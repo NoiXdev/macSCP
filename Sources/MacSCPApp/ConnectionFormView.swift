@@ -20,7 +20,7 @@ struct ConnectionFormView: View {
             }
             .disabled(isConnecting)
 
-            if case .failed(let message) = viewModel.state {
+            if case .failed(let message, _) = viewModel.state {
                 Text(message)
                     .foregroundStyle(.red)
                     .font(.callout)

@@ -7,10 +7,18 @@ import Observation
 @Observable
 @MainActor
 public final class ConnectionViewModel {
+    /// Formularfeld, dessen Validierung fehlschlug — die UI hebt es rot hervor.
+    public enum Field: Equatable, Sendable {
+        case host
+        case port
+        case username
+        case password
+    }
+
     public enum State: Equatable {
         case idle
         case connecting
-        case failed(message: String)
+        case failed(message: String, field: Field?)
     }
 
     public typealias Connector = @Sendable (SSHConnectionConfig) async throws -> any RemoteFileSystem
@@ -28,43 +36,56 @@ public final class ConnectionViewModel {
     }
 
     /// Liefert das verbundene Dateisystem oder nil; Fehler landen in `state`.
+    /// Re-entrancy-sicher: Aufrufe während `.connecting` werden verworfen,
+    /// damit ein Doppelklick keine zweite (verwaiste) Verbindung aufbaut.
     public func connect() async -> (any RemoteFileSystem)? {
+        guard state != .connecting else { return nil }
         guard let portNumber = Int(port.trimmingCharacters(in: .whitespaces)) else {
-            state = .failed(message: "Port muss eine Zahl sein.")
+            state = .failed(message: "Port muss eine Zahl sein.", field: .port)
             return nil
         }
         guard !password.isEmpty else {
-            state = .failed(message: "Passwort darf nicht leer sein.")
+            state = .failed(message: "Passwort darf nicht leer sein.", field: .password)
             return nil
         }
         do {
             let config = try SSHConnectionConfig(
-                host: host, port: portNumber, username: username, auth: .password(password)
+                host: host.trimmingCharacters(in: .whitespacesAndNewlines),
+                port: portNumber,
+                username: username.trimmingCharacters(in: .whitespacesAndNewlines),
+                auth: .password(password)
             )
             state = .connecting
             let fs = try await connector(config)
             state = .idle
             return fs
         } catch {
-            state = .failed(message: Self.message(for: error))
+            state = Self.failedState(for: error)
             return nil
         }
     }
 
-    static func message(for error: Error) -> String {
+    /// Entfernt das Klartext-Passwort aus dem State (z.B. nach dem Trennen).
+    public func clearPassword() {
+        password = ""
+    }
+
+    static func failedState(for error: Error) -> State {
         switch error {
         case SSHConnectionConfig.ConfigError.emptyHost:
-            return "Host darf nicht leer sein."
+            return .failed(message: "Host darf nicht leer sein.", field: .host)
         case SSHConnectionConfig.ConfigError.emptyUsername:
-            return "Benutzername darf nicht leer sein."
+            return .failed(message: "Benutzername darf nicht leer sein.", field: .username)
         case SSHConnectionConfig.ConfigError.invalidPort(let port):
-            return "Ungültiger Port: \(port)."
+            return .failed(message: "Ungültiger Port: \(port).", field: .port)
         case RemoteFSError.authenticationFailed:
-            return "Anmeldung fehlgeschlagen — Benutzername oder Passwort prüfen."
+            return .failed(
+                message: "Anmeldung fehlgeschlagen — Benutzername oder Passwort prüfen.",
+                field: nil)
         case RemoteFSError.connectionFailed(let reason):
-            return "Verbindung fehlgeschlagen: \(reason)"
+            return .failed(message: "Verbindung fehlgeschlagen: \(reason)", field: nil)
         default:
-            return "Unerwarteter Fehler: \(String(describing: error))"
+            return .failed(message: "Unerwarteter Fehler: \(String(describing: error))", field: nil)
         }
     }
 }
