@@ -9,9 +9,12 @@ struct RemoteFileTableView: NSViewRepresentable {
     let selectedPath: String?
     let onOpen: (RemoteFileItem) -> Void
     let onSelect: (RemoteFileItem?) -> Void
+    var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)? = nil
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onOpen: onOpen, onSelect: onSelect)
+        let coordinator = Coordinator(onOpen: onOpen, onSelect: onSelect)
+        coordinator.pasteboardWriter = pasteboardWriter
+        return coordinator
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -35,6 +38,8 @@ struct RemoteFileTableView: NSViewRepresentable {
         table.delegate = context.coordinator
         table.target = context.coordinator
         table.doubleAction = #selector(Coordinator.doubleClicked(_:))
+        // Drag nach außerhalb der App erlauben (z.B. Finder als Ziel).
+        table.setDraggingSourceOperationMask(.copy, forLocal: false)
 
         let scroll = NSScrollView()
         scroll.documentView = table
@@ -47,6 +52,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.items = items
         context.coordinator.onOpen = onOpen
         context.coordinator.onSelect = onSelect
+        context.coordinator.pasteboardWriter = pasteboardWriter
         guard let table = nsView.documentView as? NSTableView else { return }
         // reloadData() löscht die Auswahl ohne Delegate-Aufruf —
         // deshalb programmatisch wiederherstellen, Callback dabei unterdrücken.
@@ -63,6 +69,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         var items: [RemoteFileItem] = []
         var onOpen: (RemoteFileItem) -> Void
         var onSelect: (RemoteFileItem?) -> Void
+        var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)?
         weak var table: NSTableView?
         var suppressSelectionCallback = false
 
@@ -73,6 +80,16 @@ struct RemoteFileTableView: NSViewRepresentable {
 
         func numberOfRows(in tableView: NSTableView) -> Int {
             items.count
+        }
+
+        /// Liefert den Drag-Pasteboard-Writer für eine Zeile (z.B. Datei-URL) —
+        /// nil macht die Zeile nicht ziehbar (z.B. Verzeichnisse).
+        func tableView(
+            _ tableView: NSTableView,
+            pasteboardWriterForRow row: Int
+        ) -> NSPasteboardWriting? {
+            guard row >= 0, row < items.count else { return nil }
+            return pasteboardWriter?(items[row])
         }
 
         func tableView(

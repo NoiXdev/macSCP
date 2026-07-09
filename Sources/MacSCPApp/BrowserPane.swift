@@ -10,6 +10,7 @@ struct BrowserPane: View {
     let tint: Color
     let viewModel: RemoteBrowserViewModel
     var onDropURLs: (([URL]) -> Void)? = nil
+    var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)? = nil
 
     @State private var isDropTargeted = false
 
@@ -54,7 +55,8 @@ struct BrowserPane: View {
                     items: viewModel.items,
                     selectedPath: viewModel.selectedItem?.path,
                     onOpen: { item in Task { await viewModel.open(item) } },
-                    onSelect: { item in viewModel.selectedItem = item }
+                    onSelect: { item in viewModel.selectedItem = item },
+                    pasteboardWriter: pasteboardWriter
                 )
                 .allowsHitTesting(viewModel.state == .loaded)
 

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import macSCPCore
 
@@ -41,7 +42,12 @@ struct ContentView: View {
                     BrowserPane(
                         title: "Lokal",
                         tint: DesignTokens.localAmber,
-                        viewModel: session.local
+                        viewModel: session.local,
+                        pasteboardWriter: { item in
+                            item.kind == .file
+                                ? NSURL(fileURLWithPath: item.path)
+                                : nil
+                        }
                     )
                     .frame(minWidth: 280)
 
