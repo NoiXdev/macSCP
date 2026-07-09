@@ -34,7 +34,16 @@ public final class SessionListViewModel {
     public func save(
         name: String, host: String, port: Int, username: String, password: String
     ) -> StoredSession? {
-        let session = StoredSession(name: name, host: host, port: port, username: username)
+        let session: StoredSession
+        if let existing = sessions.first(where: { $0.name == name }) {
+            var updated = existing
+            updated.host = host
+            updated.port = port
+            updated.username = username
+            session = updated
+        } else {
+            session = StoredSession(name: name, host: host, port: port, username: username)
+        }
         do {
             try store.upsert(session)
             try secrets.savePassword(password, for: session.id)

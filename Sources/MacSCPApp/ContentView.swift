@@ -35,6 +35,12 @@ struct ContentView: View {
                 activeSessionID: activeSessionID,
                 interactionsDisabled: sidebarDisabled,
                 onSelect: { stored in connectStored(stored) },
+                onDelete: { stored in
+                    sessionListViewModel.delete(stored)
+                    if activeSessionID == stored.id {
+                        activeSessionID = nil
+                    }
+                },
                 onNew: { disconnectToForm() }
             )
             .frame(minWidth: 170, idealWidth: 190, maxWidth: 260)

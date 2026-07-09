@@ -58,6 +58,20 @@ struct SessionListViewModelTests {
         #expect(vm.errorMessage?.hasPrefix("Sessions konnten nicht geladen werden") == true)
     }
 
+    @Test func saveWithExistingNameUpdatesInsteadOfDuplicating() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let first = vm.save(name: "web", host: "alt.example.com", port: 22,
+                            username: "tim", password: "p1")!
+        let second = vm.save(name: "web", host: "neu.example.com", port: 2222,
+                             username: "tim2", password: "p2")!
+
+        #expect(second.id == first.id)
+        #expect(vm.sessions.count == 1)
+        #expect(vm.sessions.first?.host == "neu.example.com")
+        #expect(try secrets.password(for: first.id) == "p2")
+    }
+
     @Test func saveWithFailingSecretsStillReloadsFromDisk() {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-slvm-fail-\(UUID().uuidString)")

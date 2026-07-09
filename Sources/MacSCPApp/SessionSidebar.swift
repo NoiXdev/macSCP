@@ -8,6 +8,7 @@ struct SessionSidebar: View {
     let activeSessionID: UUID?
     let interactionsDisabled: Bool
     let onSelect: (StoredSession) -> Void
+    let onDelete: (StoredSession) -> Void
     let onNew: () -> Void
 
     var body: some View {
@@ -39,7 +40,7 @@ struct SessionSidebar: View {
                     .onTapGesture { onSelect(session) }
                     .contextMenu {
                         Button("Löschen", role: .destructive) {
-                            viewModel.delete(session)
+                            onDelete(session)
                         }
                     }
                     .help("\(session.username)@\(session.host):\(String(session.port))")
