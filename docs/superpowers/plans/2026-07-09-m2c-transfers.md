@@ -892,6 +892,53 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 **Interfaces:** Consumes Task 3 (`TransferViewModel`, `TransferDirection`, `TransferProgress`) und Task 4 (`selectedItem`). `BrowserSession` wird um die Dateisysteme erweitert (die Engine braucht Quelle/Ziel direkt).
 
+- [ ] **Step 0: Auswahl über reloadData hinweg erhalten** (Review-Fund aus Task 4, empirisch belegt: `reloadData()` löscht die visuelle Auswahl, OHNE den Delegate zu feuern — sobald ContentView `selectedItem` liest, würde jeder Klick sofort optisch „entwählt".)
+
+`Sources/MacSCPApp/RemoteFileTableView.swift`:
+
+1. Neues Property nach `items`:
+
+```swift
+    let selectedPath: String?
+```
+
+2. `updateNSView` komplett ersetzen:
+
+```swift
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        context.coordinator.items = items
+        context.coordinator.onOpen = onOpen
+        context.coordinator.onSelect = onSelect
+        guard let table = nsView.documentView as? NSTableView else { return }
+        // reloadData() löscht die Auswahl ohne Delegate-Aufruf —
+        // deshalb programmatisch wiederherstellen, Callback dabei unterdrücken.
+        context.coordinator.suppressSelectionCallback = true
+        table.reloadData()
+        if let selectedPath,
+           let row = items.firstIndex(where: { $0.path == selectedPath }) {
+            table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        }
+        context.coordinator.suppressSelectionCallback = false
+    }
+```
+
+3. Im `Coordinator`: Property `var suppressSelectionCallback = false` ergänzen und `tableViewSelectionDidChange` als erste Zeile absichern:
+
+```swift
+            guard !suppressSelectionCallback else { return }
+```
+
+4. In `Sources/MacSCPApp/BrowserPane.swift` die Aufrufstelle erweitern:
+
+```swift
+                RemoteFileTableView(
+                    items: viewModel.items,
+                    selectedPath: viewModel.selectedItem?.path,
+                    onOpen: { item in Task { await viewModel.open(item) } },
+                    onSelect: { item in viewModel.selectedItem = item }
+                )
+```
+
 - [ ] **Step 1: TransferBar**
 
 `Sources/MacSCPApp/TransferBar.swift`:
