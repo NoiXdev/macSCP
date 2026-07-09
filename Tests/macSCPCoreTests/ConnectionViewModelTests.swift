@@ -133,6 +133,17 @@ struct ConnectionViewModelTests {
             field: .password))
     }
 
+    @Test func userSwitchClearsSecretButProgrammaticSetDoesNot() async {
+        let vm = makeVM()
+        vm.password = "geheim"
+        vm.selectAuthChoice(.privateKey)
+        #expect(vm.password.isEmpty)
+
+        vm.password = "aus-dem-schluesselbund"
+        vm.authChoice = .password   // programmatisch (connectStored-Pfad)
+        #expect(vm.password == "aus-dem-schluesselbund")
+    }
+
     @Test func secondConnectWhileConnectingIsRejected() async {
         let counter = CallCounter()
         let (stream, continuation) = AsyncStream<Void>.makeStream()
