@@ -79,6 +79,27 @@ struct ConnectionViewModelTests {
         #expect(fs != nil)
     }
 
+    @Test func saveRequestedWithEmptyNameFlagsSaveNameField() async {
+        let vm = makeVM(connector: { _ in
+            Issue.record("Connector darf bei fehlendem Session-Namen nicht laufen")
+            throw RemoteFSError.connectionFailed(reason: "unreachable")
+        })
+        vm.shouldSaveSession = true
+        vm.saveName = "   "
+        let fs = await vm.connect()
+        #expect(fs == nil)
+        #expect(vm.state == .failed(
+            message: "Name für die gespeicherte Session angeben.", field: .saveName))
+    }
+
+    @Test func saveNameNotValidatedWhenToggleOff() async {
+        let vm = makeVM()
+        vm.shouldSaveSession = false
+        vm.saveName = ""
+        let fs = await vm.connect()
+        #expect(fs != nil)
+    }
+
     @Test func secondConnectWhileConnectingIsRejected() async {
         let counter = CallCounter()
         let (stream, continuation) = AsyncStream<Void>.makeStream()
