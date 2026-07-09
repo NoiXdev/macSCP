@@ -939,6 +939,50 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
                 )
 ```
 
+- [ ] **Step 0b: Fortschritts-Reihenfolge in TransferViewModel deterministisch machen** (Review-Fund aus Task 3: die pro Chunk gespawnten `Task { @MainActor … }` sind untereinander und gegenüber dem synchronen `.finished` unsortiert — ein später eintreffendes Progress-Update könnte `.finished` überschreiben.)
+
+In `Sources/macSCPCore/Presentation/TransferViewModel.swift` den Body von `run(...)` ersetzen:
+
+```swift
+        guard !isRunning else { return }
+        state = .running(
+            fileName: fileName, direction: direction,
+            progress: TransferProgress(bytesTransferred: 0, totalBytes: nil))
+
+        // Geordnete Zustellung: AsyncStream puffert in Reihenfolge, EIN Konsument
+        // aktualisiert den State — kein Task-pro-Chunk, kein Race mit .finished.
+        let (progressStream, progressContinuation) = AsyncStream<TransferProgress>.makeStream()
+        let consumer = Task { @MainActor [weak self] in
+            for await progress in progressStream {
+                self?.state = .running(fileName: fileName, direction: direction, progress: progress)
+            }
+        }
+
+        do {
+            try await TransferEngine.copyFile(
+                from: source, sourcePath: sourcePath,
+                to: destination, destinationDirectory: destinationDirectory, fileName: fileName,
+                onProgress: { progressContinuation.yield($0) }
+            )
+            progressContinuation.finish()
+            await consumer.value
+            state = .finished(fileName: fileName, direction: direction)
+            await onCompleted()
+        } catch {
+            progressContinuation.finish()
+            await consumer.value
+            state = .failed(message: Self.message(for: error))
+        }
+```
+
+Und in `Tests/macSCPCoreTests/TransferEngineTests.swift` den Test `viewModelRunsTransferAndCallsCompletion` verschärfen: `let content = Data("inhalt".utf8)` ersetzen durch
+
+```swift
+        let content = Data(repeating: 42, count: TransferChunk.size * 3)
+```
+
+(damit mehrere Progress-Events feuern — vor dem Fix wäre `.finished` dann gelegentlich überschrieben worden) und die letzte Assertion `writtenData`-Vergleich entsprechend gegen `content` lassen (unverändert korrekt). Test-Reihenfolge: erst Test verschärfen und mehrfach laufen lassen (`swift test --filter TransferEngineTests` 5×) — wenn er dabei nie rot wird, trotzdem fixen (das Race ist real, nur schwer zu treffen) und danach erneut 5× grün bestätigen.
+
 - [ ] **Step 1: TransferBar**
 
 `Sources/MacSCPApp/TransferBar.swift`:
