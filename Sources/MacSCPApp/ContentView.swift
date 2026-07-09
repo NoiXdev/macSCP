@@ -48,7 +48,10 @@ struct ContentView: View {
                     BrowserPane(
                         title: "Remote",
                         tint: DesignTokens.remoteBlue,
-                        viewModel: session.remote
+                        viewModel: session.remote,
+                        onDropURLs: { urls in
+                            uploadDropped(urls, session: session)
+                        }
                     )
                     .frame(minWidth: 280)
                 }
@@ -112,5 +115,29 @@ struct ContentView: View {
         .tint(DesignTokens.remoteBlue)
         .disabled(selected == nil || selected?.kind != .file || transferViewModel.isRunning)
         .help("Ausgewählte Remote-Datei ins lokale Verzeichnis herunterladen")
+    }
+
+    /// Gedroppte Datei-URLs sequenziell hochladen (Ordner werden übersprungen).
+    /// WICHTIG: awaited-Schleife — TransferViewModel.run verwirft parallele
+    /// Aufrufe (isRunning-Guard); erst M5 bringt eine echte Queue.
+    private func uploadDropped(_ urls: [URL], session: BrowserSession) {
+        let files = urls.filter { url in
+            var isDirectory: ObjCBool = false
+            let exists = FileManager.default.fileExists(
+                atPath: url.path(percentEncoded: false), isDirectory: &isDirectory)
+            return exists && !isDirectory.boolValue
+        }
+        guard !files.isEmpty else { return }
+        Task {
+            for url in files {
+                await transferViewModel.run(
+                    fileName: url.lastPathComponent, direction: .upload,
+                    source: session.localFS, sourcePath: url.path(percentEncoded: false),
+                    destination: session.remoteFS,
+                    destinationDirectory: session.remote.currentPath,
+                    onCompleted: { await session.remote.refresh() }
+                )
+            }
+        }
     }
 }

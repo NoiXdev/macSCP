@@ -80,6 +80,31 @@ struct TransferEngineTests {
         #expect(completed.snapshots.count == 1)
         #expect(await destination.writtenData(at: "/ziel/quelle.bin") == content)
     }
+
+    @Test func sequentialAwaitedRunsBothExecute() async {
+        let content = Data("zwei".utf8)
+        let source = MockRemoteFileSystem(
+            tree: ["/": [
+                RemoteFileItem(name: "eins.txt", path: "/eins.txt", kind: .file, size: 4),
+                RemoteFileItem(name: "zwei.txt", path: "/zwei.txt", kind: .file, size: 4),
+            ]],
+            files: ["/eins.txt": content, "/zwei.txt": content]
+        )
+        let destination = MockRemoteFileSystem(tree: ["/ziel": []])
+        let vm = await TransferViewModel()
+
+        for name in ["eins.txt", "zwei.txt"] {
+            await vm.run(
+                fileName: name, direction: .upload,
+                source: source, sourcePath: "/\(name)",
+                destination: destination, destinationDirectory: "/ziel",
+                onCompleted: {}
+            )
+        }
+        #expect(await destination.writtenData(at: "/ziel/eins.txt") == content)
+        #expect(await destination.writtenData(at: "/ziel/zwei.txt") == content)
+        #expect(await vm.state == .finished(fileName: "zwei.txt", direction: .upload))
+    }
 }
 
 /// Lock-geschütztes Test-Double statt Actor: `onProgress` ist synchron, daher
