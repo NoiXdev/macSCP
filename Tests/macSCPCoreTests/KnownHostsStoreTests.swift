@@ -60,4 +60,17 @@ struct KnownHostsStoreTests {
         let found = try store.find(host: "server.example.com", port: 22)
         #expect(found?.host == "server.example.com")
     }
+
+    @Test func decodedMixedCaseHostStillMatches() throws {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // Fixture direkt auf Platte (simuliert Alt-Datei/Handbearbeitung):
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data("""
+        [{"host":"MyServer.Local","port":22,"keyType":"ssh-ed25519","publicKeyBase64":"QUJDREVG"}]
+        """.utf8).write(to: dir.appendingPathComponent("known_hosts.json"))
+
+        #expect(try store.find(host: "myserver.local", port: 22) != nil)
+        #expect(try store.find(host: "MyServer.Local", port: 22) != nil)
+    }
 }

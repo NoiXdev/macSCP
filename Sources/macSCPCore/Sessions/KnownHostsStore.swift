@@ -15,6 +15,22 @@ public struct KnownHostKey: Codable, Equatable, Sendable {
         self.publicKeyBase64 = publicKeyBase64
     }
 
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Über den normalisierenden Init — Decode ist sonst ein zweiter,
+        // un-normalisierter Schreibpfad (Review-Fund M3d Task 0).
+        self.init(
+            host: try container.decode(String.self, forKey: .host),
+            port: try container.decode(Int.self, forKey: .port),
+            keyType: try container.decode(String.self, forKey: .keyType),
+            publicKeyBase64: try container.decode(String.self, forKey: .publicKeyBase64)
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case host, port, keyType, publicKeyBase64
+    }
+
     public var fingerprintSHA256: String {
         HostKeyFingerprint.sha256(ofKeyBlobBase64: publicKeyBase64) ?? "SHA256:?"
     }
