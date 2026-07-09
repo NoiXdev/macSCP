@@ -224,3 +224,13 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         try? await client.close()
     }
 }
+
+extension CitadelFileSystem: RemoteShellProvider {
+    /// Shell-Channel über DIESELBE Verbindung wie SFTP (Multiplex, wie WinSCP).
+    public func openShell(
+        terminal: String, cols: Int, rows: Int
+    ) async throws -> any RemoteShell {
+        try await CitadelShell.open(
+            client: client, terminal: terminal, cols: cols, rows: rows)
+    }
+}
