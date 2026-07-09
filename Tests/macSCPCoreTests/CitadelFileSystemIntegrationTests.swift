@@ -41,6 +41,15 @@ struct CitadelFileSystemIntegrationTests {
         #expect((item.size ?? 0) > 0)
     }
 
+    @Test func listNonexistentPathThrowsNotFound() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        await #expect(throws: RemoteFSError.notFound(path: "/data/seed/does-not-exist")) {
+            _ = try await fs.list(path: "/data/seed/does-not-exist")
+        }
+    }
+
     @Test func wrongPasswordThrowsAuthenticationFailed() async throws {
         let config = try SSHConnectionConfig(
             host: "127.0.0.1",

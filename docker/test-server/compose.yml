@@ -1,6 +1,6 @@
 services:
   sshd:
-    image: lscr.io/linuxserver/openssh-server:latest
+    image: lscr.io/linuxserver/openssh-server:10.3_p1-r0-ls230
     container_name: macscp-test-sshd
     ports:
       - "2222:2222"
