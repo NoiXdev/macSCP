@@ -27,16 +27,14 @@ struct ConnectionFormView: View {
                     .errorHighlight(failedField == .port)
                 TextField("Benutzername", text: $viewModel.username)
                     .errorHighlight(failedField == .username)
-                Picker("Authentifizierung", selection: $viewModel.authChoice) {
+                Picker("Authentifizierung", selection: Binding(
+                    get: { viewModel.authChoice },
+                    set: { viewModel.selectAuthChoice($0) }
+                )) {
                     Text("Passwort").tag(ConnectionViewModel.AuthChoice.password)
                     Text("SSH-Key").tag(ConnectionViewModel.AuthChoice.privateKey)
                 }
                 .pickerStyle(.segmented)
-                .onChange(of: viewModel.authChoice) {
-                    // Moduswechsel: Passwort/Passphrase nicht in den anderen
-                    // Modus verschleppen (Review-Fund M3b).
-                    viewModel.clearPassword()
-                }
                 if viewModel.authChoice == .password {
                     SecureField("Passwort", text: $viewModel.password)
                         .errorHighlight(failedField == .password)

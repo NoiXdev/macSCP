@@ -105,6 +105,16 @@ public final class ConnectionViewModel {
         password = ""
     }
 
+    /// Nutzer-initiierter Moduswechsel (Picker): leert das Geheimnis, damit
+    /// Passwort/Passphrase nicht in den anderen Modus verschleppt wird.
+    /// Programmatischer Restore (connectStored) setzt authChoice direkt —
+    /// ohne Löschung (Review-Fund M3c Task 0).
+    public func selectAuthChoice(_ choice: AuthChoice) {
+        guard choice != authChoice else { return }
+        authChoice = choice
+        clearPassword()
+    }
+
     static func failedState(for error: Error) -> State {
         switch error {
         case SSHConnectionConfig.ConfigError.emptyHost:
