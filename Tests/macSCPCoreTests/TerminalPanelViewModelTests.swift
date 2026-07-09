@@ -125,11 +125,103 @@ struct TerminalPanelViewModelTests {
         #expect(vm.state == .closed)
         #expect(!vm.isVisible)
     }
+
+    /// Regression: shutdown() während `.opening` durfte den in-flight `openShell`
+    /// Aufruf nicht ignorieren — sonst überschreibt das spät auflösende Öffnen
+    /// den `.closed`-Zustand und die dabei erzeugte Shell bleibt als Orphan offen.
+    @Test func shutdownWhileOpeningLeavesClosedAndClosesOrphan() async throws {
+        let shell = MockShell()
+        let openerReturned = Flag()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in
+            try await Task.sleep(for: .milliseconds(100))
+            await openerReturned.set()
+            return shell
+        })
+
+        vm.toggle()
+        #expect(vm.state == .opening)
+
+        await vm.shutdown()
+        #expect(!vm.isVisible)
+
+        // Genug Zeit für den verzögerten Opener, um aufzulösen.
+        try await Task.sleep(for: .milliseconds(300))
+
+        #expect(vm.state == .closed)
+        if await openerReturned.value {
+            #expect(shell.closed)
+        }
+    }
+
+    /// Regression: ein Lese-Loop, der erst nach shutdown() endet (spätes
+    /// `continuation.finish()`, nachdem `close()` schon zurückgekehrt ist),
+    /// darf `.closed` nicht nachträglich mit `.ended` überschreiben.
+    @Test func staleReadLoopCannotOverwriteState() async throws {
+        let shell = LateFinishShell()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
+        vm.toggle()
+        try await waitUntil(vm.state == .running)
+
+        Task {
+            try await Task.sleep(for: .milliseconds(50))
+            shell.finish()
+        }
+
+        await vm.shutdown()
+        #expect(vm.state == .closed)
+
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(vm.state == .closed)
+    }
 }
 
 actor Counter {
     private(set) var value = 0
     func increment() { value += 1 }
+}
+
+actor Flag {
+    private(set) var value = false
+    func set() { value = true }
+}
+
+/// Shell, deren `close()` sofort zurückkehrt, ohne den Ausgabe-Stream zu
+/// beenden. `output` ignoriert bewusst Task-Cancellation (busy-poll auf ein
+/// manuelles Flag) — reale `AsyncThrowingStream`-Continuations beenden die
+/// Iteration schon bei `Task.cancel()`, was den eigentlichen Race maskieren
+/// würde. Hier endet der Lese-Loop ausschließlich über das explizite,
+/// verzögerte `finish()`, um zu testen, dass ein spät endender Lese-Loop den
+/// bereits gesetzten Zustand nicht überschreibt.
+final class LateFinishShell: RemoteShell, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _closed = false
+    private var _finished = false
+    var closed: Bool { lock.lock(); defer { lock.unlock() }; return _closed }
+
+    var output: AsyncThrowingStream<[UInt8], Error> {
+        AsyncThrowingStream<[UInt8], Error> { [weak self] in
+            while true {
+                guard let self else { return nil }
+                self.lock.lock()
+                let finished = self._finished
+                self.lock.unlock()
+                if finished { return nil }
+                // Schluckt CancellationError absichtlich — simuliert einen
+                // Datenstrom, der Task-Cancellation nicht selbst beobachtet
+                // (z.B. eine echte Netzwerkverbindung).
+                _ = try? await Task.sleep(for: .milliseconds(5))
+            }
+        }
+    }
+
+    func send(_ bytes: [UInt8]) async throws {}
+    func resize(cols: Int, rows: Int) async throws {}
+    func close() async {
+        lock.lock(); _closed = true; lock.unlock()
+    }
+    func finish() {
+        lock.lock(); _finished = true; lock.unlock()
+    }
 }
 
 actor ShellFactory {
