@@ -27,8 +27,13 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 hostKeyValidator: .acceptAnything(),
                 reconnect: .never
             )
-            let sftp = try await client.openSFTP()
-            return CitadelFileSystem(client: client, sftp: sftp)
+            do {
+                let sftp = try await client.openSFTP()
+                return CitadelFileSystem(client: client, sftp: sftp)
+            } catch {
+                try? await client.close()
+                throw error
+            }
         } catch let error as SSHClientError {
             // Auth-Fehler laufen bei Citadel als allAuthenticationOptionsFailed auf
             // (verifiziert gegen den Docker-Testserver mit falschem Passwort).

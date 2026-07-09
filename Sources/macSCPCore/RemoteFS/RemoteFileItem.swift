@@ -35,6 +35,8 @@ public struct RemoteFileItem: Equatable, Sendable {
     public var isDirectory: Bool { kind == .directory }
 }
 
+/// Erwartet absolute, einfach-Slash-normalisierte Pfade (z.B. "/home/user/docs").
+/// Verhalten bei anderer Eingabe (relative Pfade, doppelte Slashes o.Ä.) ist nicht spezifiziert.
 public enum RemotePath {
     public static func join(_ base: String, _ component: String) -> String {
         base.hasSuffix("/") ? base + component : base + "/" + component

@@ -5,6 +5,8 @@
 actor MockRemoteFileSystem: RemoteFileSystem {
     private let tree: [String: [RemoteFileItem]]
 
+    /// Baum-Invariante: Für jeden Eintrag muss `item.path == RemotePath.join(directoryKey, item.name)`
+    /// gelten, sonst findet `stat` ihn nicht.
     init(tree: [String: [RemoteFileItem]]) {
         self.tree = tree
     }
