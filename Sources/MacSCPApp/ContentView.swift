@@ -125,7 +125,11 @@ struct ContentView: View {
                     .trimmingCharacters(in: .whitespaces)) ?? 22,
                 username: connectionViewModel.username
                     .trimmingCharacters(in: .whitespacesAndNewlines),
-                password: connectionViewModel.password
+                password: connectionViewModel.password,
+                authKind: connectionViewModel.authChoice == .password ? .password : .privateKey,
+                keyPath: connectionViewModel.authChoice == .privateKey
+                    ? connectionViewModel.keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
+                    : nil
             )
             activeSessionID = stored?.id
             connectionViewModel.shouldSaveSession = false
@@ -146,6 +150,9 @@ struct ContentView: View {
             connectionViewModel.saveName = stored.name
             connectionViewModel.shouldSaveSession = false
             connectionViewModel.password = sessionListViewModel.password(for: stored) ?? ""
+            connectionViewModel.authChoice =
+                stored.authKind == .privateKey ? .privateKey : .password
+            connectionViewModel.keyPath = stored.keyPath ?? ""
 
             if let fs = await connectionViewModel.connect() {
                 startSession(with: fs)

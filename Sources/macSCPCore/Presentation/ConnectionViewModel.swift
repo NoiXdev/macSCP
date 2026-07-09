@@ -14,6 +14,7 @@ public final class ConnectionViewModel {
         case username
         case password
         case saveName
+        case keyPath
     }
 
     public enum State: Equatable {
@@ -22,12 +23,20 @@ public final class ConnectionViewModel {
         case failed(message: String, field: Field?)
     }
 
+    /// Auth-Auswahl im Formular. Im Key-Modus dient `password` als Passphrase.
+    public enum AuthChoice: String, CaseIterable, Sendable {
+        case password
+        case privateKey
+    }
+
     public typealias Connector = @Sendable (SSHConnectionConfig) async throws -> any RemoteFileSystem
 
     public var host: String = ""
     public var port: String = "22"
     public var username: String = ""
     public var password: String = ""
+    public var authChoice: AuthChoice = .password
+    public var keyPath: String = ""
     /// Session nach erfolgreichem Verbinden speichern (Store + Schlüsselbund)?
     public var shouldSaveSession: Bool = false
     public var saveName: String = ""
@@ -48,9 +57,16 @@ public final class ConnectionViewModel {
             state = .failed(message: "Port muss eine Zahl sein.", field: .port)
             return nil
         }
-        guard !password.isEmpty else {
-            state = .failed(message: "Passwort darf nicht leer sein.", field: .password)
-            return nil
+        if authChoice == .password {
+            guard !password.isEmpty else {
+                state = .failed(message: "Passwort darf nicht leer sein.", field: .password)
+                return nil
+            }
+        } else {
+            guard !keyPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                state = .failed(message: "Pfad zum SSH-Key angeben.", field: .keyPath)
+                return nil
+            }
         }
         if shouldSaveSession,
            saveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -59,11 +75,20 @@ public final class ConnectionViewModel {
             return nil
         }
         do {
+            let auth: SSHConnectionConfig.AuthMethod
+            switch authChoice {
+            case .password:
+                auth = .password(password)
+            case .privateKey:
+                auth = .privateKey(
+                    keyPath: keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
+                    passphrase: password.isEmpty ? nil : password)
+            }
             let config = try SSHConnectionConfig(
                 host: host.trimmingCharacters(in: .whitespacesAndNewlines),
                 port: portNumber,
                 username: username.trimmingCharacters(in: .whitespacesAndNewlines),
-                auth: .password(password)
+                auth: auth
             )
             state = .connecting
             let fs = try await connector(config)
@@ -94,6 +119,18 @@ public final class ConnectionViewModel {
                 field: nil)
         case RemoteFSError.connectionFailed(let reason):
             return .failed(message: "Verbindung fehlgeschlagen: \(reason)", field: nil)
+        case SSHKeyError.fileNotFound(let path):
+            return .failed(message: "SSH-Key nicht gefunden: \(path)", field: .keyPath)
+        case SSHKeyError.passphraseRequired:
+            return .failed(
+                message: "Der SSH-Key ist verschlüsselt — Passphrase angeben.",
+                field: .password)
+        case SSHKeyError.wrongPassphrase:
+            return .failed(message: "Passphrase ist falsch.", field: .password)
+        case SSHKeyError.unsupportedFormat:
+            return .failed(
+                message: "SSH-Key-Format wird nicht unterstützt (aktuell: OpenSSH ed25519).",
+                field: .keyPath)
         default:
             return .failed(message: "Unerwarteter Fehler: \(String(describing: error))", field: nil)
         }

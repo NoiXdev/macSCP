@@ -5,6 +5,8 @@ struct ConnectionFormView: View {
     @Bindable var viewModel: ConnectionViewModel
     let onConnected: (any RemoteFileSystem) -> Void
 
+    @State private var showKeyImporter = false
+
     private var isConnecting: Bool { viewModel.state == .connecting }
 
     /// Das Feld, dessen Validierung zuletzt fehlschlug — bekommt die rote Umrandung.
@@ -25,8 +27,25 @@ struct ConnectionFormView: View {
                     .errorHighlight(failedField == .port)
                 TextField("Benutzername", text: $viewModel.username)
                     .errorHighlight(failedField == .username)
-                SecureField("Passwort", text: $viewModel.password)
-                    .errorHighlight(failedField == .password)
+                Picker("Authentifizierung", selection: $viewModel.authChoice) {
+                    Text("Passwort").tag(ConnectionViewModel.AuthChoice.password)
+                    Text("SSH-Key").tag(ConnectionViewModel.AuthChoice.privateKey)
+                }
+                .pickerStyle(.segmented)
+                if viewModel.authChoice == .password {
+                    SecureField("Passwort", text: $viewModel.password)
+                        .errorHighlight(failedField == .password)
+                } else {
+                    HStack(spacing: 6) {
+                        TextField("Key-Pfad", text: $viewModel.keyPath,
+                                  prompt: Text("~/.ssh/id_ed25519"))
+                            .errorHighlight(failedField == .keyPath)
+                        Button("…") { showKeyImporter = true }
+                            .help("Key-Datei auswählen")
+                    }
+                    SecureField("Passphrase (optional)", text: $viewModel.password)
+                        .errorHighlight(failedField == .password)
+                }
                 Toggle("Als Session speichern", isOn: $viewModel.shouldSaveSession)
                 if viewModel.shouldSaveSession {
                     TextField("Session-Name", text: $viewModel.saveName,
@@ -61,6 +80,11 @@ struct ConnectionFormView: View {
         }
         .padding(24)
         .frame(minWidth: 420)
+        .fileImporter(isPresented: $showKeyImporter, allowedContentTypes: [.item]) { result in
+            if case .success(let url) = result {
+                viewModel.keyPath = url.path(percentEncoded: false)
+            }
+        }
     }
 }
 

@@ -100,6 +100,39 @@ struct ConnectionViewModelTests {
         #expect(fs != nil)
     }
 
+    @Test func keyAuthRequiresKeyPath() async {
+        let vm = makeVM(connector: { _ in
+            Issue.record("Connector darf ohne Key-Pfad nicht laufen")
+            throw RemoteFSError.connectionFailed(reason: "unreachable")
+        })
+        vm.authChoice = .privateKey
+        vm.keyPath = "  "
+        _ = await vm.connect()
+        #expect(vm.state == .failed(message: "Pfad zum SSH-Key angeben.", field: .keyPath))
+    }
+
+    @Test func keyAuthAllowsEmptyPassphraseAndBuildsPrivateKeyAuth() async {
+        let vm = makeVM(connector: { config in
+            #expect(config.auth == .privateKey(keyPath: "~/.ssh/id_ed25519", passphrase: nil))
+            return MockRemoteFileSystem(tree: ["/": []])
+        })
+        vm.authChoice = .privateKey
+        vm.keyPath = " ~/.ssh/id_ed25519 "
+        vm.password = ""
+        let fs = await vm.connect()
+        #expect(fs != nil)
+    }
+
+    @Test func keyErrorsMapToGermanMessages() async {
+        let vm = makeVM(connector: { _ in throw SSHKeyError.passphraseRequired })
+        vm.authChoice = .privateKey
+        vm.keyPath = "~/.ssh/id_ed25519"
+        _ = await vm.connect()
+        #expect(vm.state == .failed(
+            message: "Der SSH-Key ist verschlüsselt — Passphrase angeben.",
+            field: .password))
+    }
+
     @Test func secondConnectWhileConnectingIsRejected() async {
         let counter = CallCounter()
         let (stream, continuation) = AsyncStream<Void>.makeStream()
