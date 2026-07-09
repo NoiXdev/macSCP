@@ -34,6 +34,48 @@ public struct LocalFileSystem: RemoteFileSystem {
         return Self.item(for: url)
     }
 
+    public func readStream(path: String) async throws -> AsyncThrowingStream<Data, Error> {
+        let url = URL(fileURLWithPath: path)
+        let handle: FileHandle
+        do {
+            handle = try FileHandle(forReadingFrom: url)
+        } catch {
+            throw Self.map(error, path: path)
+        }
+        // Pull-basiert (unfolding): der Konsument bestimmt das Tempo,
+        // es wird nie mehr als ein Chunk gepuffert.
+        return AsyncThrowingStream(unfolding: {
+            do {
+                if let chunk = try handle.read(upToCount: TransferChunk.size),
+                   !chunk.isEmpty {
+                    return chunk
+                }
+                try? handle.close()
+                return nil
+            } catch {
+                try? handle.close()
+                throw RemoteFSError.protocolError(reason: String(describing: error))
+            }
+        })
+    }
+
+    public func write(path: String, contents: AsyncThrowingStream<Data, Error>) async throws {
+        let url = URL(fileURLWithPath: path)
+        guard FileManager.default.createFile(atPath: url.path(percentEncoded: false), contents: nil) else {
+            throw RemoteFSError.permissionDenied(path: path)
+        }
+        let handle: FileHandle
+        do {
+            handle = try FileHandle(forWritingTo: url)
+        } catch {
+            throw Self.map(error, path: path)
+        }
+        defer { try? handle.close() }
+        for try await chunk in contents {
+            try handle.write(contentsOf: chunk)
+        }
+    }
+
     public func disconnect() async {}
 
     private static func item(for url: URL) -> RemoteFileItem {
@@ -62,7 +104,11 @@ public struct LocalFileSystem: RemoteFileSystem {
 
     private static func map(_ error: Error, path: String) -> Error {
         let ns = error as NSError
-        if ns.domain == NSCocoaErrorDomain, ns.code == NSFileReadNoSuchFileError {
+        // FileManager-Operationen werfen NSFileReadNoSuchFileError (260),
+        // FileHandle(forReadingFrom:) dagegen NSFileNoSuchFileError (4) —
+        // beide bedeuten "Datei nicht gefunden".
+        if ns.domain == NSCocoaErrorDomain,
+           ns.code == NSFileReadNoSuchFileError || ns.code == NSFileNoSuchFileError {
             return RemoteFSError.notFound(path: path)
         }
         if ns.domain == NSCocoaErrorDomain, ns.code == NSFileReadNoPermissionError {

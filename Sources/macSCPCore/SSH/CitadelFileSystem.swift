@@ -100,6 +100,14 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         }
     }
 
+    public func readStream(path: String) async throws -> AsyncThrowingStream<Data, Error> {
+        throw RemoteFSError.protocolError(reason: "readStream: kommt in M2c Task 2")
+    }
+
+    public func write(path: String, contents: AsyncThrowingStream<Data, Error>) async throws {
+        throw RemoteFSError.protocolError(reason: "write: kommt in M2c Task 2")
+    }
+
     public func disconnect() async {
         try? await client.close()
     }
