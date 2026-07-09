@@ -6,7 +6,7 @@ import Testing
 @MainActor
 struct ConnectionViewModelTests {
     private func makeVM(
-        connector: @escaping ConnectionViewModel.Connector = { _ in
+        connector: @escaping ConnectionViewModel.Connector = { _, _ in
             MockRemoteFileSystem(tree: ["/": []])
         }
     ) -> ConnectionViewModel {
@@ -41,7 +41,7 @@ struct ConnectionViewModelTests {
     }
 
     @Test func emptyPasswordFlagsPasswordFieldBeforeConnecting() async {
-        let vm = makeVM(connector: { _ in
+        let vm = makeVM(connector: { _, _ in
             Issue.record("Connector darf bei leerem Passwort nicht aufgerufen werden")
             throw RemoteFSError.connectionFailed(reason: "unreachable")
         })
@@ -51,7 +51,7 @@ struct ConnectionViewModelTests {
     }
 
     @Test func authFailureHasNoField() async {
-        let vm = makeVM(connector: { _ in throw RemoteFSError.authenticationFailed })
+        let vm = makeVM(connector: { _, _ in throw RemoteFSError.authenticationFailed })
         let fs = await vm.connect()
         #expect(fs == nil)
         #expect(vm.state == .failed(
@@ -60,7 +60,7 @@ struct ConnectionViewModelTests {
     }
 
     @Test func connectionFailureHasNoField() async {
-        let vm = makeVM(connector: { _ in
+        let vm = makeVM(connector: { _, _ in
             throw RemoteFSError.connectionFailed(reason: "timeout")
         })
         _ = await vm.connect()
@@ -68,7 +68,7 @@ struct ConnectionViewModelTests {
     }
 
     @Test func trimsPaddedHostAndUsernameForConnection() async {
-        let vm = makeVM(connector: { config in
+        let vm = makeVM(connector: { config, _ in
             #expect(config.host == "example.com")
             #expect(config.username == "tim")
             return MockRemoteFileSystem(tree: ["/": []])
@@ -80,7 +80,7 @@ struct ConnectionViewModelTests {
     }
 
     @Test func saveRequestedWithEmptyNameFlagsSaveNameField() async {
-        let vm = makeVM(connector: { _ in
+        let vm = makeVM(connector: { _, _ in
             Issue.record("Connector darf bei fehlendem Session-Namen nicht laufen")
             throw RemoteFSError.connectionFailed(reason: "unreachable")
         })
@@ -101,7 +101,7 @@ struct ConnectionViewModelTests {
     }
 
     @Test func keyAuthRequiresKeyPath() async {
-        let vm = makeVM(connector: { _ in
+        let vm = makeVM(connector: { _, _ in
             Issue.record("Connector darf ohne Key-Pfad nicht laufen")
             throw RemoteFSError.connectionFailed(reason: "unreachable")
         })
@@ -112,7 +112,7 @@ struct ConnectionViewModelTests {
     }
 
     @Test func keyAuthAllowsEmptyPassphraseAndBuildsPrivateKeyAuth() async {
-        let vm = makeVM(connector: { config in
+        let vm = makeVM(connector: { config, _ in
             #expect(config.auth == .privateKey(keyPath: "~/.ssh/id_ed25519", passphrase: nil))
             return MockRemoteFileSystem(tree: ["/": []])
         })
@@ -124,7 +124,7 @@ struct ConnectionViewModelTests {
     }
 
     @Test func keyErrorsMapToGermanMessages() async {
-        let vm = makeVM(connector: { _ in throw SSHKeyError.passphraseRequired })
+        let vm = makeVM(connector: { _, _ in throw SSHKeyError.passphraseRequired })
         vm.authChoice = .privateKey
         vm.keyPath = "~/.ssh/id_ed25519"
         _ = await vm.connect()
@@ -147,7 +147,7 @@ struct ConnectionViewModelTests {
     @Test func secondConnectWhileConnectingIsRejected() async {
         let counter = CallCounter()
         let (stream, continuation) = AsyncStream<Void>.makeStream()
-        let vm = makeVM(connector: { _ in
+        let vm = makeVM(connector: { _, _ in
             await counter.increment()
             for await _ in stream {}   // hängt, bis der Test den Stream beendet
             return MockRemoteFileSystem(tree: ["/": []])
@@ -163,6 +163,67 @@ struct ConnectionViewModelTests {
         let firstResult = await first
         #expect(firstResult != nil)
         #expect(await counter.value == 1)
+    }
+
+    @Test func unknownHostPublishesPromptAndTrustConnects() async {
+        let candidate = HostKeyCandidate(
+            host: "example.com", port: 22, keyType: "ssh-ed25519",
+            publicKeyBase64: "AAAAC3NzaC1lZDI1NTE5AAAAIAtest")
+        let vm = makeVM(connector: { _, decider in
+            let trusted = await decider(candidate)
+            guard trusted else { throw HostKeyError.rejectedByUser }
+            return MockRemoteFileSystem(tree: ["/": []])
+        })
+
+        async let result = vm.connect()
+        try? await Task.sleep(for: .milliseconds(80))
+        #expect(vm.hostKeyPrompt?.candidate == candidate)
+
+        vm.resolveHostKeyPrompt(trust: true)
+        let fs = await result
+
+        #expect(fs != nil)
+        #expect(vm.hostKeyPrompt == nil)
+    }
+
+    @Test func rejectMapsToGermanMessage() async {
+        let candidate = HostKeyCandidate(
+            host: "example.com", port: 22, keyType: "ssh-ed25519",
+            publicKeyBase64: "AAAAC3NzaC1lZDI1NTE5AAAAIAtest")
+        let vm = makeVM(connector: { _, decider in
+            let trusted = await decider(candidate)
+            guard trusted else { throw HostKeyError.rejectedByUser }
+            return MockRemoteFileSystem(tree: ["/": []])
+        })
+
+        async let result = vm.connect()
+        try? await Task.sleep(for: .milliseconds(80))
+        vm.resolveHostKeyPrompt(trust: false)
+        let fs = await result
+
+        #expect(fs == nil)
+        #expect(vm.state == .failed(
+            message: "Verbindung abgebrochen — Host-Key nicht bestätigt.", field: nil))
+        #expect(vm.hostKeyPrompt == nil)
+    }
+
+    @Test func mismatchMapsToScaryMessage() async {
+        let vm = makeVM(connector: { _, _ in
+            throw HostKeyError.mismatch(
+                host: "example.com",
+                expected: "SHA256:AAAA",
+                presented: "SHA256:BBBB")
+        })
+
+        let fs = await vm.connect()
+
+        #expect(fs == nil)
+        #expect(vm.state == .failed(
+            message: "ACHTUNG: Der Host-Key von example.com hat sich geändert! "
+                + "Erwartet SHA256:AAAA, präsentiert SHA256:BBBB. "
+                + "Möglicher Man-in-the-Middle — Verbindung abgebrochen.",
+            field: nil))
+        #expect(vm.hostKeyPrompt == nil)
     }
 }
 

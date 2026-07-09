@@ -64,6 +64,28 @@ struct ConnectionFormView: View {
                     .font(.callout)
             }
 
+            if let prompt = viewModel.hostKeyPrompt {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Erster Verbindungsaufbau zu \(prompt.candidate.host)")
+                        .font(.headline)
+                    Text("Fingerprint (\(prompt.candidate.keyType)):")
+                        .font(.callout)
+                    Text(prompt.candidate.fingerprintSHA256)
+                        .font(.system(.callout, design: .monospaced))
+                        .textSelection(.enabled)
+                    HStack {
+                        Spacer()
+                        Button("Abbrechen") { viewModel.resolveHostKeyPrompt(trust: false) }
+                        Button("Vertrauen & verbinden") {
+                            viewModel.resolveHostKeyPrompt(trust: true)
+                        }
+                        .keyboardShortcut(.defaultAction)
+                    }
+                }
+                .padding(12)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            }
+
             HStack {
                 Spacer()
                 if isConnecting {

@@ -29,7 +29,15 @@ public final class ConnectionViewModel {
         case privateKey
     }
 
-    public typealias Connector = @Sendable (SSHConnectionConfig) async throws -> any RemoteFileSystem
+    public typealias Connector = @Sendable (
+        SSHConnectionConfig, @escaping @Sendable (HostKeyCandidate) async -> Bool
+    ) async throws -> any RemoteFileSystem
+
+    /// Zustand, solange auf die Nutzer-Entscheidung zu einem unbekannten
+    /// Host-Key gewartet wird (siehe `resolveHostKeyPrompt`).
+    public struct HostKeyPrompt: Equatable {
+        public let candidate: HostKeyCandidate
+    }
 
     public var host: String = ""
     public var port: String = "22"
@@ -41,8 +49,15 @@ public final class ConnectionViewModel {
     public var shouldSaveSession: Bool = false
     public var saveName: String = ""
     public private(set) var state: State = .idle
+    /// Solange nicht nil: die Formular-UI zeigt die Fingerprint-Karte und
+    /// wartet auf `resolveHostKeyPrompt`.
+    public private(set) var hostKeyPrompt: HostKeyPrompt?
 
     private let connector: Connector
+    /// Hält die Continuation, die der Host-Key-Decider auf `connect()` legt,
+    /// bis `resolveHostKeyPrompt` sie erfüllt. Bleibt privat — die UI kennt
+    /// nur `hostKeyPrompt` und `resolveHostKeyPrompt(trust:)`.
+    private var hostKeyContinuation: CheckedContinuation<Bool, Never>?
 
     public init(connector: @escaping Connector) {
         self.connector = connector
@@ -53,6 +68,7 @@ public final class ConnectionViewModel {
     /// damit ein Doppelklick keine zweite (verwaiste) Verbindung aufbaut.
     public func connect() async -> (any RemoteFileSystem)? {
         guard state != .connecting else { return nil }
+        defer { hostKeyPrompt = nil }
         guard let portNumber = Int(port.trimmingCharacters(in: .whitespaces)) else {
             state = .failed(message: "Port muss eine Zahl sein.", field: .port)
             return nil
@@ -91,13 +107,33 @@ public final class ConnectionViewModel {
                 auth: auth
             )
             state = .connecting
-            let fs = try await connector(config)
+            let fs = try await connector(config) { [weak self] candidate in
+                await self?.presentHostKeyPrompt(for: candidate) ?? false
+            }
             state = .idle
             return fs
         } catch {
             state = Self.failedState(for: error)
             return nil
         }
+    }
+
+    /// Decider-Seite: publiziert den Prompt und hängt an einer Continuation,
+    /// bis `resolveHostKeyPrompt` sie erfüllt.
+    private func presentHostKeyPrompt(for candidate: HostKeyCandidate) async -> Bool {
+        hostKeyPrompt = HostKeyPrompt(candidate: candidate)
+        return await withCheckedContinuation { continuation in
+            hostKeyContinuation = continuation
+        }
+    }
+
+    /// Von der UI aufgerufen, wenn der Nutzer die Fingerprint-Karte beantwortet.
+    /// Doppelte Aufrufe (z.B. schnelles Doppelklicken) werden ignoriert —
+    /// die Continuation darf nur einmal erfüllt werden.
+    public func resolveHostKeyPrompt(trust: Bool) {
+        guard let continuation = hostKeyContinuation else { return }
+        hostKeyContinuation = nil
+        continuation.resume(returning: trust)
     }
 
     /// Entfernt das Klartext-Passwort aus dem State (z.B. nach dem Trennen).
@@ -141,6 +177,12 @@ public final class ConnectionViewModel {
             return .failed(
                 message: "SSH-Key-Format wird nicht unterstützt (aktuell: OpenSSH ed25519).",
                 field: .keyPath)
+        case HostKeyError.mismatch(let host, let expected, let presented):
+            return .failed(message: "ACHTUNG: Der Host-Key von \(host) hat sich geändert! "
+                + "Erwartet \(expected), präsentiert \(presented). "
+                + "Möglicher Man-in-the-Middle — Verbindung abgebrochen.", field: nil)
+        case HostKeyError.rejectedByUser:
+            return .failed(message: "Verbindung abgebrochen — Host-Key nicht bestätigt.", field: nil)
         default:
             return .failed(message: "Unerwarteter Fehler: \(String(describing: error))", field: nil)
         }
