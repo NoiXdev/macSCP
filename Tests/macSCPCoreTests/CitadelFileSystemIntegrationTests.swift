@@ -92,4 +92,59 @@ struct CitadelFileSystemIntegrationTests {
         }
         #expect(readBack == payload)
     }
+
+    /// Erzeugt einen Laufzeit-Key und installiert den Public Key im Container.
+    private func makeInstalledKey() throws -> (dir: URL, keyPath: String) {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-itest-key-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let keyURL = dir.appendingPathComponent("id_ed25519")
+
+        do {
+            let keygen = Process()
+            keygen.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
+            keygen.arguments = ["-t", "ed25519", "-f", keyURL.path(percentEncoded: false),
+                                "-N", "", "-q", "-C", "macscp-itest"]
+            try keygen.run()
+            keygen.waitUntilExit()
+            #expect(keygen.terminationStatus == 0)
+
+            let pubKey = try String(contentsOfFile: keyURL.path(percentEncoded: false) + ".pub",
+                                    encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            // Hinweis: authorized_keys wächst über Läufe auf einem langlebigen Container —
+            // für das Test-Rig akzeptabel.
+            let install = Process()
+            install.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
+            install.arguments = [
+                "exec", "macscp-test-sshd", "sh", "-c",
+                "mkdir -p /config/.ssh && echo '\(pubKey)' >> /config/.ssh/authorized_keys"
+                    + " && chmod 700 /config/.ssh && chmod 600 /config/.ssh/authorized_keys"
+                    + " && chown -R 1000:1000 /config/.ssh",
+            ]
+            try install.run()
+            install.waitUntilExit()
+            #expect(install.terminationStatus == 0)
+
+            return (dir, keyURL.path(percentEncoded: false))
+        } catch {
+            try? FileManager.default.removeItem(at: dir)
+            throw error
+        }
+    }
+
+    @Test func privateKeyAuthConnectsAndLists() async throws {
+        let (dir, keyPath) = try makeInstalledKey()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let config = try SSHConnectionConfig(
+            host: "127.0.0.1", port: 2222, username: "testuser",
+            auth: .privateKey(keyPath: keyPath, passphrase: nil))
+        let fs = try await CitadelFileSystem.connect(config: config)
+        defer { Task { await fs.disconnect() } }
+
+        let items = try await fs.list(path: "/data/seed")
+        #expect(items.contains { $0.name == "hello.txt" })
+    }
 }
