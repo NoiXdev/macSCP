@@ -42,7 +42,7 @@ Tests/macSCPCoreTests/
 
 **Parallel-Hinweis:** disjunkt zu Task 1 — Worktree.
 
-- [ ] **Step 1: Fehlschlagende Tests** — in `KnownHostsStoreTests` ergänzen:
+- [x] **Step 1: Fehlschlagende Tests** — in `KnownHostsStoreTests` ergänzen:
 
 ```swift
     @Test func findIsCaseInsensitiveOnHost() throws {
@@ -65,14 +65,14 @@ Tests/macSCPCoreTests/
 
 Run: `swift test --filter KnownHostsStoreTests` — beide FAIL.
 
-- [ ] **Step 2: Implementieren** — in `KnownHostsStore`:
+- [x] **Step 2: Implementieren** — in `KnownHostsStore`:
 
 1. `KnownHostKey.init` normalisiert: `self.host = host.lowercased()` (Doc-Kommentar: „Host wird lowercased gespeichert — Vergleiche sind case-insensitiv."). ACHTUNG: `host` ist `let` — Normalisierung im Init ist der einzige Schreibpunkt, das genügt.
 2. `find(host:port:)`: Vergleich gegen `host.lowercased()`.
 3. `upsert`: `removeAll`-Vergleich ebenfalls über lowercased (durch Init-Normalisierung von `key.host` + lowercased-Vergleich abgedeckt — beide Seiten normalisieren).
 
-- [ ] **Step 3: Grün** — Filter-Suite (6), Gesamtsuite (auf eigenem Branch Basis + 2). Prüfen, dass die drei gated TOFU-Tests unverändert kompilieren (sie nutzen „127.0.0.1" — casing-neutral).
-- [ ] **Step 4: Commit** — `fix: normalize host casing in known hosts store` (mit Footer).
+- [x] **Step 3: Grün** — Filter-Suite (6), Gesamtsuite (auf eigenem Branch Basis + 2). Prüfen, dass die drei gated TOFU-Tests unverändert kompilieren (sie nutzen „127.0.0.1" — casing-neutral).
+- [x] **Step 4: Commit** — `fix: normalize host casing in known hosts store` (mit Footer).
 
 ---
 
@@ -109,7 +109,7 @@ public enum SSHConfigImporter {
 
 **Parallel-Hinweis:** disjunkt zu Task 0 — Worktree.
 
-- [ ] **Step 1: Fehlschlagende Tests**
+- [x] **Step 1: Fehlschlagende Tests**
 
 `Tests/macSCPCoreTests/SSHConfigParserTests.swift`:
 
@@ -226,9 +226,9 @@ struct SSHConfigParserTests {
 }
 ```
 
-- [ ] **Step 2: Rot** — Compile-Fehler (`SSHConfigParser` unbekannt)
+- [x] **Step 2: Rot** — Compile-Fehler (`SSHConfigParser` unbekannt)
 
-- [ ] **Step 3: Implementieren**
+- [x] **Step 3: Implementieren**
 
 `Sources/macSCPCore/Sessions/SSHConfigParser.swift`:
 
@@ -339,8 +339,8 @@ public enum SSHConfigImporter {
 }
 ```
 
-- [ ] **Step 4: Grün** — Filter-Suite (9 PASS), Gesamtsuite (Basis + 9).
-- [ ] **Step 5: Commit** — `feat: parse and import ssh config hosts` (mit Footer).
+- [x] **Step 4: Grün** — Filter-Suite (9 PASS), Gesamtsuite (Basis + 9).
+- [x] **Step 5: Commit** — `feat: parse and import ssh config hosts` (mit Footer).
 
 ---
 
@@ -354,7 +354,7 @@ public enum SSHConfigImporter {
 
 Kein Unit-Test (UI-Wiring; Parser/Importer sind Core-getestet); Verifikation: Build + Suite + Headless-Launch; visuell in Task 3.
 
-- [ ] **Step 1: Sidebar** — in `SessionSidebar`:
+- [x] **Step 1: Sidebar** — in `SessionSidebar`:
 
 1. Properties ergänzen (nach `viewModel`): `let importedHosts: [SSHConfigHost]` und (nach `onDelete`) `let onSelectImported: (SSHConfigHost) -> Void`.
 2. In der `List` NACH dem Sessions-`ForEach` ergänzen:
@@ -383,7 +383,7 @@ Kein Unit-Test (UI-Wiring; Parser/Importer sind Core-getestet); Verifikation: Bu
                 }
 ```
 
-- [ ] **Step 2: ContentView** —
+- [x] **Step 2: ContentView** —
 
 1. State: `@State private var importedHosts: [SSHConfigHost] = []`
 2. An der `SessionSidebar`-Aufrufstelle die neuen Argumente (Reihenfolge an die Property-Deklaration anpassen) + ans `HSplitView` (bzw. den äußeren Container) anhängen:
@@ -419,17 +419,17 @@ Kein Unit-Test (UI-Wiring; Parser/Importer sind Core-getestet); Verifikation: Bu
 
 (`onSelectImported: { fillFromImported($0) }` an der Sidebar.)
 
-- [ ] **Step 3: Grün** — `swift build && swift test` (Basis unverändert), Headless-Launch-Check.
-- [ ] **Step 4: Commit** — `feat: import ssh config hosts into the sidebar` (mit Footer).
+- [x] **Step 3: Grün** — `swift build && swift test` (Basis unverändert), Headless-Launch-Check.
+- [x] **Step 4: Commit** — `feat: import ssh config hosts into the sidebar` (mit Footer).
 
 ---
 
 ### Task 3: Abschluss-Verifikation
 
-- [ ] **Step 1:** `swift test` — 126 gesamt (115 + 2 T0 + 9 T1)
-- [ ] **Step 2:** Rig hoch (HAUPT-Checkout), `MACSCP_ITEST=1` 10/10, `MACSCP_KEYCHAIN=1` 2/2, Rig runter
-- [ ] **Step 3: Visueller Smoke-Test** (Koordinator): PRÜFEN ob `~/.ssh/config` existiert (nur lesen!); falls ja: Sektion IMPORTIERT zeigt die Aliase; Klick auf einen Eintrag → Formular gefüllt (Host/Port/User/ggf. Key-Modus + Pfad), KEINE automatische Verbindung, KEIN Prompt; falls der User keine config hat: Sektion bleibt aus (ebenfalls korrekt — dokumentieren was vorlag). Die echte Datei wird unter KEINEN Umständen verändert.
-- [ ] **Step 4:** Checkboxen, Commit `docs: mark M3d plan tasks as completed` (mit Footer)
+- [x] **Step 1:** `swift test` — 126 gesamt (115 + 2 T0 + 9 T1)
+- [x] **Step 2:** Rig hoch (HAUPT-Checkout), `MACSCP_ITEST=1` 10/10, `MACSCP_KEYCHAIN=1` 2/2, Rig runter
+- [x] **Step 3: Visueller Smoke-Test** (Koordinator): PRÜFEN ob `~/.ssh/config` existiert (nur lesen!); falls ja: Sektion IMPORTIERT zeigt die Aliase; Klick auf einen Eintrag → Formular gefüllt (Host/Port/User/ggf. Key-Modus + Pfad), KEINE automatische Verbindung, KEIN Prompt; falls der User keine config hat: Sektion bleibt aus (ebenfalls korrekt — dokumentieren was vorlag). Die echte Datei wird unter KEINEN Umständen verändert.
+- [x] **Step 4:** Checkboxen, Commit `docs: mark M3d plan tasks as completed` (mit Footer)
 
 ## Ausblick
 
