@@ -20,9 +20,12 @@ struct ContentView: View {
     @State private var session: BrowserSession?
     @State private var activeSessionID: UUID?
     @State private var transferViewModel = TransferViewModel()
+    @State private var isReconnecting = false
 
     private var sidebarDisabled: Bool {
-        transferViewModel.isRunning || connectionViewModel.state == .connecting
+        isReconnecting
+            || transferViewModel.isRunning
+            || connectionViewModel.state == .connecting
     }
 
     var body: some View {
@@ -126,7 +129,10 @@ struct ContentView: View {
     /// Sidebar-Klick: bestehende Verbindung trennen, Formular aus Store +
     /// Schlüsselbund füllen und direkt verbinden.
     private func connectStored(_ stored: StoredSession) {
+        guard !isReconnecting else { return }
+        isReconnecting = true // synchron — sperrt die Sidebar sofort, vor dem ersten await
         Task {
+            defer { isReconnecting = false }
             await teardownSession()
             connectionViewModel.host = stored.host
             connectionViewModel.port = String(stored.port)
@@ -143,6 +149,7 @@ struct ContentView: View {
     }
 
     private func disconnectToForm() {
+        guard !isReconnecting else { return }
         Task {
             await teardownSession()
         }
