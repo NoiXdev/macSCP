@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "macSCP",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v15)],
     products: [
         .library(name: "macSCPCore", targets: ["macSCPCore"]),
         .executable(name: "macscp-cli", targets: ["MacSCPCLI"]),
@@ -13,6 +13,7 @@ let package = Package(
         .package(url: "https://github.com/orlandos-nl/Citadel.git", from: "0.12.1"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm", revision: "d5ee56e1c74777120f3af688600d336de4201bd2"),
     ],
     targets: [
         .target(
@@ -33,7 +34,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "MacSCPApp",
-            dependencies: ["macSCPCore"],
+            dependencies: [
+                "macSCPCore",
+                .product(name: "SwiftTerm", package: "SwiftTerm"),
+            ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(

@@ -207,6 +207,47 @@ struct ConnectionViewModelTests {
         #expect(vm.hostKeyPrompt == nil)
     }
 
+    @Test @MainActor
+    func cancelWhileHostKeyPromptPendingResolvesConnect() async throws {
+        let candidate = HostKeyCandidate(
+            host: "example.com", port: 22, keyType: "ssh-ed25519",
+            publicKeyBase64: "AAAAC3NzaC1lZDI1NTE5AAAAIAtest")
+        let vm = makeVM(connector: { _, decider in
+            let trusted = await decider(candidate)
+            guard trusted else { throw HostKeyError.rejectedByUser }
+            return MockRemoteFileSystem(tree: ["/": []])
+        })
+
+        let connectTask = Task { await vm.connect() }
+        // Warten bis der Prompt steht
+        for _ in 0..<200 where vm.hostKeyPrompt == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(vm.hostKeyPrompt != nil)
+
+        connectTask.cancel()
+
+        // Ohne Cancellation-Handler hängt connect() für immer. Ein
+        // withTaskGroup-Race würde beim Verlassen des Closures trotz
+        // cancelAll() implizit auf den hängenden Kindtask warten (Swift
+        // wartet immer auf alle Kindtasks) und selbst ewig blockieren —
+        // deshalb hier zwei unstrukturierte Tasks, die per Actor-Claim um
+        // die Continuation konkurrieren; ein hängender Verlierer-Task
+        // blockiert so nicht den Rückgabewert.
+        let claim = RaceClaim()
+        let finished: Bool = await withCheckedContinuation { continuation in
+            Task {
+                _ = await connectTask.value
+                if await claim.tryClaim() { continuation.resume(returning: true) }
+            }
+            Task {
+                try? await Task.sleep(for: .seconds(3))
+                if await claim.tryClaim() { continuation.resume(returning: false) }
+            }
+        }
+        #expect(finished, "connect() muss nach Cancel zurückkehren (Continuation aufgelöst)")
+    }
+
     @Test func mismatchMapsToScaryMessage() async {
         let vm = makeVM(connector: { _, _ in
             throw HostKeyError.mismatch(
@@ -230,4 +271,15 @@ struct ConnectionViewModelTests {
 private actor CallCounter {
     private(set) var value = 0
     func increment() { value += 1 }
+}
+
+/// Lässt genau einen von mehreren konkurrierenden Tasks „gewinnen" —
+/// verhindert doppeltes `continuation.resume` im Timeout-Race.
+private actor RaceClaim {
+    private var claimed = false
+    func tryClaim() -> Bool {
+        guard !claimed else { return false }
+        claimed = true
+        return true
+    }
 }

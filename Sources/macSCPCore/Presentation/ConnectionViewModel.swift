@@ -120,10 +120,23 @@ public final class ConnectionViewModel {
 
     /// Decider-Seite: publiziert den Prompt und hängt an einer Continuation,
     /// bis `resolveHostKeyPrompt` sie erfüllt.
+    /// Cancellation-sicher: Wird die connect()-Task abgebrochen, während der
+    /// Prompt offen ist, wird die Continuation mit `false` aufgelöst (kein Leak,
+    /// kein Hängen); der Connector sieht eine Ablehnung.
     private func presentHostKeyPrompt(for candidate: HostKeyCandidate) async -> Bool {
         hostKeyPrompt = HostKeyPrompt(candidate: candidate)
-        return await withCheckedContinuation { continuation in
-            hostKeyContinuation = continuation
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if Task.isCancelled {
+                    continuation.resume(returning: false)
+                    return
+                }
+                hostKeyContinuation = continuation
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.resolveHostKeyPrompt(trust: false)
+            }
         }
     }
 
