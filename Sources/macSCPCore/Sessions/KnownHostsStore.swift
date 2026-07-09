@@ -7,8 +7,9 @@ public struct KnownHostKey: Codable, Equatable, Sendable {
     public let keyType: String
     public let publicKeyBase64: String
 
+    /// Host wird lowercased gespeichert — Vergleiche sind case-insensitiv.
     public init(host: String, port: Int, keyType: String, publicKeyBase64: String) {
-        self.host = host
+        self.host = host.lowercased()
         self.port = port
         self.keyType = keyType
         self.publicKeyBase64 = publicKeyBase64
@@ -33,7 +34,7 @@ public struct KnownHostsStore: Sendable {
     }
 
     public func find(host: String, port: Int) throws -> KnownHostKey? {
-        try all().first { $0.host == host && $0.port == port }
+        try all().first { $0.host == host.lowercased() && $0.port == port }
     }
 
     public func upsert(_ key: KnownHostKey) throws {

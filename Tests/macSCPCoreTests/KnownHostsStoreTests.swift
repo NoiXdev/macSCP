@@ -43,4 +43,21 @@ struct KnownHostsStoreTests {
         // "QUJDREVG" == Base64("ABCDEF") — Fingerprint muss dem SHA256 davon entsprechen
         #expect(key.fingerprintSHA256 == HostKeyFingerprint.sha256(ofKeyBlobBase64: "QUJDREVG"))
     }
+
+    @Test func findIsCaseInsensitiveOnHost() throws {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try store.upsert(key)   // host: "example.com"
+        #expect(try store.find(host: "EXAMPLE.com", port: 22) == key)
+    }
+
+    @Test func upsertNormalizesHostCasing() throws {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try store.upsert(KnownHostKey(
+            host: "Server.Example.COM", port: 22,
+            keyType: "ssh-ed25519", publicKeyBase64: "QUJDREVG"))
+        let found = try store.find(host: "server.example.com", port: 22)
+        #expect(found?.host == "server.example.com")
+    }
 }
