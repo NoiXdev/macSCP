@@ -57,6 +57,19 @@ struct ContentView: View {
                         viewModel: session.remote,
                         onDropURLs: { urls in
                             uploadDropped(urls, session: session)
+                        },
+                        pasteboardWriter: { item in
+                            guard item.kind == .file else { return nil }
+                            return RemoteFilePromiseProvider(item: item) { item, url in
+                                try await TransferEngine.copyFile(
+                                    from: session.remoteFS, sourcePath: item.path,
+                                    to: LocalFileSystem(),
+                                    destinationDirectory: url.deletingLastPathComponent()
+                                        .path(percentEncoded: false),
+                                    fileName: url.lastPathComponent,
+                                    onProgress: { _ in }
+                                )
+                            }
                         }
                     )
                     .frame(minWidth: 280)
