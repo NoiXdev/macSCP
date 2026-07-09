@@ -12,11 +12,15 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/orlandos-nl/Citadel.git", from: "0.12.1"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
+        .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
     ],
     targets: [
         .target(
             name: "macSCPCore",
-            dependencies: [.product(name: "Citadel", package: "Citadel")],
+            dependencies: [
+                .product(name: "Citadel", package: "Citadel"),
+                .product(name: "Crypto", package: "swift-crypto"),
+            ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .executableTarget(
