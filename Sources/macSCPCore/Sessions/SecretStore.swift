@@ -4,6 +4,8 @@ import Security
 /// Abstraktion über die Geheimnis-Ablage. Produktion: macOS-Schlüsselbund.
 /// Geheimnisse werden über die Session-id adressiert und tauchen NIE in der
 /// Session-JSON auf.
+/// Das Geheimnis ist entweder ein Passwort (authKind .password) oder die Passphrase
+/// eines privaten Keys (authKind .privateKey; leer = unverschlüsselter Key).
 public protocol SecretStore: Sendable {
     func savePassword(_ password: String, for sessionID: UUID) throws
     func password(for sessionID: UUID) throws -> String?

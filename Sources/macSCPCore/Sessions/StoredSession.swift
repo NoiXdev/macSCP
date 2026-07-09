@@ -7,6 +7,7 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
     /// M3a: nur Passwort. privateKey/agent kommen in M3b.
     public enum AuthKind: String, Codable, Sendable {
         case password
+        case privateKey
     }
 
     public let id: UUID
@@ -15,6 +16,8 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
     public var port: Int
     public var username: String
     public var authKind: AuthKind
+    /// Pfad zum privaten Key (nur bei authKind == .privateKey belegt).
+    public var keyPath: String?
 
     public init(
         id: UUID = UUID(),
@@ -22,7 +25,8 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         host: String,
         port: Int = 22,
         username: String,
-        authKind: AuthKind = .password
+        authKind: AuthKind = .password,
+        keyPath: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -30,5 +34,6 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         self.port = port
         self.username = username
         self.authKind = authKind
+        self.keyPath = keyPath
     }
 }

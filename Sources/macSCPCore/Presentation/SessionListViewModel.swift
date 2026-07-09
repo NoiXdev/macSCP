@@ -32,9 +32,22 @@ public final class SessionListViewModel {
 
     @discardableResult
     public func save(
-        name: String, host: String, port: Int, username: String, password: String
+        name: String, host: String, port: Int, username: String, password: String,
+        authKind: StoredSession.AuthKind = .password, keyPath: String? = nil
     ) -> StoredSession? {
-        let session = StoredSession(name: name, host: host, port: port, username: username)
+        let session: StoredSession
+        if let existing = sessions.first(where: { $0.name == name }) {
+            var updated = existing
+            updated.host = host
+            updated.port = port
+            updated.username = username
+            updated.authKind = authKind
+            updated.keyPath = keyPath
+            session = updated
+        } else {
+            session = StoredSession(name: name, host: host, port: port,
+                                    username: username, authKind: authKind, keyPath: keyPath)
+        }
         do {
             try store.upsert(session)
             try secrets.savePassword(password, for: session.id)
