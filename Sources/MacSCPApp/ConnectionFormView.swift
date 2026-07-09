@@ -7,6 +7,12 @@ struct ConnectionFormView: View {
 
     private var isConnecting: Bool { viewModel.state == .connecting }
 
+    /// Das Feld, dessen Validierung zuletzt fehlschlug — bekommt die rote Umrandung.
+    private var failedField: ConnectionViewModel.Field? {
+        if case .failed(_, let field) = viewModel.state { return field }
+        return nil
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Neue Verbindung")
@@ -14,9 +20,13 @@ struct ConnectionFormView: View {
 
             Form {
                 TextField("Host", text: $viewModel.host, prompt: Text("server.example.com"))
+                    .errorHighlight(failedField == .host)
                 TextField("Port", text: $viewModel.port)
+                    .errorHighlight(failedField == .port)
                 TextField("Benutzername", text: $viewModel.username)
+                    .errorHighlight(failedField == .username)
                 SecureField("Passwort", text: $viewModel.password)
+                    .errorHighlight(failedField == .password)
             }
             .disabled(isConnecting)
 
@@ -45,5 +55,16 @@ struct ConnectionFormView: View {
         }
         .padding(24)
         .frame(minWidth: 420)
+    }
+}
+
+private extension View {
+    /// Rote Umrandung für das Formularfeld, dessen Validierung fehlschlug.
+    func errorHighlight(_ active: Bool) -> some View {
+        overlay(
+            RoundedRectangle(cornerRadius: 5)
+                .strokeBorder(Color.red, lineWidth: active ? 1.5 : 0)
+        )
+        .animation(.easeOut(duration: 0.15), value: active)
     }
 }
