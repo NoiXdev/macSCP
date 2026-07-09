@@ -12,9 +12,8 @@ struct MacSCPApp: App {
 
     var body: some Scene {
         WindowGroup("macSCP") {
-            Text("macSCP — M2 in Arbeit")
-                .padding()
-                .frame(minWidth: 480, minHeight: 320)
+            ContentView()
+                .frame(minWidth: 640, minHeight: 420)
         }
     }
 }
