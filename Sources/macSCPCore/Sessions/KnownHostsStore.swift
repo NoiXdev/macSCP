@@ -7,11 +7,28 @@ public struct KnownHostKey: Codable, Equatable, Sendable {
     public let keyType: String
     public let publicKeyBase64: String
 
+    /// Host wird lowercased gespeichert — Vergleiche sind case-insensitiv.
     public init(host: String, port: Int, keyType: String, publicKeyBase64: String) {
-        self.host = host
+        self.host = host.lowercased()
         self.port = port
         self.keyType = keyType
         self.publicKeyBase64 = publicKeyBase64
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Über den normalisierenden Init — Decode ist sonst ein zweiter,
+        // un-normalisierter Schreibpfad (Review-Fund M3d Task 0).
+        self.init(
+            host: try container.decode(String.self, forKey: .host),
+            port: try container.decode(Int.self, forKey: .port),
+            keyType: try container.decode(String.self, forKey: .keyType),
+            publicKeyBase64: try container.decode(String.self, forKey: .publicKeyBase64)
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case host, port, keyType, publicKeyBase64
     }
 
     public var fingerprintSHA256: String {
@@ -33,7 +50,7 @@ public struct KnownHostsStore: Sendable {
     }
 
     public func find(host: String, port: Int) throws -> KnownHostKey? {
-        try all().first { $0.host == host && $0.port == port }
+        try all().first { $0.host == host.lowercased() && $0.port == port }
     }
 
     public func upsert(_ key: KnownHostKey) throws {
