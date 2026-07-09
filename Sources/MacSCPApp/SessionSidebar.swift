@@ -5,11 +5,13 @@ import macSCPCore
 /// der Phosphor-Punkt markiert die aktive Verbindung.
 struct SessionSidebar: View {
     let viewModel: SessionListViewModel
+    let importedHosts: [SSHConfigHost]
     let activeSessionID: UUID?
     let interactionsDisabled: Bool
     let onSelect: (StoredSession) -> Void
     let onDelete: (StoredSession) -> Void
     let onNew: () -> Void
+    let onSelectImported: (SSHConfigHost) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -44,6 +46,28 @@ struct SessionSidebar: View {
                         }
                     }
                     .help("\(session.username)@\(session.host):\(String(session.port))")
+                }
+
+                if !importedHosts.isEmpty {
+                    Section {
+                        ForEach(importedHosts, id: \.alias) { host in
+                            HStack(spacing: 8) {
+                                Image(systemName: "arrow.down.doc")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(host.alias)
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture { onSelectImported(host) }
+                            .help("Aus ~/.ssh/config — füllt das Formular (Geheimnisse werden nicht importiert)")
+                        }
+                    } header: {
+                        Text("IMPORTIERT")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             .listStyle(.sidebar)

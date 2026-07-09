@@ -25,6 +25,7 @@ struct ContentView: View {
     @State private var activeSessionID: UUID?
     @State private var transferViewModel = TransferViewModel()
     @State private var isReconnecting = false
+    @State private var importedHosts: [SSHConfigHost] = []
 
     private var sidebarDisabled: Bool {
         isReconnecting
@@ -36,6 +37,7 @@ struct ContentView: View {
         HSplitView {
             SessionSidebar(
                 viewModel: sessionListViewModel,
+                importedHosts: importedHosts,
                 activeSessionID: activeSessionID,
                 interactionsDisabled: sidebarDisabled,
                 onSelect: { stored in connectStored(stored) },
@@ -45,13 +47,15 @@ struct ContentView: View {
                         activeSessionID = nil
                     }
                 },
-                onNew: { disconnectToForm() }
+                onNew: { disconnectToForm() },
+                onSelectImported: { fillFromImported($0) }
             )
             .frame(minWidth: 170, idealWidth: 190, maxWidth: 260)
 
             detail
                 .frame(minWidth: 590, maxWidth: .infinity)
         }
+        .task { importedHosts = SSHConfigImporter.load(path: SSHConfigImporter.defaultPath) }
     }
 
     @ViewBuilder
@@ -161,6 +165,27 @@ struct ContentView: View {
             if let fs = await connectionViewModel.connect() {
                 startSession(with: fs)
                 activeSessionID = stored.id
+            }
+        }
+    }
+
+    /// Import-Klick: Formular aus dem ssh-config-Eintrag füllen — bewusst
+    /// OHNE Verbinden (der Import kennt keine Geheimnisse).
+    private func fillFromImported(_ host: SSHConfigHost) {
+        guard !isReconnecting else { return }
+        Task {
+            await teardownSession()
+            connectionViewModel.host = host.hostName ?? host.alias
+            connectionViewModel.port = String(host.port ?? 22)
+            connectionViewModel.username = host.user ?? ""
+            connectionViewModel.saveName = host.alias
+            connectionViewModel.shouldSaveSession = false
+            if let identityFile = host.identityFile {
+                connectionViewModel.authChoice = .privateKey
+                connectionViewModel.keyPath = identityFile
+            } else {
+                connectionViewModel.authChoice = .password
+                connectionViewModel.keyPath = ""
             }
         }
     }
