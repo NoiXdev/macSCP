@@ -27,7 +27,7 @@ FileZilla (wxWidgets) und Electron-Clients: fühlt sich wie eine echte Mac-App a
 | SSH/SFTP | [Citadel](https://github.com/orlandos-nl/Citadel) (auf SwiftNIO SSH) | Aktiv gepflegt (Stand 04/2026), High-Level-SFTP-API; hinter Abstraktionsschicht austauschbar |
 | Terminal | [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) | Ausgereift, AppKit-Frontend, produktiv in Secure ShellFish, La Terminal, CodeEdit |
 | Fallback SSH | libssh2 via C-Interop | Nur falls Citadel Lücken zeigt; ermöglicht durch Protokoll-Abstraktion |
-| Mindest-macOS | 14 (Sonoma) | @Observable, moderne SwiftUI-APIs |
+| Mindest-macOS | 15 (Sequoia) | Citadels Shell-API (`withPTY`, M4-Terminal) erfordert macOS 15; Anhebung von 14 vom Maintainer bestätigt (2026-07-09) |
 | Lizenz | MIT | Niedrigste Contributor-Hürde, üblich im Swift-Ökosystem |
 | Tests | Swift Testing | Unit gegen Mock-FS, Integration gegen Docker-SSH-Server |
 | Distribution | GitHub Releases (DMG) + später Homebrew Cask | Üblicher Weg für Open-Source-Mac-Tools; kein App Store in v1 |
