@@ -43,7 +43,7 @@ Tests/macSCPCoreTests/
 **Interfaces:**
 - Produces: `BrowserPane(title:tint:viewModel:onDropURLs:)` mit `onDropURLs: (([URL]) -> Void)? = nil` — nur das Remote-Pane bekommt einen Handler; Panes ohne Handler lehnen Drops ab.
 
-- [ ] **Step 1: Fehlschlagender Test (Sequenz-Garantie im VM)** — in `TransferEngineTests` ergänzen:
+- [x] **Step 1: Fehlschlagender Test (Sequenz-Garantie im VM)** — in `TransferEngineTests` ergänzen:
 
 ```swift
     @Test func sequentialAwaitedRunsBothExecute() async {
@@ -74,7 +74,7 @@ Tests/macSCPCoreTests/
 
 Run: `swift test --filter TransferEngineTests` — der Test ist NEU und muss beim ersten Lauf GRÜN sein (er dokumentiert die Sequenz-Garantie, die der Drop-Handler nutzt; falls er ROT ist, liegt ein echter Bug im isRunning-Guard vor — dann STOPP und melden).
 
-- [ ] **Step 2: BrowserPane um Drop-Ziel erweitern**
+- [x] **Step 2: BrowserPane um Drop-Ziel erweitern**
 
 `Sources/MacSCPApp/BrowserPane.swift` — Datei komplett ersetzen:
 
@@ -197,7 +197,7 @@ extension NSItemProvider {
 }
 ```
 
-- [ ] **Step 3: Drop-Handler in ContentView**
+- [x] **Step 3: Drop-Handler in ContentView**
 
 In `Sources/MacSCPApp/ContentView.swift`: das Remote-`BrowserPane` im `HSplitView` erweitern (das lokale Pane bleibt OHNE `onDropURLs`):
 
@@ -241,9 +241,9 @@ und als private Methode in `ContentView` ergänzen:
     }
 ```
 
-- [ ] **Step 4: Bauen + Gesamtsuite** — `swift build && swift test`: 67 Tests grün (66 + 1).
+- [x] **Step 4: Bauen + Gesamtsuite** — `swift build && swift test`: 67 Tests grün (66 + 1).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/MacSCPApp/BrowserPane.swift Sources/MacSCPApp/ContentView.swift Tests/macSCPCoreTests/TransferEngineTests.swift
@@ -266,7 +266,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 Kein Unit-Test (AppKit-Drag); Verifikation: Build + visueller Test in Task 4.
 
-- [ ] **Step 1: Tabelle als Drag-Quelle**
+- [x] **Step 1: Tabelle als Drag-Quelle**
 
 In `Sources/MacSCPApp/RemoteFileTableView.swift`:
 
@@ -296,9 +296,9 @@ In `Sources/MacSCPApp/RemoteFileTableView.swift`:
         table.setDraggingSourceOperationMask(.copy, forLocal: false)
 ```
 
-- [ ] **Step 2: BrowserPane durchreichen** — Property `var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)? = nil` ergänzen und im `RemoteFileTableView`-Aufruf `pasteboardWriter: pasteboardWriter` übergeben.
+- [x] **Step 2: BrowserPane durchreichen** — Property `var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)? = nil` ergänzen und im `RemoteFileTableView`-Aufruf `pasteboardWriter: pasteboardWriter` übergeben.
 
-- [ ] **Step 3: Lokales Pane in ContentView** — das lokale `BrowserPane` erweitern:
+- [x] **Step 3: Lokales Pane in ContentView** — das lokale `BrowserPane` erweitern:
 
 ```swift
                     BrowserPane(
@@ -316,9 +316,9 @@ In `Sources/MacSCPApp/RemoteFileTableView.swift`:
 
 (`import AppKit` in ContentView ergänzen, falls der Compiler `NSURL`/`NSPasteboardWriting` nicht sieht.)
 
-- [ ] **Step 4: Bauen + Gesamtsuite** — `swift build && swift test`: 67 Tests grün.
+- [x] **Step 4: Bauen + Gesamtsuite** — `swift build && swift test`: 67 Tests grün.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/MacSCPApp/
@@ -340,7 +340,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 Kein Unit-Test (AppKit-Pasteboard); Verifikation: Build + visueller Test in Task 4.
 
-- [ ] **Step 1: Promise-Provider**
+- [x] **Step 1: Promise-Provider**
 
 `Sources/MacSCPApp/RemoteFilePromise.swift`:
 
@@ -399,7 +399,7 @@ private final class RemoteFilePromiseDelegate: NSObject, NSFilePromiseProviderDe
 }
 ```
 
-- [ ] **Step 2: Remote-Pane-Writer in ContentView**
+- [x] **Step 2: Remote-Pane-Writer in ContentView**
 
 Das Remote-`BrowserPane` um den Writer erweitern (zusätzlich zum `onDropURLs` aus Task 1):
 
@@ -421,9 +421,9 @@ Das Remote-`BrowserPane` um den Writer erweitern (zusätzlich zum `onDropURLs` a
 
 (Reihenfolge der Parameter: `viewModel`, dann `onDropURLs`, dann `pasteboardWriter` — an die tatsächliche Property-Reihenfolge in `BrowserPane` anpassen.)
 
-- [ ] **Step 3: Bauen + Gesamtsuite** — `swift build && swift test`: 67 Tests grün.
+- [x] **Step 3: Bauen + Gesamtsuite** — `swift build && swift test`: 67 Tests grün.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add Sources/MacSCPApp/RemoteFilePromise.swift Sources/MacSCPApp/ContentView.swift
@@ -436,15 +436,15 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ### Task 4: Abschluss-Verifikation
 
-- [ ] **Step 1:** `swift test` — 67 Tests grün
-- [ ] **Step 2:** Docker-Rig hoch, `MACSCP_ITEST=1 swift test --filter CitadelFileSystem` — 6/6, Rig laufen lassen (visueller Test braucht ihn)
-- [ ] **Step 3: Visueller Smoke-Test** (Koordinator am Bildschirm):
+- [x] **Step 1:** `swift test` — 67 Tests grün
+- [x] **Step 2:** Docker-Rig hoch, `MACSCP_ITEST=1 swift test --filter CitadelFileSystem` — 6/6, Rig laufen lassen (visueller Test braucht ihn)
+- [x] **Step 3: Visueller Smoke-Test** (Koordinator am Bildschirm):
   1. Lokale Datei-Zeile aufs Remote-Pane ziehen → blaues Drop-Highlight beim Hover, Upload läuft (TransferBar Bernstein), Remote-Pane refresht
   2. Mehrere Dateien nacheinander droppen → alle kommen an (Sequenz)
   3. Ordner-Zeile ziehen → Drop wird ignoriert (kein Transfer, kein Crash)
   4. Remote-Zeile in den Finder ziehen (Desktop/Ordner) → Datei erscheint mit korrektem Inhalt (Promise-Download; Finder-Zugriff für den Test nötig — sonst diesen Punkt vom Maintainer verifizieren lassen)
   5. Rig danach: `docker compose -f docker/test-server/compose.yml down`
-- [ ] **Step 4:** Checkboxen abhaken, Commit `docs: mark M2d plan tasks as completed` (mit Footer)
+- [x] **Step 4:** Checkboxen abhaken, Commit `docs: mark M2d plan tasks as completed` (mit Footer)
 
 ## Ausblick
 
