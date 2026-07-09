@@ -57,6 +57,19 @@ struct LocalFileSystemTests {
         #expect(item.size == 5)
     }
 
+    @Test func statBrokenSymlinkReportsSymlink() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let linkURL = root.appendingPathComponent("kaputt")
+        try FileManager.default.createSymbolicLink(
+            at: linkURL,
+            withDestinationURL: root.appendingPathComponent("gibt-es-nicht"))
+
+        let fs = LocalFileSystem()
+        let item = try await fs.stat(path: linkURL.path(percentEncoded: false))
+        #expect(item.kind == .symlink)
+    }
+
     @Test func listMissingPathThrowsNotFound() async {
         let fs = LocalFileSystem()
         let missing = "/tmp/macscp-gibt-es-nicht-\(UUID().uuidString)"

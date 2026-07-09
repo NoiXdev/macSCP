@@ -24,7 +24,11 @@ public struct LocalFileSystem: RemoteFileSystem {
 
     public func stat(path: String) async throws -> RemoteFileItem {
         let url = URL(fileURLWithPath: path)
-        guard FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else {
+        // fileExists(atPath:) folgt Symlinks — ein kaputter Link existiert aber
+        // als Link. Deshalb zuerst prüfen, ob der Pfad selbst ein Symlink ist.
+        let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey])
+        if values?.isSymbolicLink != true,
+           !FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
             throw RemoteFSError.notFound(path: path)
         }
         return Self.item(for: url)
