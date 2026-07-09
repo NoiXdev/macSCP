@@ -1,0 +1,14 @@
+services:
+  sshd:
+    image: lscr.io/linuxserver/openssh-server:latest
+    container_name: macscp-test-sshd
+    ports:
+      - "2222:2222"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - PASSWORD_ACCESS=true
+      - USER_NAME=testuser
+      - USER_PASSWORD=testpass
+    volumes:
+      - ./seed:/data/seed:ro
