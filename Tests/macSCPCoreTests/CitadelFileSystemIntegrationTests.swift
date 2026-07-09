@@ -10,6 +10,21 @@ import Testing
     .serialized
 )
 struct CitadelFileSystemIntegrationTests {
+    /// Reconnect-Throttling des Testcontainers abfedern: bei transientem
+    /// Transport-Fehler kurz warten und einmal erneut verbinden.
+    /// NUR für Connects verwenden, die erfolgreich sein SOLLEN — nicht für
+    /// Mismatch/Reject-Tests (dort ist der Fehler beabsichtigt).
+    private func connectWithRetry(
+        _ make: () async throws -> CitadelFileSystem
+    ) async throws -> CitadelFileSystem {
+        do {
+            return try await make()
+        } catch {
+            try? await Task.sleep(for: .milliseconds(500))
+            return try await make()
+        }
+    }
+
     private func connect() async throws -> CitadelFileSystem {
         let config = try SSHConnectionConfig(
             host: "127.0.0.1",
@@ -19,8 +34,10 @@ struct CitadelFileSystemIntegrationTests {
         )
         let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-\(UUID().uuidString)"))
-        return try await CitadelFileSystem.connect(
-            config: config, knownHosts: store, onUnknownHostKey: { _ in true })
+        return try await connectWithRetry {
+            try await CitadelFileSystem.connect(
+                config: config, knownHosts: store, onUnknownHostKey: { _ in true })
+        }
     }
 
     @Test func listsSeededDirectory() async throws {
@@ -149,8 +166,10 @@ struct CitadelFileSystemIntegrationTests {
             auth: .privateKey(keyPath: keyPath, passphrase: nil))
         let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-\(UUID().uuidString)"))
-        let fs = try await CitadelFileSystem.connect(
-            config: config, knownHosts: store, onUnknownHostKey: { _ in true })
+        let fs = try await connectWithRetry {
+            try await CitadelFileSystem.connect(
+                config: config, knownHosts: store, onUnknownHostKey: { _ in true })
+        }
         defer { Task { await fs.disconnect() } }
 
         let items = try await fs.list(path: "/data/seed")
@@ -167,9 +186,14 @@ struct CitadelFileSystemIntegrationTests {
             auth: .password("testpass"))
 
         let asked = CallCounterBox()
-        let fs1 = try await CitadelFileSystem.connect(
-            config: config, knownHosts: store,
-            onUnknownHostKey: { _ in asked.increment(); return true })
+        // Nur der ERSTE (Erfolg erwartete) Connect wird gegen Reconnect-Throttling
+        // abgesichert. Der Decider-Zähler bleibt bei 1: nach dem upsert ist der Key
+        // bekannt, ein Retry fragt den Decider nicht erneut.
+        let fs1 = try await connectWithRetry {
+            try await CitadelFileSystem.connect(
+                config: config, knownHosts: store,
+                onUnknownHostKey: { _ in asked.increment(); return true })
+        }
         await fs1.disconnect()
         #expect(asked.value == 1)
         #expect(try store.find(host: "127.0.0.1", port: 2222) != nil)

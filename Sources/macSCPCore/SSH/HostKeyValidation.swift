@@ -1,5 +1,9 @@
 import Foundation
 import NIOCore
+// NIOSSH wird transitiv über Citadel bereitgestellt (bereits im Build-Graph als
+// ausgecheckte Abhängigkeit). Eine explizite Package-Abhängigkeit auf den
+// swift-nio-ssh-Fork wurde bewusst NICHT ergänzt: Auto-Mode blockiert die
+// Fork-URL und das Modul ist ohnehin bereits verfügbar.
 import NIOSSH
 
 /// Ein vom Server präsentierter Host-Key als reiner Wert (für TOFU-Entscheidungen
@@ -70,6 +74,10 @@ extension HostKeyCandidate {
 enum HostKeyProbeResult: Sendable {
     case unknown(HostKeyCandidate)
     case mismatch(host: String, expected: String, presented: String)
+    /// Der known_hosts-Store war nicht lesbar (z.B. korruptes JSON). Wird als
+    /// harter Fehler nach außen gereicht — NICHT als "unbekannt" behandelt,
+    /// damit ein defekter Store nicht still zu Re-TOFU/Overwrite führt (fail closed).
+    case lookupFailed(reason: String)
 }
 
 /// TOFU-Host-Key-Validator als NIO-Delegate (synchroner, Promise-basierter Hook).
@@ -110,7 +118,15 @@ final class TOFUHostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @unc
 
     func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
         let candidate = HostKeyCandidate(host: host, port: port, publicKey: hostKey)
-        let known = (try? knownHosts.find(host: host, port: port)) ?? nil
+        let known: KnownHostKey?
+        do {
+            known = try knownHosts.find(host: host, port: port)
+        } catch {
+            // Store nicht lesbar → fail closed (kein Downgrade auf "unbekannt").
+            box.set(.lookupFailed(reason: String(describing: error)))
+            validationCompletePromise.fail(HostKeyError.rejectedByUser)
+            return
+        }
 
         switch HostKeyValidation.evaluate(candidate: candidate, known: known) {
         case .accept:

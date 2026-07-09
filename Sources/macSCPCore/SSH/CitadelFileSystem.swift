@@ -39,6 +39,10 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             case .mismatch(let host, let expected, let presented):
                 // Harter Stopp — kein Override, Decider wird NIE gefragt.
                 throw HostKeyError.mismatch(host: host, expected: expected, presented: presented)
+            case .lookupFailed(let reason):
+                // Korrupter known_hosts-Store → harter, typisierter Fehler statt
+                // stillem Downgrade auf TOFU (fail closed).
+                throw RemoteFSError.connectionFailed(reason: "known_hosts nicht lesbar: \(reason)")
             case .unknown(let candidate):
                 let accepted = await onUnknownHostKey(candidate)
                 guard accepted else { throw HostKeyError.rejectedByUser }
