@@ -2,8 +2,6 @@ import AppKit
 import SwiftUI
 import macSCPCore
 
-/// Beide Seiten einer aktiven Verbindung inklusive der Dateisysteme —
-/// die TransferEngine braucht Quelle und Ziel direkt.
 struct BrowserSession {
     let localFS: LocalFileSystem
     let remoteFS: any RemoteFileSystem
@@ -15,10 +13,36 @@ struct ContentView: View {
     @State private var connectionViewModel = ConnectionViewModel(connector: { config in
         try await CitadelFileSystem.connect(config: config)
     })
+    @State private var sessionListViewModel = SessionListViewModel(
+        store: SessionStore(directory: SessionStore.defaultDirectory),
+        secrets: KeychainSecretStore()
+    )
     @State private var session: BrowserSession?
+    @State private var activeSessionID: UUID?
     @State private var transferViewModel = TransferViewModel()
 
+    private var sidebarDisabled: Bool {
+        transferViewModel.isRunning || connectionViewModel.state == .connecting
+    }
+
     var body: some View {
+        HSplitView {
+            SessionSidebar(
+                viewModel: sessionListViewModel,
+                activeSessionID: activeSessionID,
+                interactionsDisabled: sidebarDisabled,
+                onSelect: { stored in connectStored(stored) },
+                onNew: { disconnectToForm() }
+            )
+            .frame(minWidth: 170, idealWidth: 190, maxWidth: 260)
+
+            detail
+                .frame(minWidth: 590, maxWidth: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private var detail: some View {
         if let session {
             VStack(spacing: 0) {
                 HStack(spacing: 12) {
@@ -26,11 +50,7 @@ struct ContentView: View {
                     downloadButton(session)
                     Spacer()
                     Button("Trennen") {
-                        Task {
-                            await session.remote.disconnect()
-                            connectionViewModel.clearPassword()
-                            self.session = nil
-                        }
+                        disconnectToForm()
                     }
                     .disabled(transferViewModel.isRunning)
                 }
@@ -59,7 +79,9 @@ struct ContentView: View {
                             uploadDropped(urls, session: session)
                         },
                         pasteboardWriter: { item in
-                            item.kind == .file ? remotePromiseProvider(for: item, session: session) : nil
+                            item.kind == .file
+                                ? remotePromiseProvider(for: item, session: session)
+                                : nil
                         }
                     )
                     .frame(minWidth: 280)
@@ -69,15 +91,70 @@ struct ContentView: View {
             }
         } else {
             ConnectionFormView(viewModel: connectionViewModel) { fs in
-                session = BrowserSession(
-                    localFS: LocalFileSystem(),
-                    remoteFS: fs,
-                    local: RemoteBrowserViewModel(fs: LocalFileSystem(), startPath: NSHomeDirectory()),
-                    remote: RemoteBrowserViewModel(fs: fs)
-                )
-                transferViewModel = TransferViewModel()
+                startSession(with: fs)
             }
         }
+    }
+
+    /// Nach erfolgreichem Verbinden: Panes aufbauen und ggf. Session speichern.
+    private func startSession(with fs: any RemoteFileSystem) {
+        session = BrowserSession(
+            localFS: LocalFileSystem(),
+            remoteFS: fs,
+            local: RemoteBrowserViewModel(fs: LocalFileSystem(), startPath: NSHomeDirectory()),
+            remote: RemoteBrowserViewModel(fs: fs)
+        )
+        transferViewModel = TransferViewModel()
+
+        if connectionViewModel.shouldSaveSession {
+            let stored = sessionListViewModel.save(
+                name: connectionViewModel.saveName
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                host: connectionViewModel.host
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                port: Int(connectionViewModel.port
+                    .trimmingCharacters(in: .whitespaces)) ?? 22,
+                username: connectionViewModel.username
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                password: connectionViewModel.password
+            )
+            activeSessionID = stored?.id
+            connectionViewModel.shouldSaveSession = false
+        }
+    }
+
+    /// Sidebar-Klick: bestehende Verbindung trennen, Formular aus Store +
+    /// Schlüsselbund füllen und direkt verbinden.
+    private func connectStored(_ stored: StoredSession) {
+        Task {
+            await teardownSession()
+            connectionViewModel.host = stored.host
+            connectionViewModel.port = String(stored.port)
+            connectionViewModel.username = stored.username
+            connectionViewModel.saveName = stored.name
+            connectionViewModel.shouldSaveSession = false
+            connectionViewModel.password = sessionListViewModel.password(for: stored) ?? ""
+
+            if let fs = await connectionViewModel.connect() {
+                startSession(with: fs)
+                activeSessionID = stored.id
+            }
+        }
+    }
+
+    private func disconnectToForm() {
+        Task {
+            await teardownSession()
+        }
+    }
+
+    private func teardownSession() async {
+        if let session {
+            await session.remote.disconnect()
+        }
+        connectionViewModel.clearPassword()
+        session = nil
+        activeSessionID = nil
     }
 
     /// Lokal ausgewählte DATEI → aktuelles Remote-Verzeichnis.

@@ -13,7 +13,7 @@ struct MacSCPApp: App {
     var body: some Scene {
         WindowGroup("macSCP") {
             ContentView()
-                .frame(minWidth: 760, minHeight: 440)
+                .frame(minWidth: 930, minHeight: 460)
         }
     }
 }

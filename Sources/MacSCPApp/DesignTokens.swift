@@ -16,4 +16,8 @@ enum DesignTokens {
             ? NSColor(srgbRed: 78 / 255, green: 146 / 255, blue: 214 / 255, alpha: 1) // #4E92D6
             : NSColor(srgbRed: 45 / 255, green: 113 / 255, blue: 184 / 255, alpha: 1) // #2D71B8
     })
+
+    /// Phosphor aus docs/design/ci.md: Verbunden-Status, Terminal-Grün.
+    static let statusPhosphor = Color(nsColor: NSColor(
+        srgbRed: 123 / 255, green: 216 / 255, blue: 143 / 255, alpha: 1)) // #7BD88F
 }
