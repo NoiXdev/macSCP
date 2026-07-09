@@ -11,7 +11,13 @@ struct BrowserSession {
 
 struct ContentView: View {
     @State private var connectionViewModel = ConnectionViewModel(connector: { config in
-        try await CitadelFileSystem.connect(config: config)
+        try await CitadelFileSystem.connect(
+            config: config,
+            knownHosts: KnownHostsStore(directory: SessionStore.defaultDirectory),
+            // ÜBERGANG (Task 3 ersetzt dies durch den Fingerprint-Prompt):
+            // unbekannte Hosts werden bis dahin automatisch vertraut.
+            onUnknownHostKey: { _ in true }
+        )
     })
     @State private var sessionListViewModel = SessionListViewModel(
         store: SessionStore(directory: SessionStore.defaultDirectory),

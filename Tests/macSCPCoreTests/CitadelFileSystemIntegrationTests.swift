@@ -17,7 +17,10 @@ struct CitadelFileSystemIntegrationTests {
             username: "testuser",
             auth: .password("testpass")
         )
-        return try await CitadelFileSystem.connect(config: config)
+        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-\(UUID().uuidString)"))
+        return try await CitadelFileSystem.connect(
+            config: config, knownHosts: store, onUnknownHostKey: { _ in true })
     }
 
     @Test func listsSeededDirectory() async throws {
@@ -57,8 +60,11 @@ struct CitadelFileSystemIntegrationTests {
             username: "testuser",
             auth: .password("WRONG")
         )
+        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-\(UUID().uuidString)"))
         await #expect(throws: RemoteFSError.authenticationFailed) {
-            _ = try await CitadelFileSystem.connect(config: config)
+            _ = try await CitadelFileSystem.connect(
+                config: config, knownHosts: store, onUnknownHostKey: { _ in true })
         }
     }
 
@@ -141,10 +147,97 @@ struct CitadelFileSystemIntegrationTests {
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: 2222, username: "testuser",
             auth: .privateKey(keyPath: keyPath, passphrase: nil))
-        let fs = try await CitadelFileSystem.connect(config: config)
+        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-\(UUID().uuidString)"))
+        let fs = try await CitadelFileSystem.connect(
+            config: config, knownHosts: store, onUnknownHostKey: { _ in true })
         defer { Task { await fs.disconnect() } }
 
         let items = try await fs.list(path: "/data/seed")
         #expect(items.contains { $0.name == "hello.txt" })
+    }
+
+    @Test func tofuStoresKeyOnFirstAcceptAndConnectsSilentlyAfterwards() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-tofu-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = KnownHostsStore(directory: dir)
+        let config = try SSHConnectionConfig(
+            host: "127.0.0.1", port: 2222, username: "testuser",
+            auth: .password("testpass"))
+
+        let asked = CallCounterBox()
+        let fs1 = try await CitadelFileSystem.connect(
+            config: config, knownHosts: store,
+            onUnknownHostKey: { _ in asked.increment(); return true })
+        await fs1.disconnect()
+        #expect(asked.value == 1)
+        #expect(try store.find(host: "127.0.0.1", port: 2222) != nil)
+
+        let fs2 = try await CitadelFileSystem.connect(
+            config: config, knownHosts: store,
+            onUnknownHostKey: { _ in asked.increment(); return true })
+        await fs2.disconnect()
+        #expect(asked.value == 1)   // kein zweiter Prompt
+    }
+
+    @Test func rejectedHostKeyFailsWithoutStoring() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-tofu-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = KnownHostsStore(directory: dir)
+        let config = try SSHConnectionConfig(
+            host: "127.0.0.1", port: 2222, username: "testuser",
+            auth: .password("testpass"))
+
+        await #expect(throws: HostKeyError.rejectedByUser) {
+            _ = try await CitadelFileSystem.connect(
+                config: config, knownHosts: store, onUnknownHostKey: { _ in false })
+        }
+        #expect(try store.find(host: "127.0.0.1", port: 2222) == nil)
+    }
+
+    @Test func tamperedKnownKeyFailsHardWithMismatch() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-tofu-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = KnownHostsStore(directory: dir)
+        try store.upsert(KnownHostKey(
+            host: "127.0.0.1", port: 2222,
+            keyType: "ssh-ed25519", publicKeyBase64: "QUJDREVG"))   // absichtlich falsch
+        let config = try SSHConnectionConfig(
+            host: "127.0.0.1", port: 2222, username: "testuser",
+            auth: .password("testpass"))
+
+        do {
+            _ = try await CitadelFileSystem.connect(
+                config: config, knownHosts: store,
+                onUnknownHostKey: { _ in
+                    Issue.record("Mismatch darf NIE den Decider fragen")
+                    return true
+                })
+            Issue.record("mismatch erwartet")
+        } catch let error as HostKeyError {
+            guard case .mismatch = error else {
+                Issue.record("mismatch erwartet, war: \(error)")
+                return
+            }
+        }
+    }
+}
+
+/// Kleines threadsicheres Zähler-Double für die Decider-Aufrufe.
+final class CallCounterBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    func increment() {
+        lock.lock(); defer { lock.unlock() }
+        count += 1
+    }
+
+    var value: Int {
+        lock.lock(); defer { lock.unlock() }
+        return count
     }
 }

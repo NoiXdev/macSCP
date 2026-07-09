@@ -13,46 +13,107 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         self.sftp = sftp
     }
 
-    public static func connect(config: SSHConnectionConfig) async throws -> CitadelFileSystem {
+    /// Verbindet mit Trust-on-First-Use-Host-Key-Prüfung.
+    ///
+    /// - bekannt & identisch → still verbinden
+    /// - bekannt & anders → `HostKeyError.mismatch` (der Decider wird NIE gefragt)
+    /// - unbekannt → `onUnknownHostKey`; bei `true` → `upsert` + genau EIN Retry,
+    ///   bei `false` → `HostKeyError.rejectedByUser` (nichts wird gespeichert)
+    ///
+    /// Umsetzung (Phase 2 der Drift-Strategie): Citadels Host-Key-Hook ist der
+    /// synchrone, Promise-basierte `NIOSSHClientServerAuthenticationDelegate` —
+    /// er kann den async-Decider nicht selbst aufrufen. Daher lehnt der Hook
+    /// unbekannte/abweichende Keys ab und meldet den Kandidaten über eine Box
+    /// nach außen; hier wird der Decider befragt und nach `upsert` erneut
+    /// verbunden (dann greift der bekannt-identisch-Pfad still).
+    public static func connect(
+        config: SSHConnectionConfig,
+        knownHosts: KnownHostsStore,
+        onUnknownHostKey: @escaping @Sendable (HostKeyCandidate) async -> Bool
+    ) async throws -> CitadelFileSystem {
+        let box = TOFUHostKeyValidator.Box()
         do {
-            let authMethod: SSHAuthenticationMethod
-            switch config.auth {
-            case .password(let password):
-                authMethod = .passwordBased(username: config.username, password: password)
-            case .privateKey(let keyPath, let passphrase):
-                authMethod = try SSHPrivateKeyLoader.authentication(
-                    username: config.username, keyPath: keyPath, passphrase: passphrase)
+            return try await attemptConnect(config: config, knownHosts: knownHosts, box: box)
+        } catch {
+            switch box.result {
+            case .mismatch(let host, let expected, let presented):
+                // Harter Stopp — kein Override, Decider wird NIE gefragt.
+                throw HostKeyError.mismatch(host: host, expected: expected, presented: presented)
+            case .unknown(let candidate):
+                let accepted = await onUnknownHostKey(candidate)
+                guard accepted else { throw HostKeyError.rejectedByUser }
+                try knownHosts.upsert(KnownHostKey(
+                    host: candidate.host, port: candidate.port,
+                    keyType: candidate.keyType, publicKeyBase64: candidate.publicKeyBase64))
+                // Genau EIN Retry: der Key ist jetzt bekannt → Hook akzeptiert still.
+                do {
+                    let retryBox = TOFUHostKeyValidator.Box()
+                    return try await attemptConnect(
+                        config: config, knownHosts: knownHosts, box: retryBox)
+                } catch {
+                    throw mapConnectError(error)
+                }
+            case .none:
+                // Kein Host-Key-Verdikt → echter Verbindungs-/Auth-/Key-Fehler.
+                throw mapConnectError(error)
             }
+        }
+    }
 
-            let client = try await SSHClient.connect(
-                host: config.host,
-                port: config.port,
-                authenticationMethod: authMethod,
-                hostKeyValidator: .acceptAnything(),
-                reconnect: .never
-            )
-            do {
-                let sftp = try await client.openSFTP()
-                return CitadelFileSystem(client: client, sftp: sftp)
-            } catch {
-                try? await client.close()
-                throw error
-            }
-        } catch let error as SSHKeyError {
+    /// Ein Verbindungsversuch mit dem TOFU-Validator. Wirft rohe Fehler; die
+    /// Auswertung (Decider, Mismatch, Mapping) übernimmt `connect`.
+    private static func attemptConnect(
+        config: SSHConnectionConfig,
+        knownHosts: KnownHostsStore,
+        box: TOFUHostKeyValidator.Box
+    ) async throws -> CitadelFileSystem {
+        let authMethod: SSHAuthenticationMethod
+        switch config.auth {
+        case .password(let password):
+            authMethod = .passwordBased(username: config.username, password: password)
+        case .privateKey(let keyPath, let passphrase):
+            authMethod = try SSHPrivateKeyLoader.authentication(
+                username: config.username, keyPath: keyPath, passphrase: passphrase)
+        }
+
+        let validator = TOFUHostKeyValidator(
+            host: config.host, port: config.port, knownHosts: knownHosts, box: box)
+        let client = try await SSHClient.connect(
+            host: config.host,
+            port: config.port,
+            authenticationMethod: authMethod,
+            hostKeyValidator: .custom(validator),
+            reconnect: .never
+        )
+        do {
+            let sftp = try await client.openSFTP()
+            return CitadelFileSystem(client: client, sftp: sftp)
+        } catch {
+            try? await client.close()
             throw error
-        } catch let error as SSHClientError {
+        }
+    }
+
+    /// Übersetzt rohe Verbindungs-Fehler in typisierte Fehler (Auth/Key/generisch).
+    private static func mapConnectError(_ error: Error) -> Error {
+        switch error {
+        case let error as SSHKeyError:
+            return error
+        case let error as HostKeyError:
+            return error
+        case let error as RemoteFSError:
+            return error
+        case let error as SSHClientError:
             // Auth-Fehler laufen bei Citadel als allAuthenticationOptionsFailed auf
             // (verifiziert gegen den Docker-Testserver mit falschem Passwort).
             switch error {
             case .allAuthenticationOptionsFailed:
-                throw RemoteFSError.authenticationFailed
+                return RemoteFSError.authenticationFailed
             default:
-                throw RemoteFSError.connectionFailed(reason: String(describing: error))
+                return RemoteFSError.connectionFailed(reason: String(describing: error))
             }
-        } catch let error as RemoteFSError {
-            throw error
-        } catch {
-            throw RemoteFSError.connectionFailed(reason: String(describing: error))
+        default:
+            return RemoteFSError.connectionFailed(reason: String(describing: error))
         }
     }
 

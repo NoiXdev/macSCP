@@ -51,8 +51,11 @@ struct SSHConnectionConfigTests {
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: 2222, username: "tim",
             auth: .privateKey(keyPath: missing, passphrase: nil))
+        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-\(UUID().uuidString)"))
         await #expect(throws: SSHKeyError.fileNotFound(path: missing)) {
-            _ = try await CitadelFileSystem.connect(config: config)
+            _ = try await CitadelFileSystem.connect(
+                config: config, knownHosts: store, onUnknownHostKey: { _ in true })
         }
     }
 }

@@ -21,7 +21,18 @@ struct MacSCPCLI: AsyncParsableCommand {
         }
 
         let config = try SSHConnectionConfig(host: host, port: port, username: user, auth: .password(password))
-        let fs = try await CitadelFileSystem.connect(config: config)
+        let knownHosts = KnownHostsStore(directory: SessionStore.defaultDirectory)
+        let fs = try await CitadelFileSystem.connect(
+            config: config,
+            knownHosts: knownHosts,
+            // CLI-Treiber: unbekannte Host-Keys automatisch vertrauen und den
+            // Fingerprint zur Nachvollziehbarkeit auf stderr drucken.
+            onUnknownHostKey: { candidate in
+                FileHandle.standardError.write(Data(
+                    "Host-Key \(candidate.fingerprintSHA256) automatisch vertraut (CLI-Treiber)\n".utf8))
+                return true
+            }
+        )
 
         do {
             let items = try await fs.list(path: path)
