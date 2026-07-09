@@ -150,6 +150,13 @@ Hauptfenster-Layout:
 - App Store / Sandbox
 - Skripting/CLI-Automatisierung
 
+## Vorgemerkt für v2
+
+- **Mehrere gleichzeitige Server über Tabs/Fenster** — vom Maintainer bestätigt
+  (2026-07-09). Architektur-Hinweis für v1: nichts bauen, was eine einzige
+  globale Verbindung annimmt — Verbindung/Session gehört an das Fenster- bzw.
+  Tab-Objekt, nicht in einen App-weiten Singleton.
+
 ## Offene Punkte
 
 - **Notarisierung:** braucht Apple-Developer-Account (99 €/Jahr). Bis M6
