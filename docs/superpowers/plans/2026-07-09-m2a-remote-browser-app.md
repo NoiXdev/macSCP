@@ -53,7 +53,7 @@ Tests/macSCPCoreTests/
 - Consumes: nichts Neues (Target hängt nur von `macSCPCore` ab)
 - Produces: Executable-Product `macSCP`, Modul `MacSCPApp`; `@main struct MacSCPApp: App` — Task 6 ersetzt dessen `body`-Inhalt
 
-- [ ] **Step 1: Package.swift erweitern**
+- [x] **Step 1: Package.swift erweitern**
 
 In `Package.swift` unter `products:` ergänzen (nach dem bestehenden `macscp-cli`-Eintrag):
 
@@ -71,7 +71,7 @@ und unter `targets:` (nach dem `MacSCPCLI`-Target):
         ),
 ```
 
-- [ ] **Step 2: Minimale App**
+- [x] **Step 2: Minimale App**
 
 `Sources/MacSCPApp/MacSCPApp.swift`:
 
@@ -98,17 +98,17 @@ struct MacSCPApp: App {
 }
 ```
 
-- [ ] **Step 3: Bauen und Tests**
+- [x] **Step 3: Bauen und Tests**
 
 Run: `swift build && swift test`
 Expected: `Build complete!`, 25 Tests grün (Integrationssuite ohne Docker übersprungen)
 
-- [ ] **Step 4: Manueller Smoke-Test**
+- [x] **Step 4: Manueller Smoke-Test**
 
 Run: `swift run macSCP` (aus `/Users/noidee/macSCP`)
 Expected: Fenster „macSCP" mit Text „macSCP — M2 in Arbeit" erscheint; mit Cmd+Q beenden. (In Headless-Umgebung: Prozess startet ohne Crash; nach ~5 s mit Ctrl+C beenden und das als Erfolg werten.)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Package.swift Sources/MacSCPApp/MacSCPApp.swift
@@ -129,7 +129,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Consumes: `RemoteFileItem` (M1: `name`, `path`, `kind`, `size: UInt64?`, `modifiedAt: Date?`, `isDirectory`)
 - Produces: `public enum FileListFormatter` mit `sizeString(for: RemoteFileItem) -> String`, `dateString(for: RemoteFileItem) -> String`, `displayName(for: RemoteFileItem) -> String` — genutzt von Task 5 (Tabelle)
 
-- [ ] **Step 1: Fehlschlagende Tests**
+- [x] **Step 1: Fehlschlagende Tests**
 
 `Tests/macSCPCoreTests/FileListFormatterTests.swift`:
 
@@ -178,12 +178,12 @@ struct FileListFormatterTests {
 }
 ```
 
-- [ ] **Step 2: Rot verifizieren**
+- [x] **Step 2: Rot verifizieren**
 
 Run: `swift test --filter FileListFormatterTests`
 Expected: Compile-Fehler `cannot find 'FileListFormatter' in scope`
 
-- [ ] **Step 3: Implementieren**
+- [x] **Step 3: Implementieren**
 
 `Sources/macSCPCore/Presentation/FileListFormatter.swift`:
 
@@ -222,12 +222,12 @@ public enum FileListFormatter {
 }
 ```
 
-- [ ] **Step 4: Grün verifizieren**
+- [x] **Step 4: Grün verifizieren**
 
 Run: `swift test --filter FileListFormatterTests`
 Expected: 6 Tests PASS
 
-- [ ] **Step 5: Gesamtsuite + Commit**
+- [x] **Step 5: Gesamtsuite + Commit**
 
 Run: `swift test` — Expected: 31 Tests grün.
 
@@ -250,7 +250,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Consumes: `SSHConnectionConfig` (M1, wirft `ConfigError`), `RemoteFSError`, `RemoteFileSystem`-Protocol, im Test `MockRemoteFileSystem`
 - Produces: `public final class ConnectionViewModel` (`@Observable`, `@MainActor`) mit Feldern `host/port/username/password: String`, `state: ConnectionViewModel.State` (`.idle/.connecting/.failed(message:)`), `init(connector:)`, `func connect() async -> (any RemoteFileSystem)?` und `typealias Connector = @Sendable (SSHConnectionConfig) async throws -> any RemoteFileSystem` — genutzt von Task 6 (Formular + ContentView)
 
-- [ ] **Step 1: Fehlschlagende Tests**
+- [x] **Step 1: Fehlschlagende Tests**
 
 `Tests/macSCPCoreTests/ConnectionViewModelTests.swift`:
 
@@ -325,12 +325,12 @@ struct ConnectionViewModelTests {
 }
 ```
 
-- [ ] **Step 2: Rot verifizieren**
+- [x] **Step 2: Rot verifizieren**
 
 Run: `swift test --filter ConnectionViewModelTests`
 Expected: Compile-Fehler `cannot find 'ConnectionViewModel' in scope`
 
-- [ ] **Step 3: Implementieren**
+- [x] **Step 3: Implementieren**
 
 `Sources/macSCPCore/Presentation/ConnectionViewModel.swift`:
 
@@ -407,12 +407,12 @@ public final class ConnectionViewModel {
 }
 ```
 
-- [ ] **Step 4: Grün verifizieren**
+- [x] **Step 4: Grün verifizieren**
 
 Run: `swift test --filter ConnectionViewModelTests`
 Expected: 6 Tests PASS
 
-- [ ] **Step 5: Gesamtsuite + Commit**
+- [x] **Step 5: Gesamtsuite + Commit**
 
 Run: `swift test` — Expected: 37 Tests grün.
 
@@ -435,7 +435,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Consumes: `RemoteFileSystem`-Protocol (`list/stat/disconnect`), `RemotePath.parent(of:)`, `RemoteFSError`; im Test `MockRemoteFileSystem`
 - Produces: `public final class RemoteBrowserViewModel` (`@Observable`, `@MainActor`): `currentPath: String`, `items: [RemoteFileItem]`, `state: RemoteBrowserViewModel.State` (`.loading/.loaded/.failed(message:)`), `canGoUp: Bool`, `init(fs:startPath:)`, `load()`, `open(_:)`, `goUp()`, `refresh()`, `disconnect()` — genutzt von Task 6 (BrowserView) und Task 5 (Items-Quelle)
 
-- [ ] **Step 1: Fehlschlagende Tests**
+- [x] **Step 1: Fehlschlagende Tests**
 
 `Tests/macSCPCoreTests/RemoteBrowserViewModelTests.swift`:
 
@@ -509,12 +509,12 @@ struct RemoteBrowserViewModelTests {
 }
 ```
 
-- [ ] **Step 2: Rot verifizieren**
+- [x] **Step 2: Rot verifizieren**
 
 Run: `swift test --filter RemoteBrowserViewModelTests`
 Expected: Compile-Fehler `cannot find 'RemoteBrowserViewModel' in scope`
 
-- [ ] **Step 3: Implementieren**
+- [x] **Step 3: Implementieren**
 
 `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift`:
 
@@ -604,12 +604,12 @@ public final class RemoteBrowserViewModel {
 }
 ```
 
-- [ ] **Step 4: Grün verifizieren**
+- [x] **Step 4: Grün verifizieren**
 
 Run: `swift test --filter RemoteBrowserViewModelTests`
 Expected: 6 Tests PASS
 
-- [ ] **Step 5: Gesamtsuite + Commit**
+- [x] **Step 5: Gesamtsuite + Commit**
 
 Run: `swift test` — Expected: 43 Tests grün.
 
@@ -633,7 +633,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 Kein Unit-Test (reiner AppKit-View-Code, Spec: UI via manuelle Smoke-Tests); die Logik dahinter (Formatter, Sortierung) ist bereits in Tasks 2/4 getestet. Verifikation: kompiliert + Smoke-Test in Task 6.
 
-- [ ] **Step 1: Implementieren**
+- [x] **Step 1: Implementieren**
 
 `Sources/MacSCPApp/RemoteFileTableView.swift`:
 
@@ -751,12 +751,12 @@ struct RemoteFileTableView: NSViewRepresentable {
 }
 ```
 
-- [ ] **Step 2: Bauen + Gesamtsuite**
+- [x] **Step 2: Bauen + Gesamtsuite**
 
 Run: `swift build && swift test`
 Expected: `Build complete!`, 43 Tests grün
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add Sources/MacSCPApp/RemoteFileTableView.swift
@@ -779,7 +779,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Consumes: `ConnectionViewModel` (Task 3), `RemoteBrowserViewModel` (Task 4), `RemoteFileTableView` (Task 5), `CitadelFileSystem.connect(config:)` (M1)
 - Produces: benutzbare App: Formular → verbinden → Browser (navigieren, aktualisieren, trennen)
 
-- [ ] **Step 1: ConnectionFormView**
+- [x] **Step 1: ConnectionFormView**
 
 `Sources/MacSCPApp/ConnectionFormView.swift`:
 
@@ -835,7 +835,7 @@ struct ConnectionFormView: View {
 }
 ```
 
-- [ ] **Step 2: BrowserView**
+- [x] **Step 2: BrowserView**
 
 `Sources/MacSCPApp/BrowserView.swift`:
 
@@ -909,7 +909,7 @@ struct BrowserView: View {
 }
 ```
 
-- [ ] **Step 3: ContentView**
+- [x] **Step 3: ContentView**
 
 `Sources/MacSCPApp/ContentView.swift`:
 
@@ -937,7 +937,7 @@ struct ContentView: View {
 }
 ```
 
-- [ ] **Step 4: App-Body ersetzen**
+- [x] **Step 4: App-Body ersetzen**
 
 In `Sources/MacSCPApp/MacSCPApp.swift` den `WindowGroup`-Inhalt ersetzen:
 
@@ -952,12 +952,12 @@ In `Sources/MacSCPApp/MacSCPApp.swift` den `WindowGroup`-Inhalt ersetzen:
 
 (Der `init()` mit der Activation-Policy bleibt unverändert.)
 
-- [ ] **Step 5: Bauen + Gesamtsuite**
+- [x] **Step 5: Bauen + Gesamtsuite**
 
 Run: `swift build && swift test`
 Expected: `Build complete!`, 43 Tests grün
 
-- [ ] **Step 6: Manueller Smoke-Test gegen Docker-Server**
+- [x] **Step 6: Manueller Smoke-Test gegen Docker-Server**
 
 ```bash
 docker compose -f docker/test-server/compose.yml up -d
@@ -977,7 +977,7 @@ Danach: `docker compose -f docker/test-server/compose.yml down`
 
 (In Headless-Umgebung ohne Fenster: Schritte nicht prüfbar — dann App nur via `swift run macSCP` auf crashfreien Start prüfen, mit Ctrl+C beenden, und im Report explizit als NICHT manuell verifiziert kennzeichnen.)
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add Sources/MacSCPApp/
@@ -993,12 +993,12 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `docs/superpowers/plans/2026-07-09-m2a-remote-browser-app.md` (Checkboxen)
 
-- [ ] **Step 1: Komplette Unit-Suite**
+- [x] **Step 1: Komplette Unit-Suite**
 
 Run: `swift test`
 Expected: 43 Tests in 8 Suiten grün, Integrationssuite übersprungen
 
-- [ ] **Step 2: Integrationstests**
+- [x] **Step 2: Integrationstests**
 
 ```bash
 docker compose -f docker/test-server/compose.yml up -d
@@ -1008,7 +1008,7 @@ docker compose -f docker/test-server/compose.yml down
 ```
 Expected: 4/4 grün
 
-- [ ] **Step 3: Checkboxen dieses Plans auf `- [x]` setzen und committen**
+- [x] **Step 3: Checkboxen dieses Plans auf `- [x]` setzen und committen**
 
 ```bash
 git add docs/superpowers/plans/2026-07-09-m2a-remote-browser-app.md
