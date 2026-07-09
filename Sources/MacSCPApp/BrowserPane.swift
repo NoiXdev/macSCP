@@ -78,7 +78,7 @@ struct BrowserPane: View {
             }
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(tint, lineWidth: isDropTargeted ? 2.5 : 0)
+                    .strokeBorder(tint, lineWidth: isDropTargeted && onDropURLs != nil ? 2.5 : 0)
                     .padding(2)
             )
             .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
@@ -99,7 +99,7 @@ struct BrowserPane: View {
     }
 }
 
-extension NSItemProvider {
+fileprivate extension NSItemProvider {
     /// Extrahiert eine Datei-URL aus dem Provider (Drop-Payload).
     func macscpFileURL() async -> URL? {
         await withCheckedContinuation { continuation in

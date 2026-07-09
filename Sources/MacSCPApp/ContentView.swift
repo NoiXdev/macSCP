@@ -59,17 +59,7 @@ struct ContentView: View {
                             uploadDropped(urls, session: session)
                         },
                         pasteboardWriter: { item in
-                            guard item.kind == .file else { return nil }
-                            return RemoteFilePromiseProvider(item: item) { item, url in
-                                try await TransferEngine.copyFile(
-                                    from: session.remoteFS, sourcePath: item.path,
-                                    to: LocalFileSystem(),
-                                    destinationDirectory: url.deletingLastPathComponent()
-                                        .path(percentEncoded: false),
-                                    fileName: url.lastPathComponent,
-                                    onProgress: { _ in }
-                                )
-                            }
+                            item.kind == .file ? remotePromiseProvider(for: item, session: session) : nil
                         }
                     )
                     .frame(minWidth: 280)
@@ -160,6 +150,23 @@ struct ContentView: View {
                     onCompleted: { await session.remote.refresh() }
                 )
             }
+        }
+    }
+
+    /// Promise-Einlösung: Remote-Datei direkt über die Engine an die
+    /// vom Finder vorgegebene URL laden (bewusst ohne TransferBar → M5).
+    private func remotePromiseProvider(
+        for item: RemoteFileItem, session: BrowserSession
+    ) -> RemoteFilePromiseProvider {
+        RemoteFilePromiseProvider(item: item) { item, url in
+            try await TransferEngine.copyFile(
+                from: session.remoteFS, sourcePath: item.path,
+                to: session.localFS,
+                destinationDirectory: url.deletingLastPathComponent()
+                    .path(percentEncoded: false),
+                fileName: url.lastPathComponent,
+                onProgress: { _ in }
+            )
         }
     }
 }
