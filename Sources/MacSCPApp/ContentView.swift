@@ -7,6 +7,7 @@ struct BrowserSession {
     let remoteFS: any RemoteFileSystem
     let local: RemoteBrowserViewModel
     let remote: RemoteBrowserViewModel
+    let terminal: TerminalPanelViewModel
 }
 
 struct ContentView: View {
@@ -66,6 +67,13 @@ struct ContentView: View {
                     uploadButton(session)
                     downloadButton(session)
                     Spacer()
+                    Button {
+                        session.terminal.toggle()
+                    } label: {
+                        Label("Terminal", systemImage: "terminal")
+                    }
+                    .keyboardShortcut("t", modifiers: .command)
+                    .help("Terminal ein-/ausblenden (⌘T)")
                     Button("Trennen") {
                         disconnectToForm()
                     }
@@ -75,33 +83,42 @@ struct ContentView: View {
 
                 Divider()
 
-                HSplitView {
-                    BrowserPane(
-                        title: "Lokal",
-                        tint: DesignTokens.localAmber,
-                        viewModel: session.local,
-                        pasteboardWriter: { item in
-                            item.kind == .file
-                                ? NSURL(fileURLWithPath: item.path)
-                                : nil
-                        }
-                    )
-                    .frame(minWidth: 280)
+                VSplitView {
+                    HSplitView {
+                        BrowserPane(
+                            title: "Lokal",
+                            tint: DesignTokens.localAmber,
+                            viewModel: session.local,
+                            pasteboardWriter: { item in
+                                item.kind == .file
+                                    ? NSURL(fileURLWithPath: item.path)
+                                    : nil
+                            }
+                        )
+                        .frame(minWidth: 280)
 
-                    BrowserPane(
-                        title: "Remote",
-                        tint: DesignTokens.remoteBlue,
-                        viewModel: session.remote,
-                        onDropURLs: { urls in
-                            uploadDropped(urls, session: session)
-                        },
-                        pasteboardWriter: { item in
-                            item.kind == .file
-                                ? remotePromiseProvider(for: item, session: session)
-                                : nil
-                        }
-                    )
-                    .frame(minWidth: 280)
+                        BrowserPane(
+                            title: "Remote",
+                            tint: DesignTokens.remoteBlue,
+                            viewModel: session.remote,
+                            onDropURLs: { urls in
+                                uploadDropped(urls, session: session)
+                            },
+                            pasteboardWriter: { item in
+                                item.kind == .file
+                                    ? remotePromiseProvider(for: item, session: session)
+                                    : nil
+                            }
+                        )
+                        .frame(minWidth: 280)
+                    }
+                    .frame(minHeight: 200)
+                    .layoutPriority(1)
+
+                    if session.terminal.isVisible {
+                        terminalPanel(session)
+                            .frame(minHeight: 120, idealHeight: 220)
+                    }
                 }
 
                 TransferBar(viewModel: transferViewModel)
@@ -113,13 +130,44 @@ struct ContentView: View {
         }
     }
 
+    /// Panel-Inhalt: Terminal bei laufender Shell, sonst Ende-/Leerzustand.
+    /// `SSHTerminalView` wird bewusst nur bei aktiver Shell eingehängt, damit
+    /// `onOutput` bei jedem Neuöffnen frisch bindet.
+    @ViewBuilder
+    private func terminalPanel(_ session: BrowserSession) -> some View {
+        ZStack {
+            Color(nsColor: DesignTokens.terminalBackground)
+            switch session.terminal.state {
+            case .running, .opening:
+                SSHTerminalView(viewModel: session.terminal)
+            case .ended(let message):
+                VStack(spacing: 8) {
+                    Text(message ?? "Shell beendet.")
+                        .foregroundStyle(Color(nsColor: DesignTokens.terminalText))
+                    Button("Neu öffnen") { session.terminal.openIfNeeded() }
+                }
+            case .closed:
+                Color.clear
+            }
+        }
+    }
+
     /// Nach erfolgreichem Verbinden: Panes aufbauen und ggf. Session speichern.
     private func startSession(with fs: any RemoteFileSystem) {
+        let shellProvider = fs as? RemoteShellProvider
         session = BrowserSession(
             localFS: LocalFileSystem(),
             remoteFS: fs,
             local: RemoteBrowserViewModel(fs: LocalFileSystem(), startPath: NSHomeDirectory()),
-            remote: RemoteBrowserViewModel(fs: fs)
+            remote: RemoteBrowserViewModel(fs: fs),
+            terminal: TerminalPanelViewModel(openShell: { term, cols, rows in
+                guard let shellProvider else {
+                    throw RemoteFSError.protocolError(
+                        reason: "Diese Verbindung unterstützt kein Terminal.")
+                }
+                return try await shellProvider.openShell(
+                    terminal: term, cols: cols, rows: rows)
+            })
         )
         transferViewModel = TransferViewModel()
 
@@ -199,6 +247,7 @@ struct ContentView: View {
 
     private func teardownSession() async {
         if let session {
+            await session.terminal.shutdown()
             await session.remote.disconnect()
         }
         connectionViewModel.clearPassword()
