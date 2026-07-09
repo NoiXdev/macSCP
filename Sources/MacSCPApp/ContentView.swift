@@ -173,6 +173,8 @@ struct ContentView: View {
             await session.remote.disconnect()
         }
         connectionViewModel.clearPassword()
+        connectionViewModel.authChoice = .password
+        connectionViewModel.keyPath = ""
         session = nil
         activeSessionID = nil
     }

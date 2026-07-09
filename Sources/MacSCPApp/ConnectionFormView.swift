@@ -32,6 +32,11 @@ struct ConnectionFormView: View {
                     Text("SSH-Key").tag(ConnectionViewModel.AuthChoice.privateKey)
                 }
                 .pickerStyle(.segmented)
+                .onChange(of: viewModel.authChoice) {
+                    // Moduswechsel: Passwort/Passphrase nicht in den anderen
+                    // Modus verschleppen (Review-Fund M3b).
+                    viewModel.clearPassword()
+                }
                 if viewModel.authChoice == .password {
                     SecureField("Passwort", text: $viewModel.password)
                         .errorHighlight(failedField == .password)
