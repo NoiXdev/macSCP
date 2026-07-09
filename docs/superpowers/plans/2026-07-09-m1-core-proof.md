@@ -18,8 +18,8 @@
 
 ## Voraussetzungen (einmalig prüfen)
 
-- [ ] `swift --version` → Swift 6.x (Xcode 16+). Falls älter: Xcode aktualisieren, bevor es losgeht.
-- [ ] `docker --version` → Docker läuft (für Task 6/7).
+- [x] `swift --version` → Swift 6.x (Xcode 16+). Falls älter: Xcode aktualisieren, bevor es losgeht.
+- [x] `docker --version` → Docker läuft (für Task 6/7).
 
 ## Datei-Struktur (Endzustand von M1)
 
@@ -65,7 +65,7 @@ docker/
 - Create: `Sources/macSCPCore/RemoteFS/RemoteFileItem.swift` (leerer Platzhalter-Inhalt, Task 2 füllt ihn)
 - Create: `Tests/macSCPCoreTests/RemotePathTests.swift` (leerer Platzhalter)
 
-- [ ] **Step 1: Package.swift anlegen**
+- [x] **Step 1: Package.swift anlegen**
 
 ```swift
 // swift-tools-version:6.0
@@ -108,7 +108,7 @@ let package = Package(
 Hinweis: Language Mode v5, weil Citadels NIO-Typen unter Swift-6-Strict-Concurrency
 sonst unnötige Reibung erzeugen. Umstellung auf v6 ist bewusst nicht Teil von M1.
 
-- [ ] **Step 2: .gitignore anlegen**
+- [x] **Step 2: .gitignore anlegen**
 
 ```
 .build/
@@ -119,7 +119,7 @@ xcuserdata/
 .DS_Store
 ```
 
-- [ ] **Step 3: Minimal-Quelldateien anlegen, damit die Targets bauen**
+- [x] **Step 3: Minimal-Quelldateien anlegen, damit die Targets bauen**
 
 `Sources/macSCPCore/RemoteFS/RemoteFileItem.swift`:
 ```swift
@@ -142,12 +142,12 @@ import Testing
 @testable import macSCPCore
 ```
 
-- [ ] **Step 4: Build + leerer Testlauf**
+- [x] **Step 4: Build + leerer Testlauf**
 
 Run: `swift build && swift test`
 Expected: `Build complete!`, Testlauf grün mit 0 Tests. (Erster Lauf lädt Citadel + Abhängigkeiten, dauert ein paar Minuten.)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Package.swift Package.resolved .gitignore Sources/ Tests/
@@ -163,7 +163,7 @@ git commit -m "build: scaffold Swift package with Citadel dependency"
 - Create: `Sources/macSCPCore/RemoteFS/RemoteFSError.swift`
 - Modify: `Tests/macSCPCoreTests/RemotePathTests.swift`
 
-- [ ] **Step 1: Failing Tests für RemotePath schreiben**
+- [x] **Step 1: Failing Tests für RemotePath schreiben**
 
 `Tests/macSCPCoreTests/RemotePathTests.swift`:
 ```swift
@@ -198,12 +198,12 @@ struct RemotePathTests {
 }
 ```
 
-- [ ] **Step 2: Testlauf — muss fehlschlagen**
+- [x] **Step 2: Testlauf — muss fehlschlagen**
 
 Run: `swift test --filter RemotePathTests`
 Expected: Compile-Fehler `cannot find 'RemotePath' in scope`
 
-- [ ] **Step 3: Modelle implementieren**
+- [x] **Step 3: Modelle implementieren**
 
 `Sources/macSCPCore/RemoteFS/RemoteFileItem.swift` (Platzhalter ersetzen):
 ```swift
@@ -270,12 +270,12 @@ public enum RemoteFSError: Error, Equatable, Sendable {
 }
 ```
 
-- [ ] **Step 4: Testlauf — muss grün sein**
+- [x] **Step 4: Testlauf — muss grün sein**
 
 Run: `swift test --filter RemotePathTests`
 Expected: 6 Tests PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/macSCPCore/RemoteFS/ Tests/macSCPCoreTests/RemotePathTests.swift
@@ -291,7 +291,7 @@ git commit -m "feat: add remote file model, path helpers and typed errors"
 - Create: `Tests/macSCPCoreTests/MockRemoteFileSystem.swift`
 - Create: `Tests/macSCPCoreTests/MockRemoteFileSystemTests.swift`
 
-- [ ] **Step 1: Failing Tests schreiben**
+- [x] **Step 1: Failing Tests schreiben**
 
 `Tests/macSCPCoreTests/MockRemoteFileSystemTests.swift`:
 ```swift
@@ -341,12 +341,12 @@ struct MockRemoteFileSystemTests {
 }
 ```
 
-- [ ] **Step 2: Testlauf — muss fehlschlagen**
+- [x] **Step 2: Testlauf — muss fehlschlagen**
 
 Run: `swift test --filter MockRemoteFileSystemTests`
 Expected: Compile-Fehler `cannot find 'MockRemoteFileSystem' in scope`
 
-- [ ] **Step 3: Protocol + Mock implementieren**
+- [x] **Step 3: Protocol + Mock implementieren**
 
 `Sources/macSCPCore/RemoteFS/RemoteFileSystem.swift`:
 ```swift
@@ -392,12 +392,12 @@ actor MockRemoteFileSystem: RemoteFileSystem {
 }
 ```
 
-- [ ] **Step 4: Testlauf — muss grün sein**
+- [x] **Step 4: Testlauf — muss grün sein**
 
 Run: `swift test --filter MockRemoteFileSystemTests`
 Expected: 4 Tests PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/macSCPCore/RemoteFS/RemoteFileSystem.swift Tests/macSCPCoreTests/
@@ -412,7 +412,7 @@ git commit -m "feat: add RemoteFileSystem protocol with mock implementation"
 - Create: `Sources/macSCPCore/SSH/SSHConnectionConfig.swift`
 - Create: `Tests/macSCPCoreTests/SSHConnectionConfigTests.swift`
 
-- [ ] **Step 1: Failing Tests schreiben**
+- [x] **Step 1: Failing Tests schreiben**
 
 `Tests/macSCPCoreTests/SSHConnectionConfigTests.swift`:
 ```swift
@@ -446,12 +446,12 @@ struct SSHConnectionConfigTests {
 }
 ```
 
-- [ ] **Step 2: Testlauf — muss fehlschlagen**
+- [x] **Step 2: Testlauf — muss fehlschlagen**
 
 Run: `swift test --filter SSHConnectionConfigTests`
 Expected: Compile-Fehler `cannot find 'SSHConnectionConfig' in scope`
 
-- [ ] **Step 3: Implementieren**
+- [x] **Step 3: Implementieren**
 
 `Sources/macSCPCore/SSH/SSHConnectionConfig.swift`:
 ```swift
@@ -484,12 +484,12 @@ public struct SSHConnectionConfig: Equatable, Sendable {
 }
 ```
 
-- [ ] **Step 4: Testlauf — muss grün sein**
+- [x] **Step 4: Testlauf — muss grün sein**
 
 Run: `swift test --filter SSHConnectionConfigTests`
 Expected: 4 Tests PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/macSCPCore/SSH/ Tests/macSCPCoreTests/SSHConnectionConfigTests.swift
@@ -508,7 +508,7 @@ Die Übersetzung von SFTP-Rohdaten in `RemoteFileItem` ist pure Logik — sie wi
 hier ohne Citadel-Typen testbar gemacht (Primitive rein, Modell raus). Die dünne
 Citadel-Schicht in Task 6 ruft nur noch diesen Mapper.
 
-- [ ] **Step 1: Failing Tests schreiben**
+- [x] **Step 1: Failing Tests schreiben**
 
 `Tests/macSCPCoreTests/SFTPAttributeMapperTests.swift`:
 ```swift
@@ -550,12 +550,12 @@ struct SFTPAttributeMapperTests {
 }
 ```
 
-- [ ] **Step 2: Testlauf — muss fehlschlagen**
+- [x] **Step 2: Testlauf — muss fehlschlagen**
 
 Run: `swift test --filter SFTPAttributeMapperTests`
 Expected: Compile-Fehler `cannot find 'SFTPAttributeMapper' in scope`
 
-- [ ] **Step 3: Implementieren**
+- [x] **Step 3: Implementieren**
 
 `Sources/macSCPCore/SSH/SFTPAttributeMapper.swift`:
 ```swift
@@ -598,12 +598,12 @@ enum SFTPAttributeMapper {
 }
 ```
 
-- [ ] **Step 4: Testlauf — muss grün sein**
+- [x] **Step 4: Testlauf — muss grün sein**
 
 Run: `swift test --filter SFTPAttributeMapperTests`
 Expected: 5 Tests PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/macSCPCore/SSH/SFTPAttributeMapper.swift Tests/macSCPCoreTests/SFTPAttributeMapperTests.swift
@@ -626,7 +626,7 @@ wird ausschließlich per Integrationstest gegen einen echten SSH-Server geprüft
 Der Test ist über die Umgebungsvariable `MACSCP_ITEST=1` geschaltet, damit
 `swift test` ohne Docker (z.B. in CI) grün bleibt.
 
-- [ ] **Step 1: Docker-Testserver definieren**
+- [x] **Step 1: Docker-Testserver definieren**
 
 `docker/test-server/compose.yml`:
 ```yaml
@@ -653,7 +653,7 @@ hello from macSCP test server
 
 `docker/test-server/seed/sub/.gitkeep`: leere Datei.
 
-- [ ] **Step 2: Server starten und manuell verifizieren**
+- [x] **Step 2: Server starten und manuell verifizieren**
 
 Run:
 ```bash
@@ -663,7 +663,7 @@ ssh -o StrictHostKeyChecking=no -p 2222 testuser@localhost "ls /data/seed" || tr
 ```
 Expected: Passwort-Prompt bzw. mit `sshpass`/manueller Eingabe: `hello.txt` und `sub`. Wichtig ist: Port 2222 antwortet.
 
-- [ ] **Step 3: Failing Integrationstest schreiben**
+- [x] **Step 3: Failing Integrationstest schreiben**
 
 `Tests/macSCPCoreTests/CitadelFileSystemIntegrationTests.swift`:
 ```swift
@@ -724,12 +724,12 @@ struct CitadelFileSystemIntegrationTests {
 }
 ```
 
-- [ ] **Step 4: Testlauf — muss fehlschlagen**
+- [x] **Step 4: Testlauf — muss fehlschlagen**
 
 Run: `MACSCP_ITEST=1 swift test --filter CitadelFileSystem`
 Expected: Compile-Fehler `cannot find 'CitadelFileSystem' in scope`
 
-- [ ] **Step 5: CitadelFileSystem implementieren**
+- [x] **Step 5: CitadelFileSystem implementieren**
 
 `Sources/macSCPCore/SSH/CitadelFileSystem.swift`:
 ```swift
@@ -815,17 +815,17 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
 
 **Abgleich mit Citadel 0.12.x:** Die Signaturen `SSHClient.connect(host:port:authenticationMethod:hostKeyValidator:reconnect:)`, `listDirectory(atPath:) -> [SFTPMessage.Name]` und `getAttributes(at:)` sind gegen den Stand 04/2026 verifiziert. Falls der Compiler bei `SSHClientError`-Cases, `SFTPMessage.Name.components`, den Property-Namen von `SFTPFileAttributes` (`size`/`permissions`/`accessModificationTime`) oder einer inzwischen Settings-basierten connect-API (`SSHClientSettings` + `SSHClient.connect(to:)`) meckert: exakte Namen in `.build/checkouts/Citadel/Sources/Citadel/` nachschlagen und nur die Aufruf-Stellen anpassen — Protocol und Mapper bleiben unverändert.
 
-- [ ] **Step 6: Unit-Tests bleiben grün (ohne Docker-Abhängigkeit)**
+- [x] **Step 6: Unit-Tests bleiben grün (ohne Docker-Abhängigkeit)**
 
 Run: `swift test`
 Expected: alle bisherigen Tests PASS; die Integrationstests werden als "skipped" gemeldet (Gate nicht gesetzt).
 
-- [ ] **Step 7: Integrationstest gegen laufenden Server**
+- [x] **Step 7: Integrationstest gegen laufenden Server**
 
 Run: `MACSCP_ITEST=1 swift test --filter CitadelFileSystem`
 Expected: 3 Tests PASS
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add Sources/macSCPCore/SSH/CitadelFileSystem.swift docker/ Tests/macSCPCoreTests/CitadelFileSystemIntegrationTests.swift
@@ -839,7 +839,7 @@ git commit -m "feat: add Citadel-backed SFTP file system with integration tests"
 **Files:**
 - Modify: `Sources/MacSCPCLI/MacSCPCLI.swift`
 
-- [ ] **Step 1: CLI implementieren**
+- [x] **Step 1: CLI implementieren**
 
 `Sources/MacSCPCLI/MacSCPCLI.swift` (Platzhalter komplett ersetzen):
 ```swift
@@ -885,12 +885,12 @@ struct MacSCPCLI: AsyncParsableCommand {
 }
 ```
 
-- [ ] **Step 2: Build**
+- [x] **Step 2: Build**
 
 Run: `swift build`
 Expected: `Build complete!`
 
-- [ ] **Step 3: Manuell gegen den Docker-Server verifizieren**
+- [x] **Step 3: Manuell gegen den Docker-Server verifizieren**
 
 Run:
 ```bash
@@ -903,12 +903,12 @@ sub/	-
 ```
 (Byte-Zahl kann leicht abweichen; entscheidend: beide Einträge, `sub` mit `/`.)
 
-- [ ] **Step 4: Fehlerfall verifizieren**
+- [x] **Step 4: Fehlerfall verifizieren**
 
 Run: `MACSCP_PASSWORD=falsch swift run macscp-cli --host 127.0.0.1 --port 2222 --user testuser /data/seed; echo "exit=$?"`
 Expected: Fehlermeldung (authenticationFailed), `exit=1` — kein Stacktrace-Crash.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/MacSCPCLI/MacSCPCLI.swift
@@ -922,7 +922,7 @@ git commit -m "feat: add CLI driver to list remote directories"
 **Files:**
 - Create: `.github/workflows/ci.yml`
 
-- [ ] **Step 1: Workflow anlegen**
+- [x] **Step 1: Workflow anlegen**
 
 `.github/workflows/ci.yml`:
 ```yaml
@@ -947,7 +947,7 @@ jobs:
 Hinweis: GitHub-macOS-Runner haben kein Docker — die Integrationstests bleiben
 dort durch das `MACSCP_ITEST`-Gate automatisch übersprungen und laufen nur lokal.
 
-- [ ] **Step 2: Kompletter lokaler Testlauf als Abschluss-Beweis**
+- [x] **Step 2: Kompletter lokaler Testlauf als Abschluss-Beweis**
 
 Run:
 ```bash
@@ -956,7 +956,7 @@ docker compose -f docker/test-server/compose.yml down
 ```
 Expected: alle Tests PASS, Container gestoppt.
 
-- [ ] **Step 3: Commit + Push**
+- [x] **Step 3: Commit + Push**
 
 ```bash
 git add .github/
@@ -964,7 +964,7 @@ git commit -m "ci: build and run unit tests on pull requests"
 git push
 ```
 
-- [ ] **Step 4: CI-Lauf prüfen**
+- [x] **Step 4: CI-Lauf prüfen**
 
 Run: `gh run watch --repo NoiXdev/macSCP --exit-status || gh run list --repo NoiXdev/macSCP --limit 1`
 Expected: Workflow grün.
