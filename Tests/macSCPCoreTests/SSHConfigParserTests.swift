@@ -107,4 +107,22 @@ struct SSHConfigParserTests {
         let hosts = SSHConfigImporter.load(path: file.path(percentEncoded: false))
         #expect(hosts.map(\.alias) == ["Alpha", "zeta"])
     }
+
+    @Test func importerDeduplicatesAliasesKeepFirst() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-sshconf-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("config")
+        try """
+        Host prod
+            HostName erster.example.com
+        Host prod
+            HostName zweiter.example.com
+        """.write(to: file, atomically: true, encoding: .utf8)
+
+        let hosts = SSHConfigImporter.load(path: file.path(percentEncoded: false))
+        #expect(hosts.count == 1)
+        #expect(hosts.first?.hostName == "erster.example.com")   // ssh-Präzedenz: erster gewinnt
+    }
 }

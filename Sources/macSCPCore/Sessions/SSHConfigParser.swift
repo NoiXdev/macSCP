@@ -97,7 +97,11 @@ public enum SSHConfigImporter {
         guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
             return []
         }
-        return SSHConfigParser.parse(text).sorted {
+        // Erster Block gewinnt (ssh-Präzedenz); verhindert zugleich doppelte
+        // SwiftUI-IDs in der Sidebar.
+        var seen = Set<String>()
+        let unique = SSHConfigParser.parse(text).filter { seen.insert($0.alias).inserted }
+        return unique.sorted {
             $0.alias.localizedCaseInsensitiveCompare($1.alias) == .orderedAscending
         }
     }
