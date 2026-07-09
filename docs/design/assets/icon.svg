@@ -1,0 +1,13 @@
+<svg width="1024" height="1024" viewBox="0 0 96 96" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="macSCP App-Icon: zwei Panes mit Austauschpfeilen">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#16344C"/>
+      <stop offset="1" stop-color="#0F1E2B"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="88" height="88" rx="21" fill="url(#bg)"/>
+  <rect x="17" y="24" width="27" height="48" rx="6" fill="none" stroke="#E8A63C" stroke-width="4"/>
+  <rect x="52" y="24" width="27" height="48" rx="6" fill="none" stroke="#4E92D6" stroke-width="4"/>
+  <path d="M40 40 H58 M53 34 l6 6 -6 6" fill="none" stroke="#E8A63C" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M56 58 H38 M43 52 l-6 6 6 6" fill="none" stroke="#4E92D6" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
