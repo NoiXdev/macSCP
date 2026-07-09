@@ -27,6 +27,12 @@ struct ConnectionFormView: View {
                     .errorHighlight(failedField == .username)
                 SecureField("Passwort", text: $viewModel.password)
                     .errorHighlight(failedField == .password)
+                Toggle("Als Session speichern", isOn: $viewModel.shouldSaveSession)
+                if viewModel.shouldSaveSession {
+                    TextField("Session-Name", text: $viewModel.saveName,
+                              prompt: Text("z.B. hetzner-web"))
+                        .errorHighlight(failedField == .saveName)
+                }
             }
             .disabled(isConnecting)
 

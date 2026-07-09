@@ -13,6 +13,7 @@ public final class ConnectionViewModel {
         case port
         case username
         case password
+        case saveName
     }
 
     public enum State: Equatable {
@@ -27,6 +28,9 @@ public final class ConnectionViewModel {
     public var port: String = "22"
     public var username: String = ""
     public var password: String = ""
+    /// Session nach erfolgreichem Verbinden speichern (Store + Schlüsselbund)?
+    public var shouldSaveSession: Bool = false
+    public var saveName: String = ""
     public private(set) var state: State = .idle
 
     private let connector: Connector
@@ -46,6 +50,12 @@ public final class ConnectionViewModel {
         }
         guard !password.isEmpty else {
             state = .failed(message: "Passwort darf nicht leer sein.", field: .password)
+            return nil
+        }
+        if shouldSaveSession,
+           saveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            state = .failed(
+                message: "Name für die gespeicherte Session angeben.", field: .saveName)
             return nil
         }
         do {
