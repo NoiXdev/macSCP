@@ -121,6 +121,9 @@ struct ContentView: View {
     /// WICHTIG: awaited-Schleife — TransferViewModel.run verwirft parallele
     /// Aufrufe (isRunning-Guard); erst M5 bringt eine echte Queue.
     private func uploadDropped(_ urls: [URL], session: BrowserSession) {
+        // Wie die Buttons: während eines laufenden Transfers keine neuen Drops
+        // annehmen — sonst verschluckt der isRunning-Guard Dateien still (Queue → M5).
+        guard !transferViewModel.isRunning else { return }
         let files = urls.filter { url in
             var isDirectory: ObjCBool = false
             let exists = FileManager.default.fileExists(
