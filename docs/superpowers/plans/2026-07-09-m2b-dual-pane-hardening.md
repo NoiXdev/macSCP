@@ -57,7 +57,7 @@ Tests/macSCPCoreTests/
 3. Host und Benutzername werden vor dem Config-Bau getrimmt (Review-Finding: `" example.com "` wählte sich sonst wörtlich ein).
 4. `clearPassword()` für den Disconnect-Pfad (Review-Finding: Klartext-Passwort blieb im State).
 
-- [ ] **Step 1: Tests ersetzen (Rot)**
+- [x] **Step 1: Tests ersetzen (Rot)**
 
 `Tests/macSCPCoreTests/ConnectionViewModelTests.swift` — Datei komplett ersetzen:
 
@@ -171,12 +171,12 @@ private actor CallCounter {
 }
 ```
 
-- [ ] **Step 2: Rot verifizieren**
+- [x] **Step 2: Rot verifizieren**
 
 Run: `swift test --filter ConnectionViewModelTests`
 Expected: Compile-Fehler (u.a. `type 'ConnectionViewModel.State' has no member 'failed(message:field:)'` bzw. fehlendes `Field`)
 
-- [ ] **Step 3: ViewModel ersetzen**
+- [x] **Step 3: ViewModel ersetzen**
 
 `Sources/macSCPCore/Presentation/ConnectionViewModel.swift` — Datei komplett ersetzen:
 
@@ -274,7 +274,7 @@ public final class ConnectionViewModel {
 }
 ```
 
-- [ ] **Step 4: Build-Bruchstelle in ConnectionFormView minimal flicken**
+- [x] **Step 4: Build-Bruchstelle in ConnectionFormView minimal flicken**
 
 Der App-Target kompiliert jetzt nicht mehr (`case .failed(let message)` passt nicht mehr). In `Sources/MacSCPApp/ConnectionFormView.swift` NUR diese eine Zeile ändern (die vollständige Neugestaltung mit roter Umrandung kommt in Task 3):
 
@@ -282,7 +282,7 @@ Der App-Target kompiliert jetzt nicht mehr (`case .failed(let message)` passt ni
             if case .failed(let message, _) = viewModel.state {
 ```
 
-- [ ] **Step 5: Redundante Sortierung in CitadelFileSystem entfernen**
+- [x] **Step 5: Redundante Sortierung in CitadelFileSystem entfernen**
 
 In `Sources/macSCPCore/SSH/CitadelFileSystem.swift`, Methode `list(path:)`: die Zeile
 
@@ -292,7 +292,7 @@ In `Sources/macSCPCore/SSH/CitadelFileSystem.swift`, Methode `list(path:)`: die 
 
 ersatzlos streichen (Review-Finding: `RemoteBrowserViewModel.sortedForDisplay` ist die einzige Sortier-Autorität; das Backend-Sortieren war totes Werk).
 
-- [ ] **Step 6: Grün verifizieren**
+- [x] **Step 6: Grün verifizieren**
 
 Run: `swift test --filter ConnectionViewModelTests`
 Expected: 8 Tests PASS
@@ -300,7 +300,7 @@ Expected: 8 Tests PASS
 Run: `swift test`
 Expected: 45 Tests grün (43 bisher − 6 alte + 8 neue ConnectionViewModel-Tests)
 
-- [ ] **Step 7: Committen (zwei Commits)**
+- [x] **Step 7: Committen (zwei Commits)**
 
 ```bash
 git add Sources/macSCPCore/Presentation/ConnectionViewModel.swift Tests/macSCPCoreTests/ConnectionViewModelTests.swift Sources/MacSCPApp/ConnectionFormView.swift
@@ -325,7 +325,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Consumes: `RemoteFileSystem`-Protocol, `RemoteFileItem`, `RemoteFileKind`, `RemoteFSError`
 - Produces (für Task 4): `public struct LocalFileSystem: RemoteFileSystem` mit `init()`, `list/stat` via FileManager, `disconnect()` No-op
 
-- [ ] **Step 1: Fehlschlagende Tests**
+- [x] **Step 1: Fehlschlagende Tests**
 
 `Tests/macSCPCoreTests/LocalFileSystemTests.swift`:
 
@@ -407,12 +407,12 @@ struct LocalFileSystemTests {
 }
 ```
 
-- [ ] **Step 2: Rot verifizieren**
+- [x] **Step 2: Rot verifizieren**
 
 Run: `swift test --filter LocalFileSystemTests`
 Expected: Compile-Fehler `cannot find 'LocalFileSystem' in scope`
 
-- [ ] **Step 3: Implementieren**
+- [x] **Step 3: Implementieren**
 
 `Sources/macSCPCore/RemoteFS/LocalFileSystem.swift`:
 
@@ -486,12 +486,12 @@ public struct LocalFileSystem: RemoteFileSystem {
 
 Hinweis: `RemoteFileItem.path` trägt hier absichtlich Pfade ohne Trailing-Slash (`path(percentEncoded: false)` liefert für Verzeichnisse ggf. einen Trailing-Slash — falls die Tests deshalb an `RemotePath.parent`-Erwartungen scheitern, in `item(for:)` normalisieren: `var p = url.path(percentEncoded: false); if p.count > 1 && p.hasSuffix("/") { p.removeLast() }` und das im Report offenlegen).
 
-- [ ] **Step 4: Grün verifizieren**
+- [x] **Step 4: Grün verifizieren**
 
 Run: `swift test --filter LocalFileSystemTests`
 Expected: 6 Tests PASS
 
-- [ ] **Step 5: Gesamtsuite + Commit**
+- [x] **Step 5: Gesamtsuite + Commit**
 
 Run: `swift test` — Expected: 51 Tests grün.
 
@@ -516,7 +516,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 Kein Unit-Test (reine View-/Konstanten-Schicht); Verifikation: Build + Gesamtsuite + visueller Smoke-Test in Task 5.
 
-- [ ] **Step 1: Design-Tokens**
+- [x] **Step 1: Design-Tokens**
 
 `Sources/MacSCPApp/DesignTokens.swift`:
 
@@ -542,7 +542,7 @@ enum DesignTokens {
 }
 ```
 
-- [ ] **Step 2: ConnectionFormView mit Feld-Highlight ersetzen**
+- [x] **Step 2: ConnectionFormView mit Feld-Highlight ersetzen**
 
 `Sources/MacSCPApp/ConnectionFormView.swift` — Datei komplett ersetzen:
 
@@ -619,12 +619,12 @@ private extension View {
 }
 ```
 
-- [ ] **Step 3: Bauen + Gesamtsuite**
+- [x] **Step 3: Bauen + Gesamtsuite**
 
 Run: `swift build && swift test`
 Expected: `Build complete!`, 51 Tests grün
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add Sources/MacSCPApp/DesignTokens.swift Sources/MacSCPApp/ConnectionFormView.swift
@@ -647,7 +647,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Consumes: `RemoteBrowserViewModel` (unverändert aus M2a), `RemoteFileTableView` (unverändert), `LocalFileSystem` (Task 2), `DesignTokens` (Task 3), `ConnectionViewModel.clearPassword()` (Task 1)
 - Produces: benutzbare Zwei-Fenster-App (Lokal links ab Home-Verzeichnis, Remote rechts, beide read-only)
 
-- [ ] **Step 1: BrowserPane**
+- [x] **Step 1: BrowserPane**
 
 `Sources/MacSCPApp/BrowserPane.swift`:
 
@@ -727,13 +727,13 @@ struct BrowserPane: View {
 }
 ```
 
-- [ ] **Step 2: BrowserView löschen**
+- [x] **Step 2: BrowserView löschen**
 
 ```bash
 git rm Sources/MacSCPApp/BrowserView.swift
 ```
 
-- [ ] **Step 3: ContentView ersetzen**
+- [x] **Step 3: ContentView ersetzen**
 
 `Sources/MacSCPApp/ContentView.swift` — Datei komplett ersetzen:
 
@@ -799,7 +799,7 @@ struct ContentView: View {
 }
 ```
 
-- [ ] **Step 4: Mindestfenster vergrößern**
+- [x] **Step 4: Mindestfenster vergrößern**
 
 In `Sources/MacSCPApp/MacSCPApp.swift` die frame-Zeile im `WindowGroup` ändern zu:
 
@@ -807,12 +807,12 @@ In `Sources/MacSCPApp/MacSCPApp.swift` die frame-Zeile im `WindowGroup` ändern 
                 .frame(minWidth: 760, minHeight: 440)
 ```
 
-- [ ] **Step 5: Bauen + Gesamtsuite**
+- [x] **Step 5: Bauen + Gesamtsuite**
 
 Run: `swift build && swift test`
 Expected: `Build complete!`, 51 Tests grün
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add Sources/MacSCPApp/
@@ -828,12 +828,12 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `docs/superpowers/plans/2026-07-09-m2b-dual-pane-hardening.md` (Checkboxen)
 
-- [ ] **Step 1: Komplette Unit-Suite**
+- [x] **Step 1: Komplette Unit-Suite**
 
 Run: `swift test`
 Expected: 51 Tests in 9 Suiten grün, Integrationssuite übersprungen
 
-- [ ] **Step 2: Integrationstests**
+- [x] **Step 2: Integrationstests**
 
 ```bash
 docker compose -f docker/test-server/compose.yml up -d
@@ -843,14 +843,14 @@ docker compose -f docker/test-server/compose.yml down
 ```
 Expected: 4/4 grün
 
-- [ ] **Step 3: Visueller Smoke-Test** (macht der Koordinator am Bildschirm)
+- [x] **Step 3: Visueller Smoke-Test** (macht der Koordinator am Bildschirm)
 
 1. Formular: Port auf `abc` → rote Meldung UND Port-Feld rot umrandet; Host leeren → Host-Feld rot umrandet.
 2. Verbinden gegen Docker (127.0.0.1:2222, testuser/testpass) → Zwei Panes: links LOKAL (Bernstein-Badge, Home-Verzeichnis), rechts REMOTE (Ozeanblau-Badge, `/`).
 3. Beide Panes unabhängig navigieren (Doppelklick/Hoch/Aktualisieren).
 4. Trennen → Formular, Passwortfeld ist geleert.
 
-- [ ] **Step 4: Checkboxen dieses Plans auf `- [x]` setzen und committen**
+- [x] **Step 4: Checkboxen dieses Plans auf `- [x]` setzen und committen**
 
 ```bash
 git add docs/superpowers/plans/2026-07-09-m2b-dual-pane-hardening.md
