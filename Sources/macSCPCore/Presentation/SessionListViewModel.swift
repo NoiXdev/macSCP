@@ -41,6 +41,7 @@ public final class SessionListViewModel {
             reload()
             return session
         } catch {
+            reload()
             errorMessage = "Session konnte nicht gespeichert werden: \(String(describing: error))"
             return nil
         }
@@ -52,6 +53,7 @@ public final class SessionListViewModel {
             try secrets.deletePassword(for: session.id)
             reload()
         } catch {
+            reload()
             errorMessage = "Session konnte nicht gelöscht werden: \(String(describing: error))"
         }
     }

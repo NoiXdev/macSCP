@@ -57,4 +57,28 @@ struct SessionListViewModelTests {
         #expect(vm.sessions.isEmpty)
         #expect(vm.errorMessage?.hasPrefix("Sessions konnten nicht geladen werden") == true)
     }
+
+    @Test func saveWithFailingSecretsStillReloadsFromDisk() {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-fail-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: FailingSecretStore())
+
+        let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "p")
+        #expect(stored == nil)
+        #expect(vm.errorMessage?.hasPrefix("Session konnte nicht gespeichert werden") == true)
+        // Store-Schreibvorgang war erfolgreich — die Liste muss den Disk-Stand zeigen
+        #expect(vm.sessions.map(\.name) == ["web"])
+    }
+}
+
+private final class FailingSecretStore: SecretStore, @unchecked Sendable {
+    func savePassword(_ password: String, for sessionID: UUID) throws {
+        throw KeychainError(status: -1)
+    }
+    func password(for sessionID: UUID) throws -> String? { nil }
+    func deletePassword(for sessionID: UUID) throws {
+        throw KeychainError(status: -1)
+    }
 }
