@@ -65,7 +65,6 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                         modifiedAt: component.attributes.accessModificationTime?.modificationTime
                     )
                 }
-                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         } catch {
             throw mapSFTPError(error, path: path)
         }
