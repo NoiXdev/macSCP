@@ -63,7 +63,7 @@ struct TransferEngineTests {
     }
 
     @Test func viewModelRunsTransferAndCallsCompletion() async {
-        let content = Data("inhalt".utf8)
+        let content = Data(repeating: 42, count: TransferChunk.size * 3)
         let source = makeSource(content: content)
         let destination = MockRemoteFileSystem(tree: ["/ziel": []])
         let completed = ProgressRecorder()

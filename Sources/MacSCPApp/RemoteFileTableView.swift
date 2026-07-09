@@ -6,6 +6,7 @@ import macSCPCore
 /// brechen bei Verzeichnissen mit tausenden Einträgen ein.
 struct RemoteFileTableView: NSViewRepresentable {
     let items: [RemoteFileItem]
+    let selectedPath: String?
     let onOpen: (RemoteFileItem) -> Void
     let onSelect: (RemoteFileItem?) -> Void
 
@@ -46,7 +47,16 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.items = items
         context.coordinator.onOpen = onOpen
         context.coordinator.onSelect = onSelect
-        (nsView.documentView as? NSTableView)?.reloadData()
+        guard let table = nsView.documentView as? NSTableView else { return }
+        // reloadData() löscht die Auswahl ohne Delegate-Aufruf —
+        // deshalb programmatisch wiederherstellen, Callback dabei unterdrücken.
+        context.coordinator.suppressSelectionCallback = true
+        table.reloadData()
+        if let selectedPath,
+           let row = items.firstIndex(where: { $0.path == selectedPath }) {
+            table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        }
+        context.coordinator.suppressSelectionCallback = false
     }
 
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
@@ -54,6 +64,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         var onOpen: (RemoteFileItem) -> Void
         var onSelect: (RemoteFileItem?) -> Void
         weak var table: NSTableView?
+        var suppressSelectionCallback = false
 
         init(onOpen: @escaping (RemoteFileItem) -> Void, onSelect: @escaping (RemoteFileItem?) -> Void) {
             self.onOpen = onOpen
@@ -113,6 +124,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         }
 
         func tableViewSelectionDidChange(_ notification: Notification) {
+            guard !suppressSelectionCallback else { return }
             guard let table else { return }
             let row = table.selectedRow
             onSelect(row >= 0 && row < items.count ? items[row] : nil)

@@ -32,20 +32,29 @@ public final class TransferViewModel {
         state = .running(
             fileName: fileName, direction: direction,
             progress: TransferProgress(bytesTransferred: 0, totalBytes: nil))
+
+        // Geordnete Zustellung: AsyncStream puffert in Reihenfolge, EIN Konsument
+        // aktualisiert den State — kein Task-pro-Chunk, kein Race mit .finished.
+        let (progressStream, progressContinuation) = AsyncStream<TransferProgress>.makeStream()
+        let consumer = Task { @MainActor [weak self] in
+            for await progress in progressStream {
+                self?.state = .running(fileName: fileName, direction: direction, progress: progress)
+            }
+        }
+
         do {
             try await TransferEngine.copyFile(
                 from: source, sourcePath: sourcePath,
                 to: destination, destinationDirectory: destinationDirectory, fileName: fileName,
-                onProgress: { progress in
-                    Task { @MainActor [weak self] in
-                        self?.state = .running(
-                            fileName: fileName, direction: direction, progress: progress)
-                    }
-                }
+                onProgress: { progressContinuation.yield($0) }
             )
+            progressContinuation.finish()
+            await consumer.value
             state = .finished(fileName: fileName, direction: direction)
             await onCompleted()
         } catch {
+            progressContinuation.finish()
+            await consumer.value
             state = .failed(message: Self.message(for: error))
         }
     }
