@@ -14,16 +14,16 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     }
 
     public static func connect(config: SSHConnectionConfig) async throws -> CitadelFileSystem {
-        let authMethod: SSHAuthenticationMethod
-        switch config.auth {
-        case .password(let password):
-            authMethod = .passwordBased(username: config.username, password: password)
-        case .privateKey(let keyPath, let passphrase):
-            authMethod = try SSHPrivateKeyLoader.authentication(
-                username: config.username, keyPath: keyPath, passphrase: passphrase)
-        }
-
         do {
+            let authMethod: SSHAuthenticationMethod
+            switch config.auth {
+            case .password(let password):
+                authMethod = .passwordBased(username: config.username, password: password)
+            case .privateKey(let keyPath, let passphrase):
+                authMethod = try SSHPrivateKeyLoader.authentication(
+                    username: config.username, keyPath: keyPath, passphrase: passphrase)
+            }
+
             let client = try await SSHClient.connect(
                 host: config.host,
                 port: config.port,

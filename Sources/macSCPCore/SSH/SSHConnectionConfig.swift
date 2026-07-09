@@ -1,7 +1,7 @@
 import Foundation
 
 public struct SSHConnectionConfig: Equatable, Sendable {
-    /// M1: nur Passwort. Key- und Agent-Auth kommen in M3 (Session-Manager).
+    /// Verbindungsparameter inkl. Auth (Passwort oder OpenSSH-Key).
     public enum AuthMethod: Equatable, Sendable {
         /// Achtung: Klartext-Passwort — niemals loggen/interpolieren.
         case password(String)
