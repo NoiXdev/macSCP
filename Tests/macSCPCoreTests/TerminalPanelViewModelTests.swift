@@ -115,6 +115,27 @@ struct TerminalPanelViewModelTests {
         #expect(shell.sent.first == Array("ls\n".utf8))
     }
 
+    /// Regression: unabhängige, unstrukturierte `Task`s pro `send()`-Aufruf
+    /// geben keine FIFO-Garantie — bei schnellen Tastenanschlägen (oder
+    /// Paste) kann eine spätere, kürzer verzögerte Eingabe eine frühere
+    /// überholen. `InvertedDelayShell` verzögert Chunk i von N absichtlich um
+    /// `(N - i) * 2ms`, damit unabhängige Tasks garantiert außer der Reihe
+    /// aufzeichnen, während eine FIFO-Kette exakt in Sende-Reihenfolge
+    /// aufzeichnet.
+    @Test func sendPreservesFIFOOrderUnderVaryingLatency() async throws {
+        let totalChunks = 20
+        let shell = InvertedDelayShell(totalChunks: totalChunks)
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
+        vm.toggle()
+        try await waitUntil(vm.state == .running)
+
+        for i in 0..<totalChunks {
+            vm.send([UInt8(i)])
+        }
+        try await waitUntil(shell.recorded.count == totalChunks)
+        #expect(shell.recorded == Array(0..<totalChunks))
+    }
+
     @Test func shutdownClosesShellAndHides() async throws {
         let shell = MockShell()
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
@@ -222,6 +243,36 @@ final class LateFinishShell: RemoteShell, @unchecked Sendable {
     func finish() {
         lock.lock(); _finished = true; lock.unlock()
     }
+}
+
+/// Shell, deren `send(_:)` den i-ten von N Aufrufen um `(N - i) * 2ms`
+/// verzögert, bevor er aufgezeichnet wird — je früher der Chunk gesendet
+/// wurde, desto länger wartet er. Bei unabhängigen Tasks pro `send()`-Aufruf
+/// (der Bug) holen spätere, kurz verzögerte Chunks frühere, lang verzögerte
+/// ein und die Aufzeichnung gerät durcheinander; eine FIFO-Kette zeichnet
+/// dagegen exakt in Sende-Reihenfolge auf, weil jeder Aufruf erst startet,
+/// nachdem der vorherige (inklusive seiner Verzögerung) fertig ist.
+final class InvertedDelayShell: RemoteShell, @unchecked Sendable {
+    let output: AsyncThrowingStream<[UInt8], Error>
+    let continuation: AsyncThrowingStream<[UInt8], Error>.Continuation
+    private let totalChunks: Int
+    private let lock = NSLock()
+    private var _recorded: [Int] = []
+    var recorded: [Int] { lock.lock(); defer { lock.unlock() }; return _recorded }
+
+    init(totalChunks: Int) {
+        self.totalChunks = totalChunks
+        (output, continuation) = AsyncThrowingStream<[UInt8], Error>.makeStream()
+    }
+
+    func send(_ bytes: [UInt8]) async throws {
+        let i = Int(bytes[0])
+        let delayMs = (totalChunks - i) * 2
+        try await Task.sleep(for: .milliseconds(delayMs))
+        lock.lock(); _recorded.append(i); lock.unlock()
+    }
+    func resize(cols: Int, rows: Int) async throws {}
+    func close() async { continuation.finish() }
 }
 
 actor ShellFactory {

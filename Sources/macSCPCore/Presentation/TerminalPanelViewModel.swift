@@ -27,6 +27,9 @@ public final class TerminalPanelViewModel {
     private var shell: (any RemoteShell)?
     private var readTask: Task<Void, Never>?
     private var openTask: Task<Void, Never>?
+    /// Verkettet alle `send()`-Aufrufe zu einer FIFO-Warteschlange (siehe
+    /// `send(_:)`).
+    private var sendTask: Task<Void, Never>?
     /// Zählt jeden `openIfNeeded()`/`shutdown()`-Zyklus hoch. Ein in-flight
     /// `openShell(...)` oder ein spät endender Lese-Loop darf `state`/`shell`
     /// nur schreiben, wenn seine erfasste Generation noch aktuell ist — sonst
@@ -96,10 +99,17 @@ public final class TerminalPanelViewModel {
         state = .ended(message)
     }
 
-    /// Tastatur-Bytes an die Shell (fire-and-forget; Fehler beendet ohnehin den Stream).
+    /// Tastatur-Bytes an die Shell. Aufrufe werden in FIFO-Reihenfolge
+    /// verkettet — unabhängige Tasks pro Aufruf garantieren das nicht
+    /// (schnelle Tastenanschläge oder Paste könnten sonst außer der Reihe
+    /// ankommen). Fehler beim Senden beenden ohnehin den Lese-Loop.
     public func send(_ bytes: [UInt8]) {
         guard let shell else { return }
-        Task { try? await shell.send(bytes) }
+        let previous = sendTask
+        sendTask = Task {
+            await previous?.value
+            try? await shell.send(bytes)
+        }
     }
 
     /// Neue Terminalgröße melden (SSH window-change).
@@ -129,6 +139,12 @@ public final class TerminalPanelViewModel {
             await shell.close()
         }
         shell = nil
+        // Nicht auf `sendTask` warten: die darin verketteten `send()`-Aufrufe
+        // zielen auf die soeben geschlossene Shell und dürfen einfach
+        // auslaufen bzw. no-op werden — sonst könnte `shutdown()` auf einem
+        // hängenden `send()` blockieren.
+        sendTask?.cancel()
+        sendTask = nil
         state = .closed
         isVisible = false
     }
