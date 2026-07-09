@@ -1,5 +1,6 @@
 import Citadel
 import Foundation
+import NIOCore
 
 /// SFTP-Implementierung von RemoteFileSystem auf Basis von Citadel.
 /// M1: Passwort-Auth, keine Host-Key-Prüfung (TOFU kommt in M3).
@@ -101,11 +102,52 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     }
 
     public func readStream(path: String) async throws -> AsyncThrowingStream<Data, Error> {
-        throw RemoteFSError.protocolError(reason: "readStream: kommt in M2c Task 2")
+        let file: SFTPFile
+        do {
+            file = try await sftp.openFile(filePath: path, flags: .read)
+        } catch {
+            throw mapSFTPError(error, path: path)
+        }
+        // Pull-basiert (unfolding): der Konsument bestimmt das Tempo.
+        var offset: UInt64 = 0
+        return AsyncThrowingStream(unfolding: {
+            do {
+                let buffer = try await file.read(
+                    from: offset, length: UInt32(TransferChunk.size))
+                guard buffer.readableBytes > 0 else {
+                    try await file.close()
+                    return nil
+                }
+                offset += UInt64(buffer.readableBytes)
+                return Data(buffer.readableBytesView)
+            } catch {
+                try? await file.close()
+                throw self.mapSFTPError(error, path: path)
+            }
+        })
     }
 
     public func write(path: String, contents: AsyncThrowingStream<Data, Error>) async throws {
-        throw RemoteFSError.protocolError(reason: "write: kommt in M2c Task 2")
+        let file: SFTPFile
+        do {
+            file = try await sftp.openFile(
+                filePath: path,
+                flags: [.create, .write, .truncate]
+            )
+        } catch {
+            throw mapSFTPError(error, path: path)
+        }
+        do {
+            var offset: UInt64 = 0
+            for try await chunk in contents {
+                try await file.write(ByteBuffer(bytes: chunk), at: offset)
+                offset += UInt64(chunk.count)
+            }
+            try await file.close()
+        } catch {
+            try? await file.close()
+            throw mapSFTPError(error, path: path)
+        }
     }
 
     public func disconnect() async {

@@ -61,4 +61,35 @@ struct CitadelFileSystemIntegrationTests {
             _ = try await CitadelFileSystem.connect(config: config)
         }
     }
+
+    @Test func readStreamDeliversSeededFileContent() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        var collected = Data()
+        for try await chunk in try await fs.readStream(path: "/data/seed/hello.txt") {
+            collected.append(chunk)
+        }
+        #expect(String(data: collected, encoding: .utf8) == "hello from macSCP test server\n")
+    }
+
+    @Test func writeUploadsAndReadsBackRoundtrip() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        let payload = Data((0..<(TransferChunk.size + 17)).map { UInt8($0 % 199) })
+        let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+        continuation.yield(payload)
+        continuation.finish()
+
+        // /config ist das beschreibbare Home von testuser im linuxserver-Image
+        let remotePath = "/config/macscp-upload-test.bin"
+        try await fs.write(path: remotePath, contents: stream)
+
+        var readBack = Data()
+        for try await chunk in try await fs.readStream(path: remotePath) {
+            readBack.append(chunk)
+        }
+        #expect(readBack == payload)
+    }
 }
