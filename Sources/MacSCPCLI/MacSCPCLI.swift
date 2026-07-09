@@ -27,7 +27,9 @@ struct MacSCPCLI: AsyncParsableCommand {
             let items = try await fs.list(path: path)
             let formatter = ByteCountFormatter()
             for item in items {
-                let size = item.size.map { formatter.string(fromByteCount: Int64($0)) } ?? "-"
+                let size = item.isDirectory
+                    ? "-"
+                    : item.size.map { formatter.string(fromByteCount: Int64($0)) } ?? "-"
                 let suffix = item.isDirectory ? "/" : ""
                 print("\(item.name)\(suffix)\t\(size)")
             }
