@@ -18,6 +18,9 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         switch config.auth {
         case .password(let password):
             authMethod = .passwordBased(username: config.username, password: password)
+        case .privateKey(let keyPath, let passphrase):
+            authMethod = try SSHPrivateKeyLoader.authentication(
+                username: config.username, keyPath: keyPath, passphrase: passphrase)
         }
 
         do {
@@ -35,6 +38,8 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 try? await client.close()
                 throw error
             }
+        } catch let error as SSHKeyError {
+            throw error
         } catch let error as SSHClientError {
             // Auth-Fehler laufen bei Citadel als allAuthenticationOptionsFailed auf
             // (verifiziert gegen den Docker-Testserver mit falschem Passwort).

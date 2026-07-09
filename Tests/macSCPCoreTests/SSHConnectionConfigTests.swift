@@ -37,4 +37,11 @@ struct SSHConnectionConfigTests {
             _ = try SSHConnectionConfig(host: "example.com", port: 70000, username: "tim", auth: .password("x"))
         }
     }
+
+    @Test func privateKeyAuthConstructs() throws {
+        let config = try SSHConnectionConfig(
+            host: "example.com", username: "tim",
+            auth: .privateKey(keyPath: "~/.ssh/id_ed25519", passphrase: nil))
+        #expect(config.auth == .privateKey(keyPath: "~/.ssh/id_ed25519", passphrase: nil))
+    }
 }

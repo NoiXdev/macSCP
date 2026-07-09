@@ -3,8 +3,11 @@ import Foundation
 public struct SSHConnectionConfig: Equatable, Sendable {
     /// M1: nur Passwort. Key- und Agent-Auth kommen in M3 (Session-Manager).
     public enum AuthMethod: Equatable, Sendable {
-        /// Achtung: Klartext-Passwort — niemals loggen/interpolieren. Keychain kommt in M3.
+        /// Achtung: Klartext-Passwort — niemals loggen/interpolieren.
         case password(String)
+        /// OpenSSH-Key (M3b: ed25519). Passphrase nil/leer = unverschlüsselter Key.
+        /// Achtung: Klartext-Passphrase — niemals loggen/interpolieren.
+        case privateKey(keyPath: String, passphrase: String?)
     }
 
     public enum ConfigError: Error, Equatable, Sendable {
