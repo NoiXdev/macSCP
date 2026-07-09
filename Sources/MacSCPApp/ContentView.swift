@@ -1,9 +1,11 @@
 import SwiftUI
 import macSCPCore
 
-/// Beide Seiten einer aktiven Verbindung: lokales Pane (Home-Verzeichnis)
-/// und Remote-Pane (SFTP). Lebt genau so lange wie die Verbindung.
+/// Beide Seiten einer aktiven Verbindung inklusive der Dateisysteme —
+/// die TransferEngine braucht Quelle und Ziel direkt.
 struct BrowserSession {
+    let localFS: LocalFileSystem
+    let remoteFS: any RemoteFileSystem
     let local: RemoteBrowserViewModel
     let remote: RemoteBrowserViewModel
 }
@@ -13,11 +15,14 @@ struct ContentView: View {
         try await CitadelFileSystem.connect(config: config)
     })
     @State private var session: BrowserSession?
+    @State private var transferViewModel = TransferViewModel()
 
     var body: some View {
         if let session {
             VStack(spacing: 0) {
-                HStack {
+                HStack(spacing: 12) {
+                    uploadButton(session)
+                    downloadButton(session)
                     Spacer()
                     Button("Trennen") {
                         Task {
@@ -26,6 +31,7 @@ struct ContentView: View {
                             self.session = nil
                         }
                     }
+                    .disabled(transferViewModel.isRunning)
                 }
                 .padding(8)
 
@@ -46,14 +52,65 @@ struct ContentView: View {
                     )
                     .frame(minWidth: 280)
                 }
+
+                TransferBar(viewModel: transferViewModel)
             }
         } else {
             ConnectionFormView(viewModel: connectionViewModel) { fs in
                 session = BrowserSession(
+                    localFS: LocalFileSystem(),
+                    remoteFS: fs,
                     local: RemoteBrowserViewModel(fs: LocalFileSystem(), startPath: NSHomeDirectory()),
                     remote: RemoteBrowserViewModel(fs: fs)
                 )
+                transferViewModel = TransferViewModel()
             }
         }
+    }
+
+    /// Lokal ausgewählte DATEI → aktuelles Remote-Verzeichnis.
+    @ViewBuilder
+    private func uploadButton(_ session: BrowserSession) -> some View {
+        let selected = session.local.selectedItem
+        Button {
+            guard let selected else { return }
+            Task {
+                await transferViewModel.run(
+                    fileName: selected.name, direction: .upload,
+                    source: session.localFS, sourcePath: selected.path,
+                    destination: session.remoteFS,
+                    destinationDirectory: session.remote.currentPath,
+                    onCompleted: { await session.remote.refresh() }
+                )
+            }
+        } label: {
+            Label("Hochladen", systemImage: "arrow.up")
+        }
+        .tint(DesignTokens.localAmber)
+        .disabled(selected == nil || selected?.kind != .file || transferViewModel.isRunning)
+        .help("Ausgewählte lokale Datei ins Remote-Verzeichnis hochladen")
+    }
+
+    /// Remote ausgewählte DATEI → aktuelles lokales Verzeichnis.
+    @ViewBuilder
+    private func downloadButton(_ session: BrowserSession) -> some View {
+        let selected = session.remote.selectedItem
+        Button {
+            guard let selected else { return }
+            Task {
+                await transferViewModel.run(
+                    fileName: selected.name, direction: .download,
+                    source: session.remoteFS, sourcePath: selected.path,
+                    destination: session.localFS,
+                    destinationDirectory: session.local.currentPath,
+                    onCompleted: { await session.local.refresh() }
+                )
+            }
+        } label: {
+            Label("Herunterladen", systemImage: "arrow.down")
+        }
+        .tint(DesignTokens.remoteBlue)
+        .disabled(selected == nil || selected?.kind != .file || transferViewModel.isRunning)
+        .help("Ausgewählte Remote-Datei ins lokale Verzeichnis herunterladen")
     }
 }
