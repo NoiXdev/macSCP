@@ -46,9 +46,13 @@ public struct LocalFileSystem: RemoteFileSystem {
         } else {
             kind = .file
         }
+        var normalizedPath = url.path(percentEncoded: false)
+        if normalizedPath.count > 1, normalizedPath.hasSuffix("/") {
+            normalizedPath.removeLast()
+        }
         return RemoteFileItem(
             name: url.lastPathComponent,
-            path: url.path(percentEncoded: false),
+            path: normalizedPath,
             kind: kind,
             size: (values?.fileSize).map(UInt64.init),
             modifiedAt: values?.contentModificationDate,

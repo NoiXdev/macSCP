@@ -85,4 +85,15 @@ struct LocalFileSystemTests {
             _ = try await fs.stat(path: missing)
         }
     }
+
+    @Test func directoryPathsHaveNoTrailingSlash() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fs = LocalFileSystem()
+
+        let items = try await fs.list(path: root.path(percentEncoded: false))
+        let dir = items.first { $0.name == "unterordner" }
+        #expect(dir?.path.hasSuffix("/") == false)
+        #expect(dir?.path.hasSuffix("unterordner") == true)
+    }
 }

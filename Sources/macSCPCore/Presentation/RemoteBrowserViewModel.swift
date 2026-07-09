@@ -58,7 +58,7 @@ public final class RemoteBrowserViewModel {
     }
 
     /// Verzeichnisse zuerst, dann Name case-insensitiv —
-    /// einheitlich für alle Backends (Mock sortiert nicht, Citadel schon).
+    /// kein Backend sortiert; dies ist die einzige Sortier-Autorität.
     static func sortedForDisplay(_ items: [RemoteFileItem]) -> [RemoteFileItem] {
         items.sorted { a, b in
             if a.isDirectory != b.isDirectory { return a.isDirectory }
