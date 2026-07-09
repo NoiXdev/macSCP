@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .library(name: "macSCPCore", targets: ["macSCPCore"]),
         .executable(name: "macscp-cli", targets: ["MacSCPCLI"]),
+        .executable(name: "macSCP", targets: ["MacSCPApp"]),
     ],
     dependencies: [
         .package(url: "https://github.com/orlandos-nl/Citadel.git", from: "0.12.1"),
@@ -24,6 +25,11 @@ let package = Package(
                 "macSCPCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .executableTarget(
+            name: "MacSCPApp",
+            dependencies: ["macSCPCore"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(
