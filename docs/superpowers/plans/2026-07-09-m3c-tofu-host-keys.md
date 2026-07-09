@@ -53,7 +53,7 @@ Tests/macSCPCoreTests/
 
 Kein Unit-Test (View-Hygiene); Verifikation: Build + Suite (98) grün. **Parallel-Hinweis:** disjunkt zu Task 1 — Worktree.
 
-- [ ] **Step 1:** In `ConnectionFormView`: an den `Picker("Authentifizierung", ...)` anhängen:
+- [x] **Step 1:** In `ConnectionFormView`: an den `Picker("Authentifizierung", ...)` anhängen:
 
 ```swift
                 .onChange(of: viewModel.authChoice) {
@@ -63,14 +63,14 @@ Kein Unit-Test (View-Hygiene); Verifikation: Build + Suite (98) grün. **Paralle
                 }
 ```
 
-- [ ] **Step 2:** In `ContentView.teardownSession()` nach `clearPassword()` ergänzen:
+- [x] **Step 2:** In `ContentView.teardownSession()` nach `clearPassword()` ergänzen:
 
 ```swift
         connectionViewModel.authChoice = .password
         connectionViewModel.keyPath = ""
 ```
 
-- [ ] **Step 3:** `swift build && swift test` (98 grün). Commit: `fix: reset auth secret on mode switch and form on disconnect` (mit Footer).
+- [x] **Step 3:** `swift build && swift test` (98 grün). Commit: `fix: reset auth secret on mode switch and form on disconnect` (mit Footer).
 
 ---
 
@@ -111,7 +111,7 @@ public struct KnownHostsStore: Sendable {   // Muster wie SessionStore (JSON, at
 
 **Parallel-Hinweis:** disjunkt zu Task 0 — Worktree möglich.
 
-- [ ] **Step 1: Fehlschlagende Tests**
+- [x] **Step 1: Fehlschlagende Tests**
 
 `Tests/macSCPCoreTests/HostKeyFingerprintTests.swift`:
 
@@ -227,9 +227,9 @@ struct KnownHostsStoreTests {
 }
 ```
 
-- [ ] **Step 2: Rot** — Compile-Fehler (`HostKeyFingerprint`/`KnownHostsStore` unbekannt)
+- [x] **Step 2: Rot** — Compile-Fehler (`HostKeyFingerprint`/`KnownHostsStore` unbekannt)
 
-- [ ] **Step 3: Implementieren**
+- [x] **Step 3: Implementieren**
 
 `Sources/macSCPCore/SSH/HostKeyFingerprint.swift`:
 
@@ -314,8 +314,8 @@ public struct KnownHostsStore: Sendable {
 }
 ```
 
-- [ ] **Step 4: Grün** — beide Filter-Suiten (3 + 4), dann Gesamtsuite (auf eigenem Branch Basis + 7).
-- [ ] **Step 5: Commit** — `feat: add host key fingerprints and known hosts store` (mit Footer).
+- [x] **Step 4: Grün** — beide Filter-Suiten (3 + 4), dann Gesamtsuite (auf eigenem Branch Basis + 7).
+- [x] **Step 5: Commit** — `feat: add host key fingerprints and known hosts store` (mit Footer).
 
 ---
 
@@ -359,7 +359,7 @@ Verhalten: bekannt+identisch → still verbinden; bekannt+anders → `HostKeyErr
 
 **API-DRIFT-BEHANDLUNG (Kern-Risiko dieses Tasks):** Vor dem Implementieren in `.build/checkouts/Citadel/Sources/Citadel/` klären: Wie heißt der Host-Key-Validator-Typ (`SSHHostKeyValidator`?), welche Fabriken existieren (`acceptAnything`, `trustedKeys`, ein `custom`-Hook mit Closure/Delegate?), und wie kommt man an die präsentierten Key-Bytes (NIOSSHPublicKey → OpenSSH-Blob: gibt es `write(to:)`/Base64-Repräsentation? Notfalls über `NIOSSHPublicKey`-Serialisierung in einen ByteBuffer). **Zwei-Phasen-Strategie:** (1) Wenn ein async-fähiger custom-Hook existiert → direkt TOFU im Hook. (2) Wenn der Hook synchron ist oder nur `trustedKeys` existiert → Fallback: VOR dem eigentlichen Connect einen kurzen Probe-Connect zum Abgreifen des Host-Keys ist NICHT akzeptabel (TOCTOU); stattdessen synchrone Variante: Decider-Ergebnis VOR dem Connect einholen geht nicht (Key erst beim Handshake bekannt) — dann: Hook lehnt unbekannte Keys ab, wirft eine markierte Fehlerkennung mit dem Kandidaten nach außen, `connect` fängt sie, fragt den Decider, bei `true` → upsert + EIN Retry mit jetzt bekanntem Key. Beide Varianten erfüllen die Tests; die gewählte im Report begründen. Wenn BEIDES unmöglich ist: BLOCKED melden, nichts aufweichen.
 
-- [ ] **Step 1: Unit-Tests (Rot)** — `Tests/macSCPCoreTests/HostKeyValidationTests.swift`: 3 Tests gegen die pure Entscheidungslogik (die als testbare Funktion existieren muss, z.B. `HostKeyValidation.evaluate(candidate:known:) -> Outcome` mit `Outcome: accept/askUser/mismatch`):
+- [x] **Step 1: Unit-Tests (Rot)** — `Tests/macSCPCoreTests/HostKeyValidationTests.swift`: 3 Tests gegen die pure Entscheidungslogik (die als testbare Funktion existieren muss, z.B. `HostKeyValidation.evaluate(candidate:known:) -> Outcome` mit `Outcome: accept/askUser/mismatch`):
 
 ```swift
 import Foundation
@@ -393,7 +393,7 @@ struct HostKeyValidationTests {
 
 (`Outcome` als `enum Outcome: Equatable { case accept, askUser, mismatch(expected: String) }` — Teil von `HostKeyValidation.swift`.)
 
-- [ ] **Step 2: Gated-Tests (Rot bzw. nach Wiring grün)** — in der Integrations-Suite ergänzen (bestehende Aufrufstellen von `connect(config:)` auf die neue Signatur heben; für die BESTEHENDEN Tests: frischer Temp-KnownHostsStore + `onUnknownHostKey: { _ in true }`):
+- [x] **Step 2: Gated-Tests (Rot bzw. nach Wiring grün)** — in der Integrations-Suite ergänzen (bestehende Aufrufstellen von `connect(config:)` auf die neue Signatur heben; für die BESTEHENDEN Tests: frischer Temp-KnownHostsStore + `onUnknownHostKey: { _ in true }`):
 
 ```swift
     @Test func tofuStoresKeyOnFirstAcceptAndConnectsSilentlyAfterwards() async throws {
@@ -467,7 +467,7 @@ struct HostKeyValidationTests {
 
 (`CallCounterBox` = kleines NSLock-Klassen-Double im Testfile, `@unchecked Sendable`.)
 
-- [ ] **Step 3: Implementieren** — `HostKeyValidation.swift` (Candidate/Error/Outcome/evaluate + Citadel-Hook gemäß Drift-Ergebnis), `CitadelFileSystem.connect` neue Signatur (Decider/Store), `MacSCPCLI` anpassen: eigener `KnownHostsStore` (defaultDirectory-Nachbar) + Auto-Trust-Decider, der den Fingerprint auf stderr druckt: `FileHandle.standardError.write(Data("Host-Key \(candidate.fingerprintSHA256) automatisch vertraut (CLI-Treiber)\n".utf8))`.
+- [x] **Step 3: Implementieren** — `HostKeyValidation.swift` (Candidate/Error/Outcome/evaluate + Citadel-Hook gemäß Drift-Ergebnis), `CitadelFileSystem.connect` neue Signatur (Decider/Store), `MacSCPCLI` anpassen: eigener `KnownHostsStore` (defaultDirectory-Nachbar) + Auto-Trust-Decider, der den Fingerprint auf stderr druckt: `FileHandle.standardError.write(Data("Host-Key \(candidate.fingerprintSHA256) automatisch vertraut (CLI-Treiber)\n".utf8))`.
 
 **Build-Brücke für die App (Task 3 ersetzt sie):** `ContentView`s Produktions-Connector kompiliert nach der Signatur-Änderung nicht mehr. In diesem Task NUR minimal patchen:
 
@@ -485,8 +485,8 @@ struct HostKeyValidationTests {
 
 Task 4 verifiziert per `grep -rn "onUnknownHostKey: { _ in true }" Sources/MacSCPApp/`, dass diese Brücke entfernt wurde.
 
-- [ ] **Step 4: Grün** — Unit (Basis + 3), gated (Rig aus HAUPT-Checkout!): 10/10.
-- [ ] **Step 5: Commit** — `feat: enforce trust-on-first-use host key verification` (mit Footer).
+- [x] **Step 4: Grün** — Unit (Basis + 3), gated (Rig aus HAUPT-Checkout!): 10/10.
+- [x] **Step 5: Commit** — `feat: enforce trust-on-first-use host key verification` (mit Footer).
 
 ---
 
@@ -550,16 +550,16 @@ Task 4 verifiziert per `grep -rn "onUnknownHostKey: { _ in true }" Sources/MacSC
 
 - 3 VM-Tests: `unknownHostPublishesPromptAndTrustConnects` (Fake-Connector ruft Decider mit Kandidat; prüft prompt-Publikation, resolve(true) → fs non-nil, prompt nil danach), `rejectMapsToGermanMessage` (resolve(false) → Connector wirft rejectedByUser → Meldung), `mismatchMapsToScaryMessage` (Connector wirft mismatch direkt).
 
-- [ ] Steps: Tests (Rot) → VM implementieren → Formular/ContentView verdrahten → `swift build && swift test` (Basis + 3) → Headless-Launch → Commit `feat: prompt for unknown host keys with hard mismatch stop` (mit Footer).
+- [x] Steps: Tests (Rot) → VM implementieren → Formular/ContentView verdrahten → `swift build && swift test` (Basis + 3) → Headless-Launch → Commit `feat: prompt for unknown host keys with hard mismatch stop` (mit Footer).
 
 ---
 
 ### Task 4: Abschluss-Verifikation
 
-- [ ] **Step 1:** `swift test` — Zielzahl laut Zählung (98 + 7 T1 + 3 T2-Unit + 3 T3 = 111; gated zählen mit: +3 → gesamt gemeldet 114? Koordinator verifiziert exakt)
-- [ ] **Step 2:** Rig hoch (HAUPT-Checkout!), gated 10/10, MACSCP_KEYCHAIN 2/2
-- [ ] **Step 3: Visueller Smoke-Test** (Koordinator): Frischer known_hosts-Zustand → Verbinden → Fingerprint-Karte erscheint (Fingerprint mit `ssh-keygen -lf` auf dem Container-Hostkey gegenprüfen!) → „Vertrauen & verbinden" → verbunden; Trennen + Reconnect → KEIN Prompt; known_hosts.json manipulieren → Reconnect → harter roter Mismatch-Stopp, kein Verbindungsaufbau; „Abbrechen" beim Prompt → saubere Abbruch-Meldung
-- [ ] **Step 4:** Checkboxen, Commit `docs: mark M3c plan tasks as completed` (mit Footer)
+- [x] **Step 1:** `swift test` — Zielzahl laut Zählung (98 + 7 T1 + 3 T2-Unit + 3 T3 = 111; gated zählen mit: +3 → gesamt gemeldet 114? Koordinator verifiziert exakt)
+- [x] **Step 2:** Rig hoch (HAUPT-Checkout!), gated 10/10, MACSCP_KEYCHAIN 2/2
+- [x] **Step 3: Visueller Smoke-Test** (Koordinator): Frischer known_hosts-Zustand → Verbinden → Fingerprint-Karte erscheint (Fingerprint mit `ssh-keygen -lf` auf dem Container-Hostkey gegenprüfen!) → „Vertrauen & verbinden" → verbunden; Trennen + Reconnect → KEIN Prompt; known_hosts.json manipulieren → Reconnect → harter roter Mismatch-Stopp, kein Verbindungsaufbau; „Abbrechen" beim Prompt → saubere Abbruch-Meldung
+- [x] **Step 4:** Checkboxen, Commit `docs: mark M3c plan tasks as completed` (mit Footer)
 
 ## Ausblick
 
