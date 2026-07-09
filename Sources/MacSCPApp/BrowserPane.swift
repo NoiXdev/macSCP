@@ -45,9 +45,11 @@ struct BrowserPane: View {
             Divider()
 
             ZStack {
-                RemoteFileTableView(items: viewModel.items) { item in
-                    Task { await viewModel.open(item) }
-                }
+                RemoteFileTableView(
+                    items: viewModel.items,
+                    onOpen: { item in Task { await viewModel.open(item) } },
+                    onSelect: { item in viewModel.selectedItem = item }
+                )
                 // Während des Ladens keine Klicks in die (alte) Liste lassen
                 .allowsHitTesting(viewModel.state == .loaded)
 

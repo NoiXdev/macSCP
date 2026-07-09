@@ -64,4 +64,12 @@ struct RemoteBrowserViewModelTests {
         #expect(vm.state == .failed(message: "Pfad nicht gefunden: /nope"))
         #expect(vm.items.isEmpty)
     }
+
+    @Test func navigationResetsSelection() async {
+        let vm = RemoteBrowserViewModel(fs: makeFS())
+        await vm.load()
+        vm.selectedItem = vm.items[1]
+        await vm.open(vm.items[0])
+        #expect(vm.selectedItem == nil)
+    }
 }

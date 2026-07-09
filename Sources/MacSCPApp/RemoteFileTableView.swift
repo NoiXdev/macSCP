@@ -7,9 +7,10 @@ import macSCPCore
 struct RemoteFileTableView: NSViewRepresentable {
     let items: [RemoteFileItem]
     let onOpen: (RemoteFileItem) -> Void
+    let onSelect: (RemoteFileItem?) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onOpen: onOpen)
+        Coordinator(onOpen: onOpen, onSelect: onSelect)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -44,16 +45,19 @@ struct RemoteFileTableView: NSViewRepresentable {
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         context.coordinator.items = items
         context.coordinator.onOpen = onOpen
+        context.coordinator.onSelect = onSelect
         (nsView.documentView as? NSTableView)?.reloadData()
     }
 
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         var items: [RemoteFileItem] = []
         var onOpen: (RemoteFileItem) -> Void
+        var onSelect: (RemoteFileItem?) -> Void
         weak var table: NSTableView?
 
-        init(onOpen: @escaping (RemoteFileItem) -> Void) {
+        init(onOpen: @escaping (RemoteFileItem) -> Void, onSelect: @escaping (RemoteFileItem?) -> Void) {
             self.onOpen = onOpen
+            self.onSelect = onSelect
         }
 
         func numberOfRows(in tableView: NSTableView) -> Int {
@@ -106,6 +110,12 @@ struct RemoteFileTableView: NSViewRepresentable {
             if item.isDirectory {
                 onOpen(item)
             }
+        }
+
+        func tableViewSelectionDidChange(_ notification: Notification) {
+            guard let table else { return }
+            let row = table.selectedRow
+            onSelect(row >= 0 && row < items.count ? items[row] : nil)
         }
     }
 }

@@ -16,6 +16,9 @@ public final class RemoteBrowserViewModel {
     public private(set) var items: [RemoteFileItem] = []
     public private(set) var state: State = .loading
 
+    /// Aktuell in der Tabelle ausgewählter Eintrag (Einfach-Auswahl).
+    public var selectedItem: RemoteFileItem?
+
     private let fs: any RemoteFileSystem
 
     public init(fs: any RemoteFileSystem, startPath: String = "/") {
@@ -27,6 +30,7 @@ public final class RemoteBrowserViewModel {
 
     public func load() async {
         state = .loading
+        selectedItem = nil
         do {
             let listed = try await fs.list(path: currentPath)
             items = Self.sortedForDisplay(listed)
