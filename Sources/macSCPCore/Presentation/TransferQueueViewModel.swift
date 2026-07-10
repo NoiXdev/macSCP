@@ -108,6 +108,16 @@ public final class TransferQueueViewModel {
         }
     }
 
+    /// Bandwidth ceilings in bytes/second, direction-dependent (M5c/T5); `0`
+    /// (default) = unlimited, matching `TransferEngine.copyFile`'s
+    /// `bytesPerSecondLimit` semantics. `ContentView` sets these from
+    /// `SettingsStore` at session start and via `.onChange`. Read in
+    /// `process` at the moment a slot actually starts transferring, so a
+    /// change applies to items STARTING after it — already-running transfers
+    /// keep whatever limit they started with.
+    public var uploadLimitBytesPerSec: Int = 0
+    public var downloadLimitBytesPerSec: Int = 0
+
     // MARK: - Privater Zustand
 
     private struct Job {
@@ -181,7 +191,14 @@ public final class TransferQueueViewModel {
     private var itemGroup: [UUID: UUID] = [:]                       // Item-ID → Gruppen-ID
     private var expansionTasks: [UUID: Task<Void, Never>] = [:]     // Gruppen-ID → Expansions-Task
 
-    public init() {}
+    /// Clock hook for the rate window (M5c/T5), default the real
+    /// `ContinuousClock`. Injectable so tests can drive a controlled tick
+    /// source instead of depending on real wall-clock timing.
+    private let now: @Sendable () -> ContinuousClock.Instant
+
+    public init(now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now }) {
+        self.now = now
+    }
 
     // MARK: - Öffentliche API
 
@@ -409,10 +426,28 @@ public final class TransferQueueViewModel {
 
         // Geordnete Zustellung: AsyncStream puffert in Reihenfolge, EIN Konsument
         // aktualisiert den Status — kein Task-pro-Chunk, kein Race mit .finished.
+        //
+        // Rate/ETA (M5c/T5): berechnet HIER im Consumer, nicht in der Engine —
+        // ein gleitendes ~3s-Fenster über (Zeitstempel, Bytes)-Paaren pro
+        // Transfer (lokal in `rateWindow`, kein Cross-Job-State nötig). ETA
+        // nur, wenn sowohl `totalBytes` als auch eine Rate bekannt sind.
         let (progressStream, progressContinuation) = AsyncStream<TransferProgress>.makeStream()
         let consumer = Task { @MainActor [weak self] in
+            var rateWindow = RateWindow()
             for await progress in progressStream {
-                self?.setStatus(jobID, .running(progress))
+                guard let self else { return }
+                let bytesPerSecond = rateWindow.record(bytes: progress.bytesTransferred, at: self.now())
+                let etaSeconds: Double?
+                if let total = progress.totalBytes, let rate = bytesPerSecond, rate > 0 {
+                    let remaining = total > progress.bytesTransferred ? total - progress.bytesTransferred : 0
+                    etaSeconds = Double(remaining) / rate
+                } else {
+                    etaSeconds = nil
+                }
+                let enriched = TransferProgress(
+                    bytesTransferred: progress.bytesTransferred, totalBytes: progress.totalBytes,
+                    bytesPerSecond: bytesPerSecond, etaSeconds: etaSeconds)
+                self.setStatus(jobID, .running(enriched))
             }
         }
 
@@ -422,10 +457,17 @@ public final class TransferQueueViewModel {
         let destination = job.destination
         let destinationDirectory = job.destinationDirectory
         let fileName = effectiveFileName
+        // Richtungsabhängiges Limit (M5c/T5): erst HIER gelesen, im Moment des
+        // tatsächlichen Transferstarts — eine Änderung an `uploadLimitBytesPerSec`/
+        // `downloadLimitBytesPerSec` gilt daher erst für als Nächstes startende
+        // Items, laufende Transfers behalten ihr Limit vom Start.
+        let bytesPerSecondLimit = job.direction == .upload
+            ? uploadLimitBytesPerSec : downloadLimitBytesPerSec
         let transfer = Task<Void, Error> {
             try await TransferEngine.copyFile(
                 from: source, sourcePath: sourcePath,
                 to: destination, destinationDirectory: destinationDirectory, fileName: fileName,
+                bytesPerSecondLimit: bytesPerSecondLimit,
                 onProgress: { progressContinuation.yield($0) }
             )
         }
@@ -697,6 +739,34 @@ public final class TransferQueueViewModel {
         default:
             return "Übertragung fehlgeschlagen: \(String(describing: error))"
         }
+    }
+}
+
+/// Sliding ~3s window over (timestamp, bytesTransferred) samples, used to
+/// derive a smoothed instantaneous transfer rate (M5c/T5). Scoped locally to
+/// each transfer's progress-consumer task in `process` — no cross-job
+/// storage needed, it's dropped along with the consumer once the transfer
+/// ends.
+struct RateWindow {
+    private static let windowLength = Duration.seconds(3)
+
+    private var samples: [(time: ContinuousClock.Instant, bytes: UInt64)] = []
+
+    /// Records a new sample and returns the current rate in bytes/second —
+    /// `nil` until at least two samples span a positive duration (i.e. never
+    /// on the very first sample).
+    mutating func record(bytes: UInt64, at time: ContinuousClock.Instant) -> Double? {
+        samples.append((time, bytes))
+        // Drop samples older than the window, but always keep at least one
+        // as the baseline for the rate calculation below.
+        while samples.count > 1, time - samples[0].time > Self.windowLength {
+            samples.removeFirst()
+        }
+        guard let oldest = samples.first, oldest.time < time else { return nil }
+        let elapsedSeconds = (time - oldest.time).secondsAsDouble
+        guard elapsedSeconds > 0 else { return nil }
+        let delta = bytes >= oldest.bytes ? bytes - oldest.bytes : 0
+        return Double(delta) / elapsedSeconds
     }
 }
 

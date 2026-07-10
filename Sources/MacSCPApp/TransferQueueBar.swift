@@ -61,6 +61,17 @@ struct TransferQueueBar: View {
             case .queued:
                 Text("wartet").font(.caption).foregroundStyle(.secondary)
             case .running(let progress):
+                // Rate/ETA (M5c/T5): compact "1,2 MB/s · 0:42" label, hidden
+                // until the queue's rate window (`TransferQueueViewModel`)
+                // has enough samples to produce a rate.
+                if let label = TransferRateFormatting.compactLabel(
+                    bytesPerSecond: progress.bytesPerSecond, etaSeconds: progress.etaSeconds
+                ) {
+                    Text(label)
+                        .font(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
                 if let fraction = progress.fraction {
                     ProgressView(value: fraction)
                         .tint(tint(for: item.direction))

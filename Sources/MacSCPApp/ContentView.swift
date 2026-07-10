@@ -125,9 +125,9 @@ private struct WindowAccessor: NSViewRepresentable {
 
 struct ContentView: View {
     /// Passed in from `MacSCPApp` (same instance as the `Settings` scene —
-    /// no singleton, per the v2 multi-window rule). Not yet read here;
-    /// M5c/T4 (queue parallelism) and T5 (bandwidth limits) wire it into
-    /// `transferQueue`.
+    /// no singleton, per the v2 multi-window rule). Wired into
+    /// `transferQueue` at session start and kept in sync via `.onChange`
+    /// (M5c/T4 queue parallelism, M5c/T5 bandwidth limits).
     let settingsStore: SettingsStore
     @State private var connectionViewModel = ConnectionViewModel(connector: { config, onUnknownHostKey in
         try await CitadelFileSystem.connect(
@@ -187,6 +187,20 @@ struct ContentView: View {
         .frame(minWidth: session == nil ? 700 : 930, minHeight: 460)
         .background(WindowAccessor { window = $0 })
         .task { importedHosts = SSHConfigImporter.load(path: SSHConfigImporter.defaultPath) }
+        // Settings live-wiring (M5c/T4+T5): each observer targets
+        // `transferQueue` directly rather than a captured snapshot, so it
+        // keeps applying to whichever session's queue is current. A change
+        // affects FUTURE slot assignments/items only — see the properties'
+        // doc comments in `TransferQueueViewModel`.
+        .onChange(of: settingsStore.maxConcurrentTransfers) { _, newValue in
+            transferQueue.maxConcurrent = newValue
+        }
+        .onChange(of: settingsStore.uploadLimitKBs) { _, newValue in
+            transferQueue.uploadLimitBytesPerSec = newValue * 1024
+        }
+        .onChange(of: settingsStore.downloadLimitKBs) { _, newValue in
+            transferQueue.downloadLimitBytesPerSec = newValue * 1024
+        }
     }
 
     @ViewBuilder
@@ -334,6 +348,13 @@ struct ContentView: View {
         transferQueue = TransferQueueViewModel()
         let bridge = conflictBridge
         transferQueue.conflictDecider = { conflict in await bridge.ask(conflict) }
+        // Settings wiring (M5c/T4 concurrency, M5c/T5 bandwidth): applied once
+        // here at session start, and kept in sync afterwards by the
+        // `.onChange` observers below (they target `transferQueue` directly,
+        // so they keep working across session restarts too). KBs → bytes/s.
+        transferQueue.maxConcurrent = settingsStore.maxConcurrentTransfers
+        transferQueue.uploadLimitBytesPerSec = settingsStore.uploadLimitKBs * 1024
+        transferQueue.downloadLimitBytesPerSec = settingsStore.downloadLimitKBs * 1024
 
         // Fenster aktiv auf Browser-Größe wachsen lassen (User-Feedback
         // 2026-07-10, M5c/T0) — auf die zuletzt gemerkte Browser-Größe, falls

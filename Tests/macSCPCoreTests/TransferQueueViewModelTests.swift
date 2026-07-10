@@ -1467,4 +1467,125 @@ struct TransferQueueViewModelTests {
         #expect(await destination.writtenData(at: "/ziel/1.txt") == content)
         #expect(await destination.writtenData(at: "/ziel/2.txt") == content)
     }
+
+    // MARK: - Rate/ETA-Tests (M5c/T5)
+
+    /// Kontrollierbarer Takt-Geber für den `now`-Hook des VM (injizierbar,
+    /// s. `TransferQueueViewModel.init(now:)`): `advance` rückt die Uhr um
+    /// eine feste Dauer vor, `now()` liest den aktuellen Stand — deterministisch
+    /// statt von echtem Wanduhr-Timing abhängig.
+    final class TickClock: @unchecked Sendable {
+        private let lock = NSLock()
+        private var current = ContinuousClock.now
+        func advance(by duration: Duration) {
+            lock.lock(); current = current.advanced(by: duration); lock.unlock()
+        }
+        func now() -> ContinuousClock.Instant {
+            lock.lock(); defer { lock.unlock() }
+            return current
+        }
+    }
+
+    /// Quelle mit MANUELL getriebenem Chunk-Strom: der Test hält die
+    /// `AsyncThrowingStream`-Continuation und liefert Chunks (und den
+    /// Takt-Vorschub) exakt dann, wenn er es will — kein Gate/Signal-Umweg
+    /// nötig, weil `TransferEngine.copyFile`s `iterator.next()` ohnehin bis
+    /// zum nächsten `yield` suspendiert.
+    actor ManualByteSource: RemoteFileSystem {
+        private let totalSize: UInt64?
+        private let providedStream: AsyncThrowingStream<Data, Error>
+
+        init(totalSize: UInt64?, stream: AsyncThrowingStream<Data, Error>) {
+            self.totalSize = totalSize
+            self.providedStream = stream
+        }
+
+        func list(path: String) async throws -> [RemoteFileItem] { [] }
+        func stat(path: String) async throws -> RemoteFileItem {
+            RemoteFileItem(name: "f.bin", path: path, kind: .file, size: totalSize)
+        }
+        func readStream(path: String) async throws -> AsyncThrowingStream<Data, Error> { providedStream }
+        func write(path: String, contents: AsyncThrowingStream<Data, Error>) async throws {}
+        func createDirectory(at path: String) async throws {}
+        func disconnect() async {}
+    }
+
+    /// Liest den `TransferProgress` aus dem aktuellen Status des ersten
+    /// Items, falls `.running` — sonst `nil`. Kleiner Helfer gegen
+    /// Wiederholung in den folgenden Tests.
+    @MainActor private func runningProgress(_ vm: TransferQueueViewModel) -> TransferProgress? {
+        guard case .running(let progress) = vm.items.first?.status else { return nil }
+        return progress
+    }
+
+    // MARK: - 35
+
+    /// Mit bekanntem `totalBytes` (300) und einem per `TickClock` exakt auf
+    /// 1s-Abstände gesetzten Takt: die erste Probe liefert noch keine Rate
+    /// (nur ein Sample), die zweite (100 Bytes / 1s Fenster) exakt 100 B/s
+    /// und eine daraus abgeleitete ETA von 1s (200 verbleibende Bytes).
+    @Test func rateAndETAPopulateOverSlidingWindow() async throws {
+        let tick = TickClock()
+        let vm = TransferQueueViewModel(now: { tick.now() })
+        let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+        let source = ManualByteSource(totalSize: 300, stream: stream)
+        let destination = QueueTestFS(reads: [:])
+
+        vm.enqueue(
+            fileName: "f.bin", direction: .download,
+            source: source, sourcePath: "/f.bin",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: nil)
+
+        continuation.yield(Data(repeating: 0, count: 100))
+        await waitUntil { runningProgress(vm)?.bytesTransferred == 100 }
+        let first = runningProgress(vm)
+        #expect(first?.bytesPerSecond == nil)   // nur ein Sample bisher
+        #expect(first?.etaSeconds == nil)
+
+        tick.advance(by: .seconds(1))
+        continuation.yield(Data(repeating: 0, count: 100))
+        await waitUntil { runningProgress(vm)?.bytesTransferred == 200 }
+        let second = runningProgress(vm)
+        #expect(second?.bytesPerSecond == 100)   // 100 Bytes über 1s Fenster
+        #expect(second?.etaSeconds == 1.0)       // (300-200) / 100 B/s
+
+        tick.advance(by: .seconds(1))
+        continuation.yield(Data(repeating: 0, count: 100))
+        continuation.finish()
+        await waitUntil { vm.items.first?.status == .finished }
+        #expect(await destination.writtenData(at: "/ziel/f.bin")?.count == 300)
+    }
+
+    // MARK: - 36
+
+    /// Ohne bekanntes `totalBytes`: die Rate wird trotzdem berechnet (das
+    /// Fenster braucht nur Zeitstempel + Bytes), aber die ETA bleibt `nil` —
+    /// bindend laut Plan ("ETA nur bei bekanntem totalBytes").
+    @Test func etaStaysNilWithoutKnownTotalBytes() async throws {
+        let tick = TickClock()
+        let vm = TransferQueueViewModel(now: { tick.now() })
+        let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+        let source = ManualByteSource(totalSize: nil, stream: stream)
+        let destination = QueueTestFS(reads: [:])
+
+        vm.enqueue(
+            fileName: "f.bin", direction: .download,
+            source: source, sourcePath: "/f.bin",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: nil)
+
+        continuation.yield(Data(repeating: 0, count: 100))
+        await waitUntil { runningProgress(vm)?.bytesTransferred == 100 }
+
+        tick.advance(by: .seconds(1))
+        continuation.yield(Data(repeating: 0, count: 100))
+        await waitUntil { runningProgress(vm)?.bytesTransferred == 200 }
+        let progress = runningProgress(vm)
+        #expect(progress?.bytesPerSecond == 100)   // Rate braucht kein totalBytes
+        #expect(progress?.etaSeconds == nil)        // ETA schon
+
+        continuation.finish()
+        await waitUntil { vm.items.first?.status == .finished }
+    }
 }

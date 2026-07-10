@@ -106,6 +106,54 @@ struct TransferEngineTests {
         #expect(written < chunkTotal)         // nicht alle Chunks übertragen
     }
 
+    // MARK: - Bandbreiten-Drossel (M5c/T5)
+
+    /// Limit 256 KB/s über 1 MiB (= 16 Chunks à 64 KiB) muss insgesamt ~4s
+    /// angefordertes Schlafen ergeben (1_048_576 / (256*1024) == 4.0). Der
+    /// injizierte `sleep`-Hook schläft NICHT wirklich — er zählt nur die
+    /// angeforderten Dauern auf, macht den Test deterministisch statt von
+    /// echtem Timing abhängig (kein Flaky-Risiko).
+    @Test func throttleRequestsExpectedTotalSleepDuration() async throws {
+        let content = Data(repeating: 0x42, count: 1024 * 1024)
+        let source = makeSource(content: content)
+        let destination = MockRemoteFileSystem(tree: ["/ziel": []])
+
+        let recorder = SleepRecorder()
+        try await TransferEngine.copyFile(
+            from: source, sourcePath: "/quelle.bin",
+            to: destination, destinationDirectory: "/ziel", fileName: "quelle.bin",
+            bytesPerSecondLimit: 256 * 1024,
+            sleep: { duration in recorder.record(duration) },
+            onProgress: { _ in }
+        )
+
+        #expect(await destination.writtenData(at: "/ziel/quelle.bin") == content)
+        let totalSeconds = recorder.totalSeconds
+        // Toleranzfenster statt exakter Gleichheit (Double-Rundung über 16
+        // Additionen) — bindend war "Dauer ≥ ~3,5s"; das virtuelle Modell
+        // liefert hier exakt 4.0s, ein enges Fenster deckt das plus etwas
+        // Spielraum ab.
+        #expect(totalSeconds >= 3.5)
+        #expect(totalSeconds <= 4.5)
+    }
+
+    /// `bytesPerSecondLimit == 0` (Default) bleibt unangetastet: kein einziger
+    /// Sleep-Aufruf, exakt das Vor-T5-Verhalten.
+    @Test func noThrottleWithoutLimitNeverSleeps() async throws {
+        let content = Data(repeating: 0x1, count: TransferChunk.size * 2)
+        let source = makeSource(content: content)
+        let destination = MockRemoteFileSystem(tree: ["/ziel": []])
+
+        let recorder = SleepRecorder()
+        try await TransferEngine.copyFile(
+            from: source, sourcePath: "/quelle.bin",
+            to: destination, destinationDirectory: "/ziel", fileName: "quelle.bin",
+            sleep: { duration in recorder.record(duration) },
+            onProgress: { _ in }
+        )
+        #expect(recorder.callCount == 0)
+    }
+
     /// Wartet auf das Task-Ergebnis, gibt aber nach `timeout` `nil` zurück
     /// (Timeout), statt ewig zu blockieren.
     private func awaitOutcome(
@@ -211,6 +259,29 @@ private actor RecordingSpinDestination: RemoteFileSystem {
 
     func createDirectory(at path: String) async throws {}
     func disconnect() async {}
+}
+
+/// Zählt die an den injizierten `sleep`-Hook übergebenen Dauern auf, OHNE
+/// wirklich zu schlafen (M5c/T5) — macht den Drossel-Test deterministisch
+/// statt von echtem Timing abhängig.
+private final class SleepRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _totalSeconds: Double = 0
+    private var _callCount = 0
+    var totalSeconds: Double {
+        lock.lock(); defer { lock.unlock() }
+        return _totalSeconds
+    }
+    var callCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return _callCount
+    }
+    func record(_ duration: Duration) {
+        lock.lock()
+        _totalSeconds += duration.secondsAsDouble
+        _callCount += 1
+        lock.unlock()
+    }
 }
 
 /// Threadsicherer Ergebnis-Halter für den Timeout-Race in `awaitOutcome`.
