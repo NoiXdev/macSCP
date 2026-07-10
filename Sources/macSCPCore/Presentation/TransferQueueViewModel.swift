@@ -98,8 +98,9 @@ public final class TransferQueueViewModel {
         didSet {
             let clamped = min(8, max(1, maxConcurrent))
             if maxConcurrent != clamped {
-                maxConcurrent = clamped   // re-enters didSet; next pass is a no-op clamp
-                return
+                // Self-assignment does NOT re-enter didSet, so fall through to
+                // the kick below instead of relying on a second pass.
+                maxConcurrent = clamped
             }
             // A raised limit may open new slots for queued items; kicking is a
             // safe no-op when nothing is waiting or all slots are busy.
@@ -366,7 +367,7 @@ public final class TransferQueueViewModel {
         // — status/waiter were handled there (exactly-once).
         guard let job = jobs[jobID] else { return }
 
-        // Konfliktprüfung VOR dem Engine-Aufruf; Prompts serialisieren FIFO.
+        // Conflict check BEFORE the engine call; prompts serialize FIFO.
         let outcome = await resolveConflictIfNeeded(job: job)
 
         // `cancelAll` kann während des obigen Awaits (stat-Probe, Decider,
