@@ -194,7 +194,7 @@ struct ContentView: View {
                 },
                 onNew: { disconnectToForm() },
                 onSelectImported: { fillFromImported($0) },
-                onEdit: { _ in }  // wired in M5f/T4
+                onEdit: { stored in editStored(stored) }
             )
             .frame(minWidth: 170, idealWidth: 190, maxWidth: 260)
 
@@ -360,7 +360,16 @@ struct ContentView: View {
             // Align the form to the top instead of centering it vertically
             // (user feedback 2026-07-10, M5c/T0) — otherwise the compact
             // window has a lot of empty space below the content.
-            ConnectionFormView(viewModel: connectionViewModel) { fs in
+            ConnectionFormView(
+                viewModel: connectionViewModel,
+                groups: sessionListViewModel.groups,
+                onSaveEdited: { session, secret in
+                    sessionListViewModel.updateSession(session, newSecret: secret)
+                    connectionViewModel.endEditing()
+                },
+                onCancelEdit: { connectionViewModel.endEditing() },
+                onConnectEdited: { session in connectStored(session) }
+            ) { fs in
                 startSession(with: fs)
             }
             .frame(maxHeight: .infinity, alignment: .top)
@@ -461,7 +470,8 @@ struct ContentView: View {
                 authKind: connectionViewModel.authChoice == .password ? .password : .privateKey,
                 keyPath: connectionViewModel.authChoice == .privateKey
                     ? connectionViewModel.keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
-                    : nil
+                    : nil,
+                groupID: connectionViewModel.selectedGroupID
             )
             activeSessionID = stored?.id
             connectionViewModel.shouldSaveSession = false
@@ -490,6 +500,20 @@ struct ContentView: View {
                 startSession(with: fs)
                 activeSessionID = stored.id
             }
+        }
+    }
+
+    /// Sidebar "Edit…" click: disconnect the current connection (detail pane
+    /// reverts to the form) and prefill it for in-place editing. Deliberately
+    /// no auto-connect — the user reviews/changes fields, then picks
+    /// Save or Save & connect.
+    private func editStored(_ stored: StoredSession) {
+        guard !isReconnecting else { return }
+        isReconnecting = true // synchronous — locks the sidebar immediately, before the first await
+        Task {
+            defer { isReconnecting = false }
+            await teardownSession()
+            connectionViewModel.beginEditing(stored)
         }
     }
 

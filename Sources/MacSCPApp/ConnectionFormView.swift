@@ -3,6 +3,21 @@ import macSCPCore
 
 struct ConnectionFormView: View {
     @Bindable var viewModel: ConnectionViewModel
+    /// Groups offered by the group picker (edit mode, and new mode once
+    /// `shouldSaveSession` is on) — passed in by `ContentView` from
+    /// `SessionListViewModel.groups`.
+    var groups: [StoredGroup] = []
+    /// Edit mode "Save": persists the edited session (see `newSecret`'s
+    /// empty-means-unchanged rule below), then leaves edit mode.
+    var onSaveEdited: (StoredSession, String?) -> Void = { _, _ in }
+    /// Edit mode "Back": discards the edit and returns to the browser/idle
+    /// state without touching the stored session.
+    var onCancelEdit: () -> Void = {}
+    /// Edit mode "Save & connect": called after `onSaveEdited` with the
+    /// validated session — `ContentView` reconnects via `connectStored`,
+    /// which reloads the secret from the keychain (covers "empty password
+    /// means unchanged" automatically).
+    var onConnectEdited: (StoredSession) -> Void = { _ in }
     let onConnected: (any RemoteFileSystem) -> Void
 
     @State private var showKeyImporter = false
@@ -12,6 +27,11 @@ struct ConnectionFormView: View {
     @State private var alertMessage: String?
 
     private var isConnecting: Bool { viewModel.state == .connecting }
+
+    private var isEditMode: Bool {
+        if case .edit = viewModel.mode { return true }
+        return false
+    }
 
     /// The field whose validation failed most recently — gets the red outline.
     private var failedField: ConnectionViewModel.Field? {
@@ -51,7 +71,9 @@ struct ConnectionFormView: View {
 
     @ViewBuilder
     private var formContent: some View {
-            Text(L10n.string("connection.title", "New connection"))
+            Text(isEditMode
+                ? L10n.string("connection.editTitle", "Edit session")
+                : L10n.string("connection.title", "New connection"))
                 .font(.title2.bold())
 
             Form {
@@ -75,7 +97,12 @@ struct ConnectionFormView: View {
                 }
                 .pickerStyle(.segmented)
                 if viewModel.authChoice == .password {
-                    SecureField(L10n.string("connection.auth.password", "Password"), text: $viewModel.password)
+                    SecureField(
+                        L10n.string("connection.auth.password", "Password"), text: $viewModel.password,
+                        prompt: isEditMode
+                            ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
+                            : nil
+                    )
                         .errorHighlight(failedField == .password)
                 } else {
                     HStack(spacing: 6) {
@@ -93,19 +120,33 @@ struct ConnectionFormView: View {
                     }
                     SecureField(
                         L10n.string("connection.field.passphrase", "Passphrase (optional)"),
-                        text: $viewModel.password
+                        text: $viewModel.password,
+                        prompt: isEditMode
+                            ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
+                            : nil
                     )
                         .errorHighlight(failedField == .password)
                 }
-                Toggle(
-                    L10n.string("connection.saveToggle", "Save as session"),
-                    isOn: $viewModel.shouldSaveSession)
-                if viewModel.shouldSaveSession {
+                if !isEditMode {
+                    Toggle(
+                        L10n.string("connection.saveToggle", "Save as session"),
+                        isOn: $viewModel.shouldSaveSession)
+                }
+                if isEditMode || viewModel.shouldSaveSession {
                     TextField(
                         L10n.string("connection.field.saveName", "Session name"), text: $viewModel.saveName,
                         prompt: Text(L10n.string("connection.field.saveName.placeholder", "e.g. hetzner-web"))
                     )
                         .errorHighlight(failedField == .saveName)
+                    Picker(
+                        L10n.string("connection.field.group", "Group"),
+                        selection: $viewModel.selectedGroupID
+                    ) {
+                        Text(L10n.string("sidebar.noGroup", "No group")).tag(UUID?.none)
+                        ForEach(groups) { group in
+                            Text(group.name).tag(UUID?.some(group.id))
+                        }
+                    }
                 }
             }
             .disabled(isConnecting)
@@ -116,17 +157,39 @@ struct ConnectionFormView: View {
                     ProgressView()
                         .controlSize(.small)
                 }
-                Button(L10n.string("connection.connect", "Connect")) {
-                    Task {
-                        if let fs = await viewModel.connect() {
-                            onConnected(fs)
+                if isEditMode {
+                    Button(L10n.string("common.back", "Back")) {
+                        onCancelEdit()
+                    }
+                    Button(L10n.string("common.save", "Save")) {
+                        if let session = viewModel.validateForEditSave() {
+                            onSaveEdited(session, viewModel.password.isEmpty ? nil : viewModel.password)
                         } else if case .failed(let message, _) = viewModel.state {
                             alertMessage = message
                         }
                     }
+                    Button(L10n.string("connection.saveAndConnect", "Save & connect")) {
+                        if let session = viewModel.validateForEditSave() {
+                            onSaveEdited(session, viewModel.password.isEmpty ? nil : viewModel.password)
+                            onConnectEdited(session)
+                        } else if case .failed(let message, _) = viewModel.state {
+                            alertMessage = message
+                        }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                } else {
+                    Button(L10n.string("connection.connect", "Connect")) {
+                        Task {
+                            if let fs = await viewModel.connect() {
+                                onConnected(fs)
+                            } else if case .failed(let message, _) = viewModel.state {
+                                alertMessage = message
+                            }
+                        }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(isConnecting)
                 }
-                .keyboardShortcut(.defaultAction)
-                .disabled(isConnecting)
             }
     }
 

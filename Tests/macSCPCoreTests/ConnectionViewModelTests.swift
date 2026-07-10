@@ -300,6 +300,49 @@ struct ConnectionViewModelTests {
             message: CoreL10n.string("core.hostkey.rejected"), field: nil))
     }
 
+    @Test @MainActor func beginEditingPrefillsEverythingExceptTheSecret() {
+        let vm = makeVM()
+        let stored = StoredSession(name: "web", host: "h", port: 2222, username: "u",
+                                   authKind: .privateKey, keyPath: "/k", groupID: UUID())
+        vm.password = "leftover"
+        vm.beginEditing(stored)
+
+        #expect(vm.mode == .edit(sessionID: stored.id))
+        #expect(vm.host == "h" && vm.port == "2222" && vm.username == "u")
+        #expect(vm.saveName == "web" && vm.keyPath == "/k")
+        #expect(vm.authChoice == .privateKey)
+        #expect(vm.selectedGroupID == stored.groupID)
+        #expect(vm.password.isEmpty) // never loaded from the keychain
+    }
+
+    @Test @MainActor func validateForEditSaveAllowsEmptyPasswordAndBuildsTheSession() {
+        let vm = makeVM()
+        let stored = StoredSession(name: "web", host: "h", username: "u")
+        vm.beginEditing(stored)
+        vm.host = "new.example"
+
+        let result = vm.validateForEditSave()
+        #expect(result?.id == stored.id)
+        #expect(result?.host == "new.example")
+        #expect(vm.state == .idle)
+    }
+
+    @Test @MainActor func validateForEditSaveRejectsInvalidPort() {
+        let vm = makeVM()
+        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u"))
+        vm.port = "abc"
+        #expect(vm.validateForEditSave() == nil)
+        #expect(vm.state == .failed(message: CoreL10n.string("core.connect.portNumeric"), field: .port))
+    }
+
+    @Test @MainActor func endEditingReturnsToNewMode() {
+        let vm = makeVM()
+        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u"))
+        vm.endEditing()
+        #expect(vm.mode == .new)
+        #expect(vm.host.isEmpty && vm.saveName.isEmpty)
+    }
+
     @Test func mismatchMapsToScaryMessage() async {
         let vm = makeVM(connector: { _, _ in
             throw HostKeyError.mismatch(

@@ -29,6 +29,14 @@ public final class ConnectionViewModel {
         case privateKey
     }
 
+    /// Whether the form creates a brand-new connection or edits a stored
+    /// session in place (M5f/T4). `edit` carries the session's id so
+    /// `validateForEditSave()` can rebuild the same `StoredSession`.
+    public enum FormMode: Equatable, Sendable {
+        case new
+        case edit(sessionID: UUID)
+    }
+
     public typealias Connector = @Sendable (
         SSHConnectionConfig, @escaping @Sendable (HostKeyCandidate) async -> Bool
     ) async throws -> any RemoteFileSystem
@@ -48,7 +56,13 @@ public final class ConnectionViewModel {
     /// Save the session after a successful connect (store + keychain)?
     public var shouldSaveSession: Bool = false
     public var saveName: String = ""
+    /// Group assignment shown by the picker — applies while saving a new
+    /// session (`shouldSaveSession == true`) AND while editing a stored one.
+    public var selectedGroupID: UUID?
     public private(set) var state: State = .idle
+    /// `.new` while the form creates a connection; `.edit` while it edits a
+    /// stored session (see `beginEditing`/`endEditing`).
+    public private(set) var mode: FormMode = .new
     /// While non-nil: the form UI shows the fingerprint card and waits for
     /// `resolveHostKeyPrompt`.
     public private(set) var hostKeyPrompt: HostKeyPrompt?
@@ -162,6 +176,84 @@ public final class ConnectionViewModel {
         guard choice != authChoice else { return }
         authChoice = choice
         clearPassword()
+    }
+
+    /// Fills the form from a stored session for in-place editing. The secret
+    /// is deliberately NEVER loaded from the keychain — `password` stays
+    /// empty; an empty password at save time means "leave unchanged" (see
+    /// `validateForEditSave`/`ContentView.onSaveEdited`).
+    public func beginEditing(_ stored: StoredSession) {
+        host = stored.host
+        port = String(stored.port)
+        username = stored.username
+        authChoice = stored.authKind == .privateKey ? .privateKey : .password
+        keyPath = stored.keyPath ?? ""
+        saveName = stored.name
+        selectedGroupID = stored.groupID
+        password = ""
+        mode = .edit(sessionID: stored.id)
+        state = .idle
+    }
+
+    /// Leaves edit mode and resets the form to the same blank state
+    /// `teardownSession` leaves it in for a new connection.
+    public func endEditing() {
+        mode = .new
+        host = ""
+        port = "22"
+        username = ""
+        password = ""
+        authChoice = .password
+        keyPath = ""
+        shouldSaveSession = false
+        saveName = ""
+        selectedGroupID = nil
+        state = .idle
+    }
+
+    /// Validates the form for saving an edited session (password may be
+    /// empty — unlike `connect()`) and, on success, returns the rebuilt
+    /// `StoredSession` carrying the id from `mode`. On failure sets `state`
+    /// to `.failed` with the same `core.connect.*` messages/fields as
+    /// `connect()` and returns nil.
+    public func validateForEditSave() -> StoredSession? {
+        guard case .edit(let sessionID) = mode else { return nil }
+        let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedHost.isEmpty else {
+            state = .failed(message: CoreL10n.string("core.connect.emptyHost"), field: .host)
+            return nil
+        }
+        guard let portNumber = Int(port.trimmingCharacters(in: .whitespaces)) else {
+            state = .failed(message: CoreL10n.string("core.connect.portNumeric"), field: .port)
+            return nil
+        }
+        let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedUsername.isEmpty else {
+            state = .failed(message: CoreL10n.string("core.connect.emptyUsername"), field: .username)
+            return nil
+        }
+        let trimmedName = saveName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            state = .failed(message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName)
+            return nil
+        }
+        let trimmedKeyPath = keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if authChoice == .privateKey {
+            guard !trimmedKeyPath.isEmpty else {
+                state = .failed(message: CoreL10n.string("core.connect.keyPathEmpty"), field: .keyPath)
+                return nil
+            }
+        }
+        state = .idle
+        return StoredSession(
+            id: sessionID,
+            name: trimmedName,
+            host: trimmedHost,
+            port: portNumber,
+            username: trimmedUsername,
+            authKind: authChoice == .privateKey ? .privateKey : .password,
+            keyPath: authChoice == .privateKey ? trimmedKeyPath : nil,
+            groupID: selectedGroupID)
     }
 
     static func failedState(for error: Error) -> State {
