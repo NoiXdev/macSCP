@@ -447,9 +447,9 @@ struct CitadelFileSystemIntegrationTests {
         #expect(try store.find(host: "127.0.0.1", port: 2222) == nil)
     }
 
-    /// Cleans up a test folder under /config via `docker exec rm -rf`.
-    /// No SFTP delete available (RemoteFileSystem has no rmdir/remove) —
-    /// hence cleanup via the container, as already done in `makeInstalledKey`.
+    /// Cleans up a test folder under /config via `docker exec rm -rf`. Used
+    /// for directories and as a catch-all after a test's own `fs.delete`
+    /// (RemoteFileSystem only deletes FILES, no rmdir/remove for directories).
     private func cleanupConfigPath(_ path: String) {
         let rm = Process()
         rm.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
@@ -518,6 +518,108 @@ struct CitadelFileSystemIntegrationTests {
                 Issue.record("expected protocolError, was: \(error)")
                 return
             }
+        }
+    }
+
+    // MARK: - M5d/T1: offset reads, append writes, delete
+
+    @Test func readStreamFromOffsetReturnsExactRemainingBytes() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let remotePath = "/config/macscp-offset-test-\(UUID().uuidString).bin"
+        defer { cleanupConfigPath(remotePath) }
+
+        // Spans multiple chunks so the offset lands mid-stream, not just in the first chunk.
+        let payload = Data((0..<(TransferChunk.size * 2 + 123)).map { UInt8($0 % 251) })
+        let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+        continuation.yield(payload)
+        continuation.finish()
+        try await fs.write(path: remotePath, mode: .overwrite, contents: stream)
+
+        let offset = UInt64(TransferChunk.size) + 50
+        var readBack = Data()
+        for try await chunk in try await fs.readStream(path: remotePath, fromOffset: offset) {
+            readBack.append(chunk)
+        }
+        #expect(readBack == payload.suffix(from: Int(offset)))
+    }
+
+    @Test func readStreamFromOffsetBeyondEOFYieldsEmptyStream() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let remotePath = "/config/macscp-offset-eof-test-\(UUID().uuidString).bin"
+        defer { cleanupConfigPath(remotePath) }
+
+        let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+        continuation.yield(Data("short".utf8))
+        continuation.finish()
+        try await fs.write(path: remotePath, contents: stream)
+
+        var collected = Data()
+        for try await chunk in try await fs.readStream(path: remotePath, fromOffset: 9999) {
+            collected.append(chunk)
+        }
+        #expect(collected.isEmpty)
+    }
+
+    /// Overwrite writes the first part, a second `write(mode: .append)` adds
+    /// the rest — the resulting remote file must be BYTE-IDENTICAL to a
+    /// locally constructed reference (first part + second part), verified
+    /// via md5 (docker exec) so the comparison also covers multi-chunk
+    /// transfers, not just tiny in-memory buffers.
+    @Test func overwriteThenAppendProducesByteIdenticalFullContent() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        let localDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-append-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: localDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: localDir) }
+
+        let firstPart = Data((0..<(TransferChunk.size + 500)).map { UInt8($0 % 233) })
+        let secondPart = Data((0..<(TransferChunk.size / 2 + 77)).map { UInt8(($0 + 17) % 199) })
+        let referenceFile = localDir.appendingPathComponent("reference.bin")
+        try (firstPart + secondPart).write(to: referenceFile)
+        let referenceMD5 = localMD5(referenceFile.path(percentEncoded: false))
+
+        let remotePath = "/config/macscp-append-test-\(UUID().uuidString).bin"
+        defer { cleanupConfigPath(remotePath) }
+
+        let (stream1, continuation1) = AsyncThrowingStream<Data, Error>.makeStream()
+        continuation1.yield(firstPart)
+        continuation1.finish()
+        try await fs.write(path: remotePath, mode: .overwrite, contents: stream1)
+
+        let (stream2, continuation2) = AsyncThrowingStream<Data, Error>.makeStream()
+        continuation2.yield(secondPart)
+        continuation2.finish()
+        try await fs.write(path: remotePath, mode: .append, contents: stream2)
+
+        #expect(remoteMD5(remotePath) == referenceMD5)
+    }
+
+    @Test func deleteRemovesFileConfirmedByListAndSecondDeleteThrowsNotFound() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let remoteName = "macscp-delete-test-\(UUID().uuidString).bin"
+        let remotePath = "/config/\(remoteName)"
+        defer { cleanupConfigPath(remotePath) }
+
+        let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+        continuation.yield(Data("delete me".utf8))
+        continuation.finish()
+        try await fs.write(path: remotePath, contents: stream)
+
+        let beforeListing = try await fs.list(path: "/config")
+        #expect(beforeListing.contains { $0.name == remoteName })
+
+        try await fs.delete(path: remotePath)
+
+        let afterListing = try await fs.list(path: "/config")
+        #expect(!afterListing.contains { $0.name == remoteName })
+
+        await #expect(throws: RemoteFSError.notFound(path: remotePath)) {
+            try await fs.delete(path: remotePath)
         }
     }
 

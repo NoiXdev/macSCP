@@ -72,6 +72,10 @@ struct TransferQueueViewModelTests {
         /// Order of `createDirectory` calls — tests use this to verify the
         /// top-down creation of destination directories (M5b/T3).
         private(set) var createdDirectories: [String] = []
+        /// Paths removed via `delete`, in call order (M5d/T1 groundwork).
+        /// Recording only — no error simulation needed here yet, that lives
+        /// in LocalFileSystemTests/MockRemoteFileSystem.
+        private(set) var deletedPaths: [String] = []
         /// Signal gate for `stat`, isolated from the chunk gating (`Read.started/gate`
         /// above): lets tests hold open EXACTLY the stat await in `resolveConflictIfNeeded`
         /// (M5b/T2 review fix, no-decider variant). `statEntered`
@@ -118,9 +122,12 @@ struct TransferQueueViewModelTests {
             return RemoteFileItem(name: name, path: path, kind: .file, size: UInt64(read.content.count))
         }
 
-        func readStream(path: String) async throws -> AsyncThrowingStream<Data, Error> {
+        func readStream(
+            path: String, fromOffset offset: UInt64
+        ) async throws -> AsyncThrowingStream<Data, Error> {
             guard let read = reads[path] else { throw RemoteFSError.notFound(path: path) }
-            let chunks = QueueTestFS.chunked(read.content)
+            let start = min(Int(offset), read.content.count)
+            let chunks = QueueTestFS.chunked(read.content.subdata(in: start..<read.content.count))
             let started = read.started
             let gate = read.gate
             let spinAt = read.spinUntilCancelledAt
@@ -144,7 +151,7 @@ struct TransferQueueViewModelTests {
             })
         }
 
-        func write(path: String, contents: AsyncThrowingStream<Data, Error>) async throws {
+        func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {
             await concurrency?.enter()
             var collected = Data()
             do {
@@ -153,12 +160,21 @@ struct TransferQueueViewModelTests {
                 await concurrency?.leave()
                 throw error
             }
-            written[path] = collected
+            switch mode {
+            case .overwrite:
+                written[path] = collected
+            case .append:
+                written[path] = (written[path] ?? Data()) + collected
+            }
             writeOrder.append(path)
             await concurrency?.leave()
         }
 
         func writtenData(at path: String) -> Data? { written[path] }
+
+        func delete(path: String) async throws {
+            deletedPaths.append(path)
+        }
 
         /// Logs the call (for order checks of the top-down
         /// creation) and is otherwise an idempotent no-op — this double doesn't
@@ -1505,8 +1521,11 @@ struct TransferQueueViewModelTests {
         func stat(path: String) async throws -> RemoteFileItem {
             RemoteFileItem(name: "f.bin", path: path, kind: .file, size: totalSize)
         }
-        func readStream(path: String) async throws -> AsyncThrowingStream<Data, Error> { providedStream }
-        func write(path: String, contents: AsyncThrowingStream<Data, Error>) async throws {}
+        func readStream(
+            path: String, fromOffset offset: UInt64
+        ) async throws -> AsyncThrowingStream<Data, Error> { providedStream }
+        func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {}
+        func delete(path: String) async throws { throw RemoteFSError.notFound(path: path) }
         func createDirectory(at path: String) async throws {}
         func disconnect() async {}
     }

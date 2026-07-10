@@ -242,11 +242,13 @@ private actor RecordingSpinDestination: RemoteFileSystem {
         throw RemoteFSError.notFound(path: path)
     }
 
-    func readStream(path: String) async throws -> AsyncThrowingStream<Data, Error> {
+    func readStream(
+        path: String, fromOffset offset: UInt64
+    ) async throws -> AsyncThrowingStream<Data, Error> {
         AsyncThrowingStream { $0.finish() }
     }
 
-    func write(path: String, contents: AsyncThrowingStream<Data, Error>) async throws {
+    func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {
         var isFirst = true
         for try await _ in contents {
             chunkCount += 1
@@ -257,6 +259,10 @@ private actor RecordingSpinDestination: RemoteFileSystem {
                 while !Task.isCancelled { await Task.yield() }
             }
         }
+    }
+
+    func delete(path: String) async throws {
+        throw RemoteFSError.notFound(path: path)
     }
 
     func createDirectory(at path: String) async throws {}

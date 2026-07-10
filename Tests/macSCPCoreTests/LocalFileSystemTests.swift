@@ -150,4 +150,123 @@ struct LocalFileSystemTests {
         #expect(exists)
         #expect(isDirectory.boolValue)
     }
+
+    // MARK: - M5d/T1: offset reads, append writes, delete
+
+    @Test func readStreamFromOffsetZeroMatchesPlainRead() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fs = LocalFileSystem()
+        let path = root.appendingPathComponent("datei.txt").path(percentEncoded: false)
+
+        var collected = Data()
+        for try await chunk in try await fs.readStream(path: path, fromOffset: 0) {
+            collected.append(chunk)
+        }
+        #expect(collected == Data("hallo".utf8))
+    }
+
+    @Test func readStreamFromOffsetMiddleReturnsRemainingBytes() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fs = LocalFileSystem()
+        let path = root.appendingPathComponent("datei.txt").path(percentEncoded: false)
+
+        var collected = Data()
+        for try await chunk in try await fs.readStream(path: path, fromOffset: 2) {
+            collected.append(chunk)
+        }
+        #expect(collected == Data("llo".utf8))
+    }
+
+    @Test func readStreamFromOffsetBeyondEOFYieldsEmptyStream() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fs = LocalFileSystem()
+        let path = root.appendingPathComponent("datei.txt").path(percentEncoded: false)
+
+        var collected = Data()
+        for try await chunk in try await fs.readStream(path: path, fromOffset: 999) {
+            collected.append(chunk)
+        }
+        #expect(collected.isEmpty)
+    }
+
+    @Test func writeAppendAddsToExistingFile() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fs = LocalFileSystem()
+        let path = root.appendingPathComponent("datei.txt").path(percentEncoded: false)
+
+        let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+        continuation.yield(Data(" welt".utf8))
+        continuation.finish()
+        try await fs.write(path: path, mode: .append, contents: stream)
+
+        let readBack = try Data(contentsOf: URL(fileURLWithPath: path))
+        #expect(readBack == Data("hallo welt".utf8))
+    }
+
+    @Test func writeAppendToNonexistentPathCreatesFile() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fs = LocalFileSystem()
+        let path = root.appendingPathComponent("neu.txt").path(percentEncoded: false)
+
+        let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+        continuation.yield(Data("frisch".utf8))
+        continuation.finish()
+        try await fs.write(path: path, mode: .append, contents: stream)
+
+        let readBack = try Data(contentsOf: URL(fileURLWithPath: path))
+        #expect(readBack == Data("frisch".utf8))
+    }
+
+    @Test func writeOverwriteReplacesExistingContent() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fs = LocalFileSystem()
+        let path = root.appendingPathComponent("datei.txt").path(percentEncoded: false)
+
+        let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+        continuation.yield(Data("neu".utf8))
+        continuation.finish()
+        try await fs.write(path: path, mode: .overwrite, contents: stream)
+
+        let readBack = try Data(contentsOf: URL(fileURLWithPath: path))
+        #expect(readBack == Data("neu".utf8))
+    }
+
+    @Test func deleteRemovesExistingFile() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fs = LocalFileSystem()
+        let path = root.appendingPathComponent("datei.txt").path(percentEncoded: false)
+
+        try await fs.delete(path: path)
+
+        #expect(!FileManager.default.fileExists(atPath: path))
+    }
+
+    @Test func deleteMissingFileThrowsNotFound() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fs = LocalFileSystem()
+        let path = root.appendingPathComponent("gibt-es-nicht.txt").path(percentEncoded: false)
+
+        await #expect(throws: RemoteFSError.notFound(path: path)) {
+            try await fs.delete(path: path)
+        }
+    }
+
+    @Test func deleteDirectoryThrowsProtocolError() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fs = LocalFileSystem()
+        let path = root.appendingPathComponent("unterordner").path(percentEncoded: false)
+
+        await #expect(throws: RemoteFSError.protocolError(reason: "path is a directory: \(path)")) {
+            try await fs.delete(path: path)
+        }
+    }
 }

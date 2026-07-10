@@ -10,6 +10,11 @@ actor MockRemoteFileSystem: RemoteFileSystem {
     private var written: [String: Data] = [:]
     /// Order of paths newly created via `createDirectory` (for T3 tests).
     private(set) var createdDirectories: [String] = []
+    /// Mode of the most recent `write` per path (M5d/T1 groundwork — lets
+    /// T2's resume tests assert `.append` was used, not `.overwrite`).
+    private(set) var writeModes: [String: WriteMode] = [:]
+    /// Paths removed via `delete`, in call order (M5d/T1 groundwork for T2/T3).
+    private(set) var deletedPaths: [String] = []
 
     init(tree: [String: [RemoteFileItem]], files: [String: Data] = [:]) {
         self.tree = tree
@@ -32,32 +37,65 @@ actor MockRemoteFileSystem: RemoteFileSystem {
         return item
     }
 
-    func readStream(path: String) async throws -> AsyncThrowingStream<Data, Error> {
+    func readStream(
+        path: String, fromOffset offset: UInt64
+    ) async throws -> AsyncThrowingStream<Data, Error> {
         guard let data = files[path] else {
             throw RemoteFSError.notFound(path: path)
         }
+        // Offset at/beyond EOF: `start == data.count`, the loop below never
+        // runs — an empty stream, no error.
+        let start = min(Int(offset), data.count)
         return AsyncThrowingStream { continuation in
-            var offset = 0
-            while offset < data.count {
-                let end = min(offset + TransferChunk.size, data.count)
-                continuation.yield(data.subdata(in: offset..<end))
-                offset = end
+            var position = start
+            while position < data.count {
+                let end = min(position + TransferChunk.size, data.count)
+                continuation.yield(data.subdata(in: position..<end))
+                position = end
             }
             continuation.finish()
         }
     }
 
-    func write(path: String, contents: AsyncThrowingStream<Data, Error>) async throws {
+    func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {
         var collected = Data()
         for try await chunk in contents {
             collected.append(chunk)
         }
-        written[path] = collected
-        files[path] = collected
+        writeModes[path] = mode
+        switch mode {
+        case .overwrite:
+            written[path] = collected
+            files[path] = collected
+        case .append:
+            let existing = files[path] ?? Data()
+            written[path] = collected
+            files[path] = existing + collected
+        }
     }
 
     func writtenData(at path: String) -> Data? {
         written[path]
+    }
+
+    /// Deletes a FILE at `path`. `notFound` if nothing exists there,
+    /// `protocolError` if a directory is at that path.
+    func delete(path: String) async throws {
+        let parent = RemotePath.parent(of: path)
+        if let siblings = tree[parent],
+           siblings.first(where: { $0.path == path })?.kind == .directory {
+            throw RemoteFSError.protocolError(reason: "path is a directory: \(path)")
+        }
+        guard files[path] != nil else {
+            throw RemoteFSError.notFound(path: path)
+        }
+        files[path] = nil
+        written[path] = nil
+        deletedPaths.append(path)
+        if var siblings = tree[parent] {
+            siblings.removeAll { $0.path == path }
+            tree[parent] = siblings
+        }
     }
 
     /// Idempotent (already exists as a directory in the mock tree: silently

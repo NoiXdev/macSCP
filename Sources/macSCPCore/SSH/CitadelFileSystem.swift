@@ -171,24 +171,28 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         }
     }
 
-    public func readStream(path: String) async throws -> AsyncThrowingStream<Data, Error> {
+    public func readStream(
+        path: String, fromOffset offset: UInt64
+    ) async throws -> AsyncThrowingStream<Data, Error> {
         let file: SFTPFile
         do {
             file = try await sftp.openFile(filePath: path, flags: .read)
         } catch {
             throw mapSFTPError(error, path: path)
         }
-        // Pull-based (unfolding): the consumer sets the pace.
-        var offset: UInt64 = 0
+        // Pull-based (unfolding): the consumer sets the pace. Starting at
+        // `offset` beyond EOF: the first read returns 0 readable bytes, so
+        // the stream ends immediately (empty), no error.
+        var currentOffset = offset
         return AsyncThrowingStream(unfolding: {
             do {
                 let buffer = try await file.read(
-                    from: offset, length: UInt32(TransferChunk.size))
+                    from: currentOffset, length: UInt32(TransferChunk.size))
                 guard buffer.readableBytes > 0 else {
                     try await file.close()
                     return nil
                 }
-                offset += UInt64(buffer.readableBytes)
+                currentOffset += UInt64(buffer.readableBytes)
                 return Data(buffer.readableBytesView)
             } catch is CancellationError {
                 // Cooperative cancellation (M5c/T2): an in-flight read request
@@ -205,18 +209,30 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         })
     }
 
-    public func write(path: String, contents: AsyncThrowingStream<Data, Error>) async throws {
+    public func write(
+        path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>
+    ) async throws {
+        // SSH_FXF_APPEND (SFTPOpenFileFlags.append) forces the server to
+        // append every write to the file's current end regardless of the
+        // offset the client sends — but not every server implementation
+        // honors that consistently, so belt-and-suspenders: also pre-stat
+        // the file's size and start our own offset counter there.
+        let flags: SFTPOpenFileFlags
+        switch mode {
+        case .overwrite: flags = [.create, .write, .truncate]
+        case .append: flags = [.create, .write, .append]
+        }
         let file: SFTPFile
         do {
-            file = try await sftp.openFile(
-                filePath: path,
-                flags: [.create, .write, .truncate]
-            )
+            file = try await sftp.openFile(filePath: path, flags: flags)
         } catch {
             throw mapSFTPError(error, path: path)
         }
         do {
             var offset: UInt64 = 0
+            if mode == .append {
+                offset = try await file.readAttributes().size ?? 0
+            }
             for try await chunk in contents {
                 try await file.write(ByteBuffer(bytes: chunk), at: offset)
                 offset += UInt64(chunk.count)
@@ -234,6 +250,18 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             throw CancellationError()
         } catch {
             try? await file.close()
+            throw mapSFTPError(error, path: path)
+        }
+    }
+
+    /// Deletes a FILE at `path` via SFTP `remove` (SSH_FXP_REMOVE). Throws
+    /// `notFound` if nothing exists there; a directory at `path` is reported
+    /// as `protocolError` by the server-side status mapping (SFTP has no
+    /// generic "is a directory" status code).
+    public func delete(path: String) async throws {
+        do {
+            try await sftp.remove(at: path)
+        } catch {
             throw mapSFTPError(error, path: path)
         }
     }
