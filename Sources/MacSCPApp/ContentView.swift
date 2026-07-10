@@ -413,7 +413,13 @@ struct ContentView: View {
     }
 
     /// After a successful connect: build the panes and save the session if requested.
-    private func startSession(with fs: any RemoteFileSystem) {
+    /// `storedName` is the display name for the window title when connecting
+    /// to an already-stored session (`connectStored`). It exists because
+    /// `connectionViewModel.saveName` cannot be trusted here: the field
+    /// survives toggling "Save as session" off and earlier sessions, so an
+    /// UNSAVED connection could inherit a stale, unrelated name (M5f/T5
+    /// review).
+    private func startSession(with fs: any RemoteFileSystem, storedName: String? = nil) {
         // Clear any stale edit error from a previous session so a late
         // openInEditor task cannot misattribute its failure to this session.
         editErrorMessage = nil
@@ -459,6 +465,7 @@ struct ContentView: View {
             height: max(lastBrowserSize?.height ?? 0, 620))
         resizeWindow(toWidth: targetSize.width, height: targetSize.height)
 
+        var titleName = storedName
         if connectionViewModel.shouldSaveSession {
             let stored = sessionListViewModel.save(
                 name: connectionViewModel.saveName
@@ -478,16 +485,16 @@ struct ContentView: View {
             )
             activeSessionID = stored?.id
             connectionViewModel.shouldSaveSession = false
+            titleName = stored?.name ?? titleName
         }
 
-        // Window title: the stored session name if there is one, otherwise
-        // "user@host" — this is window chrome (proper name + user data),
-        // deliberately not localized (no catalog key).
-        let trimmedSaveName = connectionViewModel.saveName
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let activeSessionName = trimmedSaveName.isEmpty
-            ? "\(connectionViewModel.username)@\(connectionViewModel.host)"
-            : trimmedSaveName
+        // Window title: a stored session's name when this connection is
+        // actually backed by one (just saved above, or passed in by
+        // `connectStored`), otherwise "user@host". Window chrome (proper
+        // name + user data), deliberately not localized (no catalog key).
+        let activeSessionName = titleName?.isEmpty == false
+            ? titleName!
+            : "\(connectionViewModel.username)@\(connectionViewModel.host)"
         window?.title = "macSCP — \(activeSessionName)"
     }
 
@@ -510,7 +517,7 @@ struct ContentView: View {
             connectionViewModel.keyPath = stored.keyPath ?? ""
 
             if let fs = await connectionViewModel.connect() {
-                startSession(with: fs)
+                startSession(with: fs, storedName: stored.name)
                 activeSessionID = stored.id
             }
         }
