@@ -211,6 +211,17 @@ public final class ConnectionViewModel {
         state = .idle
     }
 
+    /// Leaves edit mode WITHOUT touching the form fields. Session teardown
+    /// calls this on every sidebar-navigation path (connect stored, import
+    /// fill, disconnect): a stale `.edit` target surviving those paths would
+    /// make a later Save overwrite the wrong stored session, while the field
+    /// values are owned by the caller (teardown/connectStored set them
+    /// explicitly right after).
+    public func exitEditMode() {
+        mode = .new
+        selectedGroupID = nil
+    }
+
     /// Validates the form for saving an edited session (password may be
     /// empty — unlike `connect()`) and, on success, returns the rebuilt
     /// `StoredSession` carrying the id from `mode`. On failure sets `state`

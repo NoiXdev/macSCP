@@ -570,6 +570,10 @@ struct ContentView: View {
         connectionViewModel.clearPassword()
         connectionViewModel.authChoice = .password
         connectionViewModel.keyPath = ""
+        // Reset any pending edit context: every sidebar-navigation path runs
+        // through here, and a stale `.edit(sessionID:)` surviving into the
+        // next Save would overwrite the wrong stored session (M5f/T4 review).
+        connectionViewModel.exitEditMode()
         session = nil
         activeSessionID = nil
         if hadSession {

@@ -315,6 +315,18 @@ struct ConnectionViewModelTests {
         #expect(vm.password.isEmpty) // never loaded from the keychain
     }
 
+    @Test @MainActor func exitEditModeResetsModeAndGroupButKeepsFields() {
+        let vm = makeVM()
+        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u", groupID: UUID()))
+        vm.exitEditMode()
+
+        #expect(vm.mode == .new)
+        #expect(vm.selectedGroupID == nil)
+        // Field values are owned by the teardown/connectStored callers,
+        // which overwrite them right after — exitEditMode must not clear them.
+        #expect(vm.host == "h" && vm.saveName == "web")
+    }
+
     @Test @MainActor func validateForEditSaveAllowsEmptyPasswordAndBuildsTheSession() {
         let vm = makeVM()
         let stored = StoredSession(name: "web", host: "h", username: "u")
