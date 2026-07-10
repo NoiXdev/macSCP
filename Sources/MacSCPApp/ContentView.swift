@@ -388,7 +388,9 @@ struct ContentView: View {
     /// OHNE Verbinden (der Import kennt keine Geheimnisse).
     private func fillFromImported(_ host: SSHConfigHost) {
         guard !isReconnecting else { return }
+        isReconnecting = true // synchron — verhindert Doppel-Teardown (korrumpiert lastBrowserSize)
         Task {
+            defer { isReconnecting = false }
             await teardownSession()
             connectionViewModel.host = host.hostName ?? host.alias
             connectionViewModel.port = String(host.port ?? 22)
@@ -407,7 +409,9 @@ struct ContentView: View {
 
     private func disconnectToForm() {
         guard !isReconnecting else { return }
+        isReconnecting = true // synchron — verhindert Doppel-Teardown (korrumpiert lastBrowserSize)
         Task {
+            defer { isReconnecting = false }
             await teardownSession()
         }
     }
