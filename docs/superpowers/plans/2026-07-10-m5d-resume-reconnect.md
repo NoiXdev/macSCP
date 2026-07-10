@@ -52,7 +52,7 @@ Bestehendes `readStream(path:)`/`write(path:stream:)` bleibt als Konvenienz (def
 - Unit-Tests (Local + Mock): offset mitten/0/hinter EOF; append an bestehende Datei + auf nicht-existente (=create); delete existiert/fehlt/Verzeichnis.
 - Gated (Docker, /config): Datei schreiben → ab Offset lesen → Bytes stimmen; overwrite dann append → Gesamtinhalt korrekt (md5 gegen lokal konstruierte Referenz); delete entfernt (list bestätigt) + zweites delete → notFound; Offset hinter EOF → leer.
 
-- [ ] Rot → implementieren → grün (Unit + gated) → Commit `feat: add offset reads, append writes and delete to file systems` (mit Footer).
+- [x] Rot → implementieren → grün (Unit + gated) → Commit `feat: add offset reads, append writes and delete to file systems` (mit Footer).
 
 ---
 
@@ -80,7 +80,7 @@ static func copyFile(..., resume: Bool = false, bytesPerSecondLimit: Int = 0, ..
 - Unit (Mock): resume mitten (5 Chunks, 2 vorhanden → nur 3 gelesen ab Offset, append aufgezeichnet, Progress startet bei 2*chunk); dest fehlt → frisch; dest komplett → Sofort-Erfolg ohne Read; dest größer als Quelle → Sofort-Erfolg (dokumentierte Heuristik); Cancellation mitten im Resume → CancellationError, Teil bleibt.
 - Gated (der Kerntest): 32-MiB-Random-Upload starten, nach erstem Progress canceln (Teil-Datei bleibt, Größe < Quelle — Muster aus M5c-T2), dann copyFile resume:true → md5 remote == md5 lokal (BYTE-IDENTISCH nach Resume!). Zweiter gated: Resume auf bereits kompletter Datei → kein Write (mtime/Größe unverändert via docker stat).
 
-- [ ] Rot → implementieren → grün → Commit `feat: resume interrupted transfers from the destination offset` (mit Footer).
+- [x] Rot → implementieren → grün → Commit `feat: resume interrupted transfers from the destination offset` (mit Footer).
 
 ---
 
@@ -114,7 +114,7 @@ public func retryInterrupted(
 4. Neuer Core-Key `core.transfer.interrupted` = EN "Connection lost — transfer interrupted." / DE „Verbindung verloren — Übertragung unterbrochen." (falls eine Message gebraucht wird) + App-Key `transfers.status.interrupted` = "interrupted"/„unterbrochen" für die Leiste (oranger Sekundärtext).
 5. Tests (bindend): connectionFailed→`.interrupted` (anderer Fehler→`.failed` als Kontrast); retryInterrupted re-enqueued FIFO mit resume:true (Mock zeichnet resume-Flag auf → Engine-Aufruf-Assertions via aufgezeichnetem append/offset-Read) und flippt Status; interrupted überlebt cancelAll NICHT rückwirkend (cancelAll cancelt nur queued/running — interrupted bleibt interrupted); Queue-Persistenz über simuliertes teardown+neue-FS (Items-Liste bleibt, retry nutzt neue Refs — Mock-Identität prüfen); hasInterrupted-Flag; Rename-Items retried unter effectiveFileName.
 
-- [ ] Rot → implementieren → grün (Filter + Gesamt) → Commit `feat: keep interrupted transfers resumable across reconnects` (mit Footer).
+- [x] Rot → implementieren → grün (Filter + Gesamt) → Commit `feat: keep interrupted transfers resumable across reconnects` (mit Footer).
 
 ---
 
@@ -128,16 +128,16 @@ public func retryInterrupted(
 2. Banner nur bei bestehender Session (Formular-Ansicht zeigt ihn nicht; die Items bleiben aber in der Leiste sichtbar, die auch im Formular-Zustand... — die Leiste lebt im Session-Zweig: dann zeigt der Formular-Zustand nichts; AKZEPTIERT, dokumentieren).
 3. Headless-Launch + Suite grün; visuell in T5.
 
-- [ ] Implementieren → grün → Commit `feat: offer resuming interrupted transfers after reconnect` (mit Footer).
+- [x] Implementieren → grün → Commit `feat: offer resuming interrupted transfers after reconnect` (mit Footer).
 
 ---
 
 ### Task 5: Abschluss-Verifikation
 
-- [ ] `swift test` gesamt; Rig hoch, `MACSCP_ITEST=1` voll (inkl. neuer gated), `MACSCP_KEYCHAIN=1` 2/2.
-- [ ] **Visueller Kill-Test (der Money-Shot; Bildschirm frei):** großen Upload starten (≥ 64 MiB, Limit z. B. 500 KB/s für Sichtbarkeit) → mitten drin `docker stop macscp-test-sshd` → Item wird „unterbrochen" (orange, nicht rot), App bleibt stabil → `docker start` → in der App neu verbinden (gleiche Session) → Banner erscheint → „Fortsetzen" → Transfer läuft ab Offset weiter (Progress startet nicht bei 0!) → fertig → `md5` remote == lokal BYTE-IDENTISCH. Zusätzlich: Kill während MEHRERER paralleler Transfers → alle drei „unterbrochen", ein Fortsetzen-Klick reiht alle wieder ein.
-- [ ] Kurz-Check Teil-Datei-Semantik: nach Cancel bleibt Teil-Datei liegen; erneuter normaler Upload derselben Datei zeigt Konflikt-Dialog (kein stilles Resume außerhalb retryInterrupted).
-- [ ] Checkboxen, Commit `docs: mark M5d plan tasks as completed` (mit Footer).
+- [x] `swift test` gesamt; Rig hoch, `MACSCP_ITEST=1` voll (inkl. neuer gated), `MACSCP_KEYCHAIN=1` 2/2.
+- [x] **Visueller Kill-Test (der Money-Shot; Bildschirm frei):** großen Upload starten (≥ 64 MiB, Limit z. B. 500 KB/s für Sichtbarkeit) → mitten drin `docker stop macscp-test-sshd` → Item wird „unterbrochen" (orange, nicht rot), App bleibt stabil → `docker start` → in der App neu verbinden (gleiche Session) → Banner erscheint → „Fortsetzen" → Transfer läuft ab Offset weiter (Progress startet nicht bei 0!) → fertig → `md5` remote == lokal BYTE-IDENTISCH. Zusätzlich: Kill während MEHRERER paralleler Transfers → alle drei „unterbrochen", ein Fortsetzen-Klick reiht alle wieder ein.
+- [x] Kurz-Check Teil-Datei-Semantik: nach Cancel bleibt Teil-Datei liegen; erneuter normaler Upload derselben Datei zeigt Konflikt-Dialog (kein stilles Resume außerhalb retryInterrupted).
+- [x] Checkboxen, Commit `docs: mark M5d plan tasks as completed` (mit Footer).
 
 ## Ausblick
 
