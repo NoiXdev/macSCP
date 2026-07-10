@@ -94,3 +94,6 @@
 /* Resume-Banner (M5d/T4) */
 "transfers.interrupted.banner" = "Unterbrochene Übertragungen können fortgesetzt werden.";
 "transfers.interrupted.resume" = "Fortsetzen";
+
+/* Editor integration (M5e/T4) */
+"edit.openFailed" = "Datei konnte nicht zum Bearbeiten geöffnet werden: %@";

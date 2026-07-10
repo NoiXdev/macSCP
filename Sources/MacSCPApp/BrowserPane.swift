@@ -11,6 +11,10 @@ struct BrowserPane: View {
     let tint: Color
     let viewModel: RemoteBrowserViewModel
     var onDropURLs: (([URL]) -> Void)? = nil
+    /// Double-click on a remote FILE row — wired only for the remote pane
+    /// (M5e/T4); the local pane leaves this `nil` and keeps its existing
+    /// no-op-on-file behavior.
+    var onOpenFile: ((RemoteFileItem) -> Void)? = nil
     var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)? = nil
 
     @State private var isDropTargeted = false
@@ -57,6 +61,7 @@ struct BrowserPane: View {
                     selectedPath: viewModel.selectedItem?.path,
                     onOpen: { item in Task { await viewModel.open(item) } },
                     onSelect: { item in viewModel.selectedItem = item },
+                    onOpenFile: onOpenFile,
                     pasteboardWriter: pasteboardWriter
                 )
                 .allowsHitTesting(viewModel.state == .loaded)

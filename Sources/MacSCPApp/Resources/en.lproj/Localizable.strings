@@ -94,3 +94,6 @@
 /* Resume banner (M5d/T4) */
 "transfers.interrupted.banner" = "Interrupted transfers can be resumed.";
 "transfers.interrupted.resume" = "Resume";
+
+/* Editor integration (M5e/T4) */
+"edit.openFailed" = "Could not open file for editing: %@";
