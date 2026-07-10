@@ -12,3 +12,6 @@ services:
       - USER_PASSWORD=testpass
     volumes:
       - ./seed:/data/seed:ro
+      # Das Image aktiviert bei vorhandenem /config/sshd/sshd_config.d
+      # automatisch ein Include dafuer (siehe init-openssh-server-config).
+      - ./sshd_config.d:/config/sshd/sshd_config.d:ro
