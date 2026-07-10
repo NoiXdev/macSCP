@@ -37,9 +37,9 @@
 - `twoConcurrentTreesKeepIndependentGroups` — zwei `enqueueTree` nacheinander (unterschiedliche Ordner), beide onCompleted feuern je genau 1×, Item-Zuordnung sauber.
 - `emptyTreeFiresOnCompleted` — Ordner ohne Dateien (nur leere Unterordner): onCompleted feuert genau 1×, `createdDirectories` enthält beide Ebenen.
 
-- [ ] Step 1: Teil-B-Tests rot (falls sie wider Erwarten grün sind: dokumentieren — sie pinnen dann nur; kein Implementierungsbedarf laut Review-Trace).
-- [ ] Step 2: Teil A implementieren; `swift build && swift test` grün (185 + 2 = 187), Headless-Launch ok.
-- [ ] Step 3: Commit `fix: compact connection window and pin tree accounting tests` (mit Footer).
+- [x] Step 1: Teil-B-Tests rot (falls sie wider Erwarten grün sind: dokumentieren — sie pinnen dann nur; kein Implementierungsbedarf laut Review-Trace).
+- [x] Step 2: Teil A implementieren; `swift build && swift test` grün (185 + 2 = 187), Headless-Launch ok.
+- [x] Step 3: Commit `fix: compact connection window and pin tree accounting tests` (mit Footer).
 
 ---
 
@@ -71,7 +71,7 @@ public final class SettingsStore {
 
 **Bindende Tests:** Defaults ohne Datei; Persistenz-Roundtrip; Klemmen (0→1, 99→8, negatives Limit→0); UNBEKANNTE Schlüssel im JSON überleben Laden+Ändern+Speichern (Fixture mit Fremdschlüssel auf Platte schreiben, danach prüfen); korruptes JSON → Defaults + kein Crash (Datei wird beim nächsten Speichern ersetzt); Verzeichnis wird bei Bedarf angelegt.
 
-- [ ] Rot → implementieren → grün (Filter + Gesamt) → Commit `feat: add forward-compatible settings store` (mit Footer).
+- [x] Rot → implementieren → grün (Filter + Gesamt) → Commit `feat: add forward-compatible settings store` (mit Footer).
 
 ---
 
@@ -92,7 +92,7 @@ public final class SettingsStore {
 5. Gated Test: großer Upload (≥ 64 MiB Random) gegen das Rig; Task nach erstem Progress-Event canceln; assert Fehler ist CancellationError und die Remote-Teildatei ist ECHT kleiner als die Quelle (docker exec stat); Verbindung/SFTP danach weiter nutzbar (list ok).
 6. M5a/M5b-Invarianten unangetastet; `.serialized` wo nötig gegen Rig-Flakiness.
 
-- [ ] Rot (Tests 3+4 gegen aktuellen Stand: 3 hängt/liefert alle Chunks, 4 endet .finished) → implementieren → grün → Commit `feat: make transfers cooperatively cancellable` (mit Footer).
+- [x] Rot (Tests 3+4 gegen aktuellen Stand: 3 hängt/liefert alle Chunks, 4 endet .finished) → implementieren → grün → Commit `feat: make transfers cooperatively cancellable` (mit Footer).
 
 ---
 
@@ -112,7 +112,7 @@ public final class SettingsStore {
 3. Die Tab-Struktur ist bewusst erweiterbar (Kommentar: künftige Tabs Terminal/Allgemein).
 4. Verifikation: Build + Suite unverändert grün; Headless-Launch; visuell in T6.
 
-- [ ] Implementieren → grün → Commit `feat: add settings window with transfer tab` (mit Footer).
+- [x] Implementieren → grün → Commit `feat: add settings window with transfer tab` (mit Footer).
 
 ---
 
@@ -128,7 +128,7 @@ public final class SettingsStore {
 3. Unit-Tests: `startsAtMostMaxConcurrent` (3 gebremste Transfers + maxConcurrent 2 → nie >2 gleichzeitig im Mock aktiv, Zähler im Mock); `fifoStartOrderPreserved` (Start-Reihenfolge == Einreihung trotz Parallelität); `cancelAllWithParallelRunners` (2 laufende + 1 queued: alle enden .cancelled, exactly-once, zügige Rückkehr); `conflictPromptsSerializeAcrossSlots` (2 parallele Konflikte → Decider-Aufrufe nacheinander, nie verschachtelt); bestehende 27 Suite-Tests bleiben grün (Parallelität-Default in Tests explizit auf 1 setzen wo Determinismus nötig — NICHT die Assertions aufweichen).
 4. Gated: 5 Dateien Multi-Drop-äquivalent via enqueue, maxConcurrent 3, alle md5-identisch.
 
-- [ ] Validierung → rot → implementieren → grün (alle Ebenen) → Commit `feat: run transfers on configurable parallel slots` (mit Footer).
+- [x] Validierung → rot → implementieren → grün (alle Ebenen) → Commit `feat: run transfers on configurable parallel slots` (mit Footer).
 
 ---
 
@@ -144,15 +144,15 @@ public final class SettingsStore {
 3. Rate/ETA: `TransferProgress` erhält `bytesPerSecond: Double?` und `etaSeconds: Double?` (nil solange unbekannt). Berechnung NICHT in der Engine, sondern im Progress-Consumer der Queue: gleitendes 3-Sekunden-Fenster über (Zeitstempel, Bytes)-Paaren; ETA nur bei bekanntem totalBytes. Leiste zeigt hinter dem Balken kompakt `"1,2 MB/s · 0:42"` (Formatter-Helfer, tabellarische Ziffern, deutsche Formate via `MeasurementFormatter`/eigenem Helfer — Tests für den Formatter).
 4. Engine-Test: Limit 256 KB/s, 1 MiB Mock-Transfer → Dauer ≥ ~3,5 s (Toleranzfenster, kein Flaky-Exakt-Timing; alternativ virtuelle Zeit via injizierbarem sleep — bevorzugt: `sleep`-Closure injizierbar, Test zählt Soll-Schlafzeit statt echt zu schlafen). Queue-Test: Rate-Feld gefüllt und monoton sinnvoll bei konstantem Mock-Takt; ETA nil ohne totalBytes.
 
-- [ ] Rot → implementieren → grün → Commit `feat: add bandwidth limits and transfer rate display` (mit Footer).
+- [x] Rot → implementieren → grün → Commit `feat: add bandwidth limits and transfer rate display` (mit Footer).
 
 ---
 
 ### Task 6: Abschluss-Verifikation
 
-- [ ] `swift test` gesamt grün (Zählung im Report); Rig hoch, `MACSCP_ITEST=1` (19 + neue gated), `MACSCP_KEYCHAIN=1` 2/2.
-- [ ] Visueller Smoke-Test (nur bei freiem Bildschirm): kompaktes Formular-Fenster beim Start + Wachsen/Schrumpfen bei Verbinden/Trennen; ⌘, öffnet Einstellungen, Stepper/Felder wirken; Parallelität 3: Multi-Drop → bis zu 3 Balken GLEICHZEITIG, Start-Reihenfolge FIFO; Limit 200 KB/s Upload setzen → sichtbar gedrosselte Rate in der Leiste (`~0,2 MB/s`), zurück auf 0 → volle Rate; „Alle abbrechen"-Verhalten via Trennen-Disabled-Gate bleibt (kein neuer Button in M5c — bewusst); Promise-Drag-durch-Queue NACHHOLEN (Fenster vorher klein ziehen, Drop auf freien Desktop-Bereich); byte-identisch.
-- [ ] Checkboxen, Commit `docs: mark M5c plan tasks as completed` (mit Footer).
+- [x] `swift test` gesamt grün (Zählung im Report); Rig hoch, `MACSCP_ITEST=1` (19 + neue gated), `MACSCP_KEYCHAIN=1` 2/2.
+- [x] Visueller Smoke-Test (nur bei freiem Bildschirm): kompaktes Formular-Fenster beim Start + Wachsen/Schrumpfen bei Verbinden/Trennen; ⌘, öffnet Einstellungen, Stepper/Felder wirken; Parallelität 3: Multi-Drop → bis zu 3 Balken GLEICHZEITIG, Start-Reihenfolge FIFO; Limit 200 KB/s Upload setzen → sichtbar gedrosselte Rate in der Leiste (`~0,2 MB/s`), zurück auf 0 → volle Rate; „Alle abbrechen"-Verhalten via Trennen-Disabled-Gate bleibt (kein neuer Button in M5c — bewusst); Promise-Drag-durch-Queue NACHHOLEN (Fenster vorher klein ziehen, Drop auf freien Desktop-Bereich); byte-identisch.
+- [x] Checkboxen, Commit `docs: mark M5c plan tasks as completed` (mit Footer).
 
 ## Ausblick
 
