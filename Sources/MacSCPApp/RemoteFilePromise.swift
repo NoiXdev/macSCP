@@ -4,7 +4,8 @@ import macSCPCore
 
 /// File Promise für Remote-Zeilen: Der Finder erhält ein Versprechen und ruft
 /// beim Ablegen writePromiseTo auf — erst dann wird die Datei heruntergeladen.
-/// Läuft bewusst direkt über die TransferEngine (ohne TransferBar/Queue → M5).
+/// Der Download läuft über `TransferQueueViewModel.enqueueAndWait`, reiht sich
+/// also serialisiert mit allen anderen Transfers ein (kein Gate-Bypass mehr).
 final class RemoteFilePromiseProvider: NSFilePromiseProvider {
     private let strongDelegate: RemoteFilePromiseDelegate
 

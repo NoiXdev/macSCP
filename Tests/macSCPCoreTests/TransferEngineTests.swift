@@ -61,50 +61,6 @@ struct TransferEngineTests {
         #expect(TransferProgress(bytesTransferred: 0, totalBytes: 0).fraction == nil)
         #expect(TransferProgress(bytesTransferred: 50, totalBytes: 100).fraction == 0.5)
     }
-
-    @Test func viewModelRunsTransferAndCallsCompletion() async {
-        let content = Data(repeating: 42, count: TransferChunk.size * 3)
-        let source = makeSource(content: content)
-        let destination = MockRemoteFileSystem(tree: ["/ziel": []])
-        let completed = ProgressRecorder()
-
-        let vm = await TransferViewModel()
-        await vm.run(
-            fileName: "quelle.bin", direction: .download,
-            source: source, sourcePath: "/quelle.bin",
-            destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { completed.record(
-                TransferProgress(bytesTransferred: 1, totalBytes: 1)) }
-        )
-        #expect(await vm.state == .finished(fileName: "quelle.bin", direction: .download))
-        #expect(completed.snapshots.count == 1)
-        #expect(await destination.writtenData(at: "/ziel/quelle.bin") == content)
-    }
-
-    @Test func sequentialAwaitedRunsBothExecute() async {
-        let content = Data("zwei".utf8)
-        let source = MockRemoteFileSystem(
-            tree: ["/": [
-                RemoteFileItem(name: "eins.txt", path: "/eins.txt", kind: .file, size: 4),
-                RemoteFileItem(name: "zwei.txt", path: "/zwei.txt", kind: .file, size: 4),
-            ]],
-            files: ["/eins.txt": content, "/zwei.txt": content]
-        )
-        let destination = MockRemoteFileSystem(tree: ["/ziel": []])
-        let vm = await TransferViewModel()
-
-        for name in ["eins.txt", "zwei.txt"] {
-            await vm.run(
-                fileName: name, direction: .upload,
-                source: source, sourcePath: "/\(name)",
-                destination: destination, destinationDirectory: "/ziel",
-                onCompleted: {}
-            )
-        }
-        #expect(await destination.writtenData(at: "/ziel/eins.txt") == content)
-        #expect(await destination.writtenData(at: "/ziel/zwei.txt") == content)
-        #expect(await vm.state == .finished(fileName: "zwei.txt", direction: .upload))
-    }
 }
 
 /// Lock-geschütztes Test-Double statt Actor: `onProgress` ist synchron, daher

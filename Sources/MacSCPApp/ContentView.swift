@@ -24,13 +24,13 @@ struct ContentView: View {
     )
     @State private var session: BrowserSession?
     @State private var activeSessionID: UUID?
-    @State private var transferViewModel = TransferViewModel()
+    @State private var transferQueue = TransferQueueViewModel()
     @State private var isReconnecting = false
     @State private var importedHosts: [SSHConfigHost] = []
 
     private var sidebarDisabled: Bool {
         isReconnecting
-            || transferViewModel.isRunning
+            || transferQueue.isActive
             || connectionViewModel.state == .connecting
     }
 
@@ -77,7 +77,7 @@ struct ContentView: View {
                     Button("Trennen") {
                         disconnectToForm()
                     }
-                    .disabled(transferViewModel.isRunning)
+                    .disabled(transferQueue.isActive)
                 }
                 .padding(8)
 
@@ -121,7 +121,7 @@ struct ContentView: View {
                     }
                 }
 
-                TransferBar(viewModel: transferViewModel)
+                TransferQueueBar(viewModel: transferQueue)
             }
         } else {
             ConnectionFormView(viewModel: connectionViewModel) { fs in
@@ -169,7 +169,7 @@ struct ContentView: View {
                     terminal: term, cols: cols, rows: rows)
             })
         )
-        transferViewModel = TransferViewModel()
+        transferQueue = TransferQueueViewModel()
 
         if connectionViewModel.shouldSaveSession {
             let stored = sessionListViewModel.save(
@@ -247,6 +247,7 @@ struct ContentView: View {
 
     private func teardownSession() async {
         if let session {
+            await transferQueue.cancelAll()
             await session.terminal.shutdown()
             await session.remote.disconnect()
         }
@@ -263,20 +264,18 @@ struct ContentView: View {
         let selected = session.local.selectedItem
         Button {
             guard let selected else { return }
-            Task {
-                await transferViewModel.run(
-                    fileName: selected.name, direction: .upload,
-                    source: session.localFS, sourcePath: selected.path,
-                    destination: session.remoteFS,
-                    destinationDirectory: session.remote.currentPath,
-                    onCompleted: { await session.remote.refresh() }
-                )
-            }
+            transferQueue.enqueue(
+                fileName: selected.name, direction: .upload,
+                source: session.localFS, sourcePath: selected.path,
+                destination: session.remoteFS,
+                destinationDirectory: session.remote.currentPath,
+                onCompleted: { await session.remote.refresh() }
+            )
         } label: {
             Label("Hochladen", systemImage: "arrow.up")
         }
         .tint(DesignTokens.localAmber)
-        .disabled(selected == nil || selected?.kind != .file || transferViewModel.isRunning)
+        .disabled(selected == nil || selected?.kind != .file)
         .help("Ausgewählte lokale Datei ins Remote-Verzeichnis hochladen")
     }
 
@@ -286,63 +285,53 @@ struct ContentView: View {
         let selected = session.remote.selectedItem
         Button {
             guard let selected else { return }
-            Task {
-                await transferViewModel.run(
-                    fileName: selected.name, direction: .download,
-                    source: session.remoteFS, sourcePath: selected.path,
-                    destination: session.localFS,
-                    destinationDirectory: session.local.currentPath,
-                    onCompleted: { await session.local.refresh() }
-                )
-            }
+            transferQueue.enqueue(
+                fileName: selected.name, direction: .download,
+                source: session.remoteFS, sourcePath: selected.path,
+                destination: session.localFS,
+                destinationDirectory: session.local.currentPath,
+                onCompleted: { await session.local.refresh() }
+            )
         } label: {
             Label("Herunterladen", systemImage: "arrow.down")
         }
         .tint(DesignTokens.remoteBlue)
-        .disabled(selected == nil || selected?.kind != .file || transferViewModel.isRunning)
+        .disabled(selected == nil || selected?.kind != .file)
         .help("Ausgewählte Remote-Datei ins lokale Verzeichnis herunterladen")
     }
 
-    /// Gedroppte Datei-URLs sequenziell hochladen (Ordner werden übersprungen).
-    /// WICHTIG: awaited-Schleife — TransferViewModel.run verwirft parallele
-    /// Aufrufe (isRunning-Guard); erst M5 bringt eine echte Queue.
+    /// Gedroppte Datei-URLs in die Queue einreihen (Ordner werden übersprungen).
+    /// Kein Guard mehr nötig: die Queue nimmt jeden Drop an und reiht ihn ein.
     private func uploadDropped(_ urls: [URL], session: BrowserSession) {
-        // Wie die Buttons: während eines laufenden Transfers keine neuen Drops
-        // annehmen — sonst verschluckt der isRunning-Guard Dateien still (Queue → M5).
-        guard !transferViewModel.isRunning else { return }
         let files = urls.filter { url in
             var isDirectory: ObjCBool = false
             let exists = FileManager.default.fileExists(
                 atPath: url.path(percentEncoded: false), isDirectory: &isDirectory)
             return exists && !isDirectory.boolValue
         }
-        guard !files.isEmpty else { return }
-        Task {
-            for url in files {
-                await transferViewModel.run(
-                    fileName: url.lastPathComponent, direction: .upload,
-                    source: session.localFS, sourcePath: url.path(percentEncoded: false),
-                    destination: session.remoteFS,
-                    destinationDirectory: session.remote.currentPath,
-                    onCompleted: { await session.remote.refresh() }
-                )
-            }
+        for url in files {
+            transferQueue.enqueue(
+                fileName: url.lastPathComponent, direction: .upload,
+                source: session.localFS, sourcePath: url.path(percentEncoded: false),
+                destination: session.remoteFS,
+                destinationDirectory: session.remote.currentPath,
+                onCompleted: { await session.remote.refresh() }
+            )
         }
     }
 
-    /// Promise-Einlösung: Remote-Datei direkt über die Engine an die
-    /// vom Finder vorgegebene URL laden (bewusst ohne TransferBar → M5).
+    /// Promise-Einlösung: Remote-Datei über die Queue an die vom Finder
+    /// vorgegebene URL laden — serialisiert sich mit allen anderen Transfers.
     private func remotePromiseProvider(
         for item: RemoteFileItem, session: BrowserSession
     ) -> RemoteFilePromiseProvider {
         RemoteFilePromiseProvider(item: item) { item, url in
-            try await TransferEngine.copyFile(
-                from: session.remoteFS, sourcePath: item.path,
-                to: session.localFS,
+            try await transferQueue.enqueueAndWait(
+                fileName: url.lastPathComponent, direction: .download,
+                source: session.remoteFS, sourcePath: item.path,
+                destination: session.localFS,
                 destinationDirectory: url.deletingLastPathComponent()
-                    .path(percentEncoded: false),
-                fileName: url.lastPathComponent,
-                onProgress: { _ in }
+                    .path(percentEncoded: false)
             )
         }
     }
