@@ -171,6 +171,11 @@ struct ContentView: View {
     /// Last browser window size, remembered on disconnect — the next
     /// connect grows to it instead of the minimum size, if it's larger.
     @State private var lastBrowserSize: CGSize?
+    /// Display name for the window title while connected (stored session
+    /// name or "user@host"). Drives `.navigationTitle` — assigning
+    /// `NSWindow.title` directly does not stick, SwiftUI's `WindowGroup`
+    /// re-applies its own title on the next scene update (M5f/T6 smoke).
+    @State private var sessionTitleName: String?
 
     private var sidebarDisabled: Bool {
         isReconnecting
@@ -210,6 +215,7 @@ struct ContentView: View {
         // `MacSCPApp.swift`.
         .frame(minWidth: session == nil ? 700 : 930, minHeight: 460)
         .tint(DesignTokens.remoteBlue)
+        .navigationTitle(sessionTitleName.map { "macSCP — \($0)" } ?? "macSCP")
         .background(WindowAccessor { window = $0 })
         .task { importedHosts = SSHConfigImporter.load(path: SSHConfigImporter.defaultPath) }
         // Session actions live in the window's native toolbar (M5f/T5) —
@@ -492,10 +498,9 @@ struct ContentView: View {
         // actually backed by one (just saved above, or passed in by
         // `connectStored`), otherwise "user@host". Window chrome (proper
         // name + user data), deliberately not localized (no catalog key).
-        let activeSessionName = titleName?.isEmpty == false
+        sessionTitleName = titleName?.isEmpty == false
             ? titleName!
             : "\(connectionViewModel.username)@\(connectionViewModel.host)"
-        window?.title = "macSCP — \(activeSessionName)"
     }
 
     /// Sidebar click: disconnect the current connection, fill the form from
@@ -596,13 +601,13 @@ struct ContentView: View {
         connectionViewModel.exitEditMode()
         session = nil
         activeSessionID = nil
+        sessionTitleName = nil
         if hadSession {
             // Remember the current browser size (for the next connect) and
             // actively shrink the window to the compact form size (user
             // feedback 2026-07-10, M5c/T0).
             if let window { lastBrowserSize = window.frame.size }
             resizeWindow(toWidth: 700, height: 460)
-            window?.title = "macSCP"
         }
     }
 
