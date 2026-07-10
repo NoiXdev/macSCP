@@ -34,6 +34,7 @@ public final class CitadelShell: RemoteShell, @unchecked Sendable {
         let handshake = Handshake()
 
         let pump = Task {
+            var loopCompleted = false
             do {
                 try await client.withPTY(
                     SSHChannelRequestEvent.PseudoTerminalRequest(
@@ -52,16 +53,26 @@ public final class CitadelShell: RemoteShell, @unchecked Sendable {
                             outCont.yield(Array(buffer: buffer))
                         }
                     }
+                    loopCompleted = true
                 }
                 outCont.finish()
             } catch is CancellationError {
                 // close() — bewusst kein Fehler für den Konsumenten
                 outCont.finish()
             } catch {
-                // Aufbau- ODER Laufzeitfehler: Handshake ggf. lösen (no-op,
-                // falls schon succeeded) und den Stream fehlerhaft beenden.
-                handshake.fail(error)
-                outCont.finish(throwing: error)
+                // Wenn die Lese-Schleife bereits normal durchgelaufen ist (Remote
+                // hat geschlossen, z. B. durch `exit`), wirft `withPTY` beim
+                // Schließen des schon toten Kanals intern oft
+                // ChannelError.alreadyClosed — das ist kein echter Fehler für
+                // den Konsumenten, sondern nur Aufräumen eines bereits toten
+                // Kanals. Nur ein Fehler VOR Schleifenende (Aufbau- oder
+                // Laufzeitfehler) wird dem Handshake/Stream als Fehler gemeldet.
+                if loopCompleted {
+                    outCont.finish()
+                } else {
+                    handshake.fail(error)
+                    outCont.finish(throwing: error)
+                }
             }
         }
 

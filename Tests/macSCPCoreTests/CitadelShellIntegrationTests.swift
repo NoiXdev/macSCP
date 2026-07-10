@@ -76,10 +76,13 @@ struct CitadelShellIntegrationTests {
         let fs = try await connectWithRetry()
         let shell = try await fs.openShell(terminal: "xterm-256color", cols: 80, rows: 24)
         try await shell.send(Array("exit\n".utf8))
-        // Stream muss enden (normal oder CommandFailed) — nicht hängen
+        // Stream muss sauber enden (kein Timeout, kein Fehler) — ein `exit` ist
+        // kein Fehlerfall, auch wenn Citadels withPTY beim Schließen des schon
+        // toten Kanals intern einen ChannelError.alreadyClosed wirft.
+        var thrown: Error?
         let ended = await withTaskGroup(of: Bool.self) { group in
             group.addTask {
-                do { for try await _ in shell.output {} } catch {}
+                do { for try await _ in shell.output {} } catch { thrown = error }
                 return true
             }
             group.addTask { try? await Task.sleep(for: .seconds(10)); return false }
@@ -88,6 +91,7 @@ struct CitadelShellIntegrationTests {
             return first
         }
         #expect(ended, "Output-Stream muss nach exit enden")
+        #expect(thrown == nil, "Sauberes exit darf keinen Fehler liefern: \(String(describing: thrown))")
         await shell.close() // idempotent nach Selbst-Exit
         await fs.disconnect()
     }
