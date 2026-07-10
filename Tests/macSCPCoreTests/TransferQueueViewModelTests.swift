@@ -62,12 +62,25 @@ struct TransferQueueViewModelTests {
         private var reads: [String: Read]
         private var written: [String: Data] = [:]
         private(set) var writeOrder: [String] = []
+        /// Signal-Gate für `stat`, isoliert vom Chunk-Gating (`Read.started/gate`
+        /// oben): erlaubt Tests, GENAU das stat-Await in `resolveConflictIfNeeded`
+        /// offenzuhalten (M5b/T2-Review-Fix, no-decider-Variante). `statEntered`
+        /// feuert, sobald `stat` betreten wird — davor wartet `statGate`, falls
+        /// gesetzt.
+        private var statEntered: TestSignal?
+        private var statGate: TestSignal?
 
-        init(reads: [String: Read]) { self.reads = reads }
+        init(reads: [String: Read], statEntered: TestSignal? = nil, statGate: TestSignal? = nil) {
+            self.reads = reads
+            self.statEntered = statEntered
+            self.statGate = statGate
+        }
 
         func list(path: String) async throws -> [RemoteFileItem] { [] }
 
         func stat(path: String) async throws -> RemoteFileItem {
+            await statEntered?.fire()
+            if let statGate { try await statGate.wait() }
             guard let read = reads[path] else { throw RemoteFSError.notFound(path: path) }
             let name = String(path.split(separator: "/").last ?? Substring(path))
             return RemoteFileItem(name: name, path: path, kind: .file, size: UInt64(read.content.count))
@@ -670,5 +683,93 @@ struct TransferQueueViewModelTests {
         #expect(vm.items[0].status == .finished)
         #expect(await calls.count == 0)
         #expect(await destination.writtenData(at: "/ziel/a.txt") == content)
+    }
+
+    // MARK: - 18
+
+    /// Reviewer-Fund (M5b/T2): `cancelAll` während des offenen Decider-Prompts
+    /// darf den Transfer NICHT mehr zulassen, obwohl das Item zu diesem
+    /// Zeitpunkt weder in `order` noch in `runningTransferTask` steckt.
+    @Test func cancelAllDuringConflictPromptPreventsTransfer() async throws {
+        let content = Data("neu".utf8)
+        let source = QueueTestFS(reads: ["/a.txt": .init(content: content)])
+        let destination = QueueTestFS(reads: ["/ziel/a.txt": .init(content: Data("alt".utf8))])
+        let deciderEntered = TestSignal()
+        let releaseDecider = TestSignal()
+
+        let vm = TransferQueueViewModel()
+        vm.conflictDecider = { _ in
+            await deciderEntered.fire()
+            try? await releaseDecider.wait()
+            return (.overwrite, false)
+        }
+
+        let waiterThrew = Counter()
+        let waitTask = Task { @MainActor in
+            do {
+                try await vm.enqueueAndWait(
+                    fileName: "a.txt", direction: .upload,
+                    source: source, sourcePath: "/a.txt",
+                    destination: destination, destinationDirectory: "/ziel")
+            } catch {
+                waiterThrew.increment()
+            }
+        }
+
+        try await deciderEntered.wait()
+
+        // cancelAll während der Decider offen ist: das Item hängt gerade in
+        // resolveConflictIfNeeded — weder queued noch runningTransferTask.
+        let cancelTask = Task { @MainActor in await vm.cancelAll() }
+        await waitUntil { vm.items[0].status == .cancelled }
+        #expect(vm.items[0].status == .cancelled)
+
+        // cancelAll blockt bis der Decider zurückkehrt (dokumentiert/akzeptiert).
+        await releaseDecider.fire()
+        await cancelTask.value
+        await waitTask.value
+
+        #expect(vm.items[0].status == .cancelled)          // bleibt cancelled, NICHT finished
+        #expect(waiterThrew.value == 1)                     // enqueueAndWait warf
+        #expect(await destination.writtenData(at: "/ziel/a.txt") == nil)   // kein Write nach Cancel
+    }
+
+    // MARK: - 19
+
+    /// Wie oben, aber ohne Decider: schon das stat-Await selbst ist das
+    /// Fenster (kein Konflikt-Prompt nötig, Ziel existiert nicht).
+    @Test func cancelAllDuringStatProbePreventsTransfer() async throws {
+        let content = Data("neu".utf8)
+        let source = QueueTestFS(reads: ["/a.txt": .init(content: content)])
+        let statEntered = TestSignal()
+        let statGate = TestSignal()
+        let destination = QueueTestFS(reads: [:], statEntered: statEntered, statGate: statGate)
+
+        let vm = TransferQueueViewModel()
+        let waiterThrew = Counter()
+        let waitTask = Task { @MainActor in
+            do {
+                try await vm.enqueueAndWait(
+                    fileName: "a.txt", direction: .upload,
+                    source: source, sourcePath: "/a.txt",
+                    destination: destination, destinationDirectory: "/ziel")
+            } catch {
+                waiterThrew.increment()
+            }
+        }
+
+        try await statEntered.wait()
+
+        let cancelTask = Task { @MainActor in await vm.cancelAll() }
+        await waitUntil { vm.items[0].status == .cancelled }
+        #expect(vm.items[0].status == .cancelled)
+
+        await statGate.fire()
+        await cancelTask.value
+        await waitTask.value
+
+        #expect(vm.items[0].status == .cancelled)
+        #expect(waiterThrew.value == 1)
+        #expect(await destination.writtenData(at: "/ziel/a.txt") == nil)
     }
 }

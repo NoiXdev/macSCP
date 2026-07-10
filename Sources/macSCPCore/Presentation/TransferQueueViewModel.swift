@@ -105,6 +105,14 @@ public final class TransferQueueViewModel {
     private var runningTransferTask: Task<Void, Error>?            // fürs Cancel des aktiven copyFile
     private var queueRule: ConflictResolution?                     // aktive "Für alle"-Regel; Reset bei Drain
 
+    /// ID des Items, das GERADE `resolveConflictIfNeeded` durchläuft (stat-Probe,
+    /// Decider-Prompt, Rename-Probing) — dequeued, aber noch nicht in
+    /// `runningTransferTask` erfasst. Ohne dieses Tracking griffe `cancelAll`
+    /// in dieses Fenster hinein ins Leere (M5b/T2-Review-Fix). Gesetzt direkt
+    /// nach dem Dequeue, gelöscht sobald der Transfer registriert ist ODER ein
+    /// Terminalzustand erreicht wurde.
+    private var resolvingJobID: UUID?
+
     public init() {}
 
     // MARK: - Öffentliche API
@@ -160,11 +168,26 @@ public final class TransferQueueViewModel {
             jobs[id] = nil
             resumeWaiter(id, with: .failure(CancellationError()))
         }
+        // 1b. Das Item, das gerade `resolveConflictIfNeeded` durchläuft: weder
+        //     in `order` (schon dequeued) noch in `runningTransferTask` (noch
+        //     nicht registriert) — dieses Fenster muss hier explizit abgedeckt
+        //     werden (M5b/T2-Review-Fix). Exactly-once: `process` erkennt am
+        //     fehlenden `jobs[id]`-Eintrag, dass hier schon aufgelöst wurde,
+        //     und fasst Status/Waiter danach NICHT nochmal an.
+        if let id = resolvingJobID {
+            resolvingJobID = nil
+            setStatus(id, .cancelled)
+            jobs[id] = nil
+            resumeWaiter(id, with: .failure(CancellationError()))
+        }
         // 2. Den aktiven Transfer abbrechen — sein copyFile endet mit
         //    CancellationError, `process` setzt das Item auf `.cancelled`.
         runningTransferTask?.cancel()
         // 3. Auf das Worker-Ende warten: `nextQueuedID()` liefert nichts mehr,
-        //    die Schleife läuft aus und setzt `workerTask = nil`.
+        //    die Schleife läuft aus und setzt `workerTask = nil`. Kann so lange
+        //    blocken, bis ein evtl. noch offener Decider-Prompt zurückkehrt
+        //    (dokumentiert/akzeptiert) — `process` transferiert danach aber
+        //    nachweislich nicht mehr (s.o.).
         let worker = workerTask
         await worker?.value
     }
@@ -199,10 +222,23 @@ public final class TransferQueueViewModel {
 
     private func process(_ jobID: UUID) async {
         guard let job = jobs[jobID] else { return }
+        // Ab hier bis zur Registrierung von `runningTransferTask` (oder einem
+        // Terminalzustand) läuft dieses Item weder über `order` noch über
+        // `runningTransferTask` — s. `resolvingJobID`-Doc.
+        resolvingJobID = jobID
 
         // Konfliktprüfung VOR dem Engine-Aufruf (seriell, also genau ein Prompt).
+        let outcome = await resolveConflictIfNeeded(job: job)
+
+        // `cancelAll` kann während des obigen Awaits (stat-Probe, Decider,
+        // Rename-Probing) bereits zugeschlagen haben: Status ist dann schon
+        // `.cancelled`, der Waiter schon geworfen, `jobs[jobID]` schon weg.
+        // Exactly-once: hier NICHT nochmal auflösen und NICHT transferieren.
+        guard jobs[jobID] != nil else { return }
+        resolvingJobID = nil
+
         let effectiveFileName: String
-        switch await resolveConflictIfNeeded(job: job) {
+        switch outcome {
         case .proceed(let name):
             effectiveFileName = name
             // Bei `.rename` den angezeigten Namen aktualisieren.
