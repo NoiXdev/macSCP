@@ -2,7 +2,7 @@ import Citadel
 import Crypto
 import Foundation
 
-/// Typisierte Fehler beim Laden privater SSH-Keys.
+/// Typed errors when loading private SSH keys.
 public enum SSHKeyError: Error, Equatable, Sendable {
     case fileNotFound(path: String)
     case passphraseRequired
@@ -10,8 +10,8 @@ public enum SSHKeyError: Error, Equatable, Sendable {
     case unsupportedFormat(reason: String)
 }
 
-/// Lädt private OpenSSH-Keys (M3b: ed25519, optional verschlüsselt) über
-/// Citadels Parser. RSA/ecdsa und ssh-agent sind bewusst verschoben (YAGNI).
+/// Loads private OpenSSH keys (M3b: ed25519, optionally encrypted) via
+/// Citadel's parser. RSA/ecdsa and ssh-agent are deliberately deferred (YAGNI).
 public enum SSHPrivateKeyLoader {
     public static func authentication(
         username: String, keyPath: String, passphrase: String?
@@ -28,7 +28,7 @@ public enum SSHPrivateKeyLoader {
             throw SSHKeyError.unsupportedFormat(reason: String(describing: error))
         }
 
-        // Leere Passphrase == keine Passphrase (unverschlüsselter Key).
+        // Empty passphrase == no passphrase (unencrypted key).
         let decryptionKey = passphrase.flatMap { $0.isEmpty ? nil : Data($0.utf8) }
         do {
             let key = try Curve25519.Signing.PrivateKey(
@@ -39,27 +39,27 @@ public enum SSHPrivateKeyLoader {
         }
     }
 
-    /// Übersetzt Citadels Parser-Fehler in `SSHKeyError`.
+    /// Translates Citadel's parser errors into `SSHKeyError`.
     ///
-    /// Citadel wirft für den OpenSSH-Parser keine öffentlich unterscheidbaren
-    /// Enum-Fälle: der interne `OpenSSH.KeyError` (u.a. `missingDecryptionKey`)
-    /// ist `internal`, und `InvalidOpenSSHKey` ist zwar `public`, sein
-    /// `reason`-Feld aber `internal`. Wir werten daher die stabilen, hart
-    /// kodierten `reason`-Strings über `String(describing:)` aus:
-    ///  - `missingDecryptionKey` → Key ist verschlüsselt, keine Passphrase.
-    ///  - `invalidCheck`/`invalidPadding`/Krypto-Fehler bei gegebener Passphrase
-    ///    → falsche Passphrase (Entschlüsselung ergab Müll).
-    ///  - alles andere (`invalidOpenSSHBoundary`, `invalidBase64Payload`, …)
-    ///    → nicht unterstütztes/kaputtes Format.
+    /// Citadel doesn't throw publicly distinguishable enum cases for the
+    /// OpenSSH parser: the internal `OpenSSH.KeyError` (among others
+    /// `missingDecryptionKey`) is `internal`, and while `InvalidOpenSSHKey` is
+    /// `public`, its `reason` field is `internal`. We therefore evaluate the
+    /// stable, hard-coded `reason` strings via `String(describing:)`:
+    ///  - `missingDecryptionKey` → the key is encrypted, no passphrase given.
+    ///  - `invalidCheck`/`invalidPadding`/crypto errors given a passphrase
+    ///    → wrong passphrase (decryption produced garbage).
+    ///  - everything else (`invalidOpenSSHBoundary`, `invalidBase64Payload`, …)
+    ///    → unsupported/broken format.
     private static func map(_ error: Error, hadPassphrase: Bool) -> SSHKeyError {
         let text = String(describing: error).lowercased()
 
-        // Verschlüsselter Key, aber keine Passphrase geliefert.
+        // Encrypted key, but no passphrase supplied.
         if text.contains("missingdecryptionkey") {
             return .passphraseRequired
         }
 
-        // Entschlüsselungs-spezifische Fehler.
+        // Decryption-specific errors.
         if text.contains("invalidcheck") || text.contains("invalidpadding")
             || text.contains("crypto") || text.contains("decrypt")
             || text.contains("cipher") || text.contains("passphrase")

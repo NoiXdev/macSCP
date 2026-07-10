@@ -6,12 +6,11 @@ import Testing
 @MainActor
 struct TransferQueueViewModelTests {
 
-    // MARK: - Test-Doubles (signalbasiert, ohne Sleeps)
+    // MARK: - Test doubles (signal-based, no sleeps)
 
-    /// Einmal-Signal: `wait()` blockiert, bis `fire()` gerufen wird; wird die
-    /// wartende Task gecancelt, wirft `wait()` `CancellationError`. So kann ein
-    /// gegateter Transfer per Cancel abgebrochen werden, ohne dass `fire()`
-    /// jemals kommt.
+    /// One-shot signal: `wait()` blocks until `fire()` is called; if the
+    /// waiting task is cancelled, `wait()` throws `CancellationError`. This
+    /// lets a gated transfer be cancelled without `fire()` ever arriving.
     actor TestSignal {
         private var fired = false
         private var continuations: [UUID: CheckedContinuation<Void, Error>] = [:]
@@ -48,40 +47,40 @@ struct TransferQueueViewModelTests {
         }
     }
 
-    /// Kontrollierbares Dateisystem: pro Quellpfad Inhalt + optionale Signale
-    /// (`started` feuert beim ersten Chunk-Pull, `gate` blockiert davor).
-    /// Nicht registrierte Pfade lassen `stat` `RemoteFSError.notFound` werfen.
-    /// Schreibvorgänge werden in Reihenfolge protokolliert.
+    /// Controllable file system: content plus optional signals per source path
+    /// (`started` fires on the first chunk pull, `gate` blocks before it).
+    /// Unregistered paths make `stat` throw `RemoteFSError.notFound`.
+    /// Writes are logged in order.
     actor QueueTestFS: RemoteFileSystem {
         struct Read {
             var content: Data
             var started: TestSignal?
             var gate: TestSignal?
-            /// Abbruch-UNBEWUSSTES Parken vor dem Chunk mit diesem Index: die
-            /// `readStream`-Schleife wartet dort per `Task.isCancelled` (wirft
-            /// NICHT). Nur so greift der Abbruch eines laufenden Transfers
-            /// ausschließlich über `copyFile`s `checkCancellation` (M5c/T2) —
-            /// nicht über ein abbruchbewusstes `gate`.
+            /// Cancellation-UNAWARE parking before the chunk at this index: the
+            /// `readStream` loop waits there via `Task.isCancelled` (does NOT
+            /// throw). This is the only way cancelling a running transfer is
+            /// caught exclusively via `copyFile`'s `checkCancellation` (M5c/T2) —
+            /// not via a cancellation-aware `gate`.
             var spinUntilCancelledAt: Int?
         }
 
         private var reads: [String: Read]
-        /// Verzeichnisinhalte pro Pfad — Grundlage für Baum-Expansion (M5b/T3).
+        /// Directory contents per path — the basis for tree expansion (M5b/T3).
         private var listings: [String: [RemoteFileItem]]
         private var written: [String: Data] = [:]
         private(set) var writeOrder: [String] = []
-        /// Reihenfolge der `createDirectory`-Aufrufe — Tests prüfen darüber die
-        /// Top-down-Anlage der Zielverzeichnisse (M5b/T3).
+        /// Order of `createDirectory` calls — tests use this to verify the
+        /// top-down creation of destination directories (M5b/T3).
         private(set) var createdDirectories: [String] = []
-        /// Signal-Gate für `stat`, isoliert vom Chunk-Gating (`Read.started/gate`
-        /// oben): erlaubt Tests, GENAU das stat-Await in `resolveConflictIfNeeded`
-        /// offenzuhalten (M5b/T2-Review-Fix, no-decider-Variante). `statEntered`
-        /// feuert, sobald `stat` betreten wird — davor wartet `statGate`, falls
-        /// gesetzt.
+        /// Signal gate for `stat`, isolated from the chunk gating (`Read.started/gate`
+        /// above): lets tests hold open EXACTLY the stat await in `resolveConflictIfNeeded`
+        /// (M5b/T2 review fix, no-decider variant). `statEntered`
+        /// fires as soon as `stat` is entered — before that, `statGate` waits, if
+        /// set.
         private var statEntered: TestSignal?
         private var statGate: TestSignal?
-        /// Analog für `list`: erlaubt Tests, die Baum-Expansion an einem
-        /// `list`-Await festzunageln (cancelAll-während-Expansion, M5b/T3).
+        /// Analogous for `list`: lets tests pin down tree expansion at a
+        /// `list` await (cancelAll-during-expansion, M5b/T3).
         private var listEntered: TestSignal?
         private var listGate: TestSignal?
         /// Tracks how many `write` calls are in flight at once (peak) — the
@@ -134,9 +133,9 @@ struct TransferQueueViewModelTests {
                     if let gate { try await gate.wait() }
                 }
                 if let spinAt, index == spinAt {
-                    // Abbruch-UNBEWUSST parken: erst die Cancellation weckt die
-                    // Schleife; der Chunk wird danach noch geliefert, den nächsten
-                    // Pull deckt der Engine-`checkCancellation` ab.
+                    // Park cancellation-UNAWARE: only the cancellation wakes the
+                    // loop; the chunk is still delivered afterwards, the next
+                    // pull is covered by the engine's `checkCancellation`.
                     while !Task.isCancelled { await Task.yield() }
                 }
                 guard index < chunks.count else { return nil }
@@ -161,9 +160,9 @@ struct TransferQueueViewModelTests {
 
         func writtenData(at path: String) -> Data? { written[path] }
 
-        /// Protokolliert den Aufruf (für Reihenfolge-Prüfungen der Top-down-
-        /// Anlage) und ist ansonsten idempotenter No-op — dieses Double kennt
-        /// keine echten Kollisionsfälle.
+        /// Logs the call (for order checks of the top-down
+        /// creation) and is otherwise an idempotent no-op — this double doesn't
+        /// know any real collision cases.
         func createDirectory(at path: String) async throws {
             createdDirectories.append(path)
         }
@@ -183,9 +182,9 @@ struct TransferQueueViewModelTests {
         }
     }
 
-    // MARK: - Kleine Helfer
+    // MARK: - Small helpers
 
-    /// MainActor-Zähler für `onCompleted`-Aufrufe.
+    /// MainActor counter for `onCompleted` calls.
     @MainActor final class Counter {
         private(set) var value = 0
         func increment() { value += 1 }
@@ -201,8 +200,8 @@ struct TransferQueueViewModelTests {
         func leave() { current -= 1 }
     }
 
-    /// Pollt (mit `Task.yield`) auf eine Bedingung, damit Tests nicht auf feste
-    /// Sleeps angewiesen sind. Nur für Zustände ohne eigenes Signal.
+    /// Polls (with `Task.yield`) for a condition so tests don't depend on fixed
+    /// sleeps. Only for states without their own signal.
     @MainActor func waitUntil(
         _ condition: @MainActor () -> Bool,
         limit: Int = 100_000
@@ -214,9 +213,9 @@ struct TransferQueueViewModelTests {
         }
     }
 
-    /// Führt `op` aus und meldet, ob es binnen `timeout` zurückkehrte. Wartet
-    /// NICHT auf `op` selbst (kein Hänger bei einer Regression), sondern pollt
-    /// ein Fertig-Flag. Für den Cancellation-Timeout-Race in Test M5c/T2.
+    /// Runs `op` and reports whether it returned within `timeout`. Does NOT
+    /// wait on `op` itself (no hang on a regression), but polls
+    /// a done flag. For the cancellation-timeout race in test M5c/T2.
     @MainActor func completesWithin(
         _ timeout: Duration, _ op: @escaping @MainActor () async -> Void
     ) async -> Bool {
@@ -248,7 +247,7 @@ struct TransferQueueViewModelTests {
             destination: destination, destinationDirectory: "/ziel",
             onCompleted: { counter.increment(); await done.fire() })
 
-        // Direkt nach enqueue (noch kein await): deterministisch queued.
+        // Right after enqueue (no await yet): deterministically queued.
         #expect(vm.items.count == 1)
         #expect(vm.items[0].status == .queued)
 
@@ -291,7 +290,7 @@ struct TransferQueueViewModelTests {
             onCompleted: { await done2.fire() })
 
         try await started1.wait()
-        // Item 1 läuft, Item 2 wurde NICHT verworfen, sondern wartet.
+        // Item 1 is running, item 2 was NOT dropped, but is waiting.
         #expect(vm.items[0].status.isRunning)
         #expect(vm.items[1].status == .queued)
 
@@ -341,7 +340,7 @@ struct TransferQueueViewModelTests {
 
     @Test func failedItemDoesNotBlockQueue() async throws {
         let content = Data("z".utf8)
-        // /1.txt ist NICHT registriert → stat wirft notFound.
+        // /1.txt is NOT registered → stat throws notFound.
         let source = QueueTestFS(reads: ["/2.txt": .init(content: content)])
         let destination = QueueTestFS(reads: [:])
         let done2 = TestSignal()
@@ -360,7 +359,8 @@ struct TransferQueueViewModelTests {
 
         try await done2.wait()
 
-        #expect(vm.items[0].status == .failed("Datei nicht gefunden: /1.txt"))
+        #expect(vm.items[0].status == .failed(
+            String(format: CoreL10n.string("core.transfer.notFound %@"), "/1.txt")))
         #expect(vm.items[1].status == .finished)
         #expect(await destination.writtenData(at: "/ziel/2.txt") == content)
     }
@@ -385,7 +385,7 @@ struct TransferQueueViewModelTests {
         }
 
         try await started.wait()
-        // Läuft noch → enqueueAndWait ist NICHT zurückgekehrt.
+        // Still running → enqueueAndWait has NOT returned.
         #expect(returned.value == 0)
         #expect(vm.items[0].status.isRunning)
 
@@ -399,7 +399,7 @@ struct TransferQueueViewModelTests {
     // MARK: - 6
 
     @Test func enqueueAndWaitThrowsOnFailure() async throws {
-        // /a.txt nicht registriert → stat wirft notFound → enqueueAndWait wirft.
+        // /a.txt not registered → stat throws notFound → enqueueAndWait throws.
         let source = QueueTestFS(reads: [:])
         let destination = QueueTestFS(reads: [:])
 
@@ -410,7 +410,8 @@ struct TransferQueueViewModelTests {
                 source: source, sourcePath: "/a.txt",
                 destination: destination, destinationDirectory: "/ziel")
         }
-        #expect(vm.items[0].status == .failed("Datei nicht gefunden: /a.txt"))
+        #expect(vm.items[0].status == .failed(
+            String(format: CoreL10n.string("core.transfer.notFound %@"), "/a.txt")))
     }
 
     // MARK: - 7
@@ -418,7 +419,7 @@ struct TransferQueueViewModelTests {
     @Test func cancelAllCancelsQueuedAndRunning() async throws {
         let content = Data("c".utf8)
         let started1 = TestSignal()
-        let gate1 = TestSignal()   // wird nie gefeuert; Cancel muss ihn lösen
+        let gate1 = TestSignal()   // never fired; cancel must release it
         let source = QueueTestFS(reads: [
             "/1.txt": .init(content: content, started: started1, gate: gate1),
             "/2.txt": .init(content: content),
@@ -433,7 +434,7 @@ struct TransferQueueViewModelTests {
             source: source, sourcePath: "/1.txt",
             destination: destination, destinationDirectory: "/ziel",
             onCompleted: nil)
-        // Item 2 mit einem wartenden enqueueAndWait — muss beim Cancel werfen.
+        // Item 2 with a waiting enqueueAndWait — must throw on cancel.
         let waiterThrew = Counter()
         let waitTask = Task { @MainActor in
             do {
@@ -446,19 +447,19 @@ struct TransferQueueViewModelTests {
             }
         }
 
-        // Warten, bis Item 1 läuft UND Item 2 eingereiht ist.
+        // Wait until item 1 is running AND item 2 is enqueued.
         try await started1.wait()
         await waitUntil { vm.items.count == 2 && vm.items[1].status == .queued }
 
         await vm.cancelAll()
 
-        #expect(vm.items[1].status == .cancelled)          // queued → sofort cancelled
-        #expect(vm.items[0].status == .cancelled)          // laufend → cancelled, NICHT failed
+        #expect(vm.items[1].status == .cancelled)          // queued → cancelled immediately
+        #expect(vm.items[0].status == .cancelled)          // running → cancelled, NOT failed
         await waitTask.value
-        #expect(waiterThrew.value == 1)                     // wartender enqueueAndWait warf
+        #expect(waiterThrew.value == 1)                     // waiting enqueueAndWait threw
         #expect(vm.isActive == false)
 
-        // Worker-Neustart nach cancelAll: neues enqueue läuft wieder an.
+        // Worker restart after cancelAll: a new enqueue starts running again.
         let done3 = TestSignal()
         vm.enqueue(
             fileName: "3.txt", direction: .upload,
@@ -479,17 +480,17 @@ struct TransferQueueViewModelTests {
         let startedC = TestSignal()
         let gateC = TestSignal()
         let source = QueueTestFS(reads: [
-            "/x.txt": .init(content: content, started: startedX, gate: gateX),   // wird cancelled
+            "/x.txt": .init(content: content, started: startedX, gate: gateX),   // will be cancelled
             "/a.txt": .init(content: content),                                    // finished
-            // /b.txt fehlt → failed
-            "/c.txt": .init(content: content, started: startedC, gate: gateC),   // bleibt running
-            "/d.txt": .init(content: content),                                    // bleibt queued
+            // /b.txt is missing → failed
+            "/c.txt": .init(content: content, started: startedC, gate: gateC),   // stays running
+            "/d.txt": .init(content: content),                                    // stays queued
         ])
         let destination = QueueTestFS(reads: [:])
         let vm = TransferQueueViewModel()
         vm.maxConcurrent = 1   // determinism: item D must stay .queued behind running C
 
-        // cancelled: X starten, dann cancelAll.
+        // cancelled: start X, then cancelAll.
         vm.enqueue(
             fileName: "x.txt", direction: .upload,
             source: source, sourcePath: "/x.txt",
@@ -498,13 +499,13 @@ struct TransferQueueViewModelTests {
         await vm.cancelAll()
         #expect(vm.items[0].status == .cancelled)
 
-        // finished: A per enqueueAndWait.
+        // finished: A via enqueueAndWait.
         try await vm.enqueueAndWait(
             fileName: "a.txt", direction: .upload,
             source: source, sourcePath: "/a.txt",
             destination: destination, destinationDirectory: "/ziel")
 
-        // failed: B per enqueueAndWait (wirft), Status failed.
+        // failed: B via enqueueAndWait (throws), status failed.
         _ = try? await vm.enqueueAndWait(
             fileName: "b.txt", direction: .upload,
             source: source, sourcePath: "/b.txt",
@@ -521,21 +522,21 @@ struct TransferQueueViewModelTests {
             source: source, sourcePath: "/d.txt",
             destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
 
-        // Zustand vor dem Aufräumen: cancelled, finished, failed, running, queued.
+        // State before cleanup: cancelled, finished, failed, running, queued.
         #expect(vm.items.count == 5)
         #expect(vm.items[3].status.isRunning)
         #expect(vm.items[4].status == .queued)
 
         vm.clearCompleted()
 
-        // Nur running + queued bleiben.
+        // Only running + queued remain.
         #expect(vm.items.count == 2)
         #expect(vm.items[0].fileName == "c.txt")
         #expect(vm.items[0].status.isRunning)
         #expect(vm.items[1].fileName == "d.txt")
         #expect(vm.items[1].status == .queued)
 
-        // Aufräumen: C/D abbrechen, damit keine Task hängen bleibt.
+        // Cleanup: cancel C/D so no task is left hanging.
         await vm.cancelAll()
     }
 
@@ -570,9 +571,9 @@ struct TransferQueueViewModelTests {
         #expect(vm.pendingCount == 0)
     }
 
-    // MARK: - Konflikt-Tests (M5b/T2)
+    // MARK: - Conflict tests (M5b/T2)
 
-    /// Actor-Zähler für Decider-Aufrufe aus einer `@Sendable`-Closure.
+    /// Actor counter for decider calls from a `@Sendable` closure.
     actor CallCounter {
         private(set) var count = 0
         func increment() { count += 1 }
@@ -580,11 +581,11 @@ struct TransferQueueViewModelTests {
 
     // MARK: - 10
 
-    /// Ohne gesetzten Decider verhält sich ein Konflikt wie M5a: überschreiben.
+    /// Without a decider set, a conflict behaves like M5a: overwrite.
     @Test func conflictWithoutDeciderOverwrites() async throws {
         let content = Data("neu".utf8)
         let source = QueueTestFS(reads: ["/a.txt": .init(content: content)])
-        // Ziel existiert bereits → Konflikt.
+        // Target already exists → conflict.
         let destination = QueueTestFS(reads: ["/ziel/a.txt": .init(content: Data("alt".utf8))])
 
         let vm = TransferQueueViewModel()
@@ -599,7 +600,7 @@ struct TransferQueueViewModelTests {
 
     // MARK: - 11
 
-    /// `.skip` markiert das Item `.skipped`, schreibt nicht und ruft kein onCompleted.
+    /// `.skip` marks the item `.skipped`, doesn't write, and doesn't call onCompleted.
     @Test func deciderSkipMarksSkippedAndSkipsWrite() async throws {
         let content = Data("x".utf8)
         let source = QueueTestFS(reads: ["/a.txt": .init(content: content)])
@@ -617,12 +618,12 @@ struct TransferQueueViewModelTests {
         await waitUntil { vm.items[0].status == .skipped }
         #expect(vm.items[0].status == .skipped)
         #expect(counter.value == 0)
-        #expect(await destination.writtenData(at: "/ziel/a.txt") == nil)   // kein Write
+        #expect(await destination.writtenData(at: "/ziel/a.txt") == nil)   // no write
     }
 
     // MARK: - 12
 
-    /// `.overwrite` schreibt das Ziel neu.
+    /// `.overwrite` rewrites the target.
     @Test func deciderOverwriteWrites() async throws {
         let content = Data("neu".utf8)
         let source = QueueTestFS(reads: ["/a.txt": .init(content: content)])
@@ -641,13 +642,13 @@ struct TransferQueueViewModelTests {
 
     // MARK: - 13
 
-    /// `.rename` sucht den nächsten freien Namen: "(2)" belegt → landet bei "(3)".
+    /// `.rename` looks for the next free name: "(2)" taken → ends up at "(3)".
     @Test func deciderRenameWritesUnderFreeName() async throws {
         let content = Data("neu".utf8)
         let source = QueueTestFS(reads: ["/a.txt": .init(content: content)])
         let destination = QueueTestFS(reads: [
-            "/ziel/a.txt": .init(content: Data("alt".utf8)),        // Konflikt
-            "/ziel/a (2).txt": .init(content: Data("belegt".utf8)), // (2) belegt
+            "/ziel/a.txt": .init(content: Data("alt".utf8)),        // conflict
+            "/ziel/a (2).txt": .init(content: Data("belegt".utf8)), // (2) taken
         ])
 
         let vm = TransferQueueViewModel()
@@ -660,12 +661,12 @@ struct TransferQueueViewModelTests {
         #expect(vm.items[0].status == .finished)
         #expect(vm.items[0].fileName == "a (3).txt")
         #expect(await destination.writtenData(at: "/ziel/a (3).txt") == content)
-        #expect(await destination.writtenData(at: "/ziel/a.txt") == nil)   // Original unangetastet
+        #expect(await destination.writtenData(at: "/ziel/a.txt") == nil)   // original untouched
     }
 
     // MARK: - 14
 
-    /// Decider gibt nil (Abbrechen) → Item `.cancelled`, enqueueAndWait wirft.
+    /// Decider returns nil (cancel) → item `.cancelled`, enqueueAndWait throws.
     @Test func deciderCancelCancelsItem() async throws {
         let content = Data("x".utf8)
         let source = QueueTestFS(reads: ["/a.txt": .init(content: content)])
@@ -680,12 +681,12 @@ struct TransferQueueViewModelTests {
                 destination: destination, destinationDirectory: "/ziel")
         }
         #expect(vm.items[0].status == .cancelled)
-        #expect(await destination.writtenData(at: "/ziel/a.txt") == nil)   // kein Write
+        #expect(await destination.writtenData(at: "/ziel/a.txt") == nil)   // no write
     }
 
     // MARK: - 15
 
-    /// `applyToAll == true` setzt eine Regel: der zweite Konflikt fragt nicht erneut.
+    /// `applyToAll == true` sets a rule: the second conflict doesn't ask again.
     @Test func applyToAllAsksOnlyOnce() async throws {
         let content = Data("x".utf8)
         let source = QueueTestFS(reads: [
@@ -717,7 +718,7 @@ struct TransferQueueViewModelTests {
 
     // MARK: - 16
 
-    /// Die Regel gilt nur bis zum Drain: ein späterer Batch fragt wieder.
+    /// The rule only applies until drain: a later batch asks again.
     @Test func ruleResetsAfterDrain() async throws {
         let content = Data("x".utf8)
         let source = QueueTestFS(reads: [
@@ -733,15 +734,15 @@ struct TransferQueueViewModelTests {
         let vm = TransferQueueViewModel()
         vm.conflictDecider = { _ in await calls.increment(); return (.overwrite, true) }
 
-        // Batch 1 mit applyToAll.
+        // Batch 1 with applyToAll.
         try await vm.enqueueAndWait(
             fileName: "1.txt", direction: .upload,
             source: source, sourcePath: "/1.txt",
             destination: destination, destinationDirectory: "/ziel")
         #expect(await calls.count == 1)
-        await waitUntil { vm.isActive == false }   // Worker leergelaufen → Regel zurückgesetzt
+        await waitUntil { vm.isActive == false }   // worker drained → rule reset
 
-        // Batch 2: Decider wird WIEDER gefragt.
+        // Batch 2: decider is asked AGAIN.
         try await vm.enqueueAndWait(
             fileName: "2.txt", direction: .upload,
             source: source, sourcePath: "/2.txt",
@@ -751,11 +752,11 @@ struct TransferQueueViewModelTests {
 
     // MARK: - 17
 
-    /// Existiert das Ziel nicht, wird der Decider gar nicht erst gefragt.
+    /// If the target doesn't exist, the decider isn't asked at all.
     @Test func noConflictDoesNotAskDecider() async throws {
         let content = Data("x".utf8)
         let source = QueueTestFS(reads: ["/a.txt": .init(content: content)])
-        let destination = QueueTestFS(reads: [:])   // Ziel existiert NICHT
+        let destination = QueueTestFS(reads: [:])   // target does NOT exist
         let calls = CallCounter()
 
         let vm = TransferQueueViewModel()
@@ -772,9 +773,9 @@ struct TransferQueueViewModelTests {
 
     // MARK: - 18
 
-    /// Reviewer-Fund (M5b/T2): `cancelAll` während des offenen Decider-Prompts
-    /// darf den Transfer NICHT mehr zulassen, obwohl das Item zu diesem
-    /// Zeitpunkt weder in `order` noch in `runningTransferTask` steckt.
+    /// Reviewer finding (M5b/T2): `cancelAll` while the decider prompt is open
+    /// must NOT allow the transfer to proceed anymore, even though the item at
+    /// this point is in neither `order` nor `runningTransferTask`.
     @Test func cancelAllDuringConflictPromptPreventsTransfer() async throws {
         let content = Data("neu".utf8)
         let source = QueueTestFS(reads: ["/a.txt": .init(content: content)])
@@ -803,26 +804,26 @@ struct TransferQueueViewModelTests {
 
         try await deciderEntered.wait()
 
-        // cancelAll während der Decider offen ist: das Item hängt gerade in
-        // resolveConflictIfNeeded — weder queued noch runningTransferTask.
+        // cancelAll while the decider is open: the item is currently hanging in
+        // resolveConflictIfNeeded — neither queued nor runningTransferTask.
         let cancelTask = Task { @MainActor in await vm.cancelAll() }
         await waitUntil { vm.items[0].status == .cancelled }
         #expect(vm.items[0].status == .cancelled)
 
-        // cancelAll blockt bis der Decider zurückkehrt (dokumentiert/akzeptiert).
+        // cancelAll blocks until the decider returns (documented/accepted).
         await releaseDecider.fire()
         await cancelTask.value
         await waitTask.value
 
-        #expect(vm.items[0].status == .cancelled)          // bleibt cancelled, NICHT finished
-        #expect(waiterThrew.value == 1)                     // enqueueAndWait warf
-        #expect(await destination.writtenData(at: "/ziel/a.txt") == nil)   // kein Write nach Cancel
+        #expect(vm.items[0].status == .cancelled)          // stays cancelled, NOT finished
+        #expect(waiterThrew.value == 1)                     // enqueueAndWait threw
+        #expect(await destination.writtenData(at: "/ziel/a.txt") == nil)   // no write after cancel
     }
 
     // MARK: - 19
 
-    /// Wie oben, aber ohne Decider: schon das stat-Await selbst ist das
-    /// Fenster (kein Konflikt-Prompt nötig, Ziel existiert nicht).
+    /// Like above, but without a decider: the stat await itself is already the
+    /// window (no conflict prompt needed, target doesn't exist).
     @Test func cancelAllDuringStatProbePreventsTransfer() async throws {
         let content = Data("neu".utf8)
         let source = QueueTestFS(reads: ["/a.txt": .init(content: content)])
@@ -858,9 +859,9 @@ struct TransferQueueViewModelTests {
         #expect(await destination.writtenData(at: "/ziel/a.txt") == nil)
     }
 
-    // MARK: - Baum-Tests (M5b/T3)
+    // MARK: - Tree tests (M5b/T3)
 
-    /// Standard-Fixture `dir/{a.txt, sub/{b.txt}, link→x, leer/}` als Listings.
+    /// Standard fixture `dir/{a.txt, sub/{b.txt}, link→x, leer/}` as listings.
     func treeListings() -> [String: [RemoteFileItem]] {
         [
             "/dir": [
@@ -876,14 +877,14 @@ struct TransferQueueViewModelTests {
         ]
     }
 
-    /// Findet den Status des Items mit dem gegebenen angezeigten Namen.
+    /// Finds the status of the item with the given display name.
     @MainActor func status(_ vm: TransferQueueViewModel, _ name: String) -> TransferQueueViewModel.Item.Status? {
         vm.items.first(where: { $0.fileName == name })?.status
     }
 
     // MARK: - 20
 
-    /// Zielverzeichnisse werden top-down VOR den Datei-Writes angelegt.
+    /// Destination directories are created top-down BEFORE the file writes.
     @Test func treeCreatesDirectoriesTopDown() async throws {
         let contentA = Data("aaa".utf8)
         let contentB = Data("bbb".utf8)
@@ -906,11 +907,11 @@ struct TransferQueueViewModelTests {
             destination: destination, destinationDirectory: "/ziel",
             onCompleted: { await done.fire() })
 
-        // Auf vollständige Expansion warten (alle drei Verzeichnisse angelegt),
-        // ohne auf onCompleted zu setzen (Writes sind gegated).
+        // Wait for full expansion (all three directories created),
+        // without relying on onCompleted (writes are gated).
         while (await destination.createdDirectories).count < 3 { await Task.yield() }
         #expect(await destination.createdDirectories == ["/ziel/dir", "/ziel/dir/sub", "/ziel/dir/leer"])
-        #expect(await destination.writeOrder.isEmpty)   // Verzeichnisse zuerst, Writes noch gated
+        #expect(await destination.writeOrder.isEmpty)   // directories first, writes still gated
 
         await gateA.fire(); await gateB.fire()
         try await done.wait()
@@ -919,7 +920,7 @@ struct TransferQueueViewModelTests {
 
     // MARK: - 21
 
-    /// Alle Dateien werden übertragen, onCompleted feuert genau einmal.
+    /// All files are transferred, onCompleted fires exactly once.
     @Test func treeTransfersAllFilesAndFiresOnCompletedOnce() async throws {
         let contentA = Data("aaa".utf8)
         let contentB = Data("bbb".utf8)
@@ -942,7 +943,7 @@ struct TransferQueueViewModelTests {
 
         try await done.wait()
         await waitUntil { vm.isActive == false }
-        // Kein zweiter Aufruf – ein paar Runden nachlaufen lassen.
+        // No second call — let it run a few more rounds.
         for _ in 0..<50 { await Task.yield() }
 
         #expect(counter.value == 1)
@@ -954,7 +955,7 @@ struct TransferQueueViewModelTests {
 
     // MARK: - 22
 
-    /// Symlinks werden übersprungen (Item `.skipped`, Namensuffix " →", kein Write).
+    /// Symlinks are skipped (item `.skipped`, name suffix " →", no write).
     @Test func treeSkipsSymlinks() async throws {
         let source = QueueTestFS(
             reads: [
@@ -980,7 +981,7 @@ struct TransferQueueViewModelTests {
 
     // MARK: - 23
 
-    /// Leere Verzeichnisse werden dennoch angelegt.
+    /// Empty directories are still created.
     @Test func treeCreatesEmptyDirectories() async throws {
         let source = QueueTestFS(
             reads: [
@@ -1004,7 +1005,7 @@ struct TransferQueueViewModelTests {
 
     // MARK: - 24
 
-    /// onCompleted feuert erst NACH dem letzten Item-Finish, nicht früher.
+    /// onCompleted only fires AFTER the last item finishes, not earlier.
     @Test func treeOnCompletedWaitsForLastItem() async throws {
         let contentA = Data("aaa".utf8)
         let contentB = Data("bbb".utf8)
@@ -1026,7 +1027,7 @@ struct TransferQueueViewModelTests {
             destination: destination, destinationDirectory: "/ziel",
             onCompleted: { counter.increment(); await done.fire() })
 
-        // b.txt läuft (gegated), a.txt ist bereits fertig — trotzdem kein onCompleted.
+        // b.txt is running (gated), a.txt is already finished — still no onCompleted.
         try await startedB.wait()
         await waitUntil { status(vm, "a.txt") == .finished }
         #expect(counter.value == 0)
@@ -1039,10 +1040,10 @@ struct TransferQueueViewModelTests {
 
     // MARK: - 25
 
-    /// Expansions-Fehler (list wirft in einem Unterordner) → `.failed`-Item mit
-    /// "/"-Suffix; die übrigen Zweige laufen weiter.
+    /// Expansion error (list throws in a subfolder) → `.failed` item with
+    /// a "/" suffix; the remaining branches keep running.
     @Test func treeExpansionErrorProducesFailedItemButOthersRun() async throws {
-        // "/dir/sub" NICHT registriert → list wirft notFound in diesem Zweig.
+        // "/dir/sub" NOT registered → list throws notFound in this branch.
         var listings = treeListings()
         listings["/dir/sub"] = nil
         let contentA = Data("aaa".utf8)
@@ -1061,22 +1062,22 @@ struct TransferQueueViewModelTests {
 
         try await done.wait()
 
-        // Fehler-Item für den Unterordner.
+        // Error item for the subfolder.
         let subStatus = status(vm, "sub/")
-        if case .failed = subStatus {} else { Issue.record("sub/ sollte .failed sein, war \(String(describing: subStatus))") }
-        // a.txt lief trotzdem durch.
+        if case .failed = subStatus {} else { Issue.record("sub/ should be .failed, was \(String(describing: subStatus))") }
+        // a.txt went through anyway.
         #expect(status(vm, "a.txt") == .finished)
         #expect(status(vm, "link →") == .skipped)
         #expect(await destination.writtenData(at: "/ziel/dir/a.txt") == contentA)
-        // b.txt wurde nie eingereiht.
+        // b.txt was never enqueued.
         #expect(status(vm, "b.txt") == nil)
     }
 
     // MARK: - 26
 
-    /// Auch bei Teilfehler (eine Datei failt) feuert onCompleted — genau einmal.
+    /// Even on partial failure (one file fails), onCompleted fires — exactly once.
     @Test func treePartialFailureStillFiresOnCompleted() async throws {
-        // a.txt-Read fehlt → copyFile wirft → Item .failed. b.txt läuft durch.
+        // a.txt read is missing → copyFile throws → item .failed. b.txt goes through.
         let contentB = Data("bbb".utf8)
         let source = QueueTestFS(
             reads: ["/dir/sub/b.txt": .init(content: contentB)],
@@ -1097,18 +1098,18 @@ struct TransferQueueViewModelTests {
         for _ in 0..<50 { await Task.yield() }
 
         #expect(counter.value == 1)
-        if case .failed = status(vm, "a.txt") {} else { Issue.record("a.txt sollte .failed sein") }
+        if case .failed = status(vm, "a.txt") {} else { Issue.record("a.txt should be .failed") }
         #expect(status(vm, "b.txt") == .finished)
         #expect(await destination.writtenData(at: "/ziel/dir/sub/b.txt") == contentB)
     }
 
     // MARK: - 27
 
-    /// cancelAll während der Expansion: keine neuen Items, Gruppe aufgeräumt,
-    /// onCompleted feuert NICHT, isActive false.
+    /// cancelAll during expansion: no new items, group cleaned up,
+    /// onCompleted does NOT fire, isActive false.
     @Test func cancelAllDuringExpansionStopsCleanly() async throws {
         let listEntered = TestSignal()
-        let listGate = TestSignal()   // wird nie gefeuert; Cancel muss ihn lösen
+        let listGate = TestSignal()   // never fired; cancel must release it
         let source = QueueTestFS(
             reads: [
                 "/dir/a.txt": .init(content: Data("a".utf8)),
@@ -1126,16 +1127,16 @@ struct TransferQueueViewModelTests {
             destination: destination, destinationDirectory: "/ziel",
             onCompleted: { counter.increment() })
 
-        // Expansion hängt im ersten list-Aufruf.
+        // Expansion hangs in the first list call.
         try await listEntered.wait()
         await vm.cancelAll()
 
         #expect(vm.isActive == false)
-        #expect(vm.items.isEmpty)         // list kehrte nie zurück → keine Datei-Items
+        #expect(vm.items.isEmpty)         // list never returned → no file items
         for _ in 0..<50 { await Task.yield() }
-        #expect(counter.value == 0)        // kein onCompleted bei Voll-Abbruch
+        #expect(counter.value == 0)        // no onCompleted on full cancellation
 
-        // Worker-Neustart bleibt intakt: ein neues enqueue läuft an.
+        // Worker restart stays intact: a new enqueue starts running.
         let done = TestSignal()
         let plain = QueueTestFS(reads: ["/x.txt": .init(content: Data("x".utf8))])
         vm.enqueue(
@@ -1149,11 +1150,11 @@ struct TransferQueueViewModelTests {
 
     // MARK: - 28
 
-    /// Zwei unabhängige `enqueueTree`-Aufrufe (verschiedene Ordner) laufen
-    /// nacheinander eingereiht, aber unabhängig voneinander: jede `onCompleted`
-    /// feuert genau einmal, und die Item-Zuordnung bleibt sauber getrennt —
-    /// keine Vermischung zwischen den beiden Gruppen (Final-Review M5b,
-    /// Backlog e).
+    /// Two independent `enqueueTree` calls (different folders) are enqueued
+    /// one after another but run independently: each `onCompleted`
+    /// fires exactly once, and item assignment stays cleanly separated —
+    /// no mixing between the two groups (final review M5b,
+    /// backlog e).
     @Test func twoConcurrentTreesKeepIndependentGroups() async throws {
         let contentA = Data("aaa".utf8)
         let contentB = Data("bbb".utf8)
@@ -1202,9 +1203,9 @@ struct TransferQueueViewModelTests {
 
     // MARK: - 29
 
-    /// Ordner ohne Dateien (nur leere Unterordner): onCompleted feuert genau
-    /// einmal, `createdDirectories` enthält beide Ebenen (Final-Review M5b,
-    /// Backlog e).
+    /// Folder without files (only empty subfolders): onCompleted fires exactly
+    /// once, `createdDirectories` contains both levels (final review M5b,
+    /// backlog e).
     @Test func emptyTreeFiresOnCompleted() async throws {
         let listings: [String: [RemoteFileItem]] = [
             "/leerdir": [
@@ -1229,20 +1230,20 @@ struct TransferQueueViewModelTests {
 
         #expect(counter.value == 1)
         #expect(await destination.createdDirectories == ["/ziel/leerdir", "/ziel/leerdir/unter"])
-        #expect(vm.items.isEmpty)   // keine Datei-Items, nur Verzeichnisse
+        #expect(vm.items.isEmpty)   // no file items, only directories
     }
 
-    // MARK: - 30 (M5c/T2: kooperative Cancellation eines LAUFENDEN Transfers)
+    // MARK: - 30 (M5c/T2: cooperative cancellation of a RUNNING transfer)
 
-    /// Ein bereits laufender Transfer (aktiv Chunks schiebend, KEIN
-    /// abbruchbewusstes Gate) muss durch `cancelAll` chunk-genau enden:
-    /// Item `.cancelled` statt `.finished`, `cancelAll` kehrt zügig zurück.
+    /// A transfer that is already running (actively pushing chunks, with NO
+    /// cancellation-aware gate) must end chunk-precisely via `cancelAll`:
+    /// item `.cancelled` instead of `.finished`, `cancelAll` returns promptly.
     ///
-    /// Ohne den `checkCancellation` in `TransferEngine.copyFile` liefe der
-    /// Transfer bis zum natürlichen Ende durch und das Item endete `.finished`
-    /// (roter Ausgangszustand). Die abbruch-UNBEWUSSTE Park-Schleife im Quell-
-    /// Double stellt sicher, dass der Abbruch ausschließlich über den Engine-
-    /// Check greift und nicht über ein werfendes Warten.
+    /// Without the `checkCancellation` in `TransferEngine.copyFile`, the
+    /// transfer would run through to its natural end and the item would end up
+    /// `.finished` (red starting state). The cancellation-UNAWARE parking loop
+    /// in the source double ensures that the cancellation is caught
+    /// exclusively via the engine check and not via a throwing wait.
     @Test func cancelAllStopsRunningTransferCooperatively() async throws {
         let content = Data(repeating: 0x5A, count: TransferChunk.size * 4)
         let started = TestSignal()
@@ -1261,8 +1262,8 @@ struct TransferQueueViewModelTests {
         try await started.wait()
         await waitUntil { vm.items[0].status.isRunning }
 
-        // Timeout-Race: mit kooperativer Cancellation kehrt cancelAll zügig
-        // zurück; ohne sie hinge/liefe der Transfer bis zum natürlichen Ende.
+        // Timeout race: with cooperative cancellation, cancelAll returns
+        // promptly; without it, the transfer would hang/run until its natural end.
         let returnedInTime = await completesWithin(.seconds(2)) { await vm.cancelAll() }
         #expect(returnedInTime)
         #expect(vm.items[0].status == .cancelled)   // NICHT .finished
@@ -1468,12 +1469,12 @@ struct TransferQueueViewModelTests {
         #expect(await destination.writtenData(at: "/ziel/2.txt") == content)
     }
 
-    // MARK: - Rate/ETA-Tests (M5c/T5)
+    // MARK: - Rate/ETA tests (M5c/T5)
 
-    /// Kontrollierbarer Takt-Geber für den `now`-Hook des VM (injizierbar,
-    /// s. `TransferQueueViewModel.init(now:)`): `advance` rückt die Uhr um
-    /// eine feste Dauer vor, `now()` liest den aktuellen Stand — deterministisch
-    /// statt von echtem Wanduhr-Timing abhängig.
+    /// Controllable clock source for the VM's `now` hook (injectable,
+    /// see `TransferQueueViewModel.init(now:)`): `advance` moves the clock
+    /// forward by a fixed duration, `now()` reads the current value —
+    /// deterministic instead of depending on real wall-clock timing.
     final class TickClock: @unchecked Sendable {
         private let lock = NSLock()
         private var current = ContinuousClock.now
@@ -1486,11 +1487,11 @@ struct TransferQueueViewModelTests {
         }
     }
 
-    /// Quelle mit MANUELL getriebenem Chunk-Strom: der Test hält die
-    /// `AsyncThrowingStream`-Continuation und liefert Chunks (und den
-    /// Takt-Vorschub) exakt dann, wenn er es will — kein Gate/Signal-Umweg
-    /// nötig, weil `TransferEngine.copyFile`s `iterator.next()` ohnehin bis
-    /// zum nächsten `yield` suspendiert.
+    /// Source with a MANUALLY driven chunk stream: the test holds the
+    /// `AsyncThrowingStream` continuation and delivers chunks (and the
+    /// clock advance) exactly when it wants to — no gate/signal detour
+    /// needed, because `TransferEngine.copyFile`'s `iterator.next()` suspends
+    /// until the next `yield` anyway.
     actor ManualByteSource: RemoteFileSystem {
         private let totalSize: UInt64?
         private let providedStream: AsyncThrowingStream<Data, Error>
@@ -1510,9 +1511,9 @@ struct TransferQueueViewModelTests {
         func disconnect() async {}
     }
 
-    /// Liest den `TransferProgress` aus dem aktuellen Status des ersten
-    /// Items, falls `.running` — sonst `nil`. Kleiner Helfer gegen
-    /// Wiederholung in den folgenden Tests.
+    /// Reads the `TransferProgress` from the current status of the first
+    /// item, if `.running` — otherwise `nil`. Small helper to avoid
+    /// repetition in the following tests.
     @MainActor private func runningProgress(_ vm: TransferQueueViewModel) -> TransferProgress? {
         guard case .running(let progress) = vm.items.first?.status else { return nil }
         return progress
@@ -1520,10 +1521,10 @@ struct TransferQueueViewModelTests {
 
     // MARK: - 35
 
-    /// Mit bekanntem `totalBytes` (300) und einem per `TickClock` exakt auf
-    /// 1s-Abstände gesetzten Takt: die erste Probe liefert noch keine Rate
-    /// (nur ein Sample), die zweite (100 Bytes / 1s Fenster) exakt 100 B/s
-    /// und eine daraus abgeleitete ETA von 1s (200 verbleibende Bytes).
+    /// With a known `totalBytes` (300) and a clock set via `TickClock` to
+    /// exactly 1s intervals: the first sample doesn't yield a rate yet
+    /// (only one sample), the second (100 bytes / 1s window) yields exactly
+    /// 100 B/s and a derived ETA of 1s (200 bytes remaining).
     @Test func rateAndETAPopulateOverSlidingWindow() async throws {
         let tick = TickClock()
         let vm = TransferQueueViewModel(now: { tick.now() })
@@ -1540,14 +1541,14 @@ struct TransferQueueViewModelTests {
         continuation.yield(Data(repeating: 0, count: 100))
         await waitUntil { runningProgress(vm)?.bytesTransferred == 100 }
         let first = runningProgress(vm)
-        #expect(first?.bytesPerSecond == nil)   // nur ein Sample bisher
+        #expect(first?.bytesPerSecond == nil)   // only one sample so far
         #expect(first?.etaSeconds == nil)
 
         tick.advance(by: .seconds(1))
         continuation.yield(Data(repeating: 0, count: 100))
         await waitUntil { runningProgress(vm)?.bytesTransferred == 200 }
         let second = runningProgress(vm)
-        #expect(second?.bytesPerSecond == 100)   // 100 Bytes über 1s Fenster
+        #expect(second?.bytesPerSecond == 100)   // 100 bytes over a 1s window
         #expect(second?.etaSeconds == 1.0)       // (300-200) / 100 B/s
 
         tick.advance(by: .seconds(1))
@@ -1559,9 +1560,9 @@ struct TransferQueueViewModelTests {
 
     // MARK: - 36
 
-    /// Ohne bekanntes `totalBytes`: die Rate wird trotzdem berechnet (das
-    /// Fenster braucht nur Zeitstempel + Bytes), aber die ETA bleibt `nil` —
-    /// bindend laut Plan ("ETA nur bei bekanntem totalBytes").
+    /// Without a known `totalBytes`: the rate is still calculated (the
+    /// window only needs timestamps + bytes), but the ETA stays `nil` —
+    /// binding per the plan ("ETA only with known totalBytes").
     @Test func etaStaysNilWithoutKnownTotalBytes() async throws {
         let tick = TickClock()
         let vm = TransferQueueViewModel(now: { tick.now() })
@@ -1582,8 +1583,8 @@ struct TransferQueueViewModelTests {
         continuation.yield(Data(repeating: 0, count: 100))
         await waitUntil { runningProgress(vm)?.bytesTransferred == 200 }
         let progress = runningProgress(vm)
-        #expect(progress?.bytesPerSecond == 100)   // Rate braucht kein totalBytes
-        #expect(progress?.etaSeconds == nil)        // ETA schon
+        #expect(progress?.bytesPerSecond == 100)   // rate doesn't need totalBytes
+        #expect(progress?.etaSeconds == nil)        // ETA does
 
         continuation.finish()
         await waitUntil { vm.items.first?.status == .finished }

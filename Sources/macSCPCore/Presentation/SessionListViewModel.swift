@@ -1,8 +1,8 @@
 import Foundation
 import Observation
 
-/// Zustand der Sessions-Sidebar: Liste, Speichern, Löschen, Passwort-Zugriff.
-/// Geheimnisse laufen ausschließlich über den SecretStore.
+/// State of the sessions sidebar: list, save, delete, password access.
+/// Secrets go exclusively through the SecretStore.
 @Observable
 @MainActor
 public final class SessionListViewModel {
@@ -26,7 +26,8 @@ public final class SessionListViewModel {
             errorMessage = nil
         } catch {
             sessions = []
-            errorMessage = "Sessions konnten nicht geladen werden: \(String(describing: error))"
+            errorMessage = String(
+                format: CoreL10n.string("core.session.loadFailed %@"), String(describing: error))
         }
     }
 
@@ -55,7 +56,8 @@ public final class SessionListViewModel {
             return session
         } catch {
             reload()
-            errorMessage = "Session konnte nicht gespeichert werden: \(String(describing: error))"
+            errorMessage = String(
+                format: CoreL10n.string("core.session.saveFailed %@"), String(describing: error))
             return nil
         }
     }
@@ -67,7 +69,8 @@ public final class SessionListViewModel {
             reload()
         } catch {
             reload()
-            errorMessage = "Session konnte nicht gelöscht werden: \(String(describing: error))"
+            errorMessage = String(
+                format: CoreL10n.string("core.session.deleteFailed %@"), String(describing: error))
         }
     }
 

@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import macSCPCore
 
-/// Steuerbare Mock-Shell: Output wird von außen gefüttert; send/resize/close
-/// werden aufgezeichnet.
+/// Controllable mock shell: output is fed in from outside; send/resize/close
+/// are recorded.
 final class MockShell: RemoteShell, @unchecked Sendable {
     let output: AsyncThrowingStream<[UInt8], Error>
     let continuation: AsyncThrowingStream<[UInt8], Error>.Continuation
@@ -23,7 +23,7 @@ final class MockShell: RemoteShell, @unchecked Sendable {
     func close() async { lock.lock(); _closed = true; lock.unlock(); continuation.finish() }
 }
 
-/// Pollt bis `condition` wahr ist (max ~2 s) — Muster wie in den anderen VM-Tests.
+/// Polls until `condition` is true (max ~2 s) — same pattern as in the other VM tests.
 @MainActor
 private func waitUntil(_ condition: @autoclosure () -> Bool) async throws {
     for _ in 0..<200 where !condition() {
@@ -56,9 +56,9 @@ struct TerminalPanelViewModelTests {
             await counter.increment()
             return MockShell()
         })
-        vm.toggle()   // sichtbar + öffnet
-        vm.toggle()   // unsichtbar
-        vm.toggle()   // sichtbar — Shell läuft schon, NICHT neu öffnen
+        vm.toggle()   // visible + opens
+        vm.toggle()   // hidden
+        vm.toggle()   // visible — shell is already running, do NOT reopen
         try await waitUntil(vm.state == .running)
         #expect(await counter.value == 1)
     }
@@ -100,7 +100,7 @@ struct TerminalPanelViewModelTests {
         try await waitUntil(vm.state == .running)
         await shells.current.close()
         try await waitUntil(vm.state == .ended(nil))
-        vm.openIfNeeded()  // "Neu öffnen"-Button
+        vm.openIfNeeded()  // "Reopen" button
         try await waitUntil(vm.state == .running)
         #expect(await shells.count == 2)
     }
@@ -115,13 +115,12 @@ struct TerminalPanelViewModelTests {
         #expect(shell.sent.first == Array("ls\n".utf8))
     }
 
-    /// Regression: unabhängige, unstrukturierte `Task`s pro `send()`-Aufruf
-    /// geben keine FIFO-Garantie — bei schnellen Tastenanschlägen (oder
-    /// Paste) kann eine spätere, kürzer verzögerte Eingabe eine frühere
-    /// überholen. `InvertedDelayShell` verzögert Chunk i von N absichtlich um
-    /// `(N - i) * 2ms`, damit unabhängige Tasks garantiert außer der Reihe
-    /// aufzeichnen, während eine FIFO-Kette exakt in Sende-Reihenfolge
-    /// aufzeichnet.
+    /// Regression: independent, unstructured `Task`s per `send()` call
+    /// give no FIFO guarantee — with fast keystrokes (or paste), a later,
+    /// shorter-delayed input can overtake an earlier one. `InvertedDelayShell`
+    /// deliberately delays chunk i of N by `(N - i) * 2ms`, so that
+    /// independent tasks are guaranteed to record out of order, while a
+    /// FIFO chain records in exactly the send order.
     @Test func sendPreservesFIFOOrderUnderVaryingLatency() async throws {
         let totalChunks = 20
         let shell = InvertedDelayShell(totalChunks: totalChunks)
@@ -136,28 +135,28 @@ struct TerminalPanelViewModelTests {
         #expect(shell.recorded == Array(0..<totalChunks))
     }
 
-    /// Regression (Final-Review M4, Minor 1): ⌘T-Ausblenden unmountet die
-    /// TerminalView, `onOutput` wird nil, der Lese-Loop verwirft Chunks —
-    /// beim Wiedereinblenden startet eine leere Konsole. Der VM muss die
-    /// Chunks puffern, solange kein Konsument angehängt ist.
+    /// Regression (final review M4, minor 1): hiding with ⌘T unmounts the
+    /// TerminalView, `onOutput` becomes nil, the read loop discards chunks —
+    /// showing it again starts an empty console. The VM must buffer the
+    /// chunks while no consumer is attached.
     @Test func outputIsBufferedForReplayWhileHidden() async throws {
         let shell = MockShell()
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
         vm.toggle()
         try await waitUntil(vm.state == .running)
-        // Kein onOutput gesetzt (Panel ausgeblendet) — Chunks dürfen nicht verloren gehen
+        // No onOutput set (panel hidden) — chunks must not be lost
         shell.continuation.yield(Array("verborgen".utf8))
         try await waitUntil(!vm.replayBuffer.isEmpty)
         #expect(vm.replayBuffer.flatMap { $0 } == Array("verborgen".utf8))
-        // Neuer Konsument (Re-Mount) sieht Puffer + Live-Daten
+        // New consumer (re-mount) sees buffer + live data
         var received: [[UInt8]] = []
         vm.onOutput = { received.append($0) }
         shell.continuation.yield(Array("live".utf8))
         try await waitUntil(!received.isEmpty)
     }
 
-    /// Regression: der Replay-Puffer darf nicht unbegrenzt wachsen — er ist
-    /// auf `maxReplayBytes` (256 KiB) gedeckelt; älteste Chunks fliegen raus.
+    /// Regression: the replay buffer must not grow unbounded — it is
+    /// capped at `maxReplayBytes` (256 KiB); the oldest chunks are evicted.
     @Test func replayBufferIsBounded() async throws {
         let shell = MockShell()
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
@@ -165,13 +164,13 @@ struct TerminalPanelViewModelTests {
         try await waitUntil(vm.state == .running)
         shell.continuation.yield([UInt8](repeating: 1, count: 200_000))
         shell.continuation.yield([UInt8](repeating: 2, count: 200_000))
-        // Wartet auf das Eintreffen des ZWEITEN Chunks (nicht nur "Puffer
-        // erfüllt die Schranke", denn ein noch leerer Puffer erfüllt die
-        // Schranke trivial und würde den Poll sofort — vor der eigentlichen
-        // Verarbeitung — beenden).
+        // Waits for the SECOND chunk to arrive (not just "buffer satisfies
+        // the bound", since a still-empty buffer trivially satisfies the
+        // bound and would end the poll immediately — before the actual
+        // processing happens).
         try await waitUntil(vm.replayBuffer.last?.last == 2)
         #expect(vm.replayBuffer.reduce(0) { $0 + $1.count } <= 256 * 1024)
-        #expect(vm.replayBuffer.last?.last == 2)  // Neuestes bleibt
+        #expect(vm.replayBuffer.last?.last == 2)  // Newest is kept
     }
 
     @Test func shutdownClosesShellAndHides() async throws {
@@ -185,9 +184,9 @@ struct TerminalPanelViewModelTests {
         #expect(!vm.isVisible)
     }
 
-    /// Regression: shutdown() während `.opening` durfte den in-flight `openShell`
-    /// Aufruf nicht ignorieren — sonst überschreibt das spät auflösende Öffnen
-    /// den `.closed`-Zustand und die dabei erzeugte Shell bleibt als Orphan offen.
+    /// Regression: shutdown() during `.opening` must not ignore the in-flight
+    /// `openShell` call — otherwise the late-resolving open overwrites the
+    /// `.closed` state and the shell it creates stays open as an orphan.
     @Test func shutdownWhileOpeningLeavesClosedAndClosesOrphan() async throws {
         let shell = MockShell()
         let openerReturned = Flag()
@@ -203,7 +202,7 @@ struct TerminalPanelViewModelTests {
         await vm.shutdown()
         #expect(!vm.isVisible)
 
-        // Genug Zeit für den verzögerten Opener, um aufzulösen.
+        // Enough time for the delayed opener to resolve.
         try await Task.sleep(for: .milliseconds(300))
 
         #expect(vm.state == .closed)
@@ -212,9 +211,9 @@ struct TerminalPanelViewModelTests {
         }
     }
 
-    /// Regression: ein Lese-Loop, der erst nach shutdown() endet (spätes
-    /// `continuation.finish()`, nachdem `close()` schon zurückgekehrt ist),
-    /// darf `.closed` nicht nachträglich mit `.ended` überschreiben.
+    /// Regression: a read loop that ends only after shutdown() (a late
+    /// `continuation.finish()`, after `close()` has already returned)
+    /// must not retroactively overwrite `.closed` with `.ended`.
     @Test func staleReadLoopCannotOverwriteState() async throws {
         let shell = LateFinishShell()
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
@@ -244,13 +243,13 @@ actor Flag {
     func set() { value = true }
 }
 
-/// Shell, deren `close()` sofort zurückkehrt, ohne den Ausgabe-Stream zu
-/// beenden. `output` ignoriert bewusst Task-Cancellation (busy-poll auf ein
-/// manuelles Flag) — reale `AsyncThrowingStream`-Continuations beenden die
-/// Iteration schon bei `Task.cancel()`, was den eigentlichen Race maskieren
-/// würde. Hier endet der Lese-Loop ausschließlich über das explizite,
-/// verzögerte `finish()`, um zu testen, dass ein spät endender Lese-Loop den
-/// bereits gesetzten Zustand nicht überschreibt.
+/// Shell whose `close()` returns immediately without ending the output
+/// stream. `output` deliberately ignores task cancellation (busy-polls a
+/// manual flag) — real `AsyncThrowingStream` continuations already end
+/// iteration on `Task.cancel()`, which would mask the actual race. Here the
+/// read loop ends only via the explicit, delayed `finish()`, to test that a
+/// late-ending read loop does not overwrite a state that has already been
+/// set.
 final class LateFinishShell: RemoteShell, @unchecked Sendable {
     private let lock = NSLock()
     private var _closed = false
@@ -265,9 +264,9 @@ final class LateFinishShell: RemoteShell, @unchecked Sendable {
                 let finished = self._finished
                 self.lock.unlock()
                 if finished { return nil }
-                // Schluckt CancellationError absichtlich — simuliert einen
-                // Datenstrom, der Task-Cancellation nicht selbst beobachtet
-                // (z.B. eine echte Netzwerkverbindung).
+                // Deliberately swallows CancellationError — simulates a
+                // data stream that does not observe task cancellation
+                // itself (e.g. a real network connection).
                 _ = try? await Task.sleep(for: .milliseconds(5))
             }
         }
@@ -283,13 +282,13 @@ final class LateFinishShell: RemoteShell, @unchecked Sendable {
     }
 }
 
-/// Shell, deren `send(_:)` den i-ten von N Aufrufen um `(N - i) * 2ms`
-/// verzögert, bevor er aufgezeichnet wird — je früher der Chunk gesendet
-/// wurde, desto länger wartet er. Bei unabhängigen Tasks pro `send()`-Aufruf
-/// (der Bug) holen spätere, kurz verzögerte Chunks frühere, lang verzögerte
-/// ein und die Aufzeichnung gerät durcheinander; eine FIFO-Kette zeichnet
-/// dagegen exakt in Sende-Reihenfolge auf, weil jeder Aufruf erst startet,
-/// nachdem der vorherige (inklusive seiner Verzögerung) fertig ist.
+/// Shell whose `send(_:)` delays the i-th of N calls by `(N - i) * 2ms`
+/// before recording it — the earlier a chunk was sent, the longer it
+/// waits. With independent tasks per `send()` call (the bug), later,
+/// short-delayed chunks catch up with earlier, long-delayed ones and the
+/// recording gets scrambled; a FIFO chain, by contrast, records in exactly
+/// the send order, because each call only starts after the previous one
+/// (including its delay) has finished.
 final class InvertedDelayShell: RemoteShell, @unchecked Sendable {
     let output: AsyncThrowingStream<[UInt8], Error>
     let continuation: AsyncThrowingStream<[UInt8], Error>.Continuation

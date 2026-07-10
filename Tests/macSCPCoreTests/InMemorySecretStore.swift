@@ -1,7 +1,7 @@
 import Foundation
 @testable import macSCPCore
 
-/// Test-Double: Geheimnisse im Speicher, threadsicher über NSLock.
+/// Test double: secrets held in memory, thread-safe via NSLock.
 final class InMemorySecretStore: SecretStore, @unchecked Sendable {
     private let lock = NSLock()
     private var storage: [UUID: String] = [:]

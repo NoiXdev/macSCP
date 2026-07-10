@@ -3,13 +3,13 @@ import Foundation
 import NIOCore
 import NIOSSH
 
-/// RemoteShell auf Basis von Citadels `withPTY`.
+/// RemoteShell based on Citadel's `withPTY`.
 ///
-/// Citadels API ist closure-gescoped: der Shell-Kanal lebt genau so lange wie
-/// die an `withPTY` übergebene Closure. Diese Klasse invertiert das — eine
-/// Pump-Task hält die Closure im Lese-Loop offen, bis `close()` sie cancelt.
-/// Die Cancellation beendet die for-await-Schleife, die Closure kehrt zurück,
-/// `withPTY` schließt den Kanal (nur den Child-Channel, nie die Verbindung).
+/// Citadel's API is closure-scoped: the shell channel lives exactly as long
+/// as the closure passed to `withPTY`. This class inverts that — a pump task
+/// keeps the closure open in the read loop until `close()` cancels it.
+/// Cancellation ends the for-await loop, the closure returns, `withPTY`
+/// closes the channel (only the child channel, never the connection).
 public final class CitadelShell: RemoteShell, @unchecked Sendable {
     public let output: AsyncThrowingStream<[UInt8], Error>
     private let writer: TTYStdinWriter
@@ -25,8 +25,8 @@ public final class CitadelShell: RemoteShell, @unchecked Sendable {
         self.pump = pump
     }
 
-    /// Öffnet die PTY-Shell; kehrt erst zurück, wenn pty-req + shell bestätigt
-    /// sind (Writer verfügbar) oder der Aufbau fehlgeschlagen ist.
+    /// Opens the PTY shell; returns only once pty-req + shell are confirmed
+    /// (writer available) or setup has failed.
     static func open(
         client: SSHClient, terminal: String, cols: Int, rows: Int
     ) async throws -> CitadelShell {
@@ -57,16 +57,16 @@ public final class CitadelShell: RemoteShell, @unchecked Sendable {
                 }
                 outCont.finish()
             } catch is CancellationError {
-                // close() — bewusst kein Fehler für den Konsumenten
+                // close() — deliberately not an error for the consumer
                 outCont.finish()
             } catch {
-                // Wenn die Lese-Schleife bereits normal durchgelaufen ist (Remote
-                // hat geschlossen, z. B. durch `exit`), wirft `withPTY` beim
-                // Schließen des schon toten Kanals intern oft
-                // ChannelError.alreadyClosed — das ist kein echter Fehler für
-                // den Konsumenten, sondern nur Aufräumen eines bereits toten
-                // Kanals. Nur ein Fehler VOR Schleifenende (Aufbau- oder
-                // Laufzeitfehler) wird dem Handshake/Stream als Fehler gemeldet.
+                // If the read loop already ran to completion normally (remote
+                // closed, e.g. via `exit`), `withPTY` often internally throws
+                // ChannelError.alreadyClosed while closing the already-dead
+                // channel — that's not a real error for the consumer, just
+                // cleanup of an already-dead channel. Only an error BEFORE the
+                // loop ends (a setup or runtime error) is reported to the
+                // handshake/stream as an error.
                 if loopCompleted {
                     outCont.finish()
                 } else {
@@ -82,7 +82,7 @@ public final class CitadelShell: RemoteShell, @unchecked Sendable {
         } catch {
             pump.cancel()
             throw RemoteFSError.protocolError(
-                reason: "Shell konnte nicht geöffnet werden: \(error)")
+                reason: "failed to open shell: \(error)")
         }
     }
 
@@ -101,9 +101,9 @@ public final class CitadelShell: RemoteShell, @unchecked Sendable {
     }
 }
 
-/// Exactly-once-Übergabe des TTYStdinWriter aus der withPTY-Closure nach außen.
-/// Thread-sicher: succeed/fail können von der Pump-Task kommen, writer() vom
-/// Aufrufer — wer zuerst ein Ergebnis setzt, gewinnt; Rest ist no-op.
+/// Exactly-once hand-off of the TTYStdinWriter out of the withPTY closure.
+/// Thread-safe: succeed/fail can come from the pump task, writer() from the
+/// caller — whoever sets a result first wins; the rest is a no-op.
 private final class Handshake: @unchecked Sendable {
     private let lock = NSLock()
     private var result: Result<TTYStdinWriter, Error>?

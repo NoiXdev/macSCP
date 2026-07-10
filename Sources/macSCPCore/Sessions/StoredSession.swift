@@ -1,10 +1,10 @@
 import Foundation
 
-/// Gespeicherte Verbindung — enthält KEINE Geheimnisse.
-/// Passwörter liegen ausschließlich im SecretStore (Schlüsselbund),
-/// adressiert über die Session-id.
+/// A stored connection — contains NO secrets.
+/// Passwords live exclusively in the SecretStore (keychain), addressed via
+/// the session id.
 public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
-    /// M3b: password + privateKey; ssh-agent noch offen (M3e).
+    /// M3b: password + privateKey; ssh-agent still open (M3e).
     public enum AuthKind: String, Codable, Sendable {
         case password
         case privateKey
@@ -16,7 +16,7 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
     public var port: Int
     public var username: String
     public var authKind: AuthKind
-    /// Pfad zum privaten Key (nur bei authKind == .privateKey belegt).
+    /// Path to the private key (only set when authKind == .privateKey).
     public var keyPath: String?
 
     public init(

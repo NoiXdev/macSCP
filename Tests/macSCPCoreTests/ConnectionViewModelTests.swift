@@ -30,24 +30,24 @@ struct ConnectionViewModelTests {
         vm.port = "abc"
         let fs = await vm.connect()
         #expect(fs == nil)
-        #expect(vm.state == .failed(message: "Port muss eine Zahl sein.", field: .port))
+        #expect(vm.state == .failed(message: CoreL10n.string("core.connect.portNumeric"), field: .port))
     }
 
     @Test func emptyHostFlagsHostField() async {
         let vm = makeVM()
         vm.host = ""
         _ = await vm.connect()
-        #expect(vm.state == .failed(message: "Host darf nicht leer sein.", field: .host))
+        #expect(vm.state == .failed(message: CoreL10n.string("core.connect.emptyHost"), field: .host))
     }
 
     @Test func emptyPasswordFlagsPasswordFieldBeforeConnecting() async {
         let vm = makeVM(connector: { _, _ in
-            Issue.record("Connector darf bei leerem Passwort nicht aufgerufen werden")
+            Issue.record("Connector must not be called with an empty password")
             throw RemoteFSError.connectionFailed(reason: "unreachable")
         })
         vm.password = ""
         _ = await vm.connect()
-        #expect(vm.state == .failed(message: "Passwort darf nicht leer sein.", field: .password))
+        #expect(vm.state == .failed(message: CoreL10n.string("core.connect.passwordEmpty"), field: .password))
     }
 
     @Test func authFailureHasNoField() async {
@@ -55,7 +55,7 @@ struct ConnectionViewModelTests {
         let fs = await vm.connect()
         #expect(fs == nil)
         #expect(vm.state == .failed(
-            message: "Anmeldung fehlgeschlagen — Benutzername oder Passwort prüfen.",
+            message: CoreL10n.string("core.connect.authFailed"),
             field: nil))
     }
 
@@ -64,7 +64,9 @@ struct ConnectionViewModelTests {
             throw RemoteFSError.connectionFailed(reason: "timeout")
         })
         _ = await vm.connect()
-        #expect(vm.state == .failed(message: "Verbindung fehlgeschlagen: timeout", field: nil))
+        #expect(vm.state == .failed(
+            message: String(format: CoreL10n.string("core.connect.connectionFailed %@"), "timeout"),
+            field: nil))
     }
 
     @Test func trimsPaddedHostAndUsernameForConnection() async {
@@ -81,7 +83,7 @@ struct ConnectionViewModelTests {
 
     @Test func saveRequestedWithEmptyNameFlagsSaveNameField() async {
         let vm = makeVM(connector: { _, _ in
-            Issue.record("Connector darf bei fehlendem Session-Namen nicht laufen")
+            Issue.record("Connector must not run without a session name")
             throw RemoteFSError.connectionFailed(reason: "unreachable")
         })
         vm.shouldSaveSession = true
@@ -89,7 +91,7 @@ struct ConnectionViewModelTests {
         let fs = await vm.connect()
         #expect(fs == nil)
         #expect(vm.state == .failed(
-            message: "Name für die gespeicherte Session angeben.", field: .saveName))
+            message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName))
     }
 
     @Test func saveNameNotValidatedWhenToggleOff() async {
@@ -102,13 +104,13 @@ struct ConnectionViewModelTests {
 
     @Test func keyAuthRequiresKeyPath() async {
         let vm = makeVM(connector: { _, _ in
-            Issue.record("Connector darf ohne Key-Pfad nicht laufen")
+            Issue.record("Connector must not run without a key path")
             throw RemoteFSError.connectionFailed(reason: "unreachable")
         })
         vm.authChoice = .privateKey
         vm.keyPath = "  "
         _ = await vm.connect()
-        #expect(vm.state == .failed(message: "Pfad zum SSH-Key angeben.", field: .keyPath))
+        #expect(vm.state == .failed(message: CoreL10n.string("core.connect.keyPathEmpty"), field: .keyPath))
     }
 
     @Test func keyAuthAllowsEmptyPassphraseAndBuildsPrivateKeyAuth() async {
@@ -123,13 +125,13 @@ struct ConnectionViewModelTests {
         #expect(fs != nil)
     }
 
-    @Test func keyErrorsMapToGermanMessages() async {
+    @Test func keyErrorsMapToLocalizedMessages() async {
         let vm = makeVM(connector: { _, _ in throw SSHKeyError.passphraseRequired })
         vm.authChoice = .privateKey
         vm.keyPath = "~/.ssh/id_ed25519"
         _ = await vm.connect()
         #expect(vm.state == .failed(
-            message: "Der SSH-Key ist verschlüsselt — Passphrase angeben.",
+            message: CoreL10n.string("core.connect.keyPassphraseRequired"),
             field: .password))
     }
 
@@ -140,7 +142,7 @@ struct ConnectionViewModelTests {
         #expect(vm.password.isEmpty)
 
         vm.password = "aus-dem-schluesselbund"
-        vm.authChoice = .password   // programmatisch (connectStored-Pfad)
+        vm.authChoice = .password   // programmatic (connectStored path)
         #expect(vm.password == "aus-dem-schluesselbund")
     }
 
@@ -149,7 +151,7 @@ struct ConnectionViewModelTests {
         let (stream, continuation) = AsyncStream<Void>.makeStream()
         let vm = makeVM(connector: { _, _ in
             await counter.increment()
-            for await _ in stream {}   // hängt, bis der Test den Stream beendet
+            for await _ in stream {}   // hangs until the test ends the stream
             return MockRemoteFileSystem(tree: ["/": []])
         })
 
@@ -186,7 +188,7 @@ struct ConnectionViewModelTests {
         #expect(vm.hostKeyPrompt == nil)
     }
 
-    @Test func rejectMapsToGermanMessage() async {
+    @Test func rejectMapsToLocalizedMessage() async {
         let candidate = HostKeyCandidate(
             host: "example.com", port: 22, keyType: "ssh-ed25519",
             publicKeyBase64: "AAAAC3NzaC1lZDI1NTE5AAAAIAtest")
@@ -203,7 +205,7 @@ struct ConnectionViewModelTests {
 
         #expect(fs == nil)
         #expect(vm.state == .failed(
-            message: "Verbindung abgebrochen — Host-Key nicht bestätigt.", field: nil))
+            message: CoreL10n.string("core.hostkey.rejected"), field: nil))
         #expect(vm.hostKeyPrompt == nil)
     }
 
@@ -219,7 +221,7 @@ struct ConnectionViewModelTests {
         })
 
         let connectTask = Task { await vm.connect() }
-        // Warten bis der Prompt steht
+        // Wait until the prompt is up.
         for _ in 0..<200 where vm.hostKeyPrompt == nil {
             try await Task.sleep(for: .milliseconds(10))
         }
@@ -227,13 +229,13 @@ struct ConnectionViewModelTests {
 
         connectTask.cancel()
 
-        // Ohne Cancellation-Handler hängt connect() für immer. Ein
-        // withTaskGroup-Race würde beim Verlassen des Closures trotz
-        // cancelAll() implizit auf den hängenden Kindtask warten (Swift
-        // wartet immer auf alle Kindtasks) und selbst ewig blockieren —
-        // deshalb hier zwei unstrukturierte Tasks, die per Actor-Claim um
-        // die Continuation konkurrieren; ein hängender Verlierer-Task
-        // blockiert so nicht den Rückgabewert.
+        // Without a cancellation handler, connect() would hang forever. A
+        // withTaskGroup race would implicitly wait for the hanging child task
+        // when leaving the closure despite cancelAll() (Swift always waits
+        // for all child tasks) and would itself block forever — hence two
+        // unstructured tasks here that race for the continuation via an
+        // actor claim; a hanging losing task therefore doesn't block the
+        // return value.
         let claim = RaceClaim()
         let finished: Bool = await withCheckedContinuation { continuation in
             Task {
@@ -245,22 +247,21 @@ struct ConnectionViewModelTests {
                 if await claim.tryClaim() { continuation.resume(returning: false) }
             }
         }
-        #expect(finished, "connect() muss nach Cancel zurückkehren (Continuation aufgelöst)")
+        #expect(finished, "connect() must return after cancel (continuation resolved)")
     }
 
-    /// Regression (Final-Review M4, Minor 2): Der Connector kann den
-    /// `onUnknownHostKey`-Entscheider erst NACH dem Cancel der connect()-Task
-    /// aufrufen (hier über einen Stream erzwungen, der erst nach dem Cancel
-    /// freigegeben wird). `presentHostKeyPrompt` betritt `withCheckedContinuation`
-    /// dann mit bereits gesetzter Cancellation. Der Test pinnt das
-    /// GESAMTVERHALTEN: Cancel vor dem Prompt darf nicht hängen und muss im
-    /// Fehlerzustand enden. WELCHER Zweig die Continuation auflöst
-    /// (`Task.isCancelled`-Fast-Path in der Operation oder der `onCancel`-
-    /// Handler, dessen nachgelagerte MainActor-Task die inzwischen gesetzte
-    /// Continuation ebenfalls auflösen kann), ist von außen nicht
-    /// unterscheidbar — beide konvergieren auf denselben Zustand. Ein
-    /// Review-Experiment (Fast-Path entfernt) blieb grün via onCancel; der
-    /// Fast-Path bleibt als Gürtel-und-Hosenträger-Absicherung im Code.
+    /// Regression (Final-Review M4, Minor 2): the connector may call the
+    /// `onUnknownHostKey` decider only AFTER the connect() task's cancel
+    /// (forced here via a stream that's only released after the cancel).
+    /// `presentHostKeyPrompt` then enters `withCheckedContinuation` with
+    /// cancellation already set. The test pins the OVERALL BEHAVIOR: a cancel
+    /// before the prompt must not hang and must end in the error state. WHICH
+    /// branch resolves the continuation (the `Task.isCancelled` fast path in
+    /// the operation, or the `onCancel` handler, whose downstream MainActor
+    /// task can also resolve the by-then-set continuation) is not
+    /// distinguishable from the outside — both converge on the same state. A
+    /// review experiment (fast path removed) stayed green via onCancel; the
+    /// fast path remains as a belt-and-suspenders safeguard in the code.
     @Test @MainActor
     func cancelBeforeHostKeyPromptDeciderIsCalledDoesNotHang() async throws {
         let candidate = HostKeyCandidate(
@@ -268,20 +269,20 @@ struct ConnectionViewModelTests {
             publicKeyBase64: "AAAAC3NzaC1lZDI1NTE5AAAAIAtest")
         let (releaseStream, releaseContinuation) = AsyncStream<Void>.makeStream()
         let vm = makeVM(connector: { _, decider in
-            for await _ in releaseStream {}   // hängt, bis der Test freigibt
+            for await _ in releaseStream {}   // hangs until the test releases it
             let trusted = await decider(candidate)
             guard trusted else { throw HostKeyError.rejectedByUser }
             return MockRemoteFileSystem(tree: ["/": []])
         })
 
         let connectTask = Task { await vm.connect() }
-        // Cancel VOR der Freigabe: presentHostKeyPrompt (und damit
-        // withTaskCancellationHandler) läuft erst nach diesem Punkt.
+        // Cancel BEFORE the release: presentHostKeyPrompt (and thus
+        // withTaskCancellationHandler) only runs after this point.
         connectTask.cancel()
         releaseContinuation.finish()
 
-        // Timeout-Race-Muster der Datei (siehe cancelWhileHostKeyPromptPendingResolvesConnect):
-        // ohne Cancellation-Behandlung (Fast-Path UND onCancel) hinge connect() für immer.
+        // Timeout-race pattern from this file (see cancelWhileHostKeyPromptPendingResolvesConnect):
+        // without cancellation handling (fast path AND onCancel), connect() would hang forever.
         let claim = RaceClaim()
         let finished: Bool = await withCheckedContinuation { continuation in
             Task {
@@ -293,10 +294,10 @@ struct ConnectionViewModelTests {
                 if await claim.tryClaim() { continuation.resume(returning: false) }
             }
         }
-        #expect(finished, "connect() muss zurückkehren, wenn Cancel bereits vor dem Prompt gesetzt ist")
+        #expect(finished, "connect() must return when cancel is already set before the prompt")
         #expect(vm.hostKeyPrompt == nil)
         #expect(vm.state == .failed(
-            message: "Verbindung abgebrochen — Host-Key nicht bestätigt.", field: nil))
+            message: CoreL10n.string("core.hostkey.rejected"), field: nil))
     }
 
     @Test func mismatchMapsToScaryMessage() async {
@@ -311,9 +312,9 @@ struct ConnectionViewModelTests {
 
         #expect(fs == nil)
         #expect(vm.state == .failed(
-            message: "ACHTUNG: Der Host-Key von example.com hat sich geändert! "
-                + "Erwartet SHA256:AAAA, präsentiert SHA256:BBBB. "
-                + "Möglicher Man-in-the-Middle — Verbindung abgebrochen.",
+            message: String(
+                format: CoreL10n.string("core.hostkey.mismatch %@ %@ %@"),
+                "example.com", "SHA256:AAAA", "SHA256:BBBB"),
             field: nil))
         #expect(vm.hostKeyPrompt == nil)
     }
@@ -324,8 +325,8 @@ private actor CallCounter {
     func increment() { value += 1 }
 }
 
-/// Lässt genau einen von mehreren konkurrierenden Tasks „gewinnen" —
-/// verhindert doppeltes `continuation.resume` im Timeout-Race.
+/// Lets exactly one of several competing tasks "win" — prevents a double
+/// `continuation.resume` in the timeout race.
 private actor RaceClaim {
     private var claimed = false
     func tryClaim() -> Bool {

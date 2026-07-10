@@ -1,11 +1,11 @@
 import Foundation
 import Observation
 
-/// Wie ein Zielkonflikt (Datei existiert bereits) aufgelöst wird.
-/// Bindend für die UI-Schicht (M5b/T4).
+/// How a destination conflict (file already exists) is resolved.
+/// Binding for the UI layer (M5b/T4).
 public enum ConflictResolution: Sendable, Equatable { case overwrite, skip, rename }
 
-/// Beschreibt einen konkreten Zielkonflikt für den `ConflictDecider`.
+/// Describes a concrete destination conflict for the `ConflictDecider`.
 public struct TransferConflict: Sendable, Equatable {
     public let fileName: String
     public let destinationDirectory: String
@@ -18,16 +18,15 @@ public struct TransferConflict: Sendable, Equatable {
     }
 }
 
-/// UI-Entscheider. Rückgabe nil == "Abbrechen" (Item wird `.cancelled`).
-/// `applyToAll == true` setzt die Entscheidung als Regel für den Rest der Queue.
+/// UI decider. Returning nil == "Cancel" (item becomes `.cancelled`).
+/// `applyToAll == true` sets the decision as a rule for the rest of the queue.
 public typealias ConflictDecider =
     @Sendable (TransferConflict) async -> (resolution: ConflictResolution, applyToAll: Bool)?
 
-/// UI-Zustand einer seriellen Transfer-Warteschlange (FIFO).
+/// UI state of a serial transfer queue (FIFO).
 ///
-/// Ersetzt das Einzeltransfer-`TransferViewModel`: `enqueue` verwirft nichts
-/// mehr, sondern reiht immer ein und startet bei Bedarf einen schlafenden
-/// Worker neu.
+/// Replaces the single-transfer `TransferViewModel`: `enqueue` never discards
+/// anything, it always enqueues and restarts a sleeping worker if needed.
 ///
 /// Parallelism (M5c/T4): up to `maxConcurrent` transfers run at once. Slots are
 /// filled in strict FIFO order from `order`; a slot that frees up is handed to
@@ -44,20 +43,19 @@ public final class TransferQueueViewModel {
             case queued
             case running(TransferProgress)
             case finished
-            case failed(String)      // deutsche Meldung
+            case failed(String)      // localized message
             case cancelled
-            case skipped             // Konflikt mit `.skip` aufgelöst ("übersprungen")
+            case skipped             // conflict resolved via `.skip` ("skipped")
 
-            /// true, solange dieses Item aktiv überträgt — die UI braucht das.
+            /// true while this item is actively transferring — the UI needs this.
             public var isRunning: Bool {
                 if case .running = self { return true }
                 return false
             }
 
-            /// true, wenn dieses Item einen Endzustand erreicht hat. Die
-            /// Gruppen-Buchhaltung (M5b/T3) dekrementiert genau beim Übergang
-            /// nach terminal — deshalb ist dieser eine Prädikat der Dreh- und
-            /// Angelpunkt.
+            /// true once this item has reached a terminal state. The group
+            /// accounting (M5b/T3) decrements exactly at the transition to
+            /// terminal — this predicate is the pivot for that.
             public var isTerminal: Bool {
                 switch self {
                 case .finished, .failed, .cancelled, .skipped: return true
@@ -66,27 +64,27 @@ public final class TransferQueueViewModel {
             }
         }
         public let id: UUID
-        public internal(set) var fileName: String   // `.rename` aktualisiert den angezeigten Namen
+        public internal(set) var fileName: String   // `.rename` updates the displayed name
         public let direction: TransferDirection
         public internal(set) var status: Status
     }
 
     public private(set) var items: [Item] = []
 
-    /// true, solange irgendein Item queued/running ist (Sidebar-Gate).
+    /// true while any item is queued/running (sidebar gate).
     public var isActive: Bool {
         items.contains { $0.status == .queued || $0.status.isRunning }
     }
 
-    /// Anzahl offener (queued+running) Items — fürs "n ausstehend"-Label.
+    /// Number of open (queued+running) items — for the "n pending" label.
     public var pendingCount: Int {
         items.reduce(into: 0) { count, item in
             if item.status == .queued || item.status.isRunning { count += 1 }
         }
     }
 
-    /// UI-Entscheider für Zielkonflikte. `nil` (Default) ⇒ stilles Überschreiben
-    /// wie in M5a. Wird seriell vom Worker awaited — genau EIN offener Prompt.
+    /// UI decider for destination conflicts. `nil` (default) ⇒ silent overwrite
+    /// as in M5a. Awaited serially by the worker — exactly one open prompt.
     public var conflictDecider: ConflictDecider?
 
     /// Maximum number of transfers that may run at once (clamped to 1...8,
@@ -118,7 +116,7 @@ public final class TransferQueueViewModel {
     public var uploadLimitBytesPerSec: Int = 0
     public var downloadLimitBytesPerSec: Int = 0
 
-    // MARK: - Privater Zustand
+    // MARK: - Private state
 
     private struct Job {
         let id: UUID
@@ -131,19 +129,19 @@ public final class TransferQueueViewModel {
         let onCompleted: (@MainActor () async -> Void)?
     }
 
-    /// Fehler ohne freien Umbenennungs-Namen (Rule 5, Obergrenze erreicht).
+    /// Error for when no free rename name could be found (Rule 5, limit reached).
     private struct NoFreeNameError: Error {}
 
-    /// Ergebnis der Konfliktprüfung vor dem Engine-Aufruf.
+    /// Result of the conflict check before the engine call.
     private enum Outcome {
-        case proceed(fileName: String)      // (evtl. umbenannter) Zielname
-        case skip                            // Item → .skipped, kein Write
-        case cancel                          // Item → .cancelled
+        case proceed(fileName: String)      // (possibly renamed) destination name
+        case skip                            // item → .skipped, no write
+        case cancel                          // item → .cancelled
         case failed(message: String, error: Error)
     }
 
     private var jobs: [UUID: Job] = [:]
-    private var order: [UUID] = []                                  // FIFO der queued-IDs
+    private var order: [UUID] = []                                  // FIFO of queued ids
     private var waiters: [UUID: CheckedContinuation<Void, Error>] = [:]
     /// Active `process` tasks, keyed by item id — one per occupied slot. Their
     /// count is the number of slots in use; `cancelAll` awaits them all.
@@ -151,7 +149,7 @@ public final class TransferQueueViewModel {
     /// In-flight `copyFile` tasks, keyed by item id — one per transferring slot.
     /// `cancelAll` cancels every one (cooperative cancellation via T2).
     private var runningTransferTasks: [UUID: Task<Void, Error>] = [:]
-    private var queueRule: ConflictResolution?                     // aktive "Für alle"-Regel; Reset bei Drain
+    private var queueRule: ConflictResolution?                     // active "apply to all" rule; reset on drain
 
     /// A minimal FIFO gate serializing conflict-decider prompts across slots:
     /// at most one prompt is open at a time, and waiters are woken in arrival
@@ -167,29 +165,29 @@ public final class TransferQueueViewModel {
     /// is reached. A `Set` because multiple slots may resolve at once (M5c/T4).
     private var resolvingJobIDs: Set<UUID> = []
 
-    // MARK: - Baum-/Gruppen-Zustand (M5b/T3)
+    // MARK: - Tree/group state (M5b/T3)
 
-    /// Buchhaltung für einen rekursiven Ordner-Transfer. Referenztyp, damit
-    /// verstreute Mutationen (aus `setStatus`, der Expansion und `finishExpansion`)
-    /// ohne Rück-Zuweisung in `groups` sichtbar werden.
+    /// Accounting for a recursive folder transfer. Reference type, so that
+    /// scattered mutations (from `setStatus`, expansion, and `finishExpansion`)
+    /// become visible without a re-assignment into `groups`.
     private final class TreeGroup {
-        /// Noch nicht-terminale Items dieser Gruppe.
+        /// Not-yet-terminal items of this group.
         var remaining = 0
-        /// Expansion hat aufgehört zu laufen (regulär ODER via Cancel).
+        /// Expansion has stopped running (regularly OR via cancel).
         var expansionDone = false
-        /// Expansion hat den Baum vollständig durchlaufen (NICHT gecancelt).
+        /// Expansion walked the entire tree (was NOT cancelled).
         var expansionSucceeded = false
-        /// Mindestens ein Item ist `.finished` geworden.
+        /// At least one item has become `.finished`.
         var anyFinished = false
-        /// onCompleted bereits gefeuert — Exactly-once-Riegel.
+        /// onCompleted already fired — exactly-once latch.
         var fired = false
         let onCompleted: (@MainActor () async -> Void)?
         init(onCompleted: (@MainActor () async -> Void)?) { self.onCompleted = onCompleted }
     }
 
     private var groups: [UUID: TreeGroup] = [:]
-    private var itemGroup: [UUID: UUID] = [:]                       // Item-ID → Gruppen-ID
-    private var expansionTasks: [UUID: Task<Void, Never>] = [:]     // Gruppen-ID → Expansions-Task
+    private var itemGroup: [UUID: UUID] = [:]                       // item id → group id
+    private var expansionTasks: [UUID: Task<Void, Never>] = [:]     // group id → expansion task
 
     /// Clock hook for the rate window (M5c/T5), default the real
     /// `ContinuousClock`. Injectable so tests can drive a controlled tick
@@ -200,10 +198,10 @@ public final class TransferQueueViewModel {
         self.now = now
     }
 
-    // MARK: - Öffentliche API
+    // MARK: - Public API
 
-    /// Reiht ein und startet den Worker, falls er schläft. Läuft IMMER an —
-    /// kein `isRunning`-Verwerfen mehr.
+    /// Enqueues and starts the worker if it's sleeping. ALWAYS enqueues —
+    /// no more `isRunning`-based dropping.
     @discardableResult
     public func enqueue(
         fileName: String, direction: TransferDirection,
@@ -222,17 +220,17 @@ public final class TransferQueueViewModel {
         return id
     }
 
-    /// Wie `enqueue`, kehrt aber erst zurück, wenn GENAU dieses Item fertig ist.
-    /// Wirft bei failed/cancelled (Promise-Pfad: der Finder braucht die Datei).
+    /// Like `enqueue`, but returns only once EXACTLY this item is done.
+    /// Throws on failed/cancelled (Promise path: the Finder integration needs the file).
     public func enqueueAndWait(
         fileName: String, direction: TransferDirection,
         source: any RemoteFileSystem, sourcePath: String,
         destination: any RemoteFileSystem, destinationDirectory: String
     ) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            // Synchron auf dem MainActor: erst einreihen, dann Waiter hinterlegen,
-            // bevor der Worker überhaupt loslaufen kann — so kann kein Ergebnis
-            // den Waiter verpassen.
+            // Synchronous on the MainActor: enqueue first, then register the
+            // waiter, before the worker can even start running — so no result
+            // can miss the waiter.
             let id = enqueue(
                 fileName: fileName, direction: direction,
                 source: source, sourcePath: sourcePath,
@@ -242,22 +240,22 @@ public final class TransferQueueViewModel {
         }
     }
 
-    /// Reiht einen kompletten Ordner ein: legt Zielverzeichnisse an (top-down)
-    /// und enqueued jede Datei als eigenes Queue-Item. `onCompleted` feuert genau
-    /// einmal, wenn ALLE Items des Baums terminal sind (finished/failed/skipped/
-    /// cancelled) — auch bei Teilfehlern. Symlinks werden übersprungen (Item mit
-    /// Status `.skipped` und Namensuffix " →"). Expansions-Fehler (list/mkdir)
-    /// erscheinen als `.failed`-Item unter dem Ordnernamen mit "/"-Suffix.
+    /// Enqueues an entire folder: creates destination directories (top-down)
+    /// and enqueues every file as its own queue item. `onCompleted` fires exactly
+    /// once when ALL items of the tree are terminal (finished/failed/skipped/
+    /// cancelled) — even on partial failures. Symlinks are skipped (item with
+    /// status `.skipped` and a " →" name suffix). Expansion errors (list/mkdir)
+    /// appear as a `.failed` item under the folder name with a "/" suffix.
     ///
-    /// Die Expansion läuft als eigene MainActor-Task VOR den Transfers (BFS/DFS
-    /// top-down): erst `createDirectory(dest/dirName)`, dann `list(source)` —
-    /// Dateien via `enqueue` (samt T2-Konfliktlogik), Unterverzeichnisse rekursiv.
+    /// The expansion runs as its own MainActor task BEFORE the transfers (BFS/DFS
+    /// top-down): first `createDirectory(dest/dirName)`, then `list(source)` —
+    /// files via `enqueue` (including T2 conflict logic), subdirectories recursively.
     ///
-    /// onCompleted-Regel bei Abbruch: Wird die Queue via `cancelAll` VOLLSTÄNDIG
-    /// abgebrochen (kein Item hat `.finished` erreicht UND die Expansion wurde
-    /// gecancelt statt regulär beendet), feuert onCompleted NICHT — ein Refresh
-    /// nach kompletter Stornierung wäre sinnlos. Sobald aber mindestens ein Item
-    /// fertig wurde ODER die Expansion regulär durchlief, feuert es.
+    /// onCompleted rule on cancellation: if the queue is COMPLETELY cancelled via
+    /// `cancelAll` (no item reached `.finished` AND the expansion was cancelled
+    /// rather than ending regularly), onCompleted does NOT fire — a refresh after
+    /// a full cancellation would be pointless. But as soon as at least one item
+    /// finished OR the expansion completed regularly, it fires.
     public func enqueueTree(
         directoryName: String, direction: TransferDirection,
         source: any RemoteFileSystem, sourceDirectory: String,
@@ -276,27 +274,27 @@ public final class TransferQueueViewModel {
                     group: groupID)
                 self.finishExpansion(groupID, succeeded: true)
             } catch {
-                // Nur Cancellation propagiert bis hierher — Zweig-Fehler werden
-                // in `expandTree` lokal in `.failed`-Items übersetzt.
+                // Only cancellation propagates up to here — branch-local errors
+                // are translated into `.failed` items in `expandTree`.
                 self.finishExpansion(groupID, succeeded: false)
             }
         }
         expansionTasks[groupID] = task
     }
 
-    /// Bricht alles ab: laufenden Transfer canceln, queued → `.cancelled`,
-    /// wartende Continuations werfen. Kehrt erst nach Worker-Stopp zurück.
+    /// Cancels everything: cancels the running transfer, queued → `.cancelled`,
+    /// waiting continuations throw. Returns only after the worker has stopped.
     public func cancelAll() async {
-        // 0. Laufende Baum-Expansion(en) stoppen und abwarten, BEVOR queued Items
-        //    abgeräumt werden — so entstehen ab hier keine neuen Items mehr
-        //    (M5b/T3). `finishExpansion(succeeded: false)` markiert die Gruppen als
-        //    gecancelt; deren onCompleted feuert dann nur, falls doch schon ein
-        //    Item `.finished` war (s. `maybeFireGroup`).
+        // 0. Stop and await any running tree expansion(s) BEFORE clearing queued
+        //    items — so no new items can appear from here on (M5b/T3).
+        //    `finishExpansion(succeeded: false)` marks the groups as cancelled;
+        //    their onCompleted then only fires if an item had already become
+        //    `.finished` (see `maybeFireGroup`).
         let expansions = expansionTasks
         expansionTasks.removeAll()
         for task in expansions.values { task.cancel() }
         for task in expansions.values { await task.value }
-        // 1. Alle noch nicht gestarteten (queued) IDs abräumen.
+        // 1. Clear out every not-yet-started (queued) id.
         let queued = order
         order.removeAll()
         for id in queued {
@@ -330,7 +328,7 @@ public final class TransferQueueViewModel {
         for task in active { await task.value }
     }
 
-    /// Entfernt finished/failed/cancelled/skipped aus der Liste.
+    /// Removes finished/failed/cancelled/skipped from the list.
     public func clearCompleted() {
         items.removeAll { item in
             switch item.status {
@@ -387,10 +385,10 @@ public final class TransferQueueViewModel {
         // Conflict check BEFORE the engine call; prompts serialize FIFO.
         let outcome = await resolveConflictIfNeeded(job: job)
 
-        // `cancelAll` kann während des obigen Awaits (stat-Probe, Decider,
-        // Rename-Probing) bereits zugeschlagen haben: Status ist dann schon
-        // `.cancelled`, der Waiter schon geworfen, `jobs[jobID]` schon weg.
-        // Exactly-once: hier NICHT nochmal auflösen und NICHT transferieren.
+        // `cancelAll` may already have struck during the above await (stat
+        // probe, decider, rename probing): status is then already `.cancelled`,
+        // the waiter already thrown, `jobs[jobID]` already gone. Exactly-once:
+        // do NOT resolve again here and do NOT transfer.
         guard jobs[jobID] != nil else { return }
         // The slot moves from "resolving" to "transferring" synchronously below
         // (no await in between) — `cancelAll`'s running-sweep covers it from here.
@@ -400,14 +398,14 @@ public final class TransferQueueViewModel {
         switch outcome {
         case .proceed(let name):
             effectiveFileName = name
-            // Bei `.rename` den angezeigten Namen aktualisieren.
+            // On `.rename`, update the displayed name.
             if name != job.fileName, let index = items.firstIndex(where: { $0.id == jobID }) {
                 items[index].fileName = name
             }
         case .skip:
             setStatus(jobID, .skipped)
             jobs[jobID] = nil
-            // onCompleted wird NICHT gerufen; Waiter wirft (Datei kam nicht an).
+            // onCompleted is NOT called; the waiter throws (the file never arrived).
             resumeWaiter(jobID, with: .failure(CancellationError()))
             return
         case .cancel:
@@ -424,13 +422,13 @@ public final class TransferQueueViewModel {
 
         setStatus(jobID, .running(TransferProgress(bytesTransferred: 0, totalBytes: nil)))
 
-        // Geordnete Zustellung: AsyncStream puffert in Reihenfolge, EIN Konsument
-        // aktualisiert den Status — kein Task-pro-Chunk, kein Race mit .finished.
+        // Ordered delivery: AsyncStream buffers in order, ONE consumer updates
+        // the status — no task-per-chunk, no race with .finished.
         //
-        // Rate/ETA (M5c/T5): berechnet HIER im Consumer, nicht in der Engine —
-        // ein gleitendes ~3s-Fenster über (Zeitstempel, Bytes)-Paaren pro
-        // Transfer (lokal in `rateWindow`, kein Cross-Job-State nötig). ETA
-        // nur, wenn sowohl `totalBytes` als auch eine Rate bekannt sind.
+        // Rate/ETA (M5c/T5): computed HERE in the consumer, not in the engine —
+        // a sliding ~3s window over (timestamp, bytes) pairs per transfer
+        // (local in `rateWindow`, no cross-job state needed). ETA only when
+        // both `totalBytes` and a rate are known.
         let (progressStream, progressContinuation) = AsyncStream<TransferProgress>.makeStream()
         let consumer = Task { @MainActor [weak self] in
             var rateWindow = RateWindow()
@@ -451,16 +449,16 @@ public final class TransferQueueViewModel {
             }
         }
 
-        // Nur Sendable-Werte in die Transfer-Task ziehen (kein Job/onCompleted).
+        // Only pull Sendable values into the transfer task (no Job/onCompleted).
         let source = job.source
         let sourcePath = job.sourcePath
         let destination = job.destination
         let destinationDirectory = job.destinationDirectory
         let fileName = effectiveFileName
-        // Richtungsabhängiges Limit (M5c/T5): erst HIER gelesen, im Moment des
-        // tatsächlichen Transferstarts — eine Änderung an `uploadLimitBytesPerSec`/
-        // `downloadLimitBytesPerSec` gilt daher erst für als Nächstes startende
-        // Items, laufende Transfers behalten ihr Limit vom Start.
+        // Direction-dependent limit (M5c/T5): only read HERE, at the moment the
+        // transfer actually starts — a change to `uploadLimitBytesPerSec`/
+        // `downloadLimitBytesPerSec` therefore only applies to items starting
+        // next; already-running transfers keep the limit they started with.
         let bytesPerSecondLimit = job.direction == .upload
             ? uploadLimitBytesPerSec : downloadLimitBytesPerSec
         let transfer = Task<Void, Error> {
@@ -499,25 +497,25 @@ public final class TransferQueueViewModel {
         }
     }
 
-    // MARK: - Konfliktlogik
+    // MARK: - Conflict logic
 
-    /// Prüft vor dem Transfer, ob das Ziel schon existiert, und löst einen
-    /// etwaigen Konflikt gemäß Queue-Regel bzw. `conflictDecider` auf.
+    /// Checks before the transfer whether the destination already exists, and
+    /// resolves any conflict per the queue rule or `conflictDecider`.
     private func resolveConflictIfNeeded(job: Job) async -> Outcome {
-        // Pfad-Join IDENTISCH zu TransferEngine.copyFile (RemotePath.join).
+        // Path join IDENTICAL to TransferEngine.copyFile (RemotePath.join).
         let destinationPath = RemotePath.join(job.destinationDirectory, job.fileName)
         do {
             _ = try await job.destination.stat(path: destinationPath)
         } catch RemoteFSError.notFound {
-            return .proceed(fileName: job.fileName)   // kein Konflikt
+            return .proceed(fileName: job.fileName)   // no conflict
         } catch {
             return .failed(message: Self.message(for: error), error: error)
         }
 
-        // Ziel existiert → Konflikt. Auflösung bestimmen.
+        // Destination exists → conflict. Determine the resolution.
         let resolution: ConflictResolution
         if let rule = queueRule {
-            resolution = rule                         // aktive Regel: keine Rückfrage
+            resolution = rule                         // active rule: no prompt
         } else if let decider = conflictDecider {
             let conflict = TransferConflict(
                 fileName: job.fileName,
@@ -535,12 +533,12 @@ public final class TransferQueueViewModel {
             let decision = await decider(conflict)
             conflictGate.release()
             guard let decision else {
-                return .cancel                        // nil == Abbrechen
+                return .cancel                        // nil == cancel
             }
             resolution = decision.resolution
             if decision.applyToAll { queueRule = decision.resolution }
         } else {
-            resolution = .overwrite                   // Default: stilles Überschreiben (M5a)
+            resolution = .overwrite                   // default: silent overwrite (M5a)
         }
 
         switch resolution {
@@ -553,7 +551,7 @@ public final class TransferQueueViewModel {
         }
     }
 
-    /// Sucht einen freien Namen "name (2).ext", "name (3).ext", … per `stat`-Probe.
+    /// Finds a free name "name (2).ext", "name (3).ext", … via `stat` probing.
     private func freeRenameOutcome(job: Job) async -> Outcome {
         let (stem, ext) = Self.splitName(job.fileName)
         var counter = 2
@@ -562,19 +560,19 @@ public final class TransferQueueViewModel {
             let candidatePath = RemotePath.join(job.destinationDirectory, candidate)
             do {
                 _ = try await job.destination.stat(path: candidatePath)
-                // existiert → nächster Kandidat
+                // exists → next candidate
             } catch RemoteFSError.notFound {
-                return .proceed(fileName: candidate)  // frei
+                return .proceed(fileName: candidate)  // free
             } catch {
                 return .failed(message: Self.message(for: error), error: error)
             }
             counter += 1
         }
-        return .failed(message: "Kein freier Name gefunden.", error: NoFreeNameError())
+        return .failed(message: CoreL10n.string("core.transfer.noFreeName"), error: NoFreeNameError())
     }
 
-    /// Zerlegt einen Dateinamen am LETZTEN Punkt in Basisname und Extension
-    /// (inklusive Punkt). Ohne Punkt (oder führender Punkt) ⇒ leere Extension.
+    /// Splits a file name at the LAST dot into stem and extension (dot
+    /// included). No dot (or a leading dot only) ⇒ empty extension.
     static func splitName(_ fileName: String) -> (stem: String, ext: String) {
         guard let dotIndex = fileName.lastIndex(of: "."), dotIndex != fileName.startIndex else {
             return (fileName, "")
@@ -582,13 +580,13 @@ public final class TransferQueueViewModel {
         return (String(fileName[..<dotIndex]), String(fileName[dotIndex...]))
     }
 
-    // MARK: - Baum-Expansion (M5b/T3)
+    // MARK: - Tree expansion (M5b/T3)
 
-    /// Rekursiver Top-down-Abstieg: legt zuerst `dest/dirName` an, listet dann
-    /// `sourceDirectory` und arbeitet die Einträge ab (Dateien → `enqueue`,
-    /// Unterverzeichnisse → rekursiv, Symlinks → terminales `.skipped`-Item).
-    /// Wirft ausschließlich `CancellationError`; Zweig-lokale list/mkdir-Fehler
-    /// werden in `.failed`-Items übersetzt und beenden nur diesen Zweig.
+    /// Recursive top-down descent: first creates `dest/dirName`, then lists
+    /// `sourceDirectory` and processes the entries (files → `enqueue`,
+    /// subdirectories → recursive, symlinks → terminal `.skipped` item).
+    /// Throws only `CancellationError`; branch-local list/mkdir errors are
+    /// translated into `.failed` items and only end that branch.
     private func expandTree(
         directoryName: String, direction: TransferDirection,
         source: any RemoteFileSystem, sourceDirectory: String,
@@ -598,18 +596,18 @@ public final class TransferQueueViewModel {
         try Task.checkCancellation()
         let destDir = RemotePath.join(destinationDirectory, directoryName)
 
-        // Zielverzeichnis top-down anlegen.
+        // Create the destination directory top-down.
         do {
             try await destination.createDirectory(at: destDir)
         } catch {
-            try Task.checkCancellation()   // war es Cancellation, propagieren
+            try Task.checkCancellation()   // if it was cancellation, propagate it
             addTerminalItem(
                 group: groupID, name: directoryName + "/",
                 direction: direction, status: .failed(Self.message(for: error)))
             return
         }
 
-        // Quellverzeichnis auflisten.
+        // List the source directory.
         let entries: [RemoteFileItem]
         do {
             entries = try await source.list(path: sourceDirectory)
@@ -625,7 +623,7 @@ public final class TransferQueueViewModel {
             try Task.checkCancellation()
             switch entry.kind {
             case .file:
-                // Datei-Items durchlaufen die normale enqueue-/Konfliktlogik.
+                // File items go through the normal enqueue/conflict logic.
                 let id = enqueue(
                     fileName: entry.name, direction: direction,
                     source: source, sourcePath: entry.path,
@@ -639,7 +637,7 @@ public final class TransferQueueViewModel {
                     destination: destination, destinationDirectory: destDir,
                     group: groupID)
             case .symlink, .other:
-                // Nicht folgen: terminales `.skipped`-Item mit " →"-Suffix.
+                // Don't follow: terminal `.skipped` item with a " →" suffix.
                 addTerminalItem(
                     group: groupID, name: entry.name + " →",
                     direction: direction, status: .skipped)
@@ -647,19 +645,19 @@ public final class TransferQueueViewModel {
         }
     }
 
-    // MARK: - Gruppen-Buchhaltung (M5b/T3)
+    // MARK: - Group accounting (M5b/T3)
 
-    /// Ordnet ein bereits eingereites Item einer Gruppe zu und zählt es als
-    /// offen. Muss synchron direkt nach `enqueue` laufen (kein Await dazwischen),
-    /// sonst könnte der Worker das Item vor der Registrierung terminalisieren.
+    /// Assigns an already-enqueued item to a group and counts it as open. Must
+    /// run synchronously right after `enqueue` (no await in between), otherwise
+    /// the worker could terminalize the item before it's registered.
     private func registerGroupItem(_ id: UUID, group groupID: UUID) {
         guard let group = groups[groupID] else { return }
         group.remaining += 1
         itemGroup[id] = groupID
     }
 
-    /// Hängt ein SOFORT terminales Item an (Symlink-Skip oder Expansions-Fehler)
-    /// und routet es durch denselben Choke-Point wie alle anderen.
+    /// Appends an item that's IMMEDIATELY terminal (symlink skip or expansion
+    /// error) and routes it through the same choke point as every other item.
     private func addTerminalItem(
         group groupID: UUID, name: String,
         direction: TransferDirection, status: Item.Status
@@ -667,11 +665,11 @@ public final class TransferQueueViewModel {
         let id = UUID()
         items.append(Item(id: id, fileName: name, direction: direction, status: .queued))
         registerGroupItem(id, group: groupID)
-        setStatus(id, status)   // löst groupItemBecameTerminal aus
+        setStatus(id, status)   // triggers groupItemBecameTerminal
     }
 
-    /// Vom `setStatus`-Choke-Point aufgerufen, sobald ein Gruppen-Item terminal
-    /// wird: dekrementiert und prüft auf Gruppen-Abschluss.
+    /// Called from the `setStatus` choke point as soon as a group item becomes
+    /// terminal: decrements and checks for group completion.
     private func groupItemBecameTerminal(_ id: UUID, status: Item.Status) {
         guard let groupID = itemGroup.removeValue(forKey: id), let group = groups[groupID] else { return }
         group.remaining -= 1
@@ -679,8 +677,8 @@ public final class TransferQueueViewModel {
         maybeFireGroup(groupID)
     }
 
-    /// Markiert die Expansion einer Gruppe als beendet (regulär oder gecancelt)
-    /// und prüft auf Abschluss — Items könnten schon vorher alle terminal sein.
+    /// Marks a group's expansion as finished (regularly or cancelled) and
+    /// checks for completion — items could already all be terminal beforehand.
     private func finishExpansion(_ groupID: UUID, succeeded: Bool) {
         expansionTasks[groupID] = nil
         guard let group = groups[groupID] else { return }
@@ -689,14 +687,14 @@ public final class TransferQueueViewModel {
         maybeFireGroup(groupID)
     }
 
-    /// Feuert `onCompleted` genau einmal, wenn ALLE Items terminal sind UND die
-    /// Expansion nicht mehr läuft. Bei Voll-Abbruch (nichts fertig, Expansion
-    /// gecancelt) wird nur aufgeräumt, ohne zu feuern.
+    /// Fires `onCompleted` exactly once, once ALL items are terminal AND the
+    /// expansion is no longer running. On a full cancellation (nothing
+    /// finished, expansion cancelled), only cleans up without firing.
     private func maybeFireGroup(_ groupID: UUID) {
         guard let group = groups[groupID], !group.fired else { return }
         guard group.expansionDone, group.remaining == 0 else { return }
         guard group.anyFinished || group.expansionSucceeded else {
-            groups[groupID] = nil   // Voll-Abbruch: kein Refresh nötig
+            groups[groupID] = nil   // full cancellation: no refresh needed
             return
         }
         group.fired = true
@@ -707,15 +705,15 @@ public final class TransferQueueViewModel {
         }
     }
 
-    // MARK: - Helfer
+    // MARK: - Helpers
 
     private func setStatus(_ id: UUID, _ status: Item.Status) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         let wasTerminal = items[index].status.isTerminal
         items[index].status = status
-        // Einziger Choke-Point der Gruppen-Buchhaltung: genau beim Übergang
-        // nicht-terminal → terminal dekrementieren (M5b/T3). Verstreute
-        // Dekrements würden Fälle verpassen.
+        // The only choke point of the group accounting: decrement exactly at
+        // the non-terminal → terminal transition (M5b/T3). Scattered
+        // decrements would miss cases.
         if status.isTerminal && !wasTerminal {
             groupItemBecameTerminal(id, status: status)
         }
@@ -729,15 +727,15 @@ public final class TransferQueueViewModel {
     static func message(for error: Error) -> String {
         switch error {
         case RemoteFSError.notFound(let path):
-            return "Datei nicht gefunden: \(path)"
+            return String(format: CoreL10n.string("core.transfer.notFound %@"), path)
         case RemoteFSError.permissionDenied(let path):
-            return "Keine Berechtigung für: \(path)"
+            return String(format: CoreL10n.string("core.error.permissionDenied %@"), path)
         case RemoteFSError.connectionFailed(let reason):
-            return "Verbindung verloren: \(reason)"
+            return String(format: CoreL10n.string("core.error.connectionLost %@"), reason)
         case RemoteFSError.protocolError(let reason):
-            return "Übertragung fehlgeschlagen: \(reason)"
+            return String(format: CoreL10n.string("core.transfer.failed %@"), reason)
         default:
-            return "Übertragung fehlgeschlagen: \(String(describing: error))"
+            return String(format: CoreL10n.string("core.transfer.failed %@"), String(describing: error))
         }
     }
 }

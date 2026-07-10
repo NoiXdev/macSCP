@@ -1,7 +1,7 @@
 import Foundation
 
-/// Formatiert RemoteFileItem-Felder für die Dateiliste. Pur, damit testbar.
-/// Verzeichnisse zeigen "-" statt ihrer Inode-Größe (wie WinSCP).
+/// Formats RemoteFileItem fields for the file list. Pure, so it's testable.
+/// Directories show "-" instead of their inode size (like WinSCP).
 public enum FileListFormatter {
     private static let byteFormatter: ByteCountFormatter = {
         let f = ByteCountFormatter()

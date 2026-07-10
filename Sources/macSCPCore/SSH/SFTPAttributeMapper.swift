@@ -1,7 +1,7 @@
 import Foundation
 
-/// Übersetzt SFTP-Attribut-Primitive in RemoteFileItem.
-/// Bewusst frei von Citadel-Typen, damit pur testbar.
+/// Translates SFTP attribute primitives into RemoteFileItem.
+/// Deliberately free of Citadel types, so it's purely testable.
 enum SFTPAttributeMapper {
     private static let typeMask: UInt32 = 0o170000
     private static let directoryBits: UInt32 = 0o040000

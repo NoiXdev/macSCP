@@ -1,12 +1,12 @@
 import Foundation
 
 public struct SSHConnectionConfig: Equatable, Sendable {
-    /// Verbindungsparameter inkl. Auth (Passwort oder OpenSSH-Key).
+    /// Connection parameters incl. auth (password or OpenSSH key).
     public enum AuthMethod: Equatable, Sendable {
-        /// Achtung: Klartext-Passwort — niemals loggen/interpolieren.
+        /// Warning: plaintext password — never log/interpolate it.
         case password(String)
-        /// OpenSSH-Key (M3b: ed25519). Passphrase nil/leer = unverschlüsselter Key.
-        /// Achtung: Klartext-Passphrase — niemals loggen/interpolieren.
+        /// OpenSSH key (M3b: ed25519). Passphrase nil/empty = unencrypted key.
+        /// Warning: plaintext passphrase — never log/interpolate it.
         case privateKey(keyPath: String, passphrase: String?)
     }
 

@@ -1,14 +1,14 @@
 import Foundation
 @testable import macSCPCore
 
-/// Test-Double mit fest verdrahtetem Verzeichnisbaum und Datei-Inhalten.
-/// Invariante: item.path == RemotePath.join(verzeichnisSchlüssel, item.name),
-/// sonst findet stat den Eintrag nicht.
+/// Test double with a hard-wired directory tree and file contents.
+/// Invariant: item.path == RemotePath.join(directoryKey, item.name),
+/// otherwise stat won't find the entry.
 actor MockRemoteFileSystem: RemoteFileSystem {
     private var tree: [String: [RemoteFileItem]]
     private var files: [String: Data]
     private var written: [String: Data] = [:]
-    /// Reihenfolge der per `createDirectory` neu angelegten Pfade (für T3-Tests).
+    /// Order of paths newly created via `createDirectory` (for T3 tests).
     private(set) var createdDirectories: [String] = []
 
     init(tree: [String: [RemoteFileItem]], files: [String: Data] = [:]) {
@@ -60,14 +60,14 @@ actor MockRemoteFileSystem: RemoteFileSystem {
         written[path]
     }
 
-    /// Idempotent (existiert bereits als Verzeichnis im Mock-Baum: still ok),
-    /// wirft `protocolError` bei einer Datei am Pfad, sonst wird der Pfad im
-    /// Baum ergänzt und in `createdDirectories` protokolliert.
+    /// Idempotent (already exists as a directory in the mock tree: silently
+    /// ok), throws `protocolError` for a file at the path, otherwise the path
+    /// is added to the tree and logged in `createdDirectories`.
     func createDirectory(at path: String) async throws {
         let parent = RemotePath.parent(of: path)
         if let siblings = tree[parent], let existing = siblings.first(where: { $0.path == path }) {
             if existing.kind == .directory { return }
-            throw RemoteFSError.protocolError(reason: "Pfad existiert als Datei: \(path)")
+            throw RemoteFSError.protocolError(reason: "path exists as a file: \(path)")
         }
         let name = String(path.split(separator: "/").last ?? Substring(path))
         var siblings = tree[parent] ?? []

@@ -24,7 +24,7 @@ public struct TransferProgress: Equatable, Sendable {
         self.etaSeconds = etaSeconds
     }
 
-    /// Anteil 0…1; nil, wenn die Gesamtgröße unbekannt oder 0 ist.
+    /// Fraction 0…1; nil if the total size is unknown or 0.
     public var fraction: Double? {
         guard let totalBytes, totalBytes > 0 else { return nil }
         return Double(bytesTransferred) / Double(totalBytes)
@@ -54,28 +54,27 @@ public enum TransferDirection: Equatable, Sendable {
     case download
 }
 
-/// Kopiert einzelne Dateien zwischen zwei Dateisystemen (M2c: eine zur Zeit,
-/// Ziel wird überschrieben; Konfliktregeln und Queue kommen in M5).
+/// Copies individual files between two file systems (M2c: one at a time,
+/// destination gets overwritten; conflict rules and the queue arrive in M5).
 public enum TransferEngine {
-    /// Kopiert EINE Datei von source nach destinationDirectory/fileName.
-    /// Richtungs-agnostisch (lokal→remote, remote→lokal, remote→remote).
+    /// Copies ONE file from source to destinationDirectory/fileName.
+    /// Direction-agnostic (local→remote, remote→local, remote→remote).
     ///
-    /// Wirft der Quell-Stream mitten in der Übertragung, bleiben bereits
-    /// geschriebene Ziel-Daten stehen (kein Rollback) — Retry/Cleanup ist
-    /// Sache von M5.
+    /// If the source stream throws mid-transfer, already-written destination
+    /// data is left in place (no rollback) — retry/cleanup is M5's job.
     ///
-    /// Kooperativer Abbruch (M5c/T2): VOR jedem Chunk-Write wird
-    /// `Task.checkCancellation()` geprüft. Wird die umgebende Task abgebrochen
-    /// (z. B. via `TransferQueueViewModel.cancelAll`), stoppt die Übertragung
-    /// chunk-genau (64 KiB) mit `CancellationError`. Der Abbruch hinterlässt
-    /// ggf. eine TEIL-Datei am Ziel; es wird NICHT zurückgerollt — das
-    /// Aufräumen (bzw. ein Resume) ist Sache des Aufrufers (M5d).
+    /// Cooperative cancellation (M5c/T2): `Task.checkCancellation()` is
+    /// checked BEFORE every chunk write. If the surrounding task is cancelled
+    /// (e.g. via `TransferQueueViewModel.cancelAll`), the transfer stops
+    /// chunk-precisely (64 KiB) with `CancellationError`. The cancellation may
+    /// leave a PARTIAL file at the destination; it is NOT rolled back —
+    /// cleanup (or a resume) is the caller's job (M5d).
     /// - Parameters:
-    ///   - bytesPerSecondLimit: Bandbreiten-Drossel in Bytes/s (M5c/T5); `0`
-    ///     (Default) schaltet sie aus — kein Verhaltensunterschied zu vor T5.
-    ///   - sleep: Injizierbarer Schlaf-Hook für die Drossel, Default ein
-    ///     echtes `Task.sleep`. Tests ersetzen ihn durch eine zählende
-    ///     Attrappe, die NICHT wirklich schläft (kein Flaky-Timing).
+    ///   - bytesPerSecondLimit: Bandwidth throttle in bytes/s (M5c/T5); `0`
+    ///     (default) turns it off — no behavior change from before T5.
+    ///   - sleep: Injectable sleep hook for the throttle, default a real
+    ///     `Task.sleep`. Tests replace it with a counting stub that does
+    ///     NOT actually sleep (no flaky timing).
     public static func copyFile(
         from source: any RemoteFileSystem, sourcePath: String,
         to destination: any RemoteFileSystem, destinationDirectory: String, fileName: String,
@@ -87,21 +86,20 @@ public enum TransferEngine {
         let input = try await source.readStream(path: sourcePath)
         let destinationPath = RemotePath.join(destinationDirectory, fileName)
 
-        // Zähl-Zwischenstück, pull-basiert: das Ziel zieht Chunk für Chunk,
-        // nichts wird über einen Chunk hinaus gepuffert.
+        // Counting intermediary, pull-based: the destination pulls chunk by
+        // chunk, nothing is buffered beyond a single chunk.
         var iterator = input.makeAsyncIterator()
         var transferred: UInt64 = 0
-        // Drossel-Buchhaltung (M5c/T5): eine rein VIRTUELLE Uhr, die
-        // ausschließlich um die Dauern vorrückt, die wir `sleep` übergeben
-        // haben — nicht per Wanduhr gemessen. Das macht die Drossel
-        // deterministisch testbar (injizierter `sleep`, der nur zählt statt
-        // zu schlafen), kostet aber Genauigkeit bei echter Chunk-Latenz: eine
-        // ohnehin langsame Verbindung wird ZUSÄTZLICH gedrosselt (nie
-        // schneller als das Limit, ggf. langsamer). Einfacher gleitender
-        // Ansatz, kein Burst-Bucket (siehe Plan).
+        // Throttle accounting (M5c/T5): a purely VIRTUAL clock that only
+        // advances by the durations we hand to `sleep` — not measured by wall
+        // clock. That makes the throttle deterministically testable
+        // (injected `sleep` that just counts instead of sleeping), but costs
+        // accuracy under real chunk latency: an already-slow connection gets
+        // throttled ADDITIONALLY (never faster than the limit, possibly
+        // slower). Simple sliding approach, no burst bucket (see plan).
         var throttledElapsed = Duration.zero
         let counted = AsyncThrowingStream<Data, Error>(unfolding: {
-            // Kooperativer Abbruch VOR jedem Chunk: greift chunk-genau.
+            // Cooperative cancellation BEFORE every chunk: applies chunk-precisely.
             try Task.checkCancellation()
             guard let chunk = try await iterator.next() else { return nil }
             transferred += UInt64(chunk.count)
@@ -111,12 +109,12 @@ public enum TransferEngine {
                 let targetElapsed = Duration.seconds(
                     fromDouble: Double(transferred) / Double(bytesPerSecondLimit))
                 if throttledElapsed < targetElapsed {
-                    // WICHTIG: der `checkCancellation` oben deckt den
-                    // chunk-genauen Abbruch (M5c/T2) bereits ab. `sleep`
-                    // selbst wirft AUCH bei Abbruch der Task (Standardverhalten
-                    // von `Task.sleep`) — ein Cancel währenddessen verwirft
-                    // diesen Chunk (er wird nie zurückgegeben/geschrieben),
-                    // zusätzlich zum obigen Check, nicht an dessen Stelle.
+                    // IMPORTANT: the `checkCancellation` above already covers
+                    // chunk-precise cancellation (M5c/T2). `sleep` itself ALSO
+                    // throws on task cancellation (`Task.sleep`'s default
+                    // behavior) — a cancel during it discards this chunk (it's
+                    // never returned/written), in addition to the check
+                    // above, not in place of it.
                     try await sleep(targetElapsed - throttledElapsed)
                     throttledElapsed = targetElapsed
                 }
@@ -126,14 +124,25 @@ public enum TransferEngine {
 
         try await destination.write(path: destinationPath, contents: counted)
 
-        // WICHTIG: `AsyncThrowingStream(unfolding:)` BEENDET sich bei Abbruch der
-        // konsumierenden Task still (nächstes `next()` liefert `nil`, ohne die
-        // Closure erneut aufzurufen) — der obige `checkCancellation` greift dann
-        // NICHT. Der Konsum-Loop im Ziel läuft dadurch chunk-genau aus (kein
-        // weiterer Chunk wird geschrieben), kehrt aber regulär zurück. Erst
-        // dieser Nachcheck macht den Abbruch für den Aufrufer sichtbar: er wirft
-        // `CancellationError`, die Queue mappt ihn auf `.cancelled`. Die bereits
-        // geschriebene TEIL-Datei bleibt stehen (kein Rollback, s. o.).
+        // IMPORTANT: `AsyncThrowingStream(unfolding:)` ENDS SILENTLY when the
+        // consuming task is cancelled (the next `next()` returns `nil` without
+        // calling the closure again) — the `checkCancellation` above does NOT
+        // catch that. The destination's consume loop therefore runs out
+        // chunk-precisely (no further chunk gets written) but returns
+        // regularly. Only this post-check makes the cancellation visible to
+        // the caller: it throws `CancellationError`, which the queue maps to
+        // `.cancelled`. The already-written PARTIAL file is left in place (no
+        // rollback, see above).
+        //
+        // Benign edge case: if cancellation lands exactly after the LAST chunk
+        // has already been written and `destination.write` has returned
+        // normally, this check still observes the task as cancelled and still
+        // throws `CancellationError` — the queue then reports `.cancelled`
+        // even though the destination file is actually complete. That's a
+        // false-negative on completeness, not a correctness bug: no data is
+        // lost or corrupted, and treating a last-instant cancel as
+        // `.cancelled` rather than `.finished` is the conservative, expected
+        // read of "the task was cancelled" (M5c-final-review note).
         try Task.checkCancellation()
     }
 }

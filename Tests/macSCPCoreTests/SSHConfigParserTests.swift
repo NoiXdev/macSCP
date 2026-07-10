@@ -123,6 +123,6 @@ struct SSHConfigParserTests {
 
         let hosts = SSHConfigImporter.load(path: file.path(percentEncoded: false))
         #expect(hosts.count == 1)
-        #expect(hosts.first?.hostName == "erster.example.com")   // ssh-Präzedenz: erster gewinnt
+        #expect(hosts.first?.hostName == "erster.example.com")   // ssh precedence: first wins
     }
 }

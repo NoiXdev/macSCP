@@ -1,14 +1,14 @@
 import Foundation
 import NIOCore
-// NIOSSH wird transitiv über Citadel bereitgestellt (bereits im Build-Graph als
-// ausgecheckte Abhängigkeit). Eine explizite Package-Abhängigkeit auf den
-// swift-nio-ssh-Fork wurde bewusst NICHT ergänzt: Auto-Mode blockiert die
-// Fork-URL und das Modul ist ohnehin bereits verfügbar.
+// NIOSSH is provided transitively via Citadel (already in the build graph as
+// a checked-out dependency). An explicit package dependency on the
+// swift-nio-ssh fork was deliberately NOT added: Auto-Mode blocks the fork
+// URL and the module is already available anyway.
 import NIOSSH
 
-/// Ein vom Server präsentierter Host-Key als reiner Wert (für TOFU-Entscheidungen
-/// und den UI-Prompt in Task 3). `publicKeyBase64` ist der OpenSSH-Wire-Blob des
-/// Keys (Base64), aus dem der Fingerprint abgeleitet wird.
+/// A host key presented by the server, as a plain value (for TOFU decisions
+/// and the UI prompt in Task 3). `publicKeyBase64` is the OpenSSH wire blob
+/// of the key (Base64), from which the fingerprint is derived.
 public struct HostKeyCandidate: Equatable, Sendable {
     public let host: String
     public let port: Int
@@ -27,14 +27,14 @@ public struct HostKeyCandidate: Equatable, Sendable {
     }
 }
 
-/// Fehler der Host-Key-Prüfung. `mismatch` ist ein harter Stopp ohne Override.
+/// Errors from host-key verification. `mismatch` is a hard stop with no override.
 public enum HostKeyError: Error, Equatable, Sendable {
-    /// Bekannter Host präsentiert einen ANDEREN Key — harter Stopp, kein Override.
-    case mismatch(host: String, expected: String, presented: String)  // Fingerprints
+    /// A known host presents a DIFFERENT key — hard stop, no override.
+    case mismatch(host: String, expected: String, presented: String)  // fingerprints
     case rejectedByUser
 }
 
-/// Reine, testbare Entscheidungslogik der Host-Key-Prüfung (TOFU).
+/// Pure, testable decision logic for host-key verification (TOFU).
 public enum HostKeyValidation {
     public enum Outcome: Equatable {
         case accept
@@ -42,10 +42,10 @@ public enum HostKeyValidation {
         case mismatch(expected: String)
     }
 
-    /// Vergleicht den präsentierten Kandidaten mit dem ggf. gemerkten Key.
-    /// - unbekannt (`known == nil`) → `.askUser`
-    /// - bekannt & identisch → `.accept`
-    /// - bekannt & anders → `.mismatch` (der Decider wird NIE gefragt)
+    /// Compares the presented candidate against the possibly-remembered key.
+    /// - unknown (`known == nil`) → `.askUser`
+    /// - known & identical → `.accept`
+    /// - known & different → `.mismatch` (the decider is NEVER asked)
     public static func evaluate(candidate: HostKeyCandidate, known: KnownHostKey?) -> Outcome {
         guard let known else { return .askUser }
         if known.fingerprintSHA256 == candidate.fingerprintSHA256 {
@@ -56,8 +56,8 @@ public enum HostKeyValidation {
 }
 
 extension HostKeyCandidate {
-    /// Baut einen Kandidaten aus dem vom NIO-SSH-Handshake präsentierten Public Key.
-    /// Nutzt ausschließlich die öffentliche OpenSSH-Serialisierung
+    /// Builds a candidate from the public key presented by the NIO-SSH
+    /// handshake. Uses exclusively the public OpenSSH serialization
     /// (`String(openSSHPublicKey:)` → "keytype base64-blob").
     init(host: String, port: Int, publicKey: NIOSSHPublicKey) {
         let openSSH = String(openSSHPublicKey: publicKey)
@@ -68,27 +68,27 @@ extension HostKeyCandidate {
     }
 }
 
-/// Das, was der synchrone NIO-Validator-Hook nach außen meldet, wenn er einen
-/// Key nicht still akzeptieren kann. Wird von `CitadelFileSystem.connect`
-/// ausgewertet (Decider bzw. harter Mismatch-Stopp).
+/// What the synchronous NIO validator hook reports outward when it can't
+/// silently accept a key. Evaluated by `CitadelFileSystem.connect` (decider,
+/// or hard mismatch stop).
 enum HostKeyProbeResult: Sendable {
     case unknown(HostKeyCandidate)
     case mismatch(host: String, expected: String, presented: String)
-    /// Der known_hosts-Store war nicht lesbar (z.B. korruptes JSON). Wird als
-    /// harter Fehler nach außen gereicht — NICHT als "unbekannt" behandelt,
-    /// damit ein defekter Store nicht still zu Re-TOFU/Overwrite führt (fail closed).
+    /// The known_hosts store wasn't readable (e.g. corrupt JSON). Reported
+    /// outward as a hard error — NOT treated as "unknown", so a broken store
+    /// doesn't silently lead to re-TOFU/overwrite (fail closed).
     case lookupFailed(reason: String)
 }
 
-/// TOFU-Host-Key-Validator als NIO-Delegate (synchroner, Promise-basierter Hook).
+/// TOFU host-key validator as a NIO delegate (synchronous, Promise-based hook).
 ///
-/// Da der Hook nicht `await`en kann, wird die Entscheidung zweistufig getroffen:
-/// bekannte+identische Keys werden hier still akzeptiert; für unbekannte oder
-/// abweichende Keys schlägt der Hook fehl und hinterlegt das Ergebnis in `box`.
-/// `CitadelFileSystem.connect` liest die Box aus, fragt ggf. den Decider und
-/// verbindet nach einem `upsert` mit EINEM Retry erneut (dann bekannt+identisch).
+/// Since the hook can't `await`, the decision is made in two stages: known
+/// and identical keys are silently accepted here; for unknown or differing
+/// keys the hook fails and stores the result in `box`.
+/// `CitadelFileSystem.connect` reads the box, consults the decider if needed,
+/// and reconnects after an `upsert` with ONE retry (then known+identical).
 final class TOFUHostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
-    /// Thread-sicherer Speicher für das Hook-Ergebnis (Hook läuft auf dem Event-Loop).
+    /// Thread-safe storage for the hook's result (the hook runs on the event loop).
     final class Box: @unchecked Sendable {
         private let lock = NSLock()
         private var value: HostKeyProbeResult?
@@ -122,7 +122,7 @@ final class TOFUHostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @unc
         do {
             known = try knownHosts.find(host: host, port: port)
         } catch {
-            // Store nicht lesbar → fail closed (kein Downgrade auf "unbekannt").
+            // Store unreadable → fail closed (no downgrade to "unknown").
             box.set(.lookupFailed(reason: String(describing: error)))
             validationCompletePromise.fail(HostKeyError.rejectedByUser)
             return

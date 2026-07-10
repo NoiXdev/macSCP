@@ -1,8 +1,8 @@
 import Foundation
 
-/// Lokales Dateisystem hinter derselben Abstraktion wie SFTP — dadurch teilen
-/// sich beide Panes ViewModel und Tabelle. `disconnect` ist ein No-op.
-/// Fehler werden auf dieselben typisierten Fälle gemappt wie beim SFTP-Backend.
+/// Local file system behind the same abstraction as SFTP — so both panes
+/// share a view model and table. `disconnect` is a no-op. Errors are mapped
+/// to the same typed cases as the SFTP backend.
 public struct LocalFileSystem: RemoteFileSystem {
     private static let resourceKeys: [URLResourceKey] = [
         .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey,
@@ -24,8 +24,8 @@ public struct LocalFileSystem: RemoteFileSystem {
 
     public func stat(path: String) async throws -> RemoteFileItem {
         let url = URL(fileURLWithPath: path)
-        // fileExists(atPath:) folgt Symlinks — ein kaputter Link existiert aber
-        // als Link. Deshalb zuerst prüfen, ob der Pfad selbst ein Symlink ist.
+        // fileExists(atPath:) follows symlinks — but a broken link still
+        // exists AS a link. So check first whether the path itself is a symlink.
         let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey])
         if values?.isSymbolicLink != true,
            !FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
@@ -42,8 +42,8 @@ public struct LocalFileSystem: RemoteFileSystem {
         } catch {
             throw Self.map(error, path: path)
         }
-        // Pull-basiert (unfolding): der Konsument bestimmt das Tempo,
-        // es wird nie mehr als ein Chunk gepuffert.
+        // Pull-based (unfolding): the consumer sets the pace,
+        // never more than one chunk is buffered.
         return AsyncThrowingStream(unfolding: {
             do {
                 if let chunk = try handle.read(upToCount: TransferChunk.size),
@@ -76,15 +76,15 @@ public struct LocalFileSystem: RemoteFileSystem {
         }
     }
 
-    /// Legt das Verzeichnis inkl. fehlender Zwischenebenen an. Existiert der
-    /// Pfad bereits als Verzeichnis, kehrt der Aufruf still zurück (idempotent).
-    /// Existiert dort eine Datei, wirft `protocolError`.
+    /// Creates the directory including any missing intermediate levels. If the
+    /// path already exists as a directory, the call returns silently
+    /// (idempotent). If a file exists there, throws `protocolError`.
     public func createDirectory(at path: String) async throws {
         var isDirectory: ObjCBool = false
         let exists = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
         if exists {
             if isDirectory.boolValue { return }
-            throw RemoteFSError.protocolError(reason: "Pfad existiert als Datei: \(path)")
+            throw RemoteFSError.protocolError(reason: "path exists as a file: \(path)")
         }
         do {
             try FileManager.default.createDirectory(
@@ -122,9 +122,9 @@ public struct LocalFileSystem: RemoteFileSystem {
 
     private static func map(_ error: Error, path: String) -> Error {
         let ns = error as NSError
-        // FileManager-Operationen werfen NSFileReadNoSuchFileError (260),
-        // FileHandle(forReadingFrom:) dagegen NSFileNoSuchFileError (4) —
-        // beide bedeuten "Datei nicht gefunden".
+        // FileManager operations throw NSFileReadNoSuchFileError (260),
+        // while FileHandle(forReadingFrom:) throws NSFileNoSuchFileError (4) —
+        // both mean "file not found".
         if ns.domain == NSCocoaErrorDomain,
            ns.code == NSFileReadNoSuchFileError || ns.code == NSFileNoSuchFileError {
             return RemoteFSError.notFound(path: path)

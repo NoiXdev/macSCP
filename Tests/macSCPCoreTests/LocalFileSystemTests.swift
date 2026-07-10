@@ -4,7 +4,7 @@ import Testing
 
 @Suite("LocalFileSystem")
 struct LocalFileSystemTests {
-    /// Legt einen Wegwerf-Baum an: <root>/unterordner/ und <root>/datei.txt (5 Bytes).
+    /// Creates a throwaway tree: <root>/unterordner/ and <root>/datei.txt (5 bytes).
     private func makeTempTree() throws -> URL {
         let root = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-lfs-\(UUID().uuidString)")
@@ -132,7 +132,7 @@ struct LocalFileSystemTests {
         let fs = LocalFileSystem()
 
         let target = root.appendingPathComponent("datei.txt").path(percentEncoded: false)
-        await #expect(throws: RemoteFSError.protocolError(reason: "Pfad existiert als Datei: \(target)")) {
+        await #expect(throws: RemoteFSError.protocolError(reason: "path exists as a file: \(target)")) {
             try await fs.createDirectory(at: target)
         }
     }

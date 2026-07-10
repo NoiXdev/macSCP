@@ -1,16 +1,16 @@
 import Foundation
 import Observation
 
-/// Zustand und Lebenszyklus des einblendbaren Terminal-Panels.
-/// Besitzt den Lese-Loop der Shell; die View liefert nur Darstellung/Eingabe.
+/// State and lifecycle of the collapsible terminal panel.
+/// Owns the shell's read loop; the view only provides presentation/input.
 @Observable @MainActor
 public final class TerminalPanelViewModel {
     public enum PanelState: Equatable {
-        /// Keine Shell (initial oder nach shutdown).
+        /// No shell (initial, or after shutdown).
         case closed
         case opening
         case running
-        /// Shell beendet; Meldung nur bei Fehler (nil = normales Ende).
+        /// Shell ended; message only on error (nil = normal end).
         case ended(String?)
     }
 
@@ -20,10 +20,10 @@ public final class TerminalPanelViewModel {
 
     public private(set) var state: PanelState = .closed
     public var isVisible = false
-    /// Von der View gesetzt; empfängt Ausgabe-Bytes auf dem MainActor.
+    /// Set by the view; receives output bytes on the MainActor.
     public var onOutput: (([UInt8]) -> Void)?
-    /// Zuletzt empfangene Output-Chunks (max. 256 KiB) — Replay beim Wieder-
-    /// einblenden des Panels, damit ⌘T den sichtbaren Screen nicht verwirft.
+    /// Most recently received output chunks (max. 256 KiB) — replayed when the
+    /// panel is shown again, so ⌘T doesn't discard the visible screen.
     public private(set) var replayBuffer: [[UInt8]] = []
 
     private static let maxReplayBytes = 256 * 1024
@@ -33,26 +33,25 @@ public final class TerminalPanelViewModel {
     private var shell: (any RemoteShell)?
     private var readTask: Task<Void, Never>?
     private var openTask: Task<Void, Never>?
-    /// Verkettet alle `send()`-Aufrufe zu einer FIFO-Warteschlange (siehe
-    /// `send(_:)`).
+    /// Chains all `send()` calls into a FIFO queue (see `send(_:)`).
     private var sendTask: Task<Void, Never>?
-    /// Zählt jeden `openIfNeeded()`/`shutdown()`-Zyklus hoch. Ein in-flight
-    /// `openShell(...)` oder ein spät endender Lese-Loop darf `state`/`shell`
-    /// nur schreiben, wenn seine erfasste Generation noch aktuell ist — sonst
-    /// würde er einen neueren Zustand (insb. ein `shutdown()`) überschreiben.
+    /// Counts up every `openIfNeeded()`/`shutdown()` cycle. An in-flight
+    /// `openShell(...)` or a late-ending read loop may only write
+    /// `state`/`shell` if its captured generation is still current — otherwise
+    /// it would overwrite a newer state (in particular a `shutdown()`).
     private var generation = 0
 
     public init(openShell: @escaping ShellOpener) {
         self.openShell = openShell
     }
 
-    /// Panel ein-/ausblenden; beim Einblenden Shell öffnen, falls keine läuft.
+    /// Show/hide the panel; opens the shell on show, if none is running.
     public func toggle() {
         isVisible.toggle()
         if isVisible { openIfNeeded() }
     }
 
-    /// Öffnet die Shell, wenn keine läuft (auch fürs "Neu öffnen" nach `.ended`).
+    /// Opens the shell if none is running (also for "reopen" after `.ended`).
     public func openIfNeeded() {
         switch state {
         case .opening, .running: return
@@ -66,10 +65,10 @@ public final class TerminalPanelViewModel {
         openTask = Task {
             do {
                 let shell = try await openShell("xterm-256color", 80, 24)
-                // `shutdown()` kann während des `await` oben gelaufen sein.
-                // In dem Fall gehört diese Shell niemandem mehr — schließen,
-                // statt sie als Orphan laufen zu lassen oder `state` zu
-                // überschreiben.
+                // `shutdown()` may have run while the `await` above was in
+                // flight. In that case this shell belongs to nobody anymore —
+                // close it instead of letting it run as an orphan or
+                // overwriting `state`.
                 guard self.generation == myGeneration else {
                     await shell.close()
                     return
@@ -86,7 +85,9 @@ public final class TerminalPanelViewModel {
                         self?.finishShell(message: nil, generation: readGeneration)
                     } catch {
                         self?.finishShell(
-                            message: "Shell beendet: \(error.localizedDescription)",
+                            message: String(
+                                format: CoreL10n.string("core.terminal.shellEnded %@"),
+                                error.localizedDescription),
                             generation: readGeneration
                         )
                     }
@@ -94,13 +95,15 @@ public final class TerminalPanelViewModel {
             } catch {
                 guard self.generation == myGeneration else { return }
                 shell = nil
-                state = .ended("Shell konnte nicht geöffnet werden: \(error.localizedDescription)")
+                state = .ended(String(
+                    format: CoreL10n.string("core.terminal.openFailed %@"),
+                    error.localizedDescription))
             }
         }
     }
 
-    /// Hängt `chunk` an den Replay-Puffer und wirft älteste Chunks raus, bis
-    /// `maxReplayBytes` wieder unterschritten ist.
+    /// Appends `chunk` to the replay buffer and drops the oldest chunks until
+    /// back under `maxReplayBytes`.
     private func bufferForReplay(_ chunk: [UInt8]) {
         replayBuffer.append(chunk)
         replayBytes += chunk.count
@@ -110,18 +113,18 @@ public final class TerminalPanelViewModel {
     }
 
     private func finishShell(message: String?, generation readGeneration: Int) {
-        // Ein Lese-Loop aus einer älteren Generation (z.B. nach `shutdown()`)
-        // darf den inzwischen gesetzten Zustand nicht überschreiben.
+        // A read loop from an older generation (e.g. after `shutdown()`) may
+        // not overwrite a state that's already been set since.
         guard generation == readGeneration else { return }
         shell = nil
         readTask = nil
         state = .ended(message)
     }
 
-    /// Tastatur-Bytes an die Shell. Aufrufe werden in FIFO-Reihenfolge
-    /// verkettet — unabhängige Tasks pro Aufruf garantieren das nicht
-    /// (schnelle Tastenanschläge oder Paste könnten sonst außer der Reihe
-    /// ankommen). Fehler beim Senden beenden ohnehin den Lese-Loop.
+    /// Sends keyboard bytes to the shell. Calls are chained in FIFO order —
+    /// independent tasks per call would NOT guarantee that (fast keystrokes
+    /// or a paste could otherwise arrive out of order). Send errors end the
+    /// read loop anyway.
     public func send(_ bytes: [UInt8]) {
         guard let shell else { return }
         let previous = sendTask
@@ -131,20 +134,20 @@ public final class TerminalPanelViewModel {
         }
     }
 
-    /// Neue Terminalgröße melden (SSH window-change).
+    /// Reports a new terminal size (SSH window-change).
     public func resize(cols: Int, rows: Int) {
         guard let shell else { return }
         Task { try? await shell.resize(cols: cols, rows: rows) }
     }
 
-    /// Shell schließen und Panel zurücksetzen (Disconnect/Session-Wechsel).
-    /// Idempotent; kehrt erst zurück, wenn der Kanal zu ist — inklusive eines
-    /// noch laufenden `openIfNeeded()`, damit kein in-flight Öffnen danach
-    /// noch `state`/`shell` schreiben oder eine Shell resurrektieren kann.
+    /// Closes the shell and resets the panel (disconnect/session switch).
+    /// Idempotent; returns only once the channel is closed — including any
+    /// still-running `openIfNeeded()`, so no in-flight open can write
+    /// `state`/`shell` afterwards or resurrect a shell.
     public func shutdown() async {
-        // Zuerst hochzählen: jede noch laufende openIfNeeded()/finishShell()
-        // Fortsetzung erkennt anhand ihrer erfassten (jetzt veralteten)
-        // Generation, dass sie nichts mehr schreiben darf.
+        // Increment first: any still-running openIfNeeded()/finishShell()
+        // continuation recognizes from its captured (now stale) generation
+        // that it may no longer write anything.
         generation += 1
 
         openTask?.cancel()
@@ -158,10 +161,9 @@ public final class TerminalPanelViewModel {
             await shell.close()
         }
         shell = nil
-        // Nicht auf `sendTask` warten: die darin verketteten `send()`-Aufrufe
-        // zielen auf die soeben geschlossene Shell und dürfen einfach
-        // auslaufen bzw. no-op werden — sonst könnte `shutdown()` auf einem
-        // hängenden `send()` blockieren.
+        // Don't wait on `sendTask`: the `send()` calls chained into it target
+        // the just-closed shell and may simply run out or no-op — otherwise
+        // `shutdown()` could block on a hanging `send()`.
         sendTask?.cancel()
         sendTask = nil
         replayBuffer = []

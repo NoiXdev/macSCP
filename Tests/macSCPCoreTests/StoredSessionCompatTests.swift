@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import macSCPCore
 
-@Suite("StoredSession-Kompatibilität")
+@Suite("StoredSession compatibility")
 struct StoredSessionCompatTests {
     @Test func decodesM3aJsonWithoutKeyPath() throws {
         let json = """

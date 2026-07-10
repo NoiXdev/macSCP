@@ -1,22 +1,22 @@
 import Foundation
 
-/// Eine interaktive Remote-Shell (PTY). Lebt über einer bestehenden
-/// Verbindung; `close()` beendet nur die Shell, nie die Verbindung.
+/// An interactive remote shell (PTY). Lives on top of an existing
+/// connection; `close()` ends only the shell, never the connection.
 public protocol RemoteShell: AnyObject, Sendable {
-    /// Byte-Chunks der Shell-Ausgabe. Endet normal, wenn die Shell schließt;
-    /// wirft, wenn Shell oder Verbindung fehlschlagen. Genau EIN Konsument.
+    /// Byte chunks of the shell's output. Ends normally when the shell
+    /// closes; throws if the shell or connection fails. Exactly ONE consumer.
     var output: AsyncThrowingStream<[UInt8], Error> { get }
-    /// Schreibt rohe Eingabe-Bytes (Tastatur) an die Shell.
+    /// Writes raw input bytes (keyboard) to the shell.
     func send(_ bytes: [UInt8]) async throws
-    /// Meldet eine neue Terminalgröße (SSH window-change).
+    /// Reports a new terminal size (SSH window-change).
     func resize(cols: Int, rows: Int) async throws
-    /// Schließt die Shell. Idempotent; kehrt erst zurück, wenn der Kanal zu ist.
+    /// Closes the shell. Idempotent; returns only once the channel is closed.
     func close() async
 }
 
-/// Fähigkeit, über eine bestehende Verbindung Shells zu öffnen. Die UI erfragt
-/// sie per `as?` vom Remote-Dateisystem (LocalFileSystem hat sie nicht).
+/// The capability to open shells over an existing connection. The UI queries
+/// it via `as?` on the remote file system (LocalFileSystem doesn't have it).
 public protocol RemoteShellProvider: AnyObject {
-    /// Öffnet eine PTY-Shell (TERM=`terminal`) mit initialer Größe.
+    /// Opens a PTY shell (TERM=`terminal`) with an initial size.
     func openShell(terminal: String, cols: Int, rows: Int) async throws -> any RemoteShell
 }

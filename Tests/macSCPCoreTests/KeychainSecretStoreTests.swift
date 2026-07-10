@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import macSCPCore
 
-/// Läuft nur mit MACSCP_KEYCHAIN=1 (lokal) — CI-Runner-Keychains sind unzuverlässig.
+/// Runs only with MACSCP_KEYCHAIN=1 (locally) — CI runner keychains are unreliable.
 @Suite(
     "KeychainSecretStore",
     .enabled(if: ProcessInfo.processInfo.environment["MACSCP_KEYCHAIN"] == "1"),
@@ -18,7 +18,7 @@ struct KeychainSecretStoreTests {
         #expect(try store.password(for: id) == nil)
         try store.savePassword("geheim1", for: id)
         #expect(try store.password(for: id) == "geheim1")
-        try store.savePassword("geheim2", for: id)   // Update-Pfad
+        try store.savePassword("geheim2", for: id)   // Update path
         #expect(try store.password(for: id) == "geheim2")
     }
 
@@ -27,6 +27,6 @@ struct KeychainSecretStoreTests {
         try store.savePassword("weg", for: id)
         try store.deletePassword(for: id)
         #expect(try store.password(for: id) == nil)
-        try store.deletePassword(for: id)   // No-op, wirft nicht
+        try store.deletePassword(for: id)   // No-op, does not throw
     }
 }

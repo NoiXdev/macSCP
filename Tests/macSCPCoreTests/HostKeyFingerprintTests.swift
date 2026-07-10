@@ -2,11 +2,11 @@ import Foundation
 import Testing
 @testable import macSCPCore
 
-/// Der Fingerprint-Vertrag wird gegen das System-ssh-keygen verifiziert —
-/// Laufzeit-Keys, kein Schlüsselmaterial im Repo.
+/// The fingerprint contract is verified against the system's ssh-keygen —
+/// runtime-generated keys, no key material in the repo.
 @Suite("HostKeyFingerprint")
 struct HostKeyFingerprintTests {
-    /// Erzeugt einen ed25519-Key und liefert (Base64-Blob, ssh-keygen-Fingerprint).
+    /// Generates an ed25519 key and returns (Base64 blob, ssh-keygen fingerprint).
     private func makeReference() throws -> (blob: String, expected: String) {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-fp-\(UUID().uuidString)")
