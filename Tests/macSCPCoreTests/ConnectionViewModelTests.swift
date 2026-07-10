@@ -252,18 +252,17 @@ struct ConnectionViewModelTests {
     /// `onUnknownHostKey`-Entscheider erst NACH dem Cancel der connect()-Task
     /// aufrufen (hier über einen Stream erzwungen, der erst nach dem Cancel
     /// freigegeben wird). `presentHostKeyPrompt` betritt `withCheckedContinuation`
-    /// dann mit bereits gesetzter Cancellation — Swifts
-    /// `withTaskCancellationHandler` ruft den `onCancel`-Handler in diesem Fall
-    /// SOFORT bei der Registrierung auf (noch bevor `operation` läuft), also
-    /// bevor `hostKeyContinuation` überhaupt gesetzt ist; der Handler-Aufruf
-    /// von `resolveHostKeyPrompt(trust:)` ist dort ein No-Op (Guard gegen nil).
-    /// Erst der `Task.isCancelled`-Fast-Path INNERHALB von
-    /// `withCheckedContinuation` löst die Continuation tatsächlich auf — ohne
-    /// ihn würde hier für immer gehängt. Dieser Test zwingt also deterministisch
-    /// den Fast-Path-Zweig (nicht den onCancel-Zweig) zum Auflösen der
-    /// Continuation.
+    /// dann mit bereits gesetzter Cancellation. Der Test pinnt das
+    /// GESAMTVERHALTEN: Cancel vor dem Prompt darf nicht hängen und muss im
+    /// Fehlerzustand enden. WELCHER Zweig die Continuation auflöst
+    /// (`Task.isCancelled`-Fast-Path in der Operation oder der `onCancel`-
+    /// Handler, dessen nachgelagerte MainActor-Task die inzwischen gesetzte
+    /// Continuation ebenfalls auflösen kann), ist von außen nicht
+    /// unterscheidbar — beide konvergieren auf denselben Zustand. Ein
+    /// Review-Experiment (Fast-Path entfernt) blieb grün via onCancel; der
+    /// Fast-Path bleibt als Gürtel-und-Hosenträger-Absicherung im Code.
     @Test @MainActor
-    func cancelBeforeHostKeyPromptDeciderIsCalledResolvesViaFastPath() async throws {
+    func cancelBeforeHostKeyPromptDeciderIsCalledDoesNotHang() async throws {
         let candidate = HostKeyCandidate(
             host: "example.com", port: 22, keyType: "ssh-ed25519",
             publicKeyBase64: "AAAAC3NzaC1lZDI1NTE5AAAAIAtest")
@@ -282,7 +281,7 @@ struct ConnectionViewModelTests {
         releaseContinuation.finish()
 
         // Timeout-Race-Muster der Datei (siehe cancelWhileHostKeyPromptPendingResolvesConnect):
-        // ohne Fast-Path hängt connect() für immer.
+        // ohne Cancellation-Behandlung (Fast-Path UND onCancel) hinge connect() für immer.
         let claim = RaceClaim()
         let finished: Bool = await withCheckedContinuation { continuation in
             Task {
