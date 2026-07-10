@@ -255,6 +255,64 @@ struct CitadelFileSystemIntegrationTests {
         }
     }
 
+    /// M5c/T4 gated end-to-end: five files uploaded THROUGH the queue with
+    /// `maxConcurrent == 3` (a multi-drop equivalent) all arrive byte-identical.
+    /// Exercises the real parallel-slot dispatch over one live SFTP channel.
+    @MainActor
+    @Test func queueUploadsFilesInParallelSlotsIntact() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        let localDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-queue-parallel-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: localDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: localDir) }
+
+        struct Upload { let localPath: String; let remoteName: String; let remotePath: String; let md5: String }
+        var uploads: [Upload] = []
+        for index in 0..<5 {
+            let localFile = localDir.appendingPathComponent("q-\(index).bin")
+            let dd = Process()
+            dd.executableURL = URL(fileURLWithPath: "/bin/dd")
+            dd.arguments = ["if=/dev/urandom", "of=\(localFile.path(percentEncoded: false))",
+                            "bs=1m", "count=4"]
+            dd.standardError = FileHandle.nullDevice
+            try dd.run()
+            dd.waitUntilExit()
+            #expect(dd.terminationStatus == 0)
+
+            let remoteName = "macscp-queue-parallel-\(UUID().uuidString)-\(index).bin"
+            uploads.append(Upload(
+                localPath: localFile.path(percentEncoded: false),
+                remoteName: remoteName, remotePath: "/config/\(remoteName)",
+                md5: localMD5(localFile.path(percentEncoded: false))))
+        }
+        defer { for upload in uploads { cleanupConfigPath(upload.remotePath) } }
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 3
+        let source = LocalFileSystem()
+        for upload in uploads {
+            vm.enqueue(
+                fileName: upload.remoteName, direction: .upload,
+                source: source, sourcePath: upload.localPath,
+                destination: fs, destinationDirectory: "/config",
+                onCompleted: nil)
+        }
+
+        // Poll until every queue item reaches a terminal state.
+        var polls = 0
+        while vm.items.contains(where: { !$0.status.isTerminal }) && polls < 2000 {
+            try await Task.sleep(for: .milliseconds(20))
+            polls += 1
+        }
+        #expect(vm.items.allSatisfy { $0.status == .finished })
+
+        for upload in uploads {
+            #expect(remoteMD5(upload.remotePath) == upload.md5)
+        }
+    }
+
     /// Local md5 via `/sbin/md5 -q` (returns just the hash).
     private func localMD5(_ path: String) -> String {
         let process = Process()
