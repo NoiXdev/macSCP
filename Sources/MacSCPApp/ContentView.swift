@@ -209,8 +209,31 @@ struct ContentView: View {
         // connection state (M5c/T0) — replaces the global `.frame` from
         // `MacSCPApp.swift`.
         .frame(minWidth: session == nil ? 700 : 930, minHeight: 460)
+        .tint(DesignTokens.remoteBlue)
         .background(WindowAccessor { window = $0 })
         .task { importedHosts = SSHConfigImporter.load(path: SSHConfigImporter.defaultPath) }
+        // Session actions live in the window's native toolbar (M5f/T5) —
+        // attached at the outer container so it belongs to the window, not
+        // the detail pane. Empty (no items) while disconnected.
+        .toolbar {
+            if let session {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    uploadButton(session)
+                    downloadButton(session)
+                    Button {
+                        session.terminal.toggle()
+                    } label: {
+                        Label(L10n.string("browser.terminalToggle", "Terminal"), systemImage: "terminal")
+                    }
+                    .keyboardShortcut("t", modifiers: .command)
+                    .help(L10n.string("browser.terminalToggleHelp", "Show/hide terminal (⌘T)"))
+                    Button(L10n.string("browser.disconnect", "Disconnect")) {
+                        disconnectToForm()
+                    }
+                    .disabled(transferQueue.isActive)
+                }
+            }
+        }
         // Settings live-wiring (M5c/T4+T5): each observer targets
         // `transferQueue` directly rather than a captured snapshot, so it
         // keeps applying to whichever session's queue is current. A change
@@ -231,26 +254,6 @@ struct ContentView: View {
     private var detail: some View {
         if let session {
             VStack(spacing: 0) {
-                HStack(spacing: 12) {
-                    uploadButton(session)
-                    downloadButton(session)
-                    Spacer()
-                    Button {
-                        session.terminal.toggle()
-                    } label: {
-                        Label(L10n.string("browser.terminalToggle", "Terminal"), systemImage: "terminal")
-                    }
-                    .keyboardShortcut("t", modifiers: .command)
-                    .help(L10n.string("browser.terminalToggleHelp", "Show/hide terminal (⌘T)"))
-                    Button(L10n.string("browser.disconnect", "Disconnect")) {
-                        disconnectToForm()
-                    }
-                    .disabled(transferQueue.isActive)
-                }
-                .padding(8)
-
-                Divider()
-
                 VSplitView {
                     HSplitView {
                         BrowserPane(
@@ -476,6 +479,16 @@ struct ContentView: View {
             activeSessionID = stored?.id
             connectionViewModel.shouldSaveSession = false
         }
+
+        // Window title: the stored session name if there is one, otherwise
+        // "user@host" — this is window chrome (proper name + user data),
+        // deliberately not localized (no catalog key).
+        let trimmedSaveName = connectionViewModel.saveName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let activeSessionName = trimmedSaveName.isEmpty
+            ? "\(connectionViewModel.username)@\(connectionViewModel.host)"
+            : trimmedSaveName
+        window?.title = "macSCP — \(activeSessionName)"
     }
 
     /// Sidebar click: disconnect the current connection, fill the form from
@@ -582,6 +595,7 @@ struct ContentView: View {
             // feedback 2026-07-10, M5c/T0).
             if let window { lastBrowserSize = window.frame.size }
             resizeWindow(toWidth: 700, height: 460)
+            window?.title = "macSCP"
         }
     }
 

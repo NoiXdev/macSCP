@@ -50,7 +50,7 @@ struct ConnectionFormView: View {
             }
         }
         .padding(24)
-        .frame(minWidth: 420)
+        .frame(minWidth: 420, maxWidth: 460)
         .fileImporter(isPresented: $showKeyImporter, allowedContentTypes: [.item]) { result in
             if case .success(let url) = result {
                 viewModel.keyPath = url.path(percentEncoded: false)
@@ -177,6 +177,7 @@ struct ConnectionFormView: View {
                         }
                     }
                     .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
                 } else {
                     Button(L10n.string("connection.connect", "Connect")) {
                         Task {
@@ -189,6 +190,7 @@ struct ConnectionFormView: View {
                     }
                     .keyboardShortcut(.defaultAction)
                     .disabled(isConnecting)
+                    .buttonStyle(.borderedProminent)
                 }
             }
     }

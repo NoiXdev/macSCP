@@ -27,6 +27,7 @@ struct MacSCPApp: App {
         // Opened via Cmd-, or the app menu's "Settings…" item (M5c/T3).
         Settings {
             SettingsView(store: settingsStore)
+                .tint(DesignTokens.remoteBlue)
         }
     }
 }
