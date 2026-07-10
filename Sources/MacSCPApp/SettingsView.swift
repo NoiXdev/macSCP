@@ -112,6 +112,12 @@ private struct OpenWithSettingsTab: View {
     }
 
     @State private var activePicker: ActivePicker?
+    /// Drives the shared `.fileImporter`. Kept separate from `activePicker`
+    /// because SwiftUI resets the `isPresented` binding before invoking the
+    /// completion handler — deriving presentation from `activePicker` would
+    /// nil the picker context out from under the handler and drop the
+    /// selection.
+    @State private var importerPresented = false
     /// The extension being typed into the "add rule" row.
     @State private var newRuleExtension: String = ""
 
@@ -124,6 +130,7 @@ private struct OpenWithSettingsTab: View {
                     Spacer()
                     Button(L10n.string("settings.openWith.choose", "Choose…")) {
                         activePicker = .defaultEditor
+                        importerPresented = true
                     }
                     Button(L10n.string("settings.openWith.reset", "Reset")) {
                         store.defaultEditorPath = nil
@@ -164,6 +171,7 @@ private struct OpenWithSettingsTab: View {
                         .frame(width: 60)
                         Button(L10n.string("settings.openWith.rules.chooseApp", "Choose app…")) {
                             activePicker = .rule(extension: newRuleExtension)
+                            importerPresented = true
                         }
                         .disabled(newRuleExtension.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
@@ -185,12 +193,10 @@ private struct OpenWithSettingsTab: View {
         // remembers the last-used directory across launches, so in
         // practice it lands on `/Applications` after the first use.
         .fileImporter(
-            isPresented: Binding(
-                get: { activePicker != nil },
-                set: { if !$0 { activePicker = nil } }
-            ),
+            isPresented: $importerPresented,
             allowedContentTypes: [.application]
         ) { result in
+            defer { activePicker = nil }
             guard case .success(let url) = result, let picker = activePicker else { return }
             switch picker {
             case .defaultEditor:
