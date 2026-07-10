@@ -1202,6 +1202,7 @@ struct TransferQueueViewModelTests {
         #expect(counter.value == 1)
         #expect(await destination.createdDirectories == ["/ziel/leerdir", "/ziel/leerdir/unter"])
         #expect(vm.items.isEmpty)   // keine Datei-Items, nur Verzeichnisse
+    }
 
     // MARK: - 30 (M5c/T2: kooperative Cancellation eines LAUFENDEN Transfers)
 
