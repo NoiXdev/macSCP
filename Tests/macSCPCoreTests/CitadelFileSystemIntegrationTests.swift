@@ -116,6 +116,87 @@ struct CitadelFileSystemIntegrationTests {
         #expect(readBack == payload)
     }
 
+    /// M5c/T2: Ein großer Upload wird nach dem ersten Progress-Event abgebrochen.
+    /// Erwartung: `copyFile` wirft `CancellationError`, die Remote-Teildatei ist
+    /// ECHT kleiner als die Quelle, und die Verbindung bleibt danach nutzbar.
+    @Test func cancelledUploadStopsEarlyAndKeepsConnectionUsable() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        // Quelle zur Laufzeit erzeugen (128 MiB Random) — NIE eingecheckt.
+        let localDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-cancel-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: localDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: localDir) }
+        let localFile = localDir.appendingPathComponent("big.bin")
+
+        let dd = Process()
+        dd.executableURL = URL(fileURLWithPath: "/bin/dd")
+        dd.arguments = ["if=/dev/urandom", "of=\(localFile.path(percentEncoded: false))",
+                        "bs=1m", "count=128"]
+        dd.standardError = FileHandle.nullDevice
+        try dd.run()
+        dd.waitUntilExit()
+        #expect(dd.terminationStatus == 0)
+        let sourceSize = try FileManager.default
+            .attributesOfItem(atPath: localFile.path(percentEncoded: false))[.size] as? Int ?? 0
+        #expect(sourceSize == 128 * 1024 * 1024)
+
+        let remoteName = "macscp-cancel-upload-\(UUID().uuidString).bin"
+        let remotePath = "/config/\(remoteName)"
+        defer { cleanupConfigPath(remotePath) }
+
+        // Nach dem ERSTEN Progress-Event abbrechen.
+        let progressSeen = CallCounterBox()
+        let source = LocalFileSystem()
+        let task = Task {
+            try await TransferEngine.copyFile(
+                from: source, sourcePath: localFile.path(percentEncoded: false),
+                to: fs, destinationDirectory: "/config", fileName: remoteName,
+                onProgress: { _ in progressSeen.increment() })
+        }
+
+        // Auf das erste Progress-Event warten (mit Obergrenze gegen Hänger).
+        var polls = 0
+        while progressSeen.value == 0 && polls < 500 {
+            try await Task.sleep(for: .milliseconds(10))
+            polls += 1
+        }
+        #expect(progressSeen.value > 0)
+        task.cancel()
+
+        // Abbruch muss als CancellationError sichtbar werden.
+        do {
+            try await task.value
+            Issue.record("CancellationError erwartet, Transfer lief durch")
+        } catch is CancellationError {
+            // erwartet
+        } catch {
+            Issue.record("CancellationError erwartet, war: \(error)")
+        }
+
+        // Remote-Teildatei ist ECHT kleiner als die Quelle (docker exec stat).
+        let stat = Process()
+        stat.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
+        stat.arguments = ["exec", "macscp-test-sshd", "stat", "-c", "%s", remotePath]
+        let pipe = Pipe()
+        stat.standardOutput = pipe
+        stat.standardError = FileHandle.nullDevice
+        try stat.run()
+        stat.waitUntilExit()
+        #expect(stat.terminationStatus == 0)
+        let out = String(
+            data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let remoteSize = Int(out) ?? -1
+        #expect(remoteSize >= 0)
+        #expect(remoteSize < sourceSize)   // ECHT kleiner — Abbruch griff mitten drin
+
+        // Verbindung/SFTP danach weiter nutzbar.
+        let listing = try await fs.list(path: "/config")
+        #expect(listing.contains { $0.name == remoteName })
+    }
+
     /// Erzeugt einen Laufzeit-Key und installiert den Public Key im Container.
     private func makeInstalledKey() throws -> (dir: URL, keyPath: String) {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
