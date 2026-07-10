@@ -149,12 +149,19 @@ public final class TransferQueueViewModel {
         /// continues from the destination offset, and the queue's conflict
         /// check is bypassed (resuming IS the conflict decision).
         let resume: Bool
+        /// Skips the destination conflict check by design (M5e/T3). `true` only
+        /// for editor write-backs enqueued via `enqueueEditUpload`: writing the
+        /// edited file back over the original IS the user's explicit intent, so
+        /// no prompt is shown. Unlike `resume`, the engine still overwrites (no
+        /// offset continuation). Default `false` on every other path.
+        let bypassConflictCheck: Bool
 
         init(
             id: UUID, source: any RemoteFileSystem, sourcePath: String,
             destination: any RemoteFileSystem, destinationDirectory: String,
             fileName: String, direction: TransferDirection,
-            onCompleted: (@MainActor () async -> Void)?, resume: Bool = false
+            onCompleted: (@MainActor () async -> Void)?, resume: Bool = false,
+            bypassConflictCheck: Bool = false
         ) {
             self.id = id
             self.source = source
@@ -165,6 +172,7 @@ public final class TransferQueueViewModel {
             self.direction = direction
             self.onCompleted = onCompleted
             self.resume = resume
+            self.bypassConflictCheck = bypassConflictCheck
         }
     }
 
@@ -255,6 +263,30 @@ public final class TransferQueueViewModel {
             fileName: fileName, direction: direction, onCompleted: onCompleted)
         order.append(id)
         items.append(Item(id: id, fileName: fileName, direction: direction, status: .queued))
+        kickWorker()
+        return id
+    }
+
+    /// Enqueues an editor write-back: uploads `localURL` back to
+    /// `remoteDirectory/fileName`, BYPASSING the conflict check by design
+    /// (writing back is the user's explicit intent). Behaves like a normal
+    /// item otherwise (bar, limits, slots, interrupted classification). The
+    /// upload's source is the LOCAL file system (`source`) reading the temp
+    /// file at `localURL`; `destination` is the remote file system (M5e/T3).
+    @discardableResult
+    public func enqueueEditUpload(
+        fileName: String, localURL: URL,
+        source: any RemoteFileSystem, destination: any RemoteFileSystem,
+        remoteDirectory: String
+    ) -> UUID {
+        let id = UUID()
+        jobs[id] = Job(
+            id: id, source: source, sourcePath: localURL.path(percentEncoded: false),
+            destination: destination, destinationDirectory: remoteDirectory,
+            fileName: fileName, direction: .upload, onCompleted: nil,
+            resume: false, bypassConflictCheck: true)
+        order.append(id)
+        items.append(Item(id: id, fileName: fileName, direction: .upload, status: .queued))
         kickWorker()
         return id
     }
@@ -471,7 +503,9 @@ public final class TransferQueueViewModel {
         // Conflict check BEFORE the engine call; prompts serialize FIFO.
         // A resumed retry job (M5d/T3) bypasses it entirely: it already carries
         // its post-rename effective name and resuming IS the conflict decision.
-        let outcome: Outcome = job.resume
+        // An editor write-back (M5e/T3) bypasses it too — writing back over the
+        // original is the user's explicit intent.
+        let outcome: Outcome = (job.resume || job.bypassConflictCheck)
             ? .proceed(fileName: job.fileName)
             : await resolveConflictIfNeeded(job: job)
 

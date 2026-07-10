@@ -629,6 +629,35 @@ struct TransferQueueViewModelTests {
         #expect(await destination.writtenData(at: "/ziel/a.txt") == content)
     }
 
+    /// Editor write-backs (M5e/T3) skip the conflict check by design: even when
+    /// the destination already exists, the decider is NOT consulted and the item
+    /// finishes with an overwrite.
+    @Test func editUploadBypassesConflictCheck() async throws {
+        let content = Data("edited".utf8)
+        let localURL = URL(fileURLWithPath: "/private/tmp/macscp-edit-test/a.txt")
+        // Source = local stand-in reading the temp file at localURL.path.
+        let source = QueueTestFS(reads: [
+            localURL.path(percentEncoded: false): .init(content: content),
+        ])
+        // Destination already HAS the file — if the conflict check ran, the
+        // decider would be consulted (and stat would find it).
+        let destination = QueueTestFS(reads: ["/remote/a.txt": .init(content: Data("old".utf8))])
+        let calls = CallCounter()
+
+        let vm = TransferQueueViewModel()
+        vm.conflictDecider = { _ in await calls.increment(); return (.overwrite, false) }
+        let id = vm.enqueueEditUpload(
+            fileName: "a.txt", localURL: localURL,
+            source: source, destination: destination, remoteDirectory: "/remote")
+
+        await waitUntil { vm.items.first(where: { $0.id == id })?.status == .finished }
+
+        #expect(await calls.count == 0)                       // decider never called
+        #expect(vm.items.first(where: { $0.id == id })?.status == .finished)
+        #expect(vm.items.first(where: { $0.id == id })?.direction == .upload)
+        #expect(await destination.writtenData(at: "/remote/a.txt") == content)
+    }
+
     // MARK: - 11
 
     /// `.skip` marks the item `.skipped`, doesn't write, and doesn't call onCompleted.
