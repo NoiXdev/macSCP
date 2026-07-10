@@ -58,10 +58,11 @@ struct RemoteBrowserViewModelTests {
         #expect(vm.currentPath == "/")
     }
 
-    @Test func missingPathYieldsGermanNotFoundMessage() async {
+    @Test func missingPathYieldsLocalizedNotFoundMessage() async {
         let vm = RemoteBrowserViewModel(fs: makeFS(), startPath: "/nope")
         await vm.load()
-        #expect(vm.state == .failed(message: "Pfad nicht gefunden: /nope"))
+        #expect(vm.state == .failed(
+            message: String(format: CoreL10n.string("core.browse.notFound %@"), "/nope")))
         #expect(vm.items.isEmpty)
     }
 

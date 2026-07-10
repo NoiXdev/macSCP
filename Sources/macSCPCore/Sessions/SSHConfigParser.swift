@@ -1,6 +1,6 @@
 import Foundation
 
-/// Ein importierter Host aus ~/.ssh/config (nur die für macSCP relevanten Felder).
+/// An imported host from ~/.ssh/config (only the fields relevant to macSCP).
 public struct SSHConfigHost: Equatable, Sendable {
     public let alias: String
     public let hostName: String?
@@ -18,12 +18,12 @@ public struct SSHConfigHost: Equatable, Sendable {
     }
 }
 
-/// Purer Parser für das OpenSSH-config-Format (lesend, YAGNI-Grenzen:
-/// kein Match/Include, keine Wildcard-Vererbung — solche Blöcke werden übersprungen).
+/// Pure parser for the OpenSSH config format (read-only, YAGNI boundaries:
+/// no Match/Include, no wildcard inheritance — such blocks are skipped).
 public enum SSHConfigParser {
     public static func parse(_ text: String) -> [SSHConfigHost] {
         var blocks: [(aliases: [String], settings: [String: String])] = []
-        var inIgnoredBlock = false   // Match-Block o.ä.
+        var inIgnoredBlock = false   // Match block or similar
 
         for rawLine in text.components(separatedBy: .newlines) {
             var line = rawLine
@@ -44,7 +44,7 @@ public enum SSHConfigParser {
             default:
                 guard !inIgnoredBlock, !blocks.isEmpty else { continue }
                 let key = keyword.lowercased()
-                // ssh-Semantik: der erste Wert gewinnt
+                // ssh semantics: the first value wins
                 if blocks[blocks.count - 1].settings[key] == nil {
                     blocks[blocks.count - 1].settings[key] = unquote(value)
                 }
@@ -68,7 +68,7 @@ public enum SSHConfigParser {
         return results
     }
 
-    /// Trennt "Keyword Wert" bzw. "Keyword=Wert" (mit beliebigem Whitespace um '=').
+    /// Splits "Keyword Value" or "Keyword=Value" (with arbitrary whitespace around '=').
     private static func splitKeywordValue(_ line: String) -> (String, String)? {
         let separators = CharacterSet.whitespaces.union(CharacterSet(charactersIn: "="))
         guard let range = line.rangeOfCharacter(from: separators) else { return nil }
@@ -87,7 +87,7 @@ public enum SSHConfigParser {
     }
 }
 
-/// Lädt und sortiert die importierbaren Hosts. Fehlende Datei ist kein Fehler.
+/// Loads and sorts the importable hosts. A missing file is not an error.
 public enum SSHConfigImporter {
     public static var defaultPath: String {
         NSHomeDirectory() + "/.ssh/config"
@@ -97,8 +97,8 @@ public enum SSHConfigImporter {
         guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
             return []
         }
-        // Erster Block gewinnt (ssh-Präzedenz); verhindert zugleich doppelte
-        // SwiftUI-IDs in der Sidebar.
+        // First block wins (ssh precedence); this also prevents duplicate
+        // SwiftUI ids in the sidebar.
         var seen = Set<String>()
         let unique = SSHConfigParser.parse(text).filter { seen.insert($0.alias).inserted }
         return unique.sorted {

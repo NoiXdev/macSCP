@@ -2,15 +2,15 @@ import Foundation
 import Testing
 @testable import macSCPCore
 
-/// Läuft nur mit MACSCP_ITEST=1 und laufendem Docker-Testserver
-/// (docker compose -f docker/test-server/compose.yml up -d — aus dem HAUPT-Checkout).
-@Suite("CitadelShell gegen Docker-SSH-Server",
+/// Only runs with MACSCP_ITEST=1 and a running Docker test server
+/// (docker compose -f docker/test-server/compose.yml up -d — from the MAIN checkout).
+@Suite("CitadelShell against Docker SSH server",
        .enabled(if: ProcessInfo.processInfo.environment["MACSCP_ITEST"] == "1"),
        .serialized)
 struct CitadelShellIntegrationTests {
-    /// Standard-Passwort-Connect gegen den Docker-Testserver (127.0.0.1:2222,
-    /// testuser/testpass) mit einem Retry gegen das Reconnect-Throttling des
-    /// Containers. Entspricht dem Muster aus CitadelFileSystemIntegrationTests.
+    /// Standard password connect against the Docker test server (127.0.0.1:2222,
+    /// testuser/testpass) with a retry against the container's reconnect
+    /// throttling. Matches the pattern from CitadelFileSystemIntegrationTests.
     private func connectWithRetry() async throws -> CitadelFileSystem {
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: 2222, username: "testuser",
@@ -27,7 +27,7 @@ struct CitadelShellIntegrationTests {
         }
     }
 
-    /// Sammelt Output-Chunks, bis der Marker auftaucht oder das Timeout schlägt.
+    /// Collects output chunks until the marker shows up or the timeout hits.
     private func collectUntil(
         _ shell: any RemoteShell, marker: String, timeout: Duration = .seconds(10)
     ) async throws -> String {
@@ -44,7 +44,7 @@ struct CitadelShellIntegrationTests {
             let first = try await group.next()!
             group.cancelAll()
             guard let result = first, result.contains(marker) else {
-                throw RemoteFSError.protocolError(reason: "Marker nicht gefunden in: \(collected)")
+                throw RemoteFSError.protocolError(reason: "marker not found in: \(collected)")
             }
             return result
         }
@@ -66,7 +66,7 @@ struct CitadelShellIntegrationTests {
         try await shell.send(Array("echo ready\n".utf8))
         _ = try await collectUntil(shell, marker: "ready")
         await shell.close()
-        // Der SFTP-Channel muss den Shell-Close überleben (gleiche Verbindung!)
+        // The SFTP channel must survive the shell close (same connection!)
         let items = try await fs.list(path: "/")
         #expect(!items.isEmpty)
         await fs.disconnect()
@@ -76,9 +76,9 @@ struct CitadelShellIntegrationTests {
         let fs = try await connectWithRetry()
         let shell = try await fs.openShell(terminal: "xterm-256color", cols: 80, rows: 24)
         try await shell.send(Array("exit\n".utf8))
-        // Stream muss sauber enden (kein Timeout, kein Fehler) — ein `exit` ist
-        // kein Fehlerfall, auch wenn Citadels withPTY beim Schließen des schon
-        // toten Kanals intern einen ChannelError.alreadyClosed wirft.
+        // Stream must end cleanly (no timeout, no error) — an `exit` is not
+        // an error case, even though Citadel's withPTY internally throws a
+        // ChannelError.alreadyClosed when closing the already-dead channel.
         var thrown: Error?
         let ended = await withTaskGroup(of: Bool.self) { group in
             group.addTask {
@@ -90,9 +90,9 @@ struct CitadelShellIntegrationTests {
             group.cancelAll()
             return first
         }
-        #expect(ended, "Output-Stream muss nach exit enden")
-        #expect(thrown == nil, "Sauberes exit darf keinen Fehler liefern: \(String(describing: thrown))")
-        await shell.close() // idempotent nach Selbst-Exit
+        #expect(ended, "output stream must end after exit")
+        #expect(thrown == nil, "a clean exit must not produce an error: \(String(describing: thrown))")
+        await shell.close() // idempotent after self-exit
         await fs.disconnect()
     }
 

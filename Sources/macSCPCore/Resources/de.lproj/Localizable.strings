@@ -1,0 +1,43 @@
+/* Core-layer Nutzer-Meldungen — Deutsch (Übersetzung). */
+
+/* TransferQueueViewModel.message(for:) */
+"core.transfer.notFound %@" = "Datei nicht gefunden: %@";
+"core.error.permissionDenied %@" = "Keine Berechtigung für: %@";
+"core.error.connectionLost %@" = "Verbindung verloren: %@";
+"core.transfer.failed %@" = "Übertragung fehlgeschlagen: %@";
+"core.transfer.noFreeName" = "Kein freier Name gefunden.";
+
+/* RemoteBrowserViewModel.message(for:path:) */
+"core.browse.notFound %@" = "Pfad nicht gefunden: %@";
+"core.browse.protocolError %@" = "Protokollfehler: %@";
+"core.error.unexpected %@" = "Unerwarteter Fehler: %@";
+
+/* ConnectionViewModel Formular-Validierung */
+"core.connect.portNumeric" = "Port muss eine Zahl sein.";
+"core.connect.passwordEmpty" = "Passwort darf nicht leer sein.";
+"core.connect.keyPathEmpty" = "Pfad zum SSH-Key angeben.";
+"core.connect.saveNameEmpty" = "Name für die gespeicherte Session angeben.";
+
+/* ConnectionViewModel.failedState(for:) */
+"core.connect.emptyHost" = "Host darf nicht leer sein.";
+"core.connect.emptyUsername" = "Benutzername darf nicht leer sein.";
+"core.connect.invalidPort %@" = "Ungültiger Port: %@.";
+"core.connect.authFailed" = "Anmeldung fehlgeschlagen — Benutzername oder Passwort prüfen.";
+"core.connect.connectionFailed %@" = "Verbindung fehlgeschlagen: %@";
+"core.connect.keyNotFound %@" = "SSH-Key nicht gefunden: %@";
+"core.connect.keyPassphraseRequired" = "Der SSH-Key ist verschlüsselt — Passphrase angeben.";
+"core.connect.keyWrongPassphrase" = "Passphrase ist falsch.";
+"core.connect.keyUnsupportedFormat" = "SSH-Key-Format wird nicht unterstützt (aktuell: OpenSSH ed25519).";
+
+/* Host-Key-TOFU-Prompts — volle Schärfe in jeder Sprache. */
+"core.hostkey.mismatch %@ %@ %@" = "ACHTUNG: Der Host-Key von %1$@ hat sich geändert! Erwartet %2$@, präsentiert %3$@. Möglicher Man-in-the-Middle — Verbindung abgebrochen.";
+"core.hostkey.rejected" = "Verbindung abgebrochen — Host-Key nicht bestätigt.";
+
+/* TerminalPanelViewModel */
+"core.terminal.shellEnded %@" = "Shell beendet: %@";
+"core.terminal.openFailed %@" = "Shell konnte nicht geöffnet werden: %@";
+
+/* SessionListViewModel */
+"core.session.loadFailed %@" = "Sessions konnten nicht geladen werden: %@";
+"core.session.saveFailed %@" = "Session konnte nicht gespeichert werden: %@";
+"core.session.deleteFailed %@" = "Session konnte nicht gelöscht werden: %@";

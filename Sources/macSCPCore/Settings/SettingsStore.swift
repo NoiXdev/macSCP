@@ -1,11 +1,11 @@
 import Foundation
 import Observation
 
-/// Minimaler JSON-Werttyp für das rohe Backing von `SettingsStore`.
+/// Minimal JSON value type for `SettingsStore`'s raw backing.
 ///
-/// Wird ausschließlich intern genutzt, um Vorwärtskompatibilität zu erreichen:
-/// Schlüssel, die diese App-Version nicht kennt, werden hier als `JSONValue`
-/// gehalten und beim Speichern unverändert mit zurückgeschrieben.
+/// Used exclusively internally to achieve forward compatibility: keys this
+/// app version doesn't know about are kept here as `JSONValue` and written
+/// back unchanged when saving.
 enum JSONValue: Codable, Equatable, Sendable {
     case string(String)
     case number(Double)
@@ -30,7 +30,7 @@ enum JSONValue: Codable, Equatable, Sendable {
             self = .object(value)
         } else {
             throw DecodingError.dataCorruptedError(
-                in: container, debugDescription: "Nicht unterstützter JSON-Wert")
+                in: container, debugDescription: "Unsupported JSON value")
         }
     }
 
@@ -47,10 +47,10 @@ enum JSONValue: Codable, Equatable, Sendable {
     }
 }
 
-/// Zentrale App-Einstellungen. JSON in `<directory>/settings.json` —
-/// VORWÄRTSKOMPATIBEL: unbekannte Schlüssel bleiben beim Speichern erhalten
-/// (Roundtrip über ein rohes `[String: JSONValue]`-Backing, typisierte
-/// Accessoren obendrauf). Kein Geheimnis-Speicher.
+/// Central app settings. JSON in `<directory>/settings.json` —
+/// FORWARD-COMPATIBLE: unknown keys are preserved when saving (round-tripped
+/// through a raw `[String: JSONValue]` backing, with typed accessors on top).
+/// Not a secret store.
 @Observable
 @MainActor
 public final class SettingsStore {
@@ -66,24 +66,23 @@ public final class SettingsStore {
         static let downloadLimitKBs = 0
     }
 
-    /// Identisch zu `SessionStore.defaultDirectory` — beide Stores teilen sich
-    /// das App-Support-Verzeichnis, aber jeweils eine eigene Datei.
+    /// Identical to `SessionStore.defaultDirectory` — both stores share the
+    /// app support directory, but each has its own file.
     public static let defaultDirectory: URL = SessionStore.defaultDirectory
 
     private let directory: URL
 
-    /// Rohes Backing, direkt aus der Datei geladen. Unbekannte Schlüssel
-    /// bleiben hier unangetastet liegen und werden bei jedem `persist()`
-    /// wieder mit rausgeschrieben.
+    /// Raw backing, loaded directly from the file. Unknown keys are left
+    /// untouched here and get written back out on every `persist()`.
     private var raw: [String: JSONValue]
 
     private var fileURL: URL {
         directory.appendingPathComponent("settings.json")
     }
 
-    /// Lädt sofort aus `<directory>/settings.json`. Fehlt die Datei oder ist
-    /// sie nicht lesbar/kein valides JSON, gelten die Defaults (kein Crash) —
-    /// die Datei wird erst beim nächsten Speichern ersetzt.
+    /// Loads immediately from `<directory>/settings.json`. If the file is
+    /// missing or unreadable/not valid JSON, the defaults apply (no crash) —
+    /// the file is only replaced on the next save.
     public init(directory: URL) {
         self.directory = directory
         self.raw = Self.loadRaw(from: directory)
@@ -102,27 +101,27 @@ public final class SettingsStore {
         return decoded
     }
 
-    // MARK: - Typisierte Accessoren
+    // MARK: - Typed accessors
 
-    /// Maximale gleichzeitige Übertragungen (geklemmt auf 1...8, Default 3).
+    /// Maximum concurrent transfers (clamped to 1...8, default 3).
     public var maxConcurrentTransfers: Int {
         get { clamp(intValue(for: Keys.maxConcurrentTransfers, default: Defaults.maxConcurrentTransfers), 1, 8) }
         set { setInt(clamp(newValue, 1, 8), for: Keys.maxConcurrentTransfers) }
     }
 
-    /// Bandbreiten-Limit Upload in KB/s; 0 = unbegrenzt (Default 0). Geklemmt >= 0.
+    /// Upload bandwidth limit in KB/s; 0 = unlimited (default 0). Clamped >= 0.
     public var uploadLimitKBs: Int {
         get { clamp(intValue(for: Keys.uploadLimitKBs, default: Defaults.uploadLimitKBs), 0, .max) }
         set { setInt(clamp(newValue, 0, .max), for: Keys.uploadLimitKBs) }
     }
 
-    /// Bandbreiten-Limit Download in KB/s; 0 = unbegrenzt (Default 0). Geklemmt >= 0.
+    /// Download bandwidth limit in KB/s; 0 = unlimited (default 0). Clamped >= 0.
     public var downloadLimitKBs: Int {
         get { clamp(intValue(for: Keys.downloadLimitKBs, default: Defaults.downloadLimitKBs), 0, .max) }
         set { setInt(clamp(newValue, 0, .max), for: Keys.downloadLimitKBs) }
     }
 
-    // MARK: - Backing-Zugriff
+    // MARK: - Backing access
 
     private func intValue(for key: String, default defaultValue: Int) -> Int {
         guard case .number(let value)? = raw[key] else {
@@ -140,10 +139,10 @@ public final class SettingsStore {
         min(max(value, lower), upper)
     }
 
-    /// Schreibt das komplette rohe Backing (inkl. unbekannter Schlüssel)
-    /// synchron zurück — analog zur Save-Haltung von `SessionStore`. Legt das
-    /// Verzeichnis bei Bedarf an; Schreibfehler werden verschluckt (Setter
-    /// können laut öffentlichem Interface nicht werfen).
+    /// Writes the entire raw backing (including unknown keys) back out
+    /// synchronously — mirroring `SessionStore`'s save approach. Creates the
+    /// directory if needed; write errors are swallowed (setters can't throw
+    /// per the public interface).
     private func persist() {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let encoder = JSONEncoder()

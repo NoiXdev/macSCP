@@ -2,10 +2,10 @@ import Foundation
 import Testing
 @testable import macSCPCore
 
-/// Test-Keys werden zur LAUFZEIT erzeugt (ssh-keygen) — nie eingecheckt.
+/// Test keys are generated at RUNTIME (ssh-keygen) — never checked in.
 @Suite("SSHPrivateKeyLoader")
 struct SSHPrivateKeyLoaderTests {
-    /// Erzeugt einen ed25519-Key im Temp-Verzeichnis; passphrase "" = unverschlüsselt.
+    /// Generates an ed25519 key in the temp directory; passphrase "" = unencrypted.
     private func makeKey(passphrase: String) throws -> (dir: URL, keyPath: String) {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-key-\(UUID().uuidString)")
@@ -75,10 +75,10 @@ struct SSHPrivateKeyLoaderTests {
         do {
             _ = try SSHPrivateKeyLoader.authentication(
                 username: "tim", keyPath: garbage.path(percentEncoded: false), passphrase: nil)
-            Issue.record("unsupportedFormat erwartet")
+            Issue.record("expected unsupportedFormat")
         } catch let error as SSHKeyError {
             guard case .unsupportedFormat = error else {
-                Issue.record("unsupportedFormat erwartet, war: \(error)")
+                Issue.record("expected unsupportedFormat, was: \(error)")
                 return
             }
         }

@@ -13,7 +13,7 @@ public struct RemoteFileItem: Equatable, Sendable {
     public let kind: RemoteFileKind
     public let size: UInt64?
     public let modifiedAt: Date?
-    /// POSIX-Rechte ohne Dateityp-Bits, z.B. 0o644
+    /// POSIX permission bits without the file-type bits, e.g. 0o644
     public let permissions: UInt32?
 
     public init(
@@ -35,8 +35,8 @@ public struct RemoteFileItem: Equatable, Sendable {
     public var isDirectory: Bool { kind == .directory }
 }
 
-/// Erwartet absolute, einfach-Slash-normalisierte Pfade (z.B. "/home/user/docs").
-/// Verhalten bei anderer Eingabe (relative Pfade, doppelte Slashes o.Ä.) ist nicht spezifiziert.
+/// Expects absolute, single-slash-normalized paths (e.g. "/home/user/docs").
+/// Behavior on other input (relative paths, double slashes, etc.) is unspecified.
 public enum RemotePath {
     public static func join(_ base: String, _ component: String) -> String {
         base.hasSuffix("/") ? base + component : base + "/" + component

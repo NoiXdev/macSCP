@@ -2,18 +2,18 @@ import Foundation
 import Testing
 @testable import macSCPCore
 
-/// Läuft nur mit MACSCP_ITEST=1 und laufendem Docker-Testserver
+/// Runs only with MACSCP_ITEST=1 and a running Docker test server
 /// (docker compose -f docker/test-server/compose.yml up -d).
 @Suite(
-    "CitadelFileSystem gegen Docker-SSH-Server",
+    "CitadelFileSystem against Docker SSH server",
     .enabled(if: ProcessInfo.processInfo.environment["MACSCP_ITEST"] == "1"),
     .serialized
 )
 struct CitadelFileSystemIntegrationTests {
-    /// Reconnect-Throttling des Testcontainers abfedern: bei transientem
-    /// Transport-Fehler kurz warten und einmal erneut verbinden.
-    /// NUR für Connects verwenden, die erfolgreich sein SOLLEN — nicht für
-    /// Mismatch/Reject-Tests (dort ist der Fehler beabsichtigt).
+    /// Cushions reconnect throttling of the test container: on a transient
+    /// transport error, wait briefly and connect once more.
+    /// Use ONLY for connects that are SUPPOSED to succeed — not for
+    /// mismatch/reject tests (there the error is intentional).
     private func connectWithRetry(
         _ make: () async throws -> CitadelFileSystem
     ) async throws -> CitadelFileSystem {
@@ -105,7 +105,7 @@ struct CitadelFileSystemIntegrationTests {
         continuation.yield(payload)
         continuation.finish()
 
-        // /config ist das beschreibbare Home von testuser im linuxserver-Image
+        // /config is the writable home of testuser in the linuxserver image
         let remotePath = "/config/macscp-upload-test.bin"
         try await fs.write(path: remotePath, contents: stream)
 
@@ -116,14 +116,15 @@ struct CitadelFileSystemIntegrationTests {
         #expect(readBack == payload)
     }
 
-    /// M5c/T2: Ein großer Upload wird nach dem ersten Progress-Event abgebrochen.
-    /// Erwartung: `copyFile` wirft `CancellationError`, die Remote-Teildatei ist
-    /// ECHT kleiner als die Quelle, und die Verbindung bleibt danach nutzbar.
+    /// M5c/T2: A large upload is cancelled after the first progress event.
+    /// Expectation: `copyFile` throws `CancellationError`, the remote partial
+    /// file is GENUINELY smaller than the source, and the connection remains
+    /// usable afterward.
     @Test func cancelledUploadStopsEarlyAndKeepsConnectionUsable() async throws {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
 
-        // Quelle zur Laufzeit erzeugen (128 MiB Random) — NIE eingecheckt.
+        // Generate source at runtime (128 MiB random) — NEVER checked in.
         let localDir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-cancel-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: localDir, withIntermediateDirectories: true)
@@ -146,7 +147,7 @@ struct CitadelFileSystemIntegrationTests {
         let remotePath = "/config/\(remoteName)"
         defer { cleanupConfigPath(remotePath) }
 
-        // Nach dem ERSTEN Progress-Event abbrechen.
+        // Cancel after the FIRST progress event.
         let progressSeen = CallCounterBox()
         let source = LocalFileSystem()
         let task = Task {
@@ -156,7 +157,7 @@ struct CitadelFileSystemIntegrationTests {
                 onProgress: { _ in progressSeen.increment() })
         }
 
-        // Auf das erste Progress-Event warten (mit Obergrenze gegen Hänger).
+        // Wait for the first progress event (with an upper bound against hangs).
         var polls = 0
         while progressSeen.value == 0 && polls < 500 {
             try await Task.sleep(for: .milliseconds(10))
@@ -165,17 +166,17 @@ struct CitadelFileSystemIntegrationTests {
         #expect(progressSeen.value > 0)
         task.cancel()
 
-        // Abbruch muss als CancellationError sichtbar werden.
+        // Cancellation must become visible as CancellationError.
         do {
             try await task.value
-            Issue.record("CancellationError erwartet, Transfer lief durch")
+            Issue.record("expected CancellationError, transfer ran to completion")
         } catch is CancellationError {
-            // erwartet
+            // expected
         } catch {
-            Issue.record("CancellationError erwartet, war: \(error)")
+            Issue.record("expected CancellationError, was: \(error)")
         }
 
-        // Remote-Teildatei ist ECHT kleiner als die Quelle (docker exec stat).
+        // Remote partial file is GENUINELY smaller than the source (docker exec stat).
         let stat = Process()
         stat.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
         stat.arguments = ["exec", "macscp-test-sshd", "stat", "-c", "%s", remotePath]
@@ -190,9 +191,9 @@ struct CitadelFileSystemIntegrationTests {
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let remoteSize = Int(out) ?? -1
         #expect(remoteSize >= 0)
-        #expect(remoteSize < sourceSize)   // ECHT kleiner — Abbruch griff mitten drin
+        #expect(remoteSize < sourceSize)   // GENUINELY smaller — cancellation caught mid-transfer
 
-        // Verbindung/SFTP danach weiter nutzbar.
+        // Connection/SFTP remains usable afterward.
         let listing = try await fs.list(path: "/config")
         #expect(listing.contains { $0.name == remoteName })
     }
@@ -341,7 +342,7 @@ struct CitadelFileSystemIntegrationTests {
         return out.split(whereSeparator: { $0 == " " || $0 == "\n" }).first.map(String.init) ?? ""
     }
 
-    /// Erzeugt einen Laufzeit-Key und installiert den Public Key im Container.
+    /// Generates a runtime key and installs the public key in the container.
     private func makeInstalledKey() throws -> (dir: URL, keyPath: String) {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-itest-key-\(UUID().uuidString)")
@@ -361,8 +362,8 @@ struct CitadelFileSystemIntegrationTests {
                                     encoding: .utf8)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // Hinweis: authorized_keys wächst über Läufe auf einem langlebigen Container —
-            // für das Test-Rig akzeptabel.
+            // Note: authorized_keys grows across runs on a long-lived container —
+            // acceptable for the test rig.
             let install = Process()
             install.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
             install.arguments = [
@@ -411,9 +412,9 @@ struct CitadelFileSystemIntegrationTests {
             auth: .password("testpass"))
 
         let asked = CallCounterBox()
-        // Nur der ERSTE (Erfolg erwartete) Connect wird gegen Reconnect-Throttling
-        // abgesichert. Der Decider-Zähler bleibt bei 1: nach dem upsert ist der Key
-        // bekannt, ein Retry fragt den Decider nicht erneut.
+        // Only the FIRST (expected-to-succeed) connect is guarded against
+        // reconnect throttling. The decider counter stays at 1: after the
+        // upsert the key is known, a retry does not ask the decider again.
         let fs1 = try await connectWithRetry {
             try await CitadelFileSystem.connect(
                 config: config, knownHosts: store,
@@ -427,7 +428,7 @@ struct CitadelFileSystemIntegrationTests {
             config: config, knownHosts: store,
             onUnknownHostKey: { _ in asked.increment(); return true })
         await fs2.disconnect()
-        #expect(asked.value == 1)   // kein zweiter Prompt
+        #expect(asked.value == 1)   // no second prompt
     }
 
     @Test func rejectedHostKeyFailsWithoutStoring() async throws {
@@ -446,9 +447,9 @@ struct CitadelFileSystemIntegrationTests {
         #expect(try store.find(host: "127.0.0.1", port: 2222) == nil)
     }
 
-    /// Räumt einen Test-Ordner unter /config via `docker exec rm -rf` auf.
-    /// Kein SFTP-delete verfügbar (RemoteFileSystem kennt kein rmdir/remove) —
-    /// daher Cleanup über den Container, wie schon bei `makeInstalledKey`.
+    /// Cleans up a test folder under /config via `docker exec rm -rf`.
+    /// No SFTP delete available (RemoteFileSystem has no rmdir/remove) —
+    /// hence cleanup via the container, as already done in `makeInstalledKey`.
     private func cleanupConfigPath(_ path: String) {
         let rm = Process()
         rm.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
@@ -470,7 +471,7 @@ struct CitadelFileSystemIntegrationTests {
     }
 
     @Test func createDirectoryCreatesLastLevelAfterParentExists() async throws {
-        // Citadel legt NUR die letzte Ebene an — erst Basis, dann Unterordner.
+        // Citadel creates ONLY the last level — first base, then subfolder.
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
         let base = "/config/macscp-mkdir-test-\(UUID().uuidString)"
@@ -491,7 +492,7 @@ struct CitadelFileSystemIntegrationTests {
         defer { cleanupConfigPath(base) }
 
         try await fs.createDirectory(at: base)
-        // Zweiter Aufruf am selben Pfad darf NICHT werfen (idempotent).
+        // Second call on the same path must NOT throw (idempotent).
         try await fs.createDirectory(at: base)
 
         let item = try await fs.stat(path: base)
@@ -511,10 +512,10 @@ struct CitadelFileSystemIntegrationTests {
 
         do {
             try await fs.createDirectory(at: path)
-            Issue.record("protocolError erwartet")
+            Issue.record("expected protocolError")
         } catch let error as RemoteFSError {
             guard case .protocolError = error else {
-                Issue.record("protocolError erwartet, war: \(error)")
+                Issue.record("expected protocolError, was: \(error)")
                 return
             }
         }
@@ -527,7 +528,7 @@ struct CitadelFileSystemIntegrationTests {
         let store = KnownHostsStore(directory: dir)
         try store.upsert(KnownHostKey(
             host: "127.0.0.1", port: 2222,
-            keyType: "ssh-ed25519", publicKeyBase64: "QUJDREVG"))   // absichtlich falsch
+            keyType: "ssh-ed25519", publicKeyBase64: "QUJDREVG"))   // deliberately wrong
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: 2222, username: "testuser",
             auth: .password("testpass"))
@@ -536,20 +537,20 @@ struct CitadelFileSystemIntegrationTests {
             _ = try await CitadelFileSystem.connect(
                 config: config, knownHosts: store,
                 onUnknownHostKey: { _ in
-                    Issue.record("Mismatch darf NIE den Decider fragen")
+                    Issue.record("mismatch must NEVER ask the decider")
                     return true
                 })
-            Issue.record("mismatch erwartet")
+            Issue.record("expected mismatch")
         } catch let error as HostKeyError {
             guard case .mismatch = error else {
-                Issue.record("mismatch erwartet, war: \(error)")
+                Issue.record("expected mismatch, was: \(error)")
                 return
             }
         }
     }
 }
 
-/// Kleines threadsicheres Zähler-Double für die Decider-Aufrufe.
+/// Small thread-safe counter double for the decider calls.
 final class CallCounterBox: @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0

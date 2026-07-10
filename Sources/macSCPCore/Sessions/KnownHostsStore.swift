@@ -1,13 +1,13 @@
 import Foundation
 
-/// Gemerkter Host-Key (TOFU). Der Fingerprint ist aus dem Blob abgeleitet.
+/// A remembered host key (TOFU). The fingerprint is derived from the blob.
 public struct KnownHostKey: Codable, Equatable, Sendable {
     public let host: String
     public let port: Int
     public let keyType: String
     public let publicKeyBase64: String
 
-    /// Host wird lowercased gespeichert — Vergleiche sind case-insensitiv.
+    /// Host is stored lowercased — comparisons are case-insensitive.
     public init(host: String, port: Int, keyType: String, publicKeyBase64: String) {
         self.host = host.lowercased()
         self.port = port
@@ -17,8 +17,8 @@ public struct KnownHostKey: Codable, Equatable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        // Über den normalisierenden Init — Decode ist sonst ein zweiter,
-        // un-normalisierter Schreibpfad (Review-Fund M3d Task 0).
+        // Via the normalizing init — otherwise decode would be a second,
+        // un-normalized write path (review finding M3d Task 0).
         self.init(
             host: try container.decode(String.self, forKey: .host),
             port: try container.decode(Int.self, forKey: .port),
@@ -36,8 +36,8 @@ public struct KnownHostKey: Codable, Equatable, Sendable {
     }
 }
 
-/// JSON-Persistenz der bekannten Host-Keys (Muster wie SessionStore:
-/// zustandslos, atomare Writes, Single-App-Annahme).
+/// JSON persistence of known host keys (same pattern as SessionStore:
+/// stateless, atomic writes, single-app assumption).
 public struct KnownHostsStore: Sendable {
     private let directory: URL
 

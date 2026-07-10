@@ -1,8 +1,8 @@
 import Foundation
 import Observation
 
-/// Zustand des Remote-Browsers: aktueller Pfad, sortierte Einträge,
-/// Lade-/Fehlerzustand. Arbeitet ausschließlich gegen das Protocol.
+/// State of the remote browser: current path, sorted entries,
+/// loading/error state. Works exclusively against the protocol.
 @Observable
 @MainActor
 public final class RemoteBrowserViewModel {
@@ -16,7 +16,7 @@ public final class RemoteBrowserViewModel {
     public private(set) var items: [RemoteFileItem] = []
     public private(set) var state: State = .loading
 
-    /// Aktuell in der Tabelle ausgewählter Eintrag (Einfach-Auswahl).
+    /// Currently selected entry in the table (single selection).
     public var selectedItem: RemoteFileItem?
 
     private let fs: any RemoteFileSystem
@@ -61,8 +61,8 @@ public final class RemoteBrowserViewModel {
         await fs.disconnect()
     }
 
-    /// Verzeichnisse zuerst, dann Name case-insensitiv —
-    /// kein Backend sortiert; dies ist die einzige Sortier-Autorität.
+    /// Directories first, then name case-insensitively —
+    /// no backend sorts; this is the sole sorting authority.
     static func sortedForDisplay(_ items: [RemoteFileItem]) -> [RemoteFileItem] {
         items.sorted { a, b in
             if a.isDirectory != b.isDirectory { return a.isDirectory }
@@ -73,15 +73,15 @@ public final class RemoteBrowserViewModel {
     static func message(for error: Error, path: String) -> String {
         switch error {
         case RemoteFSError.notFound:
-            return "Pfad nicht gefunden: \(path)"
+            return String(format: CoreL10n.string("core.browse.notFound %@"), path)
         case RemoteFSError.permissionDenied:
-            return "Keine Berechtigung für: \(path)"
+            return String(format: CoreL10n.string("core.error.permissionDenied %@"), path)
         case RemoteFSError.protocolError(let reason):
-            return "Protokollfehler: \(reason)"
+            return String(format: CoreL10n.string("core.browse.protocolError %@"), reason)
         case RemoteFSError.connectionFailed(let reason):
-            return "Verbindung verloren: \(reason)"
+            return String(format: CoreL10n.string("core.error.connectionLost %@"), reason)
         default:
-            return "Unerwarteter Fehler: \(String(describing: error))"
+            return String(format: CoreL10n.string("core.error.unexpected %@"), String(describing: error))
         }
     }
 }

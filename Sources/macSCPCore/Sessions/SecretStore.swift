@@ -1,11 +1,11 @@
 import Foundation
 import Security
 
-/// Abstraktion über die Geheimnis-Ablage. Produktion: macOS-Schlüsselbund.
-/// Geheimnisse werden über die Session-id adressiert und tauchen NIE in der
-/// Session-JSON auf.
-/// Das Geheimnis ist entweder ein Passwort (authKind .password) oder die Passphrase
-/// eines privaten Keys (authKind .privateKey; leer = unverschlüsselter Key).
+/// Abstraction over the secret store. Production: macOS keychain.
+/// Secrets are addressed via the session id and NEVER appear in the
+/// session JSON.
+/// The secret is either a password (authKind .password) or the passphrase
+/// of a private key (authKind .privateKey; empty = unencrypted key).
 public protocol SecretStore: Sendable {
     func savePassword(_ password: String, for sessionID: UUID) throws
     func password(for sessionID: UUID) throws -> String?

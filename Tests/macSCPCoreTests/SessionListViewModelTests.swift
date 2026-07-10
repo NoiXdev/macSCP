@@ -48,14 +48,16 @@ struct SessionListViewModelTests {
         #expect(vm.password(for: stored) == "pw")
     }
 
-    @Test func corruptStoreYieldsGermanErrorMessage() throws {
+    @Test func corruptStoreYieldsLocalizedErrorMessage() throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try Data("kaputt".utf8).write(to: dir.appendingPathComponent("sessions.json"))
         vm.reload()
         #expect(vm.sessions.isEmpty)
-        #expect(vm.errorMessage?.hasPrefix("Sessions konnten nicht geladen werden") == true)
+        let prefix = CoreL10n.string("core.session.loadFailed %@")
+            .replacingOccurrences(of: "%@", with: "")
+        #expect(vm.errorMessage?.hasPrefix(prefix) == true)
     }
 
     @Test func saveWithExistingNameUpdatesInsteadOfDuplicating() throws {
@@ -81,8 +83,10 @@ struct SessionListViewModelTests {
 
         let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "p")
         #expect(stored == nil)
-        #expect(vm.errorMessage?.hasPrefix("Session konnte nicht gespeichert werden") == true)
-        // Store-Schreibvorgang war erfolgreich — die Liste muss den Disk-Stand zeigen
+        let prefix = CoreL10n.string("core.session.saveFailed %@")
+            .replacingOccurrences(of: "%@", with: "")
+        #expect(vm.errorMessage?.hasPrefix(prefix) == true)
+        // The store write succeeded — the list must reflect what's on disk.
         #expect(vm.sessions.map(\.name) == ["web"])
     }
 }

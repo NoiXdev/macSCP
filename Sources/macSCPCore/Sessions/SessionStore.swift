@@ -1,7 +1,7 @@
 import Foundation
 
-/// JSON-Persistenz für gespeicherte Sessions. Zustandslos: jede Operation
-/// liest und schreibt die Datei (kleine Anzahl Sessions, atomare Writes).
+/// JSON persistence for stored sessions. Stateless: every operation reads
+/// and writes the file (small number of sessions, atomic writes).
 public struct SessionStore: Sendable {
     private let directory: URL
 

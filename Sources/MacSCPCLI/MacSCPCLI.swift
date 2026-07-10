@@ -6,18 +6,18 @@ import macSCPCore
 struct MacSCPCLI: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "macscp-cli",
-        abstract: "Listet ein Remote-Verzeichnis über SFTP (M1-Treiber)."
+        abstract: "Lists a remote directory over SFTP (M1 driver)."
     )
 
-    @Option(name: .long, help: "SSH-Host") var host: String
-    @Option(name: .long, help: "SSH-Port") var port: Int = 22
-    @Option(name: .long, help: "Benutzername") var user: String
-    @Argument(help: "Remote-Pfad") var path: String = "/"
+    @Option(name: .long, help: "SSH host") var host: String
+    @Option(name: .long, help: "SSH port") var port: Int = 22
+    @Option(name: .long, help: "Username") var user: String
+    @Argument(help: "Remote path") var path: String = "/"
 
     func run() async throws {
         guard let password = ProcessInfo.processInfo.environment["MACSCP_PASSWORD"],
               !password.isEmpty else {
-            throw ValidationError("Passwort über die Umgebungsvariable MACSCP_PASSWORD setzen.")
+            throw ValidationError("Set the password via the MACSCP_PASSWORD environment variable.")
         }
 
         let config = try SSHConnectionConfig(host: host, port: port, username: user, auth: .password(password))
@@ -25,11 +25,11 @@ struct MacSCPCLI: AsyncParsableCommand {
         let fs = try await CitadelFileSystem.connect(
             config: config,
             knownHosts: knownHosts,
-            // CLI-Treiber: unbekannte Host-Keys automatisch vertrauen und den
-            // Fingerprint zur Nachvollziehbarkeit auf stderr drucken.
+            // CLI driver: automatically trust unknown host keys and print the
+            // fingerprint to stderr for traceability.
             onUnknownHostKey: { candidate in
                 FileHandle.standardError.write(Data(
-                    "Host-Key \(candidate.fingerprintSHA256) automatisch vertraut (CLI-Treiber)\n".utf8))
+                    "Host key \(candidate.fingerprintSHA256) trusted automatically (CLI driver)\n".utf8))
                 return true
             }
         )

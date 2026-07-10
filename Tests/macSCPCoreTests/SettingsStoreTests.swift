@@ -109,7 +109,7 @@ struct SettingsStoreTests {
         #expect(store.uploadLimitKBs == 0)
         #expect(store.downloadLimitKBs == 0)
 
-        // Nächstes Speichern ersetzt die kaputte Datei durch valides JSON.
+        // The next save replaces the corrupt file with valid JSON.
         store.maxConcurrentTransfers = 6
         let data = try Data(contentsOf: fileURL(dir))
         let decoded = try JSONDecoder().decode([String: JSONValue].self, from: data)

@@ -2,8 +2,8 @@ import Citadel
 import Foundation
 import NIOCore
 
-/// SFTP-Implementierung von RemoteFileSystem auf Basis von Citadel.
-/// M1: Passwort-Auth, keine Host-Key-Prüfung (TOFU kommt in M3).
+/// SFTP implementation of RemoteFileSystem based on Citadel.
+/// M1: password auth, no host-key verification (TOFU arrives in M3).
 public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     private let client: SSHClient
     private let sftp: SFTPClient
@@ -13,19 +13,19 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         self.sftp = sftp
     }
 
-    /// Verbindet mit Trust-on-First-Use-Host-Key-Prüfung.
+    /// Connects with Trust-on-First-Use host-key verification.
     ///
-    /// - bekannt & identisch → still verbinden
-    /// - bekannt & anders → `HostKeyError.mismatch` (der Decider wird NIE gefragt)
-    /// - unbekannt → `onUnknownHostKey`; bei `true` → `upsert` + genau EIN Retry,
-    ///   bei `false` → `HostKeyError.rejectedByUser` (nichts wird gespeichert)
+    /// - known & identical → connect silently
+    /// - known & different → `HostKeyError.mismatch` (the decider is NEVER asked)
+    /// - unknown → `onUnknownHostKey`; on `true` → `upsert` + exactly ONE retry,
+    ///   on `false` → `HostKeyError.rejectedByUser` (nothing is stored)
     ///
-    /// Umsetzung (Phase 2 der Drift-Strategie): Citadels Host-Key-Hook ist der
-    /// synchrone, Promise-basierte `NIOSSHClientServerAuthenticationDelegate` —
-    /// er kann den async-Decider nicht selbst aufrufen. Daher lehnt der Hook
-    /// unbekannte/abweichende Keys ab und meldet den Kandidaten über eine Box
-    /// nach außen; hier wird der Decider befragt und nach `upsert` erneut
-    /// verbunden (dann greift der bekannt-identisch-Pfad still).
+    /// Implementation (phase 2 of the drift strategy): Citadel's host-key hook
+    /// is the synchronous, Promise-based `NIOSSHClientServerAuthenticationDelegate`
+    /// — it cannot call the async decider itself. So the hook rejects
+    /// unknown/differing keys and reports the candidate outward via a box;
+    /// here the decider is consulted and, after `upsert`, connects again
+    /// (then the known-identical path takes over silently).
     public static func connect(
         config: SSHConnectionConfig,
         knownHosts: KnownHostsStore,
@@ -37,19 +37,19 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         } catch {
             switch box.result {
             case .mismatch(let host, let expected, let presented):
-                // Harter Stopp — kein Override, Decider wird NIE gefragt.
+                // Hard stop — no override, the decider is NEVER asked.
                 throw HostKeyError.mismatch(host: host, expected: expected, presented: presented)
             case .lookupFailed(let reason):
-                // Korrupter known_hosts-Store → harter, typisierter Fehler statt
-                // stillem Downgrade auf TOFU (fail closed).
-                throw RemoteFSError.connectionFailed(reason: "known_hosts nicht lesbar: \(reason)")
+                // Corrupt known_hosts store → hard, typed error instead of a
+                // silent downgrade to TOFU (fail closed).
+                throw RemoteFSError.connectionFailed(reason: "known_hosts store unreadable: \(reason)")
             case .unknown(let candidate):
                 let accepted = await onUnknownHostKey(candidate)
                 guard accepted else { throw HostKeyError.rejectedByUser }
                 try knownHosts.upsert(KnownHostKey(
                     host: candidate.host, port: candidate.port,
                     keyType: candidate.keyType, publicKeyBase64: candidate.publicKeyBase64))
-                // Genau EIN Retry: der Key ist jetzt bekannt → Hook akzeptiert still.
+                // Exactly ONE retry: the key is now known → the hook accepts silently.
                 do {
                     let retryBox = TOFUHostKeyValidator.Box()
                     return try await attemptConnect(
@@ -58,14 +58,14 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                     throw mapConnectError(error)
                 }
             case .none:
-                // Kein Host-Key-Verdikt → echter Verbindungs-/Auth-/Key-Fehler.
+                // No host-key verdict → a genuine connection/auth/key error.
                 throw mapConnectError(error)
             }
         }
     }
 
-    /// Ein Verbindungsversuch mit dem TOFU-Validator. Wirft rohe Fehler; die
-    /// Auswertung (Decider, Mismatch, Mapping) übernimmt `connect`.
+    /// A single connection attempt with the TOFU validator. Throws raw errors;
+    /// `connect` handles the evaluation (decider, mismatch, mapping).
     private static func attemptConnect(
         config: SSHConnectionConfig,
         knownHosts: KnownHostsStore,
@@ -98,7 +98,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         }
     }
 
-    /// Übersetzt rohe Verbindungs-Fehler in typisierte Fehler (Auth/Key/generisch).
+    /// Translates raw connection errors into typed errors (auth/key/generic).
     private static func mapConnectError(_ error: Error) -> Error {
         switch error {
         case let error as SSHKeyError:
@@ -108,8 +108,8 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         case let error as RemoteFSError:
             return error
         case let error as SSHClientError:
-            // Auth-Fehler laufen bei Citadel als allAuthenticationOptionsFailed auf
-            // (verifiziert gegen den Docker-Testserver mit falschem Passwort).
+            // Auth errors surface via Citadel as allAuthenticationOptionsFailed
+            // (verified against the Docker test server with a wrong password).
             switch error {
             case .allAuthenticationOptionsFailed:
                 return RemoteFSError.authenticationFailed
@@ -157,9 +157,9 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         }
     }
 
-    /// Übersetzt Citadels rohe SFTP-Status-Fehler in typisierte RemoteFSError.
-    /// Der Server antwortet mit SSH_FXP_STATUS; Citadel wirft das als
-    /// SFTPMessage.Status mit errorCode (SFTPStatusCode).
+    /// Translates Citadel's raw SFTP status errors into typed RemoteFSError.
+    /// The server responds with SSH_FXP_STATUS; Citadel throws that as
+    /// SFTPMessage.Status with an errorCode (SFTPStatusCode).
     private func mapSFTPError(_ error: Error, path: String) -> Error {
         guard let status = error as? SFTPMessage.Status else {
             return RemoteFSError.protocolError(reason: String(describing: error))
@@ -178,7 +178,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         } catch {
             throw mapSFTPError(error, path: path)
         }
-        // Pull-basiert (unfolding): der Konsument bestimmt das Tempo.
+        // Pull-based (unfolding): the consumer sets the pace.
         var offset: UInt64 = 0
         return AsyncThrowingStream(unfolding: {
             do {
@@ -191,10 +191,11 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 offset += UInt64(buffer.readableBytes)
                 return Data(buffer.readableBytesView)
             } catch is CancellationError {
-                // Kooperativer Abbruch (M5c/T2): wirft eine in-flight-Leseanfrage
-                // bei Task-Abbruch `CancellationError`, unverändert weiterreichen —
-                // NICHT auf protocolError mappen, sonst endete das Item `.failed`
-                // statt `.cancelled`. Der Channel bleibt nutzbar (file.close).
+                // Cooperative cancellation (M5c/T2): an in-flight read request
+                // throws `CancellationError` on task cancellation — pass it
+                // through unchanged, do NOT map it to protocolError, otherwise
+                // the item would end `.failed` instead of `.cancelled`. The
+                // channel stays usable (file.close).
                 try? await file.close()
                 throw CancellationError()
             } catch {
@@ -222,12 +223,13 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             }
             try await file.close()
         } catch is CancellationError {
-            // Kooperativer Abbruch (M5c/T2): Regulär läuft der Zähl-Stream aus
-            // copyFile bei Abbruch STILL aus (er beendet sich, wirft nicht) —
-            // dann greift copyFiles Nachcheck. Falls eine in-flight-Schreibanfrage
-            // bei Task-Abbruch aber selbst `CancellationError` wirft, hier
-            // unverändert weiterreichen (NICHT auf protocolError mappen), sonst
-            // endete das Item `.failed` statt `.cancelled`. Channel bleibt nutzbar.
+            // Cooperative cancellation (M5c/T2): normally the counting stream
+            // from copyFile runs out SILENTLY on cancellation (it ends,
+            // doesn't throw) — then copyFile's post-check takes over. But if
+            // an in-flight write request itself throws `CancellationError` on
+            // task cancellation, pass it through unchanged here (do NOT map
+            // to protocolError), otherwise the item would end `.failed`
+            // instead of `.cancelled`. Channel stays usable.
             try? await file.close()
             throw CancellationError()
         } catch {
@@ -236,23 +238,22 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         }
     }
 
-    /// Legt NUR die letzte Ebene an (Eltern müssen existieren — die Rekursion
-    /// in T3 läuft top-down). Idempotent: existiert der Pfad bereits als
-    /// Verzeichnis (auch bei einem Race zwischen zwei Clients), kehrt der
-    /// Aufruf still zurück. Existiert dort eine Datei, wirft `protocolError`.
+    /// Creates ONLY the last level (parents must already exist — the
+    /// recursion in T3 runs top-down). Idempotent: if the path already exists
+    /// as a directory (even in a race between two clients), the call returns
+    /// silently. If a file exists there, throws `protocolError`.
     public func createDirectory(at path: String) async throws {
         do {
             try await sftp.createDirectory(atPath: path)
         } catch {
-            // mkdir kann fehlschlagen, obwohl das Verzeichnis (bereits oder
-            // inzwischen) existiert — per stat nachprüfen statt den Fehler
-            // blind weiterzureichen.
+            // mkdir can fail even though the directory (already or by now)
+            // exists — verify via stat instead of blindly passing the error on.
             if let existing = try? await sftp.getAttributes(at: path) {
                 switch SFTPAttributeMapper.kind(fromPermissions: existing.permissions) {
                 case .directory:
                     return
                 default:
-                    throw RemoteFSError.protocolError(reason: "Pfad existiert als Datei: \(path)")
+                    throw RemoteFSError.protocolError(reason: "path exists as a file: \(path)")
                 }
             }
             throw mapSFTPError(error, path: path)
@@ -265,7 +266,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
 }
 
 extension CitadelFileSystem: RemoteShellProvider {
-    /// Shell-Channel über DIESELBE Verbindung wie SFTP (Multiplex, wie WinSCP).
+    /// Shell channel over the SAME connection as SFTP (multiplexed, like WinSCP).
     public func openShell(
         terminal: String, cols: Int, rows: Int
     ) async throws -> any RemoteShell {

@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import macSCPCore
 
-@Suite("Stream-Roundtrips")
+@Suite("Stream roundtrips")
 struct StreamRoundtripTests {
     @Test func mockReadStreamDeliversSeededData() async throws {
         let fs = MockRemoteFileSystem(
@@ -39,7 +39,7 @@ struct StreamRoundtripTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        // > 64 KiB, damit mehrere Chunks entstehen
+        // > 64 KiB, so multiple chunks are produced
         let original = Data((0..<(TransferChunk.size * 2 + 123)).map { UInt8($0 % 251) })
         let sourceURL = dir.appendingPathComponent("gross.bin")
         try original.write(to: sourceURL)

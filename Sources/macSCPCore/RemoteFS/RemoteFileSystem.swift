@@ -1,24 +1,24 @@
 import Foundation
 
-/// Einheitliche Transfer-Chunk-Größe für alle Backends.
+/// Uniform transfer chunk size for all backends.
 public enum TransferChunk {
     public static let size = 64 * 1024
 }
 
-/// Abstraktion über ein (entferntes oder lokales) Dateisystem.
-/// M1: list/stat. M2c: Chunk-Streams für Einzeldatei-Transfers.
+/// Abstraction over a (remote or local) file system.
+/// M1: list/stat. M2c: chunk streams for single-file transfers.
 public protocol RemoteFileSystem: Sendable {
     func list(path: String) async throws -> [RemoteFileItem]
     func stat(path: String) async throws -> RemoteFileItem
-    /// Dateiinhalt als Chunk-Strom (Chunks ≤ TransferChunk.size).
+    /// File contents as a chunk stream (chunks ≤ TransferChunk.size).
     func readStream(path: String) async throws -> AsyncThrowingStream<Data, Error>
-    /// Schreibt den Chunk-Strom als Datei; vorhandene Dateien werden überschrieben.
+    /// Writes the chunk stream as a file; existing files are overwritten.
     func write(path: String, contents: AsyncThrowingStream<Data, Error>) async throws
-    /// Legt das Verzeichnis an. IDEMPOTENT: existiert es bereits als Verzeichnis,
-    /// kehrt der Aufruf still zurück. Existiert am Pfad eine DATEI, wirft
-    /// RemoteFSError.protocolError. Fehlende Zwischenverzeichnisse: Local legt sie
-    /// an (withIntermediateDirectories); Citadel legt NUR die letzte Ebene an —
-    /// die Rekursion (T3) läuft top-down, Eltern existieren daher immer.
+    /// Creates the directory. IDEMPOTENT: if it already exists as a directory,
+    /// the call returns silently. If a FILE exists at the path, throws
+    /// RemoteFSError.protocolError. Missing intermediate directories: Local
+    /// creates them (withIntermediateDirectories); Citadel creates ONLY the
+    /// last level — the recursion (T3) runs top-down, so parents always exist.
     func createDirectory(at path: String) async throws
     func disconnect() async
 }

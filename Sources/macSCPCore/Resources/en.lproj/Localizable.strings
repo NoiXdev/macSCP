@@ -1,0 +1,43 @@
+/* Core-layer user-facing messages — English (default language). */
+
+/* TransferQueueViewModel.message(for:) */
+"core.transfer.notFound %@" = "File not found: %@";
+"core.error.permissionDenied %@" = "No permission for: %@";
+"core.error.connectionLost %@" = "Connection lost: %@";
+"core.transfer.failed %@" = "Transfer failed: %@";
+"core.transfer.noFreeName" = "No free name found.";
+
+/* RemoteBrowserViewModel.message(for:path:) */
+"core.browse.notFound %@" = "Path not found: %@";
+"core.browse.protocolError %@" = "Protocol error: %@";
+"core.error.unexpected %@" = "Unexpected error: %@";
+
+/* ConnectionViewModel form validation */
+"core.connect.portNumeric" = "Port must be a number.";
+"core.connect.passwordEmpty" = "Password must not be empty.";
+"core.connect.keyPathEmpty" = "Enter the path to the SSH key.";
+"core.connect.saveNameEmpty" = "Enter a name for the saved session.";
+
+/* ConnectionViewModel.failedState(for:) */
+"core.connect.emptyHost" = "Host must not be empty.";
+"core.connect.emptyUsername" = "Username must not be empty.";
+"core.connect.invalidPort %@" = "Invalid port: %@.";
+"core.connect.authFailed" = "Authentication failed — check username or password.";
+"core.connect.connectionFailed %@" = "Connection failed: %@";
+"core.connect.keyNotFound %@" = "SSH key not found: %@";
+"core.connect.keyPassphraseRequired" = "The SSH key is encrypted — enter a passphrase.";
+"core.connect.keyWrongPassphrase" = "The passphrase is incorrect.";
+"core.connect.keyUnsupportedFormat" = "SSH key format is not supported (currently: OpenSSH ed25519).";
+
+/* Host-key TOFU prompts — keep full severity in every language. */
+"core.hostkey.mismatch %@ %@ %@" = "WARNING: The host key for %1$@ has changed! Expected %2$@, presented %3$@. Possible man-in-the-middle attack — connection aborted.";
+"core.hostkey.rejected" = "Connection aborted — host key not confirmed.";
+
+/* TerminalPanelViewModel */
+"core.terminal.shellEnded %@" = "Shell ended: %@";
+"core.terminal.openFailed %@" = "Failed to open shell: %@";
+
+/* SessionListViewModel */
+"core.session.loadFailed %@" = "Failed to load sessions: %@";
+"core.session.saveFailed %@" = "Failed to save session: %@";
+"core.session.deleteFailed %@" = "Failed to delete session: %@";

@@ -62,18 +62,19 @@ struct TransferEngineTests {
         #expect(TransferProgress(bytesTransferred: 50, totalBytes: 100).fraction == 0.5)
     }
 
-    // MARK: - Kooperative Cancellation (M5c/T2)
+    // MARK: - Cooperative Cancellation (M5c/T2)
 
-    /// Wird die Transfer-Task mitten in der Übertragung abgebrochen, muss
-    /// `copyFile` chunk-genau stoppen: `CancellationError` fliegt und ab dem
-    /// Cancel-Punkt landet KEIN weiterer Chunk am Ziel.
+    /// If the transfer task is cancelled in the middle of the transfer,
+    /// `copyFile` must stop chunk-precisely: `CancellationError` is thrown and
+    /// from the cancel point on, NO further chunk lands at the destination.
     ///
-    /// Aufbau bewusst OHNE abbruchbewusstes Warten im Test-Double: Das Ziel
-    /// parkt nach dem ersten Chunk in einer `Task.isCancelled`-Schleife (die
-    /// selbst NICHT wirft). Dadurch greift der Abbruch ausschließlich über den
-    /// neuen `checkCancellation` in `copyFile` — nicht über ein werfendes
-    /// Warten. Ohne den Engine-Check würden nach dem Cancel alle restlichen
-    /// Chunks durchlaufen (roter Ausgangszustand).
+    /// Setup deliberately WITHOUT cancellation-aware waiting in the test
+    /// double: the destination parks after the first chunk in a
+    /// `Task.isCancelled` loop (which itself does NOT throw). This means
+    /// cancellation is caught exclusively via the new `checkCancellation` in
+    /// `copyFile` — not via a throwing wait. Without the engine check, all
+    /// remaining chunks would run through after the cancel (red starting
+    /// state).
     @Test func cancellationStopsBeforeNextChunkWrite() async throws {
         let chunkTotal = 4
         let content = Data(repeating: 0xAB, count: TransferChunk.size * chunkTotal)
@@ -88,31 +89,31 @@ struct TransferEngineTests {
                 onProgress: { _ in })
         }
 
-        // Erster Chunk ist am Ziel angekommen → Transfer läuft, Ziel parkt.
+        // First chunk has arrived at the destination → transfer is running, destination parks.
         await reached.wait()
         task.cancel()
 
-        // Timeout-Race, damit ein (regressierter) fehlender Abbruch den Test
-        // nicht ewig hängen lässt.
+        // Timeout race so that a (regressed) missing cancellation doesn't
+        // leave the test hanging forever.
         let outcome = await awaitOutcome(task)
         guard case .failure(let error)? = outcome else {
-            Issue.record("CancellationError erwartet, war: \(String(describing: outcome))")
+            Issue.record("expected CancellationError, was: \(String(describing: outcome))")
             return
         }
         #expect(error is CancellationError)
 
         let written = await destination.chunkCount
-        #expect(written == 1)                // kein weiterer Chunk nach dem Cancel-Punkt
-        #expect(written < chunkTotal)         // nicht alle Chunks übertragen
+        #expect(written == 1)                // no further chunk after the cancel point
+        #expect(written < chunkTotal)         // not all chunks transferred
     }
 
-    // MARK: - Bandbreiten-Drossel (M5c/T5)
+    // MARK: - Bandwidth Throttle (M5c/T5)
 
-    /// Limit 256 KB/s über 1 MiB (= 16 Chunks à 64 KiB) muss insgesamt ~4s
-    /// angefordertes Schlafen ergeben (1_048_576 / (256*1024) == 4.0). Der
-    /// injizierte `sleep`-Hook schläft NICHT wirklich — er zählt nur die
-    /// angeforderten Dauern auf, macht den Test deterministisch statt von
-    /// echtem Timing abhängig (kein Flaky-Risiko).
+    /// A limit of 256 KB/s over 1 MiB (= 16 chunks of 64 KiB) must yield a
+    /// total of ~4s of requested sleep (1_048_576 / (256*1024) == 4.0). The
+    /// injected `sleep` hook does NOT actually sleep — it only accumulates
+    /// the requested durations, making the test deterministic instead of
+    /// dependent on real timing (no flakiness risk).
     @Test func throttleRequestsExpectedTotalSleepDuration() async throws {
         let content = Data(repeating: 0x42, count: 1024 * 1024)
         let source = makeSource(content: content)
@@ -129,16 +130,16 @@ struct TransferEngineTests {
 
         #expect(await destination.writtenData(at: "/ziel/quelle.bin") == content)
         let totalSeconds = recorder.totalSeconds
-        // Toleranzfenster statt exakter Gleichheit (Double-Rundung über 16
-        // Additionen) — bindend war "Dauer ≥ ~3,5s"; das virtuelle Modell
-        // liefert hier exakt 4.0s, ein enges Fenster deckt das plus etwas
-        // Spielraum ab.
+        // Tolerance window instead of exact equality (Double rounding over 16
+        // additions) — the binding requirement was "duration ≥ ~3.5s"; the
+        // virtual model yields exactly 4.0s here, a tight window covers that
+        // plus a bit of margin.
         #expect(totalSeconds >= 3.5)
         #expect(totalSeconds <= 4.5)
     }
 
-    /// `bytesPerSecondLimit == 0` (Default) bleibt unangetastet: kein einziger
-    /// Sleep-Aufruf, exakt das Vor-T5-Verhalten.
+    /// `bytesPerSecondLimit == 0` (default) is left untouched: not a single
+    /// sleep call, exactly the pre-T5 behavior.
     @Test func noThrottleWithoutLimitNeverSleeps() async throws {
         let content = Data(repeating: 0x1, count: TransferChunk.size * 2)
         let source = makeSource(content: content)
@@ -154,8 +155,8 @@ struct TransferEngineTests {
         #expect(recorder.callCount == 0)
     }
 
-    /// Wartet auf das Task-Ergebnis, gibt aber nach `timeout` `nil` zurück
-    /// (Timeout), statt ewig zu blockieren.
+    /// Waits for the task's result, but returns `nil` after `timeout`
+    /// (timeout) instead of blocking forever.
     private func awaitOutcome(
         _ task: Task<Void, Error>, timeout: Duration = .seconds(2)
     ) async -> Result<Void, Error>? {
@@ -169,15 +170,15 @@ struct TransferEngineTests {
             if let result = box.value { return result }
             try? await Task.sleep(for: .milliseconds(2))
         }
-        return box.value   // nil ⇒ Timeout
+        return box.value   // nil ⇒ timeout
     }
 }
 
-/// Lock-geschütztes Test-Double statt Actor: `onProgress` ist synchron, daher
-/// würde ein Actor + `Task { await ... }` unstrukturierte Tasks erzeugen,
-/// deren Abschluss vor den Assertions nicht garantiert ist (beobachtete,
-/// intermittierende Fehlschläge). Synchrones Locking macht die Reihenfolge
-/// deterministisch.
+/// Lock-protected test double instead of an actor: `onProgress` is
+/// synchronous, so an actor + `Task { await ... }` would create unstructured
+/// tasks whose completion before the assertions is not guaranteed (observed
+/// intermittent failures). Synchronous locking makes the ordering
+/// deterministic.
 private final class ProgressRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var _snapshots: [TransferProgress] = []
@@ -193,9 +194,10 @@ private final class ProgressRecorder: @unchecked Sendable {
     }
 }
 
-/// Cancellation-UNABHÄNGIGES Einmal-Signal: `wait()` ignoriert Task-Cancellation
-/// (anders als das abbruchbewusste `TestSignal` der Queue-Tests). Damit greift
-/// der Abbruch im Test ausschließlich über `copyFile`s `checkCancellation`.
+/// Cancellation-INDEPENDENT one-shot signal: `wait()` ignores task
+/// cancellation (unlike the cancellation-aware `TestSignal` used in the
+/// queue tests). This means cancellation in the test is caught exclusively
+/// via `copyFile`'s `checkCancellation`.
 private final class PlainSignal: @unchecked Sendable {
     private let lock = NSLock()
     private var fired = false
@@ -224,10 +226,10 @@ private final class PlainSignal: @unchecked Sendable {
     }
 }
 
-/// Ziel-Double, das jeden geschriebenen Chunk zählt und nach dem ERSTEN Chunk
-/// in einer abbruch-UNBEWUSSTEN `Task.isCancelled`-Schleife parkt. Wird die
-/// Transfer-Task gecancelt, läuft die Schleife aus und der nächste Pull aus dem
-/// Quell-Strom deckt der Engine-`checkCancellation` ab.
+/// Destination double that counts every chunk written and, after the FIRST
+/// chunk, parks in a cancellation-UNAWARE `Task.isCancelled` loop. If the
+/// transfer task is cancelled, the loop exits and the next pull from the
+/// source stream is caught by the engine's `checkCancellation`.
 private actor RecordingSpinDestination: RemoteFileSystem {
     private let reached: PlainSignal
     private(set) var chunkCount = 0
@@ -251,7 +253,7 @@ private actor RecordingSpinDestination: RemoteFileSystem {
             if isFirst {
                 isFirst = false
                 reached.fire()
-                // Abbruch-UNBEWUSST parken: nur die Cancellation weckt die Schleife.
+                // Park cancellation-UNAWARE: only the cancellation wakes the loop.
                 while !Task.isCancelled { await Task.yield() }
             }
         }
@@ -261,9 +263,9 @@ private actor RecordingSpinDestination: RemoteFileSystem {
     func disconnect() async {}
 }
 
-/// Zählt die an den injizierten `sleep`-Hook übergebenen Dauern auf, OHNE
-/// wirklich zu schlafen (M5c/T5) — macht den Drossel-Test deterministisch
-/// statt von echtem Timing abhängig.
+/// Accumulates the durations passed to the injected `sleep` hook WITHOUT
+/// actually sleeping (M5c/T5) — makes the throttle test deterministic
+/// instead of dependent on real timing.
 private final class SleepRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var _totalSeconds: Double = 0
@@ -284,7 +286,7 @@ private final class SleepRecorder: @unchecked Sendable {
     }
 }
 
-/// Threadsicherer Ergebnis-Halter für den Timeout-Race in `awaitOutcome`.
+/// Thread-safe result holder for the timeout race in `awaitOutcome`.
 private final class ResultBox: @unchecked Sendable {
     private let lock = NSLock()
     private var _value: Result<Void, Error>?

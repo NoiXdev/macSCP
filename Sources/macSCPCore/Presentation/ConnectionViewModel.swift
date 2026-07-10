@@ -1,13 +1,13 @@
 import Foundation
 import Observation
 
-/// Zustand und Logik des Verbindungsformulars.
-/// Der Connector ist injizierbar: Produktion nutzt CitadelFileSystem.connect,
-/// Tests einen Mock — das ViewModel bleibt ohne Netz testbar.
+/// State and logic of the connection form.
+/// The connector is injectable: production uses CitadelFileSystem.connect,
+/// tests use a mock — the view model stays testable without a network.
 @Observable
 @MainActor
 public final class ConnectionViewModel {
-    /// Formularfeld, dessen Validierung fehlschlug — die UI hebt es rot hervor.
+    /// The form field whose validation failed — the UI highlights it in red.
     public enum Field: Equatable, Sendable {
         case host
         case port
@@ -23,7 +23,7 @@ public final class ConnectionViewModel {
         case failed(message: String, field: Field?)
     }
 
-    /// Auth-Auswahl im Formular. Im Key-Modus dient `password` als Passphrase.
+    /// Auth choice in the form. In key mode, `password` serves as the passphrase.
     public enum AuthChoice: String, CaseIterable, Sendable {
         case password
         case privateKey
@@ -33,8 +33,8 @@ public final class ConnectionViewModel {
         SSHConnectionConfig, @escaping @Sendable (HostKeyCandidate) async -> Bool
     ) async throws -> any RemoteFileSystem
 
-    /// Zustand, solange auf die Nutzer-Entscheidung zu einem unbekannten
-    /// Host-Key gewartet wird (siehe `resolveHostKeyPrompt`).
+    /// State while waiting for the user's decision on an unknown host key
+    /// (see `resolveHostKeyPrompt`).
     public struct HostKeyPrompt: Equatable {
         public let candidate: HostKeyCandidate
     }
@@ -45,49 +45,49 @@ public final class ConnectionViewModel {
     public var password: String = ""
     public var authChoice: AuthChoice = .password
     public var keyPath: String = ""
-    /// Session nach erfolgreichem Verbinden speichern (Store + Schlüsselbund)?
+    /// Save the session after a successful connect (store + keychain)?
     public var shouldSaveSession: Bool = false
     public var saveName: String = ""
     public private(set) var state: State = .idle
-    /// Solange nicht nil: die Formular-UI zeigt die Fingerprint-Karte und
-    /// wartet auf `resolveHostKeyPrompt`.
+    /// While non-nil: the form UI shows the fingerprint card and waits for
+    /// `resolveHostKeyPrompt`.
     public private(set) var hostKeyPrompt: HostKeyPrompt?
 
     private let connector: Connector
-    /// Hält die Continuation, die der Host-Key-Decider auf `connect()` legt,
-    /// bis `resolveHostKeyPrompt` sie erfüllt. Bleibt privat — die UI kennt
-    /// nur `hostKeyPrompt` und `resolveHostKeyPrompt(trust:)`.
+    /// Holds the continuation that the host-key decider places on `connect()`,
+    /// until `resolveHostKeyPrompt` fulfills it. Stays private — the UI only
+    /// knows `hostKeyPrompt` and `resolveHostKeyPrompt(trust:)`.
     private var hostKeyContinuation: CheckedContinuation<Bool, Never>?
 
     public init(connector: @escaping Connector) {
         self.connector = connector
     }
 
-    /// Liefert das verbundene Dateisystem oder nil; Fehler landen in `state`.
-    /// Re-entrancy-sicher: Aufrufe während `.connecting` werden verworfen,
-    /// damit ein Doppelklick keine zweite (verwaiste) Verbindung aufbaut.
+    /// Returns the connected file system or nil; errors land in `state`.
+    /// Re-entrancy safe: calls made while `.connecting` are dropped, so a
+    /// double-click doesn't open a second (orphaned) connection.
     public func connect() async -> (any RemoteFileSystem)? {
         guard state != .connecting else { return nil }
         defer { hostKeyPrompt = nil }
         guard let portNumber = Int(port.trimmingCharacters(in: .whitespaces)) else {
-            state = .failed(message: "Port muss eine Zahl sein.", field: .port)
+            state = .failed(message: CoreL10n.string("core.connect.portNumeric"), field: .port)
             return nil
         }
         if authChoice == .password {
             guard !password.isEmpty else {
-                state = .failed(message: "Passwort darf nicht leer sein.", field: .password)
+                state = .failed(message: CoreL10n.string("core.connect.passwordEmpty"), field: .password)
                 return nil
             }
         } else {
             guard !keyPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                state = .failed(message: "Pfad zum SSH-Key angeben.", field: .keyPath)
+                state = .failed(message: CoreL10n.string("core.connect.keyPathEmpty"), field: .keyPath)
                 return nil
             }
         }
         if shouldSaveSession,
            saveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             state = .failed(
-                message: "Name für die gespeicherte Session angeben.", field: .saveName)
+                message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName)
             return nil
         }
         do {
@@ -118,11 +118,11 @@ public final class ConnectionViewModel {
         }
     }
 
-    /// Decider-Seite: publiziert den Prompt und hängt an einer Continuation,
-    /// bis `resolveHostKeyPrompt` sie erfüllt.
-    /// Cancellation-sicher: Wird die connect()-Task abgebrochen, während der
-    /// Prompt offen ist, wird die Continuation mit `false` aufgelöst (kein Leak,
-    /// kein Hängen); der Connector sieht eine Ablehnung.
+    /// Decider side: publishes the prompt and suspends on a continuation
+    /// until `resolveHostKeyPrompt` fulfills it.
+    /// Cancellation-safe: if the connect() task is cancelled while the prompt
+    /// is open, the continuation resolves with `false` (no leak, no hang);
+    /// the connector sees a rejection.
     private func presentHostKeyPrompt(for candidate: HostKeyCandidate) async -> Bool {
         hostKeyPrompt = HostKeyPrompt(candidate: candidate)
         return await withTaskCancellationHandler {
@@ -140,24 +140,24 @@ public final class ConnectionViewModel {
         }
     }
 
-    /// Von der UI aufgerufen, wenn der Nutzer die Fingerprint-Karte beantwortet.
-    /// Doppelte Aufrufe (z.B. schnelles Doppelklicken) werden ignoriert —
-    /// die Continuation darf nur einmal erfüllt werden.
+    /// Called by the UI once the user answers the fingerprint card.
+    /// Duplicate calls (e.g. a fast double-click) are ignored — the
+    /// continuation may only be fulfilled once.
     public func resolveHostKeyPrompt(trust: Bool) {
         guard let continuation = hostKeyContinuation else { return }
         hostKeyContinuation = nil
         continuation.resume(returning: trust)
     }
 
-    /// Entfernt das Klartext-Passwort aus dem State (z.B. nach dem Trennen).
+    /// Removes the plaintext password from the state (e.g. after disconnecting).
     public func clearPassword() {
         password = ""
     }
 
-    /// Nutzer-initiierter Moduswechsel (Picker): leert das Geheimnis, damit
-    /// Passwort/Passphrase nicht in den anderen Modus verschleppt wird.
-    /// Programmatischer Restore (connectStored) setzt authChoice direkt —
-    /// ohne Löschung (Review-Fund M3c Task 0).
+    /// User-initiated mode switch (picker): clears the secret so the
+    /// password/passphrase doesn't carry over into the other mode.
+    /// Programmatic restore (connectStored) sets authChoice directly —
+    /// without clearing (review finding M3c Task 0).
     public func selectAuthChoice(_ choice: AuthChoice) {
         guard choice != authChoice else { return }
         authChoice = choice
@@ -167,37 +167,47 @@ public final class ConnectionViewModel {
     static func failedState(for error: Error) -> State {
         switch error {
         case SSHConnectionConfig.ConfigError.emptyHost:
-            return .failed(message: "Host darf nicht leer sein.", field: .host)
+            return .failed(message: CoreL10n.string("core.connect.emptyHost"), field: .host)
         case SSHConnectionConfig.ConfigError.emptyUsername:
-            return .failed(message: "Benutzername darf nicht leer sein.", field: .username)
+            return .failed(message: CoreL10n.string("core.connect.emptyUsername"), field: .username)
         case SSHConnectionConfig.ConfigError.invalidPort(let port):
-            return .failed(message: "Ungültiger Port: \(port).", field: .port)
+            return .failed(
+                message: String(format: CoreL10n.string("core.connect.invalidPort %@"), String(port)),
+                field: .port)
         case RemoteFSError.authenticationFailed:
             return .failed(
-                message: "Anmeldung fehlgeschlagen — Benutzername oder Passwort prüfen.",
+                message: CoreL10n.string("core.connect.authFailed"),
                 field: nil)
         case RemoteFSError.connectionFailed(let reason):
-            return .failed(message: "Verbindung fehlgeschlagen: \(reason)", field: nil)
+            return .failed(
+                message: String(format: CoreL10n.string("core.connect.connectionFailed %@"), reason),
+                field: nil)
         case SSHKeyError.fileNotFound(let path):
-            return .failed(message: "SSH-Key nicht gefunden: \(path)", field: .keyPath)
+            return .failed(
+                message: String(format: CoreL10n.string("core.connect.keyNotFound %@"), path),
+                field: .keyPath)
         case SSHKeyError.passphraseRequired:
             return .failed(
-                message: "Der SSH-Key ist verschlüsselt — Passphrase angeben.",
+                message: CoreL10n.string("core.connect.keyPassphraseRequired"),
                 field: .password)
         case SSHKeyError.wrongPassphrase:
-            return .failed(message: "Passphrase ist falsch.", field: .password)
+            return .failed(message: CoreL10n.string("core.connect.keyWrongPassphrase"), field: .password)
         case SSHKeyError.unsupportedFormat:
             return .failed(
-                message: "SSH-Key-Format wird nicht unterstützt (aktuell: OpenSSH ed25519).",
+                message: CoreL10n.string("core.connect.keyUnsupportedFormat"),
                 field: .keyPath)
         case HostKeyError.mismatch(let host, let expected, let presented):
-            return .failed(message: "ACHTUNG: Der Host-Key von \(host) hat sich geändert! "
-                + "Erwartet \(expected), präsentiert \(presented). "
-                + "Möglicher Man-in-the-Middle — Verbindung abgebrochen.", field: nil)
+            return .failed(
+                message: String(
+                    format: CoreL10n.string("core.hostkey.mismatch %@ %@ %@"),
+                    host, expected, presented),
+                field: nil)
         case HostKeyError.rejectedByUser:
-            return .failed(message: "Verbindung abgebrochen — Host-Key nicht bestätigt.", field: nil)
+            return .failed(message: CoreL10n.string("core.hostkey.rejected"), field: nil)
         default:
-            return .failed(message: "Unerwarteter Fehler: \(String(describing: error))", field: nil)
+            return .failed(
+                message: String(format: CoreL10n.string("core.error.unexpected %@"), String(describing: error)),
+                field: nil)
         }
     }
 }

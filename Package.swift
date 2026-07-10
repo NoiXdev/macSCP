@@ -23,6 +23,10 @@ let package = Package(
                 .product(name: "Citadel", package: "Citadel"),
                 .product(name: "Crypto", package: "swift-crypto"),
             ],
+            resources: [
+                .process("Resources/en.lproj"),
+                .process("Resources/de.lproj"),
+            ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .executableTarget(
