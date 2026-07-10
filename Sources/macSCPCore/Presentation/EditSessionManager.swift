@@ -76,6 +76,15 @@ public final class EditSessionManager {
     private var watchers: [UUID: Watcher] = [:]
     /// remotePath → active edit id, for the "already editing" dedup.
     private var editByRemotePath: [String: UUID] = [:]
+    /// remotePath → in-progress download+register `Task`, reserved
+    /// SYNCHRONOUSLY (before any `await`) by the first `beginEditing` caller
+    /// for that path. A second, overlapping call for the SAME remotePath
+    /// (e.g. a fast double-double-click before the first download finishes)
+    /// finds the entry already here and awaits the SAME task instead of
+    /// starting a second download/watcher — this is what closes the race
+    /// that `editByRemotePath` alone (only populated AFTER the download)
+    /// leaves open. Removed once the task settles, success or failure.
+    private var inFlightDownloads: [String: Task<URL, Error>] = [:]
 
     // MARK: - Init
 
@@ -106,6 +115,14 @@ public final class EditSessionManager {
     /// (`enqueueAndWait`), registers a debounced file watcher, and returns the
     /// local URL for the caller to open. Re-invoking for an already-active
     /// `remotePath` returns the existing local URL (no second download/watcher).
+    ///
+    /// Two overlapping calls for the SAME remotePath (e.g. a fast
+    /// double-double-click before the first download finishes) also collapse
+    /// into one download/watcher: the SECOND caller finds the FIRST caller's
+    /// reservation in `inFlightDownloads` (made synchronously, before the
+    /// first `await`) and awaits that same `Task`'s result instead of racing
+    /// it. Without this, the "already editing" check above — populated only
+    /// AFTER the download completes — has a window where both calls pass it.
     public func beginEditing(
         remotePath: String, fileName: String,
         source: any RemoteFileSystem, destinationForUploads: any RemoteFileSystem
@@ -116,6 +133,35 @@ public final class EditSessionManager {
             return existing.localURL
         }
 
+        // A download for this remotePath is already in flight: await its
+        // result instead of starting a second one. Checked and (below)
+        // reserved synchronously — no `await` between the check and the
+        // reservation — so there is no window for a third caller to slip
+        // through either.
+        if let inFlight = inFlightDownloads[remotePath] {
+            return try await inFlight.value
+        }
+
+        let task = Task { @MainActor [weak self] () -> URL in
+            guard let self else { throw CancellationError() }
+            defer { self.inFlightDownloads[remotePath] = nil }
+            return try await self.downloadAndRegister(
+                remotePath: remotePath, fileName: fileName,
+                source: source, destinationForUploads: destinationForUploads)
+        }
+        inFlightDownloads[remotePath] = task
+
+        return try await task.value
+    }
+
+    /// The actual download + registration, run inside the reserved
+    /// `inFlightDownloads` task. Throws on download failure — no edit/watcher
+    /// is registered in that case (and the reservation is removed by the
+    /// caller's `defer`, so a retry can start fresh with no ghost `ActiveEdit`).
+    private func downloadAndRegister(
+        remotePath: String, fileName: String,
+        source: any RemoteFileSystem, destinationForUploads: any RemoteFileSystem
+    ) async throws -> URL {
         // Per-file temp directory: <sessionDir>/<hash(remotePath)>/.
         let fileDirectory = sessionDirectory
             .appendingPathComponent(Self.pathHash(remotePath), isDirectory: true)
@@ -123,8 +169,7 @@ public final class EditSessionManager {
             at: fileDirectory, withIntermediateDirectories: true)
         let localURL = fileDirectory.appendingPathComponent(fileName, isDirectory: false)
 
-        // Download through the queue so it appears in the transfer bar. Throws
-        // on failure — no edit/watcher is registered in that case.
+        // Download through the queue so it appears in the transfer bar.
         try await queue.enqueueAndWait(
             fileName: fileName, direction: .download,
             source: source, sourcePath: remotePath,
