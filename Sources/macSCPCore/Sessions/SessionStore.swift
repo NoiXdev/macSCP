@@ -18,34 +18,75 @@ public struct SessionStore: Sendable {
         directory.appendingPathComponent("sessions.json")
     }
 
-    public func all() throws -> [StoredSession] {
+    /// On-disk container (current format). Legacy files are a bare
+    /// `[StoredSession]` array — `load()` falls back to that shape, so old
+    /// installations keep working without a migration step.
+    private struct StoreFile: Codable {
+        var groups: [StoredGroup] = []
+        var sessions: [StoredSession] = []
+    }
+
+    private func load() throws -> StoreFile {
         guard FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) else {
-            return []
+            return StoreFile()
         }
         let data = try Data(contentsOf: fileURL)
-        return try JSONDecoder().decode([StoredSession].self, from: data)
-    }
-
-    public func upsert(_ session: StoredSession) throws {
-        var sessions = try all()
-        if let index = sessions.firstIndex(where: { $0.id == session.id }) {
-            sessions[index] = session
+        var file: StoreFile
+        if let container = try? JSONDecoder().decode(StoreFile.self, from: data) {
+            file = container
         } else {
-            sessions.append(session)
+            file = StoreFile(groups: [], sessions: try JSONDecoder().decode([StoredSession].self, from: data))
         }
-        try persist(sessions)
+        // Defensive: a groupID whose group no longer exists behaves like nil.
+        let knownIDs = Set(file.groups.map(\.id))
+        for index in file.sessions.indices where file.sessions[index].groupID.map({ !knownIDs.contains($0) }) == true {
+            file.sessions[index].groupID = nil
+        }
+        return file
     }
 
-    public func delete(id: UUID) throws {
-        var sessions = try all()
-        sessions.removeAll { $0.id == id }
-        try persist(sessions)
-    }
-
-    private func persist(_ sessions: [StoredSession]) throws {
+    private func persist(_ file: StoreFile) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(sessions).write(to: fileURL, options: .atomic)
+        try encoder.encode(file).write(to: fileURL, options: .atomic)
+    }
+
+    public func all() throws -> [StoredSession] { try load().sessions }
+    public func allGroups() throws -> [StoredGroup] { try load().groups }
+
+    public func upsert(_ session: StoredSession) throws {
+        var file = try load()
+        if let index = file.sessions.firstIndex(where: { $0.id == session.id }) {
+            file.sessions[index] = session
+        } else {
+            file.sessions.append(session)
+        }
+        try persist(file)
+    }
+
+    public func delete(id: UUID) throws {
+        var file = try load()
+        file.sessions.removeAll { $0.id == id }
+        try persist(file)
+    }
+
+    public func upsertGroup(_ group: StoredGroup) throws {
+        var file = try load()
+        if let index = file.groups.firstIndex(where: { $0.id == group.id }) {
+            file.groups[index] = group
+        } else {
+            file.groups.append(group)
+        }
+        try persist(file)
+    }
+
+    public func dissolveGroup(id: UUID) throws {
+        var file = try load()
+        file.groups.removeAll { $0.id == id }
+        for index in file.sessions.indices where file.sessions[index].groupID == id {
+            file.sessions[index].groupID = nil
+        }
+        try persist(file)
     }
 }

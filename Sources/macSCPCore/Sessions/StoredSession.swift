@@ -18,6 +18,9 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
     public var authKind: AuthKind
     /// Path to the private key (only set when authKind == .privateKey).
     public var keyPath: String?
+    /// The flat group this session belongs to, if any. Optional so legacy
+    /// JSON without this field keeps decoding as `nil` (no custom decoder).
+    public var groupID: UUID?
 
     public init(
         id: UUID = UUID(),
@@ -26,7 +29,8 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         port: Int = 22,
         username: String,
         authKind: AuthKind = .password,
-        keyPath: String? = nil
+        keyPath: String? = nil,
+        groupID: UUID? = nil
     ) {
         self.id = id
         self.name = name
@@ -35,5 +39,6 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         self.username = username
         self.authKind = authKind
         self.keyPath = keyPath
+        self.groupID = groupID
     }
 }
