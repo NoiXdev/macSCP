@@ -89,6 +89,68 @@ struct SessionListViewModelTests {
         // The store write succeeded — the list must reflect what's on disk.
         #expect(vm.sessions.map(\.name) == ["web"])
     }
+
+    @Test func groupCRUDRoundtrip() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let group = vm.createGroup(named: "  Customers ")
+        #expect(group?.name == "Customers")
+        #expect(vm.groups.map(\.name) == ["Customers"])
+
+        vm.renameGroup(group!, to: "Clients")
+        #expect(vm.groups.map(\.name) == ["Clients"])
+
+        #expect(vm.createGroup(named: "   ") == nil)
+        #expect(vm.groups.count == 1)
+    }
+
+    @Test func dissolveKeepsSessionsAndUngroupsThem() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let group = vm.createGroup(named: "G")!
+        let stored = vm.save(name: "s", host: "h", port: 22, username: "u",
+                             password: "pw", groupID: group.id)!
+        vm.dissolveGroup(group)
+        #expect(vm.groups.isEmpty)
+        #expect(vm.sessions.count == 1)
+        #expect(vm.sessions.first?.groupID == nil)
+        #expect(vm.password(for: stored) == "pw") // secret untouched
+    }
+
+    @Test func moveAndFilterByGroup() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let group = vm.createGroup(named: "G")!
+        let stored = vm.save(name: "s", host: "h", port: 22, username: "u", password: "pw")!
+        vm.moveSession(stored, toGroup: group.id)
+        #expect(vm.sessions(inGroup: group.id).map(\.name) == ["s"])
+        #expect(vm.sessions(inGroup: nil).isEmpty)
+    }
+
+    @Test func renameSessionTrimsAndRejectsEmpty() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let stored = vm.save(name: "old", host: "h", port: 22, username: "u", password: "pw")!
+        vm.renameSession(stored, to: "  new ")
+        #expect(vm.sessions.first?.name == "new")
+        vm.renameSession(vm.sessions.first!, to: "   ")
+        #expect(vm.sessions.first?.name == "new")
+    }
+
+    @Test func updateSessionKeepsSecretWhenNewSecretIsNilOrEmpty() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let stored = vm.save(name: "s", host: "h", port: 22, username: "u", password: "keep")!
+        var updated = stored
+        updated.host = "h2"
+        vm.updateSession(updated, newSecret: nil)
+        #expect(vm.password(for: stored) == "keep")
+        vm.updateSession(updated, newSecret: "")
+        #expect(vm.password(for: stored) == "keep")
+        vm.updateSession(updated, newSecret: "next")
+        #expect(vm.password(for: stored) == "next")
+        #expect(vm.sessions.first?.host == "h2")
+    }
 }
 
 private final class FailingSecretStore: SecretStore, @unchecked Sendable {

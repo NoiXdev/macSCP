@@ -42,3 +42,6 @@
 "core.session.loadFailed %@" = "Failed to load sessions: %@";
 "core.session.saveFailed %@" = "Failed to save session: %@";
 "core.session.deleteFailed %@" = "Failed to delete session: %@";
+
+/* Session groups (M5f/T2) */
+"core.session.groupSaveFailed %@" = "Could not save group: %@";
