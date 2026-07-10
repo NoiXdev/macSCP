@@ -10,6 +10,101 @@ struct BrowserSession {
     let terminal: TerminalPanelViewModel
 }
 
+/// Sheet-Item-Wrapper: verleiht `TransferConflict` `Identifiable`, ohne den
+/// Core-Typ per Extension zu erweitern (bindende Vorgabe M5b/T4). Pro Prompt
+/// genügt eine frische UUID, weil zu jeder Zeit höchstens ein Sheet offen ist.
+struct ConflictPromptItem: Identifiable {
+    let id = UUID()
+    let conflict: TransferConflict
+}
+
+/// Hält die Continuation für den `ConflictDecider`-Prompt der Transfer-Queue.
+/// Muster: `ConnectionViewModel.presentHostKeyPrompt` inkl. Cancellation-Handler
+/// und Exactly-once-Auflösung. Reference-Typ (statt View-`@State`-Feld direkt),
+/// weil `TransferQueueViewModel.conflictDecider` eine `@Sendable`-Closure ist,
+/// die außerhalb des `ContentView`-Structs weiterlebt.
+@MainActor
+@Observable
+final class ConflictPromptBridge {
+    /// Aktuell offener Prompt — treibt `.sheet(item:)` in `ContentView`.
+    private(set) var currentPrompt: ConflictPromptItem?
+    private var continuation:
+        CheckedContinuation<(resolution: ConflictResolution, applyToAll: Bool)?, Never>?
+
+    /// Decider-Seite: von `TransferQueueViewModel.conflictDecider` awaited.
+    /// Cancellation-sicher: bricht die aufrufende Task ab, während der Prompt
+    /// offen ist, wird mit `nil` (Abbrechen) aufgelöst statt zu hängen.
+    func ask(_ conflict: TransferConflict) async
+        -> (resolution: ConflictResolution, applyToAll: Bool)?
+    {
+        currentPrompt = ConflictPromptItem(conflict: conflict)
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if Task.isCancelled {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                self.continuation = continuation
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.resolve(nil)
+            }
+        }
+    }
+
+    /// Von den Sheet-Buttons aufgerufen. Exactly-once: eine zweite Auflösung
+    /// (z.B. Doppelklick oder Dismiss nach Button-Tap) wird ignoriert.
+    func resolve(_ result: (resolution: ConflictResolution, applyToAll: Bool)?) {
+        guard let continuation else { return }
+        self.continuation = nil
+        currentPrompt = nil
+        continuation.resume(returning: result)
+    }
+
+    /// Von außen (Teardown) aufrufbar: löst einen noch offenen Prompt mit
+    /// "Abbrechen" auf. MUSS vor `transferQueue.cancelAll()` laufen — `cancelAll`
+    /// blockt (dokumentiert) auf einem offenen Decider-Prompt, der sonst nie
+    /// beantwortet würde (Deadlock beim Trennen mit offenem Sheet).
+    func dismiss() {
+        resolve(nil)
+    }
+}
+
+/// Konflikt-Sheet-Inhalt. Eigener View-Typ wegen des lokalen Toggle-Status
+/// (`applyToAll`) — SwiftUI instanziiert ihn frisch pro Sheet-Präsentation.
+private struct ConflictSheetView: View {
+    let conflict: TransferConflict
+    let onResolve: (ConflictResolution, Bool) -> Void
+    let onCancel: () -> Void
+
+    @State private var applyToAll = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Datei existiert bereits")
+                .font(.headline)
+            Text("„\(conflict.fileName)“ existiert in „\(conflict.destinationDirectory)“.")
+                .foregroundStyle(.secondary)
+            Toggle("Für alle weiteren übernehmen", isOn: $applyToAll)
+            HStack {
+                Spacer()
+                Button("Abbrechen", role: .cancel) { onCancel() }
+                Button("Umbenennen") { onResolve(.rename, applyToAll) }
+                Button("Überspringen") { onResolve(.skip, applyToAll) }
+                Button("Überschreiben", role: .destructive) { onResolve(.overwrite, applyToAll) }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 360)
+        // Escape/Klick-außerhalb dürfen den Prompt NICHT auflösen, ohne die
+        // Continuation zu erfüllen — das würde `cancelAll`/die Queue hängen
+        // lassen. Auflösung ausschließlich über die Buttons.
+        .interactiveDismissDisabled(true)
+    }
+}
+
 struct ContentView: View {
     @State private var connectionViewModel = ConnectionViewModel(connector: { config, onUnknownHostKey in
         try await CitadelFileSystem.connect(
@@ -27,6 +122,7 @@ struct ContentView: View {
     @State private var transferQueue = TransferQueueViewModel()
     @State private var isReconnecting = false
     @State private var importedHosts: [SSHConfigHost] = []
+    @State private var conflictBridge = ConflictPromptBridge()
 
     private var sidebarDisabled: Bool {
         isReconnecting
@@ -123,6 +219,23 @@ struct ContentView: View {
 
                 TransferQueueBar(viewModel: transferQueue)
             }
+            .sheet(
+                item: Binding(
+                    get: { conflictBridge.currentPrompt },
+                    set: { newValue in
+                        if newValue == nil { conflictBridge.dismiss() }
+                    }
+                ),
+                onDismiss: { conflictBridge.dismiss() }
+            ) { item in
+                ConflictSheetView(
+                    conflict: item.conflict,
+                    onResolve: { resolution, applyToAll in
+                        conflictBridge.resolve((resolution: resolution, applyToAll: applyToAll))
+                    },
+                    onCancel: { conflictBridge.dismiss() }
+                )
+            }
         } else {
             ConnectionFormView(viewModel: connectionViewModel) { fs in
                 startSession(with: fs)
@@ -170,6 +283,8 @@ struct ContentView: View {
             })
         )
         transferQueue = TransferQueueViewModel()
+        let bridge = conflictBridge
+        transferQueue.conflictDecider = { conflict in await bridge.ask(conflict) }
 
         if connectionViewModel.shouldSaveSession {
             let stored = sessionListViewModel.save(
@@ -247,6 +362,10 @@ struct ContentView: View {
 
     private func teardownSession() async {
         if let session {
+            // MUSS vor `cancelAll()` laufen: ein offenes Konflikt-Sheet hält
+            // sonst den Decider-Prompt offen, an dem `cancelAll` (dokumentiert)
+            // hängen bleibt, bis er beantwortet wird — Deadlock beim Trennen.
+            conflictBridge.dismiss()
             await transferQueue.cancelAll()
             await session.terminal.shutdown()
             await session.remote.disconnect()
@@ -258,65 +377,96 @@ struct ContentView: View {
         activeSessionID = nil
     }
 
-    /// Lokal ausgewählte DATEI → aktuelles Remote-Verzeichnis.
+    /// Lokal ausgewählte Datei ODER Ordner → aktuelles Remote-Verzeichnis.
+    /// Symlink-Auswahl bleibt deaktiviert (kein sinnvolles Transfer-Ziel).
     @ViewBuilder
     private func uploadButton(_ session: BrowserSession) -> some View {
         let selected = session.local.selectedItem
         Button {
             guard let selected else { return }
-            transferQueue.enqueue(
-                fileName: selected.name, direction: .upload,
-                source: session.localFS, sourcePath: selected.path,
-                destination: session.remoteFS,
-                destinationDirectory: session.remote.currentPath,
-                onCompleted: { await session.remote.refresh() }
-            )
+            if selected.kind == .directory {
+                transferQueue.enqueueTree(
+                    directoryName: selected.name, direction: .upload,
+                    source: session.localFS, sourceDirectory: selected.path,
+                    destination: session.remoteFS,
+                    destinationDirectory: session.remote.currentPath,
+                    onCompleted: { [weak remote = session.remote] in await remote?.refresh() }
+                )
+            } else {
+                transferQueue.enqueue(
+                    fileName: selected.name, direction: .upload,
+                    source: session.localFS, sourcePath: selected.path,
+                    destination: session.remoteFS,
+                    destinationDirectory: session.remote.currentPath,
+                    onCompleted: { [weak remote = session.remote] in await remote?.refresh() }
+                )
+            }
         } label: {
             Label("Hochladen", systemImage: "arrow.up")
         }
         .tint(DesignTokens.localAmber)
-        .disabled(selected == nil || selected?.kind != .file)
-        .help("Ausgewählte lokale Datei ins Remote-Verzeichnis hochladen")
+        .disabled(selected == nil || selected?.kind == .symlink)
+        .help("Ausgewählte lokale Datei/Ordner ins Remote-Verzeichnis hochladen")
     }
 
-    /// Remote ausgewählte DATEI → aktuelles lokales Verzeichnis.
+    /// Remote ausgewählte Datei ODER Ordner → aktuelles lokales Verzeichnis.
+    /// Symlink-Auswahl bleibt deaktiviert (kein sinnvolles Transfer-Ziel).
     @ViewBuilder
     private func downloadButton(_ session: BrowserSession) -> some View {
         let selected = session.remote.selectedItem
         Button {
             guard let selected else { return }
-            transferQueue.enqueue(
-                fileName: selected.name, direction: .download,
-                source: session.remoteFS, sourcePath: selected.path,
-                destination: session.localFS,
-                destinationDirectory: session.local.currentPath,
-                onCompleted: { await session.local.refresh() }
-            )
+            if selected.kind == .directory {
+                transferQueue.enqueueTree(
+                    directoryName: selected.name, direction: .download,
+                    source: session.remoteFS, sourceDirectory: selected.path,
+                    destination: session.localFS,
+                    destinationDirectory: session.local.currentPath,
+                    onCompleted: { [weak local = session.local] in await local?.refresh() }
+                )
+            } else {
+                transferQueue.enqueue(
+                    fileName: selected.name, direction: .download,
+                    source: session.remoteFS, sourcePath: selected.path,
+                    destination: session.localFS,
+                    destinationDirectory: session.local.currentPath,
+                    onCompleted: { [weak local = session.local] in await local?.refresh() }
+                )
+            }
         } label: {
             Label("Herunterladen", systemImage: "arrow.down")
         }
         .tint(DesignTokens.remoteBlue)
-        .disabled(selected == nil || selected?.kind != .file)
-        .help("Ausgewählte Remote-Datei ins lokale Verzeichnis herunterladen")
+        .disabled(selected == nil || selected?.kind == .symlink)
+        .help("Ausgewählte Remote-Datei/Ordner ins lokale Verzeichnis herunterladen")
     }
 
-    /// Gedroppte Datei-URLs in die Queue einreihen (Ordner werden übersprungen).
-    /// Kein Guard mehr nötig: die Queue nimmt jeden Drop an und reiht ihn ein.
+    /// Gedroppte Datei-/Ordner-URLs in die Queue einreihen. Dateien laufen über
+    /// `enqueue`, Ordner rekursiv über `enqueueTree` (M5b/T3/T4) — kein
+    /// Directory-Filter mehr, nur nicht (mehr) existierende URLs werden verworfen.
     private func uploadDropped(_ urls: [URL], session: BrowserSession) {
-        let files = urls.filter { url in
+        for url in urls {
             var isDirectory: ObjCBool = false
             let exists = FileManager.default.fileExists(
                 atPath: url.path(percentEncoded: false), isDirectory: &isDirectory)
-            return exists && !isDirectory.boolValue
-        }
-        for url in files {
-            transferQueue.enqueue(
-                fileName: url.lastPathComponent, direction: .upload,
-                source: session.localFS, sourcePath: url.path(percentEncoded: false),
-                destination: session.remoteFS,
-                destinationDirectory: session.remote.currentPath,
-                onCompleted: { await session.remote.refresh() }
-            )
+            guard exists else { continue }
+            if isDirectory.boolValue {
+                transferQueue.enqueueTree(
+                    directoryName: url.lastPathComponent, direction: .upload,
+                    source: session.localFS, sourceDirectory: url.path(percentEncoded: false),
+                    destination: session.remoteFS,
+                    destinationDirectory: session.remote.currentPath,
+                    onCompleted: { [weak remote = session.remote] in await remote?.refresh() }
+                )
+            } else {
+                transferQueue.enqueue(
+                    fileName: url.lastPathComponent, direction: .upload,
+                    source: session.localFS, sourcePath: url.path(percentEncoded: false),
+                    destination: session.remoteFS,
+                    destinationDirectory: session.remote.currentPath,
+                    onCompleted: { [weak remote = session.remote] in await remote?.refresh() }
+                )
+            }
         }
     }
 
