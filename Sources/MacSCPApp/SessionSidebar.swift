@@ -163,7 +163,10 @@ struct SessionSidebar: View {
                     .onSubmit { commitGroupRename(group) }
                     .onExitCommand(perform: cancelRename)
             } else {
+                // Display-only uppercase (spec: section labels are versal);
+                // the stored group name keeps its original casing.
                 Text(group.name)
+                    .textCase(.uppercase)
                     .font(.caption2.weight(.semibold))
                     .tracking(0.8)
                     .foregroundStyle(.secondary)
@@ -206,6 +209,7 @@ struct SessionSidebar: View {
             } header: {
                 Text(L10n.string("sidebar.importedHeader", "IMPORTED"))
                     .font(.caption2.weight(.semibold))
+                    .tracking(0.8)
                     .foregroundStyle(.secondary)
             }
         }
