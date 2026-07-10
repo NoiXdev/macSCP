@@ -2,9 +2,10 @@ import SwiftUI
 import UniformTypeIdentifiers
 import macSCPCore
 
-/// Ein Datei-Pane (lokal oder remote): Kopfzeile mit Seiten-Badge in der
-/// Markenfarbe, Pfad, Hoch/Aktualisieren — darunter die AppKit-Tabelle.
-/// Mit onDropURLs wird das Pane Drop-Ziel für Datei-URLs (Tint-Highlight).
+/// A file pane (local or remote): header with a side badge in the brand
+/// color, path, up/refresh — the AppKit table underneath.
+/// With `onDropURLs` set, the pane becomes a drop target for file URLs
+/// (tint highlight).
 struct BrowserPane: View {
     let title: String
     let tint: Color
@@ -36,7 +37,7 @@ struct BrowserPane: View {
                     Image(systemName: "arrow.up")
                 }
                 .disabled(!viewModel.canGoUp || viewModel.state == .loading)
-                .help("Übergeordnetes Verzeichnis")
+                .help(L10n.string("browser.pane.goUpHelp", "Parent directory"))
 
                 Button {
                     Task { await viewModel.refresh() }
@@ -44,7 +45,7 @@ struct BrowserPane: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .disabled(viewModel.state == .loading)
-                .help("Aktualisieren")
+                .help(L10n.string("browser.pane.refreshHelp", "Refresh"))
             }
             .padding(8)
 
@@ -68,7 +69,7 @@ struct BrowserPane: View {
                     VStack(spacing: 8) {
                         Text(message)
                             .foregroundStyle(.red)
-                        Button("Erneut versuchen") {
+                        Button(L10n.string("browser.pane.retry", "Try again")) {
                             Task { await viewModel.refresh() }
                         }
                     }
@@ -100,7 +101,7 @@ struct BrowserPane: View {
 }
 
 fileprivate extension NSItemProvider {
-    /// Extrahiert eine Datei-URL aus dem Provider (Drop-Payload).
+    /// Extracts a file URL from the provider (drop payload).
     func macscpFileURL() async -> URL? {
         await withCheckedContinuation { continuation in
             _ = loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in

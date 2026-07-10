@@ -9,17 +9,17 @@ struct MacSCPApp: App {
     @State private var settingsStore = SettingsStore(directory: SettingsStore.defaultDirectory)
 
     init() {
-        // Ohne App-Bundle (Start via `swift run`) läuft der Prozess als
-        // Accessory — erst die Regular-Policy bringt Fenster und Dock-Icon.
-        // Echtes .app-Bundle kommt in M6.
+        // Without an app bundle (started via `swift run`) the process runs
+        // as an accessory — only the regular policy brings a window and a
+        // Dock icon. A real `.app` bundle lands in M6.
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
     var body: some Scene {
-        // Die Mindestgröße hängt vom Verbindungszustand ab (kompaktes
-        // Formular vs. Browser) — sie lebt deshalb konditional in
-        // `ContentView` statt hier global (M5c/T0).
+        // The minimum size depends on the connection state (compact form vs.
+        // browser) — it lives conditionally in `ContentView` instead of here
+        // globally (M5c/T0).
         WindowGroup("macSCP") {
             ContentView(settingsStore: settingsStore)
         }

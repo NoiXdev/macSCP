@@ -9,7 +9,7 @@ struct ConnectionFormView: View {
 
     private var isConnecting: Bool { viewModel.state == .connecting }
 
-    /// Das Feld, dessen Validierung zuletzt fehlschlug — bekommt die rote Umrandung.
+    /// The field whose validation failed most recently — gets the red outline.
     private var failedField: ConnectionViewModel.Field? {
         if case .failed(_, let field) = viewModel.state { return field }
         return nil
@@ -17,42 +17,60 @@ struct ConnectionFormView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Neue Verbindung")
+            Text(L10n.string("connection.title", "New connection"))
                 .font(.title2.bold())
 
             Form {
-                TextField("Host", text: $viewModel.host, prompt: Text("server.example.com"))
+                TextField(
+                    L10n.string("connection.field.host", "Host"), text: $viewModel.host,
+                    prompt: Text(L10n.string("connection.field.host.placeholder", "server.example.com"))
+                )
                     .errorHighlight(failedField == .host)
-                TextField("Port", text: $viewModel.port)
+                TextField(L10n.string("connection.field.port", "Port"), text: $viewModel.port)
                     .errorHighlight(failedField == .port)
-                TextField("Benutzername", text: $viewModel.username)
+                TextField(L10n.string("connection.field.username", "Username"), text: $viewModel.username)
                     .errorHighlight(failedField == .username)
-                Picker("Authentifizierung", selection: Binding(
+                Picker(L10n.string("connection.field.authMethod", "Authentication"), selection: Binding(
                     get: { viewModel.authChoice },
                     set: { viewModel.selectAuthChoice($0) }
                 )) {
-                    Text("Passwort").tag(ConnectionViewModel.AuthChoice.password)
-                    Text("SSH-Key").tag(ConnectionViewModel.AuthChoice.privateKey)
+                    Text(L10n.string("connection.auth.password", "Password"))
+                        .tag(ConnectionViewModel.AuthChoice.password)
+                    Text(L10n.string("connection.auth.privateKey", "SSH key"))
+                        .tag(ConnectionViewModel.AuthChoice.privateKey)
                 }
                 .pickerStyle(.segmented)
                 if viewModel.authChoice == .password {
-                    SecureField("Passwort", text: $viewModel.password)
+                    SecureField(L10n.string("connection.auth.password", "Password"), text: $viewModel.password)
                         .errorHighlight(failedField == .password)
                 } else {
                     HStack(spacing: 6) {
-                        TextField("Key-Pfad", text: $viewModel.keyPath,
-                                  prompt: Text("~/.ssh/id_ed25519"))
+                        TextField(
+                            L10n.string("connection.field.keyPath", "Key path"), text: $viewModel.keyPath,
+                            prompt: Text(L10n.string(
+                                "connection.field.keyPath.placeholder", "~/.ssh/id_ed25519"))
+                        )
                             .errorHighlight(failedField == .keyPath)
+                        // "…" is a pure symbol (ellipsis "browse" affordance), not
+                        // natural-language text — identical in every locale, so it
+                        // stays a literal rather than a catalog key.
                         Button("…") { showKeyImporter = true }
-                            .help("Key-Datei auswählen")
+                            .help(L10n.string("connection.field.keyPath.browseHelp", "Choose key file"))
                     }
-                    SecureField("Passphrase (optional)", text: $viewModel.password)
+                    SecureField(
+                        L10n.string("connection.field.passphrase", "Passphrase (optional)"),
+                        text: $viewModel.password
+                    )
                         .errorHighlight(failedField == .password)
                 }
-                Toggle("Als Session speichern", isOn: $viewModel.shouldSaveSession)
+                Toggle(
+                    L10n.string("connection.saveToggle", "Save as session"),
+                    isOn: $viewModel.shouldSaveSession)
                 if viewModel.shouldSaveSession {
-                    TextField("Session-Name", text: $viewModel.saveName,
-                              prompt: Text("z.B. hetzner-web"))
+                    TextField(
+                        L10n.string("connection.field.saveName", "Session name"), text: $viewModel.saveName,
+                        prompt: Text(L10n.string("connection.field.saveName.placeholder", "e.g. hetzner-web"))
+                    )
                         .errorHighlight(failedField == .saveName)
                 }
             }
@@ -66,17 +84,21 @@ struct ConnectionFormView: View {
 
             if let prompt = viewModel.hostKeyPrompt {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Erster Verbindungsaufbau zu \(prompt.candidate.host)")
+                    Text(String(format: L10n.string(
+                        "connection.hostkey.first", "First connection to %@"), prompt.candidate.host))
                         .font(.headline)
-                    Text("Fingerprint (\(prompt.candidate.keyType)):")
+                    Text(String(format: L10n.string(
+                        "connection.hostkey.fingerprintLabel", "Fingerprint (%@):"), prompt.candidate.keyType))
                         .font(.callout)
                     Text(prompt.candidate.fingerprintSHA256)
                         .font(.system(.callout, design: .monospaced))
                         .textSelection(.enabled)
                     HStack {
                         Spacer()
-                        Button("Abbrechen") { viewModel.resolveHostKeyPrompt(trust: false) }
-                        Button("Vertrauen & verbinden") {
+                        Button(L10n.string("common.cancel", "Cancel")) {
+                            viewModel.resolveHostKeyPrompt(trust: false)
+                        }
+                        Button(L10n.string("connection.hostkey.trust", "Trust & connect")) {
                             viewModel.resolveHostKeyPrompt(trust: true)
                         }
                         .keyboardShortcut(.defaultAction)
@@ -92,7 +114,7 @@ struct ConnectionFormView: View {
                     ProgressView()
                         .controlSize(.small)
                 }
-                Button("Verbinden") {
+                Button(L10n.string("connection.connect", "Connect")) {
                     Task {
                         if let fs = await viewModel.connect() {
                             onConnected(fs)
@@ -114,7 +136,7 @@ struct ConnectionFormView: View {
 }
 
 private extension View {
-    /// Rote Umrandung für das Formularfeld, dessen Validierung fehlschlug.
+    /// Red outline for the form field whose validation failed.
     func errorHighlight(_ active: Bool) -> some View {
         overlay(
             RoundedRectangle(cornerRadius: 5)

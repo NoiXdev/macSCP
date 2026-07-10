@@ -1,8 +1,8 @@
 import SwiftUI
 import macSCPCore
 
-/// Linke Spalte: gespeicherte Sessions. Klick verbindet, Kontextmenü löscht,
-/// der Phosphor-Punkt markiert die aktive Verbindung.
+/// Left column: stored sessions. Click connects, context menu deletes, the
+/// phosphor dot marks the active connection.
 struct SessionSidebar: View {
     let viewModel: SessionListViewModel
     let importedHosts: [SSHConfigHost]
@@ -15,7 +15,7 @@ struct SessionSidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("SESSIONS")
+            Text(L10n.string("sidebar.header", "SESSIONS"))
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 12)
@@ -23,7 +23,7 @@ struct SessionSidebar: View {
 
             List {
                 Button(action: onNew) {
-                    Label("Neue Verbindung", systemImage: "plus")
+                    Label(L10n.string("sidebar.newConnection", "New connection"), systemImage: "plus")
                 }
                 .buttonStyle(.plain)
 
@@ -41,10 +41,12 @@ struct SessionSidebar: View {
                     .contentShape(Rectangle())
                     .onTapGesture { onSelect(session) }
                     .contextMenu {
-                        Button("Löschen", role: .destructive) {
+                        Button(L10n.string("sidebar.delete", "Delete"), role: .destructive) {
                             onDelete(session)
                         }
                     }
+                    // Pure data interpolation (user@host:port) — no natural-
+                    // language words to translate, identical in every locale.
                     .help("\(session.username)@\(session.host):\(String(session.port))")
                 }
 
@@ -61,10 +63,12 @@ struct SessionSidebar: View {
                             }
                             .contentShape(Rectangle())
                             .onTapGesture { onSelectImported(host) }
-                            .help("Aus ~/.ssh/config — füllt das Formular (Geheimnisse werden nicht importiert)")
+                            .help(L10n.string(
+                                "sidebar.importedHelp",
+                                "From ~/.ssh/config — fills the form (secrets are not imported)"))
                         }
                     } header: {
-                        Text("IMPORTIERT")
+                        Text(L10n.string("sidebar.importedHeader", "IMPORTED"))
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.secondary)
                     }
