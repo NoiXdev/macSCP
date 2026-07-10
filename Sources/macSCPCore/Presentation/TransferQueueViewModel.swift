@@ -46,6 +46,7 @@ public final class TransferQueueViewModel {
             case failed(String)      // localized message
             case cancelled
             case skipped             // conflict resolved via `.skip` ("skipped")
+            case interrupted         // connection lost mid-transfer; resumable (M5d/T3)
 
             /// true while this item is actively transferring — the UI needs this.
             public var isRunning: Bool {
@@ -56,9 +57,15 @@ public final class TransferQueueViewModel {
             /// true once this item has reached a terminal state. The group
             /// accounting (M5b/T3) decrements exactly at the transition to
             /// terminal — this predicate is the pivot for that.
+            ///
+            /// `.interrupted` is terminal (M5d/T3): the transfer is no longer
+            /// running and the group accounting must count it exactly once,
+            /// like any other terminal state. `retryInterrupted` re-enqueues a
+            /// fresh `.queued` run rather than reviving the interrupted item's
+            /// group membership.
             public var isTerminal: Bool {
                 switch self {
-                case .finished, .failed, .cancelled, .skipped: return true
+                case .finished, .failed, .cancelled, .skipped, .interrupted: return true
                 case .queued, .running: return false
                 }
             }
@@ -81,6 +88,12 @@ public final class TransferQueueViewModel {
         items.reduce(into: 0) { count, item in
             if item.status == .queued || item.status.isRunning { count += 1 }
         }
+    }
+
+    /// true if any item is in the `.interrupted` state (M5d/T3) — drives the
+    /// "Resume interrupted" banner (M5d/T4) and gates `retryInterrupted`.
+    public var hasInterrupted: Bool {
+        items.contains { $0.status == .interrupted }
     }
 
     /// UI decider for destination conflicts. `nil` (default) ⇒ silent overwrite
@@ -124,9 +137,35 @@ public final class TransferQueueViewModel {
         let sourcePath: String
         let destination: any RemoteFileSystem
         let destinationDirectory: String
+        /// The destination name the transfer actually writes to. For a fresh
+        /// enqueue this is the requested name; a retained interrupted job
+        /// (M5d/T3) stores the POST-RENAME effective name here, so a resume
+        /// continues the very file that was partially written.
         let fileName: String
         let direction: TransferDirection
         let onCompleted: (@MainActor () async -> Void)?
+        /// Resume semantics for the engine (M5d/T3). `true` only for jobs
+        /// re-enqueued by `retryInterrupted`: `TransferEngine.copyFile` then
+        /// continues from the destination offset, and the queue's conflict
+        /// check is bypassed (resuming IS the conflict decision).
+        let resume: Bool
+
+        init(
+            id: UUID, source: any RemoteFileSystem, sourcePath: String,
+            destination: any RemoteFileSystem, destinationDirectory: String,
+            fileName: String, direction: TransferDirection,
+            onCompleted: (@MainActor () async -> Void)?, resume: Bool = false
+        ) {
+            self.id = id
+            self.source = source
+            self.sourcePath = sourcePath
+            self.destination = destination
+            self.destinationDirectory = destinationDirectory
+            self.fileName = fileName
+            self.direction = direction
+            self.onCompleted = onCompleted
+            self.resume = resume
+        }
     }
 
     /// Error for when no free rename name could be found (Rule 5, limit reached).
@@ -282,8 +321,53 @@ public final class TransferQueueViewModel {
         expansionTasks[groupID] = task
     }
 
+    /// Re-enqueues every `.interrupted` item against the NEW session's file
+    /// systems, in their original (FIFO) order, with resume semantics (M5d/T3).
+    ///
+    /// The two parameters are the CURRENT session's local and remote file
+    /// systems (`source` = local, `destination` = remote). Each item's
+    /// `direction` decides which side is the transfer's source and which is
+    /// its destination: an upload reads from `source` (local) and writes to
+    /// `destination` (remote); a download swaps them. Only the file-system
+    /// references change — the retained paths and the post-rename effective
+    /// name stay, so the engine resumes the exact partial file.
+    ///
+    /// The re-enqueued jobs carry `resume: true` (engine continues from the
+    /// destination offset) and BYPASS the queue's conflict check by design —
+    /// resuming IS the conflict decision (documented). Items flip back to
+    /// `.queued`; group membership is NOT revived (an interrupted tree item
+    /// retries as an individual — the group already fired or died with the
+    /// disconnect). Retry jobs have no waiter: the original `enqueueAndWait`
+    /// continuation was already thrown at the interrupt (Promise contract), so
+    /// a resumed transfer notifies nobody; a fresh Finder promise drop would
+    /// create its own new item.
+    public func retryInterrupted(source: any RemoteFileSystem, destination: any RemoteFileSystem) {
+        // `items` preserves enqueue order, so filtering it yields the original
+        // FIFO order of the interrupted items.
+        let interruptedIDs = items.compactMap { $0.status == .interrupted ? $0.id : nil }
+        for id in interruptedIDs {
+            guard let retained = jobs[id] else { continue }
+            // Direction picks which given FS is source vs. destination.
+            let (transferSource, transferDestination): (any RemoteFileSystem, any RemoteFileSystem) =
+                retained.direction == .upload ? (source, destination) : (destination, source)
+            jobs[id] = Job(
+                id: id, source: transferSource, sourcePath: retained.sourcePath,
+                destination: transferDestination, destinationDirectory: retained.destinationDirectory,
+                fileName: retained.fileName, direction: retained.direction,
+                onCompleted: nil, resume: true)
+            order.append(id)
+            setStatus(id, .queued)   // terminal → non-terminal: no group accounting
+        }
+        kickWorker()
+    }
+
     /// Cancels everything: cancels the running transfer, queued → `.cancelled`,
     /// waiting continuations throw. Returns only after the worker has stopped.
+    ///
+    /// `.interrupted` items are already terminal and are NOT swept here (M5d/T3):
+    /// they are not in `order`, `resolvingJobIDs`, or `runningTransferTasks`, so
+    /// they survive a teardown with their retained jobs intact — the queue
+    /// outlives the session and a reconnect can still resume them.
     public func cancelAll() async {
         // 0. Stop and await any running tree expansion(s) BEFORE clearing queued
         //    items — so no new items can appear from here on (M5b/T3).
@@ -328,12 +412,14 @@ public final class TransferQueueViewModel {
         for task in active { await task.value }
     }
 
-    /// Removes finished/failed/cancelled/skipped from the list.
+    /// Removes finished/failed/cancelled/skipped from the list. `.interrupted`
+    /// items are KEPT (M5d/T3): they are resumable pending work — discarding
+    /// them on "Clean up" would drop the retry metadata.
     public func clearCompleted() {
         items.removeAll { item in
             switch item.status {
             case .finished, .failed, .cancelled, .skipped: return true
-            case .queued, .running: return false
+            case .queued, .running, .interrupted: return false
             }
         }
     }
@@ -383,7 +469,11 @@ public final class TransferQueueViewModel {
         guard let job = jobs[jobID] else { return }
 
         // Conflict check BEFORE the engine call; prompts serialize FIFO.
-        let outcome = await resolveConflictIfNeeded(job: job)
+        // A resumed retry job (M5d/T3) bypasses it entirely: it already carries
+        // its post-rename effective name and resuming IS the conflict decision.
+        let outcome: Outcome = job.resume
+            ? .proceed(fileName: job.fileName)
+            : await resolveConflictIfNeeded(job: job)
 
         // `cancelAll` may already have struck during the above await (stat
         // probe, decider, rename probing): status is then already `.cancelled`,
@@ -461,10 +551,14 @@ public final class TransferQueueViewModel {
         // next; already-running transfers keep the limit they started with.
         let bytesPerSecondLimit = job.direction == .upload
             ? uploadLimitBytesPerSec : downloadLimitBytesPerSec
+        // Resume flag (M5d/T3): only a retry job sets it — the engine then
+        // continues from the destination offset instead of overwriting.
+        let resume = job.resume
         let transfer = Task<Void, Error> {
             try await TransferEngine.copyFile(
                 from: source, sourcePath: sourcePath,
                 to: destination, destinationDirectory: destinationDirectory, fileName: fileName,
+                resume: resume,
                 bytesPerSecondLimit: bytesPerSecondLimit,
                 onProgress: { progressContinuation.yield($0) }
             )
@@ -487,6 +581,23 @@ public final class TransferQueueViewModel {
             jobs[jobID] = nil
             runningTransferTasks[jobID] = nil
             resumeWaiter(jobID, with: .failure(CancellationError()))
+        } catch let error as RemoteFSError where error.isConnectionFailure {
+            // Connection lost mid-transfer (M5d/T3): mark `.interrupted` (NOT
+            // `.failed`) and RETAIN the job — under its EFFECTIVE (post-rename)
+            // name — so a reconnect can resume the exact partial file via
+            // `retryInterrupted`. The waiter still throws (Promise contract),
+            // onCompleted does not fire. The partial file stays at the
+            // destination as resume fodder.
+            progressContinuation.finish()
+            await consumer.value
+            setStatus(jobID, .interrupted)
+            jobs[jobID] = Job(
+                id: jobID, source: source, sourcePath: sourcePath,
+                destination: destination, destinationDirectory: destinationDirectory,
+                fileName: effectiveFileName, direction: job.direction,
+                onCompleted: nil, resume: false)
+            runningTransferTasks[jobID] = nil
+            resumeWaiter(jobID, with: .failure(error))
         } catch {
             progressContinuation.finish()
             await consumer.value

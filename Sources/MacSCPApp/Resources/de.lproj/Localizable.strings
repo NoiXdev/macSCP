@@ -76,3 +76,4 @@
 "transfers.status.queued" = "wartet";
 "transfers.status.cancelled" = "abgebrochen";
 "transfers.status.skipped" = "übersprungen";
+"transfers.status.interrupted" = "unterbrochen";

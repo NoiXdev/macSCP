@@ -62,6 +62,11 @@ struct TransferQueueViewModelTests {
             /// caught exclusively via `copyFile`'s `checkCancellation` (M5c/T2) —
             /// not via a cancellation-aware `gate`.
             var spinUntilCancelledAt: Int?
+            /// If set, `readStream` throws this on the first pull (after
+            /// `started`/`gate`) — simulates a mid-transfer failure (M5d/T3):
+            /// `connectionFailed` exercises the `.interrupted` path, any other
+            /// error the `.failed` path.
+            var failWith: Error?
         }
 
         private var reads: [String: Read]
@@ -76,6 +81,12 @@ struct TransferQueueViewModelTests {
         /// Recording only — no error simulation needed here yet, that lives
         /// in LocalFileSystemTests/MockRemoteFileSystem.
         private(set) var deletedPaths: [String] = []
+        /// Write mode used by the most recent `write` per path (M5d/T3) — the
+        /// resume tests assert `.append` was used, not `.overwrite`.
+        private(set) var writeModes: [String: WriteMode] = [:]
+        /// Offset requested by the most recent `readStream` per path (M5d/T3) —
+        /// the resume tests assert the source was re-read from the partial size.
+        private(set) var readOffsets: [String: UInt64] = [:]
         /// Signal gate for `stat`, isolated from the chunk gating (`Read.started/gate`
         /// above): lets tests hold open EXACTLY the stat await in `resolveConflictIfNeeded`
         /// (M5b/T2 review fix, no-decider variant). `statEntered`
@@ -126,11 +137,13 @@ struct TransferQueueViewModelTests {
             path: String, fromOffset offset: UInt64
         ) async throws -> AsyncThrowingStream<Data, Error> {
             guard let read = reads[path] else { throw RemoteFSError.notFound(path: path) }
+            readOffsets[path] = offset
             let start = min(Int(offset), read.content.count)
             let chunks = QueueTestFS.chunked(read.content.subdata(in: start..<read.content.count))
             let started = read.started
             let gate = read.gate
             let spinAt = read.spinUntilCancelledAt
+            let failWith = read.failWith
             var index = 0
             var opened = false
             return AsyncThrowingStream<Data, Error>(unfolding: {
@@ -138,6 +151,7 @@ struct TransferQueueViewModelTests {
                     opened = true
                     await started?.fire()
                     if let gate { try await gate.wait() }
+                    if let failWith { throw failWith }
                 }
                 if let spinAt, index == spinAt {
                     // Park cancellation-UNAWARE: only the cancellation wakes the
@@ -160,6 +174,7 @@ struct TransferQueueViewModelTests {
                 await concurrency?.leave()
                 throw error
             }
+            writeModes[path] = mode
             switch mode {
             case .overwrite:
                 written[path] = collected
@@ -1607,5 +1622,241 @@ struct TransferQueueViewModelTests {
 
         continuation.finish()
         await waitUntil { vm.items.first?.status == .finished }
+    }
+
+    // MARK: - Interrupted / resume tests (M5d/T3)
+
+    // MARK: - 37
+
+    /// A `connectionFailed` mid-transfer marks the item `.interrupted` (and
+    /// sets `hasInterrupted`); ANY OTHER error still marks it `.failed`.
+    @Test func connectionLossMarksInterruptedOtherErrorFails() async throws {
+        let content = Data(repeating: 0x41, count: TransferChunk.size)
+        let startedA = TestSignal(); let gateA = TestSignal()
+        let startedB = TestSignal(); let gateB = TestSignal()
+        let source = QueueTestFS(reads: [
+            "/a.txt": .init(content: content, started: startedA, gate: gateA,
+                            failWith: RemoteFSError.connectionFailed(reason: "socket closed")),
+            "/b.txt": .init(content: content, started: startedB, gate: gateB,
+                            failWith: RemoteFSError.protocolError(reason: "boom")),
+        ])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1
+
+        // a.txt: connection lost → interrupted.
+        vm.enqueue(
+            fileName: "a.txt", direction: .upload,
+            source: source, sourcePath: "/a.txt",
+            destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
+        try await startedA.wait()
+        await gateA.fire()
+        await waitUntil { vm.items[0].status == .interrupted }
+        #expect(vm.items[0].status == .interrupted)
+        #expect(vm.hasInterrupted)
+        #expect(vm.isActive == false)   // interrupted is not "pending" work
+
+        // b.txt: a different error → failed (contrast).
+        vm.enqueue(
+            fileName: "b.txt", direction: .upload,
+            source: source, sourcePath: "/b.txt",
+            destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
+        try await startedB.wait()
+        await gateB.fire()
+        await waitUntil { if case .failed = vm.items[1].status { return true }; return false }
+        if case .failed = vm.items[1].status {} else {
+            Issue.record("b.txt should be .failed, was \(String(describing: vm.items[1].status))")
+        }
+    }
+
+    // MARK: - 38
+
+    /// `retryInterrupted` re-enqueues with resume semantics: the engine reads
+    /// the source FROM THE PARTIAL OFFSET and APPENDS to the destination, and
+    /// the item flips `.interrupted → .queued → .finished`.
+    @Test func retryInterruptedResumesWithAppendAndOffset() async throws {
+        let chunk = TransferChunk.size
+        let full = Data(repeating: 0x5A, count: chunk * 2)
+        let started1 = TestSignal(); let gate1 = TestSignal()
+        let local1 = QueueTestFS(reads: [
+            "/a.txt": .init(content: full, started: started1, gate: gate1,
+                            failWith: RemoteFSError.connectionFailed(reason: "lost")),
+        ])
+        let remote1 = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.enqueue(
+            fileName: "a.txt", direction: .upload,
+            source: local1, sourcePath: "/a.txt",
+            destination: remote1, destinationDirectory: "/ziel", onCompleted: nil)
+        try await started1.wait()
+        await gate1.fire()
+        await waitUntil { vm.items[0].status == .interrupted }
+
+        // New session refs: full source + a destination that already holds a
+        // partial (one chunk), so resume continues from offset == chunk.
+        let local2 = QueueTestFS(reads: ["/a.txt": .init(content: full)])
+        let remote2 = QueueTestFS(reads: [
+            "/ziel/a.txt": .init(content: Data(repeating: 0x5A, count: chunk)),
+        ])
+        vm.retryInterrupted(source: local2, destination: remote2)
+
+        // Flipped back out of the terminal state immediately.
+        #expect(vm.items[0].status == .queued || vm.items[0].status.isRunning)
+        await waitUntil { vm.items[0].status == .finished }
+
+        // Engine received resume:true → offset read on the source, append on
+        // the destination, only the tail written.
+        #expect(await local2.readOffsets["/a.txt"] == UInt64(chunk))
+        #expect(await remote2.writeModes["/ziel/a.txt"] == .append)
+        #expect(await remote2.writtenData(at: "/ziel/a.txt")?.count == chunk)
+    }
+
+    // MARK: - 39
+
+    /// `cancelAll` cancels queued/running items but does NOT sweep `.interrupted`
+    /// ones — they are already terminal and stay resumable across the teardown.
+    @Test func cancelAllDoesNotSweepInterrupted() async throws {
+        let chunk = TransferChunk.size
+        let content = Data(repeating: 0x42, count: chunk)
+        let startedA = TestSignal(); let gateA = TestSignal()
+        let startedC = TestSignal(); let gateC = TestSignal()   // never fired
+        let source = QueueTestFS(reads: [
+            "/a.txt": .init(content: content, started: startedA, gate: gateA,
+                            failWith: RemoteFSError.connectionFailed(reason: "lost")),
+            "/c.txt": .init(content: content, started: startedC, gate: gateC),
+        ])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1
+
+        vm.enqueue(
+            fileName: "a.txt", direction: .upload,
+            source: source, sourcePath: "/a.txt",
+            destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
+        try await startedA.wait()
+        await gateA.fire()
+        await waitUntil { vm.items[0].status == .interrupted }
+
+        // c.txt runs (gated), then cancelAll strikes.
+        vm.enqueue(
+            fileName: "c.txt", direction: .upload,
+            source: source, sourcePath: "/c.txt",
+            destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
+        try await startedC.wait()
+        await vm.cancelAll()
+
+        #expect(vm.items[0].status == .interrupted)   // untouched by cancelAll
+        #expect(vm.items[1].status == .cancelled)      // running → cancelled
+        #expect(vm.hasInterrupted)
+    }
+
+    // MARK: - 40
+
+    /// The queue survives a session teardown (`cancelAll`): the interrupted
+    /// item stays in the list, and `retryInterrupted` runs it against the NEW
+    /// session's file systems (mock identity — the new destination is written,
+    /// the old one is not).
+    @Test func queueSurvivesTeardownAndRetryUsesNewFileSystems() async throws {
+        let content = Data(repeating: 0x43, count: TransferChunk.size)
+        let started1 = TestSignal(); let gate1 = TestSignal()
+        let local1 = QueueTestFS(reads: [
+            "/a.txt": .init(content: content, started: started1, gate: gate1,
+                            failWith: RemoteFSError.connectionFailed(reason: "lost")),
+        ])
+        let remote1 = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.enqueue(
+            fileName: "a.txt", direction: .upload,
+            source: local1, sourcePath: "/a.txt",
+            destination: remote1, destinationDirectory: "/ziel", onCompleted: nil)
+        try await started1.wait()
+        await gate1.fire()
+        await waitUntil { vm.items[0].status == .interrupted }
+
+        // Simulated teardown, exactly as ContentView does on disconnect.
+        await vm.cancelAll()
+        #expect(vm.items.count == 1)
+        #expect(vm.items[0].status == .interrupted)
+
+        // New session: fresh full source + empty destination.
+        let local2 = QueueTestFS(reads: ["/a.txt": .init(content: content)])
+        let remote2 = QueueTestFS(reads: [:])
+        vm.retryInterrupted(source: local2, destination: remote2)
+        await waitUntil { vm.items[0].status == .finished }
+
+        #expect(await remote2.writtenData(at: "/ziel/a.txt") == content)   // new destination
+        #expect(await remote1.writtenData(at: "/ziel/a.txt") == nil)        // old one untouched
+    }
+
+    // MARK: - 41
+
+    /// `hasInterrupted` is false without any interrupted item (even after a
+    /// clean finish) and true once one appears.
+    @Test func hasInterruptedReflectsState() async throws {
+        let content = Data(repeating: 0x44, count: TransferChunk.size)
+        let source = QueueTestFS(reads: ["/ok.txt": .init(content: content)])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        #expect(vm.hasInterrupted == false)
+
+        try await vm.enqueueAndWait(
+            fileName: "ok.txt", direction: .upload,
+            source: source, sourcePath: "/ok.txt",
+            destination: destination, destinationDirectory: "/ziel")
+        #expect(vm.hasInterrupted == false)   // a finished transfer isn't interrupted
+
+        let started = TestSignal(); let gate = TestSignal()
+        let flaky = QueueTestFS(reads: [
+            "/x.txt": .init(content: content, started: started, gate: gate,
+                            failWith: RemoteFSError.connectionFailed(reason: "lost")),
+        ])
+        vm.enqueue(
+            fileName: "x.txt", direction: .upload,
+            source: flaky, sourcePath: "/x.txt",
+            destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
+        try await started.wait()
+        await gate.fire()
+        await waitUntil { vm.hasInterrupted }
+        #expect(vm.hasInterrupted)
+    }
+
+    // MARK: - 42
+
+    /// A renamed item (conflict → "a (2).txt") that then gets interrupted is
+    /// retried under its EFFECTIVE (post-rename) name, not the original.
+    @Test func renamedItemRetriesUnderEffectiveName() async throws {
+        let content = Data(repeating: 0x45, count: TransferChunk.size)
+        let started = TestSignal(); let gate = TestSignal()
+        let source = QueueTestFS(reads: [
+            "/a.txt": .init(content: content, started: started, gate: gate,
+                            failWith: RemoteFSError.connectionFailed(reason: "lost")),
+        ])
+        // Destination already holds a.txt → rename resolves to "a (2).txt".
+        let destination = QueueTestFS(reads: ["/ziel/a.txt": .init(content: Data("old".utf8))])
+
+        let vm = TransferQueueViewModel()
+        vm.conflictDecider = { _ in (.rename, false) }
+        vm.enqueue(
+            fileName: "a.txt", direction: .upload,
+            source: source, sourcePath: "/a.txt",
+            destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
+        try await started.wait()
+        await gate.fire()
+        await waitUntil { vm.items[0].status == .interrupted }
+        #expect(vm.items[0].fileName == "a (2).txt")   // displayed under the renamed name
+
+        // Retry resumes under the renamed name, writing to "/ziel/a (2).txt".
+        let local2 = QueueTestFS(reads: ["/a.txt": .init(content: content)])
+        let remote2 = QueueTestFS(reads: [:])
+        vm.retryInterrupted(source: local2, destination: remote2)
+        await waitUntil { vm.items[0].status == .finished }
+
+        #expect(await remote2.writtenData(at: "/ziel/a (2).txt") == content)
+        #expect(await remote2.writtenData(at: "/ziel/a.txt") == nil)
     }
 }

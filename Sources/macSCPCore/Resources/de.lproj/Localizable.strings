@@ -6,6 +6,7 @@
 "core.error.connectionLost %@" = "Verbindung verloren: %@";
 "core.transfer.failed %@" = "Übertragung fehlgeschlagen: %@";
 "core.transfer.noFreeName" = "Kein freier Name gefunden.";
+"core.transfer.interrupted" = "Verbindung verloren — Übertragung unterbrochen.";
 
 /* RemoteBrowserViewModel.message(for:path:) */
 "core.browse.notFound %@" = "Pfad nicht gefunden: %@";

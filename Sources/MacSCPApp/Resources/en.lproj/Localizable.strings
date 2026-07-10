@@ -76,3 +76,4 @@
 "transfers.status.queued" = "queued";
 "transfers.status.cancelled" = "cancelled";
 "transfers.status.skipped" = "skipped";
+"transfers.status.interrupted" = "interrupted";

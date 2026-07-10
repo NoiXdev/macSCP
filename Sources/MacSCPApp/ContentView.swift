@@ -353,7 +353,10 @@ struct ContentView: View {
                     terminal: term, cols: cols, rows: rows)
             })
         )
-        transferQueue = TransferQueueViewModel()
+        // The queue is created ONCE (the `@State` initializer) and OUTLIVES
+        // each session (M5d/T3): interrupted transfers stay in the bar across a
+        // disconnect/reconnect so `retryInterrupted` can resume them. Only the
+        // decider and the settings-derived limits are (re-)wired per session.
         let bridge = conflictBridge
         transferQueue.conflictDecider = { conflict in await bridge.ask(conflict) }
         // Settings wiring (M5c/T4 concurrency, M5c/T5 bandwidth): applied once

@@ -97,6 +97,11 @@ struct TransferQueueBar: View {
             case .skipped:
                 Text(L10n.string("transfers.status.skipped", "skipped"))
                     .font(.caption).foregroundStyle(.secondary)
+            case .interrupted:
+                // Orange, not red (M5d/T3): interrupted is resumable, not a
+                // hard failure — a reconnect can continue it.
+                Text(L10n.string("transfers.status.interrupted", "interrupted"))
+                    .font(.caption).foregroundStyle(.orange)
             }
         }
         .font(.callout)
