@@ -55,12 +55,24 @@ struct EditSessionManagerTests {
         private let inner: MockRemoteFileSystem
         private let entered: TestSignal?
         private let gate: TestSignal?
+        private let writeEntered: TestSignal?
+        private let writeGate: TestSignal?
         private(set) var readStreamCallCount = 0
+        private(set) var writeCallCount = 0
+        /// Number of `write` calls currently in flight, and the max ever seen —
+        /// the basis of the "write-backs never run concurrently" assertion.
+        private var concurrentWrites = 0
+        private(set) var maxConcurrentWrites = 0
 
-        init(inner: MockRemoteFileSystem, entered: TestSignal? = nil, gate: TestSignal? = nil) {
+        init(
+            inner: MockRemoteFileSystem, entered: TestSignal? = nil, gate: TestSignal? = nil,
+            writeEntered: TestSignal? = nil, writeGate: TestSignal? = nil
+        ) {
             self.inner = inner
             self.entered = entered
             self.gate = gate
+            self.writeEntered = writeEntered
+            self.writeGate = writeGate
         }
 
         func list(path: String) async throws -> [RemoteFileItem] {
@@ -79,6 +91,12 @@ struct EditSessionManagerTests {
         }
 
         func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {
+            writeCallCount += 1
+            concurrentWrites += 1
+            maxConcurrentWrites = max(maxConcurrentWrites, concurrentWrites)
+            await writeEntered?.fire()
+            if let writeGate { try await writeGate.wait() }
+            defer { concurrentWrites -= 1 }
             try await inner.write(path: path, mode: mode, contents: contents)
         }
 
@@ -282,6 +300,59 @@ struct EditSessionManagerTests {
 
         await waitUntil { uploadCount(queue) == 1 }
         #expect(uploadCount(queue) == 1)
+
+        await manager.stopAll()
+    }
+
+    // MARK: - 4b: overlapping saves of one edit serialize (no concurrent
+    // write-backs, latest content wins) — M5e final-review fix.
+
+    @Test func overlappingSavesForOneEditSerializeWriteBacks() async throws {
+        let remote = makeRemote(name: "a.txt", content: Data("v1".utf8))
+        // Gate only the WRITE path so the download completes normally, then the
+        // first write-back can be pinned mid-flight.
+        let writeEntered = TestSignal()
+        let writeGate = TestSignal()
+        let gated = GatedRemoteFileSystem(
+            inner: remote, writeEntered: writeEntered, writeGate: writeGate)
+        let queue = TransferQueueViewModel()
+        let manager = EditSessionManager(
+            sessionID: UUID(), queue: queue,
+            debounceInterval: .zero, sleep: { _ in })
+
+        let url = try await manager.beginEditing(
+            remotePath: "/dir/a.txt", fileName: "a.txt",
+            source: gated, destinationForUploads: gated)
+        let editID = try #require(manager.activeEdits.first?.id)
+
+        // First save → write-back #1 starts and blocks inside `write`.
+        try Data("v2".utf8).write(to: url)
+        manager.handleFileEvent(editID: editID)
+        try await writeEntered.wait()
+
+        // Second save while #1 is still in flight. This must NOT start a second
+        // concurrent write-back to the SAME remote path; it coalesces into a
+        // pending flag instead.
+        try Data("v3".utf8).write(to: url)
+        manager.handleFileEvent(editID: editID)
+        // Give any (wrongly) enqueued second upload a chance to reach `write`.
+        for _ in 0..<500 { await Task.yield() }
+
+        #expect(uploadCount(queue) == 1)
+        #expect(await gated.maxConcurrentWrites == 1)
+
+        // Release #1. Its completion must enqueue EXACTLY ONE more write-back,
+        // which reads the latest ("v3") content — still never concurrent.
+        await writeGate.fire()
+        await waitUntil { uploadCount(queue) == 2 }
+        #expect(uploadCount(queue) == 2)
+        await waitUntil {
+            queue.items.filter { $0.direction == .upload }
+                .allSatisfy { $0.status == .finished }
+        }
+        #expect(await gated.maxConcurrentWrites == 1)
+        #expect(await gated.writeCallCount == 2)
+        #expect(await remote.writtenData(at: "/dir/a.txt") == Data("v3".utf8))
 
         await manager.stopAll()
     }

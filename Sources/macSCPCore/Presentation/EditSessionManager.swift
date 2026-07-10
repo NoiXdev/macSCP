@@ -60,6 +60,15 @@ public final class EditSessionManager {
         var source: (any DispatchSourceFileSystemObject)?
         var debounceTask: Task<Void, Never>?
         var reopenTask: Task<Void, Never>?
+        /// The single in-flight write-back for this edit, or `nil` when none is
+        /// running. Serializes write-backs per edit: a debounced save that
+        /// fires while this is non-nil does NOT enqueue a second upload.
+        var uploadTask: Task<Void, Never>?
+        /// A save arrived while `uploadTask` was in flight — the edit is dirty.
+        /// When the in-flight upload finishes, exactly one fresh upload is
+        /// enqueued (which naturally reads the latest file content) and this is
+        /// cleared. Coalesces any number of saves during one upload into one.
+        var uploadPending = false
 
         init(
             editID: UUID, localURL: URL, fileName: String,
@@ -201,6 +210,13 @@ public final class EditSessionManager {
         for watcher in watchers.values {
             watcher.debounceTask?.cancel()
             watcher.reopenTask?.cancel()
+            // Cancel the serialization waiter task and drop the dirty flag so no
+            // orphaned write-back is enqueued after teardown. The task is likely
+            // suspended on the queue's waiter continuation (which ignores task
+            // cancellation); when that upload eventually settles the task
+            // resumes, but `finishUpload` finds no watcher and does nothing.
+            watcher.uploadTask?.cancel()
+            watcher.uploadPending = false
             watcher.source?.cancel()   // cancel handler closes the fd
             watcher.source = nil
         }
@@ -310,13 +326,56 @@ public final class EditSessionManager {
         }
     }
 
-    /// Enqueues the write-back upload for this edit (conflict check bypassed).
+    /// Serializes write-backs per edit (conflict check bypassed). At most one
+    /// write-back is in flight for a given edit at any time: if one is already
+    /// running, this only marks the edit dirty (`uploadPending`) and returns —
+    /// it does NOT enqueue a second job to the same remote path. The in-flight
+    /// upload's completion (`finishUpload`) then enqueues exactly one fresh
+    /// upload if the edit went dirty, which picks up the latest file content.
+    /// Without this, two saves more than one debounce interval apart could run
+    /// two uploads to the same path concurrently, and whichever finished last
+    /// — not the last-SAVED version — would win.
     private func triggerUpload(editID: UUID) {
         guard let watcher = watchers[editID] else { return }
-        queue.enqueueEditUpload(
-            fileName: watcher.fileName, localURL: watcher.localURL,
-            source: localFS, destination: watcher.uploadDestination,
-            remoteDirectory: watcher.remoteDirectory)
+        if watcher.uploadTask != nil {
+            watcher.uploadPending = true
+            return
+        }
+        startUpload(for: watcher)
+    }
+
+    /// Enqueues one write-back and awaits its completion through the queue's
+    /// waiter API (same machinery the download uses via `enqueueAndWait`),
+    /// then routes into `finishUpload`. Failures are irrelevant to
+    /// serialization — the queue surfaces them in the bar; we only need to
+    /// learn the upload settled so the next coalesced save can proceed.
+    private func startUpload(for watcher: Watcher) {
+        let editID = watcher.editID
+        let fileName = watcher.fileName
+        let localURL = watcher.localURL
+        let destination = watcher.uploadDestination
+        let remoteDirectory = watcher.remoteDirectory
+        watcher.uploadPending = false
+        watcher.uploadTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await self.queue.enqueueEditUploadAndWait(
+                fileName: fileName, localURL: localURL,
+                source: self.localFS, destination: destination,
+                remoteDirectory: remoteDirectory)
+            self.finishUpload(editID: editID)
+        }
+    }
+
+    /// The in-flight write-back for `editID` has settled. Clears the in-flight
+    /// marker and, if a save arrived meanwhile (`uploadPending`), enqueues
+    /// exactly one fresh upload. A no-op once the edit has been stopped
+    /// (`stopAll` removed the watcher) — so no orphaned upload is started.
+    private func finishUpload(editID: UUID) {
+        guard let watcher = watchers[editID] else { return }
+        watcher.uploadTask = nil
+        if watcher.uploadPending {
+            startUpload(for: watcher)
+        }
     }
 
     // MARK: - Helpers

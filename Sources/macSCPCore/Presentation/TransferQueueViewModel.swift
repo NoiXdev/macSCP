@@ -291,6 +291,29 @@ public final class TransferQueueViewModel {
         return id
     }
 
+    /// Like `enqueueEditUpload`, but returns only once EXACTLY this write-back
+    /// item is done (finished/failed/cancelled/interrupted). Throws on any
+    /// non-success terminal state, mirroring `enqueueAndWait`. This is the
+    /// serialization seam `EditSessionManager` uses to keep at most one
+    /// write-back per edit in flight: it awaits completion here, then decides
+    /// whether a coalesced save needs a fresh upload. Bypasses the conflict
+    /// check exactly like `enqueueEditUpload` (same job construction).
+    public func enqueueEditUploadAndWait(
+        fileName: String, localURL: URL,
+        source: any RemoteFileSystem, destination: any RemoteFileSystem,
+        remoteDirectory: String
+    ) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            // Synchronous on the MainActor: enqueue first, then register the
+            // waiter, before the worker can start — so no result misses it.
+            let id = enqueueEditUpload(
+                fileName: fileName, localURL: localURL,
+                source: source, destination: destination,
+                remoteDirectory: remoteDirectory)
+            waiters[id] = continuation
+        }
+    }
+
     /// Like `enqueue`, but returns only once EXACTLY this item is done.
     /// Throws on failed/cancelled (Promise path: the Finder integration needs the file).
     public func enqueueAndWait(
