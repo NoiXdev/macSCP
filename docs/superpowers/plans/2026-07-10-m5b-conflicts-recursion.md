@@ -42,16 +42,16 @@
 func createDirectory(at path: String) async throws
 ```
 
-- [ ] **Step 1: Fehlschlagende Tests**
+- [x] **Step 1: Fehlschlagende Tests**
   - Local: legt Verzeichnis an; idempotent bei zweitem Aufruf; wirft `protocolError` wenn am Pfad eine Datei liegt; legt Zwischenebenen an.
   - Mock: `createdDirectories`-Protokollierung (für T3-Tests); Verzeichnis erscheint im Mock-Tree.
   - Gated (Docker): `createDirectory(at: "/config/macscp-mkdir-test/sub")`? — NEIN: Citadel legt nur letzte Ebene an → Test: erst `/config/macscp-mkdir-test`, dann `/config/macscp-mkdir-test/sub`; Idempotenz-Zweitaufruf; Datei-Kollision (`write` einer Datei, dann createDirectory am selben Pfad → Fehler); Cleanup via `docker exec` oder SFTP-delete falls vorhanden — sonst eindeutiger Name pro Lauf + Cleanup-Hinweis im Test-Kommentar.
-- [ ] **Step 2: Rot** (Compile-Fehler in Konformitäten).
-- [ ] **Step 3: Implementieren**
+- [x] **Step 2: Rot** (Compile-Fehler in Konformitäten).
+- [x] **Step 3: Implementieren**
   - Local: `FileManager.createDirectory(atPath:withIntermediateDirectories:true)`; vorher `fileExists(isDirectory:)`-Check für die Datei-Kollision (→ `protocolError(reason: "Pfad existiert als Datei: \(path)")`).
   - Citadel: `try await sftp.createDirectory(atPath: path)`; Fehler abfangen → wenn `stat(path)` danach ein Verzeichnis liefert: still ok (Race/exists); wenn stat eine Datei liefert: `protocolError`; sonst Original-Fehler durch `mapSFTPError`.
-- [ ] **Step 4: Grün** — Filter + Gesamtsuite; gated 15/15 + neue.
-- [ ] **Step 5: Commit** — `feat: add idempotent createDirectory to remote file systems` (mit Footer).
+- [x] **Step 4: Grün** — Filter + Gesamtsuite; gated 15/15 + neue.
+- [x] **Step 5: Commit** — `feat: add idempotent createDirectory to remote file systems` (mit Footer).
 
 ---
 
@@ -94,7 +94,7 @@ case skipped                                    // deutsch: "übersprungen" (UI 
 6. **Regel-Lebensdauer:** Die Queue-Regel gilt, bis der Worker leerläuft (Drain) — beim Worker-Ende (`workerTask = nil`-Pfad) wird sie zurückgesetzt. Neue Batches fragen wieder.
 7. `TransferQueueBar` (kleine Anpassung hier in T2, Datei `Sources/MacSCPApp/TransferQueueBar.swift`): `case .skipped: Text("übersprungen")` grau — sonst bricht der exhaustive Switch.
 
-- [ ] **Step 1: Fehlschlagende Tests** (Mock-Tree so präparieren, dass Ziel existiert):
+- [x] **Step 1: Fehlschlagende Tests** (Mock-Tree so präparieren, dass Ziel existiert):
   1. `conflictWithoutDeciderOverwrites` (M5a-Verhalten)
   2. `deciderSkipMarksSkippedAndSkipsWrite` (kein Write im Mock, kein onCompleted)
   3. `deciderOverwriteWrites`
@@ -103,10 +103,10 @@ case skipped                                    // deutsch: "übersprungen" (UI 
   6. `applyToAllAsksOnlyOnce` (2 Konflikte, Decider-Callcount == 1)
   7. `ruleResetsAfterDrain` (Batch 1 mit applyToAll, Drain abwarten, Batch 2 → Decider wieder gefragt)
   8. `noConflictDoesNotAskDecider` (Ziel existiert nicht → Callcount 0)
-- [ ] **Step 2: Rot.**
-- [ ] **Step 3: Implementieren** (Konfliktlogik als private Funktion `resolveConflictIfNeeded(job:) async -> Outcome` vor dem Engine-Aufruf in `process`).
-- [ ] **Step 4: Grün** — Filter (17 = 9 + 8), Gesamtsuite.
-- [ ] **Step 5: Commit** — `feat: add conflict rules to the transfer queue` (mit Footer).
+- [x] **Step 2: Rot.**
+- [x] **Step 3: Implementieren** (Konfliktlogik als private Funktion `resolveConflictIfNeeded(job:) async -> Outcome` vor dem Engine-Aufruf in `process`).
+- [x] **Step 4: Grün** — Filter (17 = 9 + 8), Gesamtsuite.
+- [x] **Step 5: Commit** — `feat: add conflict rules to the transfer queue` (mit Footer).
 
 ---
 
@@ -141,7 +141,7 @@ public func enqueueTree(
 - `cancelAll` während Expansion: Expansion-Task wird gecancelt (Task speichern + in `cancelAll` canceln + awaiten), Rest wie gehabt.
 - Datei-Items der Gruppe durchlaufen die T2-Konfliktlogik unverändert.
 
-- [ ] **Step 1: Fehlschlagende Tests** (Mock-Tree mit Struktur `dir/{a.txt, sub/{b.txt}, link→x, leer/}`):
+- [x] **Step 1: Fehlschlagende Tests** (Mock-Tree mit Struktur `dir/{a.txt, sub/{b.txt}, link→x, leer/}`):
   1. `treeCreatesDirectoriesTopDown` (Mock-`createdDirectories`-Reihenfolge: dir vor dir/sub vor Datei-Writes)
   2. `treeTransfersAllFilesAndFiresOnCompletedOnce`
   3. `treeSkipsSymlinks` (Item .skipped, kein Write)
@@ -150,8 +150,8 @@ public func enqueueTree(
   6. `treeExpansionErrorProducesFailedItemButOthersRun` (list wirft in einem Unterordner)
   7. `treePartialFailureStillFiresOnCompleted` (eine Datei failt → onCompleted trotzdem, genau 1×)
   8. `cancelAllDuringExpansionStopsCleanly` (Expansion an Signal gebunden; cancelAll → keine neuen Items, Gruppe aufgeräumt, isActive false)
-- [ ] **Step 2: Rot.** — [ ] **Step 3: Implementieren.** — [ ] **Step 4: Grün** (Filter 25 = 17 + 8; Gesamtsuite).
-- [ ] **Step 5: Commit** — `feat: add recursive directory transfers to the queue` (mit Footer).
+- [x] **Step 2: Rot.** — [ ] **Step 3: Implementieren.** — [ ] **Step 4: Grün** (Filter 25 = 17 + 8; Gesamtsuite).
+- [x] **Step 5: Commit** — `feat: add recursive directory transfers to the queue` (mit Footer).
 
 ---
 
@@ -163,29 +163,29 @@ public func enqueueTree(
 **Interfaces:**
 - Consumes: `ConflictDecider`/`TransferConflict`/`ConflictResolution` (T2), `enqueueTree` (T3).
 
-- [ ] **Step 1: Konflikt-Brücke** (Muster: Host-Key-Prompt aus `ConnectionViewModel`/`ConnectionFormView`, inkl. Cancellation-Handler):
+- [x] **Step 1: Konflikt-Brücke** (Muster: Host-Key-Prompt aus `ConnectionViewModel`/`ConnectionFormView`, inkl. Cancellation-Handler):
   - `@State private var conflictPrompt: TransferConflict?` + private Continuation-Feld in einer kleinen `@Observable`-Hilfsklasse ODER direkt im View-State (ContentView ist Struct → Continuation in einer Box/Hilfsklasse halten; sauberste Variante: kleine `@MainActor final class ConflictPromptBridge` im selben File mit `ask(_:) async` + `resolve(_:)`, Continuation exactly-once + Cancellation-Handler wie in `presentHostKeyPrompt`).
   - In `startSession`: `transferQueue.conflictDecider = { conflict in await bridge.ask(conflict) }`.
   - Sheet (`.sheet(item:)` auf dem Detail-Bereich, `TransferConflict` dafür `Identifiable` via fileName+dir — oder ein `@State`-Wrapper mit UUID):
     Titel „Datei existiert bereits", Text „\(fileName)" existiert in „\(destinationDirectory)"." — Buttons: **Überschreiben** (destruktive Rolle), **Überspringen**, **Umbenennen**, **Abbrechen** (Cancel-Rolle); Toggle „Für alle weiteren übernehmen". Deutsche Texte, System-Farben.
-- [ ] **Step 2: Ordner-Wege**
+- [x] **Step 2: Ordner-Wege**
   - `uploadDropped`: Directory-Filter ENTFERNEN; `isDirectory` → `transferQueue.enqueueTree(directoryName: url.lastPathComponent, …, sourceDirectory: url.path…, destinationDirectory: session.remote.currentPath, onCompleted: { await session.remote.refresh() })`, Dateien wie gehabt.
   - Upload-/Download-Button: `.disabled(selected == nil)` (kind-Einschränkung weg); im Handler: `selected.kind == .directory` → `enqueueTree`, sonst `enqueue`. Symlink-Auswahl bleibt disabled (`selected?.kind == .symlink` → disabled beibehalten).
   - Finder-Promise bleibt DATEI-only (Pasteboard-Writer unverändert: `item.kind == .file`).
-- [ ] **Step 3: Grün + Headless-Launch** — `swift build && swift test`; Bundle-Wrapper-Launch-Check.
-- [ ] **Step 4: Commit** — `feat: add conflict dialog and folder transfers` (mit Footer).
+- [x] **Step 3: Grün + Headless-Launch** — `swift build && swift test`; Bundle-Wrapper-Launch-Check.
+- [x] **Step 4: Commit** — `feat: add conflict dialog and folder transfers` (mit Footer).
 
 ---
 
 ### Task 5: Abschluss-Verifikation
 
-- [ ] **Step 1:** `swift test` — Gesamtsuite grün (erwartet ≈ 155 + T1-Unit + 16 Queue-Tests; exakt im Report).
-- [ ] **Step 2:** Rig hoch (HAUPT-Checkout), `MACSCP_ITEST=1` (15 + neue mkdir-Tests), `MACSCP_KEYCHAIN=1` 2/2.
-- [ ] **Step 3: Visueller Smoke-Test** (Koordinator; Rig läuft; NUR wenn der Bildschirm frei ist — User-Aktivität respektieren):
+- [x] **Step 1:** `swift test` — Gesamtsuite grün (erwartet ≈ 155 + T1-Unit + 16 Queue-Tests; exakt im Report).
+- [x] **Step 2:** Rig hoch (HAUPT-Checkout), `MACSCP_ITEST=1` (15 + neue mkdir-Tests), `MACSCP_KEYCHAIN=1` 2/2.
+- [x] **Step 3: Visueller Smoke-Test** (Koordinator; Rig läuft; NUR wenn der Bildschirm frei ist — User-Aktivität respektieren):
   a) Konflikt: Datei doppelt hochladen → Sheet erscheint; alle vier Wege durchspielen (Überschreiben / Überspringen → „übersprungen" / Umbenennen → „x (2).ext" erscheint remote / Abbrechen → „abgebrochen"); „Für alle weiteren" mit 2+ Konflikten → nur EIN Sheet.
   b) Rekursion: lokalen Ordner mit Unterordner + leerem Ordner droppen → Struktur remote korrekt (`docker exec find`), Items pro Datei in der Leiste, Refresh am Ende; einen Remote-Ordner per Button herunterladen → `diff -r` sauber.
   c) M5a-Nachholer: Remote-Datei → Finder ziehen WÄHREND Queue arbeitet (Item erscheint, Datei byte-identisch); ⌘T aus/ein bei laufender Shell → Screen bleibt (Replay); nach Queue-Ende ist „Trennen" wieder aktiv und trennt sauber.
-- [ ] **Step 4:** Checkboxen, Commit `docs: mark M5b plan tasks as completed` (mit Footer).
+- [x] **Step 4:** Checkboxen, Commit `docs: mark M5b plan tasks as completed` (mit Footer).
 
 ## Ausblick
 
