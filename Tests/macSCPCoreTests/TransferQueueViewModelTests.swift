@@ -1089,4 +1089,89 @@ struct TransferQueueViewModelTests {
         try await done.wait()
         #expect(vm.items.last?.status == .finished)
     }
+
+    // MARK: - 28
+
+    /// Zwei unabhängige `enqueueTree`-Aufrufe (verschiedene Ordner) laufen
+    /// nacheinander eingereiht, aber unabhängig voneinander: jede `onCompleted`
+    /// feuert genau einmal, und die Item-Zuordnung bleibt sauber getrennt —
+    /// keine Vermischung zwischen den beiden Gruppen (Final-Review M5b,
+    /// Backlog e).
+    @Test func twoConcurrentTreesKeepIndependentGroups() async throws {
+        let contentA = Data("aaa".utf8)
+        let contentB = Data("bbb".utf8)
+        let listings: [String: [RemoteFileItem]] = [
+            "/dirA": [RemoteFileItem(name: "a.txt", path: "/dirA/a.txt", kind: .file, size: 1)],
+            "/dirB": [RemoteFileItem(name: "b.txt", path: "/dirB/b.txt", kind: .file, size: 1)],
+        ]
+        let source = QueueTestFS(
+            reads: [
+                "/dirA/a.txt": .init(content: contentA),
+                "/dirB/b.txt": .init(content: contentB),
+            ],
+            listings: listings)
+        let destination = QueueTestFS(reads: [:])
+        let counterA = Counter()
+        let counterB = Counter()
+        let doneA = TestSignal()
+        let doneB = TestSignal()
+
+        let vm = TransferQueueViewModel()
+        vm.enqueueTree(
+            directoryName: "dirA", direction: .download,
+            source: source, sourceDirectory: "/dirA",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { counterA.increment(); await doneA.fire() })
+        vm.enqueueTree(
+            directoryName: "dirB", direction: .download,
+            source: source, sourceDirectory: "/dirB",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { counterB.increment(); await doneB.fire() })
+
+        try await doneA.wait()
+        try await doneB.wait()
+        await waitUntil { vm.isActive == false }
+        for _ in 0..<50 { await Task.yield() }
+
+        #expect(counterA.value == 1)
+        #expect(counterB.value == 1)
+        #expect(status(vm, "a.txt") == .finished)
+        #expect(status(vm, "b.txt") == .finished)
+        #expect(await destination.writtenData(at: "/ziel/dirA/a.txt") == contentA)
+        #expect(await destination.writtenData(at: "/ziel/dirB/b.txt") == contentB)
+        #expect(await destination.createdDirectories.contains("/ziel/dirA"))
+        #expect(await destination.createdDirectories.contains("/ziel/dirB"))
+    }
+
+    // MARK: - 29
+
+    /// Ordner ohne Dateien (nur leere Unterordner): onCompleted feuert genau
+    /// einmal, `createdDirectories` enthält beide Ebenen (Final-Review M5b,
+    /// Backlog e).
+    @Test func emptyTreeFiresOnCompleted() async throws {
+        let listings: [String: [RemoteFileItem]] = [
+            "/leerdir": [
+                RemoteFileItem(name: "unter", path: "/leerdir/unter", kind: .directory),
+            ],
+            "/leerdir/unter": [],
+        ]
+        let source = QueueTestFS(reads: [:], listings: listings)
+        let destination = QueueTestFS(reads: [:])
+        let counter = Counter()
+        let done = TestSignal()
+
+        let vm = TransferQueueViewModel()
+        vm.enqueueTree(
+            directoryName: "leerdir", direction: .download,
+            source: source, sourceDirectory: "/leerdir",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { counter.increment(); await done.fire() })
+
+        try await done.wait()
+        for _ in 0..<50 { await Task.yield() }
+
+        #expect(counter.value == 1)
+        #expect(await destination.createdDirectories == ["/ziel/leerdir", "/ziel/leerdir/unter"])
+        #expect(vm.items.isEmpty)   // keine Datei-Items, nur Verzeichnisse
+    }
 }
