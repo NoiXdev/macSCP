@@ -96,4 +96,58 @@ struct LocalFileSystemTests {
         #expect(dir?.path.hasSuffix("/") == false)
         #expect(dir?.path.hasSuffix("unterordner") == true)
     }
+
+    @Test func createDirectoryCreatesNewDirectory() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fs = LocalFileSystem()
+
+        let target = root.appendingPathComponent("neu").path(percentEncoded: false)
+        try await fs.createDirectory(at: target)
+
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: target, isDirectory: &isDirectory)
+        #expect(exists)
+        #expect(isDirectory.boolValue)
+    }
+
+    @Test func createDirectoryIsIdempotentOnExistingDirectory() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fs = LocalFileSystem()
+
+        let target = root.appendingPathComponent("unterordner").path(percentEncoded: false)
+        try await fs.createDirectory(at: target)
+        try await fs.createDirectory(at: target)
+
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: target, isDirectory: &isDirectory)
+        #expect(exists)
+        #expect(isDirectory.boolValue)
+    }
+
+    @Test func createDirectoryThrowsProtocolErrorOnFileCollision() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fs = LocalFileSystem()
+
+        let target = root.appendingPathComponent("datei.txt").path(percentEncoded: false)
+        await #expect(throws: RemoteFSError.protocolError(reason: "Pfad existiert als Datei: \(target)")) {
+            try await fs.createDirectory(at: target)
+        }
+    }
+
+    @Test func createDirectoryCreatesIntermediateLevels() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fs = LocalFileSystem()
+
+        let target = root.appendingPathComponent("a/b/c").path(percentEncoded: false)
+        try await fs.createDirectory(at: target)
+
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: target, isDirectory: &isDirectory)
+        #expect(exists)
+        #expect(isDirectory.boolValue)
+    }
 }

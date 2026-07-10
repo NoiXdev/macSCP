@@ -101,6 +101,11 @@ struct TransferQueueViewModelTests {
 
         func writtenData(at path: String) -> Data? { written[path] }
 
+        /// Minimal-Konformität für T1: dieses Test-Double kennt keine
+        /// Verzeichnisstruktur (nur registrierte Datei-Pfade), daher ein
+        /// simpler No-op — idempotent per Definition, keine Kollisionsfälle.
+        func createDirectory(at path: String) async throws {}
+
         func disconnect() async {}
 
         private static func chunked(_ data: Data) -> [Data] {

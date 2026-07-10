@@ -220,6 +220,29 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         }
     }
 
+    /// Legt NUR die letzte Ebene an (Eltern müssen existieren — die Rekursion
+    /// in T3 läuft top-down). Idempotent: existiert der Pfad bereits als
+    /// Verzeichnis (auch bei einem Race zwischen zwei Clients), kehrt der
+    /// Aufruf still zurück. Existiert dort eine Datei, wirft `protocolError`.
+    public func createDirectory(at path: String) async throws {
+        do {
+            try await sftp.createDirectory(atPath: path)
+        } catch {
+            // mkdir kann fehlschlagen, obwohl das Verzeichnis (bereits oder
+            // inzwischen) existiert — per stat nachprüfen statt den Fehler
+            // blind weiterzureichen.
+            if let existing = try? await sftp.getAttributes(at: path) {
+                switch SFTPAttributeMapper.kind(fromPermissions: existing.permissions) {
+                case .directory:
+                    return
+                default:
+                    throw RemoteFSError.protocolError(reason: "Pfad existiert als Datei: \(path)")
+                }
+            }
+            throw mapSFTPError(error, path: path)
+        }
+    }
+
     public func disconnect() async {
         try? await client.close()
     }
