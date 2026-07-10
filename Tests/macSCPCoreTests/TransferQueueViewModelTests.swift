@@ -84,12 +84,16 @@ struct TransferQueueViewModelTests {
         /// `list`-Await festzunageln (cancelAll-während-Expansion, M5b/T3).
         private var listEntered: TestSignal?
         private var listGate: TestSignal?
+        /// Tracks how many `write` calls are in flight at once (peak) — the
+        /// parallel-slot tests assert the peak never exceeds `maxConcurrent`.
+        private let concurrency: ConcurrencyTracker?
 
         init(
             reads: [String: Read],
             listings: [String: [RemoteFileItem]] = [:],
             statEntered: TestSignal? = nil, statGate: TestSignal? = nil,
-            listEntered: TestSignal? = nil, listGate: TestSignal? = nil
+            listEntered: TestSignal? = nil, listGate: TestSignal? = nil,
+            concurrency: ConcurrencyTracker? = nil
         ) {
             self.reads = reads
             self.listings = listings
@@ -97,6 +101,7 @@ struct TransferQueueViewModelTests {
             self.statGate = statGate
             self.listEntered = listEntered
             self.listGate = listGate
+            self.concurrency = concurrency
         }
 
         func list(path: String) async throws -> [RemoteFileItem] {
@@ -141,10 +146,17 @@ struct TransferQueueViewModelTests {
         }
 
         func write(path: String, contents: AsyncThrowingStream<Data, Error>) async throws {
+            await concurrency?.enter()
             var collected = Data()
-            for try await chunk in contents { collected.append(chunk) }
+            do {
+                for try await chunk in contents { collected.append(chunk) }
+            } catch {
+                await concurrency?.leave()
+                throw error
+            }
             written[path] = collected
             writeOrder.append(path)
+            await concurrency?.leave()
         }
 
         func writtenData(at path: String) -> Data? { written[path] }
@@ -177,6 +189,16 @@ struct TransferQueueViewModelTests {
     @MainActor final class Counter {
         private(set) var value = 0
         func increment() { value += 1 }
+    }
+
+    /// Tracks the number of concurrently-active writes and the peak reached.
+    /// Used by the parallel-slot tests to prove at most `maxConcurrent`
+    /// transfers run at once.
+    actor ConcurrencyTracker {
+        private(set) var current = 0
+        private(set) var peak = 0
+        func enter() { current += 1; peak = max(peak, current) }
+        func leave() { current -= 1 }
     }
 
     /// Pollt (mit `Task.yield`) auf eine Bedingung, damit Tests nicht auf feste
@@ -256,6 +278,7 @@ struct TransferQueueViewModelTests {
         let done2 = TestSignal()
 
         let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1   // determinism: item 2 must stay .queued while item 1 runs
         vm.enqueue(
             fileName: "1.txt", direction: .upload,
             source: source, sourcePath: "/1.txt",
@@ -295,6 +318,7 @@ struct TransferQueueViewModelTests {
         let done = TestSignal()
 
         let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1   // determinism: serial completion order is asserted
         for name in ["1.txt", "2.txt"] {
             vm.enqueue(
                 fileName: name, direction: .upload,
@@ -403,6 +427,7 @@ struct TransferQueueViewModelTests {
         let destination = QueueTestFS(reads: [:])
 
         let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1   // determinism: item 2 must stay .queued until cancelAll
         vm.enqueue(
             fileName: "1.txt", direction: .upload,
             source: source, sourcePath: "/1.txt",
@@ -462,6 +487,7 @@ struct TransferQueueViewModelTests {
         ])
         let destination = QueueTestFS(reads: [:])
         let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1   // determinism: item D must stay .queued behind running C
 
         // cancelled: X starten, dann cancelAll.
         vm.enqueue(
@@ -673,6 +699,7 @@ struct TransferQueueViewModelTests {
         let calls = CallCounter()
 
         let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1   // determinism: the "apply to all" rule must be set before item 2 resolves
         vm.conflictDecider = { _ in await calls.increment(); return (.overwrite, true) }
         for name in ["1.txt", "2.txt"] {
             vm.enqueue(
@@ -872,6 +899,7 @@ struct TransferQueueViewModelTests {
         let done = TestSignal()
 
         let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1   // determinism: file write order is asserted
         vm.enqueueTree(
             directoryName: "dir", direction: .download,
             source: source, sourceDirectory: "/dir",
@@ -1239,5 +1267,204 @@ struct TransferQueueViewModelTests {
         #expect(returnedInTime)
         #expect(vm.items[0].status == .cancelled)   // NICHT .finished
         #expect(vm.isActive == false)
+    }
+
+    // MARK: - Parallel-slot tests (M5c/T4)
+
+    // MARK: - 31
+
+    /// With `maxConcurrent == 2` and three gated transfers, at most two run at
+    /// once: the mock's peak concurrency never exceeds two, and the third item
+    /// stays `.queued` until a slot frees.
+    @Test func startsAtMostMaxConcurrent() async throws {
+        let content = Data("x".utf8)
+        let started0 = TestSignal(); let gate0 = TestSignal()
+        let started1 = TestSignal(); let gate1 = TestSignal()
+        let started2 = TestSignal(); let gate2 = TestSignal()
+        let tracker = ConcurrencyTracker()
+        let source = QueueTestFS(reads: [
+            "/0.txt": .init(content: content, started: started0, gate: gate0),
+            "/1.txt": .init(content: content, started: started1, gate: gate1),
+            "/2.txt": .init(content: content, started: started2, gate: gate2),
+        ])
+        let destination = QueueTestFS(reads: [:], concurrency: tracker)
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 2
+        for name in ["0.txt", "1.txt", "2.txt"] {
+            vm.enqueue(
+                fileName: name, direction: .upload,
+                source: source, sourcePath: "/\(name)",
+                destination: destination, destinationDirectory: "/ziel",
+                onCompleted: nil)
+        }
+
+        // The first two FIFO items start; the third must wait for a free slot.
+        try await started0.wait()
+        try await started1.wait()
+        await waitUntil { vm.items[0].status.isRunning && vm.items[1].status.isRunning }
+        #expect(vm.items[2].status == .queued)
+        #expect(await tracker.peak == 2)
+
+        // Free one slot → the third starts; still never three at once.
+        await gate0.fire()
+        try await started2.wait()
+        await waitUntil { vm.items[2].status.isRunning }
+
+        await gate1.fire(); await gate2.fire()
+        await waitUntil { vm.items.allSatisfy { $0.status == .finished } }
+        #expect(await tracker.peak == 2)   // never exceeded the limit
+    }
+
+    // MARK: - 32
+
+    /// Slots are handed out in strict FIFO from the enqueue order, even under
+    /// parallelism: with `maxConcurrent == 2`, the two running slots always
+    /// hold the earliest still-unfinished items; a freed slot goes to the next
+    /// in line, never to a later item.
+    @Test func fifoStartOrderPreserved() async throws {
+        let content = Data("x".utf8)
+        let started0 = TestSignal(); let gate0 = TestSignal()
+        let started1 = TestSignal(); let gate1 = TestSignal()
+        let started2 = TestSignal(); let gate2 = TestSignal()
+        let started3 = TestSignal(); let gate3 = TestSignal()
+        let source = QueueTestFS(reads: [
+            "/0.txt": .init(content: content, started: started0, gate: gate0),
+            "/1.txt": .init(content: content, started: started1, gate: gate1),
+            "/2.txt": .init(content: content, started: started2, gate: gate2),
+            "/3.txt": .init(content: content, started: started3, gate: gate3),
+        ])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 2
+        for name in ["0.txt", "1.txt", "2.txt", "3.txt"] {
+            vm.enqueue(
+                fileName: name, direction: .upload,
+                source: source, sourcePath: "/\(name)",
+                destination: destination, destinationDirectory: "/ziel",
+                onCompleted: nil)
+        }
+
+        // Items 0 and 1 (the first two enqueued) take the two slots.
+        try await started0.wait()
+        try await started1.wait()
+        await waitUntil { vm.items[0].status.isRunning && vm.items[1].status.isRunning }
+        #expect(vm.items[2].status == .queued)
+        #expect(vm.items[3].status == .queued)
+
+        // Free item 0's slot → it goes to item 2 (next in FIFO), NOT item 3.
+        // `started2.wait()` only returns once item 2 actually starts; a FIFO
+        // violation (item 3 first) would leave item 2 unstarted and hang here.
+        await gate0.fire()
+        try await started2.wait()
+        await waitUntil { vm.items[0].status == .finished }
+        #expect(vm.items[2].status.isRunning)
+        #expect(vm.items[3].status == .queued)   // item 3 still waits behind item 2
+
+        // Free item 1's slot → it goes to item 3.
+        await gate1.fire()
+        try await started3.wait()
+        await waitUntil { vm.items[3].status.isRunning }
+
+        await gate2.fire(); await gate3.fire()
+        await waitUntil { vm.isActive == false }
+    }
+
+    // MARK: - 33
+
+    /// `cancelAll` with two running transfers plus one queued: all three end
+    /// `.cancelled`, each waiting `enqueueAndWait` throws exactly once, and the
+    /// call returns promptly (cooperative cancellation, no natural-end wait).
+    @Test func cancelAllWithParallelRunners() async throws {
+        let content = Data("c".utf8)
+        let started0 = TestSignal(); let gate0 = TestSignal()   // never fired
+        let started1 = TestSignal(); let gate1 = TestSignal()   // never fired
+        let source = QueueTestFS(reads: [
+            "/0.txt": .init(content: content, started: started0, gate: gate0),
+            "/1.txt": .init(content: content, started: started1, gate: gate1),
+            "/2.txt": .init(content: content),
+        ])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 2
+
+        let throwCount = Counter()
+        for name in ["0.txt", "1.txt", "2.txt"] {
+            Task { @MainActor in
+                do {
+                    try await vm.enqueueAndWait(
+                        fileName: name, direction: .upload,
+                        source: source, sourcePath: "/\(name)",
+                        destination: destination, destinationDirectory: "/ziel")
+                } catch {
+                    throwCount.increment()
+                }
+            }
+        }
+
+        // Two run, one is queued.
+        try await started0.wait()
+        try await started1.wait()
+        await waitUntil {
+            vm.items.count == 3
+            && vm.items[0].status.isRunning && vm.items[1].status.isRunning
+            && vm.items[2].status == .queued
+        }
+
+        let returnedInTime = await completesWithin(.seconds(2)) { await vm.cancelAll() }
+        #expect(returnedInTime)
+        #expect(vm.items[0].status == .cancelled)
+        #expect(vm.items[1].status == .cancelled)
+        #expect(vm.items[2].status == .cancelled)
+        #expect(vm.isActive == false)
+        await waitUntil { throwCount.value == 3 }
+        #expect(throwCount.value == 3)   // each waiter threw exactly once
+    }
+
+    // MARK: - 34
+
+    /// Two conflicts arriving in parallel slots serialize around the decider:
+    /// the prompts never overlap (peak decider concurrency stays 1), yet both
+    /// items are still asked (rule not applied to all) and both complete.
+    @Test func conflictPromptsSerializeAcrossSlots() async throws {
+        let content = Data("neu".utf8)
+        let source = QueueTestFS(reads: [
+            "/1.txt": .init(content: content),
+            "/2.txt": .init(content: content),
+        ])
+        // Both targets exist → both conflict.
+        let destination = QueueTestFS(reads: [
+            "/ziel/1.txt": .init(content: Data("alt".utf8)),
+            "/ziel/2.txt": .init(content: Data("alt".utf8)),
+        ])
+        let deciderPeak = ConcurrencyTracker()
+        let calls = CallCounter()
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 2
+        vm.conflictDecider = { _ in
+            await calls.increment()
+            await deciderPeak.enter()
+            // Yield generously: without a FIFO gate the other slot's decider
+            // would interleave here and push the peak to two.
+            for _ in 0..<10 { await Task.yield() }
+            await deciderPeak.leave()
+            return (.overwrite, false)
+        }
+        for name in ["1.txt", "2.txt"] {
+            vm.enqueue(
+                fileName: name, direction: .upload,
+                source: source, sourcePath: "/\(name)",
+                destination: destination, destinationDirectory: "/ziel",
+                onCompleted: nil)
+        }
+
+        await waitUntil { vm.items.count == 2 && vm.items.allSatisfy { $0.status == .finished } }
+        #expect(await deciderPeak.peak == 1)   // prompts never overlapped
+        #expect(await calls.count == 2)        // both conflicts were asked
+        #expect(await destination.writtenData(at: "/ziel/1.txt") == content)
+        #expect(await destination.writtenData(at: "/ziel/2.txt") == content)
     }
 }

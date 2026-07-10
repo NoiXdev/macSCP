@@ -27,11 +27,15 @@ public typealias ConflictDecider =
 ///
 /// Ersetzt das Einzeltransfer-`TransferViewModel`: `enqueue` verwirft nichts
 /// mehr, sondern reiht immer ein und startet bei Bedarf einen schlafenden
-/// Worker neu. Genau ein Worker läuft; er arbeitet die `order` seriell ab.
+/// Worker neu.
 ///
-/// Nebenläufigkeit: Die Klasse ist `@MainActor`; der eigentliche `copyFile`
-/// läuft in einer eigenen `runningTransferTask` (damit `cancelAll` ihn abbrechen
-/// kann) und gibt den MainActor während der Übertragung frei.
+/// Parallelism (M5c/T4): up to `maxConcurrent` transfers run at once. Slots are
+/// filled in strict FIFO order from `order`; a slot that frees up is handed to
+/// the next queued item (never a later one). The class is `@MainActor`; each
+/// transfer's `copyFile` runs in its own task in `runningTransferTasks` (keyed
+/// by item id, so `cancelAll` can cancel every in-flight transfer) and yields
+/// the MainActor while transferring. Conflict prompts still serialize: at most
+/// one decider prompt is open at a time, gated FIFO across slots.
 @Observable
 @MainActor
 public final class TransferQueueViewModel {
@@ -85,6 +89,25 @@ public final class TransferQueueViewModel {
     /// wie in M5a. Wird seriell vom Worker awaited — genau EIN offener Prompt.
     public var conflictDecider: ConflictDecider?
 
+    /// Maximum number of transfers that may run at once (clamped to 1...8,
+    /// default 3). ContentView sets this from the SettingsStore at session start
+    /// and on change. A change affects FUTURE slot assignments only — transfers
+    /// already running are never interrupted; raising the limit fills any freed
+    /// slots immediately, lowering it lets the extra transfers finish naturally.
+    public var maxConcurrent: Int = 3 {
+        didSet {
+            let clamped = min(8, max(1, maxConcurrent))
+            if maxConcurrent != clamped {
+                // Self-assignment does NOT re-enter didSet, so fall through to
+                // the kick below instead of relying on a second pass.
+                maxConcurrent = clamped
+            }
+            // A raised limit may open new slots for queued items; kicking is a
+            // safe no-op when nothing is waiting or all slots are busy.
+            kickWorker()
+        }
+    }
+
     // MARK: - Privater Zustand
 
     private struct Job {
@@ -112,17 +135,27 @@ public final class TransferQueueViewModel {
     private var jobs: [UUID: Job] = [:]
     private var order: [UUID] = []                                  // FIFO der queued-IDs
     private var waiters: [UUID: CheckedContinuation<Void, Error>] = [:]
-    private var workerTask: Task<Void, Never>?
-    private var runningTransferTask: Task<Void, Error>?            // fürs Cancel des aktiven copyFile
+    /// Active `process` tasks, keyed by item id — one per occupied slot. Their
+    /// count is the number of slots in use; `cancelAll` awaits them all.
+    private var processTasks: [UUID: Task<Void, Never>] = [:]
+    /// In-flight `copyFile` tasks, keyed by item id — one per transferring slot.
+    /// `cancelAll` cancels every one (cooperative cancellation via T2).
+    private var runningTransferTasks: [UUID: Task<Void, Error>] = [:]
     private var queueRule: ConflictResolution?                     // aktive "Für alle"-Regel; Reset bei Drain
 
-    /// ID des Items, das GERADE `resolveConflictIfNeeded` durchläuft (stat-Probe,
-    /// Decider-Prompt, Rename-Probing) — dequeued, aber noch nicht in
-    /// `runningTransferTask` erfasst. Ohne dieses Tracking griffe `cancelAll`
-    /// in dieses Fenster hinein ins Leere (M5b/T2-Review-Fix). Gesetzt direkt
-    /// nach dem Dequeue, gelöscht sobald der Transfer registriert ist ODER ein
-    /// Terminalzustand erreicht wurde.
-    private var resolvingJobID: UUID?
+    /// A minimal FIFO gate serializing conflict-decider prompts across slots:
+    /// at most one prompt is open at a time, and waiters are woken in arrival
+    /// order (no unfair wakeups). Only the `await decider(...)` call is gated —
+    /// the rule/no-decider fast paths don't touch it.
+    private let conflictGate = FIFOGate()
+
+    /// IDs of items CURRENTLY in `resolveConflictIfNeeded` (stat probe, decider
+    /// prompt, rename probing) — dequeued but not yet registered in
+    /// `runningTransferTasks`. Without tracking this window, `cancelAll` would
+    /// miss these items (M5b/T2 review fix). An id is inserted right after
+    /// dequeue and removed once its transfer is registered OR a terminal state
+    /// is reached. A `Set` because multiple slots may resolve at once (M5c/T4).
+    private var resolvingJobIDs: Set<UUID> = []
 
     // MARK: - Baum-/Gruppen-Zustand (M5b/T3)
 
@@ -254,28 +287,30 @@ public final class TransferQueueViewModel {
             jobs[id] = nil
             resumeWaiter(id, with: .failure(CancellationError()))
         }
-        // 1b. Das Item, das gerade `resolveConflictIfNeeded` durchläuft: weder
-        //     in `order` (schon dequeued) noch in `runningTransferTask` (noch
-        //     nicht registriert) — dieses Fenster muss hier explizit abgedeckt
-        //     werden (M5b/T2-Review-Fix). Exactly-once: `process` erkennt am
-        //     fehlenden `jobs[id]`-Eintrag, dass hier schon aufgelöst wurde,
-        //     und fasst Status/Waiter danach NICHT nochmal an.
-        if let id = resolvingJobID {
-            resolvingJobID = nil
+        // 1b. Every slot CURRENTLY in `resolveConflictIfNeeded` (stat probe,
+        //     decider prompt, rename probing): dequeued but not yet registered
+        //     in `runningTransferTasks` — this window is covered here (M5b/T2
+        //     review fix), now a set because several slots may resolve at once.
+        //     Exactly-once: `process` sees the missing `jobs[id]` entry and does
+        //     NOT touch status/waiter again.
+        let resolving = resolvingJobIDs
+        resolvingJobIDs.removeAll()
+        for id in resolving {
             setStatus(id, .cancelled)
             jobs[id] = nil
             resumeWaiter(id, with: .failure(CancellationError()))
         }
-        // 2. Den aktiven Transfer abbrechen — sein copyFile endet mit
-        //    CancellationError, `process` setzt das Item auf `.cancelled`.
-        runningTransferTask?.cancel()
-        // 3. Auf das Worker-Ende warten: `nextQueuedID()` liefert nichts mehr,
-        //    die Schleife läuft aus und setzt `workerTask = nil`. Kann so lange
-        //    blocken, bis ein evtl. noch offener Decider-Prompt zurückkehrt
-        //    (dokumentiert/akzeptiert) — `process` transferiert danach aber
-        //    nachweislich nicht mehr (s.o.).
-        let worker = workerTask
-        await worker?.value
+        // 2. Cancel every active transfer — each copyFile ends with
+        //    CancellationError (cooperative, T2) and `process` marks its item
+        //    `.cancelled`.
+        for task in runningTransferTasks.values { task.cancel() }
+        // 3. Await all slot tasks to unwind. `order` is now empty, so no slot
+        //    re-fills; each `process` runs out and calls `slotFinished`. May
+        //    block until an open decider prompt returns (documented/accepted) —
+        //    but no slot transfers after cancel (see above). A snapshot of the
+        //    task handles is stable even as `slotFinished` mutates the dict.
+        let active = Array(processTasks.values)
+        for task in active { await task.value }
     }
 
     /// Entfernt finished/failed/cancelled/skipped aus der Liste.
@@ -290,15 +325,35 @@ public final class TransferQueueViewModel {
 
     // MARK: - Worker
 
+    /// Fills free slots with queued items in strict FIFO order, up to
+    /// `maxConcurrent`. Idempotent and safe to call repeatedly — from `enqueue`,
+    /// when a slot frees (`slotFinished`), or when the limit is raised.
+    ///
+    /// The dequeued id is inserted into `resolvingJobIDs` SYNCHRONOUSLY here, at
+    /// the moment the slot is committed. That closes the window between spawning
+    /// a slot's task and its `process` body actually running: `cancelAll` can
+    /// only interleave at an await, so from this synchronous commit onward the
+    /// item is always covered by exactly one of the `cancelAll` sweeps
+    /// (resolving → then running).
     private func kickWorker() {
-        guard workerTask == nil else { return }
-        workerTask = Task { [weak self] in
-            while let self, let jobID = self.nextQueuedID() {
-                await self.process(jobID)
+        while processTasks.count < maxConcurrent, let jobID = nextQueuedID() {
+            resolvingJobIDs.insert(jobID)
+            let task = Task { @MainActor [weak self] in
+                await self?.process(jobID)
+                self?.slotFinished(jobID)
             }
-            // Drain: die "Für alle"-Regel gilt nur für diesen Batch.
-            self?.queueRule = nil
-            self?.workerTask = nil
+            processTasks[jobID] = task
+        }
+    }
+
+    /// A slot's `process` returned: free the slot and try to fill it with the
+    /// next queued item (FIFO). Once nothing is left running or waiting, the
+    /// batch-scoped "apply to all" rule expires (as in the old serial drain).
+    private func slotFinished(_ jobID: UUID) {
+        processTasks[jobID] = nil
+        kickWorker()
+        if processTasks.isEmpty && order.isEmpty {
+            queueRule = nil
         }
     }
 
@@ -307,13 +362,12 @@ public final class TransferQueueViewModel {
     }
 
     private func process(_ jobID: UUID) async {
+        // `resolvingJobIDs` already holds `jobID` (inserted in `kickWorker` when
+        // the slot was committed). If `cancelAll` already cleared this job, bail
+        // — status/waiter were handled there (exactly-once).
         guard let job = jobs[jobID] else { return }
-        // Ab hier bis zur Registrierung von `runningTransferTask` (oder einem
-        // Terminalzustand) läuft dieses Item weder über `order` noch über
-        // `runningTransferTask` — s. `resolvingJobID`-Doc.
-        resolvingJobID = jobID
 
-        // Konfliktprüfung VOR dem Engine-Aufruf (seriell, also genau ein Prompt).
+        // Conflict check BEFORE the engine call; prompts serialize FIFO.
         let outcome = await resolveConflictIfNeeded(job: job)
 
         // `cancelAll` kann während des obigen Awaits (stat-Probe, Decider,
@@ -321,7 +375,9 @@ public final class TransferQueueViewModel {
         // `.cancelled`, der Waiter schon geworfen, `jobs[jobID]` schon weg.
         // Exactly-once: hier NICHT nochmal auflösen und NICHT transferieren.
         guard jobs[jobID] != nil else { return }
-        resolvingJobID = nil
+        // The slot moves from "resolving" to "transferring" synchronously below
+        // (no await in between) — `cancelAll`'s running-sweep covers it from here.
+        resolvingJobIDs.remove(jobID)
 
         let effectiveFileName: String
         switch outcome {
@@ -373,7 +429,7 @@ public final class TransferQueueViewModel {
                 onProgress: { progressContinuation.yield($0) }
             )
         }
-        runningTransferTask = transfer
+        runningTransferTasks[jobID] = transfer
 
         do {
             try await transfer.value
@@ -381,7 +437,7 @@ public final class TransferQueueViewModel {
             await consumer.value
             setStatus(jobID, .finished)
             jobs[jobID] = nil
-            runningTransferTask = nil
+            runningTransferTasks[jobID] = nil
             if let onCompleted = job.onCompleted { await onCompleted() }
             resumeWaiter(jobID, with: .success(()))
         } catch is CancellationError {
@@ -389,14 +445,14 @@ public final class TransferQueueViewModel {
             await consumer.value
             setStatus(jobID, .cancelled)
             jobs[jobID] = nil
-            runningTransferTask = nil
+            runningTransferTasks[jobID] = nil
             resumeWaiter(jobID, with: .failure(CancellationError()))
         } catch {
             progressContinuation.finish()
             await consumer.value
             setStatus(jobID, .failed(Self.message(for: error)))
             jobs[jobID] = nil
-            runningTransferTask = nil
+            runningTransferTasks[jobID] = nil
             resumeWaiter(jobID, with: .failure(error))
         }
     }
@@ -425,7 +481,18 @@ public final class TransferQueueViewModel {
                 fileName: job.fileName,
                 destinationDirectory: job.destinationDirectory,
                 direction: job.direction)
-            guard let decision = await decider(conflict) else {
+            // Serialize prompts across parallel slots: at most one decider is
+            // open at a time, FIFO. Only the prompt itself is gated.
+            await conflictGate.acquire()
+            // Re-check: `cancelAll` may have fired while we waited for the gate.
+            // Bail without prompting (and always release, so the gate never leaks).
+            guard jobs[job.id] != nil else {
+                conflictGate.release()
+                return .cancel
+            }
+            let decision = await decider(conflict)
+            conflictGate.release()
+            guard let decision else {
                 return .cancel                        // nil == Abbrechen
             }
             resolution = decision.resolution
@@ -629,6 +696,33 @@ public final class TransferQueueViewModel {
             return "Übertragung fehlgeschlagen: \(reason)"
         default:
             return "Übertragung fehlgeschlagen: \(String(describing: error))"
+        }
+    }
+}
+
+/// Minimal FIFO async gate (binary semaphore). `acquire()` suspends callers in
+/// arrival order when the gate is held; each `release()` wakes exactly the
+/// longest-waiting caller — strictly fair, no unfair wakeups. Confined to the
+/// `TransferQueueViewModel`'s MainActor, so its mutable state is race-free.
+@MainActor
+final class FIFOGate {
+    private var available = true
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        if available {
+            available = false
+            return
+        }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        if waiters.isEmpty {
+            available = true
+        } else {
+            // Hand the gate directly to the next waiter (stays held, FIFO).
+            waiters.removeFirst().resume()
         }
     }
 }
