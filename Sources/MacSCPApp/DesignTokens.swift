@@ -1,9 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// Marken-Duo aus docs/design/ci.md: Bernstein = Lokal, Ozeanblau = Remote.
-/// Dynamisch für Hell/Dunkel. Nur semantisch einsetzen (Pane-Badges,
-/// später Transferrichtung) — der Rest der App bleibt bei Systemfarben.
+/// Brand duo from docs/design/ci.md: amber = local, ocean blue = remote.
+/// Dynamic for light/dark. Use only semantically (pane badges, later transfer
+/// direction) — the rest of the app stays on system colors.
 enum DesignTokens {
     static let localAmber = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
@@ -17,15 +17,15 @@ enum DesignTokens {
             : NSColor(srgbRed: 45 / 255, green: 113 / 255, blue: 184 / 255, alpha: 1) // #2D71B8
     })
 
-    /// Phosphor aus docs/design/ci.md: Verbunden-Status, Terminal-Grün.
+    /// Phosphor from docs/design/ci.md: connected status, terminal green.
     static let statusPhosphor = Color(nsColor: NSColor(
         srgbRed: 123 / 255, green: 216 / 255, blue: 143 / 255, alpha: 1)) // #7BD88F
 
-    /// Terminal-Hintergrund: Tiefsee (#0F1E2B) — bewusst NICHT dynamisch,
-    /// das Terminal ist in Hell wie Dunkel eine "dunkle Konsole".
+    /// Terminal background: deep sea (#0F1E2B) — deliberately NOT dynamic,
+    /// the terminal is a "dark console" in both light and dark mode.
     static let terminalBackground = NSColor(
         srgbRed: 0x0F / 255, green: 0x1E / 255, blue: 0x2B / 255, alpha: 1)
-    /// Terminal-Text/Caret: Phosphor (#7BD88F).
+    /// Terminal text/caret: phosphor (#7BD88F).
     static let terminalText = NSColor(
         srgbRed: 0x7B / 255, green: 0xD8 / 255, blue: 0x8F / 255, alpha: 1)
 }

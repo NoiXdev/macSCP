@@ -1,44 +1,6 @@
 import SwiftUI
 import macSCPCore
 
-/// Locates the string catalog's resource bundle without going through
-/// SwiftPM's generated `Bundle.module` accessor.
-///
-/// `Bundle.module` calls `fatalError` if it can't find the sibling resource
-/// bundle next to the executable. That's a real risk for stripped/bare
-/// launches — e.g. a verification wrapper that copies only the built binary
-/// into an `.app` shell without `.build`'s resource output alongside it.
-/// This lookup instead degrades gracefully: if the resource bundle isn't
-/// where we expect, we fall back to `Bundle.main`, and every call site below
-/// supplies its own English `defaultValue`, so the UI still renders (in
-/// English) instead of crashing.
-private enum SettingsResources {
-    static let bundle: Bundle = {
-        let bundleName = "macSCP_MacSCPApp.bundle"
-        let candidates = [
-            Bundle.main.bundleURL.appendingPathComponent(bundleName),
-            Bundle.main.resourceURL?.appendingPathComponent(bundleName),
-            Bundle.main.executableURL?.deletingLastPathComponent()
-                .appendingPathComponent(bundleName),
-        ].compactMap { $0 }
-
-        for candidate in candidates {
-            if FileManager.default.fileExists(atPath: candidate.path),
-                let bundle = Bundle(url: candidate)
-            {
-                return bundle
-            }
-        }
-        return .main
-    }()
-
-    /// Looks up `key` in the string catalog; `key` doubles as the English
-    /// fallback if no translated (or bundled) value can be found.
-    static func string(_ key: String.LocalizationValue) -> String {
-        String(localized: key, bundle: bundle)
-    }
-}
-
 /// The app's Settings window content, opened via Cmd-, or the app menu's
 /// "Settings…" item (the `Settings` scene is wired up in MacSCPApp.swift).
 ///
@@ -53,7 +15,7 @@ struct SettingsView: View {
             TransfersSettingsTab(store: store)
                 .tabItem {
                     Label(
-                        SettingsResources.string("Transfers"),
+                        L10n.string("settings.tab.transfers", "Transfers"),
                         systemImage: "arrow.up.arrow.down")
                 }
         }
@@ -76,7 +38,7 @@ private struct TransfersSettingsTab: View {
                     in: 1...8
                 ) {
                     HStack {
-                        Text(SettingsResources.string("Maximum concurrent transfers"))
+                        Text(L10n.string("settings.maxConcurrent.label", "Maximum concurrent transfers"))
                         Spacer()
                         Text("\(store.maxConcurrentTransfers)")
                             .foregroundStyle(.secondary)
@@ -84,15 +46,14 @@ private struct TransfersSettingsTab: View {
                     }
                 }
             } footer: {
-                Text(SettingsResources.string("Applies to new transfers; running ones are unaffected."))
+                Text(L10n.string(
+                    "settings.maxConcurrent.footer",
+                    "Applies to new transfers; running ones are unaffected."))
                     .foregroundStyle(.secondary)
             }
 
             Section {
-                // "Upload"/"Download" are identical in English and German,
-                // so they're plain literals rather than catalog entries —
-                // only the strings listed in the M5c/T3 brief are cataloged.
-                LabeledContent("Upload") {
+                LabeledContent(L10n.string("settings.bandwidth.upload", "Upload")) {
                     TextField(
                         "0", value: Binding(
                             get: { store.uploadLimitKBs },
@@ -102,7 +63,7 @@ private struct TransfersSettingsTab: View {
                     .frame(width: 80)
                     .multilineTextAlignment(.trailing)
                 }
-                LabeledContent("Download") {
+                LabeledContent(L10n.string("settings.bandwidth.download", "Download")) {
                     TextField(
                         "0", value: Binding(
                             get: { store.downloadLimitKBs },
@@ -113,9 +74,9 @@ private struct TransfersSettingsTab: View {
                     .multilineTextAlignment(.trailing)
                 }
             } header: {
-                Text(SettingsResources.string("Bandwidth limit upload/download"))
+                Text(L10n.string("settings.bandwidth.header", "Bandwidth limit upload/download"))
             } footer: {
-                Text(SettingsResources.string("0 = unlimited"))
+                Text(L10n.string("settings.bandwidth.footer", "0 = unlimited"))
                     .foregroundStyle(.secondary)
             }
         }

@@ -1,0 +1,78 @@
+/* Settings — Übertragungen-Tab */
+"settings.tab.transfers" = "Übertragungen";
+"settings.maxConcurrent.label" = "Maximale gleichzeitige Übertragungen";
+"settings.maxConcurrent.footer" = "Gilt für neue Übertragungen; laufende sind nicht betroffen.";
+"settings.bandwidth.header" = "Bandbreiten-Limit Upload/Download";
+"settings.bandwidth.footer" = "0 = unbegrenzt";
+"settings.bandwidth.upload" = "Upload";
+"settings.bandwidth.download" = "Download";
+
+/* Verbindungsformular */
+"connection.title" = "Neue Verbindung";
+"connection.field.host" = "Host";
+"connection.field.host.placeholder" = "server.example.com";
+"connection.field.port" = "Port";
+"connection.field.username" = "Benutzername";
+"connection.field.authMethod" = "Authentifizierung";
+"connection.auth.password" = "Passwort";
+"connection.auth.privateKey" = "SSH-Key";
+"connection.field.keyPath" = "Key-Pfad";
+"connection.field.keyPath.placeholder" = "~/.ssh/id_ed25519";
+"connection.field.keyPath.browseHelp" = "Key-Datei auswählen";
+"connection.field.passphrase" = "Passphrase (optional)";
+"connection.saveToggle" = "Als Session speichern";
+"connection.field.saveName" = "Session-Name";
+"connection.field.saveName.placeholder" = "z.B. hetzner-web";
+"connection.hostkey.first" = "Erster Verbindungsaufbau zu %@";
+"connection.hostkey.fingerprintLabel" = "Fingerprint (%@):";
+"connection.hostkey.trust" = "Vertrauen & verbinden";
+"connection.connect" = "Verbinden";
+
+/* Gemeinsam */
+"common.cancel" = "Abbrechen";
+
+/* Session-Seitenleiste */
+"sidebar.header" = "SESSIONS";
+"sidebar.newConnection" = "Neue Verbindung";
+"sidebar.delete" = "Löschen";
+"sidebar.importedHeader" = "IMPORTIERT";
+"sidebar.importedHelp" = "Aus ~/.ssh/config — füllt das Formular (Geheimnisse werden nicht importiert)";
+
+/* Konflikt-Sheet */
+"conflict.title" = "Datei existiert bereits";
+"conflict.message" = "„%@“ existiert in „%@“.";
+"conflict.applyToAll" = "Für alle weiteren übernehmen";
+"conflict.rename" = "Umbenennen";
+"conflict.skip" = "Überspringen";
+"conflict.overwrite" = "Überschreiben";
+
+/* Browser-Toolbar & Panes */
+"browser.terminalToggle" = "Terminal";
+"browser.terminalToggleHelp" = "Terminal ein-/ausblenden (⌘T)";
+"browser.disconnect" = "Trennen";
+"browser.paneLocal" = "Lokal";
+"browser.paneRemote" = "Remote";
+"browser.upload" = "Hochladen";
+"browser.uploadHelp" = "Ausgewählte lokale Datei/Ordner ins Remote-Verzeichnis hochladen";
+"browser.download" = "Herunterladen";
+"browser.downloadHelp" = "Ausgewählte Remote-Datei/Ordner ins lokale Verzeichnis herunterladen";
+"browser.pane.goUpHelp" = "Übergeordnetes Verzeichnis";
+"browser.pane.refreshHelp" = "Aktualisieren";
+"browser.pane.retry" = "Erneut versuchen";
+
+/* Terminal-Panel */
+"terminal.ended" = "Shell beendet.";
+"terminal.reopen" = "Neu öffnen";
+
+/* Remote-Dateitabelle: Spalten */
+"filetable.column.name" = "Name";
+"filetable.column.size" = "Größe";
+"filetable.column.modified" = "Geändert";
+
+/* Transfer-Warteschlangen-Leiste */
+"transfers.title" = "Übertragungen";
+"transfers.pending" = "Übertragungen — %lld ausstehend";
+"transfers.clear" = "Aufräumen";
+"transfers.status.queued" = "wartet";
+"transfers.status.cancelled" = "abgebrochen";
+"transfers.status.skipped" = "übersprungen";

@@ -3,9 +3,9 @@ import SwiftTerm
 import SwiftUI
 import macSCPCore
 
-/// SwiftTerms AppKit-TerminalView als SwiftUI-View, verdrahtet mit dem
-/// TerminalPanelViewModel: Ausgabe-Bytes -> feed, Tastatur -> vm.send,
-/// Resize -> vm.resize (SSH window-change).
+/// SwiftTerm's AppKit `TerminalView` wrapped as a SwiftUI view, wired to the
+/// `TerminalPanelViewModel`: output bytes -> feed, keyboard -> vm.send,
+/// resize -> vm.resize (SSH window-change).
 struct SSHTerminalView: NSViewRepresentable {
     let viewModel: TerminalPanelViewModel
 
@@ -20,18 +20,18 @@ struct SSHTerminalView: NSViewRepresentable {
         terminal.nativeBackgroundColor = DesignTokens.terminalBackground
         terminal.nativeForegroundColor = DesignTokens.terminalText
         terminal.caretColor = DesignTokens.terminalText
-        // setupOptions legt die Layer-Farbe nur einmal — nach Farbwechsel nachziehen:
+        // setupOptions sets the layer color only once — re-apply it after a color change:
         terminal.layer?.backgroundColor = DesignTokens.terminalBackground.cgColor
 
         viewModel.onOutput = { [weak terminal] bytes in
             terminal?.feed(byteArray: bytes[...])
         }
-        // Beim (Wieder-)Einblenden gepufferte Ausgabe nachliefern, damit ein
-        // Remount (⌘T aus/ein) den bisherigen Screen nicht verwirft.
+        // Replay buffered output on (re-)show, so a remount (⌘T off/on)
+        // doesn't discard the existing screen.
         for chunk in viewModel.replayBuffer {
             terminal.feed(byteArray: chunk[...])
         }
-        // SwiftTerm macht sich nicht selbst zum First Responder:
+        // SwiftTerm doesn't make itself the first responder:
         DispatchQueue.main.async { [weak terminal] in
             guard let terminal else { return }
             terminal.window?.makeFirstResponder(terminal)
@@ -41,8 +41,8 @@ struct SSHTerminalView: NSViewRepresentable {
 
     func updateNSView(_ terminal: TerminalView, context: Context) {}
 
-    /// TerminalViewDelegate-Aufrufe kommen auf dem Main-Thread (AppKit),
-    /// das ViewModel ist @MainActor — assumeIsolated schlägt die Brücke.
+    /// `TerminalViewDelegate` calls arrive on the main thread (AppKit);
+    /// the view model is `@MainActor` — `assumeIsolated` bridges the gap.
     final class Coordinator: NSObject, TerminalViewDelegate {
         private let viewModel: TerminalPanelViewModel
 

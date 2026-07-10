@@ -2,8 +2,9 @@ import AppKit
 import SwiftUI
 import macSCPCore
 
-/// AppKit-NSTableView als SwiftUI-View. Spec-Vorgabe: reine SwiftUI-Listen
-/// brechen bei Verzeichnissen mit tausenden Einträgen ein.
+/// AppKit `NSTableView` wrapped as a SwiftUI view. Spec requirement: plain
+/// SwiftUI lists collapse in performance for directories with thousands of
+/// entries.
 struct RemoteFileTableView: NSViewRepresentable {
     let items: [RemoteFileItem]
     let selectedPath: String?
@@ -24,9 +25,9 @@ struct RemoteFileTableView: NSViewRepresentable {
         table.allowsMultipleSelection = false
 
         for (identifier, title, width) in [
-            ("name", "Name", 260.0),
-            ("size", "Größe", 90.0),
-            ("modified", "Geändert", 160.0),
+            ("name", L10n.string("filetable.column.name", "Name"), 260.0),
+            ("size", L10n.string("filetable.column.size", "Size"), 90.0),
+            ("modified", L10n.string("filetable.column.modified", "Modified"), 160.0),
         ] {
             let column = NSTableColumn(identifier: .init(identifier))
             column.title = title
@@ -38,7 +39,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         table.delegate = context.coordinator
         table.target = context.coordinator
         table.doubleAction = #selector(Coordinator.doubleClicked(_:))
-        // Drag nach außerhalb der App erlauben (z.B. Finder als Ziel).
+        // Allow dragging out of the app (e.g. the Finder as a target).
         table.setDraggingSourceOperationMask(.copy, forLocal: false)
 
         let scroll = NSScrollView()
@@ -54,8 +55,8 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.onSelect = onSelect
         context.coordinator.pasteboardWriter = pasteboardWriter
         guard let table = nsView.documentView as? NSTableView else { return }
-        // reloadData() löscht die Auswahl ohne Delegate-Aufruf —
-        // deshalb programmatisch wiederherstellen, Callback dabei unterdrücken.
+        // reloadData() clears the selection without a delegate call —
+        // restore it programmatically, suppressing the callback while doing so.
         context.coordinator.suppressSelectionCallback = true
         table.reloadData()
         if let selectedPath,
@@ -82,8 +83,8 @@ struct RemoteFileTableView: NSViewRepresentable {
             items.count
         }
 
-        /// Liefert den Drag-Pasteboard-Writer für eine Zeile (z.B. Datei-URL) —
-        /// nil macht die Zeile nicht ziehbar (z.B. Verzeichnisse).
+        /// Returns the drag pasteboard writer for a row (e.g. a file URL) —
+        /// `nil` makes the row non-draggable (e.g. directories).
         func tableView(
             _ tableView: NSTableView,
             pasteboardWriterForRow row: Int

@@ -1,8 +1,8 @@
 import SwiftUI
 import macSCPCore
 
-/// Warteschlangen-Leiste unter den Panes: kompakte Item-Liste,
-/// ↑ Bernstein (Upload), ↓ Ozeanblau (Download), Fehler in System-Rot.
+/// Queue bar below the panes: compact item list,
+/// ↑ amber (upload), ↓ ocean blue (download), errors in system red.
 struct TransferQueueBar: View {
     let viewModel: TransferQueueViewModel
 
@@ -18,12 +18,14 @@ struct TransferQueueBar: View {
                 Divider()
                 HStack {
                     Text(viewModel.isActive
-                         ? "Übertragungen — \(viewModel.pendingCount) ausstehend"
-                         : "Übertragungen")
+                         ? String(format: L10n.string(
+                             "transfers.pending", "Transfers — %lld pending"),
+                             Int64(viewModel.pendingCount))
+                         : L10n.string("transfers.title", "Transfers"))
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Button("Aufräumen") { viewModel.clearCompleted() }
+                    Button(L10n.string("transfers.clear", "Clean up")) { viewModel.clearCompleted() }
                         .controlSize(.small)
                         .disabled(viewModel.items.allSatisfy {
                             $0.status == .queued || $0.status.isRunning
@@ -59,7 +61,8 @@ struct TransferQueueBar: View {
             Spacer(minLength: 8)
             switch item.status {
             case .queued:
-                Text("wartet").font(.caption).foregroundStyle(.secondary)
+                Text(L10n.string("transfers.status.queued", "queued"))
+                    .font(.caption).foregroundStyle(.secondary)
             case .running(let progress):
                 // Rate/ETA (M5c/T5): compact "1,2 MB/s · 0:42" label, hidden
                 // until the queue's rate window (`TransferQueueViewModel`)
@@ -89,9 +92,11 @@ struct TransferQueueBar: View {
                     .lineLimit(1)
                     .help(message)
             case .cancelled:
-                Text("abgebrochen").font(.caption).foregroundStyle(.secondary)
+                Text(L10n.string("transfers.status.cancelled", "cancelled"))
+                    .font(.caption).foregroundStyle(.secondary)
             case .skipped:
-                Text("übersprungen").font(.caption).foregroundStyle(.secondary)
+                Text(L10n.string("transfers.status.skipped", "skipped"))
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .font(.callout)

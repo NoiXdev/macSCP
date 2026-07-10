@@ -2,10 +2,10 @@ import AppKit
 import UniformTypeIdentifiers
 import macSCPCore
 
-/// File Promise für Remote-Zeilen: Der Finder erhält ein Versprechen und ruft
-/// beim Ablegen writePromiseTo auf — erst dann wird die Datei heruntergeladen.
-/// Der Download läuft über `TransferQueueViewModel.enqueueAndWait`, reiht sich
-/// also serialisiert mit allen anderen Transfers ein (kein Gate-Bypass mehr).
+/// File promise for remote rows: the Finder receives a promise and calls
+/// `writePromiseTo` on drop — only then is the file downloaded. The download
+/// runs through `TransferQueueViewModel.enqueueAndWait`, so it queues up
+/// serialized with every other transfer (no gate bypass anymore).
 final class RemoteFilePromiseProvider: NSFilePromiseProvider {
     private let strongDelegate: RemoteFilePromiseDelegate
 
