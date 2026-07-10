@@ -42,7 +42,7 @@ public func associatedApp(forExtension ext: String) -> String?
 
 **Bindend:** Normalisierung beim Setzen UND Lesen (".PHP"/"php"/" .php " → "php"); leere/Whitespace-Endungen werden ignoriert; Persistenz-Roundtrip; Forward-Compat bleibt (unbekannte Schlüssel + die neuen als JSONValue-Objekt/String); Defaults nil/[:]. Tests: Roundtrip beider Felder, Normalisierung, Regel-Entfernen via leerem Pfad, Fixture-Kompatibilität (alte settings.json ohne neue Keys lädt sauber; neue Datei von alter Version lesbar-Simulation via Unknown-Key-Test besteht weiter).
 
-- [ ] Rot → implementieren → grün → Commit `feat: add default editor and file association settings` (mit Footer).
+- [x] Rot → implementieren → grün → Commit `feat: add default editor and file association settings` (mit Footer).
 
 ---
 
@@ -58,7 +58,7 @@ public func associatedApp(forExtension ext: String) -> String?
 4. Neue L10n-Keys (EN-Quelle + DE) für Tab, Labels, Buttons, Placeholder, Fußnote („Rules take precedence over the default editor; the system association is the fallback." / „Regeln gehen vor Standard-Editor; System-Zuordnung ist der Fallback.").
 5. Verifikation: Build + Suite unverändert; Headless-Launch; visuell in T5.
 
-- [ ] Implementieren → grün → Commit `feat: add open-with settings tab` (mit Footer).
+- [x] Implementieren → grün → Commit `feat: add open-with settings tab` (mit Footer).
 
 ---
 
@@ -118,7 +118,7 @@ public func enqueueEditUpload(
 6. Queue-Flag: `bypassConflictCheck` im Job (internal); `resolveConflictIfNeeded` prüft `job.resume || job.bypassConflictCheck`; alle bestehenden Pfade unverändert (Flag default false überall sonst).
 7. Tests (Mock-FS, TestSignals, injizierbare Zeit fürs Debounce falls nötig — Debounce via injizierbarem Scheduler/Task.sleep-Hook testbar machen): beginEditing lädt via Queue und liefert URL (Datei existiert lokal, Inhalt == Mock-Remote); Doppel-beginEditing derselben Datei → gleiche URL, kein zweiter Download (Queue-Item-Count!); simulierte Datei-Änderung (lokal schreiben + Watcher-Event bzw. direkter Handler-Aufruf, wenn DispatchSource im Test zu flaky ist → dann den Event-Handler-Pfad als testbare interne Methode schneiden und die DispatchSource-Schicht dünn halten) → genau EIN enqueueEditUpload nach Debounce (zwei schnelle Änderungen → EIN Upload); enqueueEditUpload umgeht Konfliktprüfung (Ziel existiert, KEIN Decider-Call, Item finished); stopAll löscht Temp-Ordner + weitere Änderung löst NICHTS mehr aus; atomarer Save simuliert (rename weg + neue Datei am Pfad) → Watcher überlebt und feuert.
 
-- [ ] Rot → implementieren → grün (Filter + Gesamt) → Commit `feat: add edit session manager with auto-upload` (mit Footer).
+- [x] Rot → implementieren → grün (Filter + Gesamt) → Commit `feat: add edit session manager with auto-upload` (mit Footer).
 
 ---
 
@@ -135,15 +135,15 @@ public func enqueueEditUpload(
 4. Symlinks/Verzeichnisse: unverändertes Verhalten (dir = cd; symlink = nichts).
 5. Build + Suite grün; Headless-Launch.
 
-- [ ] Implementieren → grün → Commit `feat: open remote files in the configured editor` (mit Footer).
+- [x] Implementieren → grün → Commit `feat: open remote files in the configured editor` (mit Footer).
 
 ---
 
 ### Task 5: Abschluss-Verifikation
 
-- [ ] `swift test` gesamt; Rig hoch, `MACSCP_ITEST=1` voll, `MACSCP_KEYCHAIN=1` 2/2.
-- [ ] **Visueller Edit-Roundtrip (Bildschirm frei):** In Settings „Öffnen mit": Regel `txt` → TextEdit anlegen; remote eine `.txt` erzeugen (docker exec), doppelklicken → Download-Item in Leiste → TextEdit öffnet die Datei; Text ändern + ⌘S → Upload-Item erscheint automatisch in der Leiste → `docker exec cat` zeigt die Änderung; ZWEITES Speichern → wieder genau ein Upload. Standard-Editor-Fall (Regel entfernen, Default z. B. TextEdit setzen, `.conf`-Datei doppelklicken → öffnet in TextEdit). System-Fallback-Fall (Default zurücksetzen, `.txt` → öffnet im System-Editor). Trennen → Temp-Ordner ist weg (`ls /tmp/...macscp-edit/`), TextEdit-Dokument bleibt offen (dokumentiert ok), erneutes Speichern löst nichts mehr aus.
-- [ ] Checkboxen, Commit `docs: mark M5e plan tasks as completed` (mit Footer).
+- [x] `swift test` gesamt; Rig hoch, `MACSCP_ITEST=1` voll, `MACSCP_KEYCHAIN=1` 2/2.
+- [x] **Visueller Edit-Roundtrip (Bildschirm frei):** In Settings „Öffnen mit": Regel `txt` → TextEdit anlegen; remote eine `.txt` erzeugen (docker exec), doppelklicken → Download-Item in Leiste → TextEdit öffnet die Datei; Text ändern + ⌘S → Upload-Item erscheint automatisch in der Leiste → `docker exec cat` zeigt die Änderung; ZWEITES Speichern → wieder genau ein Upload. Standard-Editor-Fall (Regel entfernen, Default z. B. TextEdit setzen, `.conf`-Datei doppelklicken → öffnet in TextEdit). System-Fallback-Fall (Default zurücksetzen, `.txt` → öffnet im System-Editor). Trennen → Temp-Ordner ist weg (`ls /tmp/...macscp-edit/`), TextEdit-Dokument bleibt offen (dokumentiert ok), erneutes Speichern löst nichts mehr aus.
+- [x] Checkboxen, Commit `docs: mark M5e plan tasks as completed` (mit Footer).
 
 ## Ausblick
 
