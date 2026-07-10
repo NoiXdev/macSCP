@@ -37,7 +37,7 @@
 6. **DE-Render-Beweis (bindend, headless):** kleiner ausführbarer Check — z. B. `swift test` mit einem NEUEN Unit-Test im App-… App hat kein Testtarget → stattdessen: Mini-Verifikation via `swift run`?? Nicht nötig kompliziert: BINDEND ist ein Bundle-Lookup-Test im CORE-Testtarget geht nicht (App-Bundle). Stattdessen: Verifikations-Skript im Report — `defaults`-freier Direkt-Check: das gebaute `.build/debug/macSCP_MacSCPApp.bundle` MUSS `de.lproj/Localizable.strings` und `en.lproj/Localizable.strings` enthalten (ls im Report) UND ein 10-Zeilen-Swift-Schnipsel (swiftc, temporär, nicht committen) lädt das Bundle und assertet `localizedString(forKey: "connection.title", …, table: nil)` in beiden lprojs unterschiedlich/korrekt. Visueller App-auf-Deutsch-Beweis folgt in T3.
 7. Kein String bleibt hartkodiert (Suche im Report: `grep -rn '"' Sources/MacSCPApp --include='*.swift'` gefiltert auf verbliebene sichtbare Literale — begründete Ausnahmen: reine Symbole, SF-Symbol-Namen, Format-Konstanten, Bundle-IDs).
 
-- [ ] Inventar → `.strings` EN+DE anlegen → Views umstellen → Kommentare EN → Bundle-Beweis → `swift build && swift test` (219 grün, keine neuen Tests nötig) → Headless-Launch-Check → Commit `refactor: localize app ui strings and translate comments to english` (mit Footer).
+- [x] Inventar → `.strings` EN+DE anlegen → Views umstellen → Kommentare EN → Bundle-Beweis → `swift build && swift test` (219 grün, keine neuen Tests nötig) → Headless-Launch-Check → Commit `refactor: localize app ui strings and translate comments to english` (mit Footer).
 
 ---
 
@@ -56,17 +56,17 @@
 5. Die zwei Doc-Notes aus dem M5c-Final-Review einarbeiten (englisch): Post-Write-Check-Kommentar um den benignen cancel-nach-letztem-Chunk-Fall ergänzen; das ist Kommentararbeit, hier miterledigt.
 6. `RemoteFSError`-reason-Strings, die heute deutsch sind (z. B. „Pfad existiert als Datei: …", „known_hosts nicht lesbar: …", „Shell konnte nicht geöffnet werden…", „Diese Verbindung unterstützt kein Terminal.") → ENGLISCH normalisieren (Policy: reasons = englische Log-Strings); wo eine UI sie heute 1:1 zeigt, entsteht die deutsche Fassung über die lokalisierte Hüll-Meldung (`message(for:)`-Pfad). Tests, die reasons prüfen, ziehen auf die englischen reasons um.
 
-- [ ] Inventar → Resources+Helfer → Meldungs-Erzeuger umstellen → reasons EN → Tests auf Lookup/EN-reasons → Kommentar-Sweep → `swift build && swift test` (219 grün) → gated NICHT nötig (T3) → Commit `refactor: localize core messages and translate comments to english` (mit Footer).
+- [x] Inventar → Resources+Helfer → Meldungs-Erzeuger umstellen → reasons EN → Tests auf Lookup/EN-reasons → Kommentar-Sweep → `swift build && swift test` (219 grün) → gated NICHT nötig (T3) → Commit `refactor: localize core messages and translate comments to english` (mit Footer).
 
 ---
 
 ### Task 3: Abschluss-Verifikation
 
-- [ ] `swift test` gesamt (219 erwartet) + Rig hoch, `MACSCP_ITEST=1` voll (219-Äquivalent gated), `MACSCP_KEYCHAIN=1` 2/2 — die gated Suiten beweisen, dass die reason-Normalisierung keine Integrationspfade bricht.
-- [ ] **Rest-Grep-Nachweis:** `grep -rn` über `Sources/ Tests/` nach verbliebenen deutschen Kommentaren/Strings (Umlaut-Suche `[äöüÄÖÜß]` + Stichproben häufiger Wörter) — Ergebnis LEER bis auf `de.lproj`-Dateien und begründete Ausnahmen (im Commit dokumentiert).
-- [ ] **Visueller Sprach-Beweis** (Bildschirm frei): App normal starten → UI ENGLISCH (Default, da System… System ist deutsch → App folgt System: DEUTSCH! Also: normal starten → DEUTSCH sichtbar (Formular „Neue Verbindung" etc. aus de.lproj — jetzt ECHT aus dem Katalog); dann mit erzwungenem Englisch starten (`defaults write dev.noidee.macscp.dev AppleLanguages '("en")'` bzw. Launch-Argument `-AppleLanguages "(en)"` via `open --args`) → UI ENGLISCH. Beide Screenshots im Ledger vermerken; danach das defaults-Override wieder ENTFERNEN.
-- [ ] Kurzer Funktions-Smoke (verbinden, ein Transfer, ein Konflikt-Sheet in der aktiven Sprache).
-- [ ] Checkboxen, Commit `docs: mark M5i plan tasks as completed` (mit Footer).
+- [x] `swift test` gesamt (219 erwartet) + Rig hoch, `MACSCP_ITEST=1` voll (219-Äquivalent gated), `MACSCP_KEYCHAIN=1` 2/2 — die gated Suiten beweisen, dass die reason-Normalisierung keine Integrationspfade bricht.
+- [x] **Rest-Grep-Nachweis:** `grep -rn` über `Sources/ Tests/` nach verbliebenen deutschen Kommentaren/Strings (Umlaut-Suche `[äöüÄÖÜß]` + Stichproben häufiger Wörter) — Ergebnis LEER bis auf `de.lproj`-Dateien und begründete Ausnahmen (im Commit dokumentiert).
+- [x] **Visueller Sprach-Beweis** (Bildschirm frei): App normal starten → UI ENGLISCH (Default, da System… System ist deutsch → App folgt System: DEUTSCH! Also: normal starten → DEUTSCH sichtbar (Formular „Neue Verbindung" etc. aus de.lproj — jetzt ECHT aus dem Katalog); dann mit erzwungenem Englisch starten (`defaults write dev.noidee.macscp.dev AppleLanguages '("en")'` bzw. Launch-Argument `-AppleLanguages "(en)"` via `open --args`) → UI ENGLISCH. Beide Screenshots im Ledger vermerken; danach das defaults-Override wieder ENTFERNEN.
+- [x] Kurzer Funktions-Smoke (verbinden, ein Transfer, ein Konflikt-Sheet in der aktiven Sprache).
+- [x] Checkboxen, Commit `docs: mark M5i plan tasks as completed` (mit Footer).
 
 ## Ausblick
 
