@@ -22,6 +22,12 @@ public final class TerminalPanelViewModel {
     public var isVisible = false
     /// Von der View gesetzt; empfängt Ausgabe-Bytes auf dem MainActor.
     public var onOutput: (([UInt8]) -> Void)?
+    /// Zuletzt empfangene Output-Chunks (max. 256 KiB) — Replay beim Wieder-
+    /// einblenden des Panels, damit ⌘T den sichtbaren Screen nicht verwirft.
+    public private(set) var replayBuffer: [[UInt8]] = []
+
+    private static let maxReplayBytes = 256 * 1024
+    private var replayBytes = 0
 
     private let openShell: ShellOpener
     private var shell: (any RemoteShell)?
@@ -53,6 +59,8 @@ public final class TerminalPanelViewModel {
         case .closed, .ended: break
         }
         state = .opening
+        replayBuffer = []
+        replayBytes = 0
         generation += 1
         let myGeneration = generation
         openTask = Task {
@@ -72,6 +80,7 @@ public final class TerminalPanelViewModel {
                 readTask = Task { [weak self] in
                     do {
                         for try await chunk in shell.output {
+                            self?.bufferForReplay(chunk)
                             self?.onOutput?(chunk)
                         }
                         self?.finishShell(message: nil, generation: readGeneration)
@@ -87,6 +96,16 @@ public final class TerminalPanelViewModel {
                 shell = nil
                 state = .ended("Shell konnte nicht geöffnet werden: \(error.localizedDescription)")
             }
+        }
+    }
+
+    /// Hängt `chunk` an den Replay-Puffer und wirft älteste Chunks raus, bis
+    /// `maxReplayBytes` wieder unterschritten ist.
+    private func bufferForReplay(_ chunk: [UInt8]) {
+        replayBuffer.append(chunk)
+        replayBytes += chunk.count
+        while replayBytes > Self.maxReplayBytes, !replayBuffer.isEmpty {
+            replayBytes -= replayBuffer.removeFirst().count
         }
     }
 
@@ -145,6 +164,8 @@ public final class TerminalPanelViewModel {
         // hängenden `send()` blockieren.
         sendTask?.cancel()
         sendTask = nil
+        replayBuffer = []
+        replayBytes = 0
         state = .closed
         isVisible = false
     }

@@ -26,6 +26,11 @@ struct SSHTerminalView: NSViewRepresentable {
         viewModel.onOutput = { [weak terminal] bytes in
             terminal?.feed(byteArray: bytes[...])
         }
+        // Beim (Wieder-)Einblenden gepufferte Ausgabe nachliefern, damit ein
+        // Remount (⌘T aus/ein) den bisherigen Screen nicht verwirft.
+        for chunk in viewModel.replayBuffer {
+            terminal.feed(byteArray: chunk[...])
+        }
         // SwiftTerm macht sich nicht selbst zum First Responder:
         DispatchQueue.main.async { [weak terminal] in
             guard let terminal else { return }

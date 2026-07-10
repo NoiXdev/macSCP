@@ -248,6 +248,57 @@ struct ConnectionViewModelTests {
         #expect(finished, "connect() muss nach Cancel zurückkehren (Continuation aufgelöst)")
     }
 
+    /// Regression (Final-Review M4, Minor 2): Der Connector kann den
+    /// `onUnknownHostKey`-Entscheider erst NACH dem Cancel der connect()-Task
+    /// aufrufen (hier über einen Stream erzwungen, der erst nach dem Cancel
+    /// freigegeben wird). `presentHostKeyPrompt` betritt `withCheckedContinuation`
+    /// dann mit bereits gesetzter Cancellation. Der Test pinnt das
+    /// GESAMTVERHALTEN: Cancel vor dem Prompt darf nicht hängen und muss im
+    /// Fehlerzustand enden. WELCHER Zweig die Continuation auflöst
+    /// (`Task.isCancelled`-Fast-Path in der Operation oder der `onCancel`-
+    /// Handler, dessen nachgelagerte MainActor-Task die inzwischen gesetzte
+    /// Continuation ebenfalls auflösen kann), ist von außen nicht
+    /// unterscheidbar — beide konvergieren auf denselben Zustand. Ein
+    /// Review-Experiment (Fast-Path entfernt) blieb grün via onCancel; der
+    /// Fast-Path bleibt als Gürtel-und-Hosenträger-Absicherung im Code.
+    @Test @MainActor
+    func cancelBeforeHostKeyPromptDeciderIsCalledDoesNotHang() async throws {
+        let candidate = HostKeyCandidate(
+            host: "example.com", port: 22, keyType: "ssh-ed25519",
+            publicKeyBase64: "AAAAC3NzaC1lZDI1NTE5AAAAIAtest")
+        let (releaseStream, releaseContinuation) = AsyncStream<Void>.makeStream()
+        let vm = makeVM(connector: { _, decider in
+            for await _ in releaseStream {}   // hängt, bis der Test freigibt
+            let trusted = await decider(candidate)
+            guard trusted else { throw HostKeyError.rejectedByUser }
+            return MockRemoteFileSystem(tree: ["/": []])
+        })
+
+        let connectTask = Task { await vm.connect() }
+        // Cancel VOR der Freigabe: presentHostKeyPrompt (und damit
+        // withTaskCancellationHandler) läuft erst nach diesem Punkt.
+        connectTask.cancel()
+        releaseContinuation.finish()
+
+        // Timeout-Race-Muster der Datei (siehe cancelWhileHostKeyPromptPendingResolvesConnect):
+        // ohne Cancellation-Behandlung (Fast-Path UND onCancel) hinge connect() für immer.
+        let claim = RaceClaim()
+        let finished: Bool = await withCheckedContinuation { continuation in
+            Task {
+                _ = await connectTask.value
+                if await claim.tryClaim() { continuation.resume(returning: true) }
+            }
+            Task {
+                try? await Task.sleep(for: .seconds(3))
+                if await claim.tryClaim() { continuation.resume(returning: false) }
+            }
+        }
+        #expect(finished, "connect() muss zurückkehren, wenn Cancel bereits vor dem Prompt gesetzt ist")
+        #expect(vm.hostKeyPrompt == nil)
+        #expect(vm.state == .failed(
+            message: "Verbindung abgebrochen — Host-Key nicht bestätigt.", field: nil))
+    }
+
     @Test func mismatchMapsToScaryMessage() async {
         let vm = makeVM(connector: { _, _ in
             throw HostKeyError.mismatch(

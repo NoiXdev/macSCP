@@ -136,6 +136,44 @@ struct TerminalPanelViewModelTests {
         #expect(shell.recorded == Array(0..<totalChunks))
     }
 
+    /// Regression (Final-Review M4, Minor 1): ⌘T-Ausblenden unmountet die
+    /// TerminalView, `onOutput` wird nil, der Lese-Loop verwirft Chunks —
+    /// beim Wiedereinblenden startet eine leere Konsole. Der VM muss die
+    /// Chunks puffern, solange kein Konsument angehängt ist.
+    @Test func outputIsBufferedForReplayWhileHidden() async throws {
+        let shell = MockShell()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
+        vm.toggle()
+        try await waitUntil(vm.state == .running)
+        // Kein onOutput gesetzt (Panel ausgeblendet) — Chunks dürfen nicht verloren gehen
+        shell.continuation.yield(Array("verborgen".utf8))
+        try await waitUntil(!vm.replayBuffer.isEmpty)
+        #expect(vm.replayBuffer.flatMap { $0 } == Array("verborgen".utf8))
+        // Neuer Konsument (Re-Mount) sieht Puffer + Live-Daten
+        var received: [[UInt8]] = []
+        vm.onOutput = { received.append($0) }
+        shell.continuation.yield(Array("live".utf8))
+        try await waitUntil(!received.isEmpty)
+    }
+
+    /// Regression: der Replay-Puffer darf nicht unbegrenzt wachsen — er ist
+    /// auf `maxReplayBytes` (256 KiB) gedeckelt; älteste Chunks fliegen raus.
+    @Test func replayBufferIsBounded() async throws {
+        let shell = MockShell()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
+        vm.toggle()
+        try await waitUntil(vm.state == .running)
+        shell.continuation.yield([UInt8](repeating: 1, count: 200_000))
+        shell.continuation.yield([UInt8](repeating: 2, count: 200_000))
+        // Wartet auf das Eintreffen des ZWEITEN Chunks (nicht nur "Puffer
+        // erfüllt die Schranke", denn ein noch leerer Puffer erfüllt die
+        // Schranke trivial und würde den Poll sofort — vor der eigentlichen
+        // Verarbeitung — beenden).
+        try await waitUntil(vm.replayBuffer.last?.last == 2)
+        #expect(vm.replayBuffer.reduce(0) { $0 + $1.count } <= 256 * 1024)
+        #expect(vm.replayBuffer.last?.last == 2)  // Neuestes bleibt
+    }
+
     @Test func shutdownClosesShellAndHides() async throws {
         let shell = MockShell()
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
