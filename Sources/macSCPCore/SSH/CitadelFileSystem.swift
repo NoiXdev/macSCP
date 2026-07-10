@@ -1,6 +1,7 @@
 import Citadel
 import Foundation
 import NIOCore
+import NIOSSH
 
 /// SFTP implementation of RemoteFileSystem based on Citadel.
 /// M1: password auth, no host-key verification (TOFU arrives in M3).
@@ -137,7 +138,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                     )
                 }
         } catch {
-            throw mapSFTPError(error, path: path)
+            throw Self.mapSFTPError(error, path: path)
         }
     }
 
@@ -153,14 +154,42 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 modifiedAt: attributes.accessModificationTime?.modificationTime
             )
         } catch {
-            throw mapSFTPError(error, path: path)
+            throw Self.mapSFTPError(error, path: path)
+        }
+    }
+
+    /// True for errors that mean "the SSH connection/channel is gone".
+    /// A mid-transfer disconnect does NOT surface as a typed Citadel error:
+    /// in-flight SFTP requests fail with NIO's `ChannelError.ioOnClosedChannel`
+    /// (verified via live kill test against the Docker rig), or with Citadel's
+    /// `SFTPError.connectionClosed` when the channel closes with pending
+    /// request promises; NIOSSH signals a dropped transport as `.tcpShutdown`.
+    /// Deliberately conservative: only these clear connection-loss shapes
+    /// match — everything else keeps its existing mapping.
+    private static func isConnectionLoss(_ error: Error) -> Bool {
+        switch error {
+        case ChannelError.ioOnClosedChannel, ChannelError.alreadyClosed:
+            return true
+        case SFTPError.connectionClosed:
+            return true
+        case let error as NIOSSHError where error.type == .tcpShutdown:
+            return true
+        default:
+            return false
         }
     }
 
     /// Translates Citadel's raw SFTP status errors into typed RemoteFSError.
     /// The server responds with SSH_FXP_STATUS; Citadel throws that as
     /// SFTPMessage.Status with an errorCode (SFTPStatusCode).
-    private func mapSFTPError(_ error: Error, path: String) -> Error {
+    /// Connection-loss shapes map to `connectionFailed` FIRST so the transfer
+    /// queue (M5d) classifies the item `.interrupted` (resumable) instead of
+    /// `.failed`.
+    /// Internal (not private) so the mapping is unit-testable without a server.
+    static func mapSFTPError(_ error: Error, path: String) -> Error {
+        if isConnectionLoss(error) {
+            return RemoteFSError.connectionFailed(reason: String(describing: error))
+        }
         guard let status = error as? SFTPMessage.Status else {
             return RemoteFSError.protocolError(reason: String(describing: error))
         }
@@ -178,7 +207,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         do {
             file = try await sftp.openFile(filePath: path, flags: .read)
         } catch {
-            throw mapSFTPError(error, path: path)
+            throw Self.mapSFTPError(error, path: path)
         }
         // Pull-based (unfolding): the consumer sets the pace. Starting at
         // `offset` beyond EOF: the first read returns 0 readable bytes, so
@@ -204,7 +233,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 throw CancellationError()
             } catch {
                 try? await file.close()
-                throw self.mapSFTPError(error, path: path)
+                throw Self.mapSFTPError(error, path: path)
             }
         })
     }
@@ -226,7 +255,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         do {
             file = try await sftp.openFile(filePath: path, flags: flags)
         } catch {
-            throw mapSFTPError(error, path: path)
+            throw Self.mapSFTPError(error, path: path)
         }
         do {
             var offset: UInt64 = 0
@@ -250,7 +279,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             throw CancellationError()
         } catch {
             try? await file.close()
-            throw mapSFTPError(error, path: path)
+            throw Self.mapSFTPError(error, path: path)
         }
     }
 
@@ -262,7 +291,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         do {
             try await sftp.remove(at: path)
         } catch {
-            throw mapSFTPError(error, path: path)
+            throw Self.mapSFTPError(error, path: path)
         }
     }
 
@@ -284,7 +313,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                     throw RemoteFSError.protocolError(reason: "path exists as a file: \(path)")
                 }
             }
-            throw mapSFTPError(error, path: path)
+            throw Self.mapSFTPError(error, path: path)
         }
     }
 
