@@ -198,7 +198,11 @@ struct ContentView: View {
             .frame(minWidth: 170, idealWidth: 190, maxWidth: 260)
 
             detail
-                .frame(minWidth: 590, maxWidth: .infinity)
+                // The detail minimum must fit inside the window minimum
+                // below together with the sidebar minimum (170), otherwise
+                // the split view's content overflows the window and gets
+                // clipped on both sides instead of shrinking.
+                .frame(minWidth: session == nil ? 500 : 590, maxWidth: .infinity)
         }
         // Compact form vs. browser: the minimum size depends on the
         // connection state (M5c/T0) — replaces the global `.frame` from
