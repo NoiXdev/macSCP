@@ -472,4 +472,203 @@ struct TransferQueueViewModelTests {
         #expect(vm.isActive == false)
         #expect(vm.pendingCount == 0)
     }
+
+    // MARK: - Konflikt-Tests (M5b/T2)
+
+    /// Actor-Zähler für Decider-Aufrufe aus einer `@Sendable`-Closure.
+    actor CallCounter {
+        private(set) var count = 0
+        func increment() { count += 1 }
+    }
+
+    // MARK: - 10
+
+    /// Ohne gesetzten Decider verhält sich ein Konflikt wie M5a: überschreiben.
+    @Test func conflictWithoutDeciderOverwrites() async throws {
+        let content = Data("neu".utf8)
+        let source = QueueTestFS(reads: ["/a.txt": .init(content: content)])
+        // Ziel existiert bereits → Konflikt.
+        let destination = QueueTestFS(reads: ["/ziel/a.txt": .init(content: Data("alt".utf8))])
+
+        let vm = TransferQueueViewModel()
+        try await vm.enqueueAndWait(
+            fileName: "a.txt", direction: .upload,
+            source: source, sourcePath: "/a.txt",
+            destination: destination, destinationDirectory: "/ziel")
+
+        #expect(vm.items[0].status == .finished)
+        #expect(await destination.writtenData(at: "/ziel/a.txt") == content)
+    }
+
+    // MARK: - 11
+
+    /// `.skip` markiert das Item `.skipped`, schreibt nicht und ruft kein onCompleted.
+    @Test func deciderSkipMarksSkippedAndSkipsWrite() async throws {
+        let content = Data("x".utf8)
+        let source = QueueTestFS(reads: ["/a.txt": .init(content: content)])
+        let destination = QueueTestFS(reads: ["/ziel/a.txt": .init(content: Data("alt".utf8))])
+        let counter = Counter()
+
+        let vm = TransferQueueViewModel()
+        vm.conflictDecider = { _ in (.skip, false) }
+        vm.enqueue(
+            fileName: "a.txt", direction: .upload,
+            source: source, sourcePath: "/a.txt",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { counter.increment() })
+
+        await waitUntil { vm.items[0].status == .skipped }
+        #expect(vm.items[0].status == .skipped)
+        #expect(counter.value == 0)
+        #expect(await destination.writtenData(at: "/ziel/a.txt") == nil)   // kein Write
+    }
+
+    // MARK: - 12
+
+    /// `.overwrite` schreibt das Ziel neu.
+    @Test func deciderOverwriteWrites() async throws {
+        let content = Data("neu".utf8)
+        let source = QueueTestFS(reads: ["/a.txt": .init(content: content)])
+        let destination = QueueTestFS(reads: ["/ziel/a.txt": .init(content: Data("alt".utf8))])
+
+        let vm = TransferQueueViewModel()
+        vm.conflictDecider = { _ in (.overwrite, false) }
+        try await vm.enqueueAndWait(
+            fileName: "a.txt", direction: .upload,
+            source: source, sourcePath: "/a.txt",
+            destination: destination, destinationDirectory: "/ziel")
+
+        #expect(vm.items[0].status == .finished)
+        #expect(await destination.writtenData(at: "/ziel/a.txt") == content)
+    }
+
+    // MARK: - 13
+
+    /// `.rename` sucht den nächsten freien Namen: "(2)" belegt → landet bei "(3)".
+    @Test func deciderRenameWritesUnderFreeName() async throws {
+        let content = Data("neu".utf8)
+        let source = QueueTestFS(reads: ["/a.txt": .init(content: content)])
+        let destination = QueueTestFS(reads: [
+            "/ziel/a.txt": .init(content: Data("alt".utf8)),        // Konflikt
+            "/ziel/a (2).txt": .init(content: Data("belegt".utf8)), // (2) belegt
+        ])
+
+        let vm = TransferQueueViewModel()
+        vm.conflictDecider = { _ in (.rename, false) }
+        try await vm.enqueueAndWait(
+            fileName: "a.txt", direction: .upload,
+            source: source, sourcePath: "/a.txt",
+            destination: destination, destinationDirectory: "/ziel")
+
+        #expect(vm.items[0].status == .finished)
+        #expect(vm.items[0].fileName == "a (3).txt")
+        #expect(await destination.writtenData(at: "/ziel/a (3).txt") == content)
+        #expect(await destination.writtenData(at: "/ziel/a.txt") == nil)   // Original unangetastet
+    }
+
+    // MARK: - 14
+
+    /// Decider gibt nil (Abbrechen) → Item `.cancelled`, enqueueAndWait wirft.
+    @Test func deciderCancelCancelsItem() async throws {
+        let content = Data("x".utf8)
+        let source = QueueTestFS(reads: ["/a.txt": .init(content: content)])
+        let destination = QueueTestFS(reads: ["/ziel/a.txt": .init(content: Data("alt".utf8))])
+
+        let vm = TransferQueueViewModel()
+        vm.conflictDecider = { _ in nil }
+        await #expect(throws: CancellationError.self) {
+            try await vm.enqueueAndWait(
+                fileName: "a.txt", direction: .upload,
+                source: source, sourcePath: "/a.txt",
+                destination: destination, destinationDirectory: "/ziel")
+        }
+        #expect(vm.items[0].status == .cancelled)
+        #expect(await destination.writtenData(at: "/ziel/a.txt") == nil)   // kein Write
+    }
+
+    // MARK: - 15
+
+    /// `applyToAll == true` setzt eine Regel: der zweite Konflikt fragt nicht erneut.
+    @Test func applyToAllAsksOnlyOnce() async throws {
+        let content = Data("x".utf8)
+        let source = QueueTestFS(reads: [
+            "/1.txt": .init(content: content),
+            "/2.txt": .init(content: content),
+        ])
+        let destination = QueueTestFS(reads: [
+            "/ziel/1.txt": .init(content: Data("alt".utf8)),
+            "/ziel/2.txt": .init(content: Data("alt".utf8)),
+        ])
+        let calls = CallCounter()
+
+        let vm = TransferQueueViewModel()
+        vm.conflictDecider = { _ in await calls.increment(); return (.overwrite, true) }
+        for name in ["1.txt", "2.txt"] {
+            vm.enqueue(
+                fileName: name, direction: .upload,
+                source: source, sourcePath: "/\(name)",
+                destination: destination, destinationDirectory: "/ziel",
+                onCompleted: nil)
+        }
+
+        await waitUntil { vm.items.count == 2 && vm.items.allSatisfy { $0.status == .finished } }
+        #expect(await calls.count == 1)
+        #expect(await destination.writtenData(at: "/ziel/1.txt") == content)
+        #expect(await destination.writtenData(at: "/ziel/2.txt") == content)
+    }
+
+    // MARK: - 16
+
+    /// Die Regel gilt nur bis zum Drain: ein späterer Batch fragt wieder.
+    @Test func ruleResetsAfterDrain() async throws {
+        let content = Data("x".utf8)
+        let source = QueueTestFS(reads: [
+            "/1.txt": .init(content: content),
+            "/2.txt": .init(content: content),
+        ])
+        let destination = QueueTestFS(reads: [
+            "/ziel/1.txt": .init(content: Data("alt".utf8)),
+            "/ziel/2.txt": .init(content: Data("alt".utf8)),
+        ])
+        let calls = CallCounter()
+
+        let vm = TransferQueueViewModel()
+        vm.conflictDecider = { _ in await calls.increment(); return (.overwrite, true) }
+
+        // Batch 1 mit applyToAll.
+        try await vm.enqueueAndWait(
+            fileName: "1.txt", direction: .upload,
+            source: source, sourcePath: "/1.txt",
+            destination: destination, destinationDirectory: "/ziel")
+        #expect(await calls.count == 1)
+        await waitUntil { vm.isActive == false }   // Worker leergelaufen → Regel zurückgesetzt
+
+        // Batch 2: Decider wird WIEDER gefragt.
+        try await vm.enqueueAndWait(
+            fileName: "2.txt", direction: .upload,
+            source: source, sourcePath: "/2.txt",
+            destination: destination, destinationDirectory: "/ziel")
+        #expect(await calls.count == 2)
+    }
+
+    // MARK: - 17
+
+    /// Existiert das Ziel nicht, wird der Decider gar nicht erst gefragt.
+    @Test func noConflictDoesNotAskDecider() async throws {
+        let content = Data("x".utf8)
+        let source = QueueTestFS(reads: ["/a.txt": .init(content: content)])
+        let destination = QueueTestFS(reads: [:])   // Ziel existiert NICHT
+        let calls = CallCounter()
+
+        let vm = TransferQueueViewModel()
+        vm.conflictDecider = { _ in await calls.increment(); return (.overwrite, false) }
+        try await vm.enqueueAndWait(
+            fileName: "a.txt", direction: .download,
+            source: source, sourcePath: "/a.txt",
+            destination: destination, destinationDirectory: "/ziel")
+
+        #expect(vm.items[0].status == .finished)
+        #expect(await calls.count == 0)
+        #expect(await destination.writtenData(at: "/ziel/a.txt") == content)
+    }
 }
