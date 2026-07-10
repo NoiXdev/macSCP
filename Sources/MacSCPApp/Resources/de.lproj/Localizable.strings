@@ -116,7 +116,6 @@
 "sidebar.group.dissolve" = "Gruppe auflösen";
 "sidebar.delete.confirmTitle %@" = "„%@“ löschen?";
 "sidebar.delete.confirmMessage" = "Die gespeicherten Zugangsdaten werden mit entfernt.";
-"common.create" = "Anlegen";
 "connection.editTitle" = "Session bearbeiten";
 "connection.field.password.unchanged" = "unverändert";
 "connection.field.group" = "Gruppe";

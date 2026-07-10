@@ -116,7 +116,6 @@
 "sidebar.group.dissolve" = "Dissolve group";
 "sidebar.delete.confirmTitle %@" = "Delete “%@”?";
 "sidebar.delete.confirmMessage" = "The saved credentials are removed as well.";
-"common.create" = "Create";
 "connection.editTitle" = "Edit session";
 "connection.field.password.unchanged" = "unchanged";
 "connection.field.group" = "Group";
