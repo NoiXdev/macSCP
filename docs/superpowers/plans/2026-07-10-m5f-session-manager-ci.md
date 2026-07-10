@@ -45,7 +45,7 @@ T1 → T2 → T3 → T4 → T5 → T6, strikt sequenziell (T3–T5 teilen sich `
   - `SessionStore.dissolveGroup(id: UUID) throws` (entfernt Gruppe UND entgruppiert deren Sessions in EINEM Write)
   - `SessionStore.all()` / `upsert(_:)` / `delete(id:)` unverändert in Signatur; `all()` liefert Sessions mit bereinigten (verwaisten) `groupID`s.
 
-- [ ] **Step 1: Failing Tests schreiben** — in `SessionStoreTests.swift` ergänzen (bestehende Suite-Struktur/Temp-Dir-Muster der Datei übernehmen):
+- [x] **Step 1: Failing Tests schreiben** — in `SessionStoreTests.swift` ergänzen (bestehende Suite-Struktur/Temp-Dir-Muster der Datei übernehmen):
 
 ```swift
 @Test func groupsRoundtripThroughTheStore() throws {
@@ -103,9 +103,9 @@ T1 → T2 → T3 → T4 → T5 → T6, strikt sequenziell (T3–T5 teilen sich `
 }
 ```
 
-- [ ] **Step 2: Rot laufen lassen** — `swift test --filter SessionStore` → FAIL („cannot find 'StoredGroup'", „extra argument 'groupID'").
+- [x] **Step 2: Rot laufen lassen** — `swift test --filter SessionStore` → FAIL („cannot find 'StoredGroup'", „extra argument 'groupID'").
 
-- [ ] **Step 3: Implementieren**
+- [x] **Step 3: Implementieren**
 
 `StoredGroup.swift` (neu):
 
@@ -206,9 +206,9 @@ public func dissolveGroup(id: UUID) throws {
 
 Wichtig: Ein `try?`-Decode auf `StoreFile` akzeptiert auch `[]` NICHT (Array ≠ Objekt) — genau deshalb funktioniert der Fallback. `Achtung:` leeres Array `[]` decodiert als `[StoredSession]` ✓.
 
-- [ ] **Step 4: Grün laufen lassen** — `swift test --filter SessionStore` PASS, danach `swift test` komplett PASS (bestehende `StoredSessionCompatTests` müssen unverändert grün sein).
+- [x] **Step 4: Grün laufen lassen** — `swift test --filter SessionStore` PASS, danach `swift test` komplett PASS (bestehende `StoredSessionCompatTests` müssen unverändert grün sein).
 
-- [ ] **Step 5: Commit** — `git add -A && git commit -m "feat: add flat session groups to the session store"` (+ Footer).
+- [x] **Step 5: Commit** — `git add -A && git commit -m "feat: add flat session groups to the session store"` (+ Footer).
 
 ---
 
@@ -232,7 +232,7 @@ Wichtig: Ein `try?`-Decode auf `StoreFile` akzeptiert auch `[]` NICHT (Array ≠
   - `public func moveSession(_ session: StoredSession, toGroup groupID: UUID?)`
   - `save(name:host:port:username:password:authKind:keyPath:groupID:)` — bestehende Methode + `groupID: UUID? = nil`; beim Update über Namens-Match bleibt eine vorhandene Gruppenzuordnung erhalten, wenn `groupID`-Argument `nil` ist? NEIN — Entscheidung: das Argument gewinnt IMMER (explizite Auswahl im Formular; der Picker ist beim Speichern sichtbar und `nil` heißt dort „Keine Gruppe").
 
-- [ ] **Step 1: Failing Tests** (Auszug — alle in `SessionListViewModelTests.swift`; Setup-Muster der Datei übernehmen):
+- [x] **Step 1: Failing Tests** (Auszug — alle in `SessionListViewModelTests.swift`; Setup-Muster der Datei übernehmen):
 
 ```swift
 @Test @MainActor func groupCRUDRoundtrip() throws {
@@ -293,9 +293,9 @@ Wichtig: Ein `try?`-Decode auf `StoreFile` akzeptiert auch `[]` NICHT (Array ≠
 }
 ```
 
-- [ ] **Step 2: Rot** — `swift test --filter SessionListViewModel` → FAIL (unbekannte Methoden).
+- [x] **Step 2: Rot** — `swift test --filter SessionListViewModel` → FAIL (unbekannte Methoden).
 
-- [ ] **Step 3: Implementieren** — alle Methoden folgen dem bestehenden do/catch-reload-errorMessage-Muster der Datei; `reload()` lädt zusätzlich `groups = try store.allGroups()` (unsortiert). Kernstücke:
+- [x] **Step 3: Implementieren** — alle Methoden folgen dem bestehenden do/catch-reload-errorMessage-Muster der Datei; `reload()` lädt zusätzlich `groups = try store.allGroups()` (unsortiert). Kernstücke:
 
 ```swift
 public func sessions(inGroup groupID: UUID?) -> [StoredSession] {
@@ -341,8 +341,8 @@ public func createGroup(named name: String) -> StoredGroup? {
 
 `renameGroup`/`dissolveGroup`/`moveSession` analog (`moveSession`: Kopie mit gesetzter `groupID` → `updateSession(_, newSecret: nil)`). `save(...)` bekommt `groupID: UUID? = nil` und setzt es in beiden Zweigen (update + create).
 
-- [ ] **Step 4: Grün** — `swift test --filter SessionListViewModel`, dann `swift test` komplett.
-- [ ] **Step 5: Commit** — `feat: add group CRUD and secret-preserving updates to the session list`.
+- [x] **Step 4: Grün** — `swift test --filter SessionListViewModel`, dann `swift test` komplett.
+- [x] **Step 5: Commit** — `feat: add group CRUD and secret-preserving updates to the session list`.
 
 ---
 
@@ -391,7 +391,7 @@ Neue L10n-Keys (EN → DE), in BEIDE Kataloge unter `/* Session manager (M5f) */
 
 („sidebar.delete" = „Delete"/„Löschen" existiert bereits.)
 
-- [ ] **Step 1: Implementieren** (View-Umbau nach obiger Spezifikation; Struktur-Vorgabe):
+- [x] **Step 1: Implementieren** (View-Umbau nach obiger Spezifikation; Struktur-Vorgabe):
 
 ```swift
 List {
@@ -420,9 +420,9 @@ List {
 
 `sessionRows(_:)` und `groupHeader(_:)` als private `@ViewBuilder`-Helper; Zeilen-Inhalt (Punkt, Name/TextField, Hover, aktive Optik, contextMenu, draggable, help) in einem privaten `SessionRow`-Sub-View, damit der Body lesbar bleibt.
 
-- [ ] **Step 2: Build prüfen** — `swift build` fehlerfrei; `swift test` komplett grün (keine Core-Änderungen).
-- [ ] **Step 3: Kurzer manueller Sanity-Check** (Koordinator übernimmt den vollen Smoke in T6): App bauen und starten, Gruppe anlegen, Session per Kontextmenü verschieben, Inline-Rename, Löschen-Rückfrage.
-- [ ] **Step 4: Commit** — `feat: add groups, context menus and CI styling to the session sidebar`.
+- [x] **Step 2: Build prüfen** — `swift build` fehlerfrei; `swift test` komplett grün (keine Core-Änderungen).
+- [x] **Step 3: Kurzer manueller Sanity-Check** (Koordinator übernimmt den vollen Smoke in T6): App bauen und starten, Gruppe anlegen, Session per Kontextmenü verschieben, Inline-Rename, Löschen-Rückfrage.
+- [x] **Step 4: Commit** — `feat: add groups, context menus and CI styling to the session sidebar`.
 
 ---
 
@@ -463,7 +463,7 @@ Verhalten:
 
 Neue Keys: `connection.editTitle`, `connection.field.password.unchanged`, `connection.field.group`, `connection.saveAndConnect`, `common.save` (EN/DE wie oben) — App-Katalog; keine neuen Core-Keys (Validierung nutzt bestehende `core.connect.*`).
 
-- [ ] **Step 1: Failing Tests** (`ConnectionViewModelTests.swift`):
+- [x] **Step 1: Failing Tests** (`ConnectionViewModelTests.swift`):
 
 ```swift
 @Test @MainActor func beginEditingPrefillsEverythingExceptTheSecret() {
@@ -510,11 +510,11 @@ Neue Keys: `connection.editTitle`, `connection.field.password.unchanged`, `conne
 }
 ```
 
-- [ ] **Step 2: Rot** — `swift test --filter ConnectionViewModel` → FAIL.
-- [ ] **Step 3: Core implementieren** (Mode/beginEditing/endEditing/validateForEditSave nach Interface oben; Validierungsreihenfolge und Meldungen identisch zu `connect()`: host leer → `.host`, port nicht numerisch → `.port`, username leer → `.username`, name leer → `.saveName`, bei `.privateKey` keyPath leer → `.keyPath`).
-- [ ] **Step 4: Grün** — Filter-Suite, dann `swift test` komplett.
-- [ ] **Step 5: App-Teil implementieren** (FormView-Zweige + ContentView-Handler + Kataloge nach Spezifikation oben) und `swift build` prüfen.
-- [ ] **Step 6: Commit** — `feat: add edit mode for stored sessions to the connection form`.
+- [x] **Step 2: Rot** — `swift test --filter ConnectionViewModel` → FAIL.
+- [x] **Step 3: Core implementieren** (Mode/beginEditing/endEditing/validateForEditSave nach Interface oben; Validierungsreihenfolge und Meldungen identisch zu `connect()`: host leer → `.host`, port nicht numerisch → `.port`, username leer → `.username`, name leer → `.saveName`, bei `.privateKey` keyPath leer → `.keyPath`).
+- [x] **Step 4: Grün** — Filter-Suite, dann `swift test` komplett.
+- [x] **Step 5: App-Teil implementieren** (FormView-Zweige + ContentView-Handler + Kataloge nach Spezifikation oben) und `swift build` prüfen.
+- [x] **Step 6: Commit** — `feat: add edit mode for stored sessions to the connection form`.
 
 ---
 
@@ -558,22 +558,22 @@ Verhalten:
 - Formular-Proportionen: `Form`-Block auf `.frame(maxWidth: 460)` begrenzen und den umgebenden VStack horizontal zentriert lassen wie bisher (Mockup-Proportion ~420–460 pt); Alert-/Highlight-Verhalten aus dem Design-Review-Fix (6e03c7a) unangetastet.
 - CI-Wache: Upload-/Download-Button-Beschriftungen behalten ihre semantischen Farben (bestehende Builder unverändert); der blaue Tint darf Bernstein-Elemente nicht überschreiben (TransferQueueBar setzt seine Farben explizit — prüfen, dass kein `.tint`-Erbe sie kippt; falls doch, dort explizit gegensetzen).
 
-- [ ] **Step 1: Implementieren** nach Spezifikation.
-- [ ] **Step 2: Build + volle Suite** — `swift build`, `swift test` grün.
-- [ ] **Step 3: Commit** — `feat: move session actions into a native toolbar and adopt the CI accent`.
+- [x] **Step 1: Implementieren** nach Spezifikation.
+- [x] **Step 2: Build + volle Suite** — `swift build`, `swift test` grün.
+- [x] **Step 3: Commit** — `feat: move session actions into a native toolbar and adopt the CI accent`.
 
 ---
 
 ### Task 6: Abschluss-Verifikation
 
-- [ ] `swift test` gesamt; Rig hoch (`docker compose -f docker/test-server/compose.yml up -d`, NUR aus dem Haupt-Checkout), `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` voll grün.
-- [ ] **Alt-Datei-Kompatibilität real:** vorhandene `~/Library/Application Support/macSCP/sessions.json` sichern; App starten → bestehende Sessions erscheinen; eine Gruppe anlegen → Datei ist jetzt Container-Format; App neu starten → alles noch da.
-- [ ] **Visueller Smoke (Bildschirm frei):**
+- [x] `swift test` gesamt; Rig hoch (`docker compose -f docker/test-server/compose.yml up -d`, NUR aus dem Haupt-Checkout), `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` voll grün.
+- [x] **Alt-Datei-Kompatibilität real:** vorhandene `~/Library/Application Support/macSCP/sessions.json` sichern; App starten → bestehende Sessions erscheinen; eine Gruppe anlegen → Datei ist jetzt Container-Format; App neu starten → alles noch da.
+- [x] **Visueller Smoke (Bildschirm frei):**
   - Sidebar: Gruppe „Kunden" anlegen (Hintergrund-Kontextmenü), Session per „Verschieben nach" einordnen, per Drag & Drop wieder heraus; Gruppe einklappen; Inline-Umbenennen von Session UND Gruppe (Enter committet, Escape bricht ab); Löschen zeigt Rückfrage mit Namen; aktive Session ist blau hinterlegt mit Phosphor-Punkt.
   - Edit-Roundtrip: Session anlegen (verbinden mit „Als Session speichern", Gruppe im Picker wählbar) → trennen → Kontextmenü „Bearbeiten…" → Formular vorbefüllt, Passwortfeld leer mit „unverändert" → Host ändern, Passwort LEER lassen → „Speichern & verbinden" → Verbindung kommt zustande (beweist: Secret blieb erhalten) → erneut bearbeiten, falsches Passwort eintippen → Speichern → Verbinden schlägt mit Auth-Fehler fehl (beweist: Secret überschrieben) → korrigieren.
   - Toolbar/Titel: verbunden zeigt „macSCP — ‹Name›" + Toolbar-Aktionen; getrennt „macSCP" ohne Items; ⌘T funktioniert weiter.
   - Farben: Verbinden/Speichern & verbinden prominent in Ozeanblau; Pane-Badges weiter Bernstein/Blau; Transfer-Leiste unverändert Duo-Farben; DE + EN stichprobenartig (eine Ansicht mit `-AppleLanguages '(en)'`).
-- [ ] Checkboxen im Plan abhaken, Commit `docs: mark M5f plan tasks as completed` (+ Footer).
+- [x] Checkboxen im Plan abhaken, Commit `docs: mark M5f plan tasks as completed` (+ Footer).
 
 ## Ausblick
 
