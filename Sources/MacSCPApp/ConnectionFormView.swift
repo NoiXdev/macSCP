@@ -6,6 +6,10 @@ struct ConnectionFormView: View {
     let onConnected: (any RemoteFileSystem) -> Void
 
     @State private var showKeyImporter = false
+    /// Failure message currently shown as an alert. Deliberately separate
+    /// from `viewModel.state` so dismissing the alert keeps the `.failed`
+    /// state (and with it the red field highlight) intact.
+    @State private var alertMessage: String?
 
     private var isConnecting: Bool { viewModel.state == .connecting }
 
@@ -17,6 +21,36 @@ struct ConnectionFormView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            // While the host-key prompt is pending, the form is hidden
+            // entirely — the trust decision is the only thing on screen.
+            if let prompt = viewModel.hostKeyPrompt {
+                hostKeyPromptView(prompt)
+            } else {
+                formContent
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 420)
+        .fileImporter(isPresented: $showKeyImporter, allowedContentTypes: [.item]) { result in
+            if case .success(let url) = result {
+                viewModel.keyPath = url.path(percentEncoded: false)
+            }
+        }
+        .alert(
+            L10n.string("connection.error.title", "Connection failed"),
+            isPresented: Binding(
+                get: { alertMessage != nil },
+                set: { if !$0 { alertMessage = nil } }
+            )
+        ) {
+            Button(L10n.string("common.ok", "OK"), role: .cancel) {}
+        } message: {
+            Text(alertMessage ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private var formContent: some View {
             Text(L10n.string("connection.title", "New connection"))
                 .font(.title2.bold())
 
@@ -76,38 +110,6 @@ struct ConnectionFormView: View {
             }
             .disabled(isConnecting)
 
-            if case .failed(let message, _) = viewModel.state {
-                Text(message)
-                    .foregroundStyle(.red)
-                    .font(.callout)
-            }
-
-            if let prompt = viewModel.hostKeyPrompt {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(String(format: L10n.string(
-                        "connection.hostkey.first", "First connection to %@"), prompt.candidate.host))
-                        .font(.headline)
-                    Text(String(format: L10n.string(
-                        "connection.hostkey.fingerprintLabel", "Fingerprint (%@):"), prompt.candidate.keyType))
-                        .font(.callout)
-                    Text(prompt.candidate.fingerprintSHA256)
-                        .font(.system(.callout, design: .monospaced))
-                        .textSelection(.enabled)
-                    HStack {
-                        Spacer()
-                        Button(L10n.string("common.cancel", "Cancel")) {
-                            viewModel.resolveHostKeyPrompt(trust: false)
-                        }
-                        Button(L10n.string("connection.hostkey.trust", "Trust & connect")) {
-                            viewModel.resolveHostKeyPrompt(trust: true)
-                        }
-                        .keyboardShortcut(.defaultAction)
-                    }
-                }
-                .padding(12)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-            }
-
             HStack {
                 Spacer()
                 if isConnecting {
@@ -118,29 +120,56 @@ struct ConnectionFormView: View {
                     Task {
                         if let fs = await viewModel.connect() {
                             onConnected(fs)
+                        } else if case .failed(let message, _) = viewModel.state {
+                            alertMessage = message
                         }
                     }
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(isConnecting)
             }
-        }
-        .padding(24)
-        .frame(minWidth: 420)
-        .fileImporter(isPresented: $showKeyImporter, allowedContentTypes: [.item]) { result in
-            if case .success(let url) = result {
-                viewModel.keyPath = url.path(percentEncoded: false)
+    }
+
+    /// Full-pane trust decision for an unknown host key (M3c). Presentation
+    /// only — the TOFU semantics (explicit consent, mismatch never reaches
+    /// this prompt) live in the validator and stay untouched.
+    @ViewBuilder
+    private func hostKeyPromptView(_ prompt: ConnectionViewModel.HostKeyPrompt) -> some View {
+            Text(String(format: L10n.string(
+                "connection.hostkey.first", "First connection to %@"), prompt.candidate.host))
+                .font(.title2.bold())
+            Text(String(format: L10n.string(
+                "connection.hostkey.fingerprintLabel", "Fingerprint (%@):"), prompt.candidate.keyType))
+                .font(.callout)
+            Text(prompt.candidate.fingerprintSHA256)
+                .font(.system(.callout, design: .monospaced))
+                .textSelection(.enabled)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            HStack {
+                Spacer()
+                Button(L10n.string("common.back", "Back")) {
+                    viewModel.resolveHostKeyPrompt(trust: false)
+                }
+                Button(L10n.string("connection.hostkey.trust", "Trust & connect")) {
+                    viewModel.resolveHostKeyPrompt(trust: true)
+                }
+                .keyboardShortcut(.defaultAction)
             }
-        }
     }
 }
 
 private extension View {
-    /// Red outline for the form field whose validation failed.
+    /// Red outline for the form field whose validation failed. The stroke
+    /// sits 4pt outside the row's bounds so label and field content keep
+    /// breathing room instead of touching the border.
     func errorHighlight(_ active: Bool) -> some View {
         overlay(
-            RoundedRectangle(cornerRadius: 5)
+            RoundedRectangle(cornerRadius: 6)
                 .strokeBorder(Color.red, lineWidth: active ? 1.5 : 0)
+                .padding(.horizontal, -10)
+                .padding(.vertical, -5)
         )
         .animation(.easeOut(duration: 0.15), value: active)
     }

@@ -97,3 +97,8 @@
 
 /* Editor integration (M5e/T4) */
 "edit.openFailed" = "Could not open file for editing: %@";
+
+/* Connection form polish (design review 2026-07-10) */
+"common.ok" = "OK";
+"common.back" = "Back";
+"connection.error.title" = "Connection failed";
