@@ -124,6 +124,11 @@ private struct WindowAccessor: NSViewRepresentable {
 }
 
 struct ContentView: View {
+    /// Passed in from `MacSCPApp` (same instance as the `Settings` scene —
+    /// no singleton, per the v2 multi-window rule). Not yet read here;
+    /// M5c/T4 (queue parallelism) and T5 (bandwidth limits) wire it into
+    /// `transferQueue`.
+    let settingsStore: SettingsStore
     @State private var connectionViewModel = ConnectionViewModel(connector: { config, onUnknownHostKey in
         try await CitadelFileSystem.connect(
             config: config,

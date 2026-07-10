@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "macSCP",
+    defaultLocalization: "en",
     platforms: [.macOS(.v15)],
     products: [
         .library(name: "macSCPCore", targets: ["macSCPCore"]),
@@ -38,6 +39,7 @@ let package = Package(
                 "macSCPCore",
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
+            resources: [.process("Resources")],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(
