@@ -197,6 +197,92 @@ struct CitadelFileSystemIntegrationTests {
         #expect(listing.contains { $0.name == remoteName })
     }
 
+    /// M5c/T4 GATED VALIDATION (must pass before any parallel-slot code lands):
+    /// three ~8 MiB uploads run TRULY CONCURRENTLY over ONE `CitadelFileSystem`
+    /// — i.e. a single SFTP channel — via a `TaskGroup` calling
+    /// `TransferEngine.copyFile` directly. Expectation: each file arrives
+    /// byte-identical (source md5 == remote md5, checked with docker exec). If
+    /// this fails structurally, the channel cannot tolerate parallelism and the
+    /// whole parallel-slot task is BLOCKED (parallelism stays at 1).
+    @Test func threeConcurrentUploadsOverOneChannelArriveIntact() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        let localDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-parallel-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: localDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: localDir) }
+
+        // Build three distinct ~8 MiB random sources at runtime (never checked in).
+        struct Upload { let localPath: String; let remoteName: String; let remotePath: String; let md5: String }
+        var uploads: [Upload] = []
+        for index in 0..<3 {
+            let localFile = localDir.appendingPathComponent("src-\(index).bin")
+            let dd = Process()
+            dd.executableURL = URL(fileURLWithPath: "/bin/dd")
+            dd.arguments = ["if=/dev/urandom", "of=\(localFile.path(percentEncoded: false))",
+                            "bs=1m", "count=8"]
+            dd.standardError = FileHandle.nullDevice
+            try dd.run()
+            dd.waitUntilExit()
+            #expect(dd.terminationStatus == 0)
+
+            let remoteName = "macscp-parallel-\(UUID().uuidString)-\(index).bin"
+            uploads.append(Upload(
+                localPath: localFile.path(percentEncoded: false),
+                remoteName: remoteName, remotePath: "/config/\(remoteName)",
+                md5: localMD5(localFile.path(percentEncoded: false))))
+        }
+        defer { for upload in uploads { cleanupConfigPath(upload.remotePath) } }
+
+        // Drive all three uploads TRULY concurrently over the single channel.
+        let source = LocalFileSystem()
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for upload in uploads {
+                group.addTask {
+                    try await TransferEngine.copyFile(
+                        from: source, sourcePath: upload.localPath,
+                        to: fs, destinationDirectory: "/config", fileName: upload.remoteName,
+                        onProgress: { _ in })
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        // Byte-identical arrival: remote md5 (docker exec) must equal source md5.
+        for upload in uploads {
+            #expect(remoteMD5(upload.remotePath) == upload.md5)
+        }
+    }
+
+    /// Local md5 via `/sbin/md5 -q` (returns just the hash).
+    private func localMD5(_ path: String) -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/sbin/md5")
+        process.arguments = ["-q", path]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
+        process.waitUntilExit()
+        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    /// Remote md5 via `docker exec macscp-test-sshd md5sum <path>` (first field).
+    private func remoteMD5(_ path: String) -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
+        process.arguments = ["exec", "macscp-test-sshd", "md5sum", path]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
+        process.waitUntilExit()
+        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        return out.split(whereSeparator: { $0 == " " || $0 == "\n" }).first.map(String.init) ?? ""
+    }
+
     /// Erzeugt einen Laufzeit-Key und installiert den Public Key im Container.
     private func makeInstalledKey() throws -> (dir: URL, keyPath: String) {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
