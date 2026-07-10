@@ -77,3 +77,7 @@
 "transfers.status.cancelled" = "abgebrochen";
 "transfers.status.skipped" = "übersprungen";
 "transfers.status.interrupted" = "unterbrochen";
+
+/* Resume-Banner (M5d/T4) */
+"transfers.interrupted.banner" = "Unterbrochene Übertragungen können fortgesetzt werden.";
+"transfers.interrupted.resume" = "Fortsetzen";

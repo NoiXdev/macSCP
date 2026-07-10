@@ -273,6 +273,29 @@ struct ContentView: View {
                     }
                 }
 
+                // Resume banner: displayed when there are interrupted transfers
+                // (M5d/T4). Clicking "Resume" re-enqueues them with the current
+                // session's file systems and resume semantics enabled.
+                if transferQueue.hasInterrupted {
+                    HStack {
+                        Text(L10n.string(
+                            "transfers.interrupted.banner",
+                            "Interrupted transfers can be resumed."))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button(L10n.string("transfers.interrupted.resume", "Resume")) {
+                            transferQueue.retryInterrupted(
+                                source: session.localFS,
+                                destination: session.remoteFS)
+                        }
+                        .controlSize(.small)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                }
+
                 TransferQueueBar(viewModel: transferQueue)
             }
             .sheet(
