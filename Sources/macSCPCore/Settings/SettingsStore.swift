@@ -58,6 +58,8 @@ public final class SettingsStore {
         static let maxConcurrentTransfers = "maxConcurrentTransfers"
         static let uploadLimitKBs = "uploadLimitKBs"
         static let downloadLimitKBs = "downloadLimitKBs"
+        static let defaultEditorPath = "defaultEditorPath"
+        static let fileAssociations = "fileAssociations"
     }
 
     private enum Defaults {
@@ -119,6 +121,70 @@ public final class SettingsStore {
     public var downloadLimitKBs: Int {
         get { clamp(intValue(for: Keys.downloadLimitKBs, default: Defaults.downloadLimitKBs), 0, .max) }
         set { setInt(clamp(newValue, 0, .max), for: Keys.downloadLimitKBs) }
+    }
+
+    /// Absolute path to the .app bundle used as the default editor for remote
+    /// files; nil/empty = use the macOS system association. Persisted.
+    public var defaultEditorPath: String? {
+        get {
+            guard case .string(let value)? = raw[Keys.defaultEditorPath], !value.isEmpty else {
+                return nil
+            }
+            return value
+        }
+        set {
+            if let newValue, !newValue.isEmpty {
+                raw[Keys.defaultEditorPath] = .string(newValue)
+            } else {
+                raw[Keys.defaultEditorPath] = nil
+            }
+            persist()
+        }
+    }
+
+    /// Per-extension overrides: normalized extension (lowercase, no leading
+    /// dot, trimmed) -> absolute .app path. Assigning an empty app path for an
+    /// extension removes that rule instead of storing it. Empty/whitespace-only
+    /// extensions are ignored on write.
+    public var fileAssociations: [String: String] {
+        get {
+            guard case .object(let entries)? = raw[Keys.fileAssociations] else { return [:] }
+            var result: [String: String] = [:]
+            for (rawExtension, value) in entries {
+                guard case .string(let appPath) = value else { continue }
+                let normalizedExtension = Self.normalizeExtension(rawExtension)
+                guard !normalizedExtension.isEmpty else { continue }
+                result[normalizedExtension] = appPath
+            }
+            return result
+        }
+        set {
+            var normalized: [String: JSONValue] = [:]
+            for (rawExtension, appPath) in newValue {
+                let normalizedExtension = Self.normalizeExtension(rawExtension)
+                guard !normalizedExtension.isEmpty, !appPath.isEmpty else { continue }
+                normalized[normalizedExtension] = .string(appPath)
+            }
+            raw[Keys.fileAssociations] = normalized.isEmpty ? nil : .object(normalized)
+            persist()
+        }
+    }
+
+    /// Convenience: association lookup with the SAME normalization applied.
+    public func associatedApp(forExtension ext: String) -> String? {
+        let normalizedExtension = Self.normalizeExtension(ext)
+        guard !normalizedExtension.isEmpty else { return nil }
+        return fileAssociations[normalizedExtension]
+    }
+
+    /// Normalizes a file extension for use as a `fileAssociations` key:
+    /// trims whitespace, strips a single leading dot, and lowercases.
+    private static func normalizeExtension(_ ext: String) -> String {
+        var trimmed = ext.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix(".") {
+            trimmed.removeFirst()
+        }
+        return trimmed.lowercased()
     }
 
     // MARK: - Backing access

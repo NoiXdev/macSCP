@@ -125,4 +125,134 @@ struct SettingsStoreTests {
         store.maxConcurrentTransfers = 4
         #expect(FileManager.default.fileExists(atPath: fileURL(dir).path(percentEncoded: false)))
     }
+
+    // MARK: - Default editor + file associations (M5e Task 1)
+
+    @Test func defaultEditorSettingsDefaultToNilAndEmpty() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.defaultEditorPath == nil)
+        #expect(store.fileAssociations.isEmpty)
+        #expect(store.associatedApp(forExtension: "php") == nil)
+    }
+
+    @Test func editorSettingsPersistenceRoundtrips() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.defaultEditorPath = "/Applications/TextEdit.app"
+        store.fileAssociations = [
+            "php": "/Applications/PhpStorm.app",
+            "md": "/Applications/Typora.app",
+        ]
+
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.defaultEditorPath == "/Applications/TextEdit.app")
+        #expect(
+            reloaded.fileAssociations == [
+                "php": "/Applications/PhpStorm.app",
+                "md": "/Applications/Typora.app",
+            ])
+    }
+
+    @Test func fileAssociationsNormalizesExtensionsOnSet() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.fileAssociations = [
+            ".PHP": "/Applications/PhpStorm.app",
+            " .md ": "/Applications/Typora.app",
+        ]
+        #expect(
+            store.fileAssociations == [
+                "php": "/Applications/PhpStorm.app",
+                "md": "/Applications/Typora.app",
+            ])
+    }
+
+    @Test func associatedAppNormalizesLookupExtension() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.fileAssociations = ["php": "/Applications/PhpStorm.app"]
+        #expect(store.associatedApp(forExtension: ".PHP") == "/Applications/PhpStorm.app")
+        #expect(store.associatedApp(forExtension: " php ") == "/Applications/PhpStorm.app")
+    }
+
+    @Test func emptyOrWhitespaceExtensionsAreIgnoredOnSetAndRead() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.fileAssociations = [
+            "": "/Applications/PhpStorm.app",
+            "   ": "/Applications/Typora.app",
+            "php": "/Applications/PhpStorm.app",
+        ]
+        #expect(store.fileAssociations == ["php": "/Applications/PhpStorm.app"])
+        #expect(store.associatedApp(forExtension: "") == nil)
+        #expect(store.associatedApp(forExtension: "   ") == nil)
+    }
+
+    @Test func settingEmptyAppPathRemovesAssociationRule() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.fileAssociations = [
+            "php": "/Applications/PhpStorm.app",
+            "md": "/Applications/Typora.app",
+        ]
+        store.fileAssociations = ["php": "", "md": "/Applications/Typora.app"]
+        #expect(store.fileAssociations == ["md": "/Applications/Typora.app"])
+        #expect(store.associatedApp(forExtension: "php") == nil)
+    }
+
+    @Test func settingDefaultEditorPathToEmptyOrNilClearsIt() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.defaultEditorPath = "/Applications/TextEdit.app"
+        store.defaultEditorPath = ""
+        #expect(store.defaultEditorPath == nil)
+
+        store.defaultEditorPath = "/Applications/TextEdit.app"
+        store.defaultEditorPath = nil
+        #expect(store.defaultEditorPath == nil)
+    }
+
+    @Test func loadingOldSettingsFileWithoutEditorKeysUsesDefaults() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"maxConcurrentTransfers": 4, "uploadLimitKBs": 10, "downloadLimitKBs": 20}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        #expect(store.maxConcurrentTransfers == 4)
+        #expect(store.defaultEditorPath == nil)
+        #expect(store.fileAssociations.isEmpty)
+    }
+
+    @Test func editorSettingsSurviveAlongsideUnknownKeys() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"maxConcurrentTransfers": 4, "futureFeatureEnabled": true, "futureLabel": "keep-me"}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        store.defaultEditorPath = "/Applications/TextEdit.app"
+        store.fileAssociations = ["php": "/Applications/PhpStorm.app"]
+
+        let data = try Data(contentsOf: fileURL(dir))
+        let raw = try JSONDecoder().decode([String: JSONValue].self, from: data)
+        #expect(raw["futureFeatureEnabled"] == .bool(true))
+        #expect(raw["futureLabel"] == .string("keep-me"))
+        #expect(raw["defaultEditorPath"] == .string("/Applications/TextEdit.app"))
+        #expect(raw["fileAssociations"] == .object(["php": .string("/Applications/PhpStorm.app")]))
+    }
 }
