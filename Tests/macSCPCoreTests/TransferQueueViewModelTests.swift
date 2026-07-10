@@ -60,8 +60,13 @@ struct TransferQueueViewModelTests {
         }
 
         private var reads: [String: Read]
+        /// Verzeichnisinhalte pro Pfad — Grundlage für Baum-Expansion (M5b/T3).
+        private var listings: [String: [RemoteFileItem]]
         private var written: [String: Data] = [:]
         private(set) var writeOrder: [String] = []
+        /// Reihenfolge der `createDirectory`-Aufrufe — Tests prüfen darüber die
+        /// Top-down-Anlage der Zielverzeichnisse (M5b/T3).
+        private(set) var createdDirectories: [String] = []
         /// Signal-Gate für `stat`, isoliert vom Chunk-Gating (`Read.started/gate`
         /// oben): erlaubt Tests, GENAU das stat-Await in `resolveConflictIfNeeded`
         /// offenzuhalten (M5b/T2-Review-Fix, no-decider-Variante). `statEntered`
@@ -69,14 +74,31 @@ struct TransferQueueViewModelTests {
         /// gesetzt.
         private var statEntered: TestSignal?
         private var statGate: TestSignal?
+        /// Analog für `list`: erlaubt Tests, die Baum-Expansion an einem
+        /// `list`-Await festzunageln (cancelAll-während-Expansion, M5b/T3).
+        private var listEntered: TestSignal?
+        private var listGate: TestSignal?
 
-        init(reads: [String: Read], statEntered: TestSignal? = nil, statGate: TestSignal? = nil) {
+        init(
+            reads: [String: Read],
+            listings: [String: [RemoteFileItem]] = [:],
+            statEntered: TestSignal? = nil, statGate: TestSignal? = nil,
+            listEntered: TestSignal? = nil, listGate: TestSignal? = nil
+        ) {
             self.reads = reads
+            self.listings = listings
             self.statEntered = statEntered
             self.statGate = statGate
+            self.listEntered = listEntered
+            self.listGate = listGate
         }
 
-        func list(path: String) async throws -> [RemoteFileItem] { [] }
+        func list(path: String) async throws -> [RemoteFileItem] {
+            await listEntered?.fire()
+            if let listGate { try await listGate.wait() }
+            if let entries = listings[path] { return entries }
+            throw RemoteFSError.notFound(path: path)
+        }
 
         func stat(path: String) async throws -> RemoteFileItem {
             await statEntered?.fire()
@@ -114,10 +136,12 @@ struct TransferQueueViewModelTests {
 
         func writtenData(at path: String) -> Data? { written[path] }
 
-        /// Minimal-Konformität für T1: dieses Test-Double kennt keine
-        /// Verzeichnisstruktur (nur registrierte Datei-Pfade), daher ein
-        /// simpler No-op — idempotent per Definition, keine Kollisionsfälle.
-        func createDirectory(at path: String) async throws {}
+        /// Protokolliert den Aufruf (für Reihenfolge-Prüfungen der Top-down-
+        /// Anlage) und ist ansonsten idempotenter No-op — dieses Double kennt
+        /// keine echten Kollisionsfälle.
+        func createDirectory(at path: String) async throws {
+            createdDirectories.append(path)
+        }
 
         func disconnect() async {}
 
@@ -776,5 +800,293 @@ struct TransferQueueViewModelTests {
         #expect(vm.items[0].status == .cancelled)
         #expect(waiterThrew.value == 1)
         #expect(await destination.writtenData(at: "/ziel/a.txt") == nil)
+    }
+
+    // MARK: - Baum-Tests (M5b/T3)
+
+    /// Standard-Fixture `dir/{a.txt, sub/{b.txt}, link→x, leer/}` als Listings.
+    func treeListings() -> [String: [RemoteFileItem]] {
+        [
+            "/dir": [
+                RemoteFileItem(name: "a.txt", path: "/dir/a.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "sub", path: "/dir/sub", kind: .directory),
+                RemoteFileItem(name: "link", path: "/dir/link", kind: .symlink),
+                RemoteFileItem(name: "leer", path: "/dir/leer", kind: .directory),
+            ],
+            "/dir/sub": [
+                RemoteFileItem(name: "b.txt", path: "/dir/sub/b.txt", kind: .file, size: 1),
+            ],
+            "/dir/leer": [],
+        ]
+    }
+
+    /// Findet den Status des Items mit dem gegebenen angezeigten Namen.
+    @MainActor func status(_ vm: TransferQueueViewModel, _ name: String) -> TransferQueueViewModel.Item.Status? {
+        vm.items.first(where: { $0.fileName == name })?.status
+    }
+
+    // MARK: - 20
+
+    /// Zielverzeichnisse werden top-down VOR den Datei-Writes angelegt.
+    @Test func treeCreatesDirectoriesTopDown() async throws {
+        let contentA = Data("aaa".utf8)
+        let contentB = Data("bbb".utf8)
+        let startedA = TestSignal(); let gateA = TestSignal()
+        let startedB = TestSignal(); let gateB = TestSignal()
+        let source = QueueTestFS(
+            reads: [
+                "/dir/a.txt": .init(content: contentA, started: startedA, gate: gateA),
+                "/dir/sub/b.txt": .init(content: contentB, started: startedB, gate: gateB),
+            ],
+            listings: treeListings())
+        let destination = QueueTestFS(reads: [:])
+        let done = TestSignal()
+
+        let vm = TransferQueueViewModel()
+        vm.enqueueTree(
+            directoryName: "dir", direction: .download,
+            source: source, sourceDirectory: "/dir",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { await done.fire() })
+
+        // Auf vollständige Expansion warten (alle drei Verzeichnisse angelegt),
+        // ohne auf onCompleted zu setzen (Writes sind gegated).
+        while (await destination.createdDirectories).count < 3 { await Task.yield() }
+        #expect(await destination.createdDirectories == ["/ziel/dir", "/ziel/dir/sub", "/ziel/dir/leer"])
+        #expect(await destination.writeOrder.isEmpty)   // Verzeichnisse zuerst, Writes noch gated
+
+        await gateA.fire(); await gateB.fire()
+        try await done.wait()
+        #expect(await destination.writeOrder == ["/ziel/dir/a.txt", "/ziel/dir/sub/b.txt"])
+    }
+
+    // MARK: - 21
+
+    /// Alle Dateien werden übertragen, onCompleted feuert genau einmal.
+    @Test func treeTransfersAllFilesAndFiresOnCompletedOnce() async throws {
+        let contentA = Data("aaa".utf8)
+        let contentB = Data("bbb".utf8)
+        let source = QueueTestFS(
+            reads: [
+                "/dir/a.txt": .init(content: contentA),
+                "/dir/sub/b.txt": .init(content: contentB),
+            ],
+            listings: treeListings())
+        let destination = QueueTestFS(reads: [:])
+        let counter = Counter()
+        let done = TestSignal()
+
+        let vm = TransferQueueViewModel()
+        vm.enqueueTree(
+            directoryName: "dir", direction: .download,
+            source: source, sourceDirectory: "/dir",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { counter.increment(); await done.fire() })
+
+        try await done.wait()
+        await waitUntil { vm.isActive == false }
+        // Kein zweiter Aufruf – ein paar Runden nachlaufen lassen.
+        for _ in 0..<50 { await Task.yield() }
+
+        #expect(counter.value == 1)
+        #expect(status(vm, "a.txt") == .finished)
+        #expect(status(vm, "b.txt") == .finished)
+        #expect(await destination.writtenData(at: "/ziel/dir/a.txt") == contentA)
+        #expect(await destination.writtenData(at: "/ziel/dir/sub/b.txt") == contentB)
+    }
+
+    // MARK: - 22
+
+    /// Symlinks werden übersprungen (Item `.skipped`, Namensuffix " →", kein Write).
+    @Test func treeSkipsSymlinks() async throws {
+        let source = QueueTestFS(
+            reads: [
+                "/dir/a.txt": .init(content: Data("a".utf8)),
+                "/dir/sub/b.txt": .init(content: Data("b".utf8)),
+            ],
+            listings: treeListings())
+        let destination = QueueTestFS(reads: [:])
+        let done = TestSignal()
+
+        let vm = TransferQueueViewModel()
+        vm.enqueueTree(
+            directoryName: "dir", direction: .download,
+            source: source, sourceDirectory: "/dir",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { await done.fire() })
+
+        try await done.wait()
+
+        #expect(status(vm, "link →") == .skipped)
+        #expect(await destination.writtenData(at: "/ziel/dir/link") == nil)
+    }
+
+    // MARK: - 23
+
+    /// Leere Verzeichnisse werden dennoch angelegt.
+    @Test func treeCreatesEmptyDirectories() async throws {
+        let source = QueueTestFS(
+            reads: [
+                "/dir/a.txt": .init(content: Data("a".utf8)),
+                "/dir/sub/b.txt": .init(content: Data("b".utf8)),
+            ],
+            listings: treeListings())
+        let destination = QueueTestFS(reads: [:])
+        let done = TestSignal()
+
+        let vm = TransferQueueViewModel()
+        vm.enqueueTree(
+            directoryName: "dir", direction: .download,
+            source: source, sourceDirectory: "/dir",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { await done.fire() })
+
+        try await done.wait()
+        #expect(await destination.createdDirectories.contains("/ziel/dir/leer"))
+    }
+
+    // MARK: - 24
+
+    /// onCompleted feuert erst NACH dem letzten Item-Finish, nicht früher.
+    @Test func treeOnCompletedWaitsForLastItem() async throws {
+        let contentA = Data("aaa".utf8)
+        let contentB = Data("bbb".utf8)
+        let startedB = TestSignal(); let gateB = TestSignal()
+        let source = QueueTestFS(
+            reads: [
+                "/dir/a.txt": .init(content: contentA),
+                "/dir/sub/b.txt": .init(content: contentB, started: startedB, gate: gateB),
+            ],
+            listings: treeListings())
+        let destination = QueueTestFS(reads: [:])
+        let counter = Counter()
+        let done = TestSignal()
+
+        let vm = TransferQueueViewModel()
+        vm.enqueueTree(
+            directoryName: "dir", direction: .download,
+            source: source, sourceDirectory: "/dir",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { counter.increment(); await done.fire() })
+
+        // b.txt läuft (gegated), a.txt ist bereits fertig — trotzdem kein onCompleted.
+        try await startedB.wait()
+        await waitUntil { status(vm, "a.txt") == .finished }
+        #expect(counter.value == 0)
+
+        await gateB.fire()
+        try await done.wait()
+        #expect(counter.value == 1)
+        #expect(status(vm, "b.txt") == .finished)
+    }
+
+    // MARK: - 25
+
+    /// Expansions-Fehler (list wirft in einem Unterordner) → `.failed`-Item mit
+    /// "/"-Suffix; die übrigen Zweige laufen weiter.
+    @Test func treeExpansionErrorProducesFailedItemButOthersRun() async throws {
+        // "/dir/sub" NICHT registriert → list wirft notFound in diesem Zweig.
+        var listings = treeListings()
+        listings["/dir/sub"] = nil
+        let contentA = Data("aaa".utf8)
+        let source = QueueTestFS(
+            reads: ["/dir/a.txt": .init(content: contentA)],
+            listings: listings)
+        let destination = QueueTestFS(reads: [:])
+        let done = TestSignal()
+
+        let vm = TransferQueueViewModel()
+        vm.enqueueTree(
+            directoryName: "dir", direction: .download,
+            source: source, sourceDirectory: "/dir",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { await done.fire() })
+
+        try await done.wait()
+
+        // Fehler-Item für den Unterordner.
+        let subStatus = status(vm, "sub/")
+        if case .failed = subStatus {} else { Issue.record("sub/ sollte .failed sein, war \(String(describing: subStatus))") }
+        // a.txt lief trotzdem durch.
+        #expect(status(vm, "a.txt") == .finished)
+        #expect(status(vm, "link →") == .skipped)
+        #expect(await destination.writtenData(at: "/ziel/dir/a.txt") == contentA)
+        // b.txt wurde nie eingereiht.
+        #expect(status(vm, "b.txt") == nil)
+    }
+
+    // MARK: - 26
+
+    /// Auch bei Teilfehler (eine Datei failt) feuert onCompleted — genau einmal.
+    @Test func treePartialFailureStillFiresOnCompleted() async throws {
+        // a.txt-Read fehlt → copyFile wirft → Item .failed. b.txt läuft durch.
+        let contentB = Data("bbb".utf8)
+        let source = QueueTestFS(
+            reads: ["/dir/sub/b.txt": .init(content: contentB)],
+            listings: treeListings())
+        let destination = QueueTestFS(reads: [:])
+        let counter = Counter()
+        let done = TestSignal()
+
+        let vm = TransferQueueViewModel()
+        vm.enqueueTree(
+            directoryName: "dir", direction: .download,
+            source: source, sourceDirectory: "/dir",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { counter.increment(); await done.fire() })
+
+        try await done.wait()
+        await waitUntil { vm.isActive == false }
+        for _ in 0..<50 { await Task.yield() }
+
+        #expect(counter.value == 1)
+        if case .failed = status(vm, "a.txt") {} else { Issue.record("a.txt sollte .failed sein") }
+        #expect(status(vm, "b.txt") == .finished)
+        #expect(await destination.writtenData(at: "/ziel/dir/sub/b.txt") == contentB)
+    }
+
+    // MARK: - 27
+
+    /// cancelAll während der Expansion: keine neuen Items, Gruppe aufgeräumt,
+    /// onCompleted feuert NICHT, isActive false.
+    @Test func cancelAllDuringExpansionStopsCleanly() async throws {
+        let listEntered = TestSignal()
+        let listGate = TestSignal()   // wird nie gefeuert; Cancel muss ihn lösen
+        let source = QueueTestFS(
+            reads: [
+                "/dir/a.txt": .init(content: Data("a".utf8)),
+                "/dir/sub/b.txt": .init(content: Data("b".utf8)),
+            ],
+            listings: treeListings(),
+            listEntered: listEntered, listGate: listGate)
+        let destination = QueueTestFS(reads: [:])
+        let counter = Counter()
+
+        let vm = TransferQueueViewModel()
+        vm.enqueueTree(
+            directoryName: "dir", direction: .download,
+            source: source, sourceDirectory: "/dir",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { counter.increment() })
+
+        // Expansion hängt im ersten list-Aufruf.
+        try await listEntered.wait()
+        await vm.cancelAll()
+
+        #expect(vm.isActive == false)
+        #expect(vm.items.isEmpty)         // list kehrte nie zurück → keine Datei-Items
+        for _ in 0..<50 { await Task.yield() }
+        #expect(counter.value == 0)        // kein onCompleted bei Voll-Abbruch
+
+        // Worker-Neustart bleibt intakt: ein neues enqueue läuft an.
+        let done = TestSignal()
+        let plain = QueueTestFS(reads: ["/x.txt": .init(content: Data("x".utf8))])
+        vm.enqueue(
+            fileName: "x.txt", direction: .upload,
+            source: plain, sourcePath: "/x.txt",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { await done.fire() })
+        try await done.wait()
+        #expect(vm.items.last?.status == .finished)
     }
 }

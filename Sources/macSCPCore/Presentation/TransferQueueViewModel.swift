@@ -49,6 +49,17 @@ public final class TransferQueueViewModel {
                 if case .running = self { return true }
                 return false
             }
+
+            /// true, wenn dieses Item einen Endzustand erreicht hat. Die
+            /// Gruppen-Buchhaltung (M5b/T3) dekrementiert genau beim Übergang
+            /// nach terminal — deshalb ist dieser eine Prädikat der Dreh- und
+            /// Angelpunkt.
+            public var isTerminal: Bool {
+                switch self {
+                case .finished, .failed, .cancelled, .skipped: return true
+                case .queued, .running: return false
+                }
+            }
         }
         public let id: UUID
         public internal(set) var fileName: String   // `.rename` aktualisiert den angezeigten Namen
@@ -113,6 +124,30 @@ public final class TransferQueueViewModel {
     /// Terminalzustand erreicht wurde.
     private var resolvingJobID: UUID?
 
+    // MARK: - Baum-/Gruppen-Zustand (M5b/T3)
+
+    /// Buchhaltung für einen rekursiven Ordner-Transfer. Referenztyp, damit
+    /// verstreute Mutationen (aus `setStatus`, der Expansion und `finishExpansion`)
+    /// ohne Rück-Zuweisung in `groups` sichtbar werden.
+    private final class TreeGroup {
+        /// Noch nicht-terminale Items dieser Gruppe.
+        var remaining = 0
+        /// Expansion hat aufgehört zu laufen (regulär ODER via Cancel).
+        var expansionDone = false
+        /// Expansion hat den Baum vollständig durchlaufen (NICHT gecancelt).
+        var expansionSucceeded = false
+        /// Mindestens ein Item ist `.finished` geworden.
+        var anyFinished = false
+        /// onCompleted bereits gefeuert — Exactly-once-Riegel.
+        var fired = false
+        let onCompleted: (@MainActor () async -> Void)?
+        init(onCompleted: (@MainActor () async -> Void)?) { self.onCompleted = onCompleted }
+    }
+
+    private var groups: [UUID: TreeGroup] = [:]
+    private var itemGroup: [UUID: UUID] = [:]                       // Item-ID → Gruppen-ID
+    private var expansionTasks: [UUID: Task<Void, Never>] = [:]     // Gruppen-ID → Expansions-Task
+
     public init() {}
 
     // MARK: - Öffentliche API
@@ -157,9 +192,60 @@ public final class TransferQueueViewModel {
         }
     }
 
+    /// Reiht einen kompletten Ordner ein: legt Zielverzeichnisse an (top-down)
+    /// und enqueued jede Datei als eigenes Queue-Item. `onCompleted` feuert genau
+    /// einmal, wenn ALLE Items des Baums terminal sind (finished/failed/skipped/
+    /// cancelled) — auch bei Teilfehlern. Symlinks werden übersprungen (Item mit
+    /// Status `.skipped` und Namensuffix " →"). Expansions-Fehler (list/mkdir)
+    /// erscheinen als `.failed`-Item unter dem Ordnernamen mit "/"-Suffix.
+    ///
+    /// Die Expansion läuft als eigene MainActor-Task VOR den Transfers (BFS/DFS
+    /// top-down): erst `createDirectory(dest/dirName)`, dann `list(source)` —
+    /// Dateien via `enqueue` (samt T2-Konfliktlogik), Unterverzeichnisse rekursiv.
+    ///
+    /// onCompleted-Regel bei Abbruch: Wird die Queue via `cancelAll` VOLLSTÄNDIG
+    /// abgebrochen (kein Item hat `.finished` erreicht UND die Expansion wurde
+    /// gecancelt statt regulär beendet), feuert onCompleted NICHT — ein Refresh
+    /// nach kompletter Stornierung wäre sinnlos. Sobald aber mindestens ein Item
+    /// fertig wurde ODER die Expansion regulär durchlief, feuert es.
+    public func enqueueTree(
+        directoryName: String, direction: TransferDirection,
+        source: any RemoteFileSystem, sourceDirectory: String,
+        destination: any RemoteFileSystem, destinationDirectory: String,
+        onCompleted: (@MainActor () async -> Void)?
+    ) {
+        let groupID = UUID()
+        groups[groupID] = TreeGroup(onCompleted: onCompleted)
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await self.expandTree(
+                    directoryName: directoryName, direction: direction,
+                    source: source, sourceDirectory: sourceDirectory,
+                    destination: destination, destinationDirectory: destinationDirectory,
+                    group: groupID)
+                self.finishExpansion(groupID, succeeded: true)
+            } catch {
+                // Nur Cancellation propagiert bis hierher — Zweig-Fehler werden
+                // in `expandTree` lokal in `.failed`-Items übersetzt.
+                self.finishExpansion(groupID, succeeded: false)
+            }
+        }
+        expansionTasks[groupID] = task
+    }
+
     /// Bricht alles ab: laufenden Transfer canceln, queued → `.cancelled`,
     /// wartende Continuations werfen. Kehrt erst nach Worker-Stopp zurück.
     public func cancelAll() async {
+        // 0. Laufende Baum-Expansion(en) stoppen und abwarten, BEVOR queued Items
+        //    abgeräumt werden — so entstehen ab hier keine neuen Items mehr
+        //    (M5b/T3). `finishExpansion(succeeded: false)` markiert die Gruppen als
+        //    gecancelt; deren onCompleted feuert dann nur, falls doch schon ein
+        //    Item `.finished` war (s. `maybeFireGroup`).
+        let expansions = expansionTasks
+        expansionTasks.removeAll()
+        for task in expansions.values { task.cancel() }
+        for task in expansions.values { await task.value }
         // 1. Alle noch nicht gestarteten (queued) IDs abräumen.
         let queued = order
         order.removeAll()
@@ -387,11 +473,143 @@ public final class TransferQueueViewModel {
         return (String(fileName[..<dotIndex]), String(fileName[dotIndex...]))
     }
 
+    // MARK: - Baum-Expansion (M5b/T3)
+
+    /// Rekursiver Top-down-Abstieg: legt zuerst `dest/dirName` an, listet dann
+    /// `sourceDirectory` und arbeitet die Einträge ab (Dateien → `enqueue`,
+    /// Unterverzeichnisse → rekursiv, Symlinks → terminales `.skipped`-Item).
+    /// Wirft ausschließlich `CancellationError`; Zweig-lokale list/mkdir-Fehler
+    /// werden in `.failed`-Items übersetzt und beenden nur diesen Zweig.
+    private func expandTree(
+        directoryName: String, direction: TransferDirection,
+        source: any RemoteFileSystem, sourceDirectory: String,
+        destination: any RemoteFileSystem, destinationDirectory: String,
+        group groupID: UUID
+    ) async throws {
+        try Task.checkCancellation()
+        let destDir = RemotePath.join(destinationDirectory, directoryName)
+
+        // Zielverzeichnis top-down anlegen.
+        do {
+            try await destination.createDirectory(at: destDir)
+        } catch {
+            try Task.checkCancellation()   // war es Cancellation, propagieren
+            addTerminalItem(
+                group: groupID, name: directoryName + "/",
+                direction: direction, status: .failed(Self.message(for: error)))
+            return
+        }
+
+        // Quellverzeichnis auflisten.
+        let entries: [RemoteFileItem]
+        do {
+            entries = try await source.list(path: sourceDirectory)
+        } catch {
+            try Task.checkCancellation()
+            addTerminalItem(
+                group: groupID, name: directoryName + "/",
+                direction: direction, status: .failed(Self.message(for: error)))
+            return
+        }
+
+        for entry in entries {
+            try Task.checkCancellation()
+            switch entry.kind {
+            case .file:
+                // Datei-Items durchlaufen die normale enqueue-/Konfliktlogik.
+                let id = enqueue(
+                    fileName: entry.name, direction: direction,
+                    source: source, sourcePath: entry.path,
+                    destination: destination, destinationDirectory: destDir,
+                    onCompleted: nil)
+                registerGroupItem(id, group: groupID)
+            case .directory:
+                try await expandTree(
+                    directoryName: entry.name, direction: direction,
+                    source: source, sourceDirectory: entry.path,
+                    destination: destination, destinationDirectory: destDir,
+                    group: groupID)
+            case .symlink, .other:
+                // Nicht folgen: terminales `.skipped`-Item mit " →"-Suffix.
+                addTerminalItem(
+                    group: groupID, name: entry.name + " →",
+                    direction: direction, status: .skipped)
+            }
+        }
+    }
+
+    // MARK: - Gruppen-Buchhaltung (M5b/T3)
+
+    /// Ordnet ein bereits eingereites Item einer Gruppe zu und zählt es als
+    /// offen. Muss synchron direkt nach `enqueue` laufen (kein Await dazwischen),
+    /// sonst könnte der Worker das Item vor der Registrierung terminalisieren.
+    private func registerGroupItem(_ id: UUID, group groupID: UUID) {
+        guard let group = groups[groupID] else { return }
+        group.remaining += 1
+        itemGroup[id] = groupID
+    }
+
+    /// Hängt ein SOFORT terminales Item an (Symlink-Skip oder Expansions-Fehler)
+    /// und routet es durch denselben Choke-Point wie alle anderen.
+    private func addTerminalItem(
+        group groupID: UUID, name: String,
+        direction: TransferDirection, status: Item.Status
+    ) {
+        let id = UUID()
+        items.append(Item(id: id, fileName: name, direction: direction, status: .queued))
+        registerGroupItem(id, group: groupID)
+        setStatus(id, status)   // löst groupItemBecameTerminal aus
+    }
+
+    /// Vom `setStatus`-Choke-Point aufgerufen, sobald ein Gruppen-Item terminal
+    /// wird: dekrementiert und prüft auf Gruppen-Abschluss.
+    private func groupItemBecameTerminal(_ id: UUID, status: Item.Status) {
+        guard let groupID = itemGroup.removeValue(forKey: id), let group = groups[groupID] else { return }
+        group.remaining -= 1
+        if case .finished = status { group.anyFinished = true }
+        maybeFireGroup(groupID)
+    }
+
+    /// Markiert die Expansion einer Gruppe als beendet (regulär oder gecancelt)
+    /// und prüft auf Abschluss — Items könnten schon vorher alle terminal sein.
+    private func finishExpansion(_ groupID: UUID, succeeded: Bool) {
+        expansionTasks[groupID] = nil
+        guard let group = groups[groupID] else { return }
+        group.expansionDone = true
+        group.expansionSucceeded = succeeded
+        maybeFireGroup(groupID)
+    }
+
+    /// Feuert `onCompleted` genau einmal, wenn ALLE Items terminal sind UND die
+    /// Expansion nicht mehr läuft. Bei Voll-Abbruch (nichts fertig, Expansion
+    /// gecancelt) wird nur aufgeräumt, ohne zu feuern.
+    private func maybeFireGroup(_ groupID: UUID) {
+        guard let group = groups[groupID], !group.fired else { return }
+        guard group.expansionDone, group.remaining == 0 else { return }
+        guard group.anyFinished || group.expansionSucceeded else {
+            groups[groupID] = nil   // Voll-Abbruch: kein Refresh nötig
+            return
+        }
+        group.fired = true
+        let onCompleted = group.onCompleted
+        groups[groupID] = nil
+        if let onCompleted {
+            Task { @MainActor in await onCompleted() }
+        }
+    }
+
     // MARK: - Helfer
 
     private func setStatus(_ id: UUID, _ status: Item.Status) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        let wasTerminal = items[index].status.isTerminal
         items[index].status = status
+        // Einziger Choke-Point der Gruppen-Buchhaltung: genau beim Übergang
+        // nicht-terminal → terminal dekrementieren (M5b/T3). Verstreute
+        // Dekrements würden Fälle verpassen.
+        if status.isTerminal && !wasTerminal {
+            groupItemBecameTerminal(id, status: status)
+        }
     }
 
     private func resumeWaiter(_ id: UUID, with result: Result<Void, Error>) {
