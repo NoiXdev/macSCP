@@ -102,3 +102,18 @@
 "common.ok" = "OK";
 "common.back" = "Zurück";
 "connection.error.title" = "Verbindung fehlgeschlagen";
+
+/* Session manager (M5f) */
+"sidebar.connect" = "Verbinden";
+"sidebar.edit" = "Bearbeiten…";
+"sidebar.rename" = "Umbenennen";
+"sidebar.moveTo" = "Verschieben nach";
+"sidebar.noGroup" = "Keine Gruppe";
+"sidebar.newGroup" = "Neue Gruppe…";
+"sidebar.newGroup.title" = "Neue Gruppe";
+"sidebar.newGroup.placeholder" = "Gruppenname";
+"sidebar.newGroup.create" = "Anlegen";
+"sidebar.group.dissolve" = "Gruppe auflösen";
+"sidebar.delete.confirmTitle %@" = "„%@“ löschen?";
+"sidebar.delete.confirmMessage" = "Die gespeicherten Zugangsdaten werden mit entfernt.";
+"common.create" = "Anlegen";

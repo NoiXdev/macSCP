@@ -102,3 +102,18 @@
 "common.ok" = "OK";
 "common.back" = "Back";
 "connection.error.title" = "Connection failed";
+
+/* Session manager (M5f) */
+"sidebar.connect" = "Connect";
+"sidebar.edit" = "Edit…";
+"sidebar.rename" = "Rename";
+"sidebar.moveTo" = "Move to";
+"sidebar.noGroup" = "No group";
+"sidebar.newGroup" = "New group…";
+"sidebar.newGroup.title" = "New group";
+"sidebar.newGroup.placeholder" = "Group name";
+"sidebar.newGroup.create" = "Create";
+"sidebar.group.dissolve" = "Dissolve group";
+"sidebar.delete.confirmTitle %@" = "Delete “%@”?";
+"sidebar.delete.confirmMessage" = "The saved credentials are removed as well.";
+"common.create" = "Create";

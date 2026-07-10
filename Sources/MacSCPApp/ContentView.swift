@@ -193,7 +193,8 @@ struct ContentView: View {
                     }
                 },
                 onNew: { disconnectToForm() },
-                onSelectImported: { fillFromImported($0) }
+                onSelectImported: { fillFromImported($0) },
+                onEdit: { _ in }  // wired in M5f/T4
             )
             .frame(minWidth: 170, idealWidth: 190, maxWidth: 260)
 
