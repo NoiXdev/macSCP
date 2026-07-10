@@ -3,11 +3,19 @@ import SwiftUI
 import macSCPCore
 
 struct BrowserSession {
+    /// Identifies this window's edit-session temp subtree (M5e/T4) — shared
+    /// with `editManager`'s `sessionID` so both name the same directory.
+    let id: UUID
     let localFS: LocalFileSystem
     let remoteFS: any RemoteFileSystem
     let local: RemoteBrowserViewModel
     let remote: RemoteBrowserViewModel
     let terminal: TerminalPanelViewModel
+    /// Owns "open in external editor" sessions for remote files double-clicked
+    /// in this window. Lifecycle is UI-owned like everything else here: see
+    /// `teardownSession`'s ordering (`stopAll` after `cancelAll`, before
+    /// `terminal.shutdown`).
+    let editManager: EditSessionManager
 }
 
 /// Sheet item wrapper: gives `TransferConflict` `Identifiable` conformance
@@ -154,6 +162,9 @@ struct ContentView: View {
     @State private var isReconnecting = false
     @State private var importedHosts: [SSHConfigHost] = []
     @State private var conflictBridge = ConflictPromptBridge()
+    /// Transient error from a failed "open in editor" attempt (M5e/T4) —
+    /// cleared on the next successful open or dismissed via its close button.
+    @State private var editErrorMessage: String?
     /// Handed over by `WindowAccessor` — basis for the active resize calls
     /// on state transitions (M5c/T0).
     @State private var window: NSWindow?
@@ -256,6 +267,9 @@ struct ContentView: View {
                             onDropURLs: { urls in
                                 uploadDropped(urls, session: session)
                             },
+                            onOpenFile: { item in
+                                openInEditor(item, session: session)
+                            },
                             pasteboardWriter: { item in
                                 item.kind == .file
                                     ? remotePromiseProvider(for: item, session: session)
@@ -294,6 +308,28 @@ struct ContentView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 4)
                     .background(Color(nsColor: .controlBackgroundColor))
+                }
+
+                // Edit-open error (M5e/T4): subtle inline message, matching
+                // the resume banner's placement/styling above. Dismissible;
+                // cleared automatically on the next successful editor open.
+                if let editErrorMessage {
+                    HStack {
+                        Text(editErrorMessage)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .lineLimit(2)
+                        Spacer()
+                        Button {
+                            self.editErrorMessage = nil
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
                 }
 
                 TransferQueueBar(viewModel: transferQueue)
@@ -362,7 +398,11 @@ struct ContentView: View {
     /// After a successful connect: build the panes and save the session if requested.
     private func startSession(with fs: any RemoteFileSystem) {
         let shellProvider = fs as? RemoteShellProvider
+        // One UUID, shared by the session and its edit manager (M5e/T4) — see
+        // `BrowserSession.id`'s doc comment.
+        let sessionID = UUID()
         session = BrowserSession(
+            id: sessionID,
             localFS: LocalFileSystem(),
             remoteFS: fs,
             local: RemoteBrowserViewModel(fs: LocalFileSystem(), startPath: NSHomeDirectory()),
@@ -374,7 +414,8 @@ struct ContentView: View {
                 }
                 return try await shellProvider.openShell(
                     terminal: term, cols: cols, rows: rows)
-            })
+            }),
+            editManager: EditSessionManager(sessionID: sessionID, queue: transferQueue)
         )
         // The queue is created ONCE (the `@State` initializer) and OUTLIVES
         // each session (M5d/T3): interrupted transfers stay in the bar across a
@@ -484,6 +525,12 @@ struct ContentView: View {
             // (documented) hangs on until it's answered — deadlock on disconnect.
             conflictBridge.dismiss()
             await transferQueue.cancelAll()
+            // Binding order (M5e/T4 plan): AFTER `cancelAll` (any in-flight
+            // edit download/upload has already been cancelled/settled by the
+            // queue, so `stopAll` isn't racing a still-running transfer) and
+            // BEFORE `terminal.shutdown`/`disconnect` (teardown proceeds
+            // outward from the queue to the connection).
+            await session.editManager.stopAll()
             await session.terminal.shutdown()
             await session.remote.disconnect()
         }
@@ -609,6 +656,44 @@ struct ContentView: View {
                 destinationDirectory: url.deletingLastPathComponent()
                     .path(percentEncoded: false)
             )
+        }
+    }
+
+    /// Double-click on a remote FILE (kind == .file; directories `cd` via
+    /// `RemoteBrowserViewModel.open`, symlinks/other stay no-ops — unchanged,
+    /// M5e/T4): downloads it into the session's edit temp dir via
+    /// `editManager.beginEditing` (shows up as a download in the queue bar),
+    /// then opens it in the resolved application.
+    ///
+    /// Resolution is two-stage per the M5e plan: the extension-rule/default-
+    /// editor lookup (`EditorResolver.applicationURL`) only needs the file
+    /// name, so it runs BEFORE the download; the system-association fallback
+    /// (`EditorResolver.systemApplicationURL`) needs the actual local file,
+    /// so it runs AFTER the download completes. If neither yields an app,
+    /// `NSWorkspace.shared.open(_:)` is asked to open the local file with
+    /// whatever it can find, as a last resort.
+    private func openInEditor(_ item: RemoteFileItem, session: BrowserSession) {
+        let preResolvedAppURL = EditorResolver.applicationURL(
+            forFileName: item.name, settings: settingsStore)
+        Task {
+            do {
+                let localURL = try await session.editManager.beginEditing(
+                    remotePath: item.path, fileName: item.name,
+                    source: session.remoteFS, destinationForUploads: session.remoteFS)
+                let appURL = preResolvedAppURL ?? EditorResolver.systemApplicationURL(for: localURL)
+                if let appURL {
+                    _ = try await NSWorkspace.shared.open(
+                        [localURL], withApplicationAt: appURL,
+                        configuration: NSWorkspace.OpenConfiguration())
+                } else {
+                    NSWorkspace.shared.open(localURL)
+                }
+                editErrorMessage = nil
+            } catch {
+                editErrorMessage = String(format: L10n.string(
+                    "edit.openFailed", "Could not open file for editing: %@"),
+                    String(describing: error))
+            }
         }
     }
 }

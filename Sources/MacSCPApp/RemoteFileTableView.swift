@@ -10,10 +10,15 @@ struct RemoteFileTableView: NSViewRepresentable {
     let selectedPath: String?
     let onOpen: (RemoteFileItem) -> Void
     let onSelect: (RemoteFileItem?) -> Void
+    /// Double-click on a plain FILE row (kind == .file). Directories keep
+    /// going through `onOpen` (cd); symlinks/other are unchanged (no-op).
+    /// Optional because the local pane doesn't wire it (M5e/T4).
+    var onOpenFile: ((RemoteFileItem) -> Void)? = nil
     var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)? = nil
 
     func makeCoordinator() -> Coordinator {
         let coordinator = Coordinator(onOpen: onOpen, onSelect: onSelect)
+        coordinator.onOpenFile = onOpenFile
         coordinator.pasteboardWriter = pasteboardWriter
         return coordinator
     }
@@ -53,6 +58,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.items = items
         context.coordinator.onOpen = onOpen
         context.coordinator.onSelect = onSelect
+        context.coordinator.onOpenFile = onOpenFile
         context.coordinator.pasteboardWriter = pasteboardWriter
         guard let table = nsView.documentView as? NSTableView else { return }
         // reloadData() clears the selection without a delegate call —
@@ -70,6 +76,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         var items: [RemoteFileItem] = []
         var onOpen: (RemoteFileItem) -> Void
         var onSelect: (RemoteFileItem?) -> Void
+        var onOpenFile: ((RemoteFileItem) -> Void)?
         var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)?
         weak var table: NSTableView?
         var suppressSelectionCallback = false
@@ -138,7 +145,10 @@ struct RemoteFileTableView: NSViewRepresentable {
             let item = items[row]
             if item.isDirectory {
                 onOpen(item)
+            } else if item.kind == .file {
+                onOpenFile?(item)
             }
+            // Symlinks/other: unchanged (no-op).
         }
 
         func tableViewSelectionDidChange(_ notification: Notification) {
