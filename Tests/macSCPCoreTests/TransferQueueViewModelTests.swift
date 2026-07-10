@@ -57,6 +57,12 @@ struct TransferQueueViewModelTests {
             var content: Data
             var started: TestSignal?
             var gate: TestSignal?
+            /// Abbruch-UNBEWUSSTES Parken vor dem Chunk mit diesem Index: die
+            /// `readStream`-Schleife wartet dort per `Task.isCancelled` (wirft
+            /// NICHT). Nur so greift der Abbruch eines laufenden Transfers
+            /// ausschließlich über `copyFile`s `checkCancellation` (M5c/T2) —
+            /// nicht über ein abbruchbewusstes `gate`.
+            var spinUntilCancelledAt: Int?
         }
 
         private var reads: [String: Read]
@@ -113,6 +119,7 @@ struct TransferQueueViewModelTests {
             let chunks = QueueTestFS.chunked(read.content)
             let started = read.started
             let gate = read.gate
+            let spinAt = read.spinUntilCancelledAt
             var index = 0
             var opened = false
             return AsyncThrowingStream<Data, Error>(unfolding: {
@@ -120,6 +127,12 @@ struct TransferQueueViewModelTests {
                     opened = true
                     await started?.fire()
                     if let gate { try await gate.wait() }
+                }
+                if let spinAt, index == spinAt {
+                    // Abbruch-UNBEWUSST parken: erst die Cancellation weckt die
+                    // Schleife; der Chunk wird danach noch geliefert, den nächsten
+                    // Pull deckt der Engine-`checkCancellation` ab.
+                    while !Task.isCancelled { await Task.yield() }
                 }
                 guard index < chunks.count else { return nil }
                 defer { index += 1 }
@@ -177,6 +190,22 @@ struct TransferQueueViewModelTests {
             await Task.yield()
             iterations += 1
         }
+    }
+
+    /// Führt `op` aus und meldet, ob es binnen `timeout` zurückkehrte. Wartet
+    /// NICHT auf `op` selbst (kein Hänger bei einer Regression), sondern pollt
+    /// ein Fertig-Flag. Für den Cancellation-Timeout-Race in Test M5c/T2.
+    @MainActor func completesWithin(
+        _ timeout: Duration, _ op: @escaping @MainActor () async -> Void
+    ) async -> Bool {
+        let done = Counter()
+        Task { @MainActor in await op(); done.increment() }
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while ContinuousClock.now < deadline {
+            if done.value > 0 { return true }
+            try? await Task.sleep(for: .milliseconds(2))
+        }
+        return done.value > 0
     }
 
     // MARK: - 1
@@ -1088,5 +1117,42 @@ struct TransferQueueViewModelTests {
             onCompleted: { await done.fire() })
         try await done.wait()
         #expect(vm.items.last?.status == .finished)
+    }
+
+    // MARK: - 28 (M5c/T2: kooperative Cancellation eines LAUFENDEN Transfers)
+
+    /// Ein bereits laufender Transfer (aktiv Chunks schiebend, KEIN
+    /// abbruchbewusstes Gate) muss durch `cancelAll` chunk-genau enden:
+    /// Item `.cancelled` statt `.finished`, `cancelAll` kehrt zügig zurück.
+    ///
+    /// Ohne den `checkCancellation` in `TransferEngine.copyFile` liefe der
+    /// Transfer bis zum natürlichen Ende durch und das Item endete `.finished`
+    /// (roter Ausgangszustand). Die abbruch-UNBEWUSSTE Park-Schleife im Quell-
+    /// Double stellt sicher, dass der Abbruch ausschließlich über den Engine-
+    /// Check greift und nicht über ein werfendes Warten.
+    @Test func cancelAllStopsRunningTransferCooperatively() async throws {
+        let content = Data(repeating: 0x5A, count: TransferChunk.size * 4)
+        let started = TestSignal()
+        let source = QueueTestFS(reads: [
+            "/big.bin": .init(content: content, started: started, spinUntilCancelledAt: 1),
+        ])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.enqueue(
+            fileName: "big.bin", direction: .upload,
+            source: source, sourcePath: "/big.bin",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: nil)
+
+        try await started.wait()
+        await waitUntil { vm.items[0].status.isRunning }
+
+        // Timeout-Race: mit kooperativer Cancellation kehrt cancelAll zügig
+        // zurück; ohne sie hinge/liefe der Transfer bis zum natürlichen Ende.
+        let returnedInTime = await completesWithin(.seconds(2)) { await vm.cancelAll() }
+        #expect(returnedInTime)
+        #expect(vm.items[0].status == .cancelled)   // NICHT .finished
+        #expect(vm.isActive == false)
     }
 }

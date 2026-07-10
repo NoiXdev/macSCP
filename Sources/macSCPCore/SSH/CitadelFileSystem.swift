@@ -190,6 +190,13 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 }
                 offset += UInt64(buffer.readableBytes)
                 return Data(buffer.readableBytesView)
+            } catch is CancellationError {
+                // Kooperativer Abbruch (M5c/T2): wirft eine in-flight-Leseanfrage
+                // bei Task-Abbruch `CancellationError`, unverändert weiterreichen —
+                // NICHT auf protocolError mappen, sonst endete das Item `.failed`
+                // statt `.cancelled`. Der Channel bleibt nutzbar (file.close).
+                try? await file.close()
+                throw CancellationError()
             } catch {
                 try? await file.close()
                 throw self.mapSFTPError(error, path: path)
@@ -214,6 +221,15 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 offset += UInt64(chunk.count)
             }
             try await file.close()
+        } catch is CancellationError {
+            // Kooperativer Abbruch (M5c/T2): Regulär läuft der Zähl-Stream aus
+            // copyFile bei Abbruch STILL aus (er beendet sich, wirft nicht) —
+            // dann greift copyFiles Nachcheck. Falls eine in-flight-Schreibanfrage
+            // bei Task-Abbruch aber selbst `CancellationError` wirft, hier
+            // unverändert weiterreichen (NICHT auf protocolError mappen), sonst
+            // endete das Item `.failed` statt `.cancelled`. Channel bleibt nutzbar.
+            try? await file.close()
+            throw CancellationError()
         } catch {
             try? await file.close()
             throw mapSFTPError(error, path: path)
