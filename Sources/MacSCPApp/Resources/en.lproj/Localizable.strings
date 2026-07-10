@@ -7,6 +7,19 @@
 "settings.bandwidth.upload" = "Upload";
 "settings.bandwidth.download" = "Download";
 
+/* Settings — Open with tab */
+"settings.tab.openWith" = "Open with";
+"settings.openWith.defaultEditor.header" = "Default editor";
+"settings.openWith.systemDefault" = "System default";
+"settings.openWith.choose" = "Choose…";
+"settings.openWith.reset" = "Reset";
+"settings.openWith.rules.header" = "Rules";
+"settings.openWith.rules.remove" = "Remove";
+"settings.openWith.rules.extension" = "Extension";
+"settings.openWith.rules.extensionPlaceholder" = "php";
+"settings.openWith.rules.chooseApp" = "Choose app…";
+"settings.openWith.rules.footer" = "Rules take precedence over the default editor; the system association is the fallback.";
+
 /* Connection form */
 "connection.title" = "New connection";
 "connection.field.host" = "Host";
