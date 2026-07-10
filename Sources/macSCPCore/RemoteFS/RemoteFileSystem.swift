@@ -14,5 +14,11 @@ public protocol RemoteFileSystem: Sendable {
     func readStream(path: String) async throws -> AsyncThrowingStream<Data, Error>
     /// Schreibt den Chunk-Strom als Datei; vorhandene Dateien werden überschrieben.
     func write(path: String, contents: AsyncThrowingStream<Data, Error>) async throws
+    /// Legt das Verzeichnis an. IDEMPOTENT: existiert es bereits als Verzeichnis,
+    /// kehrt der Aufruf still zurück. Existiert am Pfad eine DATEI, wirft
+    /// RemoteFSError.protocolError. Fehlende Zwischenverzeichnisse: Local legt sie
+    /// an (withIntermediateDirectories); Citadel legt NUR die letzte Ebene an —
+    /// die Rekursion (T3) läuft top-down, Eltern existieren daher immer.
+    func createDirectory(at path: String) async throws
     func disconnect() async
 }

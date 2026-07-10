@@ -221,6 +221,80 @@ struct CitadelFileSystemIntegrationTests {
         #expect(try store.find(host: "127.0.0.1", port: 2222) == nil)
     }
 
+    /// Räumt einen Test-Ordner unter /config via `docker exec rm -rf` auf.
+    /// Kein SFTP-delete verfügbar (RemoteFileSystem kennt kein rmdir/remove) —
+    /// daher Cleanup über den Container, wie schon bei `makeInstalledKey`.
+    private func cleanupConfigPath(_ path: String) {
+        let rm = Process()
+        rm.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
+        rm.arguments = ["exec", "macscp-test-sshd", "rm", "-rf", path]
+        try? rm.run()
+        rm.waitUntilExit()
+    }
+
+    @Test func createDirectoryCreatesNewDirectory() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let base = "/config/macscp-mkdir-test-\(UUID().uuidString)"
+        defer { cleanupConfigPath(base) }
+
+        try await fs.createDirectory(at: base)
+
+        let item = try await fs.stat(path: base)
+        #expect(item.kind == .directory)
+    }
+
+    @Test func createDirectoryCreatesLastLevelAfterParentExists() async throws {
+        // Citadel legt NUR die letzte Ebene an — erst Basis, dann Unterordner.
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let base = "/config/macscp-mkdir-test-\(UUID().uuidString)"
+        defer { cleanupConfigPath(base) }
+        let sub = base + "/sub"
+
+        try await fs.createDirectory(at: base)
+        try await fs.createDirectory(at: sub)
+
+        let item = try await fs.stat(path: sub)
+        #expect(item.kind == .directory)
+    }
+
+    @Test func createDirectoryIsIdempotentOnSecondCall() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let base = "/config/macscp-mkdir-test-\(UUID().uuidString)"
+        defer { cleanupConfigPath(base) }
+
+        try await fs.createDirectory(at: base)
+        // Zweiter Aufruf am selben Pfad darf NICHT werfen (idempotent).
+        try await fs.createDirectory(at: base)
+
+        let item = try await fs.stat(path: base)
+        #expect(item.kind == .directory)
+    }
+
+    @Test func createDirectoryThrowsProtocolErrorOnFileCollision() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let path = "/config/macscp-mkdir-test-\(UUID().uuidString).txt"
+        defer { cleanupConfigPath(path) }
+
+        let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+        continuation.yield(Data("mkdir-collision".utf8))
+        continuation.finish()
+        try await fs.write(path: path, contents: stream)
+
+        do {
+            try await fs.createDirectory(at: path)
+            Issue.record("protocolError erwartet")
+        } catch let error as RemoteFSError {
+            guard case .protocolError = error else {
+                Issue.record("protocolError erwartet, war: \(error)")
+                return
+            }
+        }
+    }
+
     @Test func tamperedKnownKeyFailsHardWithMismatch() async throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-tofu-\(UUID().uuidString)")

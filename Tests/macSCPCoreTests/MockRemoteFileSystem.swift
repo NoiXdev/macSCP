@@ -5,9 +5,11 @@ import Foundation
 /// Invariante: item.path == RemotePath.join(verzeichnisSchlüssel, item.name),
 /// sonst findet stat den Eintrag nicht.
 actor MockRemoteFileSystem: RemoteFileSystem {
-    private let tree: [String: [RemoteFileItem]]
+    private var tree: [String: [RemoteFileItem]]
     private var files: [String: Data]
     private var written: [String: Data] = [:]
+    /// Reihenfolge der per `createDirectory` neu angelegten Pfade (für T3-Tests).
+    private(set) var createdDirectories: [String] = []
 
     init(tree: [String: [RemoteFileItem]], files: [String: Data] = [:]) {
         self.tree = tree
@@ -56,6 +58,25 @@ actor MockRemoteFileSystem: RemoteFileSystem {
 
     func writtenData(at path: String) -> Data? {
         written[path]
+    }
+
+    /// Idempotent (existiert bereits als Verzeichnis im Mock-Baum: still ok),
+    /// wirft `protocolError` bei einer Datei am Pfad, sonst wird der Pfad im
+    /// Baum ergänzt und in `createdDirectories` protokolliert.
+    func createDirectory(at path: String) async throws {
+        let parent = RemotePath.parent(of: path)
+        if let siblings = tree[parent], let existing = siblings.first(where: { $0.path == path }) {
+            if existing.kind == .directory { return }
+            throw RemoteFSError.protocolError(reason: "Pfad existiert als Datei: \(path)")
+        }
+        let name = String(path.split(separator: "/").last ?? Substring(path))
+        var siblings = tree[parent] ?? []
+        siblings.append(RemoteFileItem(name: name, path: path, kind: .directory))
+        tree[parent] = siblings
+        if tree[path] == nil {
+            tree[path] = []
+        }
+        createdDirectories.append(path)
     }
 
     func disconnect() async {}

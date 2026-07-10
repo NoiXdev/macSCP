@@ -76,6 +76,24 @@ public struct LocalFileSystem: RemoteFileSystem {
         }
     }
 
+    /// Legt das Verzeichnis inkl. fehlender Zwischenebenen an. Existiert der
+    /// Pfad bereits als Verzeichnis, kehrt der Aufruf still zurück (idempotent).
+    /// Existiert dort eine Datei, wirft `protocolError`.
+    public func createDirectory(at path: String) async throws {
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+        if exists {
+            if isDirectory.boolValue { return }
+            throw RemoteFSError.protocolError(reason: "Pfad existiert als Datei: \(path)")
+        }
+        do {
+            try FileManager.default.createDirectory(
+                atPath: path, withIntermediateDirectories: true)
+        } catch {
+            throw Self.map(error, path: path)
+        }
+    }
+
     public func disconnect() async {}
 
     private static func item(for url: URL) -> RemoteFileItem {
