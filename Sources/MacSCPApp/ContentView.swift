@@ -397,6 +397,9 @@ struct ContentView: View {
 
     /// After a successful connect: build the panes and save the session if requested.
     private func startSession(with fs: any RemoteFileSystem) {
+        // Clear any stale edit error from a previous session so a late
+        // openInEditor task cannot misattribute its failure to this session.
+        editErrorMessage = nil
         let shellProvider = fs as? RemoteShellProvider
         // One UUID, shared by the session and its edit manager (M5e/T4) — see
         // `BrowserSession.id`'s doc comment.
@@ -518,6 +521,7 @@ struct ContentView: View {
     }
 
     private func teardownSession() async {
+        editErrorMessage = nil
         let hadSession = session != nil
         if let session {
             // MUST run before `cancelAll()`: an open conflict sheet would
