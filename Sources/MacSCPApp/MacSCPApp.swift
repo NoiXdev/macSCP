@@ -11,9 +11,11 @@ struct MacSCPApp: App {
     }
 
     var body: some Scene {
+        // Die Mindestgröße hängt vom Verbindungszustand ab (kompaktes
+        // Formular vs. Browser) — sie lebt deshalb konditional in
+        // `ContentView` statt hier global (M5c/T0).
         WindowGroup("macSCP") {
             ContentView()
-                .frame(minWidth: 930, minHeight: 460)
         }
     }
 }

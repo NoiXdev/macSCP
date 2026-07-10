@@ -105,6 +105,24 @@ private struct ConflictSheetView: View {
     }
 }
 
+/// Vermittelt Zugriff auf das umschließende `NSWindow` — SwiftUI bietet dafür
+/// keine eigene API. `view.window` ist erst gesetzt, NACHDEM die NSView in die
+/// Fensterhierarchie eingehängt wurde, daher der `DispatchQueue.main.async`-
+/// Umweg (M5c/T0).
+private struct WindowAccessor: NSViewRepresentable {
+    let onResolve: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { onResolve(view.window) }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { onResolve(nsView.window) }
+    }
+}
+
 struct ContentView: View {
     @State private var connectionViewModel = ConnectionViewModel(connector: { config, onUnknownHostKey in
         try await CitadelFileSystem.connect(
@@ -123,6 +141,12 @@ struct ContentView: View {
     @State private var isReconnecting = false
     @State private var importedHosts: [SSHConfigHost] = []
     @State private var conflictBridge = ConflictPromptBridge()
+    /// Von `WindowAccessor` gereicht — Grundlage für die aktiven Resize-Aufrufe
+    /// beim Zustandswechsel (M5c/T0).
+    @State private var window: NSWindow?
+    /// Letzte Browser-Fenstergröße, gemerkt beim Trennen — beim erneuten
+    /// Verbinden wird darauf statt der Mindestgröße gewachsen, falls größer.
+    @State private var lastBrowserSize: CGSize?
 
     private var sidebarDisabled: Bool {
         isReconnecting
@@ -152,6 +176,11 @@ struct ContentView: View {
             detail
                 .frame(minWidth: 590, maxWidth: .infinity)
         }
+        // Kompaktes Formular vs. Browser: die Mindestgröße hängt vom
+        // Verbindungszustand ab (M5c/T0) — ersetzt das globale `.frame` aus
+        // `MacSCPApp.swift`.
+        .frame(minWidth: session == nil ? 700 : 930, minHeight: 460)
+        .background(WindowAccessor { window = $0 })
         .task { importedHosts = SSHConfigImporter.load(path: SSHConfigImporter.defaultPath) }
     }
 
@@ -237,10 +266,25 @@ struct ContentView: View {
                 )
             }
         } else {
+            // Formular oben ausrichten statt vertikal zu zentrieren (User-
+            // Feedback 2026-07-10, M5c/T0) — das kompakte Fenster hat sonst
+            // viel Leerraum unter dem Inhalt.
             ConnectionFormView(viewModel: connectionViewModel) { fs in
                 startSession(with: fs)
             }
+            .frame(maxHeight: .infinity, alignment: .top)
         }
+    }
+
+    /// Wächst/schrumpft das Fenster aktiv (animiert) auf die Zielgröße und
+    /// hält dabei die obere linke Ecke fest — AppKit zählt `origin.y` von
+    /// unten, daher wird sie um die Höhendifferenz nachgeführt.
+    private func resizeWindow(toWidth width: CGFloat, height: CGFloat) {
+        guard let window else { return }
+        let current = window.frame
+        let newOrigin = NSPoint(x: current.origin.x, y: current.origin.y + current.height - height)
+        let newFrame = NSRect(origin: newOrigin, size: CGSize(width: width, height: height))
+        window.setFrame(newFrame, display: true, animate: true)
     }
 
     /// Panel-Inhalt: Terminal bei laufender Shell, sonst Ende-/Leerzustand.
@@ -285,6 +329,14 @@ struct ContentView: View {
         transferQueue = TransferQueueViewModel()
         let bridge = conflictBridge
         transferQueue.conflictDecider = { conflict in await bridge.ask(conflict) }
+
+        // Fenster aktiv auf Browser-Größe wachsen lassen (User-Feedback
+        // 2026-07-10, M5c/T0) — auf die zuletzt gemerkte Browser-Größe, falls
+        // vorhanden und größer als die Mindestgröße.
+        let targetSize = CGSize(
+            width: max(lastBrowserSize?.width ?? 0, 930),
+            height: max(lastBrowserSize?.height ?? 0, 620))
+        resizeWindow(toWidth: targetSize.width, height: targetSize.height)
 
         if connectionViewModel.shouldSaveSession {
             let stored = sessionListViewModel.save(
@@ -336,7 +388,9 @@ struct ContentView: View {
     /// OHNE Verbinden (der Import kennt keine Geheimnisse).
     private func fillFromImported(_ host: SSHConfigHost) {
         guard !isReconnecting else { return }
+        isReconnecting = true // synchron — verhindert Doppel-Teardown (korrumpiert lastBrowserSize)
         Task {
+            defer { isReconnecting = false }
             await teardownSession()
             connectionViewModel.host = host.hostName ?? host.alias
             connectionViewModel.port = String(host.port ?? 22)
@@ -355,12 +409,15 @@ struct ContentView: View {
 
     private func disconnectToForm() {
         guard !isReconnecting else { return }
+        isReconnecting = true // synchron — verhindert Doppel-Teardown (korrumpiert lastBrowserSize)
         Task {
+            defer { isReconnecting = false }
             await teardownSession()
         }
     }
 
     private func teardownSession() async {
+        let hadSession = session != nil
         if let session {
             // MUSS vor `cancelAll()` laufen: ein offenes Konflikt-Sheet hält
             // sonst den Decider-Prompt offen, an dem `cancelAll` (dokumentiert)
@@ -375,6 +432,13 @@ struct ContentView: View {
         connectionViewModel.keyPath = ""
         session = nil
         activeSessionID = nil
+        if hadSession {
+            // Aktuelle Browser-Größe merken (für das nächste Verbinden) und
+            // Fenster aktiv auf die kompakte Formular-Größe schrumpfen
+            // (User-Feedback 2026-07-10, M5c/T0).
+            if let window { lastBrowserSize = window.frame.size }
+            resizeWindow(toWidth: 700, height: 460)
+        }
     }
 
     /// Lokal ausgewählte Datei ODER Ordner → aktuelles Remote-Verzeichnis.
