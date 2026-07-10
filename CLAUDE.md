@@ -15,9 +15,9 @@
 - Internal docs (`docs/`, plans, specs, ledger) may remain German.
 - Public-facing texts (README intro, taglines, landing copy) contain **no
   tech-stack terms** (see global user CLAUDE.md) and exist in English first.
-- Migration status: code written before 2026-07-10 used German comments and
-  hardcoded German UI strings. A dedicated i18n/English sweep milestone
-  converts the backlog; all NEW code follows this policy immediately.
+- Migration status: completed 2026-07-10 (milestone M5i). The pre-existing
+  German comments and hardcoded UI strings were swept; all code follows this
+  policy.
 
 ## Build & test
 

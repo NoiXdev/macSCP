@@ -40,7 +40,7 @@ struct KnownHostsStoreTests {
     }
 
     @Test func fingerprintIsDerivedFromBlob() {
-        // "QUJDREVG" == Base64("ABCDEF") — Fingerprint muss dem SHA256 davon entsprechen
+        // "QUJDREVG" == Base64("ABCDEF") — the fingerprint must match its SHA256
         #expect(key.fingerprintSHA256 == HostKeyFingerprint.sha256(ofKeyBlobBase64: "QUJDREVG"))
     }
 
@@ -64,7 +64,7 @@ struct KnownHostsStoreTests {
     @Test func decodedMixedCaseHostStillMatches() throws {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        // Fixture direkt auf Platte (simuliert Alt-Datei/Handbearbeitung):
+        // Fixture written straight to disk (simulates a legacy/hand-edited file):
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try Data("""
         [{"host":"MyServer.Local","port":22,"keyType":"ssh-ed25519","publicKeyBase64":"QUJDREVG"}]

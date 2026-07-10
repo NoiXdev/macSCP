@@ -2,10 +2,10 @@
 
 /* TransferQueueViewModel.message(for:) */
 "core.transfer.notFound %@" = "File not found: %@";
-"core.error.permissionDenied %@" = "No permission for: %@";
+"core.error.permissionDenied %@" = "Permission denied for: %@";
 "core.error.connectionLost %@" = "Connection lost: %@";
 "core.transfer.failed %@" = "Transfer failed: %@";
-"core.transfer.noFreeName" = "No free name found.";
+"core.transfer.noFreeName" = "No available filename found.";
 
 /* RemoteBrowserViewModel.message(for:path:) */
 "core.browse.notFound %@" = "Path not found: %@";

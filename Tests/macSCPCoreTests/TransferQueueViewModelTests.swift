@@ -1266,7 +1266,7 @@ struct TransferQueueViewModelTests {
         // promptly; without it, the transfer would hang/run until its natural end.
         let returnedInTime = await completesWithin(.seconds(2)) { await vm.cancelAll() }
         #expect(returnedInTime)
-        #expect(vm.items[0].status == .cancelled)   // NICHT .finished
+        #expect(vm.items[0].status == .cancelled)   // NOT .finished
         #expect(vm.isActive == false)
     }
 
