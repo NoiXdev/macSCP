@@ -79,6 +79,8 @@ struct TransferQueueBar: View {
                     .help(message)
             case .cancelled:
                 Text("abgebrochen").font(.caption).foregroundStyle(.secondary)
+            case .skipped:
+                Text("übersprungen").font(.caption).foregroundStyle(.secondary)
             }
         }
         .font(.callout)
