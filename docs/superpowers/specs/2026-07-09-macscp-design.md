@@ -102,6 +102,11 @@ Ein zentrales, erweiterbares Einstellungs-Element statt verstreuter Schalter:
     paralleler *Server-Verbindungen* ist ein v2-Thema (Tabs/Fenster).
   - **Bandbreiten-Limit** Upload/Download (KB/s, 0 = unbegrenzt) — Drossel in
     der TransferEngine (Chunk-Takt).
+- **Bereich „Öffnen mit" (vom Maintainer ergänzt, 2026-07-10, landet mit
+  M5e):** Standard-Editor für Dateien (App-Auswahl; leer = System-Standard)
+  plus Regeln pro Datei-Endung → App (z. B. `php` → PhpStorm). Die
+  Editor-Integration (M5e) löst die Ziel-App in dieser Reihenfolge auf:
+  Endungs-Regel → Standard-Editor → macOS-Systemzuordnung.
 - Vorgemerkt für später (nicht v1-bindend): Standard-Terminal-Schriftgröße,
   Standard-Lokalpfad, Queue-Verhalten bei Konflikten als Voreinstellung.
 
