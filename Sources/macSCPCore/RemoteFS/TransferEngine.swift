@@ -70,6 +70,16 @@ public enum TransferEngine {
     /// leave a PARTIAL file at the destination; it is NOT rolled back —
     /// cleanup (or a resume) is the caller's job (M5d).
     /// - Parameters:
+    ///   - resume: if `true` and the destination already exists SMALLER than
+    ///     the source, continue from its current size (offset read + append
+    ///     write) instead of starting over (M5d/T2). Destination size >=
+    ///     source size is treated as "already complete" (a size-based
+    ///     heuristic — no content hashing) and the call returns immediately
+    ///     after reporting one final progress event at full size, WITHOUT
+    ///     reading or writing anything. Destination absent (`notFound`)
+    ///     behaves exactly like a fresh transfer. `false` (default) leaves
+    ///     behavior byte-for-byte identical to pre-M5d: unconditional
+    ///     `.overwrite` from offset 0.
     ///   - bytesPerSecondLimit: Bandwidth throttle in bytes/s (M5c/T5); `0`
     ///     (default) turns it off — no behavior change from before T5.
     ///   - sleep: Injectable sleep hook for the throttle, default a real
@@ -78,18 +88,44 @@ public enum TransferEngine {
     public static func copyFile(
         from source: any RemoteFileSystem, sourcePath: String,
         to destination: any RemoteFileSystem, destinationDirectory: String, fileName: String,
+        resume: Bool = false,
         bytesPerSecondLimit: Int = 0,
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
         onProgress: @escaping @Sendable (TransferProgress) -> Void
     ) async throws {
         let total = try await source.stat(path: sourcePath).size
-        let input = try await source.readStream(path: sourcePath)
         let destinationPath = RemotePath.join(destinationDirectory, fileName)
+
+        // Resume (M5d/T2): decide the starting offset BEFORE touching the
+        // source stream. `resume == false` takes none of this — offset stays
+        // 0 and the write mode stays `.overwrite`, identical to pre-M5d.
+        var resumeOffset: UInt64 = 0
+        if resume {
+            do {
+                let destinationSize = try await destination.stat(path: destinationPath).size ?? 0
+                if let total, destinationSize >= total {
+                    // Already complete by the size heuristic: one final
+                    // progress event at full size, no read/write at all.
+                    onProgress(TransferProgress(bytesTransferred: total, totalBytes: total))
+                    return
+                }
+                resumeOffset = destinationSize
+            } catch RemoteFSError.notFound {
+                // No destination yet — behaves like a fresh transfer (offset 0).
+                resumeOffset = 0
+            }
+        }
+
+        let input = try await source.readStream(path: sourcePath, fromOffset: resumeOffset)
 
         // Counting intermediary, pull-based: the destination pulls chunk by
         // chunk, nothing is buffered beyond a single chunk.
         var iterator = input.makeAsyncIterator()
-        var transferred: UInt64 = 0
+        // Progress starts at the resume offset (0 when not resuming) and
+        // `totalBytes` always stays the FULL source size, not the remaining
+        // amount — the caller sees genuine "bytes of the whole file" progress
+        // across a resume, not a restart from 0.
+        var transferred: UInt64 = resumeOffset
         // Throttle accounting (M5c/T5): a purely VIRTUAL clock that only
         // advances by the durations we hand to `sleep` — not measured by wall
         // clock. That makes the throttle deterministically testable
@@ -97,6 +133,13 @@ public enum TransferEngine {
         // accuracy under real chunk latency: an already-slow connection gets
         // throttled ADDITIONALLY (never faster than the limit, possibly
         // slower). Simple sliding approach, no burst bucket (see plan).
+        //
+        // Resume note (M5d/T2): the virtual clock restarts at ZERO from the
+        // resume point rather than being seeded with a value that accounts
+        // for the already-transferred prefix. Only bytes transferred DURING
+        // this call count toward the throttle target — documented, not a bug:
+        // a resumed transfer is throttled over its own remaining bytes, same
+        // as a fresh one would be for that remainder.
         var throttledElapsed = Duration.zero
         let counted = AsyncThrowingStream<Data, Error>(unfolding: {
             // Cooperative cancellation BEFORE every chunk: applies chunk-precisely.
@@ -107,7 +150,7 @@ public enum TransferEngine {
 
             if bytesPerSecondLimit > 0 {
                 let targetElapsed = Duration.seconds(
-                    fromDouble: Double(transferred) / Double(bytesPerSecondLimit))
+                    fromDouble: Double(transferred - resumeOffset) / Double(bytesPerSecondLimit))
                 if throttledElapsed < targetElapsed {
                     // IMPORTANT: the `checkCancellation` above already covers
                     // chunk-precise cancellation (M5c/T2). `sleep` itself ALSO
@@ -122,7 +165,12 @@ public enum TransferEngine {
             return chunk
         })
 
-        try await destination.write(path: destinationPath, contents: counted)
+        // Write mode follows the ACTUAL resume offset, not the `resume` flag
+        // itself: `resume: true` against an absent destination behaves like a
+        // fresh transfer end to end, including the write mode (`.overwrite`),
+        // not just the read offset.
+        try await destination.write(
+            path: destinationPath, mode: resumeOffset > 0 ? .append : .overwrite, contents: counted)
 
         // IMPORTANT: `AsyncThrowingStream(unfolding:)` ENDS SILENTLY when the
         // consuming task is cancelled (the next `next()` returns `nil` without

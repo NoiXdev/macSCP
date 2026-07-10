@@ -155,6 +155,154 @@ struct TransferEngineTests {
         #expect(recorder.callCount == 0)
     }
 
+    // MARK: - Resume (M5d/T2)
+
+    /// Destination already holds the first 2 of 5 chunks. `resume: true` must
+    /// read only the remaining 3 chunks (starting at the offset, not from 0),
+    /// write them with `.append`, and report progress starting at the resume
+    /// offset while `totalBytes` stays the FULL source size throughout.
+    @Test func resumeMidTransferReadsOnlyRemainingChunksAndAppends() async throws {
+        let content = Data((0..<(TransferChunk.size * 5)).map { UInt8($0 % 241) })
+        let source = makeSource(content: content)
+        let resumeOffset = UInt64(TransferChunk.size * 2)
+        let existing = content.prefix(Int(resumeOffset))
+        let destination = MockRemoteFileSystem(
+            tree: ["/ziel": [RemoteFileItem(
+                name: "quelle.bin", path: "/ziel/quelle.bin", kind: .file, size: resumeOffset)]],
+            files: ["/ziel/quelle.bin": Data(existing)])
+
+        let recorder = ProgressRecorder()
+        try await TransferEngine.copyFile(
+            from: source, sourcePath: "/quelle.bin",
+            to: destination, destinationDirectory: "/ziel", fileName: "quelle.bin",
+            resume: true,
+            onProgress: { progress in recorder.record(progress) }
+        )
+
+        let snapshots = recorder.snapshots
+        #expect(!snapshots.isEmpty)
+        // Progress never dips below the resume offset and always carries the
+        // FULL source size as totalBytes, not the remaining amount.
+        #expect(snapshots.allSatisfy { $0.bytesTransferred > resumeOffset })
+        #expect(snapshots.allSatisfy { $0.totalBytes == UInt64(content.count) })
+        #expect(snapshots.last?.bytesTransferred == UInt64(content.count))
+
+        #expect(await destination.writeModes["/ziel/quelle.bin"] == .append)
+        // Only the 3 remaining chunks were written, not the whole file again.
+        #expect(await destination.writtenData(at: "/ziel/quelle.bin") == content.suffix(from: Int(resumeOffset)))
+
+        // The merged remote file (existing prefix + appended remainder) is
+        // byte-identical to the full source.
+        var merged = Data()
+        for try await chunk in try await destination.readStream(path: "/ziel/quelle.bin") {
+            merged.append(chunk)
+        }
+        #expect(merged == content)
+    }
+
+    /// `resume: true` against an ABSENT destination behaves exactly like a
+    /// fresh transfer: full content, `.overwrite`, starting at offset 0.
+    @Test func resumeWithMissingDestinationBehavesLikeFreshTransfer() async throws {
+        let content = Data((0..<(TransferChunk.size + 512)).map { UInt8($0 % 241) })
+        let source = makeSource(content: content)
+        let destination = MockRemoteFileSystem(tree: ["/ziel": []])
+
+        try await TransferEngine.copyFile(
+            from: source, sourcePath: "/quelle.bin",
+            to: destination, destinationDirectory: "/ziel", fileName: "quelle.bin",
+            resume: true,
+            onProgress: { _ in }
+        )
+        #expect(await destination.writtenData(at: "/ziel/quelle.bin") == content)
+        #expect(await destination.writeModes["/ziel/quelle.bin"] == .overwrite)
+    }
+
+    /// Destination already has the FULL size of the source: `resume: true`
+    /// must report one final progress event at full size and return
+    /// WITHOUT reading the source or writing anything (size-based "already
+    /// complete" heuristic).
+    @Test func resumeWithCompleteDestinationSkipsReadAndWrite() async throws {
+        let content = Data(repeating: 3, count: TransferChunk.size * 2)
+        let source = ReadCountingSource(content: content)
+        let destination = MockRemoteFileSystem(
+            tree: ["/ziel": [RemoteFileItem(
+                name: "quelle.bin", path: "/ziel/quelle.bin", kind: .file,
+                size: UInt64(content.count))]])
+
+        let recorder = ProgressRecorder()
+        try await TransferEngine.copyFile(
+            from: source, sourcePath: "/quelle.bin",
+            to: destination, destinationDirectory: "/ziel", fileName: "quelle.bin",
+            resume: true,
+            onProgress: { progress in recorder.record(progress) }
+        )
+
+        #expect(recorder.snapshots.map(\.bytesTransferred) == [UInt64(content.count)])
+        #expect(recorder.snapshots.map(\.totalBytes) == [UInt64(content.count)])
+        #expect(await source.readCallCount == 0)
+        #expect(await destination.writtenData(at: "/ziel/quelle.bin") == nil)   // no write() call at all
+    }
+
+    /// Destination is LARGER than the source (documented size heuristic):
+    /// treated the same as "already complete" — immediate success, no
+    /// read/write.
+    @Test func resumeWithDestinationLargerThanSourceSkipsReadAndWrite() async throws {
+        let content = Data(repeating: 5, count: TransferChunk.size)
+        let source = ReadCountingSource(content: content)
+        let destination = MockRemoteFileSystem(
+            tree: ["/ziel": [RemoteFileItem(
+                name: "quelle.bin", path: "/ziel/quelle.bin", kind: .file,
+                size: UInt64(content.count) + 999)]])
+
+        let recorder = ProgressRecorder()
+        try await TransferEngine.copyFile(
+            from: source, sourcePath: "/quelle.bin",
+            to: destination, destinationDirectory: "/ziel", fileName: "quelle.bin",
+            resume: true,
+            onProgress: { progress in recorder.record(progress) }
+        )
+
+        #expect(recorder.snapshots.map(\.bytesTransferred) == [UInt64(content.count)])
+        #expect(await source.readCallCount == 0)
+        #expect(await destination.writtenData(at: "/ziel/quelle.bin") == nil)
+    }
+
+    /// Cancellation mid-RESUME behaves exactly like the fresh-transfer case
+    /// (M5c/T2): `CancellationError`, only the chunks up to the cancel point
+    /// are written, and the write mode used is `.append` (proving the resume
+    /// path — not a fresh overwrite — was actually taken).
+    @Test func cancellationDuringResumeStopsBeforeNextChunkWriteAndLeavesPartial() async throws {
+        let chunkTotal = 4
+        let content = Data(repeating: 0xCD, count: TransferChunk.size * chunkTotal)
+        let source = makeSource(content: content)
+        let existingSize = UInt64(TransferChunk.size)   // one chunk already there
+        let reached = PlainSignal()
+        let destination = ResumeSpinDestination(reached: reached, existingSize: existingSize)
+
+        let task = Task {
+            try await TransferEngine.copyFile(
+                from: source, sourcePath: "/quelle.bin",
+                to: destination, destinationDirectory: "/ziel", fileName: "quelle.bin",
+                resume: true,
+                onProgress: { _ in })
+        }
+
+        await reached.wait()
+        task.cancel()
+
+        let outcome = await awaitOutcome(task)
+        guard case .failure(let error)? = outcome else {
+            Issue.record("expected CancellationError, was: \(String(describing: outcome))")
+            return
+        }
+        #expect(error is CancellationError)
+
+        let written = await destination.chunkCount
+        #expect(written == 1)
+        #expect(written < chunkTotal)
+        #expect(await destination.recordedMode == .append)
+    }
+
     /// Waits for the task's result, but returns `nil` after `timeout`
     /// (timeout) instead of blocking forever.
     private func awaitOutcome(
@@ -265,6 +413,91 @@ private actor RecordingSpinDestination: RemoteFileSystem {
         throw RemoteFSError.notFound(path: path)
     }
 
+    func createDirectory(at path: String) async throws {}
+    func disconnect() async {}
+}
+
+/// Source double that counts `readStream` calls (M5d/T2) — lets the
+/// "already complete" resume tests assert the source is NEVER read at all,
+/// not just that no bytes end up written.
+private actor ReadCountingSource: RemoteFileSystem {
+    private let content: Data
+    private(set) var readCallCount = 0
+
+    init(content: Data) { self.content = content }
+
+    func list(path: String) async throws -> [RemoteFileItem] { [] }
+
+    func stat(path: String) async throws -> RemoteFileItem {
+        RemoteFileItem(name: "quelle.bin", path: path, kind: .file, size: UInt64(content.count))
+    }
+
+    func readStream(
+        path: String, fromOffset offset: UInt64
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        readCallCount += 1
+        let start = min(Int(offset), content.count)
+        return AsyncThrowingStream { continuation in
+            var position = start
+            while position < content.count {
+                let end = min(position + TransferChunk.size, content.count)
+                continuation.yield(content.subdata(in: position..<end))
+                position = end
+            }
+            continuation.finish()
+        }
+    }
+
+    func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {}
+    func delete(path: String) async throws { throw RemoteFSError.notFound(path: path) }
+    func createDirectory(at path: String) async throws {}
+    func disconnect() async {}
+}
+
+/// Destination double for the resume-cancellation test (M5d/T2): `stat`
+/// reports an EXISTING partial size (so `copyFile` takes the resume path and
+/// computes a non-zero offset), then — just like `RecordingSpinDestination`
+/// — parks cancellation-unaware after the first written chunk so cancellation
+/// is caught exclusively via the engine's `checkCancellation`. Records the
+/// write mode it was called with, so the test can prove `.append` (not
+/// `.overwrite`) was actually used.
+private actor ResumeSpinDestination: RemoteFileSystem {
+    private let reached: PlainSignal
+    private let existingSize: UInt64
+    private(set) var chunkCount = 0
+    private(set) var recordedMode: WriteMode?
+
+    init(reached: PlainSignal, existingSize: UInt64) {
+        self.reached = reached
+        self.existingSize = existingSize
+    }
+
+    func list(path: String) async throws -> [RemoteFileItem] { [] }
+
+    func stat(path: String) async throws -> RemoteFileItem {
+        RemoteFileItem(name: "quelle.bin", path: path, kind: .file, size: existingSize)
+    }
+
+    func readStream(
+        path: String, fromOffset offset: UInt64
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+
+    func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {
+        recordedMode = mode
+        var isFirst = true
+        for try await _ in contents {
+            chunkCount += 1
+            if isFirst {
+                isFirst = false
+                reached.fire()
+                while !Task.isCancelled { await Task.yield() }
+            }
+        }
+    }
+
+    func delete(path: String) async throws { throw RemoteFSError.notFound(path: path) }
     func createDirectory(at path: String) async throws {}
     func disconnect() async {}
 }

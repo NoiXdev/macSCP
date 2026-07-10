@@ -342,6 +342,37 @@ struct CitadelFileSystemIntegrationTests {
         return out.split(whereSeparator: { $0 == " " || $0 == "\n" }).first.map(String.init) ?? ""
     }
 
+    /// Remote file size via `docker exec stat -c %s` (M5d/T2 resume tests).
+    private func remoteSize(_ path: String) -> Int {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
+        process.arguments = ["exec", "macscp-test-sshd", "stat", "-c", "%s", path]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
+        process.waitUntilExit()
+        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return Int(out) ?? -1
+    }
+
+    /// Remote mtime (epoch seconds) via `docker exec stat -c %Y` (M5d/T2
+    /// "resume on complete file writes nothing" test).
+    private func remoteMtime(_ path: String) -> Int {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
+        process.arguments = ["exec", "macscp-test-sshd", "stat", "-c", "%Y", path]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
+        process.waitUntilExit()
+        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return Int(out) ?? -1
+    }
+
     /// Generates a runtime key and installs the public key in the container.
     private func makeInstalledKey() throws -> (dir: URL, keyPath: String) {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -621,6 +652,129 @@ struct CitadelFileSystemIntegrationTests {
         await #expect(throws: RemoteFSError.notFound(path: remotePath)) {
             try await fs.delete(path: remotePath)
         }
+    }
+
+    // MARK: - M5d/T2: engine resume
+
+    /// The gated core test for M5d/T2: a 32 MiB upload is cancelled after the
+    /// first progress event (the M5c/T2 cancel pattern), leaving a GENUINELY
+    /// partial remote file. `copyFile(resume: true)` for the SAME source/
+    /// destination must then continue from that partial's size and produce a
+    /// remote file BYTE-IDENTICAL to the local source (md5 match) — not just
+    /// "same size".
+    @Test func resumeAfterCancelProducesByteIdenticalFile() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        let localDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-resume-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: localDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: localDir) }
+        let localFile = localDir.appendingPathComponent("big.bin")
+
+        let dd = Process()
+        dd.executableURL = URL(fileURLWithPath: "/bin/dd")
+        dd.arguments = ["if=/dev/urandom", "of=\(localFile.path(percentEncoded: false))",
+                        "bs=1m", "count=32"]
+        dd.standardError = FileHandle.nullDevice
+        try dd.run()
+        dd.waitUntilExit()
+        #expect(dd.terminationStatus == 0)
+        let sourceSize = try FileManager.default
+            .attributesOfItem(atPath: localFile.path(percentEncoded: false))[.size] as? Int ?? 0
+        #expect(sourceSize == 32 * 1024 * 1024)
+        let sourceMD5 = localMD5(localFile.path(percentEncoded: false))
+
+        let remoteName = "macscp-resume-upload-\(UUID().uuidString).bin"
+        let remotePath = "/config/\(remoteName)"
+        defer { cleanupConfigPath(remotePath) }
+
+        // Cancel after the FIRST progress event — same pattern as M5c/T2.
+        let progressSeen = CallCounterBox()
+        let source = LocalFileSystem()
+        let task = Task {
+            try await TransferEngine.copyFile(
+                from: source, sourcePath: localFile.path(percentEncoded: false),
+                to: fs, destinationDirectory: "/config", fileName: remoteName,
+                onProgress: { _ in progressSeen.increment() })
+        }
+
+        var polls = 0
+        while progressSeen.value == 0 && polls < 500 {
+            try await Task.sleep(for: .milliseconds(10))
+            polls += 1
+        }
+        #expect(progressSeen.value > 0)
+        task.cancel()
+
+        do {
+            try await task.value
+            Issue.record("expected CancellationError, transfer ran to completion")
+        } catch is CancellationError {
+            // expected
+        } catch {
+            Issue.record("expected CancellationError, was: \(error)")
+        }
+
+        // Partial file is GENUINELY smaller than the source.
+        let partialSize = remoteSize(remotePath)
+        #expect(partialSize >= 0)
+        #expect(partialSize < sourceSize)
+
+        // Resume: continue from the partial's offset.
+        try await TransferEngine.copyFile(
+            from: source, sourcePath: localFile.path(percentEncoded: false),
+            to: fs, destinationDirectory: "/config", fileName: remoteName,
+            resume: true,
+            onProgress: { _ in })
+
+        #expect(remoteSize(remotePath) == sourceSize)
+        #expect(remoteMD5(remotePath) == sourceMD5)   // byte-identical after resume
+    }
+
+    /// Resuming an ALREADY-COMPLETE remote file must not write anything at
+    /// all: size and mtime are captured before and after the resume call and
+    /// must be unchanged (docker exec stat).
+    @Test func resumeOnAlreadyCompleteFileWritesNothing() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        let localDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-resume-complete-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: localDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: localDir) }
+        let localFile = localDir.appendingPathComponent("small.bin")
+        let payload = Data((0..<(TransferChunk.size + 321)).map { UInt8($0 % 211) })
+        try payload.write(to: localFile)
+
+        let remoteName = "macscp-resume-complete-\(UUID().uuidString).bin"
+        let remotePath = "/config/\(remoteName)"
+        defer { cleanupConfigPath(remotePath) }
+
+        let source = LocalFileSystem()
+        // First, a full plain transfer completes the file.
+        try await TransferEngine.copyFile(
+            from: source, sourcePath: localFile.path(percentEncoded: false),
+            to: fs, destinationDirectory: "/config", fileName: remoteName,
+            onProgress: { _ in })
+
+        let beforeSize = remoteSize(remotePath)
+        let beforeMtime = remoteMtime(remotePath)
+        #expect(beforeSize == payload.count)
+
+        // Let the filesystem's mtime clock tick forward so a spurious write
+        // (bug) would be observable as a changed mtime, not hidden by
+        // same-second timestamp resolution.
+        try await Task.sleep(for: .seconds(1))
+
+        try await TransferEngine.copyFile(
+            from: source, sourcePath: localFile.path(percentEncoded: false),
+            to: fs, destinationDirectory: "/config", fileName: remoteName,
+            resume: true,
+            onProgress: { _ in })
+
+        #expect(remoteSize(remotePath) == beforeSize)
+        #expect(remoteMtime(remotePath) == beforeMtime)   // no write occurred
     }
 
     @Test func tamperedKnownKeyFailsHardWithMismatch() async throws {
