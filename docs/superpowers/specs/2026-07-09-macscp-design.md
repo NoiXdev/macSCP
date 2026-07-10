@@ -87,6 +87,24 @@ Temp-Verzeichnis → Öffnen mit Standard-App → Datei-Watcher (DispatchSource)
 erkennt Speichern → automatischer Upload. Aufräumen der Temp-Dateien beim
 Schließen der Session.
 
+### 4b. `Core/Settings` — zentrale Einstellungen (vom Maintainer ergänzt, 2026-07-10)
+
+Ein zentrales, erweiterbares Einstellungs-Element statt verstreuter Schalter:
+
+- `SettingsStore` im Application-Support-Verzeichnis (JSON, Muster wie
+  `SessionStore`); typisierte Zugriffe mit Defaults, unbekannte Schlüssel
+  bleiben beim Laden erhalten (vorwärtskompatibel).
+- Natives macOS-Einstellungsfenster (SwiftUI `Settings`-Scene, ⌘,) mit
+  Tab-Struktur — ausgelegt darauf, dass künftig weitere Bereiche dazukommen.
+- Erste Einstellungen (landen mit M5c, wo ihre Konsumenten entstehen):
+  - **Maximale gleichzeitige Übertragungen** (1–8, Default 3) — steuert die
+    Queue-Parallelität über die EINE Verbindung des Fensters. Hinweis: Zahl
+    paralleler *Server-Verbindungen* ist ein v2-Thema (Tabs/Fenster).
+  - **Bandbreiten-Limit** Upload/Download (KB/s, 0 = unbegrenzt) — Drossel in
+    der TransferEngine (Chunk-Takt).
+- Vorgemerkt für später (nicht v1-bindend): Standard-Terminal-Schriftgröße,
+  Standard-Lokalpfad, Queue-Verhalten bei Konflikten als Voreinstellung.
+
 ### 5. App/UI (SwiftUI + gezielt AppKit)
 
 Hauptfenster-Layout:
