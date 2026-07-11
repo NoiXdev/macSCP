@@ -25,9 +25,16 @@ struct RemoteFileTableView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSScrollView {
         let table = NSTableView()
-        table.style = .inset
-        table.usesAlternatingRowBackgroundColors = true
+        table.style = .plain
+        table.usesAlternatingRowBackgroundColors = false
         table.allowsMultipleSelection = false
+        table.rowHeight = 24
+        table.intercellSpacing = NSSize(width: 0, height: 0)
+        // Mockup row separators: hairline at 45% between rows.
+        table.gridStyleMask = .solidHorizontalGridLineMask
+        table.gridColor = DesignTokens.hairlineFaintNS
+        table.headerView = NSTableHeaderView(
+            frame: NSRect(x: 0, y: 0, width: 0, height: 22))
 
         for (identifier, title, width) in [
             ("name", L10n.string("filetable.column.name", "Name"), 260.0),
@@ -35,7 +42,8 @@ struct RemoteFileTableView: NSViewRepresentable {
             ("modified", L10n.string("filetable.column.modified", "Modified"), 160.0),
         ] {
             let column = NSTableColumn(identifier: .init(identifier))
-            column.title = title
+            let header = PolishedHeaderCell(textCell: title)
+            column.headerCell = header
             column.width = width
             table.addTableColumn(column)
         }
@@ -131,12 +139,26 @@ struct RemoteFileTableView: NSViewRepresentable {
                 cell.addSubview(field)
                 cell.textField = field
                 NSLayoutConstraint.activate([
-                    field.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
-                    field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -2),
+                    field.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 12),
+                    field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -12),
                     field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
                 ])
             }
             cell.textField?.stringValue = text
+            switch columnID {
+            case "name":
+                cell.textField?.font = .systemFont(ofSize: 12.5)
+                cell.textField?.textColor = DesignTokens.inkNS
+                cell.textField?.alignment = .natural
+            case "size":
+                cell.textField?.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .regular)
+                cell.textField?.textColor = DesignTokens.inkSecondaryNS
+                cell.textField?.alignment = .right
+            default: // "modified"
+                cell.textField?.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .regular)
+                cell.textField?.textColor = DesignTokens.inkSecondaryNS
+                cell.textField?.alignment = .natural
+            }
             return cell
         }
 
@@ -157,5 +179,65 @@ struct RemoteFileTableView: NSViewRepresentable {
             let row = table.selectedRow
             onSelect(row >= 0 && row < items.count ? items[row] : nil)
         }
+
+        func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+            let reuseID = NSUserInterfaceItemIdentifier("polished-row")
+            if let reused = tableView.makeView(withIdentifier: reuseID, owner: nil)
+                as? PolishedRowView {
+                return reused
+            }
+            let rowView = PolishedRowView()
+            rowView.identifier = reuseID
+            return rowView
+        }
+    }
+}
+
+/// Mockup-style column header: versal 10.5pt semibold with tracking in
+/// inkTertiary, 12pt leading inset, hairline bottom border (spec M5g).
+private final class PolishedHeaderCell: NSTableHeaderCell {
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
+        // Flat background matching the enclosing window chrome.
+        NSColor.controlBackgroundColor.setFill()
+        cellFrame.fill()
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10.5, weight: .semibold),
+            .foregroundColor: DesignTokens.inkTertiaryNS,
+            .kern: 0.8,
+        ]
+        let text = NSAttributedString(
+            string: stringValue.uppercased(with: .current), attributes: attributes)
+        let size = text.size()
+        let textRect = NSRect(
+            x: cellFrame.minX + 12,
+            y: cellFrame.midY - size.height / 2,
+            width: cellFrame.width - 16,
+            height: size.height)
+        text.draw(in: textRect)
+
+        DesignTokens.hairlineNS.setFill()
+        NSRect(x: cellFrame.minX, y: cellFrame.maxY - 1,
+               width: cellFrame.width, height: 1).fill()
+    }
+
+    override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
+        // Everything happens in draw(withFrame:in:) — keep AppKit from
+        // painting the default title on top.
+    }
+}
+
+/// Mockup-style row: rectangular remoteSoft selection in BOTH panes (blue is
+/// the selection color per CI), identical with and without key focus.
+private final class PolishedRowView: NSTableRowView {
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard selectionHighlightStyle != .none else { return }
+        DesignTokens.remoteSoftNS.setFill()
+        bounds.fill()
+    }
+
+    override var isEmphasized: Bool {
+        get { false } // never fall back to the vibrant system blue
+        set {}
     }
 }
