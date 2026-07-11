@@ -63,4 +63,13 @@ enum DesignTokens {
     static let remoteSoftNS = dynamicNS(light: 0xE3EEF9, dark: 0x142C42)
     static let remoteSoft = Color(nsColor: remoteSoftNS)
     static let localSoft = Color(nsColor: dynamicNS(light: 0xFBF1DF, dark: 0x2C2415))
+
+    // Surface hierarchy (mockup: paper ground, card content surface).
+    // `paper`/`card` are staged for the transfer-bar and form polish
+    // rounds; M5h consumes only `sidebarSurface`.
+    static let paper = Color(nsColor: dynamicNS(light: 0xF4F7FA, dark: 0x0D1720))
+    static let card = Color(nsColor: dynamicNS(light: 0xFFFFFF, dark: 0x14212E))
+    /// The mockup's sidebar tint: color-mix(card 70%, paper), precomputed
+    /// per appearance so it stays a single deterministic dynamic color.
+    static let sidebarSurface = Color(nsColor: dynamicNS(light: 0xFCFDFE, dark: 0x121E2A))
 }
