@@ -37,11 +37,12 @@ struct SessionSidebar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(L10n.string("sidebar.header", "SESSIONS"))
-                .font(.caption2.weight(.semibold))
-                .tracking(0.8)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .font(.system(size: 10.5, weight: .semibold))
+                .tracking(1.0)
+                .foregroundStyle(DesignTokens.inkTertiary)
+                .padding(.top, 2)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
                 .dropDestination(for: String.self) { items, _ in
@@ -94,6 +95,13 @@ struct SessionSidebar: View {
             }
         }
         .disabled(interactionsDisabled)
+        .padding(.top, 12)
+        .background(DesignTokens.sidebarSurface)
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(DesignTokens.hairline)
+                .frame(width: 1)
+        }
         .alert(
             L10n.string("sidebar.newGroup.title", "New group"),
             isPresented: $isShowingNewGroupAlert
@@ -150,6 +158,7 @@ struct SessionSidebar: View {
                 onRequestNewGroupMove: { beginNewGroup(forMoving: session) },
                 onRequestDelete: { sessionPendingDelete = session }
             )
+            .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 6))
         }
     }
 
@@ -167,9 +176,9 @@ struct SessionSidebar: View {
                 // the stored group name keeps its original casing.
                 Text(group.name)
                     .textCase(.uppercase)
-                    .font(.caption2.weight(.semibold))
-                    .tracking(0.8)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .tracking(1.0)
+                    .foregroundStyle(DesignTokens.inkTertiary)
             }
             Spacer(minLength: 0)
         }
@@ -208,9 +217,9 @@ struct SessionSidebar: View {
                 }
             } header: {
                 Text(L10n.string("sidebar.importedHeader", "IMPORTED"))
-                    .font(.caption2.weight(.semibold))
-                    .tracking(0.8)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .tracking(1.0)
+                    .foregroundStyle(DesignTokens.inkTertiary)
             }
         }
     }
@@ -320,12 +329,12 @@ private struct SessionRow: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 2)
-        .padding(.horizontal, 4)
+        .padding(.vertical, 5)
+        .padding(.horizontal, 10)
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(isActive
-                      ? DesignTokens.remoteBlue.opacity(0.12)
+                      ? DesignTokens.remoteSoft
                       : (isHovering ? Color.secondary.opacity(0.08) : Color.clear))
         )
         .contentShape(Rectangle())
