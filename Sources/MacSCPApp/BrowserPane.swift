@@ -9,6 +9,7 @@ import macSCPCore
 struct BrowserPane: View {
     let title: String
     let tint: Color
+    let softTint: Color
     let viewModel: RemoteBrowserViewModel
     var onDropURLs: (([URL]) -> Void)? = nil
     /// Double-click on a remote FILE row — wired only for the remote pane
@@ -23,16 +24,18 @@ struct BrowserPane: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Text(title.uppercased())
-                    .font(.caption2.weight(.semibold))
-                    .padding(.horizontal, 7)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .tracking(0.9)
+                    .padding(.horizontal, 8)
                     .padding(.vertical, 2)
-                    .background(tint.opacity(0.18), in: RoundedRectangle(cornerRadius: 5))
+                    .background(softTint, in: RoundedRectangle(cornerRadius: 5))
                     .foregroundStyle(tint)
 
                 Text(viewModel.currentPath)
-                    .font(.system(.callout, design: .monospaced))
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .foregroundStyle(DesignTokens.inkTertiary)
                     .lineLimit(1)
-                    .truncationMode(.head)
+                    .truncationMode(.middle)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Button {
@@ -51,9 +54,12 @@ struct BrowserPane: View {
                 .disabled(viewModel.state == .loading)
                 .help(L10n.string("browser.pane.refreshHelp", "Refresh"))
             }
-            .padding(8)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
 
-            Divider()
+            Rectangle()
+                .fill(DesignTokens.hairline)
+                .frame(height: 1)
 
             ZStack {
                 RemoteFileTableView(

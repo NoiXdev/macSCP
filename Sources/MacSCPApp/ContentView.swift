@@ -265,6 +265,7 @@ struct ContentView: View {
                         BrowserPane(
                             title: L10n.string("browser.paneLocal", "Local"),
                             tint: DesignTokens.localAmber,
+                            softTint: DesignTokens.localSoft,
                             viewModel: session.local,
                             pasteboardWriter: { item in
                                 item.kind == .file
@@ -277,6 +278,7 @@ struct ContentView: View {
                         BrowserPane(
                             title: L10n.string("browser.paneRemote", "Remote"),
                             tint: DesignTokens.remoteBlue,
+                            softTint: DesignTokens.remoteSoft,
                             viewModel: session.remote,
                             onDropURLs: { urls in
                                 uploadDropped(urls, session: session)
