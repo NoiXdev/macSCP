@@ -98,9 +98,11 @@ struct SessionSidebar: View {
         .padding(.top, 12)
         .background(DesignTokens.sidebarSurface)
         .overlay(alignment: .trailing) {
+            // Purely cosmetic edge — must never shadow scrollbar hits.
             Rectangle()
                 .fill(DesignTokens.hairline)
                 .frame(width: 1)
+                .allowsHitTesting(false)
         }
         .alert(
             L10n.string("sidebar.newGroup.title", "New group"),
