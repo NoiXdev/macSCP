@@ -197,7 +197,8 @@ struct RemoteFileTableView: NSViewRepresentable {
 /// inkTertiary, 12pt leading inset, hairline bottom border (spec M5g).
 private final class PolishedHeaderCell: NSTableHeaderCell {
     override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
-        // Flat background matching the enclosing window chrome.
+        // Flat background matching the table body, so header and content
+        // read as one surface (mockup: seamless card).
         NSColor.controlBackgroundColor.setFill()
         cellFrame.fill()
 
