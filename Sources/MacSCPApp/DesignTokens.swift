@@ -53,6 +53,8 @@ enum DesignTokens {
     /// color is avoided deliberately).
     static let hairlineFaintNS = dynamicNS(light: 0xDAE3EB, dark: 0x24374A, alpha: 0.45)
     static let inkNS = dynamicNS(light: 0x14212E, dark: 0xE8EFF5)
+    /// SwiftUI wrappers for `ink`/`inkSecondary` are staged for the sidebar
+    /// polish round — the file table consumes the NS variants directly.
     static let ink = Color(nsColor: inkNS)
     static let inkSecondaryNS = dynamicNS(light: 0x4A5B6B, dark: 0xA7B7C5)
     static let inkSecondary = Color(nsColor: inkSecondaryNS)
