@@ -36,7 +36,7 @@ T1 → T2 → T3 sequenziell.
   - `DesignTokens.card: Color` — hell `#FFFFFF`, dunkel `#14212E`
   - `DesignTokens.sidebarSurface: Color` — hell `#FCFDFE`, dunkel `#121E2A`
 
-- [ ] **Step 1: Implementieren** — nach `localSoft` einfügen:
+- [x] **Step 1: Implementieren** — nach `localSoft` einfügen:
 
 ```swift
     // Surface hierarchy (mockup: paper ground, card content surface).
@@ -49,8 +49,8 @@ T1 → T2 → T3 sequenziell.
     static let sidebarSurface = Color(nsColor: dynamicNS(light: 0xFCFDFE, dark: 0x121E2A))
 ```
 
-- [ ] **Step 2: Build + Suite** — `swift build` fehlerfrei, `swift test` 295/295.
-- [ ] **Step 3: Commit** — `feat: add surface hierarchy design tokens`.
+- [x] **Step 2: Build + Suite** — `swift build` fehlerfrei, `swift test` 295/295.
+- [x] **Step 3: Commit** — `feat: add surface hierarchy design tokens`.
 
 ---
 
@@ -63,7 +63,7 @@ T1 → T2 → T3 sequenziell.
 - Consumes: T1 `sidebarSurface` + M5g-Tokens `hairline`, `inkTertiary`, `remoteSoft`.
 - Produces: keine neuen APIs.
 
-- [ ] **Step 1: Container-Fläche + Hairline-Kante** — am äußeren `VStack` (nach `.disabled(interactionsDisabled)`, vor `.alert`):
+- [x] **Step 1: Container-Fläche + Hairline-Kante** — am äußeren `VStack` (nach `.disabled(interactionsDisabled)`, vor `.alert`):
 
 ```swift
         .padding(.top, 12)
@@ -79,7 +79,7 @@ T1 → T2 → T3 sequenziell.
   horizontalen ~8 pt liefern List-Insets + Label-/Zeilen-Padding, kein
   zusätzlicher Modifier nötig.)
 
-- [ ] **Step 2: Label-Typo an drei Stellen** — identischer Stil, jeweils ersetzen:
+- [x] **Step 2: Label-Typo an drei Stellen** — identischer Stil, jeweils ersetzen:
 
 „SESSIONS"-Label (Zeilen 39–44), alt `.font(.caption2.weight(.semibold)) .tracking(0.8) .foregroundStyle(.secondary) .padding(.horizontal, 12) .padding(.vertical, 6)` → neu:
 
@@ -94,7 +94,7 @@ T1 → T2 → T3 sequenziell.
 
 `groupHeader`-Text (Zeilen 168–172) und „IMPORTIERT"-Header (Zeilen 210–213): dieselben drei Modifier (`font`/`tracking(1.0)`/`foregroundStyle(DesignTokens.inkTertiary)`) anstelle von `.font(.caption2.weight(.semibold)) .tracking(0.8) .foregroundStyle(.secondary)`; die Header liegen in der List und behalten ihre List-Insets (kein zusätzliches Padding), Kontextmenü/Drop/Rename unverändert.
 
-- [ ] **Step 3: Zeilen-Maße in `SessionRow`** — Padding und Aktiv-Fill (Zeilen 323–330) ersetzen:
+- [x] **Step 3: Zeilen-Maße in `SessionRow`** — Padding und Aktiv-Fill (Zeilen 323–330) ersetzen:
 
 ```swift
         .padding(.vertical, 5)
@@ -109,20 +109,20 @@ T1 → T2 → T3 sequenziell.
 
   und in `sessionRows(_:)` auf die `SessionRow` anwenden: `.listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 6))` (2 pt effektiver Zeilenabstand; leading 0, weil die Zeile ihr 10-pt-Innenpadding selbst trägt und mit dem 10-pt-Label-Padding fluchtet).
 
-- [ ] **Step 4: Build + volle Suite** — `swift build`, `swift test` 295/295.
-- [ ] **Step 5: Commit** — `feat: tint the sidebar surface and align rows with the mockup rhythm`.
+- [x] **Step 4: Build + volle Suite** — `swift build`, `swift test` 295/295.
+- [x] **Step 5: Commit** — `feat: tint the sidebar surface and align rows with the mockup rhythm`.
 
 ---
 
 ### Task 3: Abschluss-Verifikation (Koordinator)
 
-- [ ] `swift test` gesamt; Rig hoch (`docker compose -f docker/test-server/compose.yml start` — Container existiert gestoppt, `start` behält Host-Keys) und `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` voll grün.
-- [ ] **Visueller Smoke in HELL und DUNKEL** (hell app-only via `NSRequiresAquaSystemAppearance` im Wrapper-Info.plist erzwingen, danach ENTFERNEN):
+- [x] `swift test` gesamt; Rig hoch (`docker compose -f docker/test-server/compose.yml start` — Container existiert gestoppt, `start` behält Host-Keys) und `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` voll grün.
+- [x] **Visueller Smoke in HELL und DUNKEL** (hell app-only via `NSRequiresAquaSystemAppearance` im Wrapper-Info.plist erzwingen, danach ENTFERNEN):
   - Getönte Sidebar-Fläche hebt sich von der Pane-Fläche ab; 1-pt-Hairline an der rechten Kante sichtbar.
   - Labels („SESSIONS", Gruppenname, „IMPORTIERT") 10,5 pt versal mit Laufweite in inkTertiary; Fluchtung Labels ↔ Zeilen (beide 10 pt vom Rand) — bei Abweichung darf der Koordinator die `listRowInsets`-Werte um ±2 pt nachjustieren (als eigener `fix:`-Commit).
   - Aktive Zeile: `remoteSoft`-Pille (r6) + blaue semibold-Schrift + Phosphor-Punkt; Hover dezent.
   - Verhaltens-Regression: Verbinden-Klick, Kontextmenü (Session + Gruppe + Hintergrund), Inline-Rename Enter/Escape, Gruppe ein-/ausklappen, Lösch-Dialog (Abbrechen).
-- [ ] Checkboxen im Plan abhaken, Commit `docs: mark M5h plan tasks as completed` (+ Footer).
+- [x] Checkboxen im Plan abhaken, Commit `docs: mark M5h plan tasks as completed` (+ Footer).
 
 ## Ausblick
 
