@@ -28,4 +28,37 @@ enum DesignTokens {
     /// Terminal text/caret: phosphor (#7BD88F).
     static let terminalText = NSColor(
         srgbRed: 0x7B / 255, green: 0xD8 / 255, blue: 0x8F / 255, alpha: 1)
+
+    /// Appearance-aware color from two sRGB hex values (light/dark) — the
+    /// mockup's CSS custom properties, one Swift constant each.
+    private static func dynamicNS(light: Int, dark: Int, alpha: CGFloat = 1) -> NSColor {
+        func rgb(_ hex: Int) -> (CGFloat, CGFloat, CGFloat) {
+            (CGFloat((hex >> 16) & 0xFF) / 255,
+             CGFloat((hex >> 8) & 0xFF) / 255,
+             CGFloat(hex & 0xFF) / 255)
+        }
+        return NSColor(name: nil) { appearance in
+            let (r, g, b) = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                ? rgb(dark) : rgb(light)
+            return NSColor(srgbRed: r, green: g, blue: b, alpha: alpha)
+        }
+    }
+
+    // Mockup surface/typography tokens (spec table, M5g). NS variants exist
+    // because the AppKit file table consumes NSColor directly.
+    static let hairlineNS = dynamicNS(light: 0xDAE3EB, dark: 0x24374A)
+    static let hairline = Color(nsColor: hairlineNS)
+    /// Row separators: the hairline at 45% opacity, baked into the provider
+    /// so it stays a single dynamic color (withAlphaComponent on a dynamic
+    /// color is avoided deliberately).
+    static let hairlineFaintNS = dynamicNS(light: 0xDAE3EB, dark: 0x24374A, alpha: 0.45)
+    static let inkNS = dynamicNS(light: 0x14212E, dark: 0xE8EFF5)
+    static let ink = Color(nsColor: inkNS)
+    static let inkSecondaryNS = dynamicNS(light: 0x4A5B6B, dark: 0xA7B7C5)
+    static let inkSecondary = Color(nsColor: inkSecondaryNS)
+    static let inkTertiaryNS = dynamicNS(light: 0x7E8FA0, dark: 0x6E8093)
+    static let inkTertiary = Color(nsColor: inkTertiaryNS)
+    static let remoteSoftNS = dynamicNS(light: 0xE3EEF9, dark: 0x142C42)
+    static let remoteSoft = Color(nsColor: remoteSoftNS)
+    static let localSoft = Color(nsColor: dynamicNS(light: 0xFBF1DF, dark: 0x2C2415))
 }
