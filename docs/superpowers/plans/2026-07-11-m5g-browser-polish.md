@@ -42,7 +42,7 @@ T1 → T2 → T3 → T4 sequenziell (T2/T3 konsumieren T1-Tokens; T3 teilt keine
   - `DesignTokens.remoteSoftNS: NSColor` / `remoteSoft: Color` — hell `#E3EEF9`, dunkel `#142C42`
   - `DesignTokens.localSoft: Color` — hell `#FBF1DF`, dunkel `#2C2415` (nur SwiftUI-Konsument)
 
-- [ ] **Step 1: Implementieren** — in `DesignTokens.swift` unter den bestehenden Tokens ergänzen (Helfer zuerst, damit kein Hex-Copy-Paste-Fehler passiert):
+- [x] **Step 1: Implementieren** — in `DesignTokens.swift` unter den bestehenden Tokens ergänzen (Helfer zuerst, damit kein Hex-Copy-Paste-Fehler passiert):
 
 ```swift
     /// Appearance-aware color from two sRGB hex values (light/dark) — the
@@ -79,8 +79,8 @@ T1 → T2 → T3 → T4 sequenziell (T2/T3 konsumieren T1-Tokens; T3 teilt keine
     static let localSoft = Color(nsColor: dynamicNS(light: 0xFBF1DF, dark: 0x2C2415))
 ```
 
-- [ ] **Step 2: Build + Suite** — `swift build` fehlerfrei, `swift test` 295/295 (reine Konstanten, keine Konsumenten geändert).
-- [ ] **Step 3: Commit** — `git add Sources/MacSCPApp/DesignTokens.swift && git commit -m "feat: add mockup surface and typography design tokens"` (+ Footer).
+- [x] **Step 2: Build + Suite** — `swift build` fehlerfrei, `swift test` 295/295 (reine Konstanten, keine Konsumenten geändert).
+- [x] **Step 3: Commit** — `git add Sources/MacSCPApp/DesignTokens.swift && git commit -m "feat: add mockup surface and typography design tokens"` (+ Footer).
 
 ---
 
@@ -95,7 +95,7 @@ T1 → T2 → T3 → T4 sequenziell (T2/T3 konsumieren T1-Tokens; T3 teilt keine
 
 Bindende Werte (Spec-Tabelle): Header 10,5 pt semibold versal, Laufweite ~0,8 pt, `inkTertiary`, Höhe ~22 pt, 12 pt Einzug, Hairline unten · Zeilen 24 pt hoch, 12 pt seitliches Zellen-Padding, Hairline (`hairlineFaint`) zwischen Zeilen, KEIN Zebra · Name in `ink` 12,5 pt, Größe/Datum `inkSecondary` 12,5 pt `monospacedDigit`, Größe rechtsbündig · Auswahl rechteckig `remoteSoft` in beiden Panes, auch ohne Fenster-Fokus.
 
-- [ ] **Step 1: Subclasses implementieren** — am Dateiende (nach dem Coordinator) einfügen:
+- [x] **Step 1: Subclasses implementieren** — am Dateiende (nach dem Coordinator) einfügen:
 
 ```swift
 /// Mockup-style column header: versal 10.5pt semibold with tracking in
@@ -148,7 +148,7 @@ private final class PolishedRowView: NSTableRowView {
 }
 ```
 
-- [ ] **Step 2: `makeNSView` umstellen** — den Konfigurationsblock ersetzen (Spalten-Schleife bleibt, bekommt nur die Header-Cell):
+- [x] **Step 2: `makeNSView` umstellen** — den Konfigurationsblock ersetzen (Spalten-Schleife bleibt, bekommt nur die Header-Cell):
 
 ```swift
     func makeNSView(context: Context) -> NSScrollView {
@@ -180,7 +180,7 @@ private final class PolishedRowView: NSTableRowView {
 
   (Rest der Methode — dataSource/delegate/doubleAction/Drag-Maske/ScrollView — unverändert.)
 
-- [ ] **Step 3: Delegate erweitern** — im Coordinator NUR ergänzen (nichts Bestehendes ändern):
+- [x] **Step 3: Delegate erweitern** — im Coordinator NUR ergänzen (nichts Bestehendes ändern):
 
 ```swift
         func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
@@ -195,7 +195,7 @@ private final class PolishedRowView: NSTableRowView {
         }
 ```
 
-- [ ] **Step 4: Zellen-Styling in `tableView(_:viewFor:row:)`** — beim Anlegen des Feldes 12-pt-Insets, danach spaltenabhängige Typo (nach `cell.textField?.stringValue = text`):
+- [x] **Step 4: Zellen-Styling in `tableView(_:viewFor:row:)`** — beim Anlegen des Feldes 12-pt-Insets, danach spaltenabhängige Typo (nach `cell.textField?.stringValue = text`):
 
 ```swift
                 NSLayoutConstraint.activate([
@@ -224,9 +224,9 @@ private final class PolishedRowView: NSTableRowView {
             return cell
 ```
 
-- [ ] **Step 5: Build + volle Suite** — `swift build`, `swift test` 295/295.
-- [ ] **Step 6: Eigen-Smoke (nur Bauen/Starten, keine GUI-Automation)** — App bauen; wenn ein Wrapper-Start ohne GUI-Automation möglich ist, Sichtprüfung, sonst dem Koordinator überlassen (T4 verifiziert vollständig).
-- [ ] **Step 7: Commit** — `feat: restyle the file table to the mockup rhythm`.
+- [x] **Step 5: Build + volle Suite** — `swift build`, `swift test` 295/295.
+- [x] **Step 6: Eigen-Smoke (nur Bauen/Starten, keine GUI-Automation)** — App bauen; wenn ein Wrapper-Start ohne GUI-Automation möglich ist, Sichtprüfung, sonst dem Koordinator überlassen (T4 verifiziert vollständig).
+- [x] **Step 7: Commit** — `feat: restyle the file table to the mockup rhythm`.
 
 ---
 
@@ -240,7 +240,7 @@ private final class PolishedRowView: NSTableRowView {
 - Consumes: T1-Tokens (`localSoft`, `remoteSoft`, `inkTertiary`, `hairline`).
 - Produces: `BrowserPane` erhält einen neuen Parameter `let softTint: Color` direkt nach `tint`; ContentView übergibt `softTint: DesignTokens.localSoft` (lokal) bzw. `DesignTokens.remoteSoft` (remote).
 
-- [ ] **Step 1: Header umbauen** — in `BrowserPane.body` den HStack + Divider ersetzen:
+- [x] **Step 1: Header umbauen** — in `BrowserPane.body` den HStack + Divider ersetzen:
 
 ```swift
             HStack(spacing: 8) {
@@ -285,25 +285,25 @@ private final class PolishedRowView: NSTableRowView {
 
   und die Property-Liste um `let softTint: Color` (nach `tint`) ergänzen.
 
-- [ ] **Step 2: ContentView-Aufrufe** — beide `BrowserPane(...)`-Initialisierungen (ContentView, detail-Zweig) um den Parameter ergänzen: lokal `softTint: DesignTokens.localSoft`, remote `softTint: DesignTokens.remoteSoft`.
+- [x] **Step 2: ContentView-Aufrufe** — beide `BrowserPane(...)`-Initialisierungen (ContentView, detail-Zweig) um den Parameter ergänzen: lokal `softTint: DesignTokens.localSoft`, remote `softTint: DesignTokens.remoteSoft`.
 
-- [ ] **Step 3: Pane-Trenner — Entscheidung dokumentieren, kein Umbau:** Der `HSplitView`-Systemsteg bleibt unverändert (er ist auf macOS 15 ~1 pt breit und bleibt ziehbar; Spec: Funktion > Optik). KEIN Code-Schritt; T4 prüft visuell, ob die Steg-Farbe neben den Hairlines störend abweicht — falls ja, wird das als Punkt für die Folgerunde notiert, nicht in M5g gefixt.
+- [x] **Step 3: Pane-Trenner — Entscheidung dokumentieren, kein Umbau:** Der `HSplitView`-Systemsteg bleibt unverändert (er ist auf macOS 15 ~1 pt breit und bleibt ziehbar; Spec: Funktion > Optik). KEIN Code-Schritt; T4 prüft visuell, ob die Steg-Farbe neben den Hairlines störend abweicht — falls ja, wird das als Punkt für die Folgerunde notiert, nicht in M5g gefixt.
 
-- [ ] **Step 4: Build + volle Suite** — `swift build`, `swift test` 295/295.
-- [ ] **Step 5: Commit** — `feat: align the pane headers with the mockup metrics`.
+- [x] **Step 4: Build + volle Suite** — `swift build`, `swift test` 295/295.
+- [x] **Step 5: Commit** — `feat: align the pane headers with the mockup metrics`.
 
 ---
 
 ### Task 4: Abschluss-Verifikation (Koordinator)
 
-- [ ] `swift test` gesamt; danach Rig hoch (`docker compose -f docker/test-server/compose.yml start`, Container existiert gestoppt — `start`, NICHT `up`/`down`, damit die Host-Keys bleiben) und `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` voll grün.
-- [ ] **Visueller Smoke, Seite an Seite mit dem Mockup, in HELL und DUNKEL** (Appearance umschaltbar per `defaults write -g AppleInterfaceStyle`/System-Toggle oder Fenster-Screenshots in beiden Modi):
+- [x] `swift test` gesamt; danach Rig hoch (`docker compose -f docker/test-server/compose.yml start`, Container existiert gestoppt — `start`, NICHT `up`/`down`, damit die Host-Keys bleiben) und `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` voll grün.
+- [x] **Visueller Smoke, Seite an Seite mit dem Mockup, in HELL und DUNKEL** (Appearance umschaltbar per `defaults write -g AppleInterfaceStyle`/System-Toggle oder Fenster-Screenshots in beiden Modi):
   - Dateiliste: versale Spaltenköpfe (10,5 pt, Laufweite, inkTertiary, Hairline unter dem Header), 24-pt-Zeilen mit Hairline-Trennern statt Zebra, Name in Volltinte / Größe+Datum in inkSecondary mit Tabellenziffern, Größe rechtsbündig, 12-pt-Einzüge bündig Header↔Zellen.
   - Auswahl: `remoteSoft`-Rechteck in BEIDEN Panes, identisch mit/ohne Fensterfokus, Text lesbar in beiden Appearances.
   - Paneheads: 7×12-Maße, Badge auf Soft-Grund (bernstein-soft lokal, blau-soft remote), Pfad 11,5 pt mono in inkTertiary mit Mitte-Ellipsis, Hairline statt Divider.
   - Steg-Farbe HSplitView neben den Hairlines beurteilen (nur notieren).
   - **Verhaltens-Regression:** Ordner-Doppelklick (cd), Datei-Doppelklick remote (Editor öffnet), Auswahl → Upload/Download-Buttons, Drag lokal→remote (Drop-Upload) und remote→Finder (Promise), Kontextmenü Sidebar unangetastet, Symlink-Suffix „ →" sichtbar.
-- [ ] Checkboxen im Plan abhaken, Commit `docs: mark M5g plan tasks as completed` (+ Footer).
+- [x] Checkboxen im Plan abhaken, Commit `docs: mark M5g plan tasks as completed` (+ Footer).
 
 ## Ausblick
 
