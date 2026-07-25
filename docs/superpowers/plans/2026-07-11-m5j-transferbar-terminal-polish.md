@@ -32,7 +32,7 @@ T1 → T2 → T3 sequenziell (T1 und T2 teilen keine Datei, sind aber je klein; 
 - Consumes: `DesignTokens.hairline`, `.ink`, `.inkSecondary`, `.localAmber`, `.remoteBlue` (alle vorhanden).
 - Produces: private `PillProgress(fraction: Double, fill: Color)`-View in derselben Datei — kein API-Export.
 
-- [ ] **Step 1: Styling umstellen** — exakte Änderungen:
+- [x] **Step 1: Styling umstellen** — exakte Änderungen:
 
 a) `Divider()` (Zeile 18) →
 
@@ -57,7 +57,7 @@ e) Determinate-Progress-Zweig (Zeilen 78–81) ersetzen:
                 } else {
 ```
 
-- [ ] **Step 2: PillProgress anfügen** — am Dateiende:
+- [x] **Step 2: PillProgress anfügen** — am Dateiende:
 
 ```swift
 /// Mockup-style progress pill: 5pt capsule track in the hairline color,
@@ -85,8 +85,8 @@ private struct PillProgress: View {
 
   (Die `max(5, …)`-Untergrenze hält die Füll-Capsule rund, solange fraction > 0 klein ist; fraction wird defensiv auf 0…1 geklemmt.)
 
-- [ ] **Step 3: Build + volle Suite** — `swift build` fehlerfrei, `swift test` 295/295.
-- [ ] **Step 4: Commit** — `feat: restyle the transfer bar with the mockup pill progress`.
+- [x] **Step 3: Build + volle Suite** — `swift build` fehlerfrei, `swift test` 295/295.
+- [x] **Step 4: Commit** — `feat: restyle the transfer bar with the mockup pill progress`.
 
 ---
 
@@ -99,7 +99,7 @@ private struct PillProgress: View {
 - Consumes: `DesignTokens.hairline` (vorhanden).
 - Produces: keine neuen APIs.
 
-- [ ] **Step 1: Implementieren** — `terminalPanel` wird zu:
+- [x] **Step 1: Implementieren** — `terminalPanel` wird zu:
 
 ```swift
     @ViewBuilder
@@ -134,20 +134,20 @@ private struct PillProgress: View {
 
   (Einzige Änderungen gegenüber heute: die zwei Padding-Modifier + `font` im ended-Zweig und das Hairline-Overlay; Lifecycle/State-Switch identisch.)
 
-- [ ] **Step 2: Build + volle Suite** — `swift build`, `swift test` 295/295.
-- [ ] **Step 3: Commit** — `feat: add the mockup hairline edge to the terminal panel`.
+- [x] **Step 2: Build + volle Suite** — `swift build`, `swift test` 295/295.
+- [x] **Step 3: Commit** — `feat: add the mockup hairline edge to the terminal panel`.
 
 ---
 
 ### Task 3: Abschluss-Verifikation (Koordinator)
 
-- [ ] `swift test` gesamt; Rig hoch (`docker compose -f docker/test-server/compose.yml start` — `start`, nicht `up`/`down`, Host-Keys bleiben) und `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` voll grün.
-- [ ] **Visueller Smoke in HELL und DUNKEL** (hell app-only via `NSRequiresAquaSystemAppearance`, danach ENTFERNEN):
+- [x] `swift test` gesamt; Rig hoch (`docker compose -f docker/test-server/compose.yml start` — `start`, nicht `up`/`down`, Host-Keys bleiben) und `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` voll grün.
+- [x] **Visueller Smoke in HELL und DUNKEL** (hell app-only via `NSRequiresAquaSystemAppearance`, danach ENTFERNEN):
   - In den Einstellungen das Download-Limit auf ~200 KB/s stellen, eine ~8-MB-Datei remote→lokal ziehen (oder Download-Button) → die Pille füllt sichtbar: 5-pt-Capsule, Track in Hairline-Farbe, Füllung BLAU (Download); danach ein Upload → Füllung BERNSTEIN; Limit wieder auf 0.
   - Hairline über der Transfer-Leiste und als Terminal-Oberkante (⌘T) sichtbar; Kopf-/Zeilen-Maße 8×14; Dateiname in ink, Sekundärtexte inkSecondary.
   - „Shell beendet"-Zustand: im Terminal `exit` tippen → 12-pt-Text mit 8×14-Padding, Reopen funktioniert.
   - Verhaltens-Regression: Transfer läuft durch (✓-Häkchen in Richtungsfarbe), Aufräumen leert, ⌘T auf/zu, Rate/ETA-Label erscheint.
-- [ ] Checkboxen im Plan abhaken, Commit `docs: mark M5j plan tasks as completed` (+ Footer).
+- [x] Checkboxen im Plan abhaken, Commit `docs: mark M5j plan tasks as completed` (+ Footer).
 
 ## Ausblick
 
