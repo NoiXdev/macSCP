@@ -33,7 +33,7 @@ T1 → T2 → T3 sequenziell.
 - Consumes: `DesignTokens.remoteBlue`, `.card`, `.hairline`, `.inkSecondary` (alle vorhanden).
 - Produces: `PolishedButtonStyle: ButtonStyle` mit `let prominent: Bool`; `ButtonStyle`-Extension mit `static var polished` / `static var polishedProminent`.
 
-- [ ] **Step 1: Datei anlegen** — vollständiger Inhalt:
+- [x] **Step 1: Datei anlegen** — vollständiger Inhalt:
 
 ```swift
 import SwiftUI
@@ -74,8 +74,8 @@ extension ButtonStyle where Self == PolishedButtonStyle {
 }
 ```
 
-- [ ] **Step 2: Build + Suite** — `swift build` fehlerfrei, `swift test` 295/295 (noch keine Konsumenten).
-- [ ] **Step 3: Commit** — `feat: add the mockup polished button style`.
+- [x] **Step 2: Build + Suite** — `swift build` fehlerfrei, `swift test` 295/295 (noch keine Konsumenten).
+- [x] **Step 3: Commit** — `feat: add the mockup polished button style`.
 
 ---
 
@@ -88,7 +88,7 @@ extension ButtonStyle where Self == PolishedButtonStyle {
 - Consumes: T1 (`.polished`/`.polishedProminent`), `DesignTokens.inkSecondary`.
 - Produces: private `FormRow<Content: View>` in derselben Datei.
 
-- [ ] **Step 1: `FormRow` einfügen** — vor der `errorHighlight`-Extension:
+- [x] **Step 1: `FormRow` einfügen** — vor der `errorHighlight`-Extension:
 
 ```swift
 /// Mockup form row (M5k): fixed 110pt right-aligned label column in
@@ -111,7 +111,7 @@ private struct FormRow<Content: View>: View {
 }
 ```
 
-- [ ] **Step 2: `formContent` ersetzen** — die `Form { … } .disabled(isConnecting)` (Zeilen 79–152) wird zu:
+- [x] **Step 2: `formContent` ersetzen** — die `Form { … } .disabled(isConnecting)` (Zeilen 79–152) wird zu:
 
 ```swift
             VStack(alignment: .leading, spacing: 10) {
@@ -224,24 +224,24 @@ private struct FormRow<Content: View>: View {
 
   Hinweise: `Passphrase (optional)` ist als 110-pt-Label lang — `Text` bricht bei Bedarf zweizeilig um, das ist akzeptiert (Mockup-Spalte ist fix). Der `Button("…")` bekommt bereits hier `.polished`.
 
-- [ ] **Step 3: Buttons umstellen** — in der Button-HStack von `formContent`: „Zurück" und „Speichern" erhalten `.buttonStyle(.polished)`, „Speichern & verbinden" ersetzt `.buttonStyle(.borderedProminent)` durch `.buttonStyle(.polishedProminent)`, „Verbinden" ebenso; in `hostKeyPromptView`: „Zurück" `.buttonStyle(.polished)`, „Vertrauen & verbinden" `.buttonStyle(.polishedProminent)`. `keyboardShortcut`/`disabled` unverändert an Ort und Stelle.
+- [x] **Step 3: Buttons umstellen** — in der Button-HStack von `formContent`: „Zurück" und „Speichern" erhalten `.buttonStyle(.polished)`, „Speichern & verbinden" ersetzt `.buttonStyle(.borderedProminent)` durch `.buttonStyle(.polishedProminent)`, „Verbinden" ebenso; in `hostKeyPromptView`: „Zurück" `.buttonStyle(.polished)`, „Vertrauen & verbinden" `.buttonStyle(.polishedProminent)`. `keyboardShortcut`/`disabled` unverändert an Ort und Stelle.
 
-- [ ] **Step 4: Build + volle Suite** — `swift build` fehlerfrei, `swift test` 295/295.
-- [ ] **Step 5: Commit** — `feat: adopt the mockup form grid and button style in the connection form`.
+- [x] **Step 4: Build + volle Suite** — `swift build` fehlerfrei, `swift test` 295/295.
+- [x] **Step 5: Commit** — `feat: adopt the mockup form grid and button style in the connection form`.
 
 ---
 
 ### Task 3: Abschluss-Verifikation (Koordinator)
 
-- [ ] `swift test` gesamt; Rig hoch (`docker compose -f docker/test-server/compose.yml start`) und `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` voll grün.
-- [ ] **Visueller Smoke in HELL und DUNKEL** (hell app-only via `NSRequiresAquaSystemAppearance` im Wrapper, danach ENTFERNEN):
+- [x] `swift test` gesamt; Rig hoch (`docker compose -f docker/test-server/compose.yml start`) und `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` voll grün.
+- [x] **Visueller Smoke in HELL und DUNKEL** (hell app-only via `NSRequiresAquaSystemAppearance` im Wrapper, danach ENTFERNEN):
   - Grid: 110-pt-Labels rechtsbündig bündig übereinander, 10-pt-Gap, Felder fluchten; Auth-Segmented und Gruppen-Picker ohne Doppel-Label.
   - Buttons: „Verbinden" gefüllt blau r7; Sekundär-Buttons mit Hairline-Rand auf Card; Edit-Modus (Kontextmenü „Bearbeiten…"): Zurück/Speichern sekundär, „Speichern & verbinden" primär; gedrückt-Zustand sichtbar.
   - Validierung: leer verbinden → Alert + roter Zeilen-Rahmen (Optik wie zuvor).
   - **Tab-Kette:** Klick ins Host-Feld → Tab → Tab → Tab tippt der Reihe nach Host→Port→Benutzer→Passwort (Regression des Form-Wegfalls!).
   - TOFU-Prompt: Pin für 127.0.0.1 aus `known_hosts.json` entfernen → verbinden → Prompt mit neuen Buttons → „Vertrauen & verbinden" verbindet.
   - Toggle „Als Session speichern" fluchtet auf der Feldspalte; Aktivieren blendet Session-Name+Gruppe ein.
-- [ ] Checkboxen im Plan abhaken, Commit `docs: mark M5k plan tasks as completed` (+ Footer).
+- [x] Checkboxen im Plan abhaken, Commit `docs: mark M5k plan tasks as completed` (+ Footer).
 
 ## Ausblick
 
