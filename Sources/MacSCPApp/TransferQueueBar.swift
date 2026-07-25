@@ -117,6 +117,8 @@ private struct PillProgress: View {
     let fraction: Double
     let fill: Color
 
+    private var clampedFraction: Double { min(max(fraction, 0), 1) }
+
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
@@ -124,10 +126,17 @@ private struct PillProgress: View {
                     .fill(DesignTokens.hairline)
                 Capsule()
                     .fill(fill)
-                    .frame(width: max(5, geometry.size.width * min(max(fraction, 0), 1)))
+                    // Empty track at exactly 0; once bytes move, the fill
+                    // stays at least capsule-round (5pt).
+                    .frame(width: clampedFraction > 0
+                           ? max(5, geometry.size.width * clampedFraction)
+                           : 0)
             }
         }
         .frame(height: 5)
         .animation(.linear(duration: 0.2), value: fraction)
+        // The custom shapes replaced ProgressView — keep the determinate
+        // value readable for assistive tech.
+        .accessibilityRepresentation { ProgressView(value: clampedFraction) }
     }
 }
