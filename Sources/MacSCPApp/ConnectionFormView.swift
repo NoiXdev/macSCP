@@ -122,7 +122,7 @@ struct ConnectionFormView: View {
                             L10n.string("connection.auth.password", "Password"), text: $viewModel.password,
                             prompt: isEditMode
                                 ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
-                                : nil
+                                : Text(verbatim: "")
                         )
                     }
                     .errorHighlight(failedField == .password)
@@ -150,7 +150,7 @@ struct ConnectionFormView: View {
                             text: $viewModel.password,
                             prompt: isEditMode
                                 ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
-                                : nil
+                                : Text(verbatim: "")
                         )
                     }
                     .errorHighlight(failedField == .password)
