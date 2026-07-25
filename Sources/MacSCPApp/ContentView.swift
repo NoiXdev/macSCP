@@ -411,12 +411,22 @@ struct ContentView: View {
             case .ended(let message):
                 VStack(spacing: 8) {
                     Text(message ?? L10n.string("terminal.ended", "Shell ended."))
+                        .font(.system(size: 12))
                         .foregroundStyle(Color(nsColor: DesignTokens.terminalText))
                     Button(L10n.string("terminal.reopen", "Reopen")) { session.terminal.openIfNeeded() }
                 }
+                .padding(.vertical, 8)
+                .padding(.horizontal, 14)
             case .closed:
                 Color.clear
             }
+        }
+        // Mockup: the terminal strip carries a hairline top border.
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(DesignTokens.hairline)
+                .frame(height: 1)
+                .allowsHitTesting(false)
         }
     }
 
