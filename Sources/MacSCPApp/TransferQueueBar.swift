@@ -15,15 +15,17 @@ struct TransferQueueBar: View {
             EmptyView()
         } else {
             VStack(spacing: 0) {
-                Divider()
+                Rectangle()
+                    .fill(DesignTokens.hairline)
+                    .frame(height: 1)
                 HStack {
                     Text(viewModel.isActive
                          ? String(format: L10n.string(
                              "transfers.pending", "Transfers — %lld pending"),
                              Int64(viewModel.pendingCount))
                          : L10n.string("transfers.title", "Transfers"))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(DesignTokens.inkSecondary)
                     Spacer()
                     Button(L10n.string("transfers.clear", "Clean up")) { viewModel.clearCompleted() }
                         .controlSize(.small)
@@ -31,8 +33,8 @@ struct TransferQueueBar: View {
                             $0.status == .queued || $0.status.isRunning
                         })
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
 
                 ScrollView {
                     VStack(spacing: 2) {
@@ -40,8 +42,8 @@ struct TransferQueueBar: View {
                             row(item)
                         }
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 6)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 8)
                 }
                 .frame(maxHeight: 110)
             }
@@ -50,19 +52,20 @@ struct TransferQueueBar: View {
 
     @ViewBuilder
     private func row(_ item: TransferQueueViewModel.Item) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 12) {
             Image(systemName: item.direction == .upload ? "arrow.up" : "arrow.down")
                 .foregroundStyle(tint(for: item.direction))
                 .fontWeight(.bold)
                 .frame(width: 14)
             Text(item.fileName)
+                .foregroundStyle(DesignTokens.ink)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 8)
             switch item.status {
             case .queued:
                 Text(L10n.string("transfers.status.queued", "queued"))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(DesignTokens.inkSecondary)
             case .running(let progress):
                 // Rate/ETA (M5c/T5): compact "1,2 MB/s · 0:42" label, hidden
                 // until the queue's rate window (`TransferQueueViewModel`)
@@ -73,11 +76,10 @@ struct TransferQueueBar: View {
                     Text(label)
                         .font(.caption)
                         .monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DesignTokens.inkSecondary)
                 }
                 if let fraction = progress.fraction {
-                    ProgressView(value: fraction)
-                        .tint(tint(for: item.direction))
+                    PillProgress(fraction: fraction, fill: tint(for: item.direction))
                         .frame(width: 120)
                 } else {
                     ProgressView().controlSize(.small)
@@ -93,10 +95,10 @@ struct TransferQueueBar: View {
                     .help(message)
             case .cancelled:
                 Text(L10n.string("transfers.status.cancelled", "cancelled"))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(DesignTokens.inkSecondary)
             case .skipped:
                 Text(L10n.string("transfers.status.skipped", "skipped"))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(DesignTokens.inkSecondary)
             case .interrupted:
                 // Orange, not red (M5d/T3): interrupted is resumable, not a
                 // hard failure — a reconnect can continue it.
@@ -104,6 +106,28 @@ struct TransferQueueBar: View {
                     .font(.caption).foregroundStyle(.orange)
             }
         }
-        .font(.callout)
+        .font(.system(size: 12))
+    }
+}
+
+/// Mockup-style progress pill: 5pt capsule track in the hairline color,
+/// capsule fill in the transfer direction's brand color (CI rule: amber =
+/// upload, blue = download — only the SHAPE comes from the mockup).
+private struct PillProgress: View {
+    let fraction: Double
+    let fill: Color
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(DesignTokens.hairline)
+                Capsule()
+                    .fill(fill)
+                    .frame(width: max(5, geometry.size.width * min(max(fraction, 0), 1)))
+            }
+        }
+        .frame(height: 5)
+        .animation(.linear(duration: 0.2), value: fraction)
     }
 }
