@@ -86,12 +86,19 @@ struct ConnectionFormView: View {
                 .errorHighlight(failedField == .host)
 
                 FormRow(label: L10n.string("connection.field.port", "Port")) {
-                    TextField(L10n.string("connection.field.port", "Port"), text: $viewModel.port)
+                    // Empty prompts: outside a Form the title parameter would
+                    // surface as an in-field placeholder and duplicate the
+                    // FormRow label — the titles stay for accessibility only.
+                    TextField(
+                        L10n.string("connection.field.port", "Port"), text: $viewModel.port,
+                        prompt: Text(verbatim: ""))
                 }
                 .errorHighlight(failedField == .port)
 
                 FormRow(label: L10n.string("connection.field.username", "Username")) {
-                    TextField(L10n.string("connection.field.username", "Username"), text: $viewModel.username)
+                    TextField(
+                        L10n.string("connection.field.username", "Username"), text: $viewModel.username,
+                        prompt: Text(verbatim: ""))
                 }
                 .errorHighlight(failedField == .username)
 
