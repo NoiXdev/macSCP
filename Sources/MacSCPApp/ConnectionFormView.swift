@@ -76,79 +76,111 @@ struct ConnectionFormView: View {
                 : L10n.string("connection.title", "New connection"))
                 .font(.title2.bold())
 
-            Form {
-                TextField(
-                    L10n.string("connection.field.host", "Host"), text: $viewModel.host,
-                    prompt: Text(L10n.string("connection.field.host.placeholder", "server.example.com"))
-                )
-                    .errorHighlight(failedField == .host)
-                TextField(L10n.string("connection.field.port", "Port"), text: $viewModel.port)
-                    .errorHighlight(failedField == .port)
-                TextField(L10n.string("connection.field.username", "Username"), text: $viewModel.username)
-                    .errorHighlight(failedField == .username)
-                Picker(L10n.string("connection.field.authMethod", "Authentication"), selection: Binding(
-                    get: { viewModel.authChoice },
-                    set: { viewModel.selectAuthChoice($0) }
-                )) {
-                    Text(L10n.string("connection.auth.password", "Password"))
-                        .tag(ConnectionViewModel.AuthChoice.password)
-                    Text(L10n.string("connection.auth.privateKey", "SSH key"))
-                        .tag(ConnectionViewModel.AuthChoice.privateKey)
-                }
-                .pickerStyle(.segmented)
-                if viewModel.authChoice == .password {
-                    SecureField(
-                        L10n.string("connection.auth.password", "Password"), text: $viewModel.password,
-                        prompt: isEditMode
-                            ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
-                            : nil
-                    )
-                        .errorHighlight(failedField == .password)
-                } else {
-                    HStack(spacing: 6) {
-                        TextField(
-                            L10n.string("connection.field.keyPath", "Key path"), text: $viewModel.keyPath,
-                            prompt: Text(L10n.string(
-                                "connection.field.keyPath.placeholder", "~/.ssh/id_ed25519"))
-                        )
-                            .errorHighlight(failedField == .keyPath)
-                        // "…" is a pure symbol (ellipsis "browse" affordance), not
-                        // natural-language text — identical in every locale, so it
-                        // stays a literal rather than a catalog key.
-                        Button("…") { showKeyImporter = true }
-                            .help(L10n.string("connection.field.keyPath.browseHelp", "Choose key file"))
-                    }
-                    SecureField(
-                        L10n.string("connection.field.passphrase", "Passphrase (optional)"),
-                        text: $viewModel.password,
-                        prompt: isEditMode
-                            ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
-                            : nil
-                    )
-                        .errorHighlight(failedField == .password)
-                }
-                if !isEditMode {
-                    Toggle(
-                        L10n.string("connection.saveToggle", "Save as session"),
-                        isOn: $viewModel.shouldSaveSession)
-                }
-                if isEditMode || viewModel.shouldSaveSession {
+            VStack(alignment: .leading, spacing: 10) {
+                FormRow(label: L10n.string("connection.field.host", "Host")) {
                     TextField(
-                        L10n.string("connection.field.saveName", "Session name"), text: $viewModel.saveName,
-                        prompt: Text(L10n.string("connection.field.saveName.placeholder", "e.g. hetzner-web"))
+                        L10n.string("connection.field.host", "Host"), text: $viewModel.host,
+                        prompt: Text(L10n.string("connection.field.host.placeholder", "server.example.com"))
                     )
-                        .errorHighlight(failedField == .saveName)
-                    Picker(
-                        L10n.string("connection.field.group", "Group"),
-                        selection: $viewModel.selectedGroupID
-                    ) {
-                        Text(L10n.string("sidebar.noGroup", "No group")).tag(UUID?.none)
-                        ForEach(groups) { group in
-                            Text(group.name).tag(UUID?.some(group.id))
+                }
+                .errorHighlight(failedField == .host)
+
+                FormRow(label: L10n.string("connection.field.port", "Port")) {
+                    TextField(L10n.string("connection.field.port", "Port"), text: $viewModel.port)
+                }
+                .errorHighlight(failedField == .port)
+
+                FormRow(label: L10n.string("connection.field.username", "Username")) {
+                    TextField(L10n.string("connection.field.username", "Username"), text: $viewModel.username)
+                }
+                .errorHighlight(failedField == .username)
+
+                FormRow(label: L10n.string("connection.field.authMethod", "Authentication")) {
+                    Picker(L10n.string("connection.field.authMethod", "Authentication"), selection: Binding(
+                        get: { viewModel.authChoice },
+                        set: { viewModel.selectAuthChoice($0) }
+                    )) {
+                        Text(L10n.string("connection.auth.password", "Password"))
+                            .tag(ConnectionViewModel.AuthChoice.password)
+                        Text(L10n.string("connection.auth.privateKey", "SSH key"))
+                            .tag(ConnectionViewModel.AuthChoice.privateKey)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+
+                if viewModel.authChoice == .password {
+                    FormRow(label: L10n.string("connection.auth.password", "Password")) {
+                        SecureField(
+                            L10n.string("connection.auth.password", "Password"), text: $viewModel.password,
+                            prompt: isEditMode
+                                ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
+                                : nil
+                        )
+                    }
+                    .errorHighlight(failedField == .password)
+                } else {
+                    FormRow(label: L10n.string("connection.field.keyPath", "Key path")) {
+                        HStack(spacing: 6) {
+                            TextField(
+                                L10n.string("connection.field.keyPath", "Key path"), text: $viewModel.keyPath,
+                                prompt: Text(L10n.string(
+                                    "connection.field.keyPath.placeholder", "~/.ssh/id_ed25519"))
+                            )
+                            // "…" is a pure symbol (ellipsis "browse" affordance), not
+                            // natural-language text — identical in every locale, so it
+                            // stays a literal rather than a catalog key.
+                            Button("…") { showKeyImporter = true }
+                                .buttonStyle(.polished)
+                                .help(L10n.string("connection.field.keyPath.browseHelp", "Choose key file"))
                         }
+                    }
+                    .errorHighlight(failedField == .keyPath)
+
+                    FormRow(label: L10n.string("connection.field.passphrase", "Passphrase (optional)")) {
+                        SecureField(
+                            L10n.string("connection.field.passphrase", "Passphrase (optional)"),
+                            text: $viewModel.password,
+                            prompt: isEditMode
+                                ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
+                                : nil
+                        )
+                    }
+                    .errorHighlight(failedField == .password)
+                }
+
+                if !isEditMode {
+                    FormRow(label: "") {
+                        Toggle(
+                            L10n.string("connection.saveToggle", "Save as session"),
+                            isOn: $viewModel.shouldSaveSession)
+                    }
+                }
+
+                if isEditMode || viewModel.shouldSaveSession {
+                    FormRow(label: L10n.string("connection.field.saveName", "Session name")) {
+                        TextField(
+                            L10n.string("connection.field.saveName", "Session name"), text: $viewModel.saveName,
+                            prompt: Text(L10n.string("connection.field.saveName.placeholder", "e.g. hetzner-web"))
+                        )
+                    }
+                    .errorHighlight(failedField == .saveName)
+
+                    FormRow(label: L10n.string("connection.field.group", "Group")) {
+                        Picker(
+                            L10n.string("connection.field.group", "Group"),
+                            selection: $viewModel.selectedGroupID
+                        ) {
+                            Text(L10n.string("sidebar.noGroup", "No group")).tag(UUID?.none)
+                            ForEach(groups) { group in
+                                Text(group.name).tag(UUID?.some(group.id))
+                            }
+                        }
+                        .labelsHidden()
                     }
                 }
             }
+            .textFieldStyle(.roundedBorder)
             .disabled(isConnecting)
 
             HStack {
@@ -161,6 +193,7 @@ struct ConnectionFormView: View {
                     Button(L10n.string("common.back", "Back")) {
                         onCancelEdit()
                     }
+                    .buttonStyle(.polished)
                     Button(L10n.string("common.save", "Save")) {
                         if let session = viewModel.validateForEditSave() {
                             onSaveEdited(session, viewModel.password.isEmpty ? nil : viewModel.password)
@@ -168,6 +201,7 @@ struct ConnectionFormView: View {
                             alertMessage = message
                         }
                     }
+                    .buttonStyle(.polished)
                     Button(L10n.string("connection.saveAndConnect", "Save & connect")) {
                         if let session = viewModel.validateForEditSave() {
                             onSaveEdited(session, viewModel.password.isEmpty ? nil : viewModel.password)
@@ -177,7 +211,7 @@ struct ConnectionFormView: View {
                         }
                     }
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.polishedProminent)
                 } else {
                     Button(L10n.string("connection.connect", "Connect")) {
                         Task {
@@ -190,7 +224,7 @@ struct ConnectionFormView: View {
                     }
                     .keyboardShortcut(.defaultAction)
                     .disabled(isConnecting)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.polishedProminent)
                 }
             }
     }
@@ -217,11 +251,32 @@ struct ConnectionFormView: View {
                 Button(L10n.string("common.back", "Back")) {
                     viewModel.resolveHostKeyPrompt(trust: false)
                 }
+                .buttonStyle(.polished)
                 Button(L10n.string("connection.hostkey.trust", "Trust & connect")) {
                     viewModel.resolveHostKeyPrompt(trust: true)
                 }
                 .keyboardShortcut(.defaultAction)
+                .buttonStyle(.polishedProminent)
             }
+    }
+}
+
+/// Mockup form row (M5k): fixed 110pt right-aligned label column in
+/// inkSecondary, 10pt gap to the field. The visible label lives here;
+/// the wrapped controls keep their own label parameters purely for
+/// accessibility.
+private struct FormRow<Content: View>: View {
+    let label: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(label)
+                .font(.system(size: 12.5))
+                .foregroundStyle(DesignTokens.inkSecondary)
+                .frame(width: 110, alignment: .trailing)
+            content
+        }
     }
 }
 
