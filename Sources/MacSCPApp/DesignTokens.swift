@@ -53,8 +53,8 @@ enum DesignTokens {
     /// color is avoided deliberately).
     static let hairlineFaintNS = dynamicNS(light: 0xDAE3EB, dark: 0x24374A, alpha: 0.45)
     static let inkNS = dynamicNS(light: 0x14212E, dark: 0xE8EFF5)
-    /// SwiftUI wrappers for `ink`/`inkSecondary` are staged for the sidebar
-    /// polish round — the file table consumes the NS variants directly.
+    /// SwiftUI wrappers alongside the NS variants — the file table consumes
+    /// the NS colors directly, SwiftUI views the wrappers.
     static let ink = Color(nsColor: inkNS)
     static let inkSecondaryNS = dynamicNS(light: 0x4A5B6B, dark: 0xA7B7C5)
     static let inkSecondary = Color(nsColor: inkSecondaryNS)
@@ -64,10 +64,9 @@ enum DesignTokens {
     static let remoteSoft = Color(nsColor: remoteSoftNS)
     static let localSoft = Color(nsColor: dynamicNS(light: 0xFBF1DF, dark: 0x2C2415))
 
-    // Surface hierarchy (mockup: paper ground, card content surface).
-    // `paper`/`card` are staged for the transfer-bar and form polish
-    // rounds; M5h consumes only `sidebarSurface`.
-    static let paper = Color(nsColor: dynamicNS(light: 0xF4F7FA, dark: 0x0D1720))
+    // Surface hierarchy (mockup: card content surface on the window ground).
+    // `paper` (the mockup's page ground) had no consumer after the polish
+    // rounds and was dropped (M6a, YAGNI).
     static let card = Color(nsColor: dynamicNS(light: 0xFFFFFF, dark: 0x14212E))
     /// The mockup's sidebar tint: color-mix(card 70%, paper), precomputed
     /// per appearance so it stays a single deterministic dynamic color.

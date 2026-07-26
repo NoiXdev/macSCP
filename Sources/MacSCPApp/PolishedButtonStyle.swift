@@ -7,9 +7,20 @@ import SwiftUI
 /// button styles — this style is for in-content forms only.
 struct PolishedButtonStyle: ButtonStyle {
     let prominent: Bool
-    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
+        PolishedButtonBody(prominent: prominent, configuration: configuration)
+    }
+}
+
+/// Split out so the style can read environment values (M6a focus ring).
+private struct PolishedButtonBody: View {
+    let prominent: Bool
+    let configuration: ButtonStyle.Configuration
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.isFocused) private var isFocused
+
+    var body: some View {
         configuration.label
             .font(.system(size: 12.5, weight: prominent ? .semibold : .regular))
             .padding(.vertical, 5)
@@ -22,6 +33,14 @@ struct PolishedButtonStyle: ButtonStyle {
             .overlay(
                 RoundedRectangle(cornerRadius: 7)
                     .strokeBorder(DesignTokens.hairline, lineWidth: prominent ? 0 : 1)
+            )
+            // Full Keyboard Access: custom button styles suppress the system
+            // focus ring, so draw one — 2pt remote blue, slightly outset so
+            // it never collides with the secondary variant's hairline (M6a).
+            .overlay(
+                RoundedRectangle(cornerRadius: 9)
+                    .strokeBorder(DesignTokens.remoteBlue, lineWidth: isFocused ? 2 : 0)
+                    .padding(-3)
             )
             .opacity(configuration.isPressed ? 0.85 : (isEnabled ? 1 : 0.5))
             .contentShape(RoundedRectangle(cornerRadius: 7))

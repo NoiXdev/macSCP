@@ -196,9 +196,11 @@ public final class ConnectionViewModel {
     }
 
     /// Leaves edit mode and resets the form to the same blank state
-    /// `teardownSession` leaves it in for a new connection.
+    /// `teardownSession` leaves it in for a new connection. Built on
+    /// `exitEditMode()` (mode + group reset) plus the full field reset —
+    /// the two used to duplicate the mode handling (M6a).
     public func endEditing() {
-        mode = .new
+        exitEditMode()
         host = ""
         port = "22"
         username = ""
@@ -207,7 +209,6 @@ public final class ConnectionViewModel {
         keyPath = ""
         shouldSaveSession = false
         saveName = ""
-        selectedGroupID = nil
         state = .idle
     }
 

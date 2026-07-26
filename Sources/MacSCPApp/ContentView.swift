@@ -197,7 +197,7 @@ struct ContentView: View {
                         activeSessionID = nil
                     }
                 },
-                onNew: { disconnectToForm() },
+                onNew: { newConnection() },
                 onSelectImported: { fillFromImported($0) },
                 onEdit: { stored in editStored(stored) }
             )
@@ -574,6 +574,20 @@ struct ContentView: View {
                 connectionViewModel.authChoice = .password
                 connectionViewModel.keyPath = ""
             }
+        }
+    }
+
+    /// Sidebar "New connection": tear down any current session AND blank the
+    /// form (M6a) — without this, host/username/name from a previous edit or
+    /// connection stay prefilled. The toolbar "Disconnect" deliberately keeps
+    /// the fields (reconnect convenience) — only this path blanks them.
+    private func newConnection() {
+        guard !isReconnecting else { return }
+        isReconnecting = true // synchronous — prevents double teardown
+        Task {
+            defer { isReconnecting = false }
+            await teardownSession()
+            connectionViewModel.endEditing()
         }
     }
 

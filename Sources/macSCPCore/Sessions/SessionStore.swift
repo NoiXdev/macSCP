@@ -39,7 +39,9 @@ public struct SessionStore: Sendable {
         }
         // Defensive: a groupID whose group no longer exists behaves like nil.
         let knownIDs = Set(file.groups.map(\.id))
-        for index in file.sessions.indices where file.sessions[index].groupID.map({ !knownIDs.contains($0) }) == true {
+        for index in file.sessions.indices {
+            guard let groupID = file.sessions[index].groupID,
+                  !knownIDs.contains(groupID) else { continue }
             file.sessions[index].groupID = nil
         }
         return file

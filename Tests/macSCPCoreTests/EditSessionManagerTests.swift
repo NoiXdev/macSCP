@@ -9,6 +9,10 @@ import Testing
 // session's temp files. Serializing this suite avoids that shared-resource
 // collision, same pattern as `KeychainSecretStoreTests`/
 // `CitadelFileSystemIntegrationTests`.
+// Invariant this rests on (M6a/T5): any future test that constructs an
+// `EditSessionManager` outside this file, or otherwise touches the real
+// `macscp-edit` temp root, must either join this suite or use an isolated
+// root — the sweep test does not know about tests elsewhere.
 @Suite("EditSessionManager", .serialized)
 @MainActor
 struct EditSessionManagerTests {

@@ -77,33 +77,37 @@ struct ConnectionFormView: View {
                 .font(.title2.bold())
 
             VStack(alignment: .leading, spacing: 10) {
-                FormRow(label: L10n.string("connection.field.host", "Host")) {
+                let hostLabel = L10n.string("connection.field.host", "Host")
+                FormRow(label: hostLabel) {
                     TextField(
-                        L10n.string("connection.field.host", "Host"), text: $viewModel.host,
+                        hostLabel, text: $viewModel.host,
                         prompt: Text(L10n.string("connection.field.host.placeholder", "server.example.com"))
                     )
                 }
                 .errorHighlight(failedField == .host)
 
-                FormRow(label: L10n.string("connection.field.port", "Port")) {
+                let portLabel = L10n.string("connection.field.port", "Port")
+                FormRow(label: portLabel) {
                     // Empty prompts: outside a Form the title parameter would
                     // surface as an in-field placeholder and duplicate the
                     // FormRow label — the titles stay for accessibility only.
                     TextField(
-                        L10n.string("connection.field.port", "Port"), text: $viewModel.port,
+                        portLabel, text: $viewModel.port,
                         prompt: Text(verbatim: ""))
                 }
                 .errorHighlight(failedField == .port)
 
-                FormRow(label: L10n.string("connection.field.username", "Username")) {
+                let usernameLabel = L10n.string("connection.field.username", "Username")
+                FormRow(label: usernameLabel) {
                     TextField(
-                        L10n.string("connection.field.username", "Username"), text: $viewModel.username,
+                        usernameLabel, text: $viewModel.username,
                         prompt: Text(verbatim: ""))
                 }
                 .errorHighlight(failedField == .username)
 
-                FormRow(label: L10n.string("connection.field.authMethod", "Authentication")) {
-                    Picker(L10n.string("connection.field.authMethod", "Authentication"), selection: Binding(
+                let authMethodLabel = L10n.string("connection.field.authMethod", "Authentication")
+                FormRow(label: authMethodLabel) {
+                    Picker(authMethodLabel, selection: Binding(
                         get: { viewModel.authChoice },
                         set: { viewModel.selectAuthChoice($0) }
                     )) {
@@ -117,9 +121,10 @@ struct ConnectionFormView: View {
                 }
 
                 if viewModel.authChoice == .password {
-                    FormRow(label: L10n.string("connection.auth.password", "Password")) {
+                    let passwordLabel = L10n.string("connection.auth.password", "Password")
+                    FormRow(label: passwordLabel) {
                         SecureField(
-                            L10n.string("connection.auth.password", "Password"), text: $viewModel.password,
+                            passwordLabel, text: $viewModel.password,
                             prompt: isEditMode
                                 ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
                                 : Text(verbatim: "")
@@ -127,10 +132,11 @@ struct ConnectionFormView: View {
                     }
                     .errorHighlight(failedField == .password)
                 } else {
-                    FormRow(label: L10n.string("connection.field.keyPath", "Key path")) {
+                    let keyPathLabel = L10n.string("connection.field.keyPath", "Key path")
+                    FormRow(label: keyPathLabel) {
                         HStack(spacing: 6) {
                             TextField(
-                                L10n.string("connection.field.keyPath", "Key path"), text: $viewModel.keyPath,
+                                keyPathLabel, text: $viewModel.keyPath,
                                 prompt: Text(L10n.string(
                                     "connection.field.keyPath.placeholder", "~/.ssh/id_ed25519"))
                             )
@@ -144,9 +150,10 @@ struct ConnectionFormView: View {
                     }
                     .errorHighlight(failedField == .keyPath)
 
-                    FormRow(label: L10n.string("connection.field.passphrase", "Passphrase (optional)")) {
+                    let passphraseLabel = L10n.string("connection.field.passphrase", "Passphrase (optional)")
+                    FormRow(label: passphraseLabel) {
                         SecureField(
-                            L10n.string("connection.field.passphrase", "Passphrase (optional)"),
+                            passphraseLabel,
                             text: $viewModel.password,
                             prompt: isEditMode
                                 ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
@@ -165,9 +172,10 @@ struct ConnectionFormView: View {
                 }
 
                 if isEditMode || viewModel.shouldSaveSession {
-                    FormRow(label: L10n.string("connection.field.saveName", "Session name")) {
+                    let saveNameLabel = L10n.string("connection.field.saveName", "Session name")
+                    FormRow(label: saveNameLabel) {
                         TextField(
-                            L10n.string("connection.field.saveName", "Session name"), text: $viewModel.saveName,
+                            saveNameLabel, text: $viewModel.saveName,
                             prompt: Text(L10n.string("connection.field.saveName.placeholder", "e.g. hetzner-web"))
                         )
                     }
@@ -270,27 +278,32 @@ struct ConnectionFormView: View {
 
 /// Mockup form row (M5k): fixed 110pt right-aligned label column in
 /// inkSecondary, 10pt gap to the field. The visible label lives here;
-/// the wrapped controls keep their own label parameters purely for
-/// accessibility.
+/// the wrapped controls keep their own label parameters for accessibility —
+/// which is why the visible label is hidden from VoiceOver (M6a): without
+/// that, every row is announced twice. The label also dims with the row's
+/// enabled state, matching the system Form behavior the grid replaced.
 private struct FormRow<Content: View>: View {
     let label: String
     @ViewBuilder let content: Content
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(label)
                 .font(.system(size: 12.5))
                 .foregroundStyle(DesignTokens.inkSecondary)
+                .opacity(isEnabled ? 1 : 0.5)
                 .frame(width: 110, alignment: .trailing)
+                .accessibilityHidden(true)
             content
         }
     }
 }
 
 private extension View {
-    /// Red outline for the form field whose validation failed. The stroke
-    /// sits 4pt outside the row's bounds so label and field content keep
-    /// breathing room instead of touching the border.
+    /// Red outline for the form row whose validation failed. The stroke
+    /// wraps label AND field, sitting 10pt horizontally / 5pt vertically
+    /// outside the row's bounds so the content keeps breathing room.
     func errorHighlight(_ active: Bool) -> some View {
         overlay(
             RoundedRectangle(cornerRadius: 6)

@@ -355,6 +355,31 @@ struct ConnectionViewModelTests {
         #expect(vm.host.isEmpty && vm.saveName.isEmpty)
     }
 
+    /// `endEditing` must fully blank the form AND leave edit mode (via
+    /// `exitEditMode`) — unlike `exitEditMode()` alone, which deliberately
+    /// keeps the field values for its own callers.
+    @Test @MainActor func endEditingResetsEverything() {
+        let vm = makeVM()
+        vm.beginEditing(StoredSession(
+            name: "web", host: "h", port: 2222, username: "u",
+            authKind: .privateKey, keyPath: "/k", groupID: UUID()))
+        vm.shouldSaveSession = true
+
+        vm.endEditing()
+
+        #expect(vm.mode == .new)
+        #expect(vm.selectedGroupID == nil)
+        #expect(vm.host.isEmpty)
+        #expect(vm.port == "22")
+        #expect(vm.username.isEmpty)
+        #expect(vm.password.isEmpty)
+        #expect(vm.authChoice == .password)
+        #expect(vm.keyPath.isEmpty)
+        #expect(vm.shouldSaveSession == false)
+        #expect(vm.saveName.isEmpty)
+        #expect(vm.state == .idle)
+    }
+
     @Test func mismatchMapsToScaryMessage() async {
         let vm = makeVM(connector: { _, _ in
             throw HostKeyError.mismatch(
