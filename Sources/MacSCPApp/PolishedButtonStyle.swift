@@ -13,12 +13,19 @@ struct PolishedButtonStyle: ButtonStyle {
     }
 }
 
-/// Split out so the style can read environment values (M6a focus ring).
+/// Split out so the style can read environment values.
+///
+/// Focus ring (M6a smoke finding): NO custom ring is drawn. On macOS 15
+/// AppKit draws its accent-colored focus ring around SwiftUI buttons even
+/// when they use a custom `ButtonStyle` — verified live with Full Keyboard
+/// Access (the ring matches every other control, e.g. the segmented
+/// picker). A custom `\.isFocused`-driven overlay tried here never fired
+/// (that environment reflects `FocusState` bindings, not AppKit key-view
+/// focus) and would double-ring if it ever did, so it was removed.
 private struct PolishedButtonBody: View {
     let prominent: Bool
     let configuration: ButtonStyle.Configuration
     @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.isFocused) private var isFocused
 
     var body: some View {
         configuration.label
@@ -33,14 +40,6 @@ private struct PolishedButtonBody: View {
             .overlay(
                 RoundedRectangle(cornerRadius: 7)
                     .strokeBorder(DesignTokens.hairline, lineWidth: prominent ? 0 : 1)
-            )
-            // Full Keyboard Access: custom button styles suppress the system
-            // focus ring, so draw one — 2pt remote blue, slightly outset so
-            // it never collides with the secondary variant's hairline (M6a).
-            .overlay(
-                RoundedRectangle(cornerRadius: 9)
-                    .strokeBorder(DesignTokens.remoteBlue, lineWidth: isFocused ? 2 : 0)
-                    .padding(-3)
             )
             .opacity(configuration.isPressed ? 0.85 : (isEnabled ? 1 : 0.5))
             .contentShape(RoundedRectangle(cornerRadius: 7))
