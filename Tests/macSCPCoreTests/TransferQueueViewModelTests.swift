@@ -2393,9 +2393,10 @@ struct TransferQueueViewModelTests {
         // 1.txt (no conflict) finishes and frees its slot; 3.txt is dequeued
         // into it, finds its own conflict, and suspends at
         // `conflictGate.acquire()` — 2.txt still holds the gate inside the
-        // decider. Let this settle (same technique as
-        // `queueRuleSetWhileWaitingAtGateIsApplied`).
-        await waitUntil { status(vm, "3.txt") != .queued }
+        // decider. Wait for 1.txt to finish (that is what frees the slot
+        // for 3.txt); a conflict-resolving item itself stays `.queued`, so
+        // polling 3.txt's status here would spin to the limit every run.
+        await waitUntil { status(vm, "1.txt") == .finished }
         for _ in 0..<50 { await Task.yield() }
 
         // Let 2.txt's decider answer nil: cancels the whole group. 3.txt
