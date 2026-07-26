@@ -310,7 +310,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 case .directory:
                     return
                 default:
-                    throw RemoteFSError.protocolError(reason: "path exists as a file: \(path)")
+                    throw RemoteFSError.protocolError(reason: "path exists and is not a directory: \(path)")
                 }
             }
             throw Self.mapSFTPError(error, path: path)

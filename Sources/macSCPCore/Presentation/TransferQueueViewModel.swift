@@ -488,6 +488,43 @@ public final class TransferQueueViewModel {
         for task in active { await task.value }
     }
 
+    /// Conflict-dialog "Cancel" on a tree item aborts the WHOLE folder
+    /// transfer (M6a): sweeps this group's queued items, cancels its
+    /// in-flight transfers cooperatively, and stops its expansion so no new
+    /// items appear. Already-copied files stay in place (nothing is
+    /// deleted). Built on the same exactly-once pattern as `cancelAll`:
+    /// every swept id has its job cleared synchronously, so a later
+    /// `process` guard (`jobs[id] != nil`) cannot double-terminalize it.
+    /// Items of OTHER groups and ungrouped items are untouched.
+    private func cancelGroup(_ groupID: UUID) {
+        // Stop the expansion first — its task observes the cancellation at
+        // its next checkpoint and runs `finishExpansion(succeeded: false)`.
+        expansionTasks[groupID]?.cancel()
+        // Sweep this group's queued (not yet started) items.
+        let queuedGroupIDs = order.filter { itemGroup[$0] == groupID }
+        order.removeAll { itemGroup[$0] == groupID }
+        for id in queuedGroupIDs {
+            setStatus(id, .cancelled)
+            jobs[id] = nil
+            resumeWaiter(id, with: .failure(CancellationError()))
+        }
+        // Sweep this group's items currently resolving a conflict in another
+        // slot (their `process` bails on the missing job, exactly-once).
+        let resolving = resolvingJobIDs.filter { itemGroup[$0] == groupID }
+        resolvingJobIDs.subtract(resolving)
+        for id in resolving {
+            setStatus(id, .cancelled)
+            jobs[id] = nil
+            resumeWaiter(id, with: .failure(CancellationError()))
+        }
+        // Cancel this group's in-flight transfers cooperatively — each
+        // `copyFile` throws `CancellationError` and its `process` marks the
+        // item `.cancelled` (partial files stay, as in `cancelAll`).
+        for (id, task) in runningTransferTasks where itemGroup[id] == groupID {
+            task.cancel()
+        }
+    }
+
     /// Removes finished/failed/cancelled/skipped from the list. `.interrupted`
     /// items are KEPT (M5d/T3): they are resumable pending work — discarding
     /// them on "Clean up" would drop the retry metadata.
@@ -577,9 +614,16 @@ public final class TransferQueueViewModel {
             resumeWaiter(jobID, with: .failure(CancellationError()))
             return
         case .cancel:
+            // Capture the group BEFORE setStatus — the terminal transition
+            // removes the item's `itemGroup` entry.
+            let groupID = itemGroup[jobID]
             setStatus(jobID, .cancelled)
             jobs[jobID] = nil
             resumeWaiter(jobID, with: .failure(CancellationError()))
+            // Tree item: cancelling ONE conflict aborts the whole folder
+            // transfer (M6a). Single-file items (no group) keep the old
+            // behavior — only this item is cancelled.
+            if let groupID { cancelGroup(groupID) }
             return
         case .failed(let message, let error):
             setStatus(jobID, .failed(message))
@@ -717,13 +761,21 @@ public final class TransferQueueViewModel {
                 conflictGate.release()
                 return .cancel
             }
-            let decision = await decider(conflict)
-            conflictGate.release()
-            guard let decision else {
-                return .cancel                        // nil == cancel
+            // Re-check the rule too (M6a): an "apply to all" decision made
+            // while this item waited at the gate answers its conflict as
+            // well — prompting again would contradict the just-made rule.
+            if let rule = queueRule {
+                conflictGate.release()
+                resolution = rule
+            } else {
+                let decision = await decider(conflict)
+                conflictGate.release()
+                guard let decision else {
+                    return .cancel                        // nil == cancel
+                }
+                resolution = decision.resolution
+                if decision.applyToAll { queueRule = decision.resolution }
             }
-            resolution = decision.resolution
-            if decision.applyToAll { queueRule = decision.resolution }
         } else {
             resolution = .overwrite                   // default: silent overwrite (M5a)
         }

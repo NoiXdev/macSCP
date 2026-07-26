@@ -132,7 +132,7 @@ struct LocalFileSystemTests {
         let fs = LocalFileSystem()
 
         let target = root.appendingPathComponent("datei.txt").path(percentEncoded: false)
-        await #expect(throws: RemoteFSError.protocolError(reason: "path exists as a file: \(target)")) {
+        await #expect(throws: RemoteFSError.protocolError(reason: "path exists and is not a directory: \(target)")) {
             try await fs.createDirectory(at: target)
         }
     }

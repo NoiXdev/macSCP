@@ -1908,4 +1908,282 @@ struct TransferQueueViewModelTests {
         queue.uploadLimitBytesPerSec = 0
         #expect(queue.uploadBucket == nil)
     }
+
+    // MARK: - Group-cancel + conflict-gate hygiene (M6a/T3)
+
+    // MARK: - 43
+
+    /// A tree conflict cancel (decider returns nil) aborts the WHOLE folder
+    /// transfer: the colliding item and every other still-queued item of the
+    /// same group end `.cancelled`, an already-`.finished` item stays
+    /// finished, and the group's `onCompleted` still fires exactly once
+    /// (anyFinished).
+    @Test func treeConflictCancelAbortsWholeGroup() async throws {
+        let listings: [String: [RemoteFileItem]] = [
+            "/dir": [
+                RemoteFileItem(name: "1.txt", path: "/dir/1.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "2.txt", path: "/dir/2.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "3.txt", path: "/dir/3.txt", kind: .file, size: 1),
+            ],
+        ]
+        let source = QueueTestFS(
+            reads: [
+                "/dir/1.txt": .init(content: Data("aaa".utf8)),
+                "/dir/2.txt": .init(content: Data("bbb".utf8)),
+                "/dir/3.txt": .init(content: Data("ccc".utf8)),
+            ],
+            listings: listings)
+        let destination = QueueTestFS(reads: [
+            "/ziel/dir/2.txt": .init(content: Data("alt".utf8)),   // conflict on file 2
+        ])
+        let counter = Counter()
+        let done = TestSignal()
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1   // determinism: file 1 finishes before file 2's conflict resolves
+        vm.conflictDecider = { _ in nil }   // Cancel
+        vm.enqueueTree(
+            directoryName: "dir", direction: .download,
+            source: source, sourceDirectory: "/dir",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { counter.increment(); await done.fire() })
+
+        try await done.wait()
+
+        #expect(status(vm, "1.txt") == .finished)     // already-finished item stays finished
+        #expect(status(vm, "2.txt") == .cancelled)     // the conflicting item itself
+        #expect(status(vm, "3.txt") == .cancelled)     // swept as still-queued group member
+        #expect(counter.value == 1)                    // onCompleted fires exactly once
+    }
+
+    // MARK: - 44
+
+    /// The same tree-conflict cancel leaves an UNGROUPED queued item and a
+    /// SECOND, independent group completely untouched: both keep running to
+    /// completion.
+    @Test func treeConflictCancelLeavesOtherItemsAlone() async throws {
+        let listingsA: [String: [RemoteFileItem]] = [
+            "/dirA": [
+                RemoteFileItem(name: "1.txt", path: "/dirA/1.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "2.txt", path: "/dirA/2.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "3.txt", path: "/dirA/3.txt", kind: .file, size: 1),
+            ],
+        ]
+        let listingsB: [String: [RemoteFileItem]] = [
+            "/dirB": [
+                RemoteFileItem(name: "b1.txt", path: "/dirB/b1.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "b2.txt", path: "/dirB/b2.txt", kind: .file, size: 1),
+            ],
+        ]
+        let source = QueueTestFS(
+            reads: [
+                "/dirA/1.txt": .init(content: Data("a1".utf8)),
+                "/dirA/2.txt": .init(content: Data("a2".utf8)),
+                "/dirA/3.txt": .init(content: Data("a3".utf8)),
+                "/dirB/b1.txt": .init(content: Data("b1".utf8)),
+                "/dirB/b2.txt": .init(content: Data("b2".utf8)),
+                "/solo.txt": .init(content: Data("solo".utf8)),
+            ],
+            listings: listingsA.merging(listingsB) { a, _ in a })
+        let destination = QueueTestFS(reads: [
+            "/ziel/dirA/2.txt": .init(content: Data("alt".utf8)),
+        ])
+        let counterA = Counter()
+        let doneA = TestSignal()
+        let counterB = Counter()
+        let doneB = TestSignal()
+        let soloDone = TestSignal()
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1   // determinism: file 1 finishes before file 2's conflict resolves
+        vm.conflictDecider = { _ in nil }
+        vm.enqueueTree(
+            directoryName: "dirA", direction: .download,
+            source: source, sourceDirectory: "/dirA",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { counterA.increment(); await doneA.fire() })
+        vm.enqueue(
+            fileName: "solo.txt", direction: .download,
+            source: source, sourcePath: "/solo.txt",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { await soloDone.fire() })
+        vm.enqueueTree(
+            directoryName: "dirB", direction: .download,
+            source: source, sourceDirectory: "/dirB",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { counterB.increment(); await doneB.fire() })
+
+        try await doneA.wait()
+        try await soloDone.wait()
+        try await doneB.wait()
+
+        #expect(status(vm, "1.txt") == .finished)
+        #expect(status(vm, "2.txt") == .cancelled)
+        #expect(status(vm, "3.txt") == .cancelled)
+        #expect(counterA.value == 1)
+        // Untouched: the ungrouped item and the second group's items.
+        #expect(status(vm, "solo.txt") == .finished)
+        #expect(status(vm, "b1.txt") == .finished)
+        #expect(status(vm, "b2.txt") == .finished)
+        #expect(counterB.value == 1)
+    }
+
+    // MARK: - 45
+
+    /// A conflict cancel on one group item ALSO cooperatively cancels the
+    /// group's currently-RUNNING transfer (blocked mid-chunk, no cancellation-
+    /// aware gate): it ends `.cancelled` instead of running to completion, and
+    /// `onCompleted` still fires exactly once.
+    @Test func treeConflictCancelCancelsRunningGroupTransfers() async throws {
+        let content1 = Data(repeating: 0x5A, count: TransferChunk.size * 4)
+        let started1 = TestSignal()
+        let listings: [String: [RemoteFileItem]] = [
+            "/dir": [
+                RemoteFileItem(name: "1.bin", path: "/dir/1.bin", kind: .file, size: UInt64(content1.count)),
+                RemoteFileItem(name: "2.txt", path: "/dir/2.txt", kind: .file, size: 1),
+            ],
+        ]
+        let source = QueueTestFS(
+            reads: [
+                "/dir/1.bin": .init(content: content1, started: started1, spinUntilCancelledAt: 1),
+                "/dir/2.txt": .init(content: Data("x".utf8)),
+            ],
+            listings: listings)
+        let destination = QueueTestFS(reads: [
+            "/ziel/dir/2.txt": .init(content: Data("alt".utf8)),   // conflict on file 2
+        ])
+        let counter = Counter()
+        let done = TestSignal()
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 2   // both files occupy a slot at once
+        vm.conflictDecider = { _ in
+            // Only resolve file 2's conflict once file 1 is DEFINITELY running
+            // (registered in runningTransferTasks) — proves the cancel below
+            // hits a running transfer, not one still queued/resolving.
+            try? await started1.wait()
+            return nil   // Cancel
+        }
+        vm.enqueueTree(
+            directoryName: "dir", direction: .download,
+            source: source, sourceDirectory: "/dir",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { counter.increment(); await done.fire() })
+
+        try await done.wait()
+
+        #expect(status(vm, "1.bin") == .cancelled)   // running transfer, stopped cooperatively
+        #expect(status(vm, "2.txt") == .cancelled)   // the conflicting item itself
+        #expect(counter.value == 1)
+    }
+
+    // MARK: - 46
+
+    /// Single-file (ungrouped) conflict cancel keeps the OLD behavior: only
+    /// that item is cancelled, any other queued item is unaffected.
+    @Test func singleFileConflictCancelKeepsOldBehavior() async throws {
+        let source = QueueTestFS(reads: [
+            "/a.txt": .init(content: Data("x".utf8)),
+            "/b.txt": .init(content: Data("y".utf8)),
+        ])
+        let destination = QueueTestFS(reads: [
+            "/ziel/a.txt": .init(content: Data("alt".utf8)),   // conflict
+        ])
+
+        let vm = TransferQueueViewModel()
+        vm.conflictDecider = { _ in nil }
+        vm.enqueue(
+            fileName: "a.txt", direction: .upload,
+            source: source, sourcePath: "/a.txt",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: nil)
+        let done = TestSignal()
+        vm.enqueue(
+            fileName: "b.txt", direction: .upload,
+            source: source, sourcePath: "/b.txt",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { await done.fire() })
+
+        try await done.wait()
+
+        #expect(vm.items[0].status == .cancelled)
+        #expect(vm.items[1].status == .finished)
+    }
+
+    // MARK: - 47
+
+    /// An "apply to all" rule set by one slot while a SECOND slot is waiting
+    /// at the conflict gate is honored by that second slot as soon as it gets
+    /// the gate — it must NOT prompt the decider a second time.
+    @Test func queueRuleSetWhileWaitingAtGateIsApplied() async throws {
+        let statEntered1 = TestSignal(); let statGate1 = TestSignal()
+        let statEntered2 = TestSignal(); let statGate2 = TestSignal()
+        let source = QueueTestFS(reads: [
+            "/1.txt": .init(content: Data("neu1".utf8)),
+            "/2.txt": .init(content: Data("neu2".utf8)),
+        ])
+        let destination1 = QueueTestFS(
+            reads: ["/ziel/1.txt": .init(content: Data("alt1".utf8))],
+            statEntered: statEntered1, statGate: statGate1)
+        let destination2 = QueueTestFS(
+            reads: ["/ziel/2.txt": .init(content: Data("alt2".utf8))],
+            statEntered: statEntered2, statGate: statGate2)
+
+        let calls = CallCounter()
+        let slot1EnteredDecider = TestSignal()
+        let letSlot1Proceed = TestSignal()
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 2
+        vm.conflictDecider = { _ in
+            await calls.increment()
+            let n = await calls.count
+            if n == 1 {
+                // Slot 1: holds the gate. Signal that we're inside the
+                // decider (i.e. the gate is held), then wait until the test
+                // has confirmed slot 2 is queued behind it before answering
+                // with an "apply to all" rule.
+                await slot1EnteredDecider.fire()
+                try? await letSlot1Proceed.wait()
+                return (.overwrite, true)
+            }
+            // Reached only if the fix is missing: slot 2 asked the decider
+            // again instead of following the freshly-set rule.
+            return (.overwrite, false)
+        }
+
+        vm.enqueue(
+            fileName: "1.txt", direction: .upload,
+            source: source, sourcePath: "/1.txt",
+            destination: destination1, destinationDirectory: "/ziel",
+            onCompleted: nil)
+        vm.enqueue(
+            fileName: "2.txt", direction: .upload,
+            source: source, sourcePath: "/2.txt",
+            destination: destination2, destinationDirectory: "/ziel",
+            onCompleted: nil)
+
+        try await statEntered1.wait()
+        try await statEntered2.wait()
+
+        // File 1's stat returns (conflict) → it acquires the gate and calls
+        // the decider (call #1), which then blocks on `letSlot1Proceed`.
+        await statGate1.fire()
+        try await slot1EnteredDecider.wait()
+
+        // File 2's stat now returns (conflict too). `queueRule` is still nil
+        // (slot 1 hasn't answered yet) so it takes the decider branch and
+        // suspends on `conflictGate.acquire()` — slot 1 already holds it.
+        await statGate2.fire()
+        for _ in 0..<50 { await Task.yield() }
+
+        // Let slot 1 answer: sets the rule, releases the gate straight to
+        // slot 2 (FIFO hand-off). A correct implementation re-checks the rule
+        // right there and does NOT call the decider again.
+        await letSlot1Proceed.fire()
+
+        await waitUntil { vm.items.allSatisfy { $0.status == .finished } }
+        #expect(await calls.count == 1)   // decider asked exactly once overall
+        #expect(await destination1.writtenData(at: "/ziel/1.txt") == Data("neu1".utf8))
+        #expect(await destination2.writtenData(at: "/ziel/2.txt") == Data("neu2".utf8))
+    }
 }

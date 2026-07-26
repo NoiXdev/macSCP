@@ -130,7 +130,7 @@ public struct LocalFileSystem: RemoteFileSystem {
         let exists = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
         if exists {
             if isDirectory.boolValue { return }
-            throw RemoteFSError.protocolError(reason: "path exists as a file: \(path)")
+            throw RemoteFSError.protocolError(reason: "path exists and is not a directory: \(path)")
         }
         do {
             try FileManager.default.createDirectory(
