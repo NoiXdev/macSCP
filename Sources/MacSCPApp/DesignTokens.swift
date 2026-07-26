@@ -68,7 +68,8 @@ enum DesignTokens {
     // `paper` (the mockup's page ground) had no consumer after the polish
     // rounds and was dropped (M6a, YAGNI).
     static let card = Color(nsColor: dynamicNS(light: 0xFFFFFF, dark: 0x14212E))
-    /// The mockup's sidebar tint: color-mix(card 70%, paper), precomputed
-    /// per appearance so it stays a single deterministic dynamic color.
+    /// The mockup's sidebar tint: color-mix(card 70%, window ground — the
+    /// mockup's "paper" #F4F7FA/#0D1720, dropped as a token in M6a),
+    /// precomputed per appearance so it stays a single dynamic color.
     static let sidebarSurface = Color(nsColor: dynamicNS(light: 0xFCFDFE, dark: 0x121E2A))
 }

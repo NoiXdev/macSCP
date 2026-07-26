@@ -2397,6 +2397,14 @@ struct TransferQueueViewModelTests {
         // for 3.txt); a conflict-resolving item itself stays `.queued`, so
         // polling 3.txt's status here would spin to the limit every run.
         await waitUntil { status(vm, "1.txt") == .finished }
+        // Deterministic gate arrival (M6a final-review hardening): wait until
+        // 3.txt's conflict probe has entered `stat` — from its return the
+        // slot reaches `conflictGate.acquire()` with no other suspension
+        // point in between, so after the yields below it is genuinely parked
+        // AT THE GATE (not still queued in `order`).
+        while await destination.statedPaths.contains("/ziel/dir/3.txt") == false {
+            await Task.yield()
+        }
         for _ in 0..<50 { await Task.yield() }
 
         // Let 2.txt's decider answer nil: cancels the whole group. 3.txt

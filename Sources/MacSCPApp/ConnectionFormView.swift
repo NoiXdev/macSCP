@@ -181,9 +181,10 @@ struct ConnectionFormView: View {
                     }
                     .errorHighlight(failedField == .saveName)
 
-                    FormRow(label: L10n.string("connection.field.group", "Group")) {
+                    let groupLabel = L10n.string("connection.field.group", "Group")
+                    FormRow(label: groupLabel) {
                         Picker(
-                            L10n.string("connection.field.group", "Group"),
+                            groupLabel,
                             selection: $viewModel.selectedGroupID
                         ) {
                             Text(L10n.string("sidebar.noGroup", "No group")).tag(UUID?.none)
