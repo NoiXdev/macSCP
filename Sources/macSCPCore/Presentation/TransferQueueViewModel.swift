@@ -119,15 +119,36 @@ public final class TransferQueueViewModel {
         }
     }
 
-    /// Bandwidth ceilings in bytes/second, direction-dependent (M5c/T5); `0`
-    /// (default) = unlimited, matching `TransferEngine.copyFile`'s
-    /// `bytesPerSecondLimit` semantics. `ContentView` sets these from
-    /// `SettingsStore` at session start and via `.onChange`. Read in
-    /// `process` at the moment a slot actually starts transferring, so a
-    /// change applies to items STARTING after it — already-running transfers
-    /// keep whatever limit they started with.
-    public var uploadLimitBytesPerSec: Int = 0
-    public var downloadLimitBytesPerSec: Int = 0
+    /// Bandwidth ceilings in bytes/second, direction-dependent; `0` (default)
+    /// = unlimited. Backed by ONE shared `BandwidthBucket` per direction
+    /// (M6a): all concurrent transfers of a direction share the limit in
+    /// aggregate. CHANGING a non-zero limit re-rates the existing bucket, so
+    /// it applies live even to running transfers; ENABLING/DISABLING (0 ↔ n)
+    /// swaps the bucket reference and therefore only applies to transfers
+    /// starting afterwards (running ones keep the reference they resolved).
+    public var uploadLimitBytesPerSec: Int = 0 {
+        didSet { uploadBucket = Self.updatedBucket(uploadBucket, bytesPerSecond: uploadLimitBytesPerSec) }
+    }
+    public var downloadLimitBytesPerSec: Int = 0 {
+        didSet { downloadBucket = Self.updatedBucket(downloadBucket, bytesPerSecond: downloadLimitBytesPerSec) }
+    }
+
+    /// The per-direction shared buckets handed to `TransferEngine.copyFile`.
+    /// Internal for test visibility.
+    private(set) var uploadBucket: BandwidthBucket?
+    private(set) var downloadBucket: BandwidthBucket?
+
+    private static func updatedBucket(
+        _ bucket: BandwidthBucket?, bytesPerSecond: Int
+    ) -> BandwidthBucket? {
+        guard bytesPerSecond > 0 else { return nil }
+        guard let bucket else { return BandwidthBucket(bytesPerSecond: bytesPerSecond) }
+        // Keep the instance (running transfers hold it) and re-rate it. The
+        // hop is fire-and-forget by design: pacing catches up on the next
+        // consume, there is nothing to await for correctness.
+        Task { await bucket.setRate(bytesPerSecond: bytesPerSecond) }
+        return bucket
+    }
 
     // MARK: - Private state
 
@@ -602,12 +623,10 @@ public final class TransferQueueViewModel {
         let destination = job.destination
         let destinationDirectory = job.destinationDirectory
         let fileName = effectiveFileName
-        // Direction-dependent limit (M5c/T5): only read HERE, at the moment the
-        // transfer actually starts — a change to `uploadLimitBytesPerSec`/
-        // `downloadLimitBytesPerSec` therefore only applies to items starting
-        // next; already-running transfers keep the limit they started with.
-        let bytesPerSecondLimit = job.direction == .upload
-            ? uploadLimitBytesPerSec : downloadLimitBytesPerSec
+        // Direction-dependent shared bucket (M6a): resolved HERE, at the
+        // moment the transfer actually starts — a Settings change rebuilds
+        // the bucket and therefore only applies to items starting next.
+        let throttle = job.direction == .upload ? uploadBucket : downloadBucket
         // Resume flag (M5d/T3): only a retry job sets it — the engine then
         // continues from the destination offset instead of overwriting.
         let resume = job.resume
@@ -616,7 +635,7 @@ public final class TransferQueueViewModel {
                 from: source, sourcePath: sourcePath,
                 to: destination, destinationDirectory: destinationDirectory, fileName: fileName,
                 resume: resume,
-                bytesPerSecondLimit: bytesPerSecondLimit,
+                throttle: throttle,
                 onProgress: { progressContinuation.yield($0) }
             )
         }

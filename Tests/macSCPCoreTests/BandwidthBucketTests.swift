@@ -2,28 +2,6 @@ import Foundation
 import Testing
 @testable import macSCPCore
 
-/// Deterministic clock driver for BandwidthBucket tests: `sleep` advances the
-/// virtual instant instead of actually sleeping, so tests never wait.
-private final class VirtualTime: @unchecked Sendable {
-    private let lock = NSLock()
-    private var instant = ContinuousClock.now
-    private(set) var totalSlept = Duration.zero
-
-    var now: @Sendable () -> ContinuousClock.Instant {
-        { [self] in lock.withLock { instant } }
-    }
-
-    var sleep: @Sendable (Duration) async throws -> Void {
-        { [self] duration in
-            try Task.checkCancellation()
-            lock.withLock {
-                instant = instant.advanced(by: duration)
-                totalSlept += duration
-            }
-        }
-    }
-}
-
 @Suite("BandwidthBucket")
 struct BandwidthBucketTests {
     @Test("first consume within the burst capacity passes without sleeping")

@@ -1888,4 +1888,24 @@ struct TransferQueueViewModelTests {
         #expect(await remote2.writtenData(at: "/ziel/a (2).txt") == content)
         #expect(await remote2.writtenData(at: "/ziel/a.txt") == nil)
     }
+
+    // MARK: - Shared bandwidth buckets (M6a/T2)
+
+    @Test("direction limits build one shared bucket per direction")
+    @MainActor
+    func directionLimitsBuildBuckets() {
+        let queue = TransferQueueViewModel()
+        #expect(queue.uploadBucket == nil && queue.downloadBucket == nil)
+        queue.uploadLimitBytesPerSec = 1024
+        #expect(queue.uploadBucket != nil && queue.downloadBucket == nil)
+        queue.downloadLimitBytesPerSec = 2048
+        #expect(queue.downloadBucket != nil)
+        // Changing a non-zero limit keeps the SAME bucket instance (running
+        // transfers hold it — the change must reach them live).
+        let bucketBefore = queue.uploadBucket
+        queue.uploadLimitBytesPerSec = 4096
+        #expect(queue.uploadBucket === bucketBefore)
+        queue.uploadLimitBytesPerSec = 0
+        #expect(queue.uploadBucket == nil)
+    }
 }

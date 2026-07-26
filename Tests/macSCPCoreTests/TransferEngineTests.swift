@@ -107,52 +107,37 @@ struct TransferEngineTests {
         #expect(written < chunkTotal)         // not all chunks transferred
     }
 
-    // MARK: - Bandwidth Throttle (M5c/T5)
+    // MARK: - Bandwidth Throttle (M6a/T2)
 
-    /// A limit of 256 KB/s over 1 MiB (= 16 chunks of 64 KiB) must yield a
-    /// total of ~4s of requested sleep (1_048_576 / (256*1024) == 4.0). The
-    /// injected `sleep` hook does NOT actually sleep — it only accumulates
-    /// the requested durations, making the test deterministic instead of
-    /// dependent on real timing (no flakiness risk).
+    /// A shared `BandwidthBucket` at 256 KB/s over 1 MiB (= 16 chunks of 64
+    /// KiB): the first 4 chunks (262_144 bytes == 1s of rate, the bucket's
+    /// initial burst) ride for free, the remaining 12 chunks are each paced
+    /// ~0.25s apart — total virtual sleep ≈ 3.0s (786_432 bytes ÷ 262_144
+    /// B/s). The chunk size equals the bucket's capacity exactly, so the
+    /// terminal chunk lands the balance at 0, not negative — no leftover
+    /// debt to add to the expectation. `VirtualTime` drives the bucket's
+    /// clock/sleep so the test is deterministic instead of depending on real
+    /// timing (no flakiness risk).
     @Test func throttleRequestsExpectedTotalSleepDuration() async throws {
         let content = Data(repeating: 0x42, count: 1024 * 1024)
         let source = makeSource(content: content)
         let destination = MockRemoteFileSystem(tree: ["/ziel": []])
 
-        let recorder = SleepRecorder()
+        let time = VirtualTime()
+        let bucket = BandwidthBucket(bytesPerSecond: 256 * 1024, now: time.now, sleep: time.sleep)
         try await TransferEngine.copyFile(
             from: source, sourcePath: "/quelle.bin",
             to: destination, destinationDirectory: "/ziel", fileName: "quelle.bin",
-            bytesPerSecondLimit: 256 * 1024,
-            sleep: { duration in recorder.record(duration) },
+            throttle: bucket,
             onProgress: { _ in }
         )
 
         #expect(await destination.writtenData(at: "/ziel/quelle.bin") == content)
-        let totalSeconds = recorder.totalSeconds
-        // Tolerance window instead of exact equality (Double rounding over 16
-        // additions) — the binding requirement was "duration ≥ ~3.5s"; the
-        // virtual model yields exactly 4.0s here, a tight window covers that
-        // plus a bit of margin.
-        #expect(totalSeconds >= 3.5)
-        #expect(totalSeconds <= 4.5)
-    }
-
-    /// `bytesPerSecondLimit == 0` (default) is left untouched: not a single
-    /// sleep call, exactly the pre-T5 behavior.
-    @Test func noThrottleWithoutLimitNeverSleeps() async throws {
-        let content = Data(repeating: 0x1, count: TransferChunk.size * 2)
-        let source = makeSource(content: content)
-        let destination = MockRemoteFileSystem(tree: ["/ziel": []])
-
-        let recorder = SleepRecorder()
-        try await TransferEngine.copyFile(
-            from: source, sourcePath: "/quelle.bin",
-            to: destination, destinationDirectory: "/ziel", fileName: "quelle.bin",
-            sleep: { duration in recorder.record(duration) },
-            onProgress: { _ in }
-        )
-        #expect(recorder.callCount == 0)
+        let totalSeconds = time.totalSlept.secondsAsDouble
+        // Tolerance window instead of exact equality (Double rounding over 12
+        // additions).
+        #expect(totalSeconds >= 2.8)
+        #expect(totalSeconds <= 3.2)
     }
 
     // MARK: - Resume (M5d/T2)
@@ -500,29 +485,6 @@ private actor ResumeSpinDestination: RemoteFileSystem {
     func delete(path: String) async throws { throw RemoteFSError.notFound(path: path) }
     func createDirectory(at path: String) async throws {}
     func disconnect() async {}
-}
-
-/// Accumulates the durations passed to the injected `sleep` hook WITHOUT
-/// actually sleeping (M5c/T5) — makes the throttle test deterministic
-/// instead of dependent on real timing.
-private final class SleepRecorder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var _totalSeconds: Double = 0
-    private var _callCount = 0
-    var totalSeconds: Double {
-        lock.lock(); defer { lock.unlock() }
-        return _totalSeconds
-    }
-    var callCount: Int {
-        lock.lock(); defer { lock.unlock() }
-        return _callCount
-    }
-    func record(_ duration: Duration) {
-        lock.lock()
-        _totalSeconds += duration.secondsAsDouble
-        _callCount += 1
-        lock.unlock()
-    }
 }
 
 /// Thread-safe result holder for the timeout race in `awaitOutcome`.

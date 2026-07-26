@@ -80,17 +80,17 @@ public enum TransferEngine {
     ///     behaves exactly like a fresh transfer. `false` (default) leaves
     ///     behavior byte-for-byte identical to pre-M5d: unconditional
     ///     `.overwrite` from offset 0.
-    ///   - bytesPerSecondLimit: Bandwidth throttle in bytes/s (M5c/T5); `0`
-    ///     (default) turns it off — no behavior change from before T5.
-    ///   - sleep: Injectable sleep hook for the throttle, default a real
-    ///     `Task.sleep`. Tests replace it with a counting stub that does
-    ///     NOT actually sleep (no flaky timing).
+    ///   - throttle: Shared bandwidth bucket (M6a); `nil` (default) means
+    ///     unlimited — no throttling at all. Callers that want to pace a
+    ///     direction pass ONE `BandwidthBucket` shared across all of that
+    ///     direction's concurrent transfers, so the limit applies in
+    ///     aggregate rather than per-transfer. See `BandwidthBucket`'s doc
+    ///     comment for the pacing/debt model.
     public static func copyFile(
         from source: any RemoteFileSystem, sourcePath: String,
         to destination: any RemoteFileSystem, destinationDirectory: String, fileName: String,
         resume: Bool = false,
-        bytesPerSecondLimit: Int = 0,
-        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
+        throttle: BandwidthBucket? = nil,
         onProgress: @escaping @Sendable (TransferProgress) -> Void
     ) async throws {
         let total = try await source.stat(path: sourcePath).size
@@ -126,21 +126,6 @@ public enum TransferEngine {
         // amount — the caller sees genuine "bytes of the whole file" progress
         // across a resume, not a restart from 0.
         var transferred: UInt64 = resumeOffset
-        // Throttle accounting (M5c/T5): a purely VIRTUAL clock that only
-        // advances by the durations we hand to `sleep` — not measured by wall
-        // clock. That makes the throttle deterministically testable
-        // (injected `sleep` that just counts instead of sleeping), but costs
-        // accuracy under real chunk latency: an already-slow connection gets
-        // throttled ADDITIONALLY (never faster than the limit, possibly
-        // slower). Simple sliding approach, no burst bucket (see plan).
-        //
-        // Resume note (M5d/T2): the virtual clock restarts at ZERO from the
-        // resume point rather than being seeded with a value that accounts
-        // for the already-transferred prefix. Only bytes transferred DURING
-        // this call count toward the throttle target — documented, not a bug:
-        // a resumed transfer is throttled over its own remaining bytes, same
-        // as a fresh one would be for that remainder.
-        var throttledElapsed = Duration.zero
         let counted = AsyncThrowingStream<Data, Error>(unfolding: {
             // Cooperative cancellation BEFORE every chunk: applies chunk-precisely.
             try Task.checkCancellation()
@@ -148,19 +133,12 @@ public enum TransferEngine {
             transferred += UInt64(chunk.count)
             onProgress(TransferProgress(bytesTransferred: transferred, totalBytes: total))
 
-            if bytesPerSecondLimit > 0 {
-                let targetElapsed = Duration.seconds(
-                    fromDouble: Double(transferred - resumeOffset) / Double(bytesPerSecondLimit))
-                if throttledElapsed < targetElapsed {
-                    // IMPORTANT: the `checkCancellation` above already covers
-                    // chunk-precise cancellation (M5c/T2). `sleep` itself ALSO
-                    // throws on task cancellation (`Task.sleep`'s default
-                    // behavior) — a cancel during it discards this chunk (it's
-                    // never returned/written), in addition to the check
-                    // above, not in place of it.
-                    try await sleep(targetElapsed - throttledElapsed)
-                    throttledElapsed = targetElapsed
-                }
+            // Shared throttle (M6a): every chunk asks the direction's bucket
+            // before being handed to the destination. `consume` also throws
+            // on task cancellation — in addition to the check above, not in
+            // place of it.
+            if let throttle {
+                try await throttle.consume(chunk.count)
             }
             return chunk
         })
