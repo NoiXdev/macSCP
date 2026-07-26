@@ -64,8 +64,10 @@ public actor BandwidthBucket {
             // Sleep until enough tokens accumulate to bring the balance
             // positive after deducting the bytes, then re-check — several
             // consumers may have been admitted meanwhile (actor reentrancy),
-            // so this loops.
-            let waitSeconds = (-tokens + Double(bytes)) / rate
+            // so this loops. The min() bounds the target to capacity, since
+            // refill() caps tokens there: waiting to reach bytes (when bytes
+            // > capacity) is impossible.
+            let waitSeconds = (-tokens + min(Double(bytes), capacity)) / rate
             try await sleep(Duration.seconds(fromDouble: waitSeconds))
         }
     }

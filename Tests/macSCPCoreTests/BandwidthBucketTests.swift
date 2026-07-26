@@ -105,4 +105,17 @@ struct BandwidthBucketTests {
         let result = await task.result
         #expect(throws: CancellationError.self) { try result.get() }
     }
+
+    @Test("repeated oversized chunks settle at the configured rate")
+    func repeatedOversizedChunksPaceExactly() async throws {
+        let time = VirtualTime()
+        let bucket = BandwidthBucket(bytesPerSecond: 100, now: time.now, sleep: time.sleep)
+        // 6 chunks of 500 bytes at 100 B/s. With the fixed formula, each cycle
+        // after the first waits only until tokens reach capacity (100), not bytes
+        // (500): this avoids the impossible target that caused oversleeping. Result:
+        // total sleep = 5 cycles * 5 s = 25 s. The old formula overslept to ≈ 45 s.
+        for _ in 0..<6 { try await bucket.consume(500) }
+        let slept = time.totalSlept.secondsAsDouble
+        #expect(slept > 24.5 && slept < 25.5)
+    }
 }
