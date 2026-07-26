@@ -44,7 +44,7 @@ T1 → T2 → T3 → T4 → T5 sequenziell (T2–T4 teilen `TransferQueueViewMod
 - `setRate` setzt Rate und Kapazität neu und klemmt `tokens` auf die neue Kapazität (nach oben); negative Tokens bleiben (Schulden werden nicht erlassen).
 - `bytesPerSecond <= 0` im Init/`setRate` ist Programmierfehler des Aufrufers — die Queue erzeugt für „0 = aus" gar keinen Bucket. Klemme defensiv auf mindestens 1.
 
-- [ ] **Step 1: Failing Tests schreiben** — `Tests/macSCPCoreTests/BandwidthBucketTests.swift`:
+- [x] **Step 1: Failing Tests schreiben** — `Tests/macSCPCoreTests/BandwidthBucketTests.swift`:
 
 ```swift
 import Foundation
@@ -157,9 +157,9 @@ struct BandwidthBucketTests {
 }
 ```
 
-- [ ] **Step 2: Rot beweisen** — `swift test --filter BandwidthBucketTests` ⇒ FAIL (Typ existiert nicht / Compile-Error zählt als rot).
+- [x] **Step 2: Rot beweisen** — `swift test --filter BandwidthBucketTests` ⇒ FAIL (Typ existiert nicht / Compile-Error zählt als rot).
 
-- [ ] **Step 3: Implementieren** — `Sources/macSCPCore/RemoteFS/BandwidthBucket.swift`:
+- [x] **Step 3: Implementieren** — `Sources/macSCPCore/RemoteFS/BandwidthBucket.swift`:
 
 ```swift
 import Foundation
@@ -243,8 +243,8 @@ public actor BandwidthBucket {
 }
 ```
 
-- [ ] **Step 4: Grün beweisen** — `swift test --filter BandwidthBucketTests` ⇒ alle PASS; danach volle Suite `swift test` ⇒ 295 + neue grün.
-- [ ] **Step 5: Commit** — `feat: add the shared bandwidth token bucket`.
+- [x] **Step 4: Grün beweisen** — `swift test --filter BandwidthBucketTests` ⇒ alle PASS; danach volle Suite `swift test` ⇒ 295 + neue grün.
+- [x] **Step 5: Commit** — `feat: add the shared bandwidth token bucket`.
 
 ---
 
@@ -347,12 +347,12 @@ public actor BandwidthBucket {
     }
 ```
 
-- [ ] **Step 1: Queue-Test + ein migrierter Engine-Test rot** — neue Signatur noch nicht da ⇒ Compile-Fehler zählt als rot (`swift test --filter directionLimitsBuildBuckets`).
-- [ ] **Step 2: Engine umbauen** (Signatur, Drossel-Block, Doku wie oben).
-- [ ] **Step 3: Queue umbauen** (Properties, `process`, Doku wie oben).
-- [ ] **Step 4: Drossel-Tests migrieren** (`VirtualTime` nach `Tests/macSCPCoreTests/VirtualTime.swift`, Engine-Tests auf Bucket, tote sleep-Hook-Stubs entfernen).
-- [ ] **Step 5: Volle Suite grün** — `swift test` ⇒ alles PASS (Anzahl kann sich durch die Migration leicht ändern; im Report dokumentieren).
-- [ ] **Step 6: Commit** — `feat: pace transfers through a shared per-direction bandwidth bucket`.
+- [x] **Step 1: Queue-Test + ein migrierter Engine-Test rot** — neue Signatur noch nicht da ⇒ Compile-Fehler zählt als rot (`swift test --filter directionLimitsBuildBuckets`).
+- [x] **Step 2: Engine umbauen** (Signatur, Drossel-Block, Doku wie oben).
+- [x] **Step 3: Queue umbauen** (Properties, `process`, Doku wie oben).
+- [x] **Step 4: Drossel-Tests migrieren** (`VirtualTime` nach `Tests/macSCPCoreTests/VirtualTime.swift`, Engine-Tests auf Bucket, tote sleep-Hook-Stubs entfernen).
+- [x] **Step 5: Volle Suite grün** — `swift test` ⇒ alles PASS (Anzahl kann sich durch die Migration leicht ändern; im Report dokumentieren).
+- [x] **Step 6: Commit** — `feat: pace transfers through a shared per-direction bandwidth bucket`.
 
 ---
 
@@ -468,12 +468,12 @@ public actor BandwidthBucket {
 4. `singleFileConflictCancelKeepsOldBehavior` — Einzeldatei-Konflikt, Decider `nil`: nur dieses Item `.cancelled`, andere queued Items laufen weiter.
 5. `queueRuleSetWhileWaitingAtGateIsApplied` — zwei parallele Slots, beide kollidieren; Slot 1 antwortet `overwrite` + applyToAll, Slot 2 wartet am Gate: der Decider wird insgesamt nur EINMAL aufgerufen (Zähler im Decider), Slot 2 folgt der Regel.
 
-- [ ] **Step 1: Tests 1–5 schreiben, rot beweisen** (`swift test --filter TransferQueueViewModelTests` — die neuen schlagen fehl, Bestand bleibt grün).
-- [ ] **Step 2: Teil A+B implementieren**, Tests 1–4 grün.
-- [ ] **Step 3: Teil C implementieren**, Test 5 grün.
-- [ ] **Step 4: Teil D** (zwei Strings), betroffene Bestands-Tests (grep nach `exists as a file` in Tests) anpassen.
-- [ ] **Step 5: Volle Suite grün** — `swift test`.
-- [ ] **Step 6: Commit** — `feat: cancel the whole folder transfer from a tree conflict dialog` (Teil A+B), bzw. ein zweiter Commit `fix: honor an apply-to-all rule set while waiting at the conflict gate` für Teil C+D, falls getrennt committet wird (beide Formen ok, im Report nennen).
+- [x] **Step 1: Tests 1–5 schreiben, rot beweisen** (`swift test --filter TransferQueueViewModelTests` — die neuen schlagen fehl, Bestand bleibt grün).
+- [x] **Step 2: Teil A+B implementieren**, Tests 1–4 grün.
+- [x] **Step 3: Teil C implementieren**, Test 5 grün.
+- [x] **Step 4: Teil D** (zwei Strings), betroffene Bestands-Tests (grep nach `exists as a file` in Tests) anpassen.
+- [x] **Step 5: Volle Suite grün** — `swift test`.
+- [x] **Step 6: Commit** — `feat: cancel the whole folder transfer from a tree conflict dialog` (Teil A+B), bzw. ein zweiter Commit `fix: honor an apply-to-all rule set while waiting at the conflict gate` für Teil C+D, falls getrennt committet wird (beide Formen ok, im Report nennen).
 
 ---
 
@@ -552,10 +552,10 @@ Hinweis: `enqueueAndWait` wirft `CancellationError` auch für Skip/Cancel-Konfli
 
 Test: Mapper selbst ist durch Bestands-Tests von `message(for:)` gedeckt (falls keiner existiert: einen Lookup-Test ergänzen, der für `RemoteFSError.notFound(path:)` den Katalogtext via `CoreL10n.string` vergleicht — locale-fest, gleiches Muster wie bestehende L10n-Tests).
 
-- [ ] **Step 1: Tests (Sweep, Resume-Ausschluss, ggf. Mapper) rot.**
-- [ ] **Step 2: Teile A–C implementieren.**
-- [ ] **Step 3: Volle Suite grün** — `swift test`.
-- [ ] **Step 4: Commit** — `fix: edit-upload interruptions, orphaned temp dirs, localized edit errors`.
+- [x] **Step 1: Tests (Sweep, Resume-Ausschluss, ggf. Mapper) rot.**
+- [x] **Step 2: Teile A–C implementieren.**
+- [x] **Step 3: Volle Suite grün** — `swift test`.
+- [x] **Step 4: Commit** — `fix: edit-upload interruptions, orphaned temp dirs, localized edit errors`.
 
 ---
 
@@ -744,15 +744,15 @@ Und die stale Zeilen 56–57 („staged for the sidebar polish round") werden zu
     /// the NS colors directly, SwiftUI views the wrappers.
 ```
 
-- [ ] **Step 1: `endEditingResetsEverything` rot** (Assertion auf `selectedGroupID == nil` nach `beginEditing` mit Gruppe schlägt fehl, solange die alte Doppel-Implementierung… — falls der Test sofort grün ist: er pinnt das Verhalten, im Report als Charakterisierungs-Test ausweisen; Refactoring danach beweist Verhaltenserhalt).
-- [ ] **Step 2: Teile A–H implementieren.**
-- [ ] **Step 3: Volle Suite grün** — `swift test`; `swift build` warnungsfrei bzgl. der geänderten Dateien.
-- [ ] **Step 4: Commit** — `fix: form a11y, blank new-connection form, focus ring, code hygiene`.
+- [x] **Step 1: `endEditingResetsEverything` rot** (Assertion auf `selectedGroupID == nil` nach `beginEditing` mit Gruppe schlägt fehl, solange die alte Doppel-Implementierung… — falls der Test sofort grün ist: er pinnt das Verhalten, im Report als Charakterisierungs-Test ausweisen; Refactoring danach beweist Verhaltenserhalt).
+- [x] **Step 2: Teile A–H implementieren.**
+- [x] **Step 3: Volle Suite grün** — `swift test`; `swift build` warnungsfrei bzgl. der geänderten Dateien.
+- [x] **Step 4: Commit** — `fix: form a11y, blank new-connection form, focus ring, code hygiene`.
 
 ---
 
 ### Task 6: Abschluss-Verifikation (Koordinator, kein Subagent)
 
-- [ ] Docker-Rig starten (`docker compose -f docker/test-server/compose.yml start` — NUR aus dem Haupt-Checkout), dann `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün.
-- [ ] Visueller Smoke (App-Wrapper neu bauen): (1) Drossel global — Limit 300 KB/s, ZWEI parallele Downloads: Summe der Raten ≈ 300 (nicht 600); (2) Ordner-Konflikt → „Abbrechen" stoppt die ganze Gruppe, Einzeldatei-Cancel nur das Item; (3) „Neue Verbindung" nach Edit-Modus: Formular leer; (4) Tab auf die Formular-Buttons (Full Keyboard Access an): blauer Fokus-Ring sichtbar — sonst Fallback aus T5/Teil G nachziehen; (5) VoiceOver-Stichprobe: Formularzeile wird EINMAL genannt; (6) Disabled-Dimmen der Labels während Connect (10.255.255.1-Trick); (7) Edit-Roundtrip kurz (Doppelklick → TextEdit → Save → Upload) als Regressionsprobe.
-- [ ] Plan-Checkboxen abhaken, Ledger-Einträge, Opus-Whole-Branch-Final-Review (Base = Commit vor T1), Fixes, Push, `gh run watch`, Rig `stop`, Memory-Update.
+- [x] Docker-Rig starten (`docker compose -f docker/test-server/compose.yml start` — NUR aus dem Haupt-Checkout), dann `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün.
+- [x] Visueller Smoke (App-Wrapper neu bauen): (1) Drossel global — Limit 300 KB/s, ZWEI parallele Downloads: Summe der Raten ≈ 300 (nicht 600); (2) Ordner-Konflikt → „Abbrechen" stoppt die ganze Gruppe, Einzeldatei-Cancel nur das Item; (3) „Neue Verbindung" nach Edit-Modus: Formular leer; (4) Tab auf die Formular-Buttons (Full Keyboard Access an): blauer Fokus-Ring sichtbar — sonst Fallback aus T5/Teil G nachziehen; (5) VoiceOver-Stichprobe: Formularzeile wird EINMAL genannt; (6) Disabled-Dimmen der Labels während Connect (10.255.255.1-Trick); (7) Edit-Roundtrip kurz (Doppelklick → TextEdit → Save → Upload) als Regressionsprobe.
+- [x] Plan-Checkboxen abhaken, Ledger-Einträge, Opus-Whole-Branch-Final-Review (Base = Commit vor T1), Fixes, Push, `gh run watch`, Rig `stop`, Memory-Update.
