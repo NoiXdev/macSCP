@@ -105,7 +105,7 @@ actor MockRemoteFileSystem: RemoteFileSystem {
         let parent = RemotePath.parent(of: path)
         if let siblings = tree[parent], let existing = siblings.first(where: { $0.path == path }) {
             if existing.kind == .directory { return }
-            throw RemoteFSError.protocolError(reason: "path exists as a file: \(path)")
+            throw RemoteFSError.protocolError(reason: "path exists and is not a directory: \(path)")
         }
         let name = String(path.split(separator: "/").last ?? Substring(path))
         var siblings = tree[parent] ?? []

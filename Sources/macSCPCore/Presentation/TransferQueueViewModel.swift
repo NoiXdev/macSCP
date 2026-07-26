@@ -769,12 +769,17 @@ public final class TransferQueueViewModel {
                 resolution = rule
             } else {
                 let decision = await decider(conflict)
+                // Set the rule BEFORE releasing the gate (M6a/T3 review
+                // hardening): correctness must not depend on FIFOGate
+                // resuming waiters via a scheduled (not inline) continuation.
+                // A waiter woken synchronously by `release()` below would
+                // otherwise race the (not-yet-set) rule.
+                if let decision, decision.applyToAll { queueRule = decision.resolution }
                 conflictGate.release()
                 guard let decision else {
                     return .cancel                        // nil == cancel
                 }
                 resolution = decision.resolution
-                if decision.applyToAll { queueRule = decision.resolution }
             }
         } else {
             resolution = .overwrite                   // default: silent overwrite (M5a)

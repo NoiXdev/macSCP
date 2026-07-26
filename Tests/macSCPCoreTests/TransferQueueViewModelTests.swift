@@ -94,10 +94,27 @@ struct TransferQueueViewModelTests {
         /// set.
         private var statEntered: TestSignal?
         private var statGate: TestSignal?
+        /// Per-path stat gates (M6a/T3 review, I-2/finding d): lets a test
+        /// hold open ONE specific stat call (e.g. a rename-candidate probe)
+        /// while every other stat call on the same instance stays ungated —
+        /// unlike `statGate` above, which gates every call indiscriminately.
+        private var statGates: [String: TestSignal]
+        /// Every path passed to `stat`, in call order — lets a test detect
+        /// that a SPECIFIC stat call has been entered (and is possibly parked
+        /// behind `statGate`/`statGates`) without needing a dedicated
+        /// "entered" signal per path.
+        private(set) var statedPaths: [String] = []
         /// Analogous for `list`: lets tests pin down tree expansion at a
         /// `list` await (cancelAll-during-expansion, M5b/T3).
         private var listEntered: TestSignal?
         private var listGate: TestSignal?
+        /// Per-path list gates (M6a/T3 review, I-1): lets a test hold open
+        /// ONE specific `list` call (e.g. a subdirectory expansion) while
+        /// every other `list` call on the same instance stays ungated.
+        private var listGates: [String: TestSignal]
+        /// Every path passed to `list`, in call order — analogous to
+        /// `statedPaths`.
+        private(set) var listedPaths: [String] = []
         /// Tracks how many `write` calls are in flight at once (peak) — the
         /// parallel-slot tests assert the peak never exceeds `maxConcurrent`.
         private let concurrency: ConcurrencyTracker?
@@ -106,28 +123,36 @@ struct TransferQueueViewModelTests {
             reads: [String: Read],
             listings: [String: [RemoteFileItem]] = [:],
             statEntered: TestSignal? = nil, statGate: TestSignal? = nil,
+            statGates: [String: TestSignal] = [:],
             listEntered: TestSignal? = nil, listGate: TestSignal? = nil,
+            listGates: [String: TestSignal] = [:],
             concurrency: ConcurrencyTracker? = nil
         ) {
             self.reads = reads
             self.listings = listings
             self.statEntered = statEntered
             self.statGate = statGate
+            self.statGates = statGates
             self.listEntered = listEntered
             self.listGate = listGate
+            self.listGates = listGates
             self.concurrency = concurrency
         }
 
         func list(path: String) async throws -> [RemoteFileItem] {
+            listedPaths.append(path)
             await listEntered?.fire()
             if let listGate { try await listGate.wait() }
+            if let gate = listGates[path] { try await gate.wait() }
             if let entries = listings[path] { return entries }
             throw RemoteFSError.notFound(path: path)
         }
 
         func stat(path: String) async throws -> RemoteFileItem {
+            statedPaths.append(path)
             await statEntered?.fire()
             if let statGate { try await statGate.wait() }
+            if let gate = statGates[path] { try await gate.wait() }
             guard let read = reads[path] else { throw RemoteFSError.notFound(path: path) }
             let name = String(path.split(separator: "/").last ?? Substring(path))
             return RemoteFileItem(name: name, path: path, kind: .file, size: UInt64(read.content.count))
@@ -2185,5 +2210,293 @@ struct TransferQueueViewModelTests {
         #expect(await calls.count == 1)   // decider asked exactly once overall
         #expect(await destination1.writtenData(at: "/ziel/1.txt") == Data("neu1".utf8))
         #expect(await destination2.writtenData(at: "/ziel/2.txt") == Data("neu2".utf8))
+    }
+
+    // MARK: - 48
+
+    /// Cancelling a tree conflict WHILE the group's expansion is still
+    /// RUNNING (parked mid-`list`, not yet cancelled) stops the expansion
+    /// before it can enqueue anything from the still-unlisted subdirectory:
+    /// `cancelGroup`'s `expansionTasks[groupID]?.cancel()` is otherwise dead
+    /// code (I-1 review finding). Fixture: `/dir` has a clean file, a
+    /// conflicting file, and a `sub` subdirectory; `/dir` lists freely,
+    /// `/dir/sub`'s list is pinned by a dedicated per-path gate.
+    @Test func treeConflictCancelDuringExpansionStopsNewItems() async throws {
+        let subListGate = TestSignal()
+        let listings: [String: [RemoteFileItem]] = [
+            "/dir": [
+                RemoteFileItem(name: "clean.txt", path: "/dir/clean.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "conflict.txt", path: "/dir/conflict.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "sub", path: "/dir/sub", kind: .directory),
+            ],
+            "/dir/sub": [
+                RemoteFileItem(name: "inner.txt", path: "/dir/sub/inner.txt", kind: .file, size: 1),
+            ],
+        ]
+        let source = QueueTestFS(
+            reads: [
+                "/dir/clean.txt": .init(content: Data("clean".utf8)),
+                "/dir/conflict.txt": .init(content: Data("new".utf8)),
+                "/dir/sub/inner.txt": .init(content: Data("inner".utf8)),
+            ],
+            listings: listings,
+            listGates: ["/dir/sub": subListGate])
+        let destination = QueueTestFS(reads: [
+            "/ziel/dir/conflict.txt": .init(content: Data("old".utf8)),   // conflict
+        ])
+        let counter = Counter()
+        let done = TestSignal()
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1   // determinism: clean.txt finishes before conflict.txt resolves
+        vm.conflictDecider = { _ in
+            // Answer only once the expansion has genuinely entered the
+            // `/dir/sub` list call (parked behind `subListGate`) — proves the
+            // cancel below interrupts a RUNNING expansion, not one that
+            // already stopped at an earlier checkpoint.
+            while await source.listedPaths.contains("/dir/sub") == false {
+                await Task.yield()
+            }
+            return nil   // Cancel
+        }
+        vm.enqueueTree(
+            directoryName: "dir", direction: .download,
+            source: source, sourceDirectory: "/dir",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { counter.increment(); await done.fire() })
+
+        try await done.wait()
+
+        #expect(status(vm, "clean.txt") == .finished)
+        #expect(status(vm, "conflict.txt") == .cancelled)
+        #expect(status(vm, "inner.txt") == nil)   // never enqueued — sub was never listed
+        #expect(counter.value == 1)               // anyFinished (clean.txt)
+
+        // Let the parked list call unwind — a no-op in fixed code (the
+        // expansion task is already cancelled, so `list` throws regardless
+        // of this fire; see `TestSignal.wait()`'s cancellation-awareness).
+        // Guards against leaking a permanently-parked task past the test.
+        await subListGate.fire()
+        for _ in 0..<50 { await Task.yield() }
+        #expect(status(vm, "inner.txt") == nil)
+    }
+
+    // MARK: - 49
+
+    /// Same interruption as above, but nothing EVER reaches `.finished`: the
+    /// conflict is the sole top-level file (`maxConcurrent = 1`), its only
+    /// sibling is the file behind the pinned `/dir/sub` listing. `onCompleted`
+    /// must NEVER fire (the `anyFinished || expansionSucceeded` guard in
+    /// `maybeFireGroup`), even though every materialized item ends
+    /// `.cancelled`.
+    @Test func treeConflictCancelWithNothingFinishedNeverFires() async throws {
+        let subListGate = TestSignal()
+        let listings: [String: [RemoteFileItem]] = [
+            "/dir": [
+                RemoteFileItem(name: "conflict.txt", path: "/dir/conflict.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "sub", path: "/dir/sub", kind: .directory),
+            ],
+            "/dir/sub": [
+                RemoteFileItem(name: "inner.txt", path: "/dir/sub/inner.txt", kind: .file, size: 1),
+            ],
+        ]
+        let source = QueueTestFS(
+            reads: [
+                "/dir/conflict.txt": .init(content: Data("new".utf8)),
+                "/dir/sub/inner.txt": .init(content: Data("inner".utf8)),
+            ],
+            listings: listings,
+            listGates: ["/dir/sub": subListGate])
+        let destination = QueueTestFS(reads: [
+            "/ziel/dir/conflict.txt": .init(content: Data("old".utf8)),   // conflict
+        ])
+        let counter = Counter()
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1
+        vm.conflictDecider = { _ in
+            while await source.listedPaths.contains("/dir/sub") == false {
+                await Task.yield()
+            }
+            return nil   // Cancel
+        }
+        vm.enqueueTree(
+            directoryName: "dir", direction: .download,
+            source: source, sourceDirectory: "/dir",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { counter.increment() })
+
+        await waitUntil { status(vm, "conflict.txt") == .cancelled }
+        for _ in 0..<50 { await Task.yield() }   // let the expansion's cancellation settle
+
+        #expect(status(vm, "conflict.txt") == .cancelled)
+        #expect(status(vm, "inner.txt") == nil)
+        #expect(counter.value == 0)   // nothing ever finished — onCompleted must NOT fire
+
+        await subListGate.fire()   // let the parked expansion task unwind
+        for _ in 0..<50 { await Task.yield() }
+        #expect(counter.value == 0)
+        #expect(status(vm, "inner.txt") == nil)
+    }
+
+    // MARK: - 50
+
+    /// A conflict-cancel decision must be asked of the decider EXACTLY once,
+    /// even when a SECOND group sibling is already parked at the (FIFO)
+    /// conflict gate behind the first one: cancelling the group must sweep
+    /// that parked sibling via `resolvingJobIDs` WITHOUT ever prompting it
+    /// (I-2, finding c).
+    @Test func treeConflictCancelWhileSiblingWaitsAtGate() async throws {
+        let listings: [String: [RemoteFileItem]] = [
+            "/dir": [
+                RemoteFileItem(name: "1.txt", path: "/dir/1.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "2.txt", path: "/dir/2.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "3.txt", path: "/dir/3.txt", kind: .file, size: 1),
+            ],
+        ]
+        let source = QueueTestFS(
+            reads: [
+                "/dir/1.txt": .init(content: Data("one".utf8)),
+                "/dir/2.txt": .init(content: Data("two".utf8)),
+                "/dir/3.txt": .init(content: Data("three".utf8)),
+            ],
+            listings: listings)
+        let destination = QueueTestFS(reads: [
+            "/ziel/dir/2.txt": .init(content: Data("old2".utf8)),   // conflict on 2 and 3
+            "/ziel/dir/3.txt": .init(content: Data("old3".utf8)),
+        ])
+        let calls = CallCounter()
+        let enteredDecider = TestSignal()
+        let letProceed = TestSignal()
+        let counter = Counter()
+        let done = TestSignal()
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 2   // 1.txt and 2.txt occupy the two slots first
+        vm.conflictDecider = { _ in
+            await calls.increment()
+            // Only the FIRST call (2.txt) parks here; a second call would
+            // mean 3.txt got prompted despite already having been swept.
+            await enteredDecider.fire()
+            try? await letProceed.wait()
+            return nil   // Cancel
+        }
+        vm.enqueueTree(
+            directoryName: "dir", direction: .download,
+            source: source, sourceDirectory: "/dir",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { counter.increment(); await done.fire() })
+
+        // 2.txt's slot reached the decider (call #1) and is parked there.
+        try await enteredDecider.wait()
+
+        // 1.txt (no conflict) finishes and frees its slot; 3.txt is dequeued
+        // into it, finds its own conflict, and suspends at
+        // `conflictGate.acquire()` — 2.txt still holds the gate inside the
+        // decider. Let this settle (same technique as
+        // `queueRuleSetWhileWaitingAtGateIsApplied`).
+        await waitUntil { status(vm, "3.txt") != .queued }
+        for _ in 0..<50 { await Task.yield() }
+
+        // Let 2.txt's decider answer nil: cancels the whole group. 3.txt
+        // must be swept via `resolvingJobIDs` WITHOUT the decider ever being
+        // asked about it — its own `jobs[id] != nil` guard, right after the
+        // gate hand-off, must catch the cancellation instead.
+        await letProceed.fire()
+        try await done.wait()
+
+        #expect(status(vm, "1.txt") == .finished)
+        #expect(status(vm, "2.txt") == .cancelled)
+        #expect(status(vm, "3.txt") == .cancelled)
+        #expect(await calls.count == 1)   // decider asked exactly once overall
+        #expect(counter.value == 1)       // onCompleted fires exactly once (1.txt finished)
+    }
+
+    // MARK: - 51
+
+    /// Sibling B's conflict is answered `.rename` (applyToAll false) and its
+    /// rename-candidate stat probe is held open via a per-path stat gate.
+    /// While B probes, sibling C's conflict is answered `nil` → the whole
+    /// group is cancelled. B must end `.cancelled` exactly once, AFTER its
+    /// probe eventually returns — no double terminal transition (I-2,
+    /// finding d).
+    @Test func treeConflictCancelWhileSiblingProbesRename() async throws {
+        let renameProbeGate = TestSignal()
+        // C's OWN initial conflict-check stat is held open too — otherwise C
+        // could race B for `conflictGate` and end up polling forever for B's
+        // probe while itself holding the gate B needs (deadlock). Gating C's
+        // stat instead fully decouples the two: B is guaranteed to acquire
+        // and release the gate (a quick, non-blocking decision) before C's
+        // own conflict is even detected.
+        let cStatGate = TestSignal()
+        let listings: [String: [RemoteFileItem]] = [
+            "/dir": [
+                RemoteFileItem(name: "B.txt", path: "/dir/B.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "C.txt", path: "/dir/C.txt", kind: .file, size: 1),
+            ],
+        ]
+        let source = QueueTestFS(
+            reads: [
+                "/dir/B.txt": .init(content: Data("newB".utf8)),
+                "/dir/C.txt": .init(content: Data("newC".utf8)),
+            ],
+            listings: listings)
+        let renameCandidatePath = "/ziel/dir/B (2).txt"   // left unregistered: a "free" name
+        let destination = QueueTestFS(
+            reads: [
+                "/ziel/dir/B.txt": .init(content: Data("oldB".utf8)),   // conflict on B
+                "/ziel/dir/C.txt": .init(content: Data("oldC".utf8)),   // conflict on C
+            ],
+            statGates: [
+                renameCandidatePath: renameProbeGate,
+                "/ziel/dir/C.txt": cStatGate,
+            ])
+        let counter = Counter()
+        let done = TestSignal()
+
+        // Drives cStatGate open only once B's rename probe has genuinely
+        // started (its stat call entered, whether or not it's still parked)
+        // — this is what makes C's cancel-nil answer land WHILE B probes.
+        let driver = Task {
+            while await destination.statedPaths.contains(renameCandidatePath) == false {
+                await Task.yield()
+            }
+            await cStatGate.fire()
+        }
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 2   // B and C occupy both slots at once
+        vm.conflictDecider = { conflict in
+            if conflict.fileName == "B.txt" {
+                return (.rename, false)   // triggers B's rename-candidate probe
+            }
+            return nil   // C: cancel (its own stat was gated until B probed)
+        }
+        vm.enqueueTree(
+            directoryName: "dir", direction: .download,
+            source: source, sourceDirectory: "/dir",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { counter.increment(); await done.fire() })
+
+        try await done.wait()
+
+        #expect(status(vm, "B.txt") == .cancelled)
+        #expect(status(vm, "C.txt") == .cancelled)
+        // Neither B nor C ever finished, but the (flat, ungated) expansion
+        // itself completed regularly before the cancel — `expansionSucceeded`
+        // alone satisfies `maybeFireGroup`'s OR-guard, so onCompleted still
+        // fires exactly once (already proven by `done.wait()` returning).
+        #expect(counter.value == 1)
+
+        // Let B's parked rename probe unwind — a no-op in fixed code (its
+        // job was already cleared by `cancelGroup`, so `process` bails at
+        // the `jobs[jobID] != nil` guard without touching status again).
+        await renameProbeGate.fire()
+        for _ in 0..<50 { await Task.yield() }
+
+        // Stable after the probe resolves: no double terminal transition.
+        #expect(status(vm, "B.txt") == .cancelled)
+        #expect(status(vm, "C.txt") == .cancelled)
+        await driver.value   // already finished long ago; just tidy up
     }
 }

@@ -63,7 +63,7 @@ struct MockRemoteFileSystemTests {
 
     @Test func createDirectoryThrowsProtocolErrorOnFileCollision() async {
         let fs = makeMock()
-        await #expect(throws: RemoteFSError.protocolError(reason: "path exists as a file: /readme.txt")) {
+        await #expect(throws: RemoteFSError.protocolError(reason: "path exists and is not a directory: /readme.txt")) {
             try await fs.createDirectory(at: "/readme.txt")
         }
     }
