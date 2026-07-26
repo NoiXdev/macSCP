@@ -80,9 +80,11 @@ neuen Formular-Optik und Code-Hygiene. Danach ist der Code release-fertig.
   ein Resume schlüge sichtbar fehl). Sie enden als normaler Fehler; der
   nächste Editor-Save stößt ohnehin einen frischen Upload an.
 - **Lokalisierte Fehlertexte:** Das Edit-Banner zeigt statt
-  `String(describing:)` einen App-Layer-Mapper: `RemoteFSError`-Fälle und
-  Abbruch erhalten katalogisierte EN/DE-Texte, unbekannte Fehler einen
-  generischen Text.
+  `String(describing:)` die bestehende lokalisierte Fehlerabbildung des
+  Core-Layers (`RemoteFSError`-Fälle + generischer Fallback). Ein
+  Abbruch (`CancellationError`) zeigt bewusst KEIN Banner: der einzige
+  Abbruch-Pfad ist der Session-Teardown, und ein danach gesetzter Banner
+  würde fälschlich in der nächsten Session auftauchen.
 
 ### 4. Formular / Session
 
