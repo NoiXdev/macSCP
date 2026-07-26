@@ -764,10 +764,14 @@ struct ContentView: View {
                     NSWorkspace.shared.open(localURL)
                 }
                 editErrorMessage = nil
+            } catch is CancellationError {
+                // Teardown cancelled the download (disconnect while opening) —
+                // the session is going away; a stale banner on the NEXT
+                // session would be misattributed. Show nothing.
             } catch {
                 editErrorMessage = String(format: L10n.string(
                     "edit.openFailed", "Could not open file for editing: %@"),
-                    String(describing: error))
+                    TransferQueueViewModel.message(for: error))
             }
         }
     }

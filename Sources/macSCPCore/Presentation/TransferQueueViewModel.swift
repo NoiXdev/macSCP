@@ -702,22 +702,33 @@ public final class TransferQueueViewModel {
             runningTransferTasks[jobID] = nil
             resumeWaiter(jobID, with: .failure(CancellationError()))
         } catch let error as RemoteFSError where error.isConnectionFailure {
-            // Connection lost mid-transfer (M5d/T3): mark `.interrupted` (NOT
-            // `.failed`) and RETAIN the job — under its EFFECTIVE (post-rename)
-            // name — so a reconnect can resume the exact partial file via
-            // `retryInterrupted`. The waiter still throws (Promise contract),
-            // onCompleted does not fire. The partial file stays at the
-            // destination as resume fodder.
             progressContinuation.finish()
             await consumer.value
-            setStatus(jobID, .interrupted)
-            jobs[jobID] = Job(
-                id: jobID, source: source, sourcePath: sourcePath,
-                destination: destination, destinationDirectory: destinationDirectory,
-                fileName: effectiveFileName, direction: job.direction,
-                onCompleted: nil, resume: false)
-            runningTransferTasks[jobID] = nil
-            resumeWaiter(jobID, with: .failure(error))
+            if job.bypassConflictCheck {
+                // Editor write-back (M6a): NOT resumable — its temp source is
+                // deleted by `stopAll` on disconnect, so a later resume would
+                // visibly fail. Surface it as a plain failure instead; the
+                // next editor save enqueues a fresh upload anyway.
+                setStatus(jobID, .failed(CoreL10n.string("core.transfer.interrupted")))
+                jobs[jobID] = nil
+                runningTransferTasks[jobID] = nil
+                resumeWaiter(jobID, with: .failure(error))
+            } else {
+                // Connection lost mid-transfer (M5d/T3): mark `.interrupted`
+                // (NOT `.failed`) and RETAIN the job — under its EFFECTIVE
+                // (post-rename) name — so a reconnect can resume the exact
+                // partial file via `retryInterrupted`. The waiter still
+                // throws (Promise contract), onCompleted does not fire. The
+                // partial file stays at the destination as resume fodder.
+                setStatus(jobID, .interrupted)
+                jobs[jobID] = Job(
+                    id: jobID, source: source, sourcePath: sourcePath,
+                    destination: destination, destinationDirectory: destinationDirectory,
+                    fileName: effectiveFileName, direction: job.direction,
+                    onCompleted: nil, resume: false)
+                runningTransferTasks[jobID] = nil
+                resumeWaiter(jobID, with: .failure(error))
+            }
         } catch {
             progressContinuation.finish()
             await consumer.value
@@ -968,7 +979,8 @@ public final class TransferQueueViewModel {
         continuation.resume(with: result)
     }
 
-    static func message(for error: Error) -> String {
+    /// Public: the App layer reuses this mapping for editor-open failures (M6a).
+    public static func message(for error: Error) -> String {
         switch error {
         case RemoteFSError.notFound(let path):
             return String(format: CoreL10n.string("core.transfer.notFound %@"), path)

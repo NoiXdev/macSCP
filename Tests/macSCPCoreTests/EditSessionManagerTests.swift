@@ -2,7 +2,14 @@ import Foundation
 import Testing
 @testable import macSCPCore
 
-@Suite("EditSessionManager")
+// `.serialized` (M6a/T4): `sweepOrphanedTempDirectoriesRemovesOrphanedTreeAndIsIdempotent`
+// removes the WHOLE shared `macscp-edit` temp root — running concurrently
+// with any other test in this suite (each of which owns a session
+// subdirectory under that same root) races the sweep against a live
+// session's temp files. Serializing this suite avoids that shared-resource
+// collision, same pattern as `KeychainSecretStoreTests`/
+// `CitadelFileSystemIntegrationTests`.
+@Suite("EditSessionManager", .serialized)
 @MainActor
 struct EditSessionManagerTests {
 
@@ -439,5 +446,28 @@ struct EditSessionManagerTests {
         #expect(uploadCount(queue) > uploadsAfterRename)
 
         await manager.stopAll()
+    }
+
+    // MARK: - 8: sweepOrphanedTempDirectories removes orphaned trees at launch (M6a)
+
+    /// Only `stopAll` cleans a session's subtree, so a hard-killed app run
+    /// leaves orphaned `macscp-edit/<uuid>/...` directories behind forever.
+    /// The startup sweep must remove the whole tree unconditionally, and be
+    /// safe to call again on an already-missing tree.
+    @Test func sweepOrphanedTempDirectoriesRemovesOrphanedTreeAndIsIdempotent() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macscp-edit", isDirectory: true)
+        let orphanDirectory = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: orphanDirectory, withIntermediateDirectories: true)
+        let probe = orphanDirectory.appendingPathComponent("probe.txt", isDirectory: false)
+        try Data("orphan".utf8).write(to: probe)
+        #expect(FileManager.default.fileExists(atPath: probe.path(percentEncoded: false)))
+
+        EditSessionManager.sweepOrphanedTempDirectories()
+
+        #expect(!FileManager.default.fileExists(atPath: root.path(percentEncoded: false)))
+
+        // Idempotent: a second call on an already-missing tree does not throw.
+        EditSessionManager.sweepOrphanedTempDirectories()
     }
 }

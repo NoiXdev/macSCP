@@ -9,6 +9,10 @@ struct MacSCPApp: App {
     @State private var settingsStore = SettingsStore(directory: SettingsStore.defaultDirectory)
 
     init() {
+        // Sweep any orphaned edit temp directories left behind by a
+        // hard-killed previous run (M6a) — first, before anything else
+        // touches the temp tree.
+        EditSessionManager.sweepOrphanedTempDirectories()
         // Without an app bundle (started via `swift run`) the process runs
         // as an accessory — only the regular policy brings a window and a
         // Dock icon. A real `.app` bundle lands in M6.

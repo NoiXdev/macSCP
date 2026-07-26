@@ -2500,4 +2500,75 @@ struct TransferQueueViewModelTests {
         #expect(status(vm, "C.txt") == .cancelled)
         await driver.value   // already finished long ago; just tidy up
     }
+
+    // MARK: - Edit-upload / localization tests (M6a/T4)
+
+    // MARK: - 41
+
+    /// Edit-upload write-backs (`bypassConflictCheck == true`, made via
+    /// `enqueueEditUpload`) are NOT resumable — their temp source is deleted
+    /// by `EditSessionManager.stopAll` on disconnect. A `connectionFailed`
+    /// mid-transfer must therefore mark them `.failed` with the localized
+    /// "interrupted" catalog text, NOT `.interrupted`. Counter-probe in the
+    /// same test: a NORMAL transfer hitting the SAME error still becomes
+    /// `.interrupted` (resumable), unaffected by the edit-upload branch.
+    @Test func editUploadConnectionFailureIsFailedNotInterrupted() async throws {
+        let content = Data(repeating: 0x41, count: TransferChunk.size)
+        let startedEdit = TestSignal(); let gateEdit = TestSignal()
+        let startedNormal = TestSignal(); let gateNormal = TestSignal()
+        let localURL = URL(fileURLWithPath: "/local/a.txt")
+        let source = QueueTestFS(reads: [
+            localURL.path(percentEncoded: false): .init(
+                content: content, started: startedEdit, gate: gateEdit,
+                failWith: RemoteFSError.connectionFailed(reason: "socket closed")),
+            "/normal.txt": .init(
+                content: content, started: startedNormal, gate: gateNormal,
+                failWith: RemoteFSError.connectionFailed(reason: "socket closed")),
+        ])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1
+
+        // The edit-upload write-back: connection lost mid-transfer.
+        vm.enqueueEditUpload(
+            fileName: "a.txt", localURL: localURL,
+            source: source, destination: destination, remoteDirectory: "/ziel")
+        try await startedEdit.wait()
+        await gateEdit.fire()
+        await waitUntil {
+            if case .failed = vm.items[0].status { return true }; return false
+        }
+        guard case .failed(let message) = vm.items[0].status else {
+            Issue.record("edit-upload should be .failed, was \(String(describing: vm.items[0].status))")
+            return
+        }
+        #expect(message == CoreL10n.string("core.transfer.interrupted"))
+        #expect(vm.items[0].status != .interrupted)
+        #expect(vm.hasInterrupted == false)
+
+        // Counter-probe: a NORMAL transfer with the SAME error still becomes
+        // `.interrupted` (resumable) — the edit-upload branch does not leak
+        // into the ordinary path.
+        vm.enqueue(
+            fileName: "normal.txt", direction: .upload,
+            source: source, sourcePath: "/normal.txt",
+            destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
+        try await startedNormal.wait()
+        await gateNormal.fire()
+        await waitUntil { vm.items[1].status == .interrupted }
+        #expect(vm.items[1].status == .interrupted)
+        #expect(vm.hasInterrupted)
+    }
+
+    // MARK: - 42
+
+    /// `message(for:)` is `public` (M6a/T4): the App layer reuses it for
+    /// editor-open failures (`ContentView.openInEditor`). Direct
+    /// catalog-lookup test — locale-fixed, same pattern as the existing
+    /// `.failed(...)` message assertions above.
+    @Test func messageForLooksUpCatalogText() {
+        let message = TransferQueueViewModel.message(for: RemoteFSError.notFound(path: "/a.txt"))
+        #expect(message == String(format: CoreL10n.string("core.transfer.notFound %@"), "/a.txt"))
+    }
 }
