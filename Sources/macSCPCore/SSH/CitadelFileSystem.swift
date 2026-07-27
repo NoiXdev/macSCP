@@ -317,6 +317,31 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         }
     }
 
+    /// Renames/moves to the FULL destination path. The explicit existence
+    /// probe keeps the no-silent-overwrite contract server-independent
+    /// (SFTP rename semantics differ between servers).
+    public func rename(from: String, to: String) async throws {
+        if (try? await sftp.getAttributes(at: to)) != nil {
+            throw RemoteFSError.protocolError(reason: "destination already exists: \(to)")
+        }
+        do {
+            try await sftp.rename(at: from, to: to)
+        } catch {
+            throw Self.mapSFTPError(error, path: from)
+        }
+    }
+
+    /// Sets only the low 12 permission bits via SFTP setstat.
+    public func setPermissions(path: String, permissions: UInt32) async throws {
+        var attributes = SFTPFileAttributes()
+        attributes.permissions = permissions & 0o7777
+        do {
+            try await sftp.setAttributes(at: path, to: attributes)
+        } catch {
+            throw Self.mapSFTPError(error, path: path)
+        }
+    }
+
     public func disconnect() async {
         try? await client.close()
     }

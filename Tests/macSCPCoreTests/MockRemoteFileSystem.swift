@@ -15,6 +15,8 @@ actor MockRemoteFileSystem: RemoteFileSystem {
     private(set) var writeModes: [String: WriteMode] = [:]
     /// Paths removed via `delete`, in call order (M5d/T1 groundwork for T2/T3).
     private(set) var deletedPaths: [String] = []
+    /// Permission bits set via `setPermissions`, keyed by path (M7a/T1).
+    private(set) var permissionsByPath: [String: UInt32] = [:]
 
     init(tree: [String: [RemoteFileItem]], files: [String: Data] = [:]) {
         self.tree = tree
@@ -115,6 +117,63 @@ actor MockRemoteFileSystem: RemoteFileSystem {
             tree[path] = []
         }
         createdDirectories.append(path)
+    }
+
+    /// Moves the tree entry (and any tracked file data) from `from` to the
+    /// FULL destination path `to`. `notFound` if nothing exists at `from`,
+    /// `protocolError` if something already exists at `to` (no silent
+    /// overwrite, matching Local/Citadel). Shallow: a directory's own
+    /// children in `tree` are not re-keyed, mirroring `delete`'s file-only
+    /// scope — no test in this suite renames a non-empty directory.
+    func rename(from: String, to: String) async throws {
+        let sourceParent = RemotePath.parent(of: from)
+        guard let siblings = tree[sourceParent],
+              let index = siblings.firstIndex(where: { $0.path == from }) else {
+            throw RemoteFSError.notFound(path: from)
+        }
+        let destParent = RemotePath.parent(of: to)
+        if let destSiblings = tree[destParent], destSiblings.contains(where: { $0.path == to }) {
+            throw RemoteFSError.protocolError(reason: "destination already exists: \(to)")
+        }
+
+        var sourceSiblings = siblings
+        let item = sourceSiblings.remove(at: index)
+        tree[sourceParent] = sourceSiblings
+
+        let newName = String(to.split(separator: "/").last ?? Substring(to))
+        let movedItem = RemoteFileItem(
+            name: newName, path: to, kind: item.kind, size: item.size,
+            modifiedAt: item.modifiedAt, permissions: item.permissions)
+        var destSiblings = tree[destParent] ?? []
+        destSiblings.append(movedItem)
+        tree[destParent] = destSiblings
+
+        if let data = files[from] {
+            files[to] = data
+            files[from] = nil
+        }
+        if let data = written[from] {
+            written[to] = data
+            written[from] = nil
+        }
+        if let mode = writeModes[from] {
+            writeModes[to] = mode
+            writeModes[from] = nil
+        }
+        if let perms = permissionsByPath[from] {
+            permissionsByPath[to] = perms
+            permissionsByPath[from] = nil
+        }
+    }
+
+    /// Records the low-12-bit permission mask for `path` (M7a/T1); `notFound`
+    /// if nothing exists there in the mock tree.
+    func setPermissions(path: String, permissions: UInt32) async throws {
+        let parent = RemotePath.parent(of: path)
+        guard let siblings = tree[parent], siblings.contains(where: { $0.path == path }) else {
+            throw RemoteFSError.notFound(path: path)
+        }
+        permissionsByPath[path] = permissions & 0o7777
     }
 
     func disconnect() async {}

@@ -777,6 +777,60 @@ struct CitadelFileSystemIntegrationTests {
         #expect(remoteMtime(remotePath) == beforeMtime)   // no write occurred
     }
 
+    // MARK: - M7a/T1: rename + setPermissions
+
+    /// Uploads a file, renames it, and confirms the listing shows only the
+    /// new name (not both). Renaming a second file onto the same (now
+    /// occupied) name must throw — no silent overwrite. Then `chmod` via
+    /// `setPermissions`, re-stat, and confirm the low 12 bits round-trip.
+    @Test func renameAndSetPermissionsRoundtrip() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        let base = "/config/macscp-rename-test-\(UUID().uuidString)"
+        let oldName = "\(base)-old.bin"
+        let newName = "\(base)-new.bin"
+        let otherName = "\(base)-other.bin"
+        defer {
+            cleanupConfigPath(oldName)
+            cleanupConfigPath(newName)
+            cleanupConfigPath(otherName)
+        }
+
+        let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+        continuation.yield(Data("rename me".utf8))
+        continuation.finish()
+        try await fs.write(path: oldName, contents: stream)
+
+        let beforeListing = try await fs.list(path: "/config")
+        #expect(beforeListing.contains { $0.path == oldName })
+        #expect(!beforeListing.contains { $0.path == newName })
+
+        try await fs.rename(from: oldName, to: newName)
+
+        let afterListing = try await fs.list(path: "/config")
+        #expect(!afterListing.contains { $0.path == oldName })
+        #expect(afterListing.contains { $0.path == newName })
+
+        // Renaming another file onto the now-occupied name must throw —
+        // no silent overwrite, source stays where it is.
+        let (otherStream, otherContinuation) = AsyncThrowingStream<Data, Error>.makeStream()
+        otherContinuation.yield(Data("do not overwrite".utf8))
+        otherContinuation.finish()
+        try await fs.write(path: otherName, contents: otherStream)
+
+        await #expect(throws: RemoteFSError.self) {
+            try await fs.rename(from: otherName, to: newName)
+        }
+        let afterCollisionListing = try await fs.list(path: "/config")
+        #expect(afterCollisionListing.contains { $0.path == otherName })
+
+        // setPermissions: chmod 0o640, re-stat, low 12 bits must match exactly.
+        try await fs.setPermissions(path: newName, permissions: 0o640)
+        let stat = try await fs.stat(path: newName)
+        #expect((stat.permissions ?? 0) & 0o7777 == 0o640)
+    }
+
     @Test func tamperedKnownKeyFailsHardWithMismatch() async throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-tofu-\(UUID().uuidString)")

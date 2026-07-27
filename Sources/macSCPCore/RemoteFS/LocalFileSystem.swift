@@ -140,6 +140,36 @@ public struct LocalFileSystem: RemoteFileSystem {
         }
     }
 
+    /// Renames/moves to the FULL destination path. Refuses an existing
+    /// destination — `moveItem` would too, but the explicit check yields a
+    /// stable, mapped error instead of a Foundation-specific one.
+    public func rename(from: String, to: String) async throws {
+        guard FileManager.default.fileExists(atPath: from) else {
+            throw RemoteFSError.notFound(path: from)
+        }
+        guard !FileManager.default.fileExists(atPath: to) else {
+            throw RemoteFSError.protocolError(reason: "destination already exists: \(to)")
+        }
+        do {
+            try FileManager.default.moveItem(atPath: from, toPath: to)
+        } catch {
+            throw Self.map(error, path: from)
+        }
+    }
+
+    /// Applies only the low 12 permission bits; type bits are stripped.
+    public func setPermissions(path: String, permissions: UInt32) async throws {
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw RemoteFSError.notFound(path: path)
+        }
+        do {
+            try FileManager.default.setAttributes(
+                [.posixPermissions: Int(permissions & 0o7777)], ofItemAtPath: path)
+        } catch {
+            throw Self.map(error, path: path)
+        }
+    }
+
     public func disconnect() async {}
 
     private static func item(for url: URL) -> RemoteFileItem {

@@ -38,6 +38,15 @@ public protocol RemoteFileSystem: Sendable {
     /// creates them (withIntermediateDirectories); Citadel creates ONLY the
     /// last level — the recursion (T3) runs top-down, so parents always exist.
     func createDirectory(at path: String) async throws
+    /// Renames/moves the entry at `from` to the FULL destination path `to`.
+    /// An existing destination is an error (`RemoteFSError`) — this call
+    /// never silently overwrites. The UI builds same-directory paths for a
+    /// rename; the protocol stays generic (M7a).
+    func rename(from: String, to: String) async throws
+    /// Sets the POSIX permission bits of the entry at `path`. Only the low
+    /// 12 bits (rwx for owner/group/other + setuid/setgid/sticky) are
+    /// applied — file-type bits are never written (M7a).
+    func setPermissions(path: String, permissions: UInt32) async throws
     func disconnect() async
 }
 

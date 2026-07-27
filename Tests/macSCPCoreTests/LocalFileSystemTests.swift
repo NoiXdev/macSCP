@@ -269,4 +269,57 @@ struct LocalFileSystemTests {
             try await fs.delete(path: path)
         }
     }
+
+    // MARK: - M7a/T1: rename + setPermissions
+
+    /// Creates an empty throwaway directory (unlike `makeTempTree`, which
+    /// seeds a fixed tree) — this suite's rename/permission tests build
+    /// their own files inside it.
+    private func makeTempDir() throws -> URL {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-lfs-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+
+    @Test func renameMovesFileAndRefusesExistingDestination() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fs = LocalFileSystem()
+        let a = dir.appendingPathComponent("a.txt").path(percentEncoded: false)
+        let b = dir.appendingPathComponent("b.txt").path(percentEncoded: false)
+        try Data("x".utf8).write(to: URL(fileURLWithPath: a))
+        try await fs.rename(from: a, to: b)
+        #expect(!FileManager.default.fileExists(atPath: a))
+        #expect(FileManager.default.fileExists(atPath: b))
+        // Existing destination must be refused, source stays put.
+        try Data("y".utf8).write(to: URL(fileURLWithPath: a))
+        await #expect(throws: RemoteFSError.self) {
+            try await fs.rename(from: a, to: b)
+        }
+        #expect(FileManager.default.fileExists(atPath: a))
+    }
+
+    @Test func renameMissingSourceThrowsNotFound() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fs = LocalFileSystem()
+        await #expect(throws: RemoteFSError.self) {
+            try await fs.rename(
+                from: dir.appendingPathComponent("missing").path(percentEncoded: false),
+                to: dir.appendingPathComponent("target").path(percentEncoded: false))
+        }
+    }
+
+    @Test func setPermissionsAppliesLow12BitsOnly() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fs = LocalFileSystem()
+        let f = dir.appendingPathComponent("p.txt").path(percentEncoded: false)
+        try Data("x".utf8).write(to: URL(fileURLWithPath: f))
+        // Type bits in the argument must be ignored (0o100000 = regular file).
+        try await fs.setPermissions(path: f, permissions: 0o100640)
+        let mode = try FileManager.default.attributesOfItem(atPath: f)[.posixPermissions] as? Int
+        #expect(mode == 0o640)
+    }
 }
