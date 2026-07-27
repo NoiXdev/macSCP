@@ -1,6 +1,20 @@
 import SwiftUI
 import macSCPCore
 
+/// Command bridge (M8a/T4): the WindowGroup's `.commands` closures are built
+/// by `MacSCPApp`, which holds no reference to `ContentView` — the menu
+/// items call these closures, and `ContentView` assigns them (in `.task`) to
+/// its own tab-lifecycle methods. `@Observable` for consistency with the
+/// app's other cross-layer bridges (`ConflictPromptBridge`); the closures
+/// themselves are read once per invocation, not observed reactively.
+@MainActor
+@Observable
+final class TabCommands {
+    var newTab: (() -> Void)?
+    var closeActiveTab: (() -> Void)?
+    var selectTab: ((Int) -> Void)?
+}
+
 @main
 struct MacSCPApp: App {
     /// Single instance for the whole app — passed to `ContentView` and the
@@ -12,6 +26,8 @@ struct MacSCPApp: App {
     /// its throttle from the same buckets — limits apply in aggregate across
     /// tabs, not per tab.
     @State private var bandwidthLimiter = BandwidthLimiter()
+    /// Tab menu command bridge (M8a/T4) — see `TabCommands`.
+    @State private var tabCommands = TabCommands()
 
     init() {
         // Sweep any orphaned edit temp directories left behind by a
@@ -30,9 +46,40 @@ struct MacSCPApp: App {
         // browser) — it lives conditionally in `ContentView` instead of here
         // globally (M5c/T0).
         WindowGroup("macSCP") {
-            ContentView(settingsStore: settingsStore, bandwidthLimiter: bandwidthLimiter)
+            ContentView(
+                settingsStore: settingsStore, bandwidthLimiter: bandwidthLimiter,
+                tabCommands: tabCommands)
         }
         .commands {
+            // Replaces the default "New Window" (⌘N) — this is a single-window,
+            // multi-tab app (M8a/T4): ⌘N opens a new TAB instead. "Close Tab"
+            // (⌘W) lives in the same group; it shadows the system "Close"
+            // command with the same shortcut (there is no dedicated
+            // `CommandGroupPlacement` to replace it outright), routing through
+            // `tabCommands.closeActiveTab` which falls back to closing the
+            // window when the active tab is the last, unconnected one.
+            CommandGroup(replacing: .newItem) {
+                Button(L10n.string("menu.newTab", "New Tab")) {
+                    tabCommands.newTab?()
+                }
+                .keyboardShortcut("n", modifiers: .command)
+                Button(L10n.string("menu.closeTab", "Close Tab")) {
+                    tabCommands.closeActiveTab?()
+                }
+                .keyboardShortcut("w", modifiers: .command)
+            }
+            // ⌘1–⌘9: jump to tab n (1-indexed); no-op past the tab count
+            // (`ContentView.selectTab(atIndex:)`). ⌃Tab cycling was left out
+            // — it could not be verified in this headless environment (no
+            // NSEvent monitor per the M8a/T4 brief); flagged for the T5 smoke.
+            CommandGroup(after: .windowList) {
+                ForEach(1...9, id: \.self) { n in
+                    Button(String(format: L10n.string("menu.selectTab", "Tab %lld"), n)) {
+                        tabCommands.selectTab?(n - 1)
+                    }
+                    .keyboardShortcut(KeyEquivalent(Character("\(n)")), modifiers: .command)
+                }
+            }
             CommandGroup(after: .sidebar) {
                 Button(L10n.string("menu.toggleHidden", "Show/Hide Hidden Files")) {
                     settingsStore.showHiddenFiles.toggle()

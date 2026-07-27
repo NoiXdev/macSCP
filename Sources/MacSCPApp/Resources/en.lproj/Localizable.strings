@@ -184,3 +184,17 @@
 
 /* Tabs (M8a) */
 "tabs.newConnection" = "New Connection";
+
+/* Tab strip (M8a/T4) */
+"tabs.newTabHelp" = "New tab (⌘N)";
+"tabs.a11y.uploading" = "uploading";
+"tabs.a11y.downloading" = "downloading";
+"tabs.a11y.attention" = "needs attention";
+"tabs.close.title" = "Close tab?";
+"tabs.close.activeTransfers" = "Active transfers in this tab will be canceled.";
+"tabs.close.confirm" = "Close";
+
+/* Tab menu commands (M8a/T4) */
+"menu.newTab" = "New Tab";
+"menu.closeTab" = "Close Tab";
+"menu.selectTab" = "Tab %lld";

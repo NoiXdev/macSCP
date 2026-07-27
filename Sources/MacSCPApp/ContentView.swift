@@ -144,6 +144,10 @@ struct ContentView: View {
     /// Every tab's queue resolves its throttle from this one instance, so
     /// limits apply in aggregate across tabs (M8a/T3).
     let bandwidthLimiter: BandwidthLimiter
+    /// Command bridge (M8a/T4): `MacSCPApp` holds no reference to
+    /// `ContentView`, so the menu's Cmd-N/Cmd-W/Cmd-1…9 items call into the
+    /// closures this view assigns in `.task` below.
+    let tabCommands: TabCommands
     @State private var sessionListViewModel = SessionListViewModel(
         store: SessionStore(directory: SessionStore.defaultDirectory),
         secrets: KeychainSecretStore()
@@ -161,10 +165,14 @@ struct ContentView: View {
     /// Last browser window size, remembered on disconnect — the next
     /// connect grows to it instead of the minimum size, if it's larger.
     @State private var lastBrowserSize: CGSize?
+    /// Tab pending a destructive close confirmation (active transfers) — nil
+    /// when no confirmation is showing (M8a/T4).
+    @State private var closeRequest: SessionTab?
 
-    init(settingsStore: SettingsStore, bandwidthLimiter: BandwidthLimiter) {
+    init(settingsStore: SettingsStore, bandwidthLimiter: BandwidthLimiter, tabCommands: TabCommands) {
         self.settingsStore = settingsStore
         self.bandwidthLimiter = bandwidthLimiter
+        self.tabCommands = tabCommands
         _tabsModel = State(initialValue: TabsViewModel(
             initial: Self.makeTab(settingsStore: settingsStore, limiter: bandwidthLimiter)))
     }
@@ -205,12 +213,26 @@ struct ContentView: View {
             )
             .frame(minWidth: 170, idealWidth: 190, maxWidth: 260)
 
-            detail
-                // The detail minimum must fit inside the window minimum
-                // below together with the sidebar minimum (170), otherwise
-                // the split view's content overflows the window and gets
-                // clipped on both sides instead of shrinking.
-                .frame(minWidth: isPristine ? 500 : 590, maxWidth: .infinity)
+            VStack(spacing: 0) {
+                // Hidden in the pristine (single unconnected tab) state — a
+                // strip with nothing to switch between would just be clutter
+                // (M8a/T4 spec 2).
+                if !isPristine {
+                    TabStripView(
+                        tabs: tabsModel.tabs,
+                        activeTabID: tabsModel.activeTabID,
+                        onActivate: { activate($0) },
+                        onClose: { requestClose($0) },
+                        onAdd: { tabsModel.addTab(makeTab()) }
+                    )
+                }
+                detail
+            }
+            // The detail minimum must fit inside the window minimum
+            // below together with the sidebar minimum (170), otherwise
+            // the split view's content overflows the window and gets
+            // clipped on both sides instead of shrinking.
+            .frame(minWidth: isPristine ? 500 : 590, maxWidth: .infinity)
         }
         // Compact form vs. browser: the minimum size depends on the window's
         // pristine state (M5c/T0, M8a/T3) — replaces the global `.frame` from
@@ -225,6 +247,45 @@ struct ContentView: View {
             // `.onChange` observers below keep it in sync afterwards. KBs → bytes/s.
             bandwidthLimiter.uploadLimitBytesPerSec = settingsStore.uploadLimitKBs * 1024
             bandwidthLimiter.downloadLimitBytesPerSec = settingsStore.downloadLimitKBs * 1024
+            // Command bridge wiring (M8a/T4): `MacSCPApp` has no reference to
+            // this view, so the menu items call back through these closures.
+            tabCommands.newTab = { tabsModel.addTab(makeTab()) }
+            tabCommands.selectTab = { index in selectTab(atIndex: index) }
+            tabCommands.closeActiveTab = {
+                let tab = tabsModel.activeTab
+                if tabsModel.isLastTab && !tab.isConnected {
+                    // The only tab left, already a pristine form: Cmd-W
+                    // closes the WINDOW via the system path instead of the
+                    // tab-close flow (there is nothing left to revert to).
+                    window?.performClose(nil)
+                } else {
+                    requestClose(tab)
+                }
+            }
+        }
+        // Destructive confirmation for closing a tab with active transfers
+        // (M8a/T4) — mirrors `SessionSidebar`'s delete-confirmation pattern.
+        // An idle tab bypasses this and closes immediately (`requestClose`).
+        .confirmationDialog(
+            L10n.string("tabs.close.title", "Close tab?"),
+            isPresented: Binding(
+                get: { closeRequest != nil },
+                set: { isPresented in if !isPresented { closeRequest = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(L10n.string("tabs.close.confirm", "Close"), role: .destructive) {
+                if let tab = closeRequest {
+                    closeRequest = nil
+                    Task { await performClose(tab) }
+                }
+            }
+            Button(L10n.string("common.cancel", "Cancel"), role: .cancel) {
+                closeRequest = nil
+            }
+        } message: {
+            Text(L10n.string(
+                "tabs.close.activeTransfers", "Active transfers in this tab will be canceled."))
         }
         // Session actions live in the window's native toolbar (M5f/T5) —
         // attached at the outer container so it belongs to the window, not
@@ -519,12 +580,43 @@ struct ContentView: View {
         tab.titleName = nil
     }
 
-    /// Closes a tab: tab-local teardown first, then removal from the model
-    /// (the last tab is not removable — `TabsViewModel.closeTab` returns
-    /// false and the tab simply stays as a torn-down form tab).
-    private func closeTab(_ tab: SessionTab) async {
+    /// Activates a tab (strip click) and resets its attention indicator —
+    /// visiting a tab acknowledges whatever failures it accumulated while in
+    /// the background (M8a/T4 spec: reset on every activation call site).
+    private func activate(_ id: UUID) {
+        tabsModel.activate(id)
+        tabsModel.activeTab.seenFailureCount = tabsModel.activeTab.transferQueue.failedCount
+    }
+
+    /// ⌘1–⌘9 target: 1-indexed, no-op outside the current tab range.
+    private func selectTab(atIndex index: Int) {
+        guard tabsModel.tabs.indices.contains(index) else { return }
+        activate(tabsModel.tabs[index].id)
+    }
+
+    /// Tab close entry point (strip ✕, ⌘W): a tab with active transfers
+    /// requires destructive confirmation (`closeRequest`, bound to the
+    /// confirmation dialog above); an idle tab closes immediately.
+    private func requestClose(_ tab: SessionTab) {
+        if tab.transferQueue.isActive {
+            closeRequest = tab
+        } else {
+            Task { await performClose(tab) }
+        }
+    }
+
+    /// Closes a tab: tab-local teardown first, then either removal from the
+    /// model (the last tab is not removable — `TabsViewModel.closeTab`
+    /// returns false and it simply stays as a torn-down form tab, reverting
+    /// the window to the compact size via `shrinkIfPristine`) or, with
+    /// another tab around, the neighbor `TabsViewModel.closeTab` activates
+    /// gets its attention indicator reset (same rule as `activate(_:)`).
+    private func performClose(_ tab: SessionTab) async {
         await teardown(tab)
-        tabsModel.closeTab(tab.id)
+        if !tabsModel.isLastTab {
+            tabsModel.closeTab(tab.id)
+            tabsModel.activeTab.seenFailureCount = tabsModel.activeTab.transferQueue.failedCount
+        }
         shrinkIfPristine()
     }
 
