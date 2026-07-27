@@ -44,7 +44,7 @@ T1 (Core-Logik) → T2 (Menü) → T3 (Sheets) → T4 Abschluss (Koordinator).
   - `RemoteBrowserViewModel.isValidEntryName(_ name: String) -> Bool` (static)
   - `struct PosixPermissions` (siehe unten)
 
-- [ ] **Step 1: Mock-Dir-Rename-Fix (Vorbedingung, TDD)** — failing Test in `MockRemoteFileSystemTests.swift`:
+- [x] **Step 1: Mock-Dir-Rename-Fix (Vorbedingung, TDD)** — failing Test in `MockRemoteFileSystemTests.swift`:
 
 ```swift
     @Test func renameDirectoryRekeysDescendants() async throws {
@@ -63,7 +63,7 @@ T1 (Core-Logik) → T2 (Menü) → T3 (Sheets) → T4 Abschluss (Koordinator).
 
 (Helper-Namen `dirItem`/`fileItem` bzw. die Konstruktions-API an die tatsächliche Mock-Init-Form der Datei anpassen — Assertions unverändert.) Rot beweisen, dann im Mock-`rename` alle Schlüssel mit Präfix `from + "/"` in `tree`/`files`/`written`/`writeModes`/`permissionsByPath` auf das neue Präfix umschreiben und die Item-`path`/`name`-Felder der umgehängten Einträge aktualisieren; grün beweisen.
 
-- [ ] **Step 2: `PosixPermissions`** — failing Tests (`PosixPermissionsTests.swift`, neu):
+- [x] **Step 2: `PosixPermissions`** — failing Tests (`PosixPermissionsTests.swift`, neu):
 
 ```swift
 import Testing
@@ -143,7 +143,7 @@ public struct PosixPermissions: Equatable, Sendable {
 }
 ```
 
-- [ ] **Step 3: VM-Aktionen** — failing Tests in `RemoteBrowserViewModelTests.swift` (Mock-Konventionen der Datei):
+- [x] **Step 3: VM-Aktionen** — failing Tests in `RemoteBrowserViewModelTests.swift` (Mock-Konventionen der Datei):
 
 ```swift
     @Test @MainActor func renameRefreshesAndFollowsSelection() async {
@@ -201,7 +201,7 @@ public struct PosixPermissions: Equatable, Sendable {
     }
 ```
 
-- [ ] **Step 4: Rot, dann implementieren** — in `RemoteBrowserViewModel`:
+- [x] **Step 4: Rot, dann implementieren** — in `RemoteBrowserViewModel`:
 
 ```swift
     // MARK: - Browser actions (M7b)
@@ -290,8 +290,8 @@ Doku-Zeile an `RemoteFileSystem.setPermissions` (Zeile ~46) ergänzen:
     /// UI must not offer the permission editor for `.symlink` entries (M7b).
 ```
 
-- [ ] **Step 5: Grün** — volle `swift test` (340 + neue).
-- [ ] **Step 6: Commit** — `feat: browser action layer, posix permissions model, mock dir rename`.
+- [x] **Step 5: Grün** — volle `swift test` (340 + neue).
+- [x] **Step 6: Commit** — `feat: browser action layer, posix permissions model, mock dir rename`.
 
 ---
 
@@ -313,7 +313,7 @@ Doku-Zeile an `RemoteFileSystem.setPermissions` (Zeile ~46) ergänzen:
   - `public enum BrowserContextMenu { public static func entries(for selection: [RemoteFileItem], side: BrowserPaneSide) -> [BrowserMenuEntry] }`
   - Coordinator-/Pane-Callback `onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)?` (Items = die Selektion, auf die das Menü wirkt; bei `newFolder` darf sie leer sein).
 
-- [ ] **Step 1: Failing Tests** (`BrowserContextMenuTests.swift`):
+- [x] **Step 1: Failing Tests** (`BrowserContextMenuTests.swift`):
 
 ```swift
 import Testing
@@ -369,7 +369,7 @@ struct BrowserContextMenuTests {
 }
 ```
 
-- [ ] **Step 2: Rot, dann Modell implementieren:**
+- [x] **Step 2: Rot, dann Modell implementieren:**
 
 ```swift
 import Foundation
@@ -418,7 +418,7 @@ public enum BrowserContextMenu {
 }
 ```
 
-- [ ] **Step 3: Coordinator-Brücke** — in `RemoteFileTableView`:
+- [x] **Step 3: Coordinator-Brücke** — in `RemoteFileTableView`:
   - Representable: neues Property `var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)?`; in `makeNSView` `table.menu = NSMenu()` + `table.menu?.delegate = context.coordinator`; in `updateNSView` (VOR den Guards, bei den anderen Rebinds) `context.coordinator.onMenuAction = onMenuAction`.
   - Coordinator: `var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)?` + `NSMenuDelegate`:
 
@@ -511,7 +511,7 @@ private final class MenuActionBox {
 ```
 
   Hinweis Side-Erkennung: `onOpenFile != nil ⇒ .remote` nutzt die bestehende Verdrahtung (nur das Remote-Pane setzt `onOpenFile`) — dokumentieren; falls der Reviewer das zu implizit findet, ist ein explizites `side: BrowserPaneSide`-Property am Representable die saubere Alternative (dann auch in `BrowserPane` durchreichen). IMPLEMENTIERE direkt die explizite Variante (`let side: BrowserPaneSide` als Representable-/Pane-Parameter) — sie ist selbstdokumentierend.
-- [ ] **Step 4: Pane/ContentView-Verdrahtung** — `BrowserPane` bekommt `let side: BrowserPaneSide` und `var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)? = nil`, reicht beides an `RemoteFileTableView`. `ContentView` setzt `side: .local` / `.remote` und verdrahtet in T2 NUR diese Fälle im Handler (Rest kommt in T3):
+- [x] **Step 4: Pane/ContentView-Verdrahtung** — `BrowserPane` bekommt `let side: BrowserPaneSide` und `var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)? = nil`, reicht beides an `RemoteFileTableView`. `ContentView` setzt `side: .local` / `.remote` und verdrahtet in T2 NUR diese Fälle im Handler (Rest kommt in T3):
 
 ```swift
                 onMenuAction: { entry, selection in
@@ -578,9 +578,9 @@ private final class MenuActionBox {
 ```
 
   REFAKTOR im selben Zug: `uploadButton`/`downloadButton` rufen `transferSelection` (DRY — deren Schleifen entfallen; Verhalten identisch, bestehende Hilfetexte/Disable-Logik bleiben).
-- [ ] **Step 5: Menü-Keys** — EN: `"menu.transfer" = "Transfer"; "menu.transfer.otherPane" = "To the other pane"; "menu.openEditor" = "Open"; "menu.rename" = "Rename…"; "menu.info" = "Info & Permissions…"; "menu.newFolder" = "New Folder…"; "menu.copyPath" = "Copy Path"; "menu.delete" = "Delete…";` — DE: `"Übertragen"; "Zum anderen Fenster"; "Öffnen"; "Umbenennen…"; "Informationen & Rechte…"; "Neuer Ordner…"; "Pfad kopieren"; "Löschen…";`
-- [ ] **Step 6: Grün** — volle Suite; Build sauber.
-- [ ] **Step 7: Commit** — `feat: context menu in both panes with transfer, open, copy path`.
+- [x] **Step 5: Menü-Keys** — EN: `"menu.transfer" = "Transfer"; "menu.transfer.otherPane" = "To the other pane"; "menu.openEditor" = "Open"; "menu.rename" = "Rename…"; "menu.info" = "Info & Permissions…"; "menu.newFolder" = "New Folder…"; "menu.copyPath" = "Copy Path"; "menu.delete" = "Delete…";` — DE: `"Übertragen"; "Zum anderen Fenster"; "Öffnen"; "Umbenennen…"; "Informationen & Rechte…"; "Neuer Ordner…"; "Pfad kopieren"; "Löschen…";`
+- [x] **Step 6: Grün** — volle Suite; Build sauber.
+- [x] **Step 7: Commit** — `feat: context menu in both panes with transfer, open, copy path`.
 
 ---
 
@@ -597,7 +597,7 @@ private final class MenuActionBox {
 - Consumes: T1-VM-Methoden (exakte Signaturen oben), `PosixPermissions`, T2-Menü (`BrowserMenuEntry`, `onMenuAction`).
 - Produces: `struct NameEntrySheet: View`, `struct InfoPermissionsSheet: View` (beide in `BrowserSheets.swift`).
 
-- [ ] **Step 1: Pane-interne Behandlung** — in `BrowserPane`:
+- [x] **Step 1: Pane-interne Behandlung** — in `BrowserPane`:
 
 ```swift
     @State private var renameTarget: RemoteFileItem?
@@ -624,7 +624,7 @@ private final class MenuActionBox {
                 )
 ```
 
-- [ ] **Step 2: NameEntrySheet** (`BrowserSheets.swift`) — geteilt für Umbenennen/Neuer Ordner:
+- [x] **Step 2: NameEntrySheet** (`BrowserSheets.swift`) — geteilt für Umbenennen/Neuer Ordner:
 
 ```swift
 import SwiftUI
@@ -707,7 +707,7 @@ struct NameEntrySheet: View {
 ```
 
   (`RemoteFileItem` braucht dafür `Identifiable` — falls noch nicht konform: `extension RemoteFileItem: Identifiable { public var id: String { path } }` in Core, mit Doku-Satz.)
-- [ ] **Step 3: InfoPermissionsSheet** (`BrowserSheets.swift`):
+- [x] **Step 3: InfoPermissionsSheet** (`BrowserSheets.swift`):
 
 ```swift
 /// Info & permissions sheet (M7b): metadata block plus the rwx grid and
@@ -856,7 +856,7 @@ struct InfoPermissionsSheet: View {
                     onApply: { perms in await viewModel.applyPermissions(perms, to: target) })
             }
 ```
-- [ ] **Step 4: Lösch-Bestätigung** — im Pane (Alert statt Sheet; destruktiver roter Button):
+- [x] **Step 4: Lösch-Bestätigung** — im Pane (Alert statt Sheet; destruktiver roter Button):
 
 ```swift
             .alert(
@@ -909,14 +909,14 @@ struct InfoPermissionsSheet: View {
     }
 ```
 
-- [ ] **Step 5: Katalog-Keys** — EN/DE für: `sheet.rename.title/confirm`, `sheet.newFolder.title/confirm/defaultName`, `common.close`, `common.apply`, `info.path/kind/size/modified/permissions/octal/permissionsUnavailable`, `info.kind.directory/file/symlink/other`, `info.perm.read/write/execute/owner/group/other`, `delete.title/confirm/failedTitle`, `delete.message.single/many/recursive/permanent`. DE-Texte: „Umbenennen"/„Umbenennen", „Neuer Ordner"/„Erstellen"/„unbenannter Ordner", „Schließen", „Übernehmen", „Pfad"/„Art"/„Größe"/„Geändert"/„Rechte"/„Oktal"/„Für diesen Eintrag sind keine Rechte verfügbar.", „Ordner"/„Datei"/„Symbolischer Link"/„Sonstiges", „Lesen"/„Schreiben"/„Ausführen"/„Besitzer"/„Gruppe"/„Andere", „Löschen?"/„Löschen"/„Löschen fehlgeschlagen", „„%@" wird gelöscht."/„%lld Objekte werden gelöscht."/„Ordner werden mit ihrem gesamten Inhalt gelöscht."/„Diese Aktion kann nicht widerrufen werden."
-- [ ] **Step 6: Grün** — volle Suite; Build sauber (neue Dateien warnungsfrei).
-- [ ] **Step 7: Commit** — `feat: rename, new-folder, info-permissions and delete dialogs`.
+- [x] **Step 5: Katalog-Keys** — EN/DE für: `sheet.rename.title/confirm`, `sheet.newFolder.title/confirm/defaultName`, `common.close`, `common.apply`, `info.path/kind/size/modified/permissions/octal/permissionsUnavailable`, `info.kind.directory/file/symlink/other`, `info.perm.read/write/execute/owner/group/other`, `delete.title/confirm/failedTitle`, `delete.message.single/many/recursive/permanent`. DE-Texte: „Umbenennen"/„Umbenennen", „Neuer Ordner"/„Erstellen"/„unbenannter Ordner", „Schließen", „Übernehmen", „Pfad"/„Art"/„Größe"/„Geändert"/„Rechte"/„Oktal"/„Für diesen Eintrag sind keine Rechte verfügbar.", „Ordner"/„Datei"/„Symbolischer Link"/„Sonstiges", „Lesen"/„Schreiben"/„Ausführen"/„Besitzer"/„Gruppe"/„Andere", „Löschen?"/„Löschen"/„Löschen fehlgeschlagen", „„%@" wird gelöscht."/„%lld Objekte werden gelöscht."/„Ordner werden mit ihrem gesamten Inhalt gelöscht."/„Diese Aktion kann nicht widerrufen werden."
+- [x] **Step 6: Grün** — volle Suite; Build sauber (neue Dateien warnungsfrei).
+- [x] **Step 7: Commit** — `feat: rename, new-folder, info-permissions and delete dialogs`.
 
 ---
 
 ### Task 4: Abschluss-Verifikation (Koordinator, kein Subagent)
 
-- [ ] Gated Suiten (Rig aus dem Haupt-Checkout): `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün.
-- [ ] Visueller Smoke (Dev-Wrapper): Menü in BEIDEN Panes (Hintergrund-Klick → nur „Neuer Ordner…"); Rechtsklick auf unselektierte Zeile selektiert; Umbenennen inkl. Kollision (Fehlertext im Sheet, Sheet bleibt offen); chmod am Rig mit `docker exec ls -l`-Beweis (0644→0600); Symlink-Zeile: kein Übertragen/Öffnen/Info; rekursives Löschen mit rotem Confirm (Ordner-Hinweis) + `docker exec`-Beweis; Neuer Ordner (Default-Name, Auswahl folgt); Pfad kopieren (Mehrfachauswahl → mehrzeilig, pbpaste-Beweis); Übertragen-Submenü 2er-Auswahl → 2 Queue-Items; Editor-„Öffnen" aus dem Menü; Doppelklick/Toolbar/Drag-Regression.
-- [ ] Plan-Checkboxen, Ledger, Opus-Whole-Branch-Final-Review (Base = Commit vor T1), Fixes, Push develop, CI, Rig `stop`, Memory-Update, Milestone-Zusammenfassung (+ Frage an den Maintainer: Release v1.1.0 von diesem Stand?).
+- [x] Gated Suiten (Rig aus dem Haupt-Checkout): `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün.
+- [x] Visueller Smoke (Dev-Wrapper): Menü in BEIDEN Panes (Hintergrund-Klick → nur „Neuer Ordner…"); Rechtsklick auf unselektierte Zeile selektiert; Umbenennen inkl. Kollision (Fehlertext im Sheet, Sheet bleibt offen); chmod am Rig mit `docker exec ls -l`-Beweis (0644→0600); Symlink-Zeile: kein Übertragen/Öffnen/Info; rekursives Löschen mit rotem Confirm (Ordner-Hinweis) + `docker exec`-Beweis; Neuer Ordner (Default-Name, Auswahl folgt); Pfad kopieren (Mehrfachauswahl → mehrzeilig, pbpaste-Beweis); Übertragen-Submenü 2er-Auswahl → 2 Queue-Items; Editor-„Öffnen" aus dem Menü; Doppelklick/Toolbar/Drag-Regression.
+- [x] Plan-Checkboxen, Ledger, Opus-Whole-Branch-Final-Review (Base = Commit vor T1), Fixes, Push develop, CI, Rig `stop`, Memory-Update, Milestone-Zusammenfassung (+ Frage an den Maintainer: Release v1.1.0 von diesem Stand?).
