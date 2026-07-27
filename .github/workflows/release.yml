@@ -33,9 +33,11 @@ jobs:
       - name: Generate full CHANGELOG.md
         # This is a Swift package with no package.json. conventional-changelog
         # labels the newest section with package.json's version, so synthesize
-        # a throwaway one from the tag (never committed).
+        # a throwaway one from the tag (never committed). TAG comes in via env
+        # so untrusted ref names are never interpolated into script text.
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          TAG='${{ github.event.inputs.tag || github.ref_name }}'
           printf '{"name":"macscp","version":"%s"}\n' "${TAG#v}" > package.json
           npx -y conventional-changelog-cli@5 -p conventionalcommits -i CHANGELOG.md -s -r 0
           rm -f package.json
@@ -45,9 +47,11 @@ jobs:
 
       - name: Extract latest release notes
         # Slice out just the newest version section for the GitHub Release body.
-        run: awk '/^#{1,3} \[?v?[0-9]+\.[0-9]+/{c++} c==1' CHANGELOG.md > RELEASE_NOTES.md
+        run: awk '/^#+ \[?v?[0-9]+\.[0-9]+/{c++} c==1' CHANGELOG.md > RELEASE_NOTES.md
 
       - name: Commit CHANGELOG back to main
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
@@ -58,15 +62,16 @@ jobs:
           if git diff --cached --quiet; then
             echo 'CHANGELOG.md unchanged — nothing to commit.'
           else
-            git commit -m "chore(release): ${{ github.event.inputs.tag || github.ref_name }} [skip ci]"
+            git commit -m "chore(release): $TAG [skip ci]"
             git push origin HEAD:main
           fi
 
-      - name: Create / update GitHub Release
+      - name: Create / update GitHub Release (draft until the DMG is up)
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           body_path: RELEASE_NOTES.md
+          draft: true
 
   build:
     name: Build, sign & notarize (macOS)
@@ -74,6 +79,14 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          # workflow_dispatch runs from a branch ref; build the TAGGED source
+          # either way so a re-dispatch can never ship a moved HEAD.
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Run tests
+        # A tag can point at any commit — never sign and ship untested code.
+        run: swift test
 
       - name: Import signing certificate
         uses: apple-actions/import-codesign-certs@5142e029c445c10ffc7149d172e540235a065466 # v7
@@ -93,17 +106,19 @@ jobs:
         # scripts/release picks up the API-key env (CI mode) and the version
         # from the tag; notarization waits on Apple's notary service, which
         # can take several minutes with no output — not a hang.
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          TAG='${{ github.event.inputs.tag || github.ref_name }}'
           MACSCP_VERSION="${TAG#v}" scripts/release
 
       - name: Clean up notarization key
         if: always()
         run: rm -f "$RUNNER_TEMP/apple_api_key.p8"
 
-      - name: Upload DMG to GitHub Release
+      - name: Upload DMG and publish the release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           fail_on_unmatched_files: true
           files: dist/*.dmg
+          draft: false

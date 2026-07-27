@@ -7,8 +7,6 @@ macSCP brings the classic two-pane file-transfer workflow to macOS as a
 true native app: browse your Mac on the left, your server on the right,
 and move files between them with drag and drop, buttons, or the Finder.
 
-![macSCP browser window](docs/design/assets/screenshot-browser.png)
-
 ## Features
 
 - **Two-pane browser** — local and remote side by side, folder navigation
@@ -31,7 +29,7 @@ and move files between them with drag and drop, buttons, or the Finder.
 
 ## Install
 
-1. Download `macSCP-1.0.0.dmg` from the releases page.
+1. Download the latest DMG from the [releases page](https://github.com/NoiXdev/macSCP/releases).
 2. Open it and drag **macSCP** into **Applications**.
 3. Requires macOS 15 or newer. The app is signed and notarized.
 
