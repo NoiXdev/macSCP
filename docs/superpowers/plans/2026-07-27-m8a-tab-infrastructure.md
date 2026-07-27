@@ -49,7 +49,7 @@ T1 (TabsViewModel, Core) → T2 (BandwidthLimiter + Queue-Accessoren, Core) → 
   - `@discardableResult public func closeTab(_ id: UUID) -> Bool` (false bei letztem Tab oder unbekannter ID; war der geschlossene aktiv, wird der RECHTE Nachbar aktiv, sonst der linke)
   - `public func sidebarConnectTarget(activeTabIsConnected: Bool, makeTab: () -> Tab) -> Tab` (unverbunden → aktueller aktiver Tab; verbunden → `makeTab()` wird per `addTab` angehängt und zurückgegeben)
 
-- [ ] **Step 1: Failing Tests** — `Tests/macSCPCoreTests/TabsViewModelTests.swift`:
+- [x] **Step 1: Failing Tests** — `Tests/macSCPCoreTests/TabsViewModelTests.swift`:
 
 ```swift
 import Foundation
@@ -153,12 +153,12 @@ struct TabsViewModelTests {
 }
 ```
 
-- [ ] **Step 2: Rot beweisen**
+- [x] **Step 2: Rot beweisen**
 
 Run: `swift test --filter TabsViewModelTests`
 Expected: FAIL (Typ existiert nicht).
 
-- [ ] **Step 3: Implementierung** — `Sources/macSCPCore/Presentation/TabsViewModel.swift`:
+- [x] **Step 3: Implementierung** — `Sources/macSCPCore/Presentation/TabsViewModel.swift`:
 
 ```swift
 import Foundation
@@ -233,11 +233,11 @@ public final class TabsViewModel<Tab: Identifiable> where Tab.ID == UUID {
 }
 ```
 
-- [ ] **Step 4: Grün beweisen**
+- [x] **Step 4: Grün beweisen**
 
 Run: `swift test --filter TabsViewModelTests` → PASS, dann volle Suite `swift test` → 370/370 (361 + 9 neue).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/macSCPCore/Presentation/TabsViewModel.swift Tests/macSCPCoreTests/TabsViewModelTests.swift
@@ -262,7 +262,7 @@ git commit -m "feat: add the window-scoped tabs state machine"
   - `TransferQueueViewModel.limiter: BandwidthLimiter?` (public var, default nil = ungedrosselt; Job-Start liest `limiter?.uploadBucket` bzw. `downloadBucket`).
   - `TransferQueueViewModel.lastStartedDirection: TransferDirection?` (public private(set); gesetzt bei jedem Job-Start) und `TransferQueueViewModel.failedCount: Int` (public computed: Anzahl Items mit Status .failed) — Grundlage der Tab-Indikatoren (T4).
 
-- [ ] **Step 1: Failing Tests** — `Tests/macSCPCoreTests/BandwidthLimiterTests.swift`:
+- [x] **Step 1: Failing Tests** — `Tests/macSCPCoreTests/BandwidthLimiterTests.swift`:
 
 ```swift
 import Testing
@@ -307,11 +307,11 @@ struct BandwidthLimiterTests {
 
 Zusätzlich im bestehenden `TransferQueueViewModelTests.swift`: den Block ab ~Zeile 1940 (setzt `queue.uploadLimitBytesPerSec` etc.) auf den Limiter migrieren — gleiche Assertions (Bucket-Identität bei Re-Rate, Referenz-Swap bei 0↔n), nur über `queue.limiter = BandwidthLimiter()` + Limits auf dem Limiter. KEINE Assertion abschwächen.
 
-- [ ] **Step 2: Rot beweisen**
+- [x] **Step 2: Rot beweisen**
 
 Run: `swift test --filter BandwidthLimiterTests` → FAIL (Typ fehlt).
 
-- [ ] **Step 3: `BandwidthLimiter` implementieren** — Code ist die WÖRTLICH verschobene Maschinerie aus der Queue (Zeilen ~137–175):
+- [x] **Step 3: `BandwidthLimiter` implementieren** — Code ist die WÖRTLICH verschobene Maschinerie aus der Queue (Zeilen ~137–175):
 
 ```swift
 import Foundation
@@ -365,7 +365,7 @@ public final class BandwidthLimiter {
 }
 ```
 
-- [ ] **Step 4: Queue umstellen** — in `TransferQueueViewModel`:
+- [x] **Step 4: Queue umstellen** — in `TransferQueueViewModel`:
   1. Die Properties `uploadLimitBytesPerSec`, `downloadLimitBytesPerSec`, `uploadRateGeneration`, `downloadRateGeneration`, `uploadBucket`, `downloadBucket` und `static updatedBucket` ERSATZLOS entfernen; stattdessen:
 
 ```swift
@@ -403,13 +403,13 @@ public final class BandwidthLimiter {
 
   (Die exakte Status-Enum-Case-Syntax an `TransferItem.Status` in der Datei anpassen; Assertions der neuen Tests unverändert.)
 
-- [ ] **Step 5: App kompilierfähig halten** — `MacSCPApp.swift`: `@State private var bandwidthLimiter = BandwidthLimiter()` neben dem SettingsStore, Weitergabe `ContentView(settingsStore: settingsStore, bandwidthLimiter: bandwidthLimiter)`. `ContentView`: Parameter `let bandwidthLimiter: BandwidthLimiter` ergänzen; die drei Settings-`.onChange`-Observer und die `startSession`-Verkabelung von `transferQueue.uploadLimitBytesPerSec…` umstellen auf `bandwidthLimiter.uploadLimitBytesPerSec…`; zusätzlich einmalig `transferQueue.limiter = bandwidthLimiter` in `startSession` (T3 zieht das in die Tab-Erzeugung um). `maxConcurrent` bleibt auf der Queue.
+- [x] **Step 5: App kompilierfähig halten** — `MacSCPApp.swift`: `@State private var bandwidthLimiter = BandwidthLimiter()` neben dem SettingsStore, Weitergabe `ContentView(settingsStore: settingsStore, bandwidthLimiter: bandwidthLimiter)`. `ContentView`: Parameter `let bandwidthLimiter: BandwidthLimiter` ergänzen; die drei Settings-`.onChange`-Observer und die `startSession`-Verkabelung von `transferQueue.uploadLimitBytesPerSec…` umstellen auf `bandwidthLimiter.uploadLimitBytesPerSec…`; zusätzlich einmalig `transferQueue.limiter = bandwidthLimiter` in `startSession` (T3 zieht das in die Tab-Erzeugung um). `maxConcurrent` bleibt auf der Queue.
 
-- [ ] **Step 6: Grün beweisen**
+- [x] **Step 6: Grün beweisen**
 
 Run: `swift build` (0 Fehler) und `swift test` → alle Suiten grün (370 + 3 neue = 373; Zahl je nach migriertem Block prüfen und im Report festhalten).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add -A
@@ -449,7 +449,7 @@ git commit -m "feat: hoist bandwidth buckets into an app-global limiter"
 8. Fenstertitel: `.navigationTitle` aus `tabsModel.activeTab.titleName`.
 9. Der Menü-Handler (`onMenuAction`) und `transferSelection`/`copyPaths`/`uploadDropped`/`openInEditor`/`remotePromiseProvider` nehmen den Tab (bzw. dessen Session/Queue) als Parameter statt des globalen `session` — mechanische Anpassung, Verhalten identisch.
 
-- [ ] **Step 1: `SessionTab.swift` anlegen** (inkl. hierher verschobenem `BrowserSession`-Struct, unverändert):
+- [x] **Step 1: `SessionTab.swift` anlegen** (inkl. hierher verschobenem `BrowserSession`-Struct, unverändert):
 
 ```swift
 import Foundation
@@ -500,7 +500,7 @@ final class SessionTab: Identifiable {
 
 (Der `ConflictPromptBridge`- und `ConnectionViewModel`-Typ existieren; `ConflictPromptBridge` von `ContentView.swift` hierher verschieben, falls Sichtbarkeit es erfordert. Katalog-Keys `tabs.newConnection` EN "New Connection" / DE „Neue Verbindung" ergänzen.)
 
-- [ ] **Step 2: `ContentView` umbauen** gemäß Verhaltens-Anforderungen 1–9. `makeTab()` als statische Factory, damit sie auch dem `ContentView`-Init zur Verfügung steht:
+- [x] **Step 2: `ContentView` umbauen** gemäß Verhaltens-Anforderungen 1–9. `makeTab()` als statische Factory, damit sie auch dem `ContentView`-Init zur Verfügung steht:
 
 ```swift
     private static func makeTab(
@@ -531,13 +531,13 @@ final class SessionTab: Identifiable {
     }
 ```
 
-- [ ] **Step 3: Build + volle Suite**
+- [x] **Step 3: Build + volle Suite**
 
 Run: `swift build` (0 Fehler, keine neuen Warnungen) und `swift test` → Stand aus T2 unverändert grün.
 
-- [ ] **Step 4: Verhaltens-Selbstcheck** (Report): je ein Satz mit Code-Beleg zu den Anforderungen 1–9; explizit bestätigen, dass (a) kein Codepfad mehr `teardownSession` global aufruft, (b) Sidebar-Klick bei verbundenem aktivem Tab KEINEN Teardown auslöst, (c) das Konflikt-Sheet an der tab-eigenen Bridge hängt.
+- [x] **Step 4: Verhaltens-Selbstcheck** (Report): je ein Satz mit Code-Beleg zu den Anforderungen 1–9; explizit bestätigen, dass (a) kein Codepfad mehr `teardownSession` global aufruft, (b) Sidebar-Klick bei verbundenem aktivem Tab KEINEN Teardown auslöst, (c) das Konflikt-Sheet an der tab-eigenen Bridge hängt.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A
@@ -559,7 +559,7 @@ git commit -m "feat: move the window session state into per-tab objects"
 
 **Maße (Spec §2 / Mockup, bindend):** Strip 30 pt, Fläche `paper`, Hairline unten; aktiver Tab `card`-Fläche + 2-pt-`remoteBlue`-Unterstreichung + Titel 12 pt semibold `ink`; inaktive `inkSecondary` + Hairline-Trenner rechts; Tab min 120 / max 200 pt, Ellipsis; ✕ 15-pt-Hit-Area nur bei Tab-Hover; ⊕ 30 pt rechts; Formular-Tab kursiv `inkTertiary`; Indikator 7-pt-Punkt links: Achtung-Rot statisch (Priorität) > Bernstein (Upload) / Blau (Download) mit dezentem Pulsieren (`opacity`-Animation, `reduceMotion` respektieren) > kein Punkt. a11y: `accessibilityValue` je Zustand. Strip unsichtbar im jungfräulichen Zustand (`isPristine`).
 
-- [ ] **Step 1: `TabStripView.swift`**:
+- [x] **Step 1: `TabStripView.swift`**:
 
 ```swift
 import SwiftUI
@@ -703,7 +703,7 @@ private struct TabItemView: View {
 
 (Token-Namen `paperColor/cardColor/localAmber` an die realen Bezeichner in `DesignTokens.swift` anpassen — `paper` wurde in M6a entfernt, ggf. ist die Strip-Fläche der Fenster-Hintergrund; im Report festhalten, welcher Token verwendet wurde. Maße NICHT anpassen.)
 
-- [ ] **Step 2: Einhängen + Schließen-Confirm** in `ContentView`: Strip oberhalb des Detail-Inhalts, `if !isPristine`. `onClose`-Fluss:
+- [x] **Step 2: Einhängen + Schließen-Confirm** in `ContentView`: Strip oberhalb des Detail-Inhalts, `if !isPristine`. `onClose`-Fluss:
 
 ```swift
     @State private var closeRequest: SessionTab?
@@ -733,13 +733,13 @@ private struct TabItemView: View {
 
 Alert (destruktiv, an `closeRequest` gebunden): Titel-Key `tabs.close.title` „Close tab?"/„Tab schließen?", Text `tabs.close.activeTransfers` „Active transfers in this tab will be canceled."/„Laufende Übertragungen in diesem Tab werden abgebrochen.", Buttons `common.cancel` + `tabs.close.confirm` „Close"/„Schließen" (role .destructive). Beim Tab-AKTIVIEREN (`onActivate` und nach `closeTab`): `tab.seenFailureCount = tab.transferQueue.failedCount` für den neuen aktiven Tab (Achtung-Reset beim Besuch).
 
-- [ ] **Step 3: Commands** in `MacSCPApp.swift` — `CommandGroup(replacing: .newItem)`: „New Tab" ⌘N (ruft via `FocusedValue` oder — einfacher, da Ein-Fenster-App — über eine an `ContentView` gereichte, dort gesetzte `@Observable`-Command-Brücke `TabCommands` mit Closures `newTab/closeTab/selectTab(Int)`; Implementierungsweg im Report dokumentieren) und „Close Tab" ⌘W (letzter unverbundener Tab → `window.performClose(nil)`). ⌘1–⌘9 als „Tab n"-Items (Window-Menü, `CommandGroup(after: .windowList)`), Ziel = Index n-1, No-op wenn außerhalb. ⌃Tab nur, falls als Menü-Shortcut (`KeyEquivalent("\t")`, `.control`) funktionsfähig — sonst weglassen und im Report vermerken. Keys `menu.newTab` „New Tab"/„Neuer Tab", `menu.closeTab` „Close Tab"/„Tab schließen", `menu.selectTab` „Tab %lld"/„Tab %lld".
+- [x] **Step 3: Commands** in `MacSCPApp.swift` — `CommandGroup(replacing: .newItem)`: „New Tab" ⌘N (ruft via `FocusedValue` oder — einfacher, da Ein-Fenster-App — über eine an `ContentView` gereichte, dort gesetzte `@Observable`-Command-Brücke `TabCommands` mit Closures `newTab/closeTab/selectTab(Int)`; Implementierungsweg im Report dokumentieren) und „Close Tab" ⌘W (letzter unverbundener Tab → `window.performClose(nil)`). ⌘1–⌘9 als „Tab n"-Items (Window-Menü, `CommandGroup(after: .windowList)`), Ziel = Index n-1, No-op wenn außerhalb. ⌃Tab nur, falls als Menü-Shortcut (`KeyEquivalent("\t")`, `.control`) funktionsfähig — sonst weglassen und im Report vermerken. Keys `menu.newTab` „New Tab"/„Neuer Tab", `menu.closeTab` „Close Tab"/„Tab schließen", `menu.selectTab` „Tab %lld"/„Tab %lld".
 
-- [ ] **Step 4: Build + volle Suite + Katalog-Check**
+- [x] **Step 4: Build + volle Suite + Katalog-Check**
 
 Run: `swift build` && `swift test` (Stand T3 grün). Katalog-Gegenprobe: jeder neue `L10n.string`-Key existiert in BEIDEN `.strings`-Dateien.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A
@@ -750,8 +750,8 @@ git commit -m "feat: add the tab strip with activity indicators and tab commands
 
 ### Task 5: Abschluss-Verifikation (Koordinator)
 
-- [ ] Gated Suiten (Rig aus dem Haupt-Checkout, `docker compose -f docker/test-server/compose.yml start`): `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün, zero skips.
-- [ ] Visueller Smoke (Dev-Wrapper; Maintainer testet ggf. selbst — Checkliste übergeben):
+- [x] Gated Suiten (Rig aus dem Haupt-Checkout, `docker compose -f docker/test-server/compose.yml start`): `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün, zero skips (373 vor / 376 nach den Final-Review-Fixes).
+- [ ] Visueller Smoke — **an den Maintainer delegiert** (Wrapper läuft; Checkliste in der Milestone-Zusammenfassung, inkl. ⌘W-bei-Settings-Fokus und Bandbreiten-Summe über zwei Tabs):
   - Start = heutiges Bild (kein Strip, kompaktes Formular-Fenster).
   - Verbinden → Fenster wächst; ⊕ → Formular-Tab im großen Fenster, Strip sichtbar; zweite Session verbinden (Rig-User) → zwei Tabs.
   - Sidebar-Klick bei verbundenem aktivem Tab → NEUER Tab, erste Session läuft weiter (Terminal-Ping im Hintergrund-Tab lebt nach Rückwechsel, Replay zeigt Ausgabe).
@@ -761,4 +761,4 @@ git commit -m "feat: add the tab strip with activity indicators and tab commands
   - Tab schließen ohne Transfers → weg, rechter Nachbar aktiv; mit Transfers → destruktive Nachfrage; letzter Tab → wird Formular-Tab, Fenster schrumpft.
   - ⌘N/⌘W/⌘1–⌘9; ⌘T weiterhin Terminal; Fenstertitel folgt aktivem Tab; „Trennen" macht Formular-Tab, Unterbrochene + Resume-Banner überleben im Tab.
   - Regressionen: Doppelklick-Editor, Drag&Drop in beide Richtungen, Kontextmenü (M7b), Umbenennen/Rechte/Löschen, versteckte Dateien ⌘⇧. wirkt auf beide Tabs.
-- [ ] Plan-Checkboxen, Ledger, Opus-Whole-Branch-Final-Review (Base = Commit vor T1), Fixes, Push develop, CI, Rig `stop`, Memory-Update, Milestone-Zusammenfassung (+ Übergang M8b).
+- [x] Plan-Checkboxen, Ledger, Opus-Whole-Branch-Final-Review (Base = Commit vor T1; „No" → Fix-Commit 17b3829 → Re-Review „Ready to merge: Yes"), Fixes, Push develop, CI, Rig `stop`, Memory-Update, Milestone-Zusammenfassung (+ Übergang M8b).
