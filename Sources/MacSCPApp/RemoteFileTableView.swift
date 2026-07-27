@@ -81,16 +81,29 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.onOpenFile = onOpenFile
         context.coordinator.pasteboardWriter = pasteboardWriter
         guard let table = nsView.documentView as? NSTableView else { return }
-        guard itemsChanged else { return }
-        // reloadData() clears the selection without a delegate call —
-        // restore it programmatically, suppressing the callback while doing so.
-        context.coordinator.suppressSelectionCallback = true
-        table.reloadData()
-        let restoredRows = items.indices.filter { selectedPaths.contains(items[$0].path) }
-        if !restoredRows.isEmpty {
-            table.selectRowIndexes(IndexSet(restoredRows), byExtendingSelection: false)
+        if itemsChanged {
+            // reloadData() clears the selection without a delegate call —
+            // the reconciliation below restores it right after.
+            context.coordinator.suppressSelectionCallback = true
+            table.reloadData()
+            context.coordinator.suppressSelectionCallback = false
         }
-        context.coordinator.suppressSelectionCallback = false
+        // Selection reconciliation runs INDEPENDENTLY of the reload guard
+        // (task-3 re-review): a content-identical refresh still clears
+        // `selectedItems` in the view model, and without this step the
+        // table would keep showing the stale highlight while the toolbar
+        // buttons (bound to the model) already disabled themselves. A no-op
+        // when desired == actual, so the live cmd-click path is untouched.
+        let desired = IndexSet(items.indices.filter { selectedPaths.contains(items[$0].path) })
+        if table.selectedRowIndexes != desired {
+            context.coordinator.suppressSelectionCallback = true
+            if desired.isEmpty {
+                table.deselectAll(nil)
+            } else {
+                table.selectRowIndexes(desired, byExtendingSelection: false)
+            }
+            context.coordinator.suppressSelectionCallback = false
+        }
     }
 
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
