@@ -22,7 +22,7 @@ import macSCPCore
 /// A configured app path that no longer exists on disk is skipped (falls
 /// through to the next stage) with a single log line — not treated as fatal.
 enum EditorResolver {
-    private static let logger = Logger(subsystem: "dev.noidee.macscp", category: "EditorResolver")
+    private static let logger = Logger(subsystem: "dev.noix.macscp", category: "EditorResolver")
 
     /// Stages 1-2 (pre-download): resolves the extension rule or the
     /// configured default editor by file name alone — no local file needs to

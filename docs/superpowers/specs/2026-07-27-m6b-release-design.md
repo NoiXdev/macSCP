@@ -12,8 +12,8 @@ public-Schalter legt der Maintainer selbst um); Release-Mechanik als
 
 - Lizenz: **MIT**, Copyright „© 2026 Tim Rösner".
 - Erste Version: **1.0.0** (Build 1).
-- Bundle-Identifier: `dev.noidee.macscp` (der Dev-Wrapper nutzte
-  `dev.noidee.macscp.dev` — der Release-Bundle-Id ist neu und final).
+- Bundle-Identifier: `dev.noix.macscp` (der Dev-Wrapper nutzte
+  `dev.noix.macscp.dev` — der Release-Bundle-Id ist neu und final).
 
 ## Ziel
 
@@ -60,7 +60,7 @@ auferlegten Live-Beweise.
 - `scripts/package-app`: baut aus einem `swift build -c release` das
   Bundle `dist/macSCP.app`:
   - `Contents/MacOS/macSCP` (Release-Binary),
-  - `Contents/Info.plist` mit: `CFBundleIdentifier dev.noidee.macscp`,
+  - `Contents/Info.plist` mit: `CFBundleIdentifier dev.noix.macscp`,
     `CFBundleName macSCP`, `CFBundleDisplayName macSCP`,
     `CFBundleShortVersionString 1.0.0`, `CFBundleVersion 1`,
     `CFBundleExecutable macSCP`, `CFBundleIconFile AppIcon`,
@@ -159,3 +159,24 @@ Mit dem NOTARISIERTEN DMG:
 - Sparkle/Auto-Update, CHANGELOG, Menüleisten-Icon (Variante B bleibt
   Reserve).
 - App Store / Sandbox-Migration.
+
+## Update (Maintainer, 2026-07-27 — nach Task 6)
+
+- **Bundle-ID/Branding:** `dev.noidee.macscp` → **`dev.noix.macscp`**
+  (Angleich an die NoiXdev-Org; Keychain-Service und Logger-Subsystem
+  ziehen mit — lokal gespeicherte Dev-Secrets unter dem alten Service
+  müssen einmalig neu gespeichert werden).
+- **Release-Mechanik erweitert:** zusätzlich zum lokalen Skript ein
+  **CI-Release-Workflow** (`.github/workflows/release.yml`) nach dem
+  Vorbild des s3Manager-Repos derselben Org: Tag `v*.*.*` →
+  Changelog-Job (conventional-changelog, CHANGELOG.md-Commit auf main,
+  GitHub-Release mit Release-Notes) → macOS-Build-Job (Zertifikat-Import
+  + App-Store-Connect-API-Key aus den org-weiten Secrets
+  `MACOS_CERTIFICATE`, `MACOS_CERTIFICATE_PASSWORD`, `APPLE_API_KEY`,
+  `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`) → `scripts/release` im
+  CI-Modus → DMG als Release-Asset. `scripts/release` ist zweigleisig:
+  API-Key-Env (CI) oder Keychain-Profil (lokal); `MACSCP_VERSION` kommt
+  aus dem Tag. Damit sind „CI bleibt Test-only", „kein CHANGELOG" und
+  „GitHub-Release-Automatik nicht in M6b" aus der ursprünglichen Spec
+  REVIDIERT. Das Repo wird dafür public gestellt (Audit 2026-07-27:
+  0 Critical, Härtungen committet).

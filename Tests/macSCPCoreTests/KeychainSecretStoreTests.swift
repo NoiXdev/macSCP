@@ -9,7 +9,7 @@ import Testing
     .serialized
 )
 struct KeychainSecretStoreTests {
-    private let store = KeychainSecretStore(service: "dev.noidee.macSCP.test")
+    private let store = KeychainSecretStore(service: "dev.noix.macSCP.test")
 
     @Test func roundtripSaveReadUpdate() throws {
         let id = UUID()

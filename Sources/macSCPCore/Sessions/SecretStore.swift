@@ -19,7 +19,7 @@ public struct KeychainError: Error, Equatable, Sendable {
 public struct KeychainSecretStore: SecretStore {
     private let service: String
 
-    public init(service: String = "dev.noidee.macSCP") {
+    public init(service: String = "dev.noix.macSCP") {
         self.service = service
     }
 
