@@ -143,11 +143,19 @@ public struct LocalFileSystem: RemoteFileSystem {
     /// Renames/moves to the FULL destination path. Refuses an existing
     /// destination — `moveItem` would too, but the explicit check yields a
     /// stable, mapped error instead of a Foundation-specific one.
+    ///
+    /// Both existence probes use `Self.exists(atPath:)` (symlink-first, same
+    /// pattern as `stat`), not a bare `fileExists`: a dangling symlink AT
+    /// `from` still "exists" as a link (though `moveItem` can move it) —
+    /// plain `fileExists` follows symlinks and would misreport it as
+    /// `notFound`. Symmetrically, a dangling symlink already AT `to` must
+    /// still trip the collision guard, otherwise `moveItem` falls through to
+    /// a raw Foundation error instead of our stable `protocolError`.
     public func rename(from: String, to: String) async throws {
-        guard FileManager.default.fileExists(atPath: from) else {
+        guard Self.exists(atPath: from) else {
             throw RemoteFSError.notFound(path: from)
         }
-        guard !FileManager.default.fileExists(atPath: to) else {
+        guard !Self.exists(atPath: to) else {
             throw RemoteFSError.protocolError(reason: "destination already exists: \(to)")
         }
         do {
@@ -170,7 +178,38 @@ public struct LocalFileSystem: RemoteFileSystem {
         }
     }
 
+    /// Recursive delete. `FileManager.removeItem` is natively recursive and
+    /// removes symlinks WITHOUT following them, which matches the protocol
+    /// contract exactly. Cancellation granularity is the whole call here
+    /// (Foundation offers no per-entry hook) — acceptable for local trees.
+    ///
+    /// `fileExists` follows symlinks — the `attributesOfItem` second check
+    /// catches dangling symlinks, which must still be reported as existing
+    /// (and are still deletable via `removeItem`).
+    public func deleteTree(at path: String) async throws {
+        try Task.checkCancellation()
+        guard FileManager.default.fileExists(atPath: path)
+            || (try? FileManager.default.attributesOfItem(atPath: path)) != nil else {
+            throw RemoteFSError.notFound(path: path)
+        }
+        do {
+            try FileManager.default.removeItem(atPath: path)
+        } catch {
+            throw Self.map(error, path: path)
+        }
+    }
+
     public func disconnect() async {}
+
+    /// `path` "exists" if it is a symlink (even a dangling one) OR
+    /// `fileExists` reports it — mirrors the check `stat` already uses, so a
+    /// dangling symlink is never misreported as absent (plain `fileExists`
+    /// follows symlinks and would miss it).
+    private static func exists(atPath path: String) -> Bool {
+        let url = URL(fileURLWithPath: path)
+        let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey])
+        return values?.isSymbolicLink == true || FileManager.default.fileExists(atPath: path)
+    }
 
     private static func item(for url: URL) -> RemoteFileItem {
         let values = try? url.resourceValues(forKeys: Set(resourceKeys))

@@ -47,6 +47,12 @@ public protocol RemoteFileSystem: Sendable {
     /// 12 bits (rwx for owner/group/other + setuid/setgid/sticky) are
     /// applied — file-type bits are never written (M7a).
     func setPermissions(path: String, permissions: UInt32) async throws
+    /// Recursively deletes the entry at `path` (file, symlink, or directory
+    /// with its entire contents). Symlinks are deleted, NEVER followed — the
+    /// walk cannot escape the subtree. Cooperatively cancellable per entry;
+    /// a cancellation leaves a partially deleted tree in place (documented,
+    /// M7a). A plain file behaves exactly like `delete`.
+    func deleteTree(at path: String) async throws
     func disconnect() async
 }
 

@@ -320,6 +320,13 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// Renames/moves to the FULL destination path. The explicit existence
     /// probe keeps the no-silent-overwrite contract server-independent
     /// (SFTP rename semantics differ between servers).
+    ///
+    /// The probe is SFTP stat (SSH_FXP_STAT), which follows symlinks —
+    /// Citadel exposes no lstat. So a DANGLING symlink already at `to` is
+    /// invisible to this check and falls through to the server's own
+    /// duplicate-name handling in `sftp.rename` instead of our stable
+    /// `protocolError` (residual, accepted — matches the Local backend's
+    /// best effort, not its exact guarantee).
     public func rename(from: String, to: String) async throws {
         if (try? await sftp.getAttributes(at: to)) != nil {
             throw RemoteFSError.protocolError(reason: "destination already exists: \(to)")
@@ -337,6 +344,48 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         attributes.permissions = permissions & 0o7777
         do {
             try await sftp.setAttributes(at: path, to: attributes)
+        } catch {
+            throw Self.mapSFTPError(error, path: path)
+        }
+    }
+
+    /// Recursive delete via bottom-up walk: SFTP has no recursive remove.
+    /// Files and symlinks go through `remove` (a symlink is removed as the
+    /// link itself — never followed, the walk descends only into REAL
+    /// directories per the listed entry kind); directories are emptied
+    /// first, then removed with rmdir. Cooperatively cancellable per entry;
+    /// cancellation leaves a partially deleted tree (documented).
+    ///
+    /// NOTE (residual limitation, same root cause as `rename`'s destination
+    /// probe above): the initial `stat` uses SFTP stat, which follows
+    /// symlinks — Citadel exposes no lstat. So if `path` ITSELF is a symlink
+    /// pointing at a directory, the walk enters the target instead of
+    /// deleting the link. Symlinks found WITHIN the tree are unaffected:
+    /// `list` (backed by SSH_FXP_READDIR) reports entries lstat-style
+    /// (never resolved), so a listed child that is a symlink is always
+    /// deleted as the link itself via `delete`/`remove`, never descended
+    /// into — the escape is only possible for the top-level argument.
+    public func deleteTree(at path: String) async throws {
+        try Task.checkCancellation()
+        let entry = try await stat(path: path)
+        guard entry.kind == .directory else {
+            try await delete(path: path)
+            return
+        }
+        // Reuse `list` (the file has no separate mapping helper besides its
+        // inline flatMap/filter/map over SFTPAttributeMapper) instead of
+        // re-deriving RemoteFileItems from `sftp.listDirectory` here.
+        let children = try await list(path: path)
+        for child in children {
+            try Task.checkCancellation()
+            if child.kind == .directory {
+                try await deleteTree(at: child.path)
+            } else {
+                try await delete(path: child.path)
+            }
+        }
+        do {
+            try await sftp.rmdir(at: path)
         } catch {
             throw Self.mapSFTPError(error, path: path)
         }

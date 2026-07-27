@@ -322,4 +322,103 @@ struct LocalFileSystemTests {
         let mode = try FileManager.default.attributesOfItem(atPath: f)[.posixPermissions] as? Int
         #expect(mode == 0o640)
     }
+
+    /// T1 review minor: a dangling symlink as the RENAME SOURCE must succeed
+    /// — `fileExists` alone follows symlinks and would misreport it as
+    /// `notFound`, even though `moveItem` can move the link itself just fine.
+    @Test func renameDanglingSymlinkSourceSucceeds() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fs = LocalFileSystem()
+        let source = dir.appendingPathComponent("dangling-src").path(percentEncoded: false)
+        try FileManager.default.createSymbolicLink(
+            atPath: source, withDestinationPath: "/macscp-nope-\(UUID().uuidString)")
+        let target = dir.appendingPathComponent("dangling-renamed").path(percentEncoded: false)
+
+        try await fs.rename(from: source, to: target)
+
+        let values = try? URL(fileURLWithPath: target).resourceValues(forKeys: [.isSymbolicLinkKey])
+        #expect(values?.isSymbolicLink == true)
+        #expect(!FileManager.default.fileExists(atPath: source))
+    }
+
+    /// T1 review minor: a dangling symlink already AT the destination must
+    /// trip the no-silent-overwrite guard — `fileExists` alone follows
+    /// symlinks and would miss it, letting `moveItem` fall through to a raw
+    /// Foundation error instead of our stable `protocolError`.
+    @Test func renameOntoDanglingSymlinkDestinationIsRefused() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fs = LocalFileSystem()
+        let source = dir.appendingPathComponent("a.txt").path(percentEncoded: false)
+        try Data("x".utf8).write(to: URL(fileURLWithPath: source))
+        let target = dir.appendingPathComponent("dangling-dst").path(percentEncoded: false)
+        try FileManager.default.createSymbolicLink(
+            atPath: target, withDestinationPath: "/macscp-nope-\(UUID().uuidString)")
+
+        await #expect(throws: RemoteFSError.protocolError(reason: "destination already exists: \(target)")) {
+            try await fs.rename(from: source, to: target)
+        }
+        #expect(FileManager.default.fileExists(atPath: source))
+    }
+
+    // MARK: - M7a/T2: deleteTree
+
+    @Test func deleteTreeRemovesNestedDirectoryButNeverFollowsSymlinks() async throws {
+        let dir = try makeTempDir()
+        let fs = LocalFileSystem()
+        // outside/victim.txt must SURVIVE: tree/link points at outside.
+        let outside = dir.appendingPathComponent("outside", isDirectory: true)
+        let victim = outside.appendingPathComponent("victim.txt")
+        let tree = dir.appendingPathComponent("tree", isDirectory: true)
+        let sub = tree.appendingPathComponent("sub", isDirectory: true)
+        try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try Data("keep".utf8).write(to: victim)
+        try Data("x".utf8).write(to: sub.appendingPathComponent("f.txt"))
+        try FileManager.default.createSymbolicLink(
+            at: tree.appendingPathComponent("link"), withDestinationURL: outside)
+
+        try await fs.deleteTree(at: tree.path(percentEncoded: false))
+
+        #expect(!FileManager.default.fileExists(atPath: tree.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: victim.path(percentEncoded: false)))
+    }
+
+    @Test func deleteTreeRemovesPlainFile() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fs = LocalFileSystem()
+        let f = dir.appendingPathComponent("solo.txt").path(percentEncoded: false)
+        try Data("x".utf8).write(to: URL(fileURLWithPath: f))
+
+        try await fs.deleteTree(at: f)
+
+        #expect(!FileManager.default.fileExists(atPath: f))
+    }
+
+    @Test func deleteTreeMissingPathThrowsNotFound() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fs = LocalFileSystem()
+        let missing = dir.appendingPathComponent("gibt-es-nicht").path(percentEncoded: false)
+
+        await #expect(throws: RemoteFSError.notFound(path: missing)) {
+            try await fs.deleteTree(at: missing)
+        }
+    }
+
+    @Test func deleteTreeRemovesDanglingSymlinkItself() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fs = LocalFileSystem()
+        let link = dir.appendingPathComponent("dangling").path(percentEncoded: false)
+        try FileManager.default.createSymbolicLink(
+            atPath: link, withDestinationPath: "/macscp-nope-\(UUID().uuidString)")
+
+        try await fs.deleteTree(at: link)
+
+        let values = try? URL(fileURLWithPath: link).resourceValues(forKeys: [.isSymbolicLinkKey])
+        #expect(values?.isSymbolicLink != true)
+    }
 }

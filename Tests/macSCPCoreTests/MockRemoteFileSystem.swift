@@ -176,5 +176,36 @@ actor MockRemoteFileSystem: RemoteFileSystem {
         permissionsByPath[path] = permissions & 0o7777
     }
 
+    /// Recursively removes `path` from the in-memory tree. A file (or any
+    /// non-directory kind) behaves exactly like `delete` (same typed errors,
+    /// same `deletedPaths` bookkeeping). A directory recurses into its own
+    /// `tree[path]` children first (depth-first, mirroring the Citadel
+    /// bottom-up walk), then drops its own tree entry, its parent-listing
+    /// entry, and any tracked data — logged in `deletedPaths` too.
+    func deleteTree(at path: String) async throws {
+        let parent = RemotePath.parent(of: path)
+        guard let siblings = tree[parent],
+              let item = siblings.first(where: { $0.path == path }) else {
+            throw RemoteFSError.notFound(path: path)
+        }
+        guard item.kind == .directory else {
+            try await delete(path: path)
+            return
+        }
+        for child in tree[path] ?? [] {
+            try await deleteTree(at: child.path)
+        }
+        tree[path] = nil
+        files[path] = nil
+        written[path] = nil
+        writeModes[path] = nil
+        permissionsByPath[path] = nil
+        if var updatedSiblings = tree[parent] {
+            updatedSiblings.removeAll { $0.path == path }
+            tree[parent] = updatedSiblings
+        }
+        deletedPaths.append(path)
+    }
+
     func disconnect() async {}
 }

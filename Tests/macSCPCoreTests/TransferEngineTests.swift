@@ -405,6 +405,9 @@ private actor RecordingSpinDestination: RemoteFileSystem {
     func setPermissions(path: String, permissions: UInt32) async throws {
         throw RemoteFSError.protocolError(reason: "unsupported in this test double")
     }
+    func deleteTree(at path: String) async throws {
+        throw RemoteFSError.protocolError(reason: "unsupported in this test double")
+    }
     func disconnect() async {}
 }
 
@@ -446,6 +449,9 @@ private actor ReadCountingSource: RemoteFileSystem {
         throw RemoteFSError.protocolError(reason: "unsupported in this test double")
     }
     func setPermissions(path: String, permissions: UInt32) async throws {
+        throw RemoteFSError.protocolError(reason: "unsupported in this test double")
+    }
+    func deleteTree(at path: String) async throws {
         throw RemoteFSError.protocolError(reason: "unsupported in this test double")
     }
     func disconnect() async {}
@@ -500,6 +506,9 @@ private actor ResumeSpinDestination: RemoteFileSystem {
         throw RemoteFSError.protocolError(reason: "unsupported in this test double")
     }
     func setPermissions(path: String, permissions: UInt32) async throws {
+        throw RemoteFSError.protocolError(reason: "unsupported in this test double")
+    }
+    func deleteTree(at path: String) async throws {
         throw RemoteFSError.protocolError(reason: "unsupported in this test double")
     }
     func disconnect() async {}

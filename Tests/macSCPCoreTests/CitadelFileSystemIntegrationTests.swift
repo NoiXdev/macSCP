@@ -831,6 +831,92 @@ struct CitadelFileSystemIntegrationTests {
         #expect((stat.permissions ?? 0) & 0o7777 == 0o640)
     }
 
+    // MARK: - M7a/T2: deleteTree (RISK)
+
+    /// A 2-level nested tree (files + an empty subdirectory + a symlink
+    /// pointing at a FILE outside the tree, created via docker-exec `ln -s`)
+    /// is removed with a single `deleteTree` call. The tree itself is gone
+    /// afterward; the symlink's TARGET (outside the tree) survives, proving
+    /// the walk deletes the link entry without ever following it.
+    @Test func deleteTreeRemovesNestedTreeButSymlinkTargetOutsideSurvives() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        let base = "/config/macscp-deletetree-\(UUID().uuidString)"
+        let sub = "\(base)/sub"
+        let victimPath = "/config/macscp-deletetree-victim-\(UUID().uuidString).txt"
+        defer {
+            cleanupConfigPath(base)
+            cleanupConfigPath(victimPath)
+        }
+
+        let seed = Process()
+        seed.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
+        seed.arguments = [
+            "exec", "macscp-test-sshd", "sh", "-c",
+            "mkdir -p '\(sub)' && echo victim > '\(victimPath)'"
+                + " && echo hi > '\(base)/a.txt' && ln -s '\(victimPath)' '\(base)/link'",
+        ]
+        try seed.run()
+        seed.waitUntilExit()
+        #expect(seed.terminationStatus == 0)
+
+        try await fs.deleteTree(at: base)
+
+        await #expect(throws: RemoteFSError.notFound(path: base)) {
+            _ = try await fs.stat(path: base)
+        }
+
+        // Symlink TARGET (outside the deleted tree) survives (docker exec test -f).
+        let testFile = Process()
+        testFile.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
+        testFile.arguments = ["exec", "macscp-test-sshd", "test", "-f", victimPath]
+        try testFile.run()
+        testFile.waitUntilExit()
+        #expect(testFile.terminationStatus == 0)
+    }
+
+    /// A ~50-file tree is seeded (docker-exec), `deleteTree` is started in a
+    /// `Task` and cancelled immediately. Tolerant like the file's existing
+    /// cancel tests: either `CancellationError` surfaces, or the walk simply
+    /// finished before the cancellation was observed (both acceptable — the
+    /// contract only promises a partially-deleted tree, never a corrupt
+    /// one). A second `deleteTree` call cleans up whatever remains.
+    @Test func deleteTreeCancellationLeavesConsistentServerState() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        let base = "/config/macscp-deletetree-cancel-\(UUID().uuidString)"
+        defer { cleanupConfigPath(base) }
+
+        let seed = Process()
+        seed.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
+        seed.arguments = [
+            "exec", "macscp-test-sshd", "sh", "-c",
+            "mkdir -p '\(base)' && for i in $(seq 1 50); do echo x > '\(base)/f$i.txt'; done",
+        ]
+        try seed.run()
+        seed.waitUntilExit()
+        #expect(seed.terminationStatus == 0)
+
+        let task = Task { try await fs.deleteTree(at: base) }
+        task.cancel()
+
+        do {
+            try await task.value
+            // The walk finished before the cancellation was observed — acceptable.
+        } catch is CancellationError {
+            // expected
+        } catch {
+            Issue.record("expected CancellationError or successful completion, was: \(error)")
+        }
+
+        // Consistent server state either way: a second call cleans up
+        // whatever remains (a `notFound` here just means the first call
+        // already finished the job).
+        try? await fs.deleteTree(at: base)
+    }
+
     @Test func tamperedKnownKeyFailsHardWithMismatch() async throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-tofu-\(UUID().uuidString)")

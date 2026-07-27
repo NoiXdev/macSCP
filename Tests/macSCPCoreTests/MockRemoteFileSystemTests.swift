@@ -199,4 +199,53 @@ struct MockRemoteFileSystemTests {
             try await fs.delete(path: "/docs")
         }
     }
+
+    // MARK: - M7a/T2: deleteTree
+
+    @Test func deleteTreeRemovesNestedDirectoryRecursively() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [
+                RemoteFileItem(name: "readme.txt", path: "/readme.txt", kind: .file, size: 12),
+                RemoteFileItem(name: "tree", path: "/tree", kind: .directory),
+            ],
+            "/tree": [
+                RemoteFileItem(name: "sub", path: "/tree/sub", kind: .directory),
+                RemoteFileItem(name: "a.txt", path: "/tree/a.txt", kind: .file, size: 1),
+            ],
+            "/tree/sub": [
+                RemoteFileItem(name: "b.txt", path: "/tree/sub/b.txt", kind: .file, size: 1),
+            ],
+        ], files: [
+            "/tree/a.txt": Data("a".utf8),
+            "/tree/sub/b.txt": Data("b".utf8),
+        ])
+
+        try await fs.deleteTree(at: "/tree")
+
+        let parentListing = try await fs.list(path: "/")
+        #expect(!parentListing.contains { $0.path == "/tree" })
+        #expect(parentListing.contains { $0.path == "/readme.txt" })
+        await #expect(throws: RemoteFSError.notFound(path: "/tree")) {
+            _ = try await fs.stat(path: "/tree")
+        }
+    }
+
+    @Test func deleteTreeOnPlainFileBehavesLikeDelete() async throws {
+        let fs = makeMockWithFile(content: Data("bye".utf8))
+
+        try await fs.deleteTree(at: "/datei.bin")
+
+        await #expect(throws: RemoteFSError.notFound(path: "/datei.bin")) {
+            _ = try await fs.readStream(path: "/datei.bin", fromOffset: 0)
+        }
+        let deletedPaths = await fs.deletedPaths
+        #expect(deletedPaths == ["/datei.bin"])
+    }
+
+    @Test func deleteTreeMissingPathThrowsNotFound() async {
+        let fs = makeMock()
+        await #expect(throws: RemoteFSError.notFound(path: "/gibt-es-nicht")) {
+            try await fs.deleteTree(at: "/gibt-es-nicht")
+        }
+    }
 }

@@ -117,6 +117,10 @@ struct EditSessionManagerTests {
             try await inner.setPermissions(path: path, permissions: permissions)
         }
 
+        func deleteTree(at path: String) async throws {
+            try await inner.deleteTree(at: path)
+        }
+
         func disconnect() async {
             await inner.disconnect()
         }
