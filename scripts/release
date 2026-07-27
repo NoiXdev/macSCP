@@ -1,0 +1,70 @@
+#!/bin/bash
+# Builds, signs, notarizes and staples the macSCP release DMG.
+# One-time setup by the maintainer (secrets never touch this repo):
+#   xcrun notarytool store-credentials macscp-notary \
+#       --apple-id <apple-id> --team-id 5V8ZCK434F
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+IDENTITY="Developer ID Application: Tim Rösner (5V8ZCK434F)"
+PROFILE="macscp-notary"
+VERSION="1.0.0"
+APP="dist/macSCP.app"
+DMG="dist/macSCP-${VERSION}.dmg"
+
+# --- preflight -------------------------------------------------------------
+[ -z "$(git status --porcelain)" ] || {
+    echo "error: working tree not clean — commit or stash first" >&2; exit 1; }
+security find-identity -v -p codesigning | grep -Fq "$IDENTITY" || {
+    echo "error: signing identity not found in the keychain: $IDENTITY" >&2; exit 1; }
+xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1 || {
+    echo "error: keychain profile '$PROFILE' missing." >&2
+    echo "Create it once (maintainer only):" >&2
+    echo "  xcrun notarytool store-credentials $PROFILE --apple-id <apple-id> --team-id 5V8ZCK434F" >&2
+    exit 1; }
+
+# --- build + sign ----------------------------------------------------------
+scripts/package-app
+
+# Resource bundles first (inside-out), then the app with hardened runtime.
+codesign --force --timestamp --sign "$IDENTITY" \
+    "$APP/Contents/Resources/macSCP_MacSCPApp.bundle" \
+    "$APP/Contents/Resources/macSCP_macSCPCore.bundle"
+codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP"
+codesign --verify --deep --strict "$APP"
+echo "signed: $(codesign -dv "$APP" 2>&1 | grep '^Authority=Developer ID Application')"
+
+# --- notarize the app, staple it -------------------------------------------
+ZIP="dist/macSCP-${VERSION}.zip"
+ditto -c -k --keepParent "$APP" "$ZIP"
+xcrun notarytool submit "$ZIP" --keychain-profile "$PROFILE" --wait \
+    --output-format json | tee dist/notary-app.json
+grep -Eq '"status"[[:space:]]*:[[:space:]]*"Accepted"' dist/notary-app.json || {
+    echo "error: app notarization not accepted — fetch the log with:" >&2
+    echo "  xcrun notarytool log <submission-id> --keychain-profile $PROFILE" >&2
+    exit 1; }
+xcrun stapler staple "$APP"
+rm -f "$ZIP"
+
+# --- build the DMG from the STAPLED app, sign + notarize + staple it -------
+STAGING="dist/dmg-staging"
+rm -rf "$STAGING"; mkdir -p "$STAGING"
+cp -R "$APP" "$STAGING/"
+ln -s /Applications "$STAGING/Applications"
+hdiutil create -volname "macSCP" -srcfolder "$STAGING" -ov -format UDZO "$DMG"
+rm -rf "$STAGING"
+codesign --force --timestamp --sign "$IDENTITY" "$DMG"
+
+xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" --wait \
+    --output-format json | tee dist/notary-dmg.json
+grep -Eq '"status"[[:space:]]*:[[:space:]]*"Accepted"' dist/notary-dmg.json || {
+    echo "error: DMG notarization not accepted — fetch the log with:" >&2
+    echo "  xcrun notarytool log <submission-id> --keychain-profile $PROFILE" >&2
+    exit 1; }
+xcrun stapler staple "$DMG"
+
+# --- final proof -----------------------------------------------------------
+spctl --assess --type execute -v "$APP"
+xcrun stapler validate "$APP"
+xcrun stapler validate "$DMG"
+echo "RELEASE OK: $DMG"
