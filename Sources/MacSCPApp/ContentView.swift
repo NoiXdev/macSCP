@@ -583,8 +583,12 @@ struct ContentView: View {
     /// Activates a tab (strip click) and resets its attention indicator —
     /// visiting a tab acknowledges whatever failures it accumulated while in
     /// the background (M8a/T4 spec: reset on every activation call site).
+    /// Guarded on the activation actually happening: `TabsViewModel.activate`
+    /// no-ops for a stale/unknown id, and the reset must never fire for a
+    /// tab the user did not actually visit.
     private func activate(_ id: UUID) {
         tabsModel.activate(id)
+        guard tabsModel.activeTabID == id else { return }
         tabsModel.activeTab.seenFailureCount = tabsModel.activeTab.transferQueue.failedCount
     }
 
@@ -609,13 +613,19 @@ struct ContentView: View {
     /// model (the last tab is not removable — `TabsViewModel.closeTab`
     /// returns false and it simply stays as a torn-down form tab, reverting
     /// the window to the compact size via `shrinkIfPristine`) or, with
-    /// another tab around, the neighbor `TabsViewModel.closeTab` activates
-    /// gets its attention indicator reset (same rule as `activate(_:)`).
+    /// another tab around, removal from the model. Only when the CLOSED tab
+    /// was the active one does the auto-activated neighbor get its attention
+    /// indicator reset (same rule as `activate(_:)`) — closing a background
+    /// tab must not acknowledge failures on the untouched active tab.
     private func performClose(_ tab: SessionTab) async {
         await teardown(tab)
         if !tabsModel.isLastTab {
+            let wasActive = tab.id == tabsModel.activeTabID
             tabsModel.closeTab(tab.id)
-            tabsModel.activeTab.seenFailureCount = tabsModel.activeTab.transferQueue.failedCount
+            if wasActive {
+                tabsModel.activeTab.seenFailureCount =
+                    tabsModel.activeTab.transferQueue.failedCount
+            }
         }
         shrinkIfPristine()
     }
