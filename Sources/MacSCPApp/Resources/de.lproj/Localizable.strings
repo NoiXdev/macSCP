@@ -141,3 +141,42 @@
 "menu.newFolder" = "Neuer Ordner…";
 "menu.copyPath" = "Pfad kopieren";
 "menu.delete" = "Löschen…";
+
+/* Gemeinsam (M7b/T3) */
+"common.close" = "Schließen";
+"common.apply" = "Übernehmen";
+
+/* Umbenennen-/Neuer-Ordner-Sheet (M7b/T3) */
+"sheet.rename.title" = "Umbenennen";
+"sheet.rename.confirm" = "Umbenennen";
+"sheet.newFolder.title" = "Neuer Ordner";
+"sheet.newFolder.confirm" = "Erstellen";
+"sheet.newFolder.defaultName" = "unbenannter Ordner";
+
+/* Info-&-Rechte-Sheet (M7b/T3) */
+"info.path" = "Pfad";
+"info.kind" = "Art";
+"info.size" = "Größe";
+"info.modified" = "Geändert";
+"info.permissions" = "Rechte";
+"info.octal" = "Oktal";
+"info.permissionsUnavailable" = "Für diesen Eintrag sind keine Rechte verfügbar.";
+"info.kind.directory" = "Ordner";
+"info.kind.file" = "Datei";
+"info.kind.symlink" = "Symbolischer Link";
+"info.kind.other" = "Sonstiges";
+"info.perm.read" = "Lesen";
+"info.perm.write" = "Schreiben";
+"info.perm.execute" = "Ausführen";
+"info.perm.owner" = "Besitzer";
+"info.perm.group" = "Gruppe";
+"info.perm.other" = "Andere";
+
+/* Löschen-Bestätigung (M7b/T3) */
+"delete.title" = "Löschen?";
+"delete.confirm" = "Löschen";
+"delete.failedTitle" = "Löschen fehlgeschlagen";
+"delete.message.single" = "„%@“ wird gelöscht.";
+"delete.message.many" = "%lld Objekte werden gelöscht.";
+"delete.message.recursive" = "Ordner werden mit ihrem gesamten Inhalt gelöscht.";
+"delete.message.permanent" = "Diese Aktion kann nicht widerrufen werden.";

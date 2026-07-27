@@ -141,3 +141,42 @@
 "menu.newFolder" = "New Folder…";
 "menu.copyPath" = "Copy Path";
 "menu.delete" = "Delete…";
+
+/* Shared (M7b/T3) */
+"common.close" = "Close";
+"common.apply" = "Apply";
+
+/* Rename / New Folder sheet (M7b/T3) */
+"sheet.rename.title" = "Rename";
+"sheet.rename.confirm" = "Rename";
+"sheet.newFolder.title" = "New Folder";
+"sheet.newFolder.confirm" = "Create";
+"sheet.newFolder.defaultName" = "untitled folder";
+
+/* Info & permissions sheet (M7b/T3) */
+"info.path" = "Path";
+"info.kind" = "Kind";
+"info.size" = "Size";
+"info.modified" = "Modified";
+"info.permissions" = "Permissions";
+"info.octal" = "Octal";
+"info.permissionsUnavailable" = "Permissions are not available for this entry.";
+"info.kind.directory" = "Folder";
+"info.kind.file" = "File";
+"info.kind.symlink" = "Symbolic link";
+"info.kind.other" = "Other";
+"info.perm.read" = "Read";
+"info.perm.write" = "Write";
+"info.perm.execute" = "Execute";
+"info.perm.owner" = "Owner";
+"info.perm.group" = "Group";
+"info.perm.other" = "Others";
+
+/* Delete confirmation (M7b/T3) */
+"delete.title" = "Delete?";
+"delete.confirm" = "Delete";
+"delete.failedTitle" = "Delete failed";
+"delete.message.single" = "“%@” will be deleted.";
+"delete.message.many" = "%lld items will be deleted.";
+"delete.message.recursive" = "Folders are deleted with their entire contents.";
+"delete.message.permanent" = "This action cannot be undone.";

@@ -35,6 +35,13 @@ public struct RemoteFileItem: Equatable, Sendable {
     public var isDirectory: Bool { kind == .directory }
 }
 
+/// `Identifiable` conformance for sheet presentation (M7b): `.sheet(item:)`
+/// needs a stable identity, and the path already is one (unique within a
+/// directory listing).
+extension RemoteFileItem: Identifiable {
+    public var id: String { path }
+}
+
 /// Expects absolute, single-slash-normalized paths (e.g. "/home/user/docs").
 /// Behavior on other input (relative paths, double slashes, etc.) is unspecified.
 public enum RemotePath {

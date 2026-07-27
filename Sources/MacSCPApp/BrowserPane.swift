@@ -23,6 +23,14 @@ struct BrowserPane: View {
     var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)? = nil
 
     @State private var isDropTargeted = false
+    // Sheet/alert state for the four dialogs the pane handles internally
+    // (M7b/T3) — rename/info/new-folder/delete never reach the external
+    // `onMenuAction` callback, see the wrapper below.
+    @State private var renameTarget: RemoteFileItem?
+    @State private var infoTarget: RemoteFileItem?
+    @State private var deleteRequest: [RemoteFileItem]?
+    @State private var showNewFolderSheet = false
+    @State private var deleteErrorMessage: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -74,7 +82,15 @@ struct BrowserPane: View {
                     onOpenFile: onOpenFile,
                     pasteboardWriter: pasteboardWriter,
                     side: side,
-                    onMenuAction: onMenuAction
+                    onMenuAction: { entry, selection in
+                        switch entry {
+                        case .rename: renameTarget = selection.first
+                        case .infoAndPermissions: infoTarget = selection.first
+                        case .newFolder: showNewFolderSheet = true
+                        case .delete: deleteRequest = selection
+                        default: onMenuAction?(entry, selection)
+                        }
+                    }
                 )
                 .allowsHitTesting(viewModel.state == .loaded)
 
@@ -114,6 +130,71 @@ struct BrowserPane: View {
             }
         }
         .task { await viewModel.load() }
+        .sheet(item: $renameTarget) { target in
+            NameEntrySheet(
+                title: L10n.string("sheet.rename.title", "Rename"),
+                confirmLabel: L10n.string("sheet.rename.confirm", "Rename"),
+                initialName: target.name,
+                onConfirm: { newName in await viewModel.rename(target, to: newName) })
+        }
+        .sheet(isPresented: $showNewFolderSheet) {
+            NameEntrySheet(
+                title: L10n.string("sheet.newFolder.title", "New Folder"),
+                confirmLabel: L10n.string("sheet.newFolder.confirm", "Create"),
+                initialName: L10n.string("sheet.newFolder.defaultName", "untitled folder"),
+                onConfirm: { name in await viewModel.createFolder(named: name) })
+        }
+        .sheet(item: $infoTarget) { target in
+            InfoPermissionsSheet(
+                item: target,
+                onApply: { perms in await viewModel.applyPermissions(perms, to: target) })
+        }
+        .alert(
+            L10n.string("delete.title", "Delete?"),
+            isPresented: Binding(
+                get: { deleteRequest != nil },
+                set: { if !$0 { deleteRequest = nil } }
+            ),
+            presenting: deleteRequest
+        ) { doomed in
+            Button(L10n.string("common.cancel", "Cancel"), role: .cancel) {}
+            Button(L10n.string("delete.confirm", "Delete"), role: .destructive) {
+                let items = doomed
+                Task { @MainActor in
+                    deleteErrorMessage = await viewModel.deleteItems(items)
+                }
+            }
+        } message: { doomed in
+            Text(deleteMessage(for: doomed))
+        }
+        .alert(
+            L10n.string("delete.failedTitle", "Delete failed"),
+            isPresented: Binding(
+                get: { deleteErrorMessage != nil },
+                set: { if !$0 { deleteErrorMessage = nil } }
+            )
+        ) {
+            Button(L10n.string("common.ok", "OK"), role: .cancel) {}
+        } message: {
+            Text(deleteErrorMessage ?? "")
+        }
+    }
+
+    private func deleteMessage(for doomed: [RemoteFileItem]) -> String {
+        let base: String
+        if doomed.count == 1, let only = doomed.first {
+            base = String(format: L10n.string(
+                "delete.message.single", "“%@” will be deleted."), only.name)
+        } else {
+            base = String(format: L10n.string(
+                "delete.message.many", "%lld items will be deleted."), Int64(doomed.count))
+        }
+        let folderHint = doomed.contains { $0.kind == .directory }
+            ? " " + L10n.string(
+                "delete.message.recursive", "Folders are deleted with their entire contents.")
+            : ""
+        return base + folderHint + " " + L10n.string(
+            "delete.message.permanent", "This action cannot be undone.")
     }
 }
 

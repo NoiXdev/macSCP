@@ -302,7 +302,7 @@ struct ContentView: View {
                                 case .copyPath:
                                     copyPaths(of: selection)
                                 default:
-                                    break   // sheets arrive with T3
+                                    break   // rename/info/newFolder/delete are handled inside BrowserPane
                                 }
                             }
                         )
@@ -334,7 +334,7 @@ struct ContentView: View {
                                 case .copyPath:
                                     copyPaths(of: selection)
                                 default:
-                                    break   // sheets arrive with T3
+                                    break   // rename/info/newFolder/delete are handled inside BrowserPane
                                 }
                             }
                         )
