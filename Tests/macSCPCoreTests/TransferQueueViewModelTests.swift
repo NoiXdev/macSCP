@@ -2579,4 +2579,56 @@ struct TransferQueueViewModelTests {
         let message = TransferQueueViewModel.message(for: RemoteFSError.notFound(path: "/a.txt"))
         #expect(message == String(format: CoreL10n.string("core.transfer.notFound %@"), "/a.txt"))
     }
+
+    // MARK: - 43 (M6b/T1)
+
+    /// `TransferConflict.isPartOfFolderTransfer` distinguishes a lone-file
+    /// conflict from one raised inside a recursive folder transfer, so the
+    /// conflict sheet can label its Cancel button accordingly.
+    @Test("decider learns whether a conflict belongs to a folder transfer")
+    @MainActor
+    func deciderSeesFolderTransferFlag() async throws {
+        // One conflicting single file and one tree whose file conflicts too.
+        let source = QueueTestFS(
+            reads: [
+                "/solo.txt": .init(content: Data("s".utf8)),
+                "/dir/tree.txt": .init(content: Data("t".utf8)),
+            ],
+            listings: ["/dir": [
+                RemoteFileItem(name: "tree.txt", path: "/dir/tree.txt", kind: .file, size: 1)
+            ]])
+        let destination = QueueTestFS(reads: [
+            "/ziel/solo.txt": .init(content: Data("old".utf8)),
+            "/ziel/dir/tree.txt": .init(content: Data("old".utf8)),
+        ])
+        let flags = Flags()   // actor collecting (fileName, isPartOfFolderTransfer)
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1
+        vm.conflictDecider = { conflict in
+            await flags.record(conflict.fileName, conflict.isPartOfFolderTransfer)
+            return (resolution: .skip, applyToAll: false)
+        }
+        vm.enqueue(
+            fileName: "solo.txt", direction: .download,
+            source: source, sourcePath: "/solo.txt",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: nil)
+        vm.enqueueTree(
+            directoryName: "dir", direction: .download,
+            source: source, sourceDirectory: "/dir",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: nil)
+        await waitUntil { vm.items.count >= 2 && vm.items.allSatisfy { $0.status.isTerminal } }
+        #expect(await flags.value("solo.txt") == false)
+        #expect(await flags.value("tree.txt") == true)
+    }
+}
+
+/// Collects (fileName, isPartOfFolderTransfer) pairs reported by a
+/// `conflictDecider` closure — a plain `[String: Bool]` isn't `Sendable`
+/// across the closure's actor hops, so this needs an actor (M6b/T1).
+private actor Flags {
+    private var byName: [String: Bool] = [:]
+    func record(_ name: String, _ flag: Bool) { byName[name] = flag }
+    func value(_ name: String) -> Bool? { byName[name] }
 }

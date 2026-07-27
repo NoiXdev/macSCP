@@ -10,11 +10,19 @@ public struct TransferConflict: Sendable, Equatable {
     public let fileName: String
     public let destinationDirectory: String
     public let direction: TransferDirection
+    /// true when this conflict belongs to a recursive folder transfer —
+    /// the sheet then labels Cancel as "Cancel folder transfer", because
+    /// cancelling aborts the WHOLE group (M6a behavior, M6b labeling).
+    public let isPartOfFolderTransfer: Bool
 
-    public init(fileName: String, destinationDirectory: String, direction: TransferDirection) {
+    public init(
+        fileName: String, destinationDirectory: String,
+        direction: TransferDirection, isPartOfFolderTransfer: Bool = false
+    ) {
         self.fileName = fileName
         self.destinationDirectory = destinationDirectory
         self.direction = direction
+        self.isPartOfFolderTransfer = isPartOfFolderTransfer
     }
 }
 
@@ -762,7 +770,8 @@ public final class TransferQueueViewModel {
             let conflict = TransferConflict(
                 fileName: job.fileName,
                 destinationDirectory: job.destinationDirectory,
-                direction: job.direction)
+                direction: job.direction,
+                isPartOfFolderTransfer: itemGroup[job.id] != nil)
             // Serialize prompts across parallel slots: at most one decider is
             // open at a time, FIFO. Only the prompt itself is gated.
             await conflictGate.acquire()

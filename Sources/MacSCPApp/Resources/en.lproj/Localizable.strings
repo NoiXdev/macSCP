@@ -58,6 +58,8 @@
 "conflict.rename" = "Rename";
 "conflict.skip" = "Skip";
 "conflict.overwrite" = "Overwrite";
+"conflict.cancelFolder" = "Cancel folder transfer";
+"conflict.folderHint" = "Canceling stops the whole folder transfer; files already copied are kept.";
 
 /* Browser toolbar & panes */
 "browser.terminalToggle" = "Terminal";

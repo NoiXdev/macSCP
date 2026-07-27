@@ -58,6 +58,8 @@
 "conflict.rename" = "Umbenennen";
 "conflict.skip" = "Überspringen";
 "conflict.overwrite" = "Überschreiben";
+"conflict.cancelFolder" = "Ordner-Übertragung abbrechen";
+"conflict.folderHint" = "Abbrechen beendet die gesamte Ordner-Übertragung; bereits kopierte Dateien bleiben erhalten.";
 
 /* Browser-Toolbar & Panes */
 "browser.terminalToggle" = "Terminal";

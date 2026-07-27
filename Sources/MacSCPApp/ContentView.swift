@@ -100,10 +100,20 @@ private struct ConflictSheetView: View {
                 "conflict.message", "“%@” already exists in “%@”."),
                 conflict.fileName, conflict.destinationDirectory))
                 .foregroundStyle(.secondary)
+            if conflict.isPartOfFolderTransfer {
+                Text(L10n.string(
+                    "conflict.folderHint",
+                    "Canceling stops the whole folder transfer; files already copied are kept."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Toggle(L10n.string("conflict.applyToAll", "Apply to all further items"), isOn: $applyToAll)
             HStack {
                 Spacer()
-                Button(L10n.string("common.cancel", "Cancel"), role: .cancel) { onCancel() }
+                Button(conflict.isPartOfFolderTransfer
+                    ? L10n.string("conflict.cancelFolder", "Cancel folder transfer")
+                    : L10n.string("common.cancel", "Cancel"),
+                    role: .cancel) { onCancel() }
                 Button(L10n.string("conflict.rename", "Rename")) { onResolve(.rename, applyToAll) }
                 Button(L10n.string("conflict.skip", "Skip")) { onResolve(.skip, applyToAll) }
                 Button(L10n.string("conflict.overwrite", "Overwrite"), role: .destructive) {
