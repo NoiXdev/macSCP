@@ -41,7 +41,7 @@ T1 → T2 (Core-FS, T2 RISK) → T3 → T4 (App-Schicht) → T5 Abschluss (Koord
   - `func rename(from: String, to: String) async throws`
   - `func setPermissions(path: String, permissions: UInt32) async throws`
 
-- [ ] **Step 1: Protocol erweitern** — in `RemoteFileSystem.swift` nach `delete`:
+- [x] **Step 1: Protocol erweitern** — in `RemoteFileSystem.swift` nach `delete`:
 
 ```swift
     /// Renames/moves the entry at `from` to the FULL destination path `to`.
@@ -56,7 +56,7 @@ T1 → T2 (Core-FS, T2 RISK) → T3 → T4 (App-Schicht) → T5 Abschluss (Koord
     func setPermissions(path: String, permissions: UInt32) async throws
 ```
 
-- [ ] **Step 2: Failing Unit-Tests (Local)** — in `LocalFileSystemTests.swift` (bestehende tmp-Dir-Muster der Datei wiederverwenden):
+- [x] **Step 2: Failing Unit-Tests (Local)** — in `LocalFileSystemTests.swift` (bestehende tmp-Dir-Muster der Datei wiederverwenden):
 
 ```swift
     @Test func renameMovesFileAndRefusesExistingDestination() async throws {
@@ -100,8 +100,8 @@ T1 → T2 (Core-FS, T2 RISK) → T3 → T4 (App-Schicht) → T5 Abschluss (Koord
 
 (Existiert in der Datei kein `makeTempDir`-Helper, den vorhandenen tmp-Setup-Stil der Datei übernehmen — Assertions unverändert.)
 
-- [ ] **Step 3: Rot beweisen** — `swift test --filter LocalFileSystemTests` ⇒ Compile-Fehler (Protokoll-Konforme unvollständig) = rot.
-- [ ] **Step 4: Local implementieren** — in `LocalFileSystem.swift` (Fehler über das vorhandene `Self.map(error, path:)`):
+- [x] **Step 3: Rot beweisen** — `swift test --filter LocalFileSystemTests` ⇒ Compile-Fehler (Protokoll-Konforme unvollständig) = rot.
+- [x] **Step 4: Local implementieren** — in `LocalFileSystem.swift` (Fehler über das vorhandene `Self.map(error, path:)`):
 
 ```swift
     /// Renames/moves to the FULL destination path. Refuses an existing
@@ -135,7 +135,7 @@ T1 → T2 (Core-FS, T2 RISK) → T3 → T4 (App-Schicht) → T5 Abschluss (Koord
     }
 ```
 
-- [ ] **Step 5: Citadel implementieren** — in `CitadelFileSystem.swift` (Fehler über `Self.mapSFTPError(_:path:)`; Kollisionscheck explizit, weil OpenSSH-Rename je nach Server überschreiben kann):
+- [x] **Step 5: Citadel implementieren** — in `CitadelFileSystem.swift` (Fehler über `Self.mapSFTPError(_:path:)`; Kollisionscheck explizit, weil OpenSSH-Rename je nach Server überschreiben kann):
 
 ```swift
     /// Renames/moves to the FULL destination path. The explicit existence
@@ -166,8 +166,8 @@ T1 → T2 (Core-FS, T2 RISK) → T3 → T4 (App-Schicht) → T5 Abschluss (Koord
 
 (Prüfen: hat `SFTPFileAttributes` keinen argumentlosen `public init`, dann `SFTPFileAttributes(size: nil, uidgid: nil, permissions: permissions & 0o7777, accessModificationTime: nil)` bzw. die tatsächlich vorhandene Init-Form verwenden — Verhalten identisch, im Report vermerken.)
 
-- [ ] **Step 6: Doubles nachziehen** — `MockRemoteFileSystem` bekommt funktionierende In-Memory-Varianten (Dateien-Dictionary verschieben; permissions in einem `var permissionsByPath: [String: UInt32]` ablegen), die übrigen Test-Doubles minimale Stubs im Stil ihres vorhandenen `delete` (z. B. `throw RemoteFSError.protocolError(reason: "unsupported in this test double")` wo nie aufgerufen).
-- [ ] **Step 7: Gated Integration-Tests** — in `CitadelFileSystemIntegrationTests.swift` (Muster der Datei: `MACSCP_ITEST`-Gate, eigener UUID-Pfad unter `/config`, Cleanup per docker-exec):
+- [x] **Step 6: Doubles nachziehen** — `MockRemoteFileSystem` bekommt funktionierende In-Memory-Varianten (Dateien-Dictionary verschieben; permissions in einem `var permissionsByPath: [String: UInt32]` ablegen), die übrigen Test-Doubles minimale Stubs im Stil ihres vorhandenen `delete` (z. B. `throw RemoteFSError.protocolError(reason: "unsupported in this test double")` wo nie aufgerufen).
+- [x] **Step 7: Gated Integration-Tests** — in `CitadelFileSystemIntegrationTests.swift` (Muster der Datei: `MACSCP_ITEST`-Gate, eigener UUID-Pfad unter `/config`, Cleanup per docker-exec):
 
 ```swift
     @Test func renameAndSetPermissionsRoundtrip() async throws {
@@ -179,8 +179,8 @@ T1 → T2 (Core-FS, T2 RISK) → T3 → T4 (App-Schicht) → T5 Abschluss (Koord
 
 Der Test wird VOLL ausformuliert (kein Kommentar-Gerüst) nach dem Vorbild der bestehenden `delete`-Integrationstests in derselben Datei; Assertions: Liste vorher/nachher, `#expect(throws:)` für die Kollision, `stat`-Permissions-Vergleich.
 
-- [ ] **Step 8: Grün** — volle `swift test` (ungated; die gated Tests kompilieren, laufen aber erst in T5).
-- [ ] **Step 9: Commit** — `feat: add rename and setPermissions to the file-system protocol`.
+- [x] **Step 8: Grün** — volle `swift test` (ungated; die gated Tests kompilieren, laufen aber erst in T5).
+- [x] **Step 9: Commit** — `feat: add rename and setPermissions to the file-system protocol`.
 
 ---
 
@@ -194,7 +194,7 @@ Der Test wird VOLL ausformuliert (kein Kommentar-Gerüst) nach dem Vorbild der b
 - Consumes: T1 gemergt (Protokollstand).
 - Produces: `func deleteTree(at path: String) async throws` — M7b ruft genau diesen Namen.
 
-- [ ] **Step 1: Protocol** — nach `setPermissions`:
+- [x] **Step 1: Protocol** — nach `setPermissions`:
 
 ```swift
     /// Recursively deletes the entry at `path` (file, symlink, or directory
@@ -205,7 +205,7 @@ Der Test wird VOLL ausformuliert (kein Kommentar-Gerüst) nach dem Vorbild der b
     func deleteTree(at path: String) async throws
 ```
 
-- [ ] **Step 2: Failing Tests** — Local (`LocalFileSystemTests.swift`):
+- [x] **Step 2: Failing Tests** — Local (`LocalFileSystemTests.swift`):
 
 ```swift
     @Test func deleteTreeRemovesNestedDirectoryButNeverFollowsSymlinks() async throws {
@@ -232,7 +232,7 @@ Der Test wird VOLL ausformuliert (kein Kommentar-Gerüst) nach dem Vorbild der b
 
 Mock (`MockRemoteFileSystemTests.swift`): Baum im In-Memory-Mock anlegen, `deleteTree`, `list` des Parents zeigt den Eintrag nicht mehr; plus ein Cancellation-Test gegen den CITADEL-Walk gehört in die gated Suite (Step 5).
 
-- [ ] **Step 3: Rot beweisen**, dann **Local implementieren** (Symlink-Check VOR removeItem entfällt — `removeItem` folgt Symlinks nicht, löscht den Link; genau das dokumentieren):
+- [x] **Step 3: Rot beweisen**, dann **Local implementieren** (Symlink-Check VOR removeItem entfällt — `removeItem` folgt Symlinks nicht, löscht den Link; genau das dokumentieren):
 
 ```swift
     /// Recursive delete. `FileManager.removeItem` is natively recursive and
@@ -255,7 +255,7 @@ Mock (`MockRemoteFileSystemTests.swift`): Baum im In-Memory-Mock anlegen, `delet
 
 (Hinweis für den Implementer: `fileExists` folgt Symlinks — der `attributesOfItem`-Zweitcheck fängt dangling Symlinks, die trotzdem löschbar sein müssen.)
 
-- [ ] **Step 4: Citadel implementieren** — Bottom-up-Walk:
+- [x] **Step 4: Citadel implementieren** — Bottom-up-Walk:
 
 ```swift
     /// Recursive delete via bottom-up walk: SFTP has no recursive remove.
@@ -303,10 +303,10 @@ Mock (`MockRemoteFileSystemTests.swift`): Baum im In-Memory-Mock anlegen, `delet
 
 WICHTIG: Die Datei hat bereits eine `list`-Implementierung, die Komponenten zu `RemoteFileItem` mappt — deren vorhandenen Mapping-Helper wiederverwenden statt `Self.item(fromComponent:parent:)` neu zu erfinden (exakten Namen aus der Datei übernehmen; existiert kein separater Helper, `list(path:)` selbst aufrufen). `rmdir`-Signatur aus Citadel prüfen (`rmdir(at:)` — tatsächliche Parameter-Labels übernehmen). Abweichungen im Report dokumentieren.
 
-- [ ] **Step 5: Gated Tests** (`CitadelFileSystemIntegrationTests.swift`): (a) verschachtelter Baum (2 Ebenen, Dateien + leeres Unterverzeichnis + Symlink AUF eine Datei außerhalb, per docker-exec `ln -s` angelegt) → `deleteTree` → Baum weg, Symlink-ZIEL existiert weiter (docker-exec `test -f`); (b) Cancellation: großen Baum anlegen (docker-exec, ~50 Dateien), `deleteTree` in Task starten, sofort canceln → wirft `CancellationError` (oder endet regulär, wenn der Walk schneller war — Assertion tolerant wie die bestehenden Cancel-Tests der Datei) und der Server-Zustand ist konsistent (Rest lässt sich mit zweitem `deleteTree` aufräumen).
-- [ ] **Step 6: Doubles nachziehen** (Mock: rekursiv aus dem Dictionary; übrige Stubs wie T1).
-- [ ] **Step 7: Grün** — volle `swift test`.
-- [ ] **Step 8: Commit** — `feat: add recursive deleteTree to the file-system protocol`.
+- [x] **Step 5: Gated Tests** (`CitadelFileSystemIntegrationTests.swift`): (a) verschachtelter Baum (2 Ebenen, Dateien + leeres Unterverzeichnis + Symlink AUF eine Datei außerhalb, per docker-exec `ln -s` angelegt) → `deleteTree` → Baum weg, Symlink-ZIEL existiert weiter (docker-exec `test -f`); (b) Cancellation: großen Baum anlegen (docker-exec, ~50 Dateien), `deleteTree` in Task starten, sofort canceln → wirft `CancellationError` (oder endet regulär, wenn der Walk schneller war — Assertion tolerant wie die bestehenden Cancel-Tests der Datei) und der Server-Zustand ist konsistent (Rest lässt sich mit zweitem `deleteTree` aufräumen).
+- [x] **Step 6: Doubles nachziehen** (Mock: rekursiv aus dem Dictionary; übrige Stubs wie T1).
+- [x] **Step 7: Grün** — volle `swift test`.
+- [x] **Step 8: Commit** — `feat: add recursive deleteTree to the file-system protocol`.
 
 ---
 
@@ -321,7 +321,7 @@ WICHTIG: Die Datei hat bereits eine `list`-Implementierung, die Komponenten zu `
 **Interfaces:**
 - Produces: `RemoteBrowserViewModel.selectedItems: [RemoteFileItem]` (geordnet, Quelle der Wahrheit) und `selectedItem: RemoteFileItem?` als abgeleitete Convenience (`selectedItems.count == 1 ? selectedItems[0] : nil`) — M7b nutzt BEIDE.
 
-- [ ] **Step 1: Failing VM-Test:**
+- [x] **Step 1: Failing VM-Test:**
 
 ```swift
     @Test @MainActor func selectedItemDerivesFromSelectedItems() async {
@@ -337,7 +337,7 @@ WICHTIG: Die Datei hat bereits eine `list`-Implementierung, die Komponenten zu `
     }
 ```
 
-- [ ] **Step 2: Rot, dann VM umbauen:**
+- [x] **Step 2: Rot, dann VM umbauen:**
 
 ```swift
     /// Currently selected entries, in table order (M7a multi-select).
@@ -353,7 +353,7 @@ WICHTIG: Die Datei hat bereits eine `list`-Implementierung, die Komponenten zu `
 
 `load()` setzt `selectedItems = []` (statt `selectedItem = nil`). ACHTUNG: `selectedItem` war bisher gesetzt-bar (`public var`) — grep alle Zuweisungen (`git grep -n "selectedItem =" Sources Tests`) und stelle sie auf `selectedItems` um.
 
-- [ ] **Step 3: Tabelle** — `allowsMultipleSelection = true` (Zeile 30); Callback-Typ wird `onSelect: ([RemoteFileItem]) -> Void`; in `tableViewSelectionDidChange`:
+- [x] **Step 3: Tabelle** — `allowsMultipleSelection = true` (Zeile 30); Callback-Typ wird `onSelect: ([RemoteFileItem]) -> Void`; in `tableViewSelectionDidChange`:
 
 ```swift
             let rows = table.selectedRowIndexes
@@ -362,9 +362,9 @@ WICHTIG: Die Datei hat bereits eine `list`-Implementierung, die Komponenten zu `
 
 Callsites in `BrowserPane`/`ContentView` binden `viewModel.selectedItems = $0`.
 
-- [ ] **Step 4: Toolbar-Buttons** (`ContentView.uploadButton`/`downloadButton`): statt `selected == nil || kind == .symlink`-Disable gilt: enabled, wenn `session.local.selectedItems.contains { $0.kind != .symlink }` (bzw. remote); die Action iteriert über `selectedItems`, Datei → `enqueue`, Ordner → `enqueueTree`, Symlink → überspringen (still). `onCompleted`-Refresh wie bisher pro Item.
-- [ ] **Step 5: Grün** — volle Suite; `swift build` warnungsfrei bzgl. der geänderten Dateien.
-- [ ] **Step 6: Commit** — `feat: multi-select in both file panes`.
+- [x] **Step 4: Toolbar-Buttons** (`ContentView.uploadButton`/`downloadButton`): statt `selected == nil || kind == .symlink`-Disable gilt: enabled, wenn `session.local.selectedItems.contains { $0.kind != .symlink }` (bzw. remote); die Action iteriert über `selectedItems`, Datei → `enqueue`, Ordner → `enqueueTree`, Symlink → überspringen (still). `onCompleted`-Refresh wie bisher pro Item.
+- [x] **Step 5: Grün** — volle Suite; `swift build` warnungsfrei bzgl. der geänderten Dateien.
+- [x] **Step 6: Commit** — `feat: multi-select in both file panes`.
 
 ---
 
@@ -383,7 +383,7 @@ Callsites in `BrowserPane`/`ContentView` binden `viewModel.selectedItems = $0`.
 - Consumes: T3 (`selectedItems`-Reset in `load()`).
 - Produces: `SettingsStore.showHiddenFiles: Bool` (Default `false`, persistiert); `RemoteBrowserViewModel.showHiddenFiles: Bool` (Default `false`; Änderung erfordert `refresh()` durch den Aufrufer).
 
-- [ ] **Step 1: Failing Tests:**
+- [x] **Step 1: Failing Tests:**
 
 ```swift
     // SettingsStoreTests: defaults false, persists, survives reload.
@@ -414,7 +414,7 @@ Callsites in `BrowserPane`/`ContentView` binden `viewModel.selectedItems = $0`.
 
 (Mock-Zugriff auf die Einträge dem tatsächlichen `MockRemoteFileSystem`-API anpassen — Assertions unverändert; Sortierung: Verzeichnisse zuerst, dann case-insensitiv — `.env` vor `visible.txt`.)
 
-- [ ] **Step 2: Rot, dann implementieren:**
+- [x] **Step 2: Rot, dann implementieren:**
 
 SettingsStore (Muster von `uploadLimitKBs` kopieren — Feld, didSet→persist, Encode/Decode vorwärtskompatibel):
 
@@ -443,7 +443,7 @@ plus Property:
     public var showHiddenFiles = false
 ```
 
-- [ ] **Step 3: Settings-Tab „Allgemein"** — in `SettingsView.swift` neuer erster Tab:
+- [x] **Step 3: Settings-Tab „Allgemein"** — in `SettingsView.swift` neuer erster Tab:
 
 ```swift
             GeneralSettingsTab(store: store)
@@ -477,7 +477,7 @@ private struct GeneralSettingsTab: View {
 
 Keys EN: `"settings.tab.general" = "General"; "settings.general.showHidden" = "Show hidden files"; "settings.general.showHiddenHint" = "Applies to both panes. Shortcut: ⌘⇧.";` — DE: `"Allgemein"`, `"Versteckte Dateien anzeigen"`, `"Gilt für beide Seiten. Kürzel: ⌘⇧."`.
 
-- [ ] **Step 4: ⌘⇧.-Command** — in `MacSCPApp.swift` am `WindowGroup`:
+- [x] **Step 4: ⌘⇧.-Command** — in `MacSCPApp.swift` am `WindowGroup`:
 
 ```swift
         .commands {
@@ -492,14 +492,14 @@ Keys EN: `"settings.tab.general" = "General"; "settings.general.showHidden" = "S
 
 Keys: EN `"menu.toggleHidden" = "Show/Hide Hidden Files";` DE `"Versteckte Dateien ein-/ausblenden";`.
 
-- [ ] **Step 5: Wiring** — in `ContentView`: bei `startSession` beide VMs setzen (`local.showHiddenFiles = settingsStore.showHiddenFiles`, remote ebenso) und ein `.onChange(of: settingsStore.showHiddenFiles)` neben den Limit-Observern, das beide VMs der AKTUELLEN Session setzt und `refresh()` beider Panes anstößt (`Task { await session.local.refresh(); await session.remote.refresh() }`; ohne Session no-op).
-- [ ] **Step 6: Grün** — volle Suite.
-- [ ] **Step 7: Commit** — `feat: hidden-files toggle with settings tab and shortcut`.
+- [x] **Step 5: Wiring** — in `ContentView`: bei `startSession` beide VMs setzen (`local.showHiddenFiles = settingsStore.showHiddenFiles`, remote ebenso) und ein `.onChange(of: settingsStore.showHiddenFiles)` neben den Limit-Observern, das beide VMs der AKTUELLEN Session setzt und `refresh()` beider Panes anstößt (`Task { await session.local.refresh(); await session.remote.refresh() }`; ohne Session no-op).
+- [x] **Step 6: Grün** — volle Suite.
+- [x] **Step 7: Commit** — `feat: hidden-files toggle with settings tab and shortcut`.
 
 ---
 
 ### Task 5: Abschluss-Verifikation (Koordinator, kein Subagent)
 
-- [ ] Docker-Rig starten (Haupt-Checkout!), `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün (inkl. der neuen gated rename/chmod/deleteTree-Tests).
-- [ ] Visueller Smoke (Dev-Wrapper neu bauen): Multi-Select per ⌘-Klick beide Panes; Übertragen einer 3er-Auswahl (Queue zeigt 3 Items); Symlink in Auswahl wird übersprungen; versteckte Dateien: Standard AUS (Home zeigt KEINE Dotfiles mehr — die augenfälligste Änderung), ⌘⇧. blendet ein/aus (beide Panes), Settings-Tab „Allgemein" DE/EN-Texte; Doppelklick-Editor (nutzt `selectedItem`) funktioniert weiter.
-- [ ] Plan-Checkboxen, Ledger, Opus-Whole-Branch-Final-Review (Base = Commit vor T1 auf develop), Fixes, Push develop, `gh run watch` (ci.yml läuft auch auf develop? prüfen — ci.yml triggert nur push auf main + PRs: dann `swift test`-Beleg lokal genügt bzw. ci.yml um develop erweitern als Teil dieses Tasks), Rig `stop`, Memory-Update, Milestone-Zusammenfassung.
+- [x] Docker-Rig starten (Haupt-Checkout!), `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün (inkl. der neuen gated rename/chmod/deleteTree-Tests).
+- [x] Visueller Smoke (Dev-Wrapper neu bauen): Multi-Select per ⌘-Klick beide Panes; Übertragen einer 3er-Auswahl (Queue zeigt 3 Items); Symlink in Auswahl wird übersprungen; versteckte Dateien: Standard AUS (Home zeigt KEINE Dotfiles mehr — die augenfälligste Änderung), ⌘⇧. blendet ein/aus (beide Panes), Settings-Tab „Allgemein" DE/EN-Texte; Doppelklick-Editor (nutzt `selectedItem`) funktioniert weiter.
+- [x] Plan-Checkboxen, Ledger, Opus-Whole-Branch-Final-Review (Base = Commit vor T1 auf develop), Fixes, Push develop, `gh run watch` (ci.yml läuft auch auf develop? prüfen — ci.yml triggert nur push auf main + PRs: dann `swift test`-Beleg lokal genügt bzw. ci.yml um develop erweitern als Teil dieses Tasks), Rig `stop`, Memory-Update, Milestone-Zusammenfassung.

@@ -947,6 +947,48 @@ struct CitadelFileSystemIntegrationTests {
         #expect(testKeep.terminationStatus == 0)
     }
 
+    /// A trailing slash on a symlink argument defeats `topLevelKind`'s exact
+    /// parent-listing match (`entry.path == path` never matches `"link/"`),
+    /// falling through to the SFTP stat fallback — which FOLLOWS the link and
+    /// destroys the TARGET's contents (proven live in the M7a final review).
+    /// Normalization must strip the trailing slash before the kind lookup.
+    @Test func deleteTreeWithTrailingSlashOnSymlinkRemovesOnlyTheLink() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        let outsideDir = "/config/macscp-deletetree-tslash-outside-\(UUID().uuidString)"
+        let link = "/config/macscp-deletetree-tslash-\(UUID().uuidString)"
+        defer {
+            cleanupConfigPath(outsideDir)
+            cleanupConfigPath(link)
+        }
+
+        let seed = Process()
+        seed.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
+        seed.arguments = [
+            "exec", "macscp-test-sshd", "sh", "-c",
+            "mkdir -p '\(outsideDir)' && echo keep > '\(outsideDir)/keep.txt'"
+                + " && ln -s '\(outsideDir)' '\(link)'",
+        ]
+        try seed.run()
+        seed.waitUntilExit()
+        #expect(seed.terminationStatus == 0)
+
+        try await fs.deleteTree(at: link + "/")
+
+        // The link itself is gone: it no longer appears in its parent's listing.
+        let siblings = try await fs.list(path: "/config")
+        #expect(!siblings.contains { $0.path == link })
+
+        // The target directory AND its contents survive (docker exec test -f).
+        let testKeep = Process()
+        testKeep.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
+        testKeep.arguments = ["exec", "macscp-test-sshd", "test", "-f", "\(outsideDir)/keep.txt"]
+        try testKeep.run()
+        testKeep.waitUntilExit()
+        #expect(testKeep.terminationStatus == 0)
+    }
+
     /// A ~50-file tree is seeded (docker-exec), `deleteTree` is started in a
     /// `Task` and cancelled immediately. Tolerant like the file's existing
     /// cancel tests: either `CancellationError` surfaces, or the walk simply

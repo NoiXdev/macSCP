@@ -409,6 +409,28 @@ struct LocalFileSystemTests {
         #expect(FileManager.default.fileExists(atPath: keep.path(percentEncoded: false)))
     }
 
+    /// A trailing slash on a symlink argument makes `removeItem` FOLLOW the
+    /// link (proven live in the M7a final review) — normalization must strip
+    /// it before the delete happens, otherwise the target's contents are
+    /// destroyed instead of just the link.
+    @Test func deleteTreeWithTrailingSlashOnSymlinkRemovesOnlyTheLink() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fs = LocalFileSystem()
+        let outside = dir.appendingPathComponent("outsideDir", isDirectory: true)
+        let keep = outside.appendingPathComponent("keep.txt")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try Data("keep".utf8).write(to: keep)
+        let link = dir.appendingPathComponent("dirlink")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+
+        try await fs.deleteTree(at: link.path(percentEncoded: false) + "/")
+
+        #expect(!FileManager.default.fileExists(atPath: link.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: outside.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: keep.path(percentEncoded: false)))
+    }
+
     @Test func deleteTreeRemovesPlainFile() async throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }

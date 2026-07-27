@@ -179,9 +179,13 @@ public struct LocalFileSystem: RemoteFileSystem {
     }
 
     /// Recursive delete. `FileManager.removeItem` is natively recursive and
-    /// removes symlinks WITHOUT following them, which matches the protocol
-    /// contract exactly. Cancellation granularity is the whole call here
-    /// (Foundation offers no per-entry hook) — acceptable for local trees.
+    /// removes symlinks WITHOUT following them — PROVIDED the path has no
+    /// trailing slash. With one (`"<symlink>/"`), `removeItem` instead
+    /// FOLLOWS the link and destroys the TARGET's contents (proven live in
+    /// the M7a final review) — so a trailing slash is stripped up front,
+    /// before the existence probe or the delete itself. Cancellation
+    /// granularity is the whole call here (Foundation offers no per-entry
+    /// hook) — acceptable for local trees.
     ///
     /// Existence probe reuses `Self.exists(atPath:)` (symlink-first, same
     /// pattern as `stat`/`rename`): a dangling symlink still "exists" as a
@@ -190,6 +194,10 @@ public struct LocalFileSystem: RemoteFileSystem {
     /// would miss it.
     public func deleteTree(at path: String) async throws {
         try Task.checkCancellation()
+        // A trailing slash makes the delete FOLLOW a symlink argument and
+        // destroy the TARGET's contents (proven on both backends in the M7a
+        // final review) — strip it before anything else.
+        let path = path.count > 1 && path.hasSuffix("/") ? String(path.dropLast()) : path
         guard Self.exists(atPath: path) else {
             throw RemoteFSError.notFound(path: path)
         }

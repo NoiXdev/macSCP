@@ -365,23 +365,72 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// reports entries unresolved, exactly like every child encountered
     /// deeper in the walk). Only "/" (no parent to list) or a parent we
     /// cannot list falls back to SFTP stat.
+    ///
+    /// A trailing slash defeats the parent-listing match below (the listing
+    /// never contains an entry whose path ends in "/") and falls through to
+    /// the stat fallback, which FOLLOWS the symlink and destroys the
+    /// TARGET's contents (proven live in the M7a final review) — so it is
+    /// stripped up front, before the kind lookup or anything else.
     public func deleteTree(at path: String) async throws {
         try Task.checkCancellation()
+        let path = path.count > 1 && path.hasSuffix("/") ? String(path.dropLast()) : path
         try await deleteTree(at: path, kind: try await topLevelKind(of: path))
     }
 
-    /// SFTP stat FOLLOWS symlinks and Citadel exposes no lstat — so the top
-    /// level's kind comes from the PARENT listing, which is backed by
-    /// SSH_FXP_READDIR and reports entries unresolved. Only the root (and a
-    /// parent we cannot list) falls back to stat.
+    /// Derives `path`'s kind WITHOUT ever following a symlink at `path`
+    /// itself. SFTP stat follows symlinks and Citadel exposes no lstat, so
+    /// the primary source of truth is the PARENT's listing (SSH_FXP_READDIR,
+    /// which reports entries unresolved — same guarantee every child in the
+    /// walk relies on). `path` is assumed already normalized (no trailing
+    /// slash) by the caller.
+    ///
+    /// Branches:
+    /// - `parent == path` (i.e. `path` is "/", the root — it has no parent
+    ///   to list): fall back to stat. There is no symlink-following risk
+    ///   here, "/" can never itself be a symlink.
+    /// - Parent listing succeeds AND contains an entry at `path`: use that
+    ///   entry's kind directly — the exact, unresolved, ground-truth answer.
+    ///   This is the common case and the only one for anything reachable in
+    ///   a normal walk.
+    /// - Parent listing succeeds but does NOT contain `path` (e.g. a
+    ///   non-normalized form like "/a//b" that the listing's exact-path
+    ///   match can't see, or a race where the entry vanished between listing
+    ///   and lookup): fall back to stat, but do not trust a `.directory`
+    ///   verdict blindly — stat would happily follow a symlink the parent
+    ///   listing simply didn't recognize the path as, and reporting
+    ///   `.directory` for that would let a symlink argument slip through as
+    ///   "is a directory" and get walked into. So: if stat throws (most
+    ///   commonly `notFound` — the entry is genuinely gone), propagate that
+    ///   error naturally; if stat succeeds and reports `.directory`, that is
+    ///   precisely the unverifiable case — throw `protocolError` instead of
+    ///   trusting it. Non-directory stat results (`.file`/`.symlink`) are
+    ///   safe to trust as-is: `deleteTree(at:kind:)` sends anything that
+    ///   isn't `.directory` straight to `delete`, which removes a symlink AS
+    ///   the link (never follows), so there is no walk-into-target risk.
+    /// - Parent listing fails outright (e.g. permission denied on the
+    ///   parent): fall back to stat, same reasoning as above.
     private func topLevelKind(of path: String) async throws -> RemoteFileKind {
         let parent = RemotePath.parent(of: path)
-        if parent != path,
-           let siblings = try? await list(path: parent),
+        guard parent != path else {
+            // Root: no parent to list, and "/" cannot be a symlink.
+            return try await stat(path: path).kind
+        }
+        if let siblings = try? await list(path: parent),
            let entry = siblings.first(where: { $0.path == path }) {
             return entry.kind
         }
-        return try await stat(path: path).kind
+        let statKind = try await stat(path: path).kind
+        guard statKind == .directory else {
+            // .file / .symlink is safe to trust: deleteTree(at:kind:) routes
+            // anything but .directory straight to `delete`, which removes a
+            // symlink as the link itself, never following it.
+            return statKind
+        }
+        // The parent listing did not vouch for this path, yet stat (which
+        // follows symlinks) reports a directory — this is exactly the
+        // shape of a symlink slipping through on a non-normalized path.
+        // Refuse to walk into it.
+        throw RemoteFSError.protocolError(reason: "cannot verify entry kind for: \(path)")
     }
 
     private func deleteTree(at path: String, kind: RemoteFileKind) async throws {
