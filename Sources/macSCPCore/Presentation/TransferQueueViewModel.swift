@@ -127,48 +127,20 @@ public final class TransferQueueViewModel {
         }
     }
 
-    /// Bandwidth ceilings in bytes/second, direction-dependent; `0` (default)
-    /// = unlimited. Backed by ONE shared `BandwidthBucket` per direction
-    /// (M6a): all concurrent transfers of a direction share the limit in
-    /// aggregate. CHANGING a non-zero limit re-rates the existing bucket, so
-    /// it applies live even to running transfers; ENABLING/DISABLING (0 ↔ n)
-    /// swaps the bucket reference and therefore only applies to transfers
-    /// starting afterwards (running ones keep the reference they resolved).
-    public var uploadLimitBytesPerSec: Int = 0 {
-        didSet {
-            uploadRateGeneration += 1
-            uploadBucket = Self.updatedBucket(
-                uploadBucket, bytesPerSecond: uploadLimitBytesPerSec,
-                generation: uploadRateGeneration)
-        }
-    }
-    public var downloadLimitBytesPerSec: Int = 0 {
-        didSet {
-            downloadRateGeneration += 1
-            downloadBucket = Self.updatedBucket(
-                downloadBucket, bytesPerSecond: downloadLimitBytesPerSec,
-                generation: downloadRateGeneration)
-        }
-    }
-    private var uploadRateGeneration = 0
-    private var downloadRateGeneration = 0
+    /// App-global limiter injected by the app layer (M8a). nil = unthrottled
+    /// (tests, CLI). All queues of a window share one instance, so limits
+    /// apply in aggregate across tabs.
+    public var limiter: BandwidthLimiter?
 
-    /// The per-direction shared buckets handed to `TransferEngine.copyFile`.
-    /// Internal for test visibility.
-    private(set) var uploadBucket: BandwidthBucket?
-    private(set) var downloadBucket: BandwidthBucket?
+    /// Direction of the most recently STARTED job — drives the tab activity
+    /// indicator's color (M8a; spec 2: on simultaneous both-direction
+    /// activity the last started one wins).
+    public private(set) var lastStartedDirection: TransferDirection?
 
-    private static func updatedBucket(
-        _ bucket: BandwidthBucket?, bytesPerSecond: Int, generation: Int
-    ) -> BandwidthBucket? {
-        guard bytesPerSecond > 0 else { return nil }
-        guard let bucket else { return BandwidthBucket(bytesPerSecond: bytesPerSecond) }
-        // Keep the instance (running transfers hold it) and re-rate it. The
-        // hop is fire-and-forget by design: pacing catches up on the next
-        // consume, there is nothing to await for correctness — the
-        // generation makes the unordered hops last-write-wins.
-        Task { await bucket.setRate(bytesPerSecond: bytesPerSecond, generation: generation) }
-        return bucket
+    /// Number of items currently in the failed state — the tab attention
+    /// indicator compares this against a per-tab seen-counter (M8a).
+    public var failedCount: Int {
+        items.filter { if case .failed = $0.status { return true } else { return false } }.count
     }
 
     // MARK: - Private state
@@ -657,6 +629,7 @@ public final class TransferQueueViewModel {
         }
 
         setStatus(jobID, .running(TransferProgress(bytesTransferred: 0, totalBytes: nil)))
+        lastStartedDirection = job.direction
 
         // Ordered delivery: AsyncStream buffers in order, ONE consumer updates
         // the status — no task-per-chunk, no race with .finished.
@@ -694,7 +667,8 @@ public final class TransferQueueViewModel {
         // Direction-dependent shared bucket (M6a): resolved HERE, at the
         // moment the transfer actually starts — a Settings change rebuilds
         // the bucket and therefore only applies to items starting next.
-        let throttle = job.direction == .upload ? uploadBucket : downloadBucket
+        let throttle = job.direction == .upload
+            ? limiter?.uploadBucket : limiter?.downloadBucket
         // Resume flag (M5d/T3): only a retry job sets it — the engine then
         // continues from the destination offset instead of overwriting.
         let resume = job.resume

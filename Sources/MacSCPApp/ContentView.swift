@@ -155,6 +155,10 @@ struct ContentView: View {
     /// `transferQueue` at session start and kept in sync via `.onChange`
     /// (M5c/T4 queue parallelism, M5c/T5 bandwidth limits).
     let settingsStore: SettingsStore
+    /// App-global bandwidth ceilings (M8a/T2), created once in `MacSCPApp`.
+    /// `transferQueue.limiter` is wired to this in `startSession` — T3 moves
+    /// that wiring to per-tab queue creation instead.
+    let bandwidthLimiter: BandwidthLimiter
     @State private var connectionViewModel = ConnectionViewModel(connector: { config, onUnknownHostKey in
         try await CitadelFileSystem.connect(
             config: config,
@@ -259,10 +263,10 @@ struct ContentView: View {
             transferQueue.maxConcurrent = newValue
         }
         .onChange(of: settingsStore.uploadLimitKBs) { _, newValue in
-            transferQueue.uploadLimitBytesPerSec = newValue * 1024
+            bandwidthLimiter.uploadLimitBytesPerSec = newValue * 1024
         }
         .onChange(of: settingsStore.downloadLimitKBs) { _, newValue in
-            transferQueue.downloadLimitBytesPerSec = newValue * 1024
+            bandwidthLimiter.downloadLimitBytesPerSec = newValue * 1024
         }
         // Hidden-files toggle (M7a/T4): applies to the CURRENT session's
         // panes only — a no-op while disconnected, same as the limit
@@ -524,8 +528,9 @@ struct ContentView: View {
         // `.onChange` observers below (they target `transferQueue` directly,
         // so they keep working across session restarts too). KBs → bytes/s.
         transferQueue.maxConcurrent = settingsStore.maxConcurrentTransfers
-        transferQueue.uploadLimitBytesPerSec = settingsStore.uploadLimitKBs * 1024
-        transferQueue.downloadLimitBytesPerSec = settingsStore.downloadLimitKBs * 1024
+        transferQueue.limiter = bandwidthLimiter
+        bandwidthLimiter.uploadLimitBytesPerSec = settingsStore.uploadLimitKBs * 1024
+        bandwidthLimiter.downloadLimitBytesPerSec = settingsStore.downloadLimitKBs * 1024
 
         // Actively grow the window to the browser size (user feedback
         // 2026-07-10, M5c/T0) — to the last remembered browser size, if any
