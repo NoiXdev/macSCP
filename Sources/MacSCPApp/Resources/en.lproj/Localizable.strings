@@ -160,6 +160,7 @@
 "info.modified" = "Modified";
 "info.permissions" = "Permissions";
 "info.octal" = "Octal";
+"info.octalInvalid" = "Invalid octal value";
 "info.permissionsUnavailable" = "Permissions are not available for this entry.";
 "info.kind.directory" = "Folder";
 "info.kind.file" = "File";

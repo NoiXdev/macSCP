@@ -160,6 +160,7 @@
 "info.modified" = "Geändert";
 "info.permissions" = "Rechte";
 "info.octal" = "Oktal";
+"info.octalInvalid" = "Ungültiger Oktalwert";
 "info.permissionsUnavailable" = "Für diesen Eintrag sind keine Rechte verfügbar.";
 "info.kind.directory" = "Ordner";
 "info.kind.file" = "Datei";

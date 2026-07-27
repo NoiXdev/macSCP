@@ -72,6 +72,12 @@ struct InfoPermissionsSheet: View {
 
     private var hasPermissions: Bool { item.permissions != nil }
 
+    /// The octal field's parse state gates Apply (T3 review): while the
+    /// user types an invalid intermediate value, `permissions` keeps the
+    /// last good parse — committing that silently would apply something
+    /// other than what the field shows.
+    private var octalIsValid: Bool { PosixPermissions(octalString: octalText) != nil }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(item.name).font(.headline)
@@ -90,6 +96,10 @@ struct InfoPermissionsSheet: View {
                     Text(L10n.string("info.octal", "Octal"))
                         .font(.system(size: 12.5))
                         .foregroundStyle(DesignTokens.inkSecondary)
+                    // Typing NEVER echoes a reformatted value back into the
+                    // field (T3 review: the zero-padded echo corrupted
+                    // digit-by-digit entry) — the field only updates the
+                    // grid; the grid's toggles write the field explicitly.
                     TextField("", text: $octalText)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 70)
@@ -98,6 +108,11 @@ struct InfoPermissionsSheet: View {
                                 permissions = parsed
                             }
                         }
+                    if !octalIsValid {
+                        Text(L10n.string("info.octalInvalid", "Invalid octal value"))
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
                 }
             } else {
                 Text(L10n.string(
@@ -119,7 +134,7 @@ struct InfoPermissionsSheet: View {
                     Button(L10n.string("common.apply", "Apply")) { apply() }
                         .buttonStyle(.polishedProminent)
                         .keyboardShortcut(.defaultAction)
-                        .disabled(isWorking)
+                        .disabled(isWorking || !octalIsValid)
                 }
             }
         }
@@ -128,9 +143,6 @@ struct InfoPermissionsSheet: View {
         .onAppear {
             permissions = PosixPermissions(rawValue: item.permissions ?? 0)
             octalText = permissions.octalString
-        }
-        .onChange(of: permissions) { _, newValue in
-            octalText = newValue.octalString
         }
     }
 
@@ -173,7 +185,13 @@ struct InfoPermissionsSheet: View {
             ForEach([PosixPermissions.Right.read, .write, .execute], id: \.self) { right in
                 Toggle("", isOn: Binding(
                     get: { permissions[c, right] },
-                    set: { permissions[c, right] = $0 }
+                    set: {
+                        permissions[c, right] = $0
+                        // Toggles write the octal field explicitly — there
+                        // is deliberately no permissions→octalText echo,
+                        // so typing in the field is never reformatted.
+                        octalText = permissions.octalString
+                    }
                 ))
                 .labelsHidden()
                 .disabled(isWorking)
