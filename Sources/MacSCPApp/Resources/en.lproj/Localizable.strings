@@ -131,3 +131,13 @@
 /* Menu commands (M7a/T4) */
 "menu.toggleHidden" = "Show/Hide Hidden Files";
 "common.save" = "Save";
+
+/* Browser context menu (M7b/T2) */
+"menu.transfer" = "Transfer";
+"menu.transfer.otherPane" = "To the other pane";
+"menu.openEditor" = "Open";
+"menu.rename" = "Rename…";
+"menu.info" = "Info & Permissions…";
+"menu.newFolder" = "New Folder…";
+"menu.copyPath" = "Copy Path";
+"menu.delete" = "Delete…";

@@ -11,12 +11,16 @@ struct BrowserPane: View {
     let tint: Color
     let softTint: Color
     let viewModel: RemoteBrowserViewModel
+    /// Which pane this is (M7b) — passed through to the context menu model
+    /// (the editor entry only ever shows on the remote side).
+    let side: BrowserPaneSide
     var onDropURLs: (([URL]) -> Void)? = nil
     /// Double-click on a remote FILE row — wired only for the remote pane
     /// (M5e/T4); the local pane leaves this `nil` and keeps its existing
     /// no-op-on-file behavior.
     var onOpenFile: ((RemoteFileItem) -> Void)? = nil
     var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)? = nil
+    var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)? = nil
 
     @State private var isDropTargeted = false
 
@@ -68,7 +72,9 @@ struct BrowserPane: View {
                     onOpen: { item in Task { await viewModel.open(item) } },
                     onSelect: { viewModel.selectedItems = $0 },
                     onOpenFile: onOpenFile,
-                    pasteboardWriter: pasteboardWriter
+                    pasteboardWriter: pasteboardWriter,
+                    side: side,
+                    onMenuAction: onMenuAction
                 )
                 .allowsHitTesting(viewModel.state == .loaded)
 

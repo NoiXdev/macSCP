@@ -289,10 +289,21 @@ struct ContentView: View {
                             tint: DesignTokens.localAmber,
                             softTint: DesignTokens.localSoft,
                             viewModel: session.local,
+                            side: .local,
                             pasteboardWriter: { item in
                                 item.kind == .file
                                     ? NSURL(fileURLWithPath: item.path)
                                     : nil
+                            },
+                            onMenuAction: { entry, selection in
+                                switch entry {
+                                case .transferToOtherPane:
+                                    transferSelection(selection, from: .local, session: session)
+                                case .copyPath:
+                                    copyPaths(of: selection)
+                                default:
+                                    break   // sheets arrive with T3
+                                }
                             }
                         )
                         .frame(minWidth: 280)
@@ -302,6 +313,7 @@ struct ContentView: View {
                             tint: DesignTokens.remoteBlue,
                             softTint: DesignTokens.remoteSoft,
                             viewModel: session.remote,
+                            side: .remote,
                             onDropURLs: { urls in
                                 uploadDropped(urls, session: session)
                             },
@@ -312,6 +324,18 @@ struct ContentView: View {
                                 item.kind == .file
                                     ? remotePromiseProvider(for: item, session: session)
                                     : nil
+                            },
+                            onMenuAction: { entry, selection in
+                                switch entry {
+                                case .transferToOtherPane:
+                                    transferSelection(selection, from: .remote, session: session)
+                                case .openInEditor:
+                                    if let item = selection.first { openInEditor(item, session: session) }
+                                case .copyPath:
+                                    copyPaths(of: selection)
+                                default:
+                                    break   // sheets arrive with T3
+                                }
                             }
                         )
                         .frame(minWidth: 280)
@@ -670,28 +694,7 @@ struct ContentView: View {
     private func uploadButton(_ session: BrowserSession) -> some View {
         let selected = session.local.selectedItems
         Button {
-            for item in selected {
-                switch item.kind {
-                case .directory:
-                    transferQueue.enqueueTree(
-                        directoryName: item.name, direction: .upload,
-                        source: session.localFS, sourceDirectory: item.path,
-                        destination: session.remoteFS,
-                        destinationDirectory: session.remote.currentPath,
-                        onCompleted: { [weak remote = session.remote] in await remote?.refresh() }
-                    )
-                case .symlink:
-                    continue
-                default:
-                    transferQueue.enqueue(
-                        fileName: item.name, direction: .upload,
-                        source: session.localFS, sourcePath: item.path,
-                        destination: session.remoteFS,
-                        destinationDirectory: session.remote.currentPath,
-                        onCompleted: { [weak remote = session.remote] in await remote?.refresh() }
-                    )
-                }
-            }
+            transferSelection(selected, from: .local, session: session)
         } label: {
             Label(L10n.string("browser.upload", "Upload"), systemImage: "arrow.up")
         }
@@ -708,28 +711,7 @@ struct ContentView: View {
     private func downloadButton(_ session: BrowserSession) -> some View {
         let selected = session.remote.selectedItems
         Button {
-            for item in selected {
-                switch item.kind {
-                case .directory:
-                    transferQueue.enqueueTree(
-                        directoryName: item.name, direction: .download,
-                        source: session.remoteFS, sourceDirectory: item.path,
-                        destination: session.localFS,
-                        destinationDirectory: session.local.currentPath,
-                        onCompleted: { [weak local = session.local] in await local?.refresh() }
-                    )
-                case .symlink:
-                    continue
-                default:
-                    transferQueue.enqueue(
-                        fileName: item.name, direction: .download,
-                        source: session.remoteFS, sourcePath: item.path,
-                        destination: session.localFS,
-                        destinationDirectory: session.local.currentPath,
-                        onCompleted: { [weak local = session.local] in await local?.refresh() }
-                    )
-                }
-            }
+            transferSelection(selected, from: .remote, session: session)
         } label: {
             Label(L10n.string("browser.download", "Download"), systemImage: "arrow.down")
         }
@@ -737,6 +719,51 @@ struct ContentView: View {
         .disabled(!selected.contains { $0.kind != .symlink })
         .help(L10n.string(
             "browser.downloadHelp", "Download the selected remote file/folder to the local directory"))
+    }
+
+    /// Context-menu transfer: same per-item enqueue the toolbar buttons use.
+    private func transferSelection(
+        _ selection: [RemoteFileItem], from side: BrowserPaneSide, session: BrowserSession
+    ) {
+        for item in selection where item.kind != .symlink {
+            switch (side, item.kind) {
+            case (.local, .directory):
+                transferQueue.enqueueTree(
+                    directoryName: item.name, direction: .upload,
+                    source: session.localFS, sourceDirectory: item.path,
+                    destination: session.remoteFS,
+                    destinationDirectory: session.remote.currentPath,
+                    onCompleted: { [weak remote = session.remote] in await remote?.refresh() })
+            case (.local, _):
+                transferQueue.enqueue(
+                    fileName: item.name, direction: .upload,
+                    source: session.localFS, sourcePath: item.path,
+                    destination: session.remoteFS,
+                    destinationDirectory: session.remote.currentPath,
+                    onCompleted: { [weak remote = session.remote] in await remote?.refresh() })
+            case (.remote, .directory):
+                transferQueue.enqueueTree(
+                    directoryName: item.name, direction: .download,
+                    source: session.remoteFS, sourceDirectory: item.path,
+                    destination: session.localFS,
+                    destinationDirectory: session.local.currentPath,
+                    onCompleted: { [weak local = session.local] in await local?.refresh() })
+            case (.remote, _):
+                transferQueue.enqueue(
+                    fileName: item.name, direction: .download,
+                    source: session.remoteFS, sourcePath: item.path,
+                    destination: session.localFS,
+                    destinationDirectory: session.local.currentPath,
+                    onCompleted: { [weak local = session.local] in await local?.refresh() })
+            }
+        }
+    }
+
+    /// "Copy Path": one absolute path per line.
+    private func copyPaths(of selection: [RemoteFileItem]) {
+        let text = selection.map(\.path).joined(separator: "\n")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     /// Enqueues dropped file/folder URLs onto the queue. Files run through

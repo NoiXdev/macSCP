@@ -15,11 +15,18 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// Optional because the local pane doesn't wire it (M5e/T4).
     var onOpenFile: ((RemoteFileItem) -> Void)? = nil
     var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)? = nil
+    /// Which pane this table belongs to (M7b) — drives the context menu's
+    /// entries (the editor entry is remote-only). Explicit rather than
+    /// inferred from `onOpenFile != nil`, so the side is self-documenting
+    /// at every call site instead of an implicit side effect of the wiring.
+    let side: BrowserPaneSide
+    var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
-        let coordinator = Coordinator(onOpen: onOpen, onSelect: onSelect)
+        let coordinator = Coordinator(onOpen: onOpen, onSelect: onSelect, side: side)
         coordinator.onOpenFile = onOpenFile
         coordinator.pasteboardWriter = pasteboardWriter
+        coordinator.onMenuAction = onMenuAction
         return coordinator
     }
 
@@ -54,6 +61,9 @@ struct RemoteFileTableView: NSViewRepresentable {
         table.doubleAction = #selector(Coordinator.doubleClicked(_:))
         // Allow dragging out of the app (e.g. the Finder as a target).
         table.setDraggingSourceOperationMask(.copy, forLocal: false)
+        // Context menu (M7b): built lazily per click in menuNeedsUpdate.
+        table.menu = NSMenu()
+        table.menu?.delegate = context.coordinator
 
         let scroll = NSScrollView()
         scroll.documentView = table
@@ -80,6 +90,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.onSelect = onSelect
         context.coordinator.onOpenFile = onOpenFile
         context.coordinator.pasteboardWriter = pasteboardWriter
+        context.coordinator.onMenuAction = onMenuAction
         guard let table = nsView.documentView as? NSTableView else { return }
         if itemsChanged {
             // reloadData() clears the selection without a delegate call —
@@ -106,18 +117,24 @@ struct RemoteFileTableView: NSViewRepresentable {
         }
     }
 
-    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
         var items: [RemoteFileItem] = []
         var onOpen: (RemoteFileItem) -> Void
         var onSelect: ([RemoteFileItem]) -> Void
         var onOpenFile: ((RemoteFileItem) -> Void)?
         var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)?
+        var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)?
+        let side: BrowserPaneSide
         weak var table: NSTableView?
         var suppressSelectionCallback = false
 
-        init(onOpen: @escaping (RemoteFileItem) -> Void, onSelect: @escaping ([RemoteFileItem]) -> Void) {
+        init(
+            onOpen: @escaping (RemoteFileItem) -> Void, onSelect: @escaping ([RemoteFileItem]) -> Void,
+            side: BrowserPaneSide
+        ) {
             self.onOpen = onOpen
             self.onSelect = onSelect
+            self.side = side
         }
 
         func numberOfRows(in tableView: NSTableView) -> Int {
@@ -216,6 +233,87 @@ struct RemoteFileTableView: NSViewRepresentable {
             rowView.identifier = reuseID
             return rowView
         }
+
+        // MARK: - Context menu (M7b)
+
+        /// Finder behavior: right-click on an unselected row selects it
+        /// first (and reports the change); right-click inside the current
+        /// selection keeps it; a click below the rows targets the pane
+        /// background (empty selection → "New Folder" only).
+        func menuNeedsUpdate(_ menu: NSMenu) {
+            guard let table else { return }
+            let clicked = table.clickedRow
+            var selection: [RemoteFileItem] = []
+            if clicked >= 0, clicked < items.count {
+                if !table.selectedRowIndexes.contains(clicked) {
+                    table.selectRowIndexes(IndexSet(integer: clicked), byExtendingSelection: false)
+                    onSelect([items[clicked]])
+                }
+                selection = table.selectedRowIndexes.compactMap {
+                    $0 < items.count ? items[$0] : nil
+                }
+            }
+            menu.removeAllItems()
+            for entry in BrowserContextMenu.entries(for: selection, side: side) {
+                if entry == .delete, menu.items.isEmpty == false {
+                    menu.addItem(.separator())
+                }
+                menu.addItem(makeItem(entry, selection: selection))
+            }
+        }
+
+        private func makeItem(_ entry: BrowserMenuEntry, selection: [RemoteFileItem]) -> NSMenuItem {
+            switch entry {
+            case .transferToOtherPane:
+                // Submenu now with a single target — M8 hooks per-session
+                // targets into the same submenu.
+                let parent = NSMenuItem(
+                    title: L10n.string("menu.transfer", "Transfer"), action: nil, keyEquivalent: "")
+                let submenu = NSMenu()
+                submenu.addItem(actionItem(
+                    title: L10n.string("menu.transfer.otherPane", "To the other pane"),
+                    entry: entry, selection: selection))
+                parent.submenu = submenu
+                return parent
+            case .openInEditor:
+                return actionItem(title: L10n.string("menu.openEditor", "Open"), entry: entry, selection: selection)
+            case .rename:
+                return actionItem(title: L10n.string("menu.rename", "Rename…"), entry: entry, selection: selection)
+            case .infoAndPermissions:
+                return actionItem(title: L10n.string("menu.info", "Info & Permissions…"), entry: entry, selection: selection)
+            case .newFolder:
+                return actionItem(title: L10n.string("menu.newFolder", "New Folder…"), entry: entry, selection: selection)
+            case .copyPath:
+                return actionItem(title: L10n.string("menu.copyPath", "Copy Path"), entry: entry, selection: selection)
+            case .delete:
+                let item = actionItem(title: L10n.string("menu.delete", "Delete…"), entry: entry, selection: selection)
+                return item
+            }
+        }
+
+        private func actionItem(
+            title: String, entry: BrowserMenuEntry, selection: [RemoteFileItem]
+        ) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: #selector(menuItemFired(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = MenuActionBox(entry: entry, selection: selection)
+            return item
+        }
+
+        @objc private func menuItemFired(_ sender: NSMenuItem) {
+            guard let box = sender.representedObject as? MenuActionBox else { return }
+            onMenuAction?(box.entry, box.selection)
+        }
+    }
+}
+
+/// NSMenuItem.representedObject needs a class — boxes the menu action.
+private final class MenuActionBox {
+    let entry: BrowserMenuEntry
+    let selection: [RemoteFileItem]
+    init(entry: BrowserMenuEntry, selection: [RemoteFileItem]) {
+        self.entry = entry
+        self.selection = selection
     }
 }
 

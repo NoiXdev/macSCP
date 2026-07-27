@@ -131,3 +131,13 @@
 /* Menü-Befehle (M7a/T4) */
 "menu.toggleHidden" = "Versteckte Dateien ein-/ausblenden";
 "common.save" = "Speichern";
+
+/* Browser-Kontextmenü (M7b/T2) */
+"menu.transfer" = "Übertragen";
+"menu.transfer.otherPane" = "Zum anderen Fenster";
+"menu.openEditor" = "Öffnen";
+"menu.rename" = "Umbenennen…";
+"menu.info" = "Informationen & Rechte…";
+"menu.newFolder" = "Neuer Ordner…";
+"menu.copyPath" = "Pfad kopieren";
+"menu.delete" = "Löschen…";
