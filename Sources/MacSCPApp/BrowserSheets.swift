@@ -75,8 +75,12 @@ struct InfoPermissionsSheet: View {
     /// The octal field's parse state gates Apply (T3 review): while the
     /// user types an invalid intermediate value, `permissions` keeps the
     /// last good parse — committing that silently would apply something
-    /// other than what the field shows.
-    private var octalIsValid: Bool { PosixPermissions(octalString: octalText) != nil }
+    /// other than what the field shows. The spec requires a 3–4 digit
+    /// value; shorter prefixes still parse (so the grid tracks typing)
+    /// but must not be applied — Return after a lone "6" would chmod 006.
+    private var octalIsValid: Bool {
+        (3...4).contains(octalText.count) && PosixPermissions(octalString: octalText) != nil
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {

@@ -301,8 +301,10 @@ struct ContentView: View {
                                     transferSelection(selection, from: .local, session: session)
                                 case .copyPath:
                                     copyPaths(of: selection)
-                                default:
-                                    break   // rename/info/newFolder/delete are handled inside BrowserPane
+                                case .openInEditor:
+                                    break   // never emitted for the local pane (menu model)
+                                case .rename, .infoAndPermissions, .newFolder, .delete:
+                                    break   // handled inside BrowserPane, never forwarded
                                 }
                             }
                         )
@@ -333,8 +335,8 @@ struct ContentView: View {
                                     if let item = selection.first { openInEditor(item, session: session) }
                                 case .copyPath:
                                     copyPaths(of: selection)
-                                default:
-                                    break   // rename/info/newFolder/delete are handled inside BrowserPane
+                                case .rename, .infoAndPermissions, .newFolder, .delete:
+                                    break   // handled inside BrowserPane, never forwarded
                                 }
                             }
                         )
