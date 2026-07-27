@@ -9,7 +9,7 @@ struct RemoteFileTableView: NSViewRepresentable {
     let items: [RemoteFileItem]
     let selectedPath: String?
     let onOpen: (RemoteFileItem) -> Void
-    let onSelect: (RemoteFileItem?) -> Void
+    let onSelect: ([RemoteFileItem]) -> Void
     /// Double-click on a plain FILE row (kind == .file). Directories keep
     /// going through `onOpen` (cd); symlinks/other are unchanged (no-op).
     /// Optional because the local pane doesn't wire it (M5e/T4).
@@ -27,7 +27,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         let table = NSTableView()
         table.style = .plain
         table.usesAlternatingRowBackgroundColors = false
-        table.allowsMultipleSelection = false
+        table.allowsMultipleSelection = true
         table.rowHeight = 24
         table.intercellSpacing = NSSize(width: 0, height: 0)
         // Mockup row separators: hairline at 45% between rows.
@@ -83,13 +83,13 @@ struct RemoteFileTableView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         var items: [RemoteFileItem] = []
         var onOpen: (RemoteFileItem) -> Void
-        var onSelect: (RemoteFileItem?) -> Void
+        var onSelect: ([RemoteFileItem]) -> Void
         var onOpenFile: ((RemoteFileItem) -> Void)?
         var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)?
         weak var table: NSTableView?
         var suppressSelectionCallback = false
 
-        init(onOpen: @escaping (RemoteFileItem) -> Void, onSelect: @escaping (RemoteFileItem?) -> Void) {
+        init(onOpen: @escaping (RemoteFileItem) -> Void, onSelect: @escaping ([RemoteFileItem]) -> Void) {
             self.onOpen = onOpen
             self.onSelect = onSelect
         }
@@ -176,8 +176,8 @@ struct RemoteFileTableView: NSViewRepresentable {
         func tableViewSelectionDidChange(_ notification: Notification) {
             guard !suppressSelectionCallback else { return }
             guard let table else { return }
-            let row = table.selectedRow
-            onSelect(row >= 0 && row < items.count ? items[row] : nil)
+            let rows = table.selectedRowIndexes
+            onSelect(rows.compactMap { $0 < items.count ? items[$0] : nil })
         }
 
         func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {

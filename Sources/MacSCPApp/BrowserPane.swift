@@ -66,7 +66,7 @@ struct BrowserPane: View {
                     items: viewModel.items,
                     selectedPath: viewModel.selectedItem?.path,
                     onOpen: { item in Task { await viewModel.open(item) } },
-                    onSelect: { item in viewModel.selectedItem = item },
+                    onSelect: { viewModel.selectedItems = $0 },
                     onOpenFile: onOpenFile,
                     pasteboardWriter: pasteboardWriter
                 )

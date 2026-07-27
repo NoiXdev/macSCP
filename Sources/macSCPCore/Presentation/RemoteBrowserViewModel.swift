@@ -16,8 +16,15 @@ public final class RemoteBrowserViewModel {
     public private(set) var items: [RemoteFileItem] = []
     public private(set) var state: State = .loading
 
-    /// Currently selected entry in the table (single selection).
-    public var selectedItem: RemoteFileItem?
+    /// Currently selected entries, in table order (M7a multi-select).
+    /// The single source of truth for selection.
+    public var selectedItems: [RemoteFileItem] = []
+
+    /// Single-selection convenience: non-nil exactly when ONE row is
+    /// selected. Double-click/editor paths keep using this.
+    public var selectedItem: RemoteFileItem? {
+        selectedItems.count == 1 ? selectedItems[0] : nil
+    }
 
     private let fs: any RemoteFileSystem
 
@@ -30,7 +37,7 @@ public final class RemoteBrowserViewModel {
 
     public func load() async {
         state = .loading
-        selectedItem = nil
+        selectedItems = []
         do {
             let listed = try await fs.list(path: currentPath)
             items = Self.sortedForDisplay(listed)

@@ -647,68 +647,78 @@ struct ContentView: View {
         }
     }
 
-    /// Locally selected file OR folder → current remote directory.
-    /// Symlink selection stays disabled (not a meaningful transfer target).
+    /// Locally selected files/folders → current remote directory.
+    /// Symlinks in the selection are skipped silently (not a meaningful
+    /// transfer target); enabled when at least one non-symlink is selected.
     @ViewBuilder
     private func uploadButton(_ session: BrowserSession) -> some View {
-        let selected = session.local.selectedItem
+        let selected = session.local.selectedItems
         Button {
-            guard let selected else { return }
-            if selected.kind == .directory {
-                transferQueue.enqueueTree(
-                    directoryName: selected.name, direction: .upload,
-                    source: session.localFS, sourceDirectory: selected.path,
-                    destination: session.remoteFS,
-                    destinationDirectory: session.remote.currentPath,
-                    onCompleted: { [weak remote = session.remote] in await remote?.refresh() }
-                )
-            } else {
-                transferQueue.enqueue(
-                    fileName: selected.name, direction: .upload,
-                    source: session.localFS, sourcePath: selected.path,
-                    destination: session.remoteFS,
-                    destinationDirectory: session.remote.currentPath,
-                    onCompleted: { [weak remote = session.remote] in await remote?.refresh() }
-                )
+            for item in selected {
+                switch item.kind {
+                case .directory:
+                    transferQueue.enqueueTree(
+                        directoryName: item.name, direction: .upload,
+                        source: session.localFS, sourceDirectory: item.path,
+                        destination: session.remoteFS,
+                        destinationDirectory: session.remote.currentPath,
+                        onCompleted: { [weak remote = session.remote] in await remote?.refresh() }
+                    )
+                case .symlink:
+                    continue
+                default:
+                    transferQueue.enqueue(
+                        fileName: item.name, direction: .upload,
+                        source: session.localFS, sourcePath: item.path,
+                        destination: session.remoteFS,
+                        destinationDirectory: session.remote.currentPath,
+                        onCompleted: { [weak remote = session.remote] in await remote?.refresh() }
+                    )
+                }
             }
         } label: {
             Label(L10n.string("browser.upload", "Upload"), systemImage: "arrow.up")
         }
         .tint(DesignTokens.localAmber)
-        .disabled(selected == nil || selected?.kind == .symlink)
+        .disabled(!selected.contains { $0.kind != .symlink })
         .help(L10n.string(
             "browser.uploadHelp", "Upload the selected local file/folder to the remote directory"))
     }
 
-    /// Remotely selected file OR folder → current local directory.
-    /// Symlink selection stays disabled (not a meaningful transfer target).
+    /// Remotely selected files/folders → current local directory.
+    /// Symlinks in the selection are skipped silently (not a meaningful
+    /// transfer target); enabled when at least one non-symlink is selected.
     @ViewBuilder
     private func downloadButton(_ session: BrowserSession) -> some View {
-        let selected = session.remote.selectedItem
+        let selected = session.remote.selectedItems
         Button {
-            guard let selected else { return }
-            if selected.kind == .directory {
-                transferQueue.enqueueTree(
-                    directoryName: selected.name, direction: .download,
-                    source: session.remoteFS, sourceDirectory: selected.path,
-                    destination: session.localFS,
-                    destinationDirectory: session.local.currentPath,
-                    onCompleted: { [weak local = session.local] in await local?.refresh() }
-                )
-            } else {
-                transferQueue.enqueue(
-                    fileName: selected.name, direction: .download,
-                    source: session.remoteFS, sourcePath: selected.path,
-                    destination: session.localFS,
-                    destinationDirectory: session.local.currentPath,
-                    onCompleted: { [weak local = session.local] in await local?.refresh() }
-                )
+            for item in selected {
+                switch item.kind {
+                case .directory:
+                    transferQueue.enqueueTree(
+                        directoryName: item.name, direction: .download,
+                        source: session.remoteFS, sourceDirectory: item.path,
+                        destination: session.localFS,
+                        destinationDirectory: session.local.currentPath,
+                        onCompleted: { [weak local = session.local] in await local?.refresh() }
+                    )
+                case .symlink:
+                    continue
+                default:
+                    transferQueue.enqueue(
+                        fileName: item.name, direction: .download,
+                        source: session.remoteFS, sourcePath: item.path,
+                        destination: session.localFS,
+                        destinationDirectory: session.local.currentPath,
+                        onCompleted: { [weak local = session.local] in await local?.refresh() }
+                    )
+                }
             }
         } label: {
             Label(L10n.string("browser.download", "Download"), systemImage: "arrow.down")
         }
         .tint(DesignTokens.remoteBlue)
-        .disabled(selected == nil || selected?.kind == .symlink)
+        .disabled(!selected.contains { $0.kind != .symlink })
         .help(L10n.string(
             "browser.downloadHelp", "Download the selected remote file/folder to the local directory"))
     }

@@ -18,7 +18,7 @@ actor MockRemoteFileSystem: RemoteFileSystem {
     /// Permission bits set via `setPermissions`, keyed by path (M7a/T1).
     private(set) var permissionsByPath: [String: UInt32] = [:]
 
-    init(tree: [String: [RemoteFileItem]], files: [String: Data] = [:]) {
+    init(tree: [String: [RemoteFileItem]] = [:], files: [String: Data] = [:]) {
         self.tree = tree
         self.files = files
     }

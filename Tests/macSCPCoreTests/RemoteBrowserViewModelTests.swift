@@ -69,8 +69,20 @@ struct RemoteBrowserViewModelTests {
     @Test func navigationResetsSelection() async {
         let vm = RemoteBrowserViewModel(fs: makeFS())
         await vm.load()
-        vm.selectedItem = vm.items[1]
+        vm.selectedItems = [vm.items[1]]
         await vm.open(vm.items[0])
+        #expect(vm.selectedItem == nil)
+    }
+
+    @Test @MainActor func selectedItemDerivesFromSelectedItems() async {
+        let vm = RemoteBrowserViewModel(fs: MockRemoteFileSystem())
+        let a = RemoteFileItem(name: "a", path: "/a", kind: .file, size: 1)
+        let b = RemoteFileItem(name: "b", path: "/b", kind: .file, size: 1)
+        vm.selectedItems = [a]
+        #expect(vm.selectedItem == a)
+        vm.selectedItems = [a, b]
+        #expect(vm.selectedItem == nil)
+        vm.selectedItems = []
         #expect(vm.selectedItem == nil)
     }
 }
