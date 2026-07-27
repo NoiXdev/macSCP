@@ -2,22 +2,6 @@ import AppKit
 import SwiftUI
 import macSCPCore
 
-struct BrowserSession {
-    /// Identifies this window's edit-session temp subtree (M5e/T4) — shared
-    /// with `editManager`'s `sessionID` so both name the same directory.
-    let id: UUID
-    let localFS: LocalFileSystem
-    let remoteFS: any RemoteFileSystem
-    let local: RemoteBrowserViewModel
-    let remote: RemoteBrowserViewModel
-    let terminal: TerminalPanelViewModel
-    /// Owns "open in external editor" sessions for remote files double-clicked
-    /// in this window. Lifecycle is UI-owned like everything else here: see
-    /// `teardownSession`'s ordering (`stopAll` after `cancelAll`, before
-    /// `terminal.shutdown`).
-    let editManager: EditSessionManager
-}
-
 /// Sheet item wrapper: gives `TransferConflict` `Identifiable` conformance
 /// without extending the Core type via extension (binding requirement
 /// M5b/T4). One fresh UUID per prompt suffices because at most one sheet is
@@ -32,7 +16,8 @@ struct ConflictPromptItem: Identifiable {
 /// cancellation handler and exactly-once resolution. A reference type
 /// (instead of a `@State` field directly on the view) because
 /// `TransferQueueViewModel.conflictDecider` is a `@Sendable` closure that
-/// outlives the `ContentView` struct.
+/// outlives the `ContentView` struct. Owned per tab by `SessionTab` (M8a/T3),
+/// so a background tab's prompt never presents on the active tab.
 @MainActor
 @Observable
 final class ConflictPromptBridge {
@@ -151,50 +136,48 @@ private struct WindowAccessor: NSViewRepresentable {
 
 struct ContentView: View {
     /// Passed in from `MacSCPApp` (same instance as the `Settings` scene —
-    /// no singleton, per the v2 multi-window rule). Wired into
-    /// `transferQueue` at session start and kept in sync via `.onChange`
-    /// (M5c/T4 queue parallelism, M5c/T5 bandwidth limits).
+    /// no singleton, per the v2 multi-window rule). Wired into every tab's
+    /// queue at tab creation and kept in sync via `.onChange` (M5c/T4 queue
+    /// parallelism, M5c/T5 bandwidth limits).
     let settingsStore: SettingsStore
     /// App-global bandwidth ceilings (M8a/T2), created once in `MacSCPApp`.
-    /// `transferQueue.limiter` is wired to this in `startSession` — T3 moves
-    /// that wiring to per-tab queue creation instead.
+    /// Every tab's queue resolves its throttle from this one instance, so
+    /// limits apply in aggregate across tabs (M8a/T3).
     let bandwidthLimiter: BandwidthLimiter
-    @State private var connectionViewModel = ConnectionViewModel(connector: { config, onUnknownHostKey in
-        try await CitadelFileSystem.connect(
-            config: config,
-            knownHosts: KnownHostsStore(directory: SessionStore.defaultDirectory),
-            onUnknownHostKey: onUnknownHostKey
-        )
-    })
     @State private var sessionListViewModel = SessionListViewModel(
         store: SessionStore(directory: SessionStore.defaultDirectory),
         secrets: KeychainSecretStore()
     )
-    @State private var session: BrowserSession?
-    @State private var activeSessionID: UUID?
-    @State private var transferQueue = TransferQueueViewModel()
-    @State private var isReconnecting = false
+    /// Window-scoped tab collection (M8a/T3). Everything that used to be
+    /// window-wide session state (connection form, session, queue, conflict
+    /// bridge, title, edit error, reconnect flag) now lives per tab in
+    /// `SessionTab`; only `window`, `lastBrowserSize`, `importedHosts`,
+    /// `sessionListViewModel` and the two injected stores stay window-wide.
+    @State private var tabsModel: TabsViewModel<SessionTab>
     @State private var importedHosts: [SSHConfigHost] = []
-    @State private var conflictBridge = ConflictPromptBridge()
-    /// Transient error from a failed "open in editor" attempt (M5e/T4) —
-    /// cleared on the next successful open or dismissed via its close button.
-    @State private var editErrorMessage: String?
     /// Handed over by `WindowAccessor` — basis for the active resize calls
     /// on state transitions (M5c/T0).
     @State private var window: NSWindow?
     /// Last browser window size, remembered on disconnect — the next
     /// connect grows to it instead of the minimum size, if it's larger.
     @State private var lastBrowserSize: CGSize?
-    /// Display name for the window title while connected (stored session
-    /// name or "user@host"). Drives `.navigationTitle` — assigning
-    /// `NSWindow.title` directly does not stick, SwiftUI's `WindowGroup`
-    /// re-applies its own title on the next scene update (M5f/T6 smoke).
-    @State private var sessionTitleName: String?
 
-    private var sidebarDisabled: Bool {
-        isReconnecting
-            || transferQueue.isActive
-            || connectionViewModel.state == .connecting
+    init(settingsStore: SettingsStore, bandwidthLimiter: BandwidthLimiter) {
+        self.settingsStore = settingsStore
+        self.bandwidthLimiter = bandwidthLimiter
+        _tabsModel = State(initialValue: TabsViewModel(
+            initial: Self.makeTab(settingsStore: settingsStore, limiter: bandwidthLimiter)))
+    }
+
+    /// The mounted tab. Every view below renders THIS tab's state; switching
+    /// tabs re-resolves all of it (sheet, banners, queue bar, toolbar).
+    private var activeTab: SessionTab { tabsModel.activeTab }
+
+    /// "Fresh window" state: a single, unconnected tab. Drives the compact
+    /// form geometry — with a second tab around, the window keeps its
+    /// browser size even while the active tab shows a form.
+    private var isPristine: Bool {
+        tabsModel.isLastTab && !tabsModel.activeTab.isConnected
     }
 
     var body: some View {
@@ -202,13 +185,18 @@ struct ContentView: View {
             SessionSidebar(
                 viewModel: sessionListViewModel,
                 importedHosts: importedHosts,
-                activeSessionID: activeSessionID,
-                interactionsDisabled: sidebarDisabled,
-                onSelect: { stored in connectStored(stored) },
+                activeSessionID: activeTab.activeStoredSessionID,
+                // A running transfer no longer locks the sidebar (M8a): a
+                // sidebar click opens a NEW tab instead of tearing the
+                // connected one down. Only the active tab's own in-flight
+                // connect/reconnect blocks interaction.
+                interactionsDisabled: activeTab.isReconnecting
+                    || activeTab.connectionViewModel.state == .connecting,
+                onSelect: { stored in connectFromSidebar(stored) },
                 onDelete: { stored in
                     sessionListViewModel.delete(stored)
-                    if activeSessionID == stored.id {
-                        activeSessionID = nil
+                    for tab in tabsModel.tabs where tab.activeStoredSessionID == stored.id {
+                        tab.activeStoredSessionID = nil
                     }
                 },
                 onNew: { newConnection() },
@@ -222,24 +210,31 @@ struct ContentView: View {
                 // below together with the sidebar minimum (170), otherwise
                 // the split view's content overflows the window and gets
                 // clipped on both sides instead of shrinking.
-                .frame(minWidth: session == nil ? 500 : 590, maxWidth: .infinity)
+                .frame(minWidth: isPristine ? 500 : 590, maxWidth: .infinity)
         }
-        // Compact form vs. browser: the minimum size depends on the
-        // connection state (M5c/T0) — replaces the global `.frame` from
+        // Compact form vs. browser: the minimum size depends on the window's
+        // pristine state (M5c/T0, M8a/T3) — replaces the global `.frame` from
         // `MacSCPApp.swift`.
-        .frame(minWidth: session == nil ? 700 : 930, minHeight: 460)
+        .frame(minWidth: isPristine ? 700 : 930, minHeight: 460)
         .tint(DesignTokens.remoteBlue)
-        .navigationTitle(sessionTitleName.map { "macSCP — \($0)" } ?? "macSCP")
+        .navigationTitle(activeTab.titleName.map { "macSCP — \($0)" } ?? "macSCP")
         .background(WindowAccessor { window = $0 })
-        .task { importedHosts = SSHConfigImporter.load(path: SSHConfigImporter.defaultPath) }
+        .task {
+            importedHosts = SSHConfigImporter.load(path: SSHConfigImporter.defaultPath)
+            // Seed the shared limiter from the settings once per window; the
+            // `.onChange` observers below keep it in sync afterwards. KBs → bytes/s.
+            bandwidthLimiter.uploadLimitBytesPerSec = settingsStore.uploadLimitKBs * 1024
+            bandwidthLimiter.downloadLimitBytesPerSec = settingsStore.downloadLimitKBs * 1024
+        }
         // Session actions live in the window's native toolbar (M5f/T5) —
         // attached at the outer container so it belongs to the window, not
-        // the detail pane. Empty (no items) while disconnected.
+        // the detail pane. Empty (no items) while the active tab is
+        // disconnected.
         .toolbar {
-            if let session {
+            if let session = activeTab.session {
                 ToolbarItemGroup(placement: .primaryAction) {
-                    uploadButton(session)
-                    downloadButton(session)
+                    uploadButton(in: activeTab, session: session)
+                    downloadButton(in: activeTab, session: session)
                     Button {
                         session.terminal.toggle()
                     } label: {
@@ -248,19 +243,20 @@ struct ContentView: View {
                     .keyboardShortcut("t", modifiers: .command)
                     .help(L10n.string("browser.terminalToggleHelp", "Show/hide terminal (⌘T)"))
                     Button(L10n.string("browser.disconnect", "Disconnect")) {
-                        disconnectToForm()
+                        disconnectToForm(activeTab)
                     }
-                    .disabled(transferQueue.isActive)
+                    .disabled(activeTab.transferQueue.isActive)
                 }
             }
         }
-        // Settings live-wiring (M5c/T4+T5): each observer targets
-        // `transferQueue` directly rather than a captured snapshot, so it
-        // keeps applying to whichever session's queue is current. A change
-        // affects FUTURE slot assignments/items only — see the properties'
-        // doc comments in `TransferQueueViewModel`.
+        // Settings live-wiring (M5c/T4+T5): the concurrency observer targets
+        // EVERY tab's queue (M8a/T3), the limit observers the shared limiter.
+        // A change affects FUTURE slot assignments/items only — see the
+        // properties' doc comments in `TransferQueueViewModel`.
         .onChange(of: settingsStore.maxConcurrentTransfers) { _, newValue in
-            transferQueue.maxConcurrent = newValue
+            for tab in tabsModel.tabs {
+                tab.transferQueue.maxConcurrent = newValue
+            }
         }
         .onChange(of: settingsStore.uploadLimitKBs) { _, newValue in
             bandwidthLimiter.uploadLimitBytesPerSec = newValue * 1024
@@ -268,23 +264,26 @@ struct ContentView: View {
         .onChange(of: settingsStore.downloadLimitKBs) { _, newValue in
             bandwidthLimiter.downloadLimitBytesPerSec = newValue * 1024
         }
-        // Hidden-files toggle (M7a/T4): applies to the CURRENT session's
-        // panes only — a no-op while disconnected, same as the limit
-        // observers above.
+        // Hidden-files toggle (M7a/T4): applies to the panes of EVERY
+        // connected tab (M8a/T3), not just the active one — a background tab
+        // would otherwise show a stale listing when it comes forward.
         .onChange(of: settingsStore.showHiddenFiles) { _, newValue in
-            guard let session else { return }
-            session.local.showHiddenFiles = newValue
-            session.remote.showHiddenFiles = newValue
-            Task {
-                await session.local.refresh()
-                await session.remote.refresh()
+            for tab in tabsModel.tabs {
+                guard let session = tab.session else { continue }
+                session.local.showHiddenFiles = newValue
+                session.remote.showHiddenFiles = newValue
+                Task {
+                    await session.local.refresh()
+                    await session.remote.refresh()
+                }
             }
         }
     }
 
     @ViewBuilder
     private var detail: some View {
-        if let session {
+        let tab = activeTab
+        if let session = tab.session {
             VStack(spacing: 0) {
                 VSplitView {
                     HSplitView {
@@ -302,7 +301,8 @@ struct ContentView: View {
                             onMenuAction: { entry, selection in
                                 switch entry {
                                 case .transferToOtherPane:
-                                    transferSelection(selection, from: .local, session: session)
+                                    transferSelection(
+                                        selection, from: .local, in: tab, session: session)
                                 case .copyPath:
                                     copyPaths(of: selection)
                                 case .openInEditor:
@@ -321,22 +321,25 @@ struct ContentView: View {
                             viewModel: session.remote,
                             side: .remote,
                             onDropURLs: { urls in
-                                uploadDropped(urls, session: session)
+                                uploadDropped(urls, in: tab, session: session)
                             },
                             onOpenFile: { item in
-                                openInEditor(item, session: session)
+                                openInEditor(item, in: tab, session: session)
                             },
                             pasteboardWriter: { item in
                                 item.kind == .file
-                                    ? remotePromiseProvider(for: item, session: session)
+                                    ? remotePromiseProvider(for: item, in: tab, session: session)
                                     : nil
                             },
                             onMenuAction: { entry, selection in
                                 switch entry {
                                 case .transferToOtherPane:
-                                    transferSelection(selection, from: .remote, session: session)
+                                    transferSelection(
+                                        selection, from: .remote, in: tab, session: session)
                                 case .openInEditor:
-                                    if let item = selection.first { openInEditor(item, session: session) }
+                                    if let item = selection.first {
+                                        openInEditor(item, in: tab, session: session)
+                                    }
                                 case .copyPath:
                                     copyPaths(of: selection)
                                 case .rename, .infoAndPermissions, .newFolder, .delete:
@@ -355,10 +358,10 @@ struct ContentView: View {
                     }
                 }
 
-                // Resume banner: displayed when there are interrupted transfers
-                // (M5d/T4). Clicking "Resume" re-enqueues them with the current
-                // session's file systems and resume semantics enabled.
-                if transferQueue.hasInterrupted {
+                // Resume banner: displayed when the ACTIVE tab has interrupted
+                // transfers (M5d/T4). Clicking "Resume" re-enqueues them with
+                // that tab's file systems and resume semantics enabled.
+                if tab.transferQueue.hasInterrupted {
                     HStack {
                         Text(L10n.string(
                             "transfers.interrupted.banner",
@@ -367,7 +370,7 @@ struct ContentView: View {
                             .foregroundStyle(.secondary)
                         Spacer()
                         Button(L10n.string("transfers.interrupted.resume", "Resume")) {
-                            transferQueue.retryInterrupted(
+                            tab.transferQueue.retryInterrupted(
                                 source: session.localFS,
                                 destination: session.remoteFS)
                         }
@@ -381,7 +384,7 @@ struct ContentView: View {
                 // Edit-open error (M5e/T4): subtle inline message, matching
                 // the resume banner's placement/styling above. Dismissible;
                 // cleared automatically on the next successful editor open.
-                if let editErrorMessage {
+                if let editErrorMessage = tab.editErrorMessage {
                     HStack {
                         Text(editErrorMessage)
                             .font(.caption)
@@ -389,7 +392,7 @@ struct ContentView: View {
                             .lineLimit(2)
                         Spacer()
                         Button {
-                            self.editErrorMessage = nil
+                            tab.editErrorMessage = nil
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                         }
@@ -400,23 +403,28 @@ struct ContentView: View {
                     .padding(.vertical, 4)
                 }
 
-                TransferQueueBar(viewModel: transferQueue)
+                TransferQueueBar(viewModel: tab.transferQueue)
             }
+            // The binding deliberately resolves `tabsModel.activeTab` on every
+            // access instead of capturing `tab`: only the tab in front may
+            // present its prompt, and a tab switch must re-resolve the sheet
+            // rather than keep a background tab's bridge alive here.
             .sheet(
                 item: Binding(
-                    get: { conflictBridge.currentPrompt },
+                    get: { tabsModel.activeTab.conflictBridge.currentPrompt },
                     set: { newValue in
-                        if newValue == nil { conflictBridge.dismiss() }
+                        if newValue == nil { tabsModel.activeTab.conflictBridge.dismiss() }
                     }
                 ),
-                onDismiss: { conflictBridge.dismiss() }
+                onDismiss: { tabsModel.activeTab.conflictBridge.dismiss() }
             ) { item in
                 ConflictSheetView(
                     conflict: item.conflict,
                     onResolve: { resolution, applyToAll in
-                        conflictBridge.resolve((resolution: resolution, applyToAll: applyToAll))
+                        tabsModel.activeTab.conflictBridge.resolve(
+                            (resolution: resolution, applyToAll: applyToAll))
                     },
-                    onCancel: { conflictBridge.dismiss() }
+                    onCancel: { tabsModel.activeTab.conflictBridge.dismiss() }
                 )
             }
         } else {
@@ -424,20 +432,91 @@ struct ContentView: View {
             // (user feedback 2026-07-10, M5c/T0) — otherwise the compact
             // window has a lot of empty space below the content.
             ConnectionFormView(
-                viewModel: connectionViewModel,
+                viewModel: tab.connectionViewModel,
                 groups: sessionListViewModel.groups,
-                onSaveEdited: { session, secret in
-                    sessionListViewModel.updateSession(session, newSecret: secret)
-                    connectionViewModel.endEditing()
+                onSaveEdited: { stored, secret in
+                    sessionListViewModel.updateSession(stored, newSecret: secret)
+                    tab.connectionViewModel.endEditing()
                 },
-                onCancelEdit: { connectionViewModel.endEditing() },
-                onConnectEdited: { session in connectStored(session) }
+                onCancelEdit: { tab.connectionViewModel.endEditing() },
+                onConnectEdited: { stored in connect(in: tab, stored: stored) }
             ) { fs in
-                startSession(with: fs)
+                startSession(in: tab, with: fs)
             }
             .frame(maxHeight: .infinity, alignment: .top)
         }
     }
+
+    // MARK: - Tab lifecycle
+
+    /// Builds a fresh form tab: own connection view model, own queue (wired
+    /// once here to the shared limiter, the settings concurrency and the
+    /// tab's OWN conflict bridge). Static so `init` can seed `tabsModel`
+    /// with the window's first tab.
+    private static func makeTab(
+        settingsStore: SettingsStore, limiter: BandwidthLimiter
+    ) -> SessionTab {
+        SessionTab(
+            connectionViewModel: ConnectionViewModel(connector: { config, onUnknownHostKey in
+                try await CitadelFileSystem.connect(
+                    config: config,
+                    knownHosts: KnownHostsStore(directory: SessionStore.defaultDirectory),
+                    onUnknownHostKey: onUnknownHostKey
+                )
+            }),
+            limiter: limiter,
+            maxConcurrent: settingsStore.maxConcurrentTransfers
+        )
+    }
+
+    private func makeTab() -> SessionTab {
+        Self.makeTab(settingsStore: settingsStore, limiter: bandwidthLimiter)
+    }
+
+    /// Tab-local teardown, in the invariant order: bridge dismiss →
+    /// `cancelAll` → `editManager.stopAll` → `terminal.shutdown` →
+    /// `remote.disconnect`. Touches ONLY this tab; other tabs' sessions,
+    /// queues and forms are untouched.
+    private func teardown(_ tab: SessionTab) async {
+        tab.editErrorMessage = nil
+        if let session = tab.session {
+            // MUST run before `cancelAll()`: an open conflict sheet would
+            // otherwise keep the decider prompt open, which `cancelAll`
+            // (documented) hangs on until it's answered — deadlock on disconnect.
+            tab.conflictBridge.dismiss()
+            await tab.transferQueue.cancelAll()
+            // Binding order (M5e/T4 plan): AFTER `cancelAll` (any in-flight
+            // edit download/upload has already been cancelled/settled by the
+            // queue, so `stopAll` isn't racing a still-running transfer) and
+            // BEFORE `terminal.shutdown`/`disconnect` (teardown proceeds
+            // outward from the queue to the connection).
+            await session.editManager.stopAll()
+            await session.terminal.shutdown()
+            await session.remote.disconnect()
+        }
+        let form = tab.connectionViewModel
+        form.clearPassword()
+        form.authChoice = .password
+        form.keyPath = ""
+        // Reset any pending edit context: a stale `.edit(sessionID:)`
+        // surviving into the next Save would overwrite the wrong stored
+        // session (M5f/T4 review).
+        form.exitEditMode()
+        tab.session = nil
+        tab.activeStoredSessionID = nil
+        tab.titleName = nil
+    }
+
+    /// Closes a tab: tab-local teardown first, then removal from the model
+    /// (the last tab is not removable — `TabsViewModel.closeTab` returns
+    /// false and the tab simply stays as a torn-down form tab).
+    private func closeTab(_ tab: SessionTab) async {
+        await teardown(tab)
+        tabsModel.closeTab(tab.id)
+        shrinkIfPristine()
+    }
+
+    // MARK: - Window geometry
 
     /// Actively grows/shrinks the window (animated) to the target size while
     /// keeping the top-left corner fixed — AppKit counts `origin.y` from the
@@ -448,6 +527,17 @@ struct ContentView: View {
         let newOrigin = NSPoint(x: current.origin.x, y: current.origin.y + current.height - height)
         let newFrame = NSRect(origin: newOrigin, size: CGSize(width: width, height: height))
         window.setFrame(newFrame, display: true, animate: true)
+    }
+
+    /// Remembers the browser size and shrinks back to the compact form size
+    /// — but ONLY when the action left the window with a single unconnected
+    /// tab (M8a/T3). With another tab still around, the window keeps its size.
+    private func shrinkIfPristine() {
+        guard isPristine, let window else { return }
+        let size = window.frame.size
+        guard size.width > 700 || size.height > 460 else { return }
+        lastBrowserSize = size
+        resizeWindow(toWidth: 700, height: 460)
     }
 
     /// Panel content: terminal while the shell is running, otherwise an
@@ -482,22 +572,33 @@ struct ContentView: View {
         }
     }
 
-    /// After a successful connect: build the panes and save the session if requested.
-    /// `storedName` is the display name for the window title when connecting
-    /// to an already-stored session (`connectStored`). It exists because
+    // MARK: - Connecting
+
+    /// After a successful connect: build the panes of THIS tab and save the
+    /// session if requested. `storedName` is the display name for the tab/
+    /// window title when connecting to an already-stored session
+    /// (`connect(in:stored:)`). It exists because
     /// `connectionViewModel.saveName` cannot be trusted here: the field
     /// survives toggling "Save as session" off and earlier sessions, so an
     /// UNSAVED connection could inherit a stale, unrelated name (M5f/T5
     /// review).
-    private func startSession(with fs: any RemoteFileSystem, storedName: String? = nil) {
+    private func startSession(
+        in tab: SessionTab, with fs: any RemoteFileSystem, storedName: String? = nil
+    ) {
         // Clear any stale edit error from a previous session so a late
         // openInEditor task cannot misattribute its failure to this session.
-        editErrorMessage = nil
+        tab.editErrorMessage = nil
+        // Evaluated BEFORE the session is attached: the window only grows on
+        // the FIRST connection: with another tab already connected it is
+        // browser-sized already, and resizing would fight the user's layout.
+        let isFirstConnection = !tabsModel.tabs.contains { $0.isConnected }
+        let form = tab.connectionViewModel
         let shellProvider = fs as? RemoteShellProvider
         // One UUID, shared by the session and its edit manager (M5e/T4) — see
         // `BrowserSession.id`'s doc comment.
         let sessionID = UUID()
-        session = BrowserSession(
+        let queue = tab.transferQueue
+        tab.session = BrowserSession(
             id: sessionID,
             localFS: LocalFileSystem(),
             remoteFS: fs,
@@ -511,197 +612,176 @@ struct ContentView: View {
                 return try await shellProvider.openShell(
                     terminal: term, cols: cols, rows: rows)
             }),
-            editManager: EditSessionManager(sessionID: sessionID, queue: transferQueue)
+            editManager: EditSessionManager(sessionID: sessionID, queue: queue)
         )
         // Hidden-files toggle (M7a/T4): applied once here at session start,
         // kept in sync afterwards by the `.onChange` observer above.
-        session?.local.showHiddenFiles = settingsStore.showHiddenFiles
-        session?.remote.showHiddenFiles = settingsStore.showHiddenFiles
-        // The queue is created ONCE (the `@State` initializer) and OUTLIVES
-        // each session (M5d/T3): interrupted transfers stay in the bar across a
-        // disconnect/reconnect so `retryInterrupted` can resume them. Only the
-        // decider and the settings-derived limits are (re-)wired per session.
-        let bridge = conflictBridge
-        transferQueue.conflictDecider = { conflict in await bridge.ask(conflict) }
-        // Settings wiring (M5c/T4 concurrency, M5c/T5 bandwidth): applied once
-        // here at session start, and kept in sync afterwards by the
-        // `.onChange` observers below (they target `transferQueue` directly,
-        // so they keep working across session restarts too). KBs → bytes/s.
-        transferQueue.maxConcurrent = settingsStore.maxConcurrentTransfers
-        transferQueue.limiter = bandwidthLimiter
-        bandwidthLimiter.uploadLimitBytesPerSec = settingsStore.uploadLimitKBs * 1024
-        bandwidthLimiter.downloadLimitBytesPerSec = settingsStore.downloadLimitKBs * 1024
+        tab.session?.local.showHiddenFiles = settingsStore.showHiddenFiles
+        tab.session?.remote.showHiddenFiles = settingsStore.showHiddenFiles
+        // The tab's queue is created ONCE (in `SessionTab.init`, together with
+        // its limiter/concurrency/decider wiring) and OUTLIVES each session of
+        // that tab (M5d/T3): interrupted transfers stay in the bar across a
+        // disconnect/reconnect so `retryInterrupted` can resume them.
 
-        // Actively grow the window to the browser size (user feedback
-        // 2026-07-10, M5c/T0) — to the last remembered browser size, if any
-        // and larger than the minimum size.
-        let targetSize = CGSize(
-            width: max(lastBrowserSize?.width ?? 0, 930),
-            height: max(lastBrowserSize?.height ?? 0, 620))
-        resizeWindow(toWidth: targetSize.width, height: targetSize.height)
+        if isFirstConnection {
+            // Actively grow the window to the browser size (user feedback
+            // 2026-07-10, M5c/T0) — to the last remembered browser size, if any
+            // and larger than the minimum size.
+            let targetSize = CGSize(
+                width: max(lastBrowserSize?.width ?? 0, 930),
+                height: max(lastBrowserSize?.height ?? 0, 620))
+            resizeWindow(toWidth: targetSize.width, height: targetSize.height)
+        }
 
         var titleName = storedName
-        if connectionViewModel.shouldSaveSession {
+        if form.shouldSaveSession {
             let stored = sessionListViewModel.save(
-                name: connectionViewModel.saveName
-                    .trimmingCharacters(in: .whitespacesAndNewlines),
-                host: connectionViewModel.host
-                    .trimmingCharacters(in: .whitespacesAndNewlines),
-                port: Int(connectionViewModel.port
-                    .trimmingCharacters(in: .whitespaces)) ?? 22,
-                username: connectionViewModel.username
-                    .trimmingCharacters(in: .whitespacesAndNewlines),
-                password: connectionViewModel.password,
-                authKind: connectionViewModel.authChoice == .password ? .password : .privateKey,
-                keyPath: connectionViewModel.authChoice == .privateKey
-                    ? connectionViewModel.keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
+                name: form.saveName.trimmingCharacters(in: .whitespacesAndNewlines),
+                host: form.host.trimmingCharacters(in: .whitespacesAndNewlines),
+                port: Int(form.port.trimmingCharacters(in: .whitespaces)) ?? 22,
+                username: form.username.trimmingCharacters(in: .whitespacesAndNewlines),
+                password: form.password,
+                authKind: form.authChoice == .password ? .password : .privateKey,
+                keyPath: form.authChoice == .privateKey
+                    ? form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
                     : nil,
-                groupID: connectionViewModel.selectedGroupID
+                groupID: form.selectedGroupID
             )
-            activeSessionID = stored?.id
-            connectionViewModel.shouldSaveSession = false
+            tab.activeStoredSessionID = stored?.id
+            form.shouldSaveSession = false
             titleName = stored?.name ?? titleName
         }
 
-        // Window title: a stored session's name when this connection is
+        // Tab/window title: a stored session's name when this connection is
         // actually backed by one (just saved above, or passed in by
-        // `connectStored`), otherwise "user@host". Window chrome (proper
+        // `connect(in:stored:)`), otherwise "user@host". Window chrome (proper
         // name + user data), deliberately not localized (no catalog key).
-        sessionTitleName = titleName?.isEmpty == false
+        tab.titleName = titleName?.isEmpty == false
             ? titleName!
-            : "\(connectionViewModel.username)@\(connectionViewModel.host)"
+            : "\(form.username)@\(form.host)"
     }
 
-    /// Sidebar click: disconnect the current connection, fill the form from
-    /// the store + keychain, and connect right away.
-    private func connectStored(_ stored: StoredSession) {
-        guard !isReconnecting else { return }
-        isReconnecting = true // synchronous — locks the sidebar immediately, before the first await
-        Task {
-            defer { isReconnecting = false }
-            await teardownSession()
-            connectionViewModel.host = stored.host
-            connectionViewModel.port = String(stored.port)
-            connectionViewModel.username = stored.username
-            connectionViewModel.saveName = stored.name
-            connectionViewModel.shouldSaveSession = false
-            connectionViewModel.password = sessionListViewModel.password(for: stored) ?? ""
-            connectionViewModel.authChoice =
-                stored.authKind == .privateKey ? .privateKey : .password
-            connectionViewModel.keyPath = stored.keyPath ?? ""
+    /// Sidebar click: pick the target tab per the tab rule — the active tab
+    /// when it is unconnected, otherwise a FRESH tab. A running session is
+    /// therefore never torn down by a sidebar click (M8a spec 1.2).
+    private func connectFromSidebar(_ stored: StoredSession) {
+        let target = tabsModel.sidebarConnectTarget(
+            activeTabIsConnected: activeTab.isConnected, makeTab: makeTab)
+        connect(in: target, stored: stored)
+    }
 
-            if let fs = await connectionViewModel.connect() {
-                startSession(with: fs, storedName: stored.name)
-                activeSessionID = stored.id
+    /// Fills the tab's form from the store + keychain and connects right
+    /// away. No teardown of any other tab.
+    private func connect(in tab: SessionTab, stored: StoredSession) {
+        guard !tab.isReconnecting else { return }
+        tab.isReconnecting = true // synchronous — locks this tab immediately, before the first await
+        Task {
+            defer { tab.isReconnecting = false }
+            // Defensive only: the sidebar rule always hands over an
+            // unconnected tab. Reconnecting in place still tears THIS tab's
+            // session down first, never anyone else's.
+            if tab.isConnected { await teardown(tab) }
+            let form = tab.connectionViewModel
+            form.host = stored.host
+            form.port = String(stored.port)
+            form.username = stored.username
+            form.saveName = stored.name
+            form.shouldSaveSession = false
+            form.password = sessionListViewModel.password(for: stored) ?? ""
+            form.authChoice = stored.authKind == .privateKey ? .privateKey : .password
+            form.keyPath = stored.keyPath ?? ""
+
+            if let fs = await form.connect() {
+                startSession(in: tab, with: fs, storedName: stored.name)
+                tab.activeStoredSessionID = stored.id
             }
         }
     }
 
-    /// Sidebar "Edit…" click: disconnect the current connection (detail pane
-    /// reverts to the form) and prefill it for in-place editing. Deliberately
-    /// no auto-connect — the user reviews/changes fields, then picks
-    /// Save or Save & connect.
+    /// Sidebar "Edit…" click: prefill the form for in-place editing — in the
+    /// active tab when it is unconnected, otherwise in a fresh tab (a running
+    /// session is never displaced). Deliberately no auto-connect: the user
+    /// reviews/changes fields, then picks Save or Save & connect.
     private func editStored(_ stored: StoredSession) {
-        guard !isReconnecting else { return }
-        isReconnecting = true // synchronous — locks the sidebar immediately, before the first await
-        Task {
-            defer { isReconnecting = false }
-            await teardownSession()
-            connectionViewModel.beginEditing(stored)
-        }
+        guard let tab = formTarget() else { return }
+        tab.connectionViewModel.beginEditing(stored)
     }
 
     /// Import click: fill the form from the ssh-config entry — deliberately
-    /// WITHOUT connecting (the import knows no secrets).
+    /// WITHOUT connecting (the import knows no secrets). Same target rule as
+    /// "Edit…".
     private func fillFromImported(_ host: SSHConfigHost) {
-        guard !isReconnecting else { return }
-        isReconnecting = true // synchronous — prevents double teardown (would corrupt lastBrowserSize)
-        Task {
-            defer { isReconnecting = false }
-            await teardownSession()
-            connectionViewModel.host = host.hostName ?? host.alias
-            connectionViewModel.port = String(host.port ?? 22)
-            connectionViewModel.username = host.user ?? ""
-            connectionViewModel.saveName = host.alias
-            connectionViewModel.shouldSaveSession = false
-            if let identityFile = host.identityFile {
-                connectionViewModel.authChoice = .privateKey
-                connectionViewModel.keyPath = identityFile
-            } else {
-                connectionViewModel.authChoice = .password
-                connectionViewModel.keyPath = ""
-            }
+        guard let tab = formTarget() else { return }
+        let form = tab.connectionViewModel
+        form.exitEditMode()
+        form.clearPassword()
+        form.host = host.hostName ?? host.alias
+        form.port = String(host.port ?? 22)
+        form.username = host.user ?? ""
+        form.saveName = host.alias
+        form.shouldSaveSession = false
+        if let identityFile = host.identityFile {
+            form.authChoice = .privateKey
+            form.keyPath = identityFile
+        } else {
+            form.authChoice = .password
+            form.keyPath = ""
         }
     }
 
-    /// Sidebar "New connection": tear down any current session AND blank the
-    /// form (M6a) — without this, host/username/name from a previous edit or
-    /// connection stay prefilled. The toolbar "Disconnect" deliberately keeps
-    /// the fields (reconnect convenience) — only this path blanks them.
+    /// Sidebar "New connection": blank the active tab's form when it is
+    /// unconnected (M6a — without this, host/username/name from a previous
+    /// edit stay prefilled), otherwise open a fresh empty tab. The toolbar
+    /// "Disconnect" deliberately keeps the fields (reconnect convenience) —
+    /// only this path blanks them.
     private func newConnection() {
-        guard !isReconnecting else { return }
-        isReconnecting = true // synchronous — prevents double teardown
+        let tab = activeTab
+        if tab.isConnected {
+            tabsModel.addTab(makeTab())
+            return
+        }
+        guard !tab.isReconnecting else { return }
+        tab.connectionViewModel.endEditing()
+    }
+
+    /// Target tab for the form-filling sidebar actions ("Edit…", ssh-config
+    /// import): the active tab if it is unconnected and idle, otherwise a new
+    /// tab. `nil` while the active tab is mid-connect (the click is ignored,
+    /// as it is today).
+    private func formTarget() -> SessionTab? {
+        let tab = activeTab
+        if tab.isConnected {
+            let fresh = makeTab()
+            tabsModel.addTab(fresh)
+            return fresh
+        }
+        guard !tab.isReconnecting else { return nil }
+        return tab
+    }
+
+    /// Toolbar "Disconnect": tears this tab's session down and returns it to
+    /// the form. The tab's queue survives — interrupted transfers stay
+    /// resumable after a reconnect, exactly as before.
+    private func disconnectToForm(_ tab: SessionTab) {
+        guard !tab.isReconnecting else { return }
+        tab.isReconnecting = true // synchronous — prevents double teardown (would corrupt lastBrowserSize)
         Task {
-            defer { isReconnecting = false }
-            await teardownSession()
-            connectionViewModel.endEditing()
+            defer { tab.isReconnecting = false }
+            await teardown(tab)
+            shrinkIfPristine()
         }
     }
 
-    private func disconnectToForm() {
-        guard !isReconnecting else { return }
-        isReconnecting = true // synchronous — prevents double teardown (would corrupt lastBrowserSize)
-        Task {
-            defer { isReconnecting = false }
-            await teardownSession()
-        }
-    }
-
-    private func teardownSession() async {
-        editErrorMessage = nil
-        let hadSession = session != nil
-        if let session {
-            // MUST run before `cancelAll()`: an open conflict sheet would
-            // otherwise keep the decider prompt open, which `cancelAll`
-            // (documented) hangs on until it's answered — deadlock on disconnect.
-            conflictBridge.dismiss()
-            await transferQueue.cancelAll()
-            // Binding order (M5e/T4 plan): AFTER `cancelAll` (any in-flight
-            // edit download/upload has already been cancelled/settled by the
-            // queue, so `stopAll` isn't racing a still-running transfer) and
-            // BEFORE `terminal.shutdown`/`disconnect` (teardown proceeds
-            // outward from the queue to the connection).
-            await session.editManager.stopAll()
-            await session.terminal.shutdown()
-            await session.remote.disconnect()
-        }
-        connectionViewModel.clearPassword()
-        connectionViewModel.authChoice = .password
-        connectionViewModel.keyPath = ""
-        // Reset any pending edit context: every sidebar-navigation path runs
-        // through here, and a stale `.edit(sessionID:)` surviving into the
-        // next Save would overwrite the wrong stored session (M5f/T4 review).
-        connectionViewModel.exitEditMode()
-        session = nil
-        activeSessionID = nil
-        sessionTitleName = nil
-        if hadSession {
-            // Remember the current browser size (for the next connect) and
-            // actively shrink the window to the compact form size (user
-            // feedback 2026-07-10, M5c/T0).
-            if let window { lastBrowserSize = window.frame.size }
-            resizeWindow(toWidth: 700, height: 460)
-        }
-    }
+    // MARK: - Transfers
 
     /// Locally selected files/folders → current remote directory.
     /// Symlinks in the selection are skipped silently (not a meaningful
     /// transfer target); enabled when at least one non-symlink is selected.
     @ViewBuilder
-    private func uploadButton(_ session: BrowserSession) -> some View {
+    private func uploadButton(in tab: SessionTab, session: BrowserSession) -> some View {
         let selected = session.local.selectedItems
         Button {
-            transferSelection(selected, from: .local, session: session)
+            transferSelection(selected, from: .local, in: tab, session: session)
         } label: {
             Label(L10n.string("browser.upload", "Upload"), systemImage: "arrow.up")
         }
@@ -715,10 +795,10 @@ struct ContentView: View {
     /// Symlinks in the selection are skipped silently (not a meaningful
     /// transfer target); enabled when at least one non-symlink is selected.
     @ViewBuilder
-    private func downloadButton(_ session: BrowserSession) -> some View {
+    private func downloadButton(in tab: SessionTab, session: BrowserSession) -> some View {
         let selected = session.remote.selectedItems
         Button {
-            transferSelection(selected, from: .remote, session: session)
+            transferSelection(selected, from: .remote, in: tab, session: session)
         } label: {
             Label(L10n.string("browser.download", "Download"), systemImage: "arrow.down")
         }
@@ -730,33 +810,35 @@ struct ContentView: View {
 
     /// Context-menu transfer: same per-item enqueue the toolbar buttons use.
     private func transferSelection(
-        _ selection: [RemoteFileItem], from side: BrowserPaneSide, session: BrowserSession
+        _ selection: [RemoteFileItem], from side: BrowserPaneSide,
+        in tab: SessionTab, session: BrowserSession
     ) {
+        let queue = tab.transferQueue
         for item in selection where item.kind != .symlink {
             switch (side, item.kind) {
             case (.local, .directory):
-                transferQueue.enqueueTree(
+                queue.enqueueTree(
                     directoryName: item.name, direction: .upload,
                     source: session.localFS, sourceDirectory: item.path,
                     destination: session.remoteFS,
                     destinationDirectory: session.remote.currentPath,
                     onCompleted: { [weak remote = session.remote] in await remote?.refresh() })
             case (.local, _):
-                transferQueue.enqueue(
+                queue.enqueue(
                     fileName: item.name, direction: .upload,
                     source: session.localFS, sourcePath: item.path,
                     destination: session.remoteFS,
                     destinationDirectory: session.remote.currentPath,
                     onCompleted: { [weak remote = session.remote] in await remote?.refresh() })
             case (.remote, .directory):
-                transferQueue.enqueueTree(
+                queue.enqueueTree(
                     directoryName: item.name, direction: .download,
                     source: session.remoteFS, sourceDirectory: item.path,
                     destination: session.localFS,
                     destinationDirectory: session.local.currentPath,
                     onCompleted: { [weak local = session.local] in await local?.refresh() })
             case (.remote, _):
-                transferQueue.enqueue(
+                queue.enqueue(
                     fileName: item.name, direction: .download,
                     source: session.remoteFS, sourcePath: item.path,
                     destination: session.localFS,
@@ -773,17 +855,19 @@ struct ContentView: View {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    /// Enqueues dropped file/folder URLs onto the queue. Files run through
-    /// `enqueue`, folders recursively through `enqueueTree` (M5b/T3/T4) — no
-    /// more directory filter, only URLs that no longer exist are discarded.
-    private func uploadDropped(_ urls: [URL], session: BrowserSession) {
+    /// Enqueues dropped file/folder URLs onto the tab's queue. Files run
+    /// through `enqueue`, folders recursively through `enqueueTree`
+    /// (M5b/T3/T4) — no directory filter, only URLs that no longer exist are
+    /// discarded.
+    private func uploadDropped(_ urls: [URL], in tab: SessionTab, session: BrowserSession) {
+        let queue = tab.transferQueue
         for url in urls {
             var isDirectory: ObjCBool = false
             let exists = FileManager.default.fileExists(
                 atPath: url.path(percentEncoded: false), isDirectory: &isDirectory)
             guard exists else { continue }
             if isDirectory.boolValue {
-                transferQueue.enqueueTree(
+                queue.enqueueTree(
                     directoryName: url.lastPathComponent, direction: .upload,
                     source: session.localFS, sourceDirectory: url.path(percentEncoded: false),
                     destination: session.remoteFS,
@@ -791,7 +875,7 @@ struct ContentView: View {
                     onCompleted: { [weak remote = session.remote] in await remote?.refresh() }
                 )
             } else {
-                transferQueue.enqueue(
+                queue.enqueue(
                     fileName: url.lastPathComponent, direction: .upload,
                     source: session.localFS, sourcePath: url.path(percentEncoded: false),
                     destination: session.remoteFS,
@@ -802,13 +886,15 @@ struct ContentView: View {
         }
     }
 
-    /// Promise fulfillment: loads a remote file through the queue to the URL
-    /// specified by the Finder — serializes with all other transfers.
+    /// Promise fulfillment: loads a remote file through the tab's queue to
+    /// the URL specified by the Finder — serializes with all other transfers
+    /// of that tab.
     private func remotePromiseProvider(
-        for item: RemoteFileItem, session: BrowserSession
+        for item: RemoteFileItem, in tab: SessionTab, session: BrowserSession
     ) -> RemoteFilePromiseProvider {
-        RemoteFilePromiseProvider(item: item) { item, url in
-            try await transferQueue.enqueueAndWait(
+        let queue = tab.transferQueue
+        return RemoteFilePromiseProvider(item: item) { item, url in
+            try await queue.enqueueAndWait(
                 fileName: url.lastPathComponent, direction: .download,
                 source: session.remoteFS, sourcePath: item.path,
                 destination: session.localFS,
@@ -821,8 +907,8 @@ struct ContentView: View {
     /// Double-click on a remote FILE (kind == .file; directories `cd` via
     /// `RemoteBrowserViewModel.open`, symlinks/other stay no-ops — unchanged,
     /// M5e/T4): downloads it into the session's edit temp dir via
-    /// `editManager.beginEditing` (shows up as a download in the queue bar),
-    /// then opens it in the resolved application.
+    /// `editManager.beginEditing` (shows up as a download in the tab's queue
+    /// bar), then opens it in the resolved application.
     ///
     /// Resolution is two-stage per the M5e plan: the extension-rule/default-
     /// editor lookup (`EditorResolver.applicationURL`) only needs the file
@@ -831,7 +917,9 @@ struct ContentView: View {
     /// so it runs AFTER the download completes. If neither yields an app,
     /// `NSWorkspace.shared.open(_:)` is asked to open the local file with
     /// whatever it can find, as a last resort.
-    private func openInEditor(_ item: RemoteFileItem, session: BrowserSession) {
+    private func openInEditor(
+        _ item: RemoteFileItem, in tab: SessionTab, session: BrowserSession
+    ) {
         let preResolvedAppURL = EditorResolver.applicationURL(
             forFileName: item.name, settings: settingsStore)
         Task {
@@ -847,13 +935,13 @@ struct ContentView: View {
                 } else {
                     NSWorkspace.shared.open(localURL)
                 }
-                editErrorMessage = nil
+                tab.editErrorMessage = nil
             } catch is CancellationError {
                 // Teardown cancelled the download (disconnect while opening) —
                 // the session is going away; a stale banner on the NEXT
                 // session would be misattributed. Show nothing.
             } catch {
-                editErrorMessage = String(format: L10n.string(
+                tab.editErrorMessage = String(format: L10n.string(
                     "edit.openFailed", "Could not open file for editing: %@"),
                     TransferQueueViewModel.message(for: error))
             }

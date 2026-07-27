@@ -195,8 +195,8 @@ public final class ConnectionViewModel {
         state = .idle
     }
 
-    /// Leaves edit mode and resets the form to the same blank state
-    /// `teardownSession` leaves it in for a new connection. Built on
+    /// Leaves edit mode and resets the form to the same blank state the
+    /// app's per-tab teardown leaves it in for a new connection. Built on
     /// `exitEditMode()` (mode + group reset) plus the full field reset —
     /// the two used to duplicate the mode handling (M6a).
     public func endEditing() {
@@ -212,12 +212,12 @@ public final class ConnectionViewModel {
         state = .idle
     }
 
-    /// Leaves edit mode WITHOUT touching the form fields. Session teardown
-    /// calls this on every sidebar-navigation path (connect stored, import
-    /// fill, disconnect): a stale `.edit` target surviving those paths would
-    /// make a later Save overwrite the wrong stored session, while the field
-    /// values are owned by the caller (teardown/connectStored set them
-    /// explicitly right after).
+    /// Leaves edit mode WITHOUT touching the form fields. The app's tab
+    /// teardown and every sidebar-navigation path (connect stored, import
+    /// fill, disconnect) call this: a stale `.edit` target surviving those
+    /// paths would make a later Save overwrite the wrong stored session,
+    /// while the field values are owned by the caller (teardown/connect set
+    /// them explicitly right after).
     public func exitEditMode() {
         mode = .new
         selectedGroupID = nil

@@ -181,3 +181,6 @@
 "delete.message.many" = "%lld Objekte werden gelöscht.";
 "delete.message.recursive" = "Ordner werden mit ihrem gesamten Inhalt gelöscht.";
 "delete.message.permanent" = "Diese Aktion kann nicht widerrufen werden.";
+
+/* Tabs (M8a) */
+"tabs.newConnection" = "Neue Verbindung";

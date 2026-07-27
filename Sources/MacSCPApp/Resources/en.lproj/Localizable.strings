@@ -181,3 +181,6 @@
 "delete.message.many" = "%lld items will be deleted.";
 "delete.message.recursive" = "Folders are deleted with their entire contents.";
 "delete.message.permanent" = "This action cannot be undone.";
+
+/* Tabs (M8a) */
+"tabs.newConnection" = "New Connection";
