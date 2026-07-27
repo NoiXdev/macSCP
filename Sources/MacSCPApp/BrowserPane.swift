@@ -64,7 +64,7 @@ struct BrowserPane: View {
             ZStack {
                 RemoteFileTableView(
                     items: viewModel.items,
-                    selectedPath: viewModel.selectedItem?.path,
+                    selectedPaths: Set(viewModel.selectedItems.map(\.path)),
                     onOpen: { item in Task { await viewModel.open(item) } },
                     onSelect: { viewModel.selectedItems = $0 },
                     onOpenFile: onOpenFile,

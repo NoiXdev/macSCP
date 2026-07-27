@@ -7,7 +7,7 @@ import macSCPCore
 /// entries.
 struct RemoteFileTableView: NSViewRepresentable {
     let items: [RemoteFileItem]
-    let selectedPath: String?
+    let selectedPaths: Set<String>
     let onOpen: (RemoteFileItem) -> Void
     let onSelect: ([RemoteFileItem]) -> Void
     /// Double-click on a plain FILE row (kind == .file). Directories keep
@@ -62,20 +62,33 @@ struct RemoteFileTableView: NSViewRepresentable {
         return scroll
     }
 
+    /// Whether the table's backing data actually changed and therefore needs
+    /// a `reloadData()` — plain SwiftUI re-renders (e.g. an unrelated
+    /// `@Observable` write triggering `updateNSView`) must NOT reload the
+    /// table, since `reloadData()` unconditionally clears the AppKit
+    /// selection. Pulled out as a static helper so it's unit-testable
+    /// without an `NSTableView`.
+    static func needsReload(old: [RemoteFileItem], new: [RemoteFileItem]) -> Bool {
+        old != new
+    }
+
     func updateNSView(_ nsView: NSScrollView, context: Context) {
+        let oldItems = context.coordinator.items
+        let itemsChanged = Self.needsReload(old: oldItems, new: items)
         context.coordinator.items = items
         context.coordinator.onOpen = onOpen
         context.coordinator.onSelect = onSelect
         context.coordinator.onOpenFile = onOpenFile
         context.coordinator.pasteboardWriter = pasteboardWriter
         guard let table = nsView.documentView as? NSTableView else { return }
+        guard itemsChanged else { return }
         // reloadData() clears the selection without a delegate call —
         // restore it programmatically, suppressing the callback while doing so.
         context.coordinator.suppressSelectionCallback = true
         table.reloadData()
-        if let selectedPath,
-           let row = items.firstIndex(where: { $0.path == selectedPath }) {
-            table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        let restoredRows = items.indices.filter { selectedPaths.contains(items[$0].path) }
+        if !restoredRows.isEmpty {
+            table.selectRowIndexes(IndexSet(restoredRows), byExtendingSelection: false)
         }
         context.coordinator.suppressSelectionCallback = false
     }
