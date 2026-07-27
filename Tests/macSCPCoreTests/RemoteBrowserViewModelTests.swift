@@ -168,4 +168,85 @@ struct RemoteBrowserViewModelTests {
         #expect(vm.items.map(\.name) == ["fresh"])
         #expect(vm.selectedItems.map(\.name) == ["fresh"])
     }
+
+    // MARK: - applyPermissions (M7b Task 1 review follow-up)
+
+    @Test func applyPermissionsSucceedsAndRefreshes() async {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "a.txt", path: "/a.txt", kind: .file, size: 1)],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        let item = vm.items[0]
+        vm.selectedItems = [item]   // so we can observe load() resetting it
+        let error = await vm.applyPermissions(0o640, to: item)
+        #expect(error == nil)
+        let recorded = await fs.permissionsByPath[item.path]
+        #expect(recorded == 0o640)
+        #expect(vm.selectedItems.isEmpty)          // load() ran and reset selection
+        #expect(vm.items.map(\.name) == ["a.txt"])  // reload succeeded
+    }
+
+    @Test func applyPermissionsFailureReturnsLocalizedMessage() async {
+        let fs = MockRemoteFileSystem(tree: ["/": []])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        // Not seeded anywhere in the mock tree -> setPermissions throws notFound.
+        let ghost = RemoteFileItem(name: "ghost.txt", path: "/ghost.txt", kind: .file, size: 1)
+        let error = await vm.applyPermissions(0o640, to: ghost)
+        #expect(error != nil)
+    }
+
+    // MARK: - createFolder collisions (M7b Task 1 review follow-up)
+
+    @Test func createFolderCollisionWithVisibleDirReturnsError() async {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "taken", path: "/taken", kind: .directory)],
+            "/taken": [],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        let itemsBefore = vm.items.map(\.name)
+        let error = await vm.createFolder(named: "taken")
+        #expect(error != nil)
+        #expect(vm.items.map(\.name) == itemsBefore)
+    }
+
+    /// Regression test for the adjudicated `fs.stat`-based collision probe
+    /// (see the deviation note in the M7b Task 1 report): a directory
+    /// collision that is a HIDDEN dotfile must still be caught even though
+    /// it is filtered out of `vm.items` by the hidden-files display filter.
+    @Test func createFolderCollisionWithHiddenDotfileDirReturnsError() async {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: ".config", path: "/.config", kind: .directory)],
+            "/.config": [],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        // showHiddenFiles defaults to false.
+        await vm.load()
+        #expect(vm.items.isEmpty)   // the dotfile dir is not in the display list
+        let error = await vm.createFolder(named: ".config")
+        #expect(error != nil)
+    }
+
+    // MARK: - deleteItems stop-at-first-failure (M7b Task 1 review follow-up)
+
+    @Test func deleteItemsStopsAtFirstFailureLeavingLaterItemsUntouched() async {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [
+                RemoteFileItem(name: "a.txt", path: "/a.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "c.txt", path: "/c.txt", kind: .file, size: 1),
+            ],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        let a = vm.items.first(where: { $0.name == "a.txt" })!
+        let c = vm.items.first(where: { $0.name == "c.txt" })!
+        // Stale item: never seeded in the mock tree, so `deleteTree` throws
+        // `notFound` for it — a real failure mode, not injected mock machinery.
+        let staleB = RemoteFileItem(name: "b.txt", path: "/b.txt", kind: .file, size: 1)
+        let error = await vm.deleteItems([a, staleB, c])
+        #expect(error != nil)
+        #expect(vm.items.map(\.name) == ["c.txt"])   // a deleted, loop stopped before c
+    }
 }
