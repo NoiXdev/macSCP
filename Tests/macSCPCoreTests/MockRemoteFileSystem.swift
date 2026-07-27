@@ -176,25 +176,38 @@ actor MockRemoteFileSystem: RemoteFileSystem {
         permissionsByPath[path] = permissions & 0o7777
     }
 
-    /// Recursively removes `path` from the in-memory tree. A file (or any
-    /// non-directory kind) behaves exactly like `delete` (same typed errors,
-    /// same `deletedPaths` bookkeeping). A directory recurses into its own
-    /// `tree[path]` children first (depth-first, mirroring the Citadel
-    /// bottom-up walk), then drops its own tree entry, its parent-listing
-    /// entry, and any tracked data — logged in `deletedPaths` too.
+    /// Recursively removes `path` from the in-memory tree. A directory
+    /// recurses into its own `tree[path]` children first (depth-first,
+    /// mirroring the Citadel bottom-up walk), then drops its own tree entry.
+    /// A non-directory entry (file OR symlink) is removed directly via
+    /// `removeTreeEntry` rather than delegating to `delete(path:)`: `delete`
+    /// requires seeded `files[path]` data and throws `notFound` otherwise,
+    /// which would abort the recursion on every `.symlink` listing entry
+    /// (symlinks in this mock carry no file content) — diverging from both
+    /// real backends, which remove a symlink's directory-entry regardless of
+    /// tracked content. Cooperatively cancellable per entry.
     func deleteTree(at path: String) async throws {
+        try Task.checkCancellation()
         let parent = RemotePath.parent(of: path)
         guard let siblings = tree[parent],
               let item = siblings.first(where: { $0.path == path }) else {
             throw RemoteFSError.notFound(path: path)
         }
         guard item.kind == .directory else {
-            try await delete(path: path)
+            removeTreeEntry(at: path, parent: parent)
             return
         }
         for child in tree[path] ?? [] {
+            try Task.checkCancellation()
             try await deleteTree(at: child.path)
         }
+        removeTreeEntry(at: path, parent: parent)
+    }
+
+    /// Drops `path`'s own tree entry, its parent-listing entry, and any
+    /// tracked data (file content, write log, write mode, permissions) —
+    /// logged in `deletedPaths`. Shared by both branches of `deleteTree`.
+    private func removeTreeEntry(at path: String, parent: String) {
         tree[path] = nil
         files[path] = nil
         written[path] = nil

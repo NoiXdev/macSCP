@@ -230,6 +230,36 @@ struct MockRemoteFileSystemTests {
         }
     }
 
+    /// Review IMPORTANT-3: a `.symlink` listing entry carries no seeded
+    /// `files` content — delegating to `delete(path:)` for it would throw
+    /// `notFound` and abort the recursion, diverging from both real
+    /// backends. `deleteTree` must remove the symlink entry directly and
+    /// still walk past it to the rest of the tree.
+    @Test func deleteTreeRemovesTreeContainingASymlinkEntry() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [
+                RemoteFileItem(name: "tree", path: "/tree", kind: .directory),
+            ],
+            "/tree": [
+                RemoteFileItem(name: "link", path: "/tree/link", kind: .symlink),
+                RemoteFileItem(name: "a.txt", path: "/tree/a.txt", kind: .file, size: 1),
+            ],
+        ], files: [
+            "/tree/a.txt": Data("a".utf8),
+        ])
+
+        try await fs.deleteTree(at: "/tree")
+
+        let parentListing = try await fs.list(path: "/")
+        #expect(!parentListing.contains { $0.path == "/tree" })
+        await #expect(throws: RemoteFSError.notFound(path: "/tree")) {
+            _ = try await fs.stat(path: "/tree")
+        }
+        let deletedPaths = await fs.deletedPaths
+        #expect(deletedPaths.contains("/tree/link"))
+        #expect(deletedPaths.contains("/tree/a.txt"))
+    }
+
     @Test func deleteTreeOnPlainFileBehavesLikeDelete() async throws {
         let fs = makeMockWithFile(content: Data("bye".utf8))
 

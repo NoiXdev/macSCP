@@ -354,35 +354,48 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// link itself — never followed, the walk descends only into REAL
     /// directories per the listed entry kind); directories are emptied
     /// first, then removed with rmdir. Cooperatively cancellable per entry;
-    /// cancellation leaves a partially deleted tree (documented).
+    /// a partially deleted tree can result not only from cancellation but
+    /// also from a mid-walk error (e.g. permissionDenied on a child, or a
+    /// rmdir race against a concurrent writer) — both are documented,
+    /// accepted best-effort behavior, matching Local.
     ///
-    /// NOTE (residual limitation, same root cause as `rename`'s destination
-    /// probe above): the initial `stat` uses SFTP stat, which follows
-    /// symlinks — Citadel exposes no lstat. So if `path` ITSELF is a symlink
-    /// pointing at a directory, the walk enters the target instead of
-    /// deleting the link. Symlinks found WITHIN the tree are unaffected:
-    /// `list` (backed by SSH_FXP_READDIR) reports entries lstat-style
-    /// (never resolved), so a listed child that is a symlink is always
-    /// deleted as the link itself via `delete`/`remove`, never descended
-    /// into — the escape is only possible for the top-level argument.
+    /// GUARANTEE: a top-level symlink argument is NEVER followed. SFTP stat
+    /// follows symlinks and Citadel exposes no lstat, so the top level's
+    /// kind is instead derived from the PARENT's listing (SSH_FXP_READDIR
+    /// reports entries unresolved, exactly like every child encountered
+    /// deeper in the walk). Only "/" (no parent to list) or a parent we
+    /// cannot list falls back to SFTP stat.
     public func deleteTree(at path: String) async throws {
         try Task.checkCancellation()
-        let entry = try await stat(path: path)
-        guard entry.kind == .directory else {
+        try await deleteTree(at: path, kind: try await topLevelKind(of: path))
+    }
+
+    /// SFTP stat FOLLOWS symlinks and Citadel exposes no lstat — so the top
+    /// level's kind comes from the PARENT listing, which is backed by
+    /// SSH_FXP_READDIR and reports entries unresolved. Only the root (and a
+    /// parent we cannot list) falls back to stat.
+    private func topLevelKind(of path: String) async throws -> RemoteFileKind {
+        let parent = RemotePath.parent(of: path)
+        if parent != path,
+           let siblings = try? await list(path: parent),
+           let entry = siblings.first(where: { $0.path == path }) {
+            return entry.kind
+        }
+        return try await stat(path: path).kind
+    }
+
+    private func deleteTree(at path: String, kind: RemoteFileKind) async throws {
+        try Task.checkCancellation()
+        guard kind == .directory else {
             try await delete(path: path)
             return
         }
         // Reuse `list` (the file has no separate mapping helper besides its
         // inline flatMap/filter/map over SFTPAttributeMapper) instead of
         // re-deriving RemoteFileItems from `sftp.listDirectory` here.
-        let children = try await list(path: path)
-        for child in children {
+        for child in try await list(path: path) {
             try Task.checkCancellation()
-            if child.kind == .directory {
-                try await deleteTree(at: child.path)
-            } else {
-                try await delete(path: child.path)
-            }
+            try await deleteTree(at: child.path, kind: child.kind)
         }
         do {
             try await sftp.rmdir(at: path)

@@ -183,13 +183,14 @@ public struct LocalFileSystem: RemoteFileSystem {
     /// contract exactly. Cancellation granularity is the whole call here
     /// (Foundation offers no per-entry hook) — acceptable for local trees.
     ///
-    /// `fileExists` follows symlinks — the `attributesOfItem` second check
-    /// catches dangling symlinks, which must still be reported as existing
-    /// (and are still deletable via `removeItem`).
+    /// Existence probe reuses `Self.exists(atPath:)` (symlink-first, same
+    /// pattern as `stat`/`rename`): a dangling symlink still "exists" as a
+    /// link and must still be reported as existing (and is still deletable
+    /// via `removeItem`), whereas a bare `fileExists` follows symlinks and
+    /// would miss it.
     public func deleteTree(at path: String) async throws {
         try Task.checkCancellation()
-        guard FileManager.default.fileExists(atPath: path)
-            || (try? FileManager.default.attributesOfItem(atPath: path)) != nil else {
+        guard Self.exists(atPath: path) else {
             throw RemoteFSError.notFound(path: path)
         }
         do {

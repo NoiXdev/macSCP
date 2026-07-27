@@ -366,6 +366,7 @@ struct LocalFileSystemTests {
 
     @Test func deleteTreeRemovesNestedDirectoryButNeverFollowsSymlinks() async throws {
         let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
         let fs = LocalFileSystem()
         // outside/victim.txt must SURVIVE: tree/link points at outside.
         let outside = dir.appendingPathComponent("outside", isDirectory: true)
@@ -383,6 +384,29 @@ struct LocalFileSystemTests {
 
         #expect(!FileManager.default.fileExists(atPath: tree.path(percentEncoded: false)))
         #expect(FileManager.default.fileExists(atPath: victim.path(percentEncoded: false)))
+    }
+
+    /// Review CRITICAL-1 (Citadel deleteTree could follow a TOP-LEVEL
+    /// symlink-to-directory): locks the contract on the no-Docker backend.
+    /// `FileManager.removeItem` never follows symlinks regardless of what
+    /// they point at, so a top-level symlink argument must remove only the
+    /// link — the target directory and its contents survive untouched.
+    @Test func deleteTreeOnSymlinkToDirectoryRemovesOnlyTheLink() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fs = LocalFileSystem()
+        let outside = dir.appendingPathComponent("outsideDir", isDirectory: true)
+        let keep = outside.appendingPathComponent("keep.txt")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try Data("keep".utf8).write(to: keep)
+        let link = dir.appendingPathComponent("dirlink")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+
+        try await fs.deleteTree(at: link.path(percentEncoded: false))
+
+        #expect(!FileManager.default.fileExists(atPath: link.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: outside.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: keep.path(percentEncoded: false)))
     }
 
     @Test func deleteTreeRemovesPlainFile() async throws {

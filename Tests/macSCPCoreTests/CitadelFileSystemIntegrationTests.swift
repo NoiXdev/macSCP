@@ -838,6 +838,12 @@ struct CitadelFileSystemIntegrationTests {
     /// is removed with a single `deleteTree` call. The tree itself is gone
     /// afterward; the symlink's TARGET (outside the tree) survives, proving
     /// the walk deletes the link entry without ever following it.
+    ///
+    /// Review IMPORTANT-2: also covers a symlink-to-DIRECTORY nested INSIDE
+    /// the tree (`sub/dirlink` -> an outside directory) — `list`/READDIR
+    /// reports it unresolved just like the file symlink, so the walk deletes
+    /// the link entry itself and never descends into (or removes) the
+    /// outside directory's contents.
     @Test func deleteTreeRemovesNestedTreeButSymlinkTargetOutsideSurvives() async throws {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
@@ -845,17 +851,28 @@ struct CitadelFileSystemIntegrationTests {
         let base = "/config/macscp-deletetree-\(UUID().uuidString)"
         let sub = "\(base)/sub"
         let victimPath = "/config/macscp-deletetree-victim-\(UUID().uuidString).txt"
+        let outsideDir = "/config/macscp-deletetree-outsidedir-\(UUID().uuidString)"
         defer {
             cleanupConfigPath(base)
             cleanupConfigPath(victimPath)
+            cleanupConfigPath(outsideDir)
         }
 
         let seed = Process()
         seed.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
         seed.arguments = [
             "exec", "macscp-test-sshd", "sh", "-c",
-            "mkdir -p '\(sub)' && echo victim > '\(victimPath)'"
-                + " && echo hi > '\(base)/a.txt' && ln -s '\(victimPath)' '\(base)/link'",
+            "mkdir -p '\(sub)' && mkdir -p '\(outsideDir)' && echo keep > '\(outsideDir)/keep.txt'"
+                + " && echo victim > '\(victimPath)'"
+                + " && echo hi > '\(base)/a.txt' && ln -s '\(victimPath)' '\(base)/link'"
+                + " && ln -s '\(outsideDir)' '\(sub)/dirlink'"
+                // `docker exec` runs as root, so everything under `base` is
+                // root-owned (0755) by default — testuser (the SFTP user,
+                // uid 1000) could list it but not unlink entries inside.
+                // chown to testuser (matching the file's existing .ssh-seed
+                // convention) so the SFTP-side deleteTree walk can actually
+                // remove the seeded entries.
+                + " && chown -R 1000:1000 '\(base)'",
         ]
         try seed.run()
         seed.waitUntilExit()
@@ -874,6 +891,60 @@ struct CitadelFileSystemIntegrationTests {
         try testFile.run()
         testFile.waitUntilExit()
         #expect(testFile.terminationStatus == 0)
+
+        // The in-tree symlink-to-DIRECTORY's target survives with its
+        // contents intact (docker exec test -f on the nested keep.txt).
+        let testOutsideKeep = Process()
+        testOutsideKeep.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
+        testOutsideKeep.arguments = [
+            "exec", "macscp-test-sshd", "test", "-f", "\(outsideDir)/keep.txt",
+        ]
+        try testOutsideKeep.run()
+        testOutsideKeep.waitUntilExit()
+        #expect(testOutsideKeep.terminationStatus == 0)
+    }
+
+    /// Review CRITICAL-1: `deleteTree` called DIRECTLY on a top-level
+    /// symlink-to-DIRECTORY (created via docker-exec `ln -s`) must remove
+    /// ONLY the link — never follow it and recurse into (and destroy) the
+    /// target directory's contents. SFTP stat follows symlinks and Citadel
+    /// exposes no lstat, so this exercises the parent-listing-derived kind
+    /// fix rather than a naive `stat`-based dispatch.
+    @Test func deleteTreeOnSymlinkToDirectoryRemovesOnlyTheLink() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        let outsideDir = "/config/macscp-deletetree-dirlink-outside-\(UUID().uuidString)"
+        let link = "/config/macscp-deletetree-dirlink-\(UUID().uuidString)"
+        defer {
+            cleanupConfigPath(outsideDir)
+            cleanupConfigPath(link)
+        }
+
+        let seed = Process()
+        seed.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
+        seed.arguments = [
+            "exec", "macscp-test-sshd", "sh", "-c",
+            "mkdir -p '\(outsideDir)' && echo keep > '\(outsideDir)/keep.txt'"
+                + " && ln -s '\(outsideDir)' '\(link)'",
+        ]
+        try seed.run()
+        seed.waitUntilExit()
+        #expect(seed.terminationStatus == 0)
+
+        try await fs.deleteTree(at: link)
+
+        // The link itself is gone: it no longer appears in its parent's listing.
+        let siblings = try await fs.list(path: "/config")
+        #expect(!siblings.contains { $0.path == link })
+
+        // The target directory AND its contents survive (docker exec test -f).
+        let testKeep = Process()
+        testKeep.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
+        testKeep.arguments = ["exec", "macscp-test-sshd", "test", "-f", "\(outsideDir)/keep.txt"]
+        try testKeep.run()
+        testKeep.waitUntilExit()
+        #expect(testKeep.terminationStatus == 0)
     }
 
     /// A ~50-file tree is seeded (docker-exec), `deleteTree` is started in a
