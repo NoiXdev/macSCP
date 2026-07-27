@@ -68,6 +68,19 @@ struct BandwidthBucketTests {
         #expect(slept > 1.9 && slept < 2.3)
     }
 
+    @Test("a stale-generation setRate is ignored (last write wins)")
+    func setRateIgnoresStaleGeneration() async throws {
+        let time = VirtualTime()
+        let bucket = BandwidthBucket(bytesPerSecond: 1000, now: time.now, sleep: time.sleep)
+        try await bucket.consume(1000)                       // eat the burst
+        await bucket.setRate(bytesPerSecond: 4000, generation: 2)
+        await bucket.setRate(bytesPerSecond: 500, generation: 1)   // stale — ignored
+        // 8000 bytes at the SURVIVING 4000 B/s ≈ 2 s; at 500 B/s it were 16 s.
+        for _ in 0..<8 { try await bucket.consume(1000) }
+        let slept = time.totalSlept.secondsAsDouble
+        #expect(slept > 1.8 && slept < 2.4)
+    }
+
     @Test("consume throws on task cancellation instead of sleeping forever")
     func consumeIsCancellable() async {
         let time = VirtualTime()

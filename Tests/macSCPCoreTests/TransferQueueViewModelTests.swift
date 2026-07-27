@@ -2199,7 +2199,7 @@ struct TransferQueueViewModelTests {
         // (slot 1 hasn't answered yet) so it takes the decider branch and
         // suspends on `conflictGate.acquire()` — slot 1 already holds it.
         await statGate2.fire()
-        for _ in 0..<50 { await Task.yield() }
+        await waitUntil { vm.conflictGateWaiterCount == 1 }
 
         // Let slot 1 answer: sets the rule, releases the gate straight to
         // slot 2 (FIFO hand-off). A correct implementation re-checks the rule

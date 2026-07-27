@@ -25,6 +25,7 @@ public actor BandwidthBucket {
     private var lastRefill: ContinuousClock.Instant
     private let now: @Sendable () -> ContinuousClock.Instant
     private let sleep: @Sendable (Duration) async throws -> Void
+    private var lastAppliedGeneration = 0
 
     public init(
         bytesPerSecond: Int,
@@ -43,7 +44,15 @@ public actor BandwidthBucket {
 
     /// Updates the rate (Settings change at runtime). Tokens are clamped to
     /// the new capacity; a negative balance (debt) is deliberately kept.
-    public func setRate(bytesPerSecond: Int) {
+    /// `generation` orders concurrent fire-and-forget re-rates (M6b): a call
+    /// carrying a generation older than the last applied one is ignored, so
+    /// a delayed hop can never overwrite a newer rate. `nil` (tests, direct
+    /// use) bypasses the ordering check.
+    public func setRate(bytesPerSecond: Int, generation: Int? = nil) {
+        if let generation {
+            guard generation > lastAppliedGeneration else { return }
+            lastAppliedGeneration = generation
+        }
         refill()
         rate = Double(max(1, bytesPerSecond))
         capacity = rate

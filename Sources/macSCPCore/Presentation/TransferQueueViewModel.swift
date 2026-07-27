@@ -135,11 +135,23 @@ public final class TransferQueueViewModel {
     /// swaps the bucket reference and therefore only applies to transfers
     /// starting afterwards (running ones keep the reference they resolved).
     public var uploadLimitBytesPerSec: Int = 0 {
-        didSet { uploadBucket = Self.updatedBucket(uploadBucket, bytesPerSecond: uploadLimitBytesPerSec) }
+        didSet {
+            uploadRateGeneration += 1
+            uploadBucket = Self.updatedBucket(
+                uploadBucket, bytesPerSecond: uploadLimitBytesPerSec,
+                generation: uploadRateGeneration)
+        }
     }
     public var downloadLimitBytesPerSec: Int = 0 {
-        didSet { downloadBucket = Self.updatedBucket(downloadBucket, bytesPerSecond: downloadLimitBytesPerSec) }
+        didSet {
+            downloadRateGeneration += 1
+            downloadBucket = Self.updatedBucket(
+                downloadBucket, bytesPerSecond: downloadLimitBytesPerSec,
+                generation: downloadRateGeneration)
+        }
     }
+    private var uploadRateGeneration = 0
+    private var downloadRateGeneration = 0
 
     /// The per-direction shared buckets handed to `TransferEngine.copyFile`.
     /// Internal for test visibility.
@@ -147,14 +159,15 @@ public final class TransferQueueViewModel {
     private(set) var downloadBucket: BandwidthBucket?
 
     private static func updatedBucket(
-        _ bucket: BandwidthBucket?, bytesPerSecond: Int
+        _ bucket: BandwidthBucket?, bytesPerSecond: Int, generation: Int
     ) -> BandwidthBucket? {
         guard bytesPerSecond > 0 else { return nil }
         guard let bucket else { return BandwidthBucket(bytesPerSecond: bytesPerSecond) }
         // Keep the instance (running transfers hold it) and re-rate it. The
         // hop is fire-and-forget by design: pacing catches up on the next
-        // consume, there is nothing to await for correctness.
-        Task { await bucket.setRate(bytesPerSecond: bytesPerSecond) }
+        // consume, there is nothing to await for correctness — the
+        // generation makes the unordered hops last-write-wins.
+        Task { await bucket.setRate(bytesPerSecond: bytesPerSecond, generation: generation) }
         return bucket
     }
 
@@ -232,6 +245,9 @@ public final class TransferQueueViewModel {
     /// order (no unfair wakeups). Only the `await decider(...)` call is gated —
     /// the rule/no-decider fast paths don't touch it.
     private let conflictGate = FIFOGate()
+
+    /// Test hook (M6b): callers parked at the conflict-prompt gate.
+    var conflictGateWaiterCount: Int { conflictGate.waiterCount }
 
     /// IDs of items CURRENTLY in `resolveConflictIfNeeded` (stat probe, decider
     /// prompt, rename probing) — dequeued but not yet registered in
@@ -1058,4 +1074,9 @@ final class FIFOGate {
             waiters.removeFirst().resume()
         }
     }
+
+    /// Number of callers currently suspended in `acquire()` — test hook
+    /// (M6b) so gate-interleaving tests can wait deterministically for a
+    /// sibling to be parked instead of yield-spinning.
+    var waiterCount: Int { waiters.count }
 }

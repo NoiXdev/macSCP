@@ -2,18 +2,8 @@ import Foundation
 import Testing
 @testable import macSCPCore
 
-// `.serialized` (M6a/T4): `sweepOrphanedTempDirectoriesRemovesOrphanedTreeAndIsIdempotent`
-// removes the WHOLE shared `macscp-edit` temp root — running concurrently
-// with any other test in this suite (each of which owns a session
-// subdirectory under that same root) races the sweep against a live
-// session's temp files. Serializing this suite avoids that shared-resource
-// collision, same pattern as `KeychainSecretStoreTests`/
-// `CitadelFileSystemIntegrationTests`.
-// Invariant this rests on (M6a/T5): any future test that constructs an
-// `EditSessionManager` outside this file, or otherwise touches the real
-// `macscp-edit` temp root, must either join this suite or use an isolated
-// root — the sweep test does not know about tests elsewhere.
-@Suite("EditSessionManager", .serialized)
+// Tests use isolated temp roots; nothing here touches shared global state.
+@Suite("EditSessionManager")
 @MainActor
 struct EditSessionManagerTests {
 
@@ -459,19 +449,21 @@ struct EditSessionManagerTests {
     /// The startup sweep must remove the whole tree unconditionally, and be
     /// safe to call again on an already-missing tree.
     @Test func sweepOrphanedTempDirectoriesRemovesOrphanedTreeAndIsIdempotent() throws {
+        // Isolated root (M6b): a UUID directory directly under the process
+        // temp dir, NOT the shared `macscp-edit` root other tests may use.
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("macscp-edit", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let orphanDirectory = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: orphanDirectory, withIntermediateDirectories: true)
         let probe = orphanDirectory.appendingPathComponent("probe.txt", isDirectory: false)
         try Data("orphan".utf8).write(to: probe)
         #expect(FileManager.default.fileExists(atPath: probe.path(percentEncoded: false)))
 
-        EditSessionManager.sweepOrphanedTempDirectories()
+        EditSessionManager.sweepOrphanedTempDirectories(root: root)
 
         #expect(!FileManager.default.fileExists(atPath: root.path(percentEncoded: false)))
 
         // Idempotent: a second call on an already-missing tree does not throw.
-        EditSessionManager.sweepOrphanedTempDirectories()
+        EditSessionManager.sweepOrphanedTempDirectories(root: root)
     }
 }

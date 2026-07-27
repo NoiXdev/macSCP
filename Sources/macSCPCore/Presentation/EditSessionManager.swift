@@ -122,10 +122,13 @@ public final class EditSessionManager {
     /// `stopAll` cleans a session's subtree, so hard-killed app runs leave
     /// orphaned directories behind forever. At launch no edit can be active
     /// (single-instance app, sessions start later), so sweeping the whole
-    /// tree is safe. Idempotent; a missing tree is a no-op.
-    public static func sweepOrphanedTempDirectories() {
-        let root = FileManager.default.temporaryDirectory
+    /// tree is safe. Idempotent; a missing tree is a no-op. `root` is
+    /// injectable (M6b) so tests sweep an isolated directory instead of the
+    /// process-wide real temp root.
+    public static func sweepOrphanedTempDirectories(
+        root: URL = FileManager.default.temporaryDirectory
             .appendingPathComponent("macscp-edit", isDirectory: true)
+    ) {
         try? FileManager.default.removeItem(at: root)
     }
 
