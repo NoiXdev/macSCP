@@ -38,8 +38,13 @@ final class SessionTab: Identifiable {
     /// Stored session this tab is connected to (sidebar highlight).
     var activeStoredSessionID: UUID?
     var isReconnecting = false
-    /// Failure count last seen while this tab was active — the attention
-    /// indicator (T4) lights up when `transferQueue.failedCount` exceeds it.
+    /// Last-seen value of `transferQueue.totalFailureCount` while this tab was
+    /// active — the attention indicator (T4) lights up when
+    /// `totalFailureCount` exceeds it. `totalFailureCount` is monotonic (it
+    /// never decreases, unlike the old item-based `failedCount`), so this
+    /// watermark correctly detects a NEW failure even after a background
+    /// tab's completed items were swept by `clearCompleted()` (M8a T5 review,
+    /// finding 2).
     var seenFailureCount = 0
 
     var isConnected: Bool { session != nil }

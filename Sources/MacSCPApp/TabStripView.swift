@@ -60,14 +60,26 @@ private struct TabItemView: View {
     private enum Indicator { case none, upload, download, attention }
 
     /// Attention (static red) wins over activity; activity color follows
-    /// the LAST STARTED item's direction (spec 2).
+    /// `TransferQueueViewModel.displayDirection` (spec 2: last-started item's
+    /// direction while something is running, falling back to the first
+    /// queued item's direction otherwise — see that property's doc comment,
+    /// M8a T5 review finding 4).
+    ///
+    /// The attention comparison uses `totalFailureCount` (monotonic), not the
+    /// old item-based `failedCount`: `clearCompleted()` removes `.failed`
+    /// items, so a `failedCount`-based watermark could get "stuck" — visit
+    /// (seen = totalFailureCount), clean up (removes the failed items),
+    /// then a NEW failure would still compare against the same absolute
+    /// count and never re-trigger. `totalFailureCount` only ever grows, so
+    /// this comparison always detects a genuinely new failure (M8a T5
+    /// review, finding 2).
     private var indicator: Indicator {
         if tab.conflictBridge.currentPrompt != nil
-            || tab.transferQueue.failedCount > tab.seenFailureCount {
+            || tab.transferQueue.totalFailureCount > tab.seenFailureCount {
             return .attention
         }
         guard tab.transferQueue.isActive else { return .none }
-        return tab.transferQueue.lastStartedDirection == .upload ? .upload : .download
+        return tab.transferQueue.displayDirection == .upload ? .upload : .download
     }
 
     var body: some View {

@@ -249,9 +249,30 @@ struct ContentView: View {
             bandwidthLimiter.downloadLimitBytesPerSec = settingsStore.downloadLimitKBs * 1024
             // Command bridge wiring (M8a/T4): `MacSCPApp` has no reference to
             // this view, so the menu items call back through these closures.
-            tabCommands.newTab = { tabsModel.addTab(makeTab()) }
-            tabCommands.selectTab = { index in selectTab(atIndex: index) }
+            //
+            // Key-window guard (M8a T5 review, finding 1): the `Settings`
+            // scene shares this exact ⌘N/⌘W/⌘1–9 command set (SwiftUI attaches
+            // one `.commands` menu app-wide, not per window/scene), so with
+            // Settings focused these closures would otherwise still fire
+            // against THIS window's tabs instead of Settings — e.g. ⌘W would
+            // tear down a tab instead of closing the Settings window. Each
+            // closure checks that this window is actually key before acting.
+            tabCommands.newTab = {
+                guard window?.isKeyWindow == true else { return }
+                tabsModel.addTab(makeTab())
+            }
+            tabCommands.selectTab = { index in
+                guard window?.isKeyWindow == true else { return }
+                selectTab(atIndex: index)
+            }
             tabCommands.closeActiveTab = {
+                guard window?.isKeyWindow == true else {
+                    // Not our window: route Close to whichever window IS key
+                    // (typically Settings) via the system path instead of
+                    // silently doing nothing.
+                    NSApp.keyWindow?.performClose(nil)
+                    return
+                }
                 let tab = tabsModel.activeTab
                 if tabsModel.isLastTab && !tab.isConnected {
                     // The only tab left, already a pristine form: Cmd-W
@@ -344,6 +365,15 @@ struct ContentView: View {
     @ViewBuilder
     private var detail: some View {
         let tab = activeTab
+        // Captured once per `detail` evaluation (M8a T5 review, finding 3):
+        // the sheet's four closures below all read THIS tab's bridge, not
+        // `tabsModel.activeTab` at call time. Without this, ⌘1–9 switching
+        // the active tab while the sheet is still up would make `onDismiss`/
+        // `onCancel`/`onResolve` resolve the NEWLY active tab's prompt
+        // instead of the one actually presenting the sheet. Invariant: the
+        // sheet always talks to its presenting tab's bridge, for its whole
+        // lifetime, regardless of what becomes active afterwards.
+        let bridge = tab.conflictBridge
         Group {
             if let session = tab.session {
                 VStack(spacing: 0) {
@@ -467,26 +497,21 @@ struct ContentView: View {
 
                     TransferQueueBar(viewModel: tab.transferQueue)
                 }
-                // The binding deliberately resolves `tabsModel.activeTab` on every
-                // access instead of capturing `tab`: only the tab in front may
-                // present its prompt, and a tab switch must re-resolve the sheet
-                // rather than keep a background tab's bridge alive here.
                 .sheet(
                     item: Binding(
-                        get: { tabsModel.activeTab.conflictBridge.currentPrompt },
+                        get: { bridge.currentPrompt },
                         set: { newValue in
-                            if newValue == nil { tabsModel.activeTab.conflictBridge.dismiss() }
+                            if newValue == nil { bridge.dismiss() }
                         }
                     ),
-                    onDismiss: { tabsModel.activeTab.conflictBridge.dismiss() }
+                    onDismiss: { bridge.dismiss() }
                 ) { item in
                     ConflictSheetView(
                         conflict: item.conflict,
                         onResolve: { resolution, applyToAll in
-                            tabsModel.activeTab.conflictBridge.resolve(
-                                (resolution: resolution, applyToAll: applyToAll))
+                            bridge.resolve((resolution: resolution, applyToAll: applyToAll))
                         },
-                        onCancel: { tabsModel.activeTab.conflictBridge.dismiss() }
+                        onCancel: { bridge.dismiss() }
                     )
                 }
             } else {
@@ -589,7 +614,7 @@ struct ContentView: View {
     private func activate(_ id: UUID) {
         tabsModel.activate(id)
         guard tabsModel.activeTabID == id else { return }
-        tabsModel.activeTab.seenFailureCount = tabsModel.activeTab.transferQueue.failedCount
+        tabsModel.activeTab.seenFailureCount = tabsModel.activeTab.transferQueue.totalFailureCount
     }
 
     /// ⌘1–⌘9 target: 1-indexed, no-op outside the current tab range.
@@ -624,7 +649,7 @@ struct ContentView: View {
             tabsModel.closeTab(tab.id)
             if wasActive {
                 tabsModel.activeTab.seenFailureCount =
-                    tabsModel.activeTab.transferQueue.failedCount
+                    tabsModel.activeTab.transferQueue.totalFailureCount
             }
         }
         shrinkIfPristine()

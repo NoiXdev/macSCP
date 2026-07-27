@@ -137,11 +137,35 @@ public final class TransferQueueViewModel {
     /// activity the last started one wins).
     public private(set) var lastStartedDirection: TransferDirection?
 
-    /// Number of items currently in the failed state — the tab attention
-    /// indicator compares this against a per-tab seen-counter (M8a).
-    public var failedCount: Int {
-        items.filter { if case .failed = $0.status { return true } else { return false } }.count
+    /// Direction to display in the tab activity indicator (M8a T5 review,
+    /// finding 4). `lastStartedDirection` alone is nil on a fresh queue and
+    /// STALE between a finished transfer and the next one starting — a
+    /// freshly queued item would then briefly show the previous (or no)
+    /// direction/color instead of its own. This falls back to the first
+    /// still-queued item's direction whenever nothing is currently running;
+    /// as soon as a transfer actually starts, `lastStartedDirection` (which
+    /// spec 2 says should win on simultaneous both-direction activity) takes
+    /// over again.
+    public var displayDirection: TransferDirection? {
+        if items.contains(where: { $0.status.isRunning }) {
+            return lastStartedDirection
+        }
+        return items.first(where: { $0.status == .queued })?.direction
     }
+
+    /// Monotonically increasing count of items that have transitioned into
+    /// `.failed`, EVER — replaces the old item-based `failedCount` (M8a T5
+    /// review, finding 2). `failedCount` could only ever compare against the
+    /// CURRENT number of `.failed` items, which `clearCompleted()` removes:
+    /// visit a tab (seen = failedCount), clean up completed items
+    /// (failedCount drops back to 0), then a single new failure would still
+    /// fail to exceed the stale watermark and the attention indicator would
+    /// never re-light. This counter only ever grows, so the tab's
+    /// `seenFailureCount` watermark (`SessionTab.seenFailureCount`) always
+    /// detects a genuinely new failure. Incremented exactly once per
+    /// non-terminal → `.failed` transition in `setStatus` — never on a
+    /// repeated `setStatus` call for an already-terminal item.
+    public private(set) var totalFailureCount = 0
 
     // MARK: - Private state
 
@@ -969,6 +993,12 @@ public final class TransferQueueViewModel {
         // the non-terminal → terminal transition (M5b/T3). Scattered
         // decrements would miss cases.
         if status.isTerminal && !wasTerminal {
+            // `totalFailureCount` (M8a T5 review, finding 2) increments here,
+            // at the same non-terminal → terminal choke point, so a job that
+            // is already terminal (`wasTerminal == true`) can never
+            // double-count even if `setStatus` were ever called again with
+            // the same `.failed` status.
+            if case .failed = status { totalFailureCount += 1 }
             groupItemBecameTerminal(id, status: status)
         }
     }

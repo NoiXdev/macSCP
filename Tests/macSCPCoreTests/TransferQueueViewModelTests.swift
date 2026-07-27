@@ -2644,6 +2644,107 @@ struct TransferQueueViewModelTests {
         #expect(await flags.value("solo.txt") == false)
         #expect(await flags.value("tree.txt") == true)
     }
+
+    // MARK: - 44 (M8a T5 review, finding 2)
+
+    /// `totalFailureCount` increments on a failure and, unlike the old
+    /// item-based `failedCount`, does NOT decrease when `clearCompleted()`
+    /// sweeps the now-`.failed` item out of `items` — it is a monotonic
+    /// counter, not a live tally.
+    @Test func totalFailureCountIncrementsAndSurvivesClearCompleted() async throws {
+        // "/missing.txt" is not registered on either side → stat throws
+        // notFound → the item becomes `.failed` (same pattern as test 4,
+        // `failedItemDoesNotBlockQueue`).
+        let source = QueueTestFS(reads: [:])
+        let destination = QueueTestFS(reads: [:])
+        let vm = TransferQueueViewModel()
+
+        #expect(vm.totalFailureCount == 0)
+
+        _ = try? await vm.enqueueAndWait(
+            fileName: "missing.txt", direction: .download,
+            source: source, sourcePath: "/missing.txt",
+            destination: destination, destinationDirectory: "/ziel")
+
+        if case .failed = vm.items[0].status {} else {
+            Issue.record("setup: item should be .failed, was \(vm.items[0].status)")
+        }
+        #expect(vm.totalFailureCount == 1)
+
+        vm.clearCompleted()
+
+        #expect(vm.items.isEmpty)              // the failed item WAS swept…
+        #expect(vm.totalFailureCount == 1)     // …but the monotonic count survives
+    }
+
+    // MARK: - 45 (M8a T5 review, finding 2)
+
+    /// A SECOND failure, occurring after `clearCompleted()` already swept the
+    /// first one out of `items`, still increments the counter — proving the
+    /// tab attention watermark (`totalFailureCount > seenFailureCount`) can
+    /// never get stuck: visit (seen = 1) → clean up (items empty, count
+    /// still 1) → new failure (count = 2) → `2 > 1` fires again.
+    @Test func totalFailureCountIncrementsAgainAfterClearCompleted() async throws {
+        let source = QueueTestFS(reads: [:])
+        let destination = QueueTestFS(reads: [:])
+        let vm = TransferQueueViewModel()
+
+        _ = try? await vm.enqueueAndWait(
+            fileName: "missing1.txt", direction: .download,
+            source: source, sourcePath: "/missing1.txt",
+            destination: destination, destinationDirectory: "/ziel")
+        #expect(vm.totalFailureCount == 1)
+
+        vm.clearCompleted()
+        #expect(vm.items.isEmpty)
+
+        _ = try? await vm.enqueueAndWait(
+            fileName: "missing2.txt", direction: .download,
+            source: source, sourcePath: "/missing2.txt",
+            destination: destination, destinationDirectory: "/ziel")
+
+        #expect(vm.totalFailureCount == 2)
+    }
+
+    // MARK: - 46 (M8a T5 review, finding 4 coverage)
+
+    /// `lastStartedDirection` reflects the direction of the most recently
+    /// STARTED job, not the most recently enqueued one — it flips to
+    /// `.download` as soon as item 2 starts, even though item 1 (still
+    /// running behind it in a single-slot queue) was an `.upload`.
+    @Test func lastStartedDirectionReflectsMostRecentlyStartedJob() async throws {
+        let content = Data("x".utf8)
+        let started1 = TestSignal(); let gate1 = TestSignal()
+        let started2 = TestSignal(); let gate2 = TestSignal()
+        let source = QueueTestFS(reads: [
+            "/1.txt": .init(content: content, started: started1, gate: gate1),
+            "/2.txt": .init(content: content, started: started2, gate: gate2),
+        ])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1   // determinism: item 2 must not start before item 1 finishes
+
+        #expect(vm.lastStartedDirection == nil)
+
+        vm.enqueue(
+            fileName: "1.txt", direction: .upload,
+            source: source, sourcePath: "/1.txt",
+            destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
+        try await started1.wait()
+        #expect(vm.lastStartedDirection == .upload)
+
+        vm.enqueue(
+            fileName: "2.txt", direction: .download,
+            source: source, sourcePath: "/2.txt",
+            destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
+        await gate1.fire()
+        try await started2.wait()
+        #expect(vm.lastStartedDirection == .download)
+
+        await gate2.fire()
+        await waitUntil { vm.isActive == false }
+    }
 }
 
 /// Collects (fileName, isPartOfFolderTransfer) pairs reported by a
