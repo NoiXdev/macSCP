@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>macSCP M8 — Tab-Strip Mockup</title>
+<style>
+  :root {
+    --paper: #F4F7FA; --card: #FFFFFF; --ink: #14212E; --ink-2: #4A5B6B;
+    --ink-3: #7E8FA0; --line: #DAE3EB; --local: #DE9426; --local-soft: #FBF1DF;
+    --remote: #2D71B8; --remote-soft: #E3EEF9; --deep-1: #0F1E2B;
+    --ok: #2E9A5B; --err: #C2453A;
+    --shadow: 0 1px 2px rgba(15,30,43,.06), 0 12px 32px -12px rgba(15,30,43,.18);
+    --sidebar: #FCFDFE;
+  }
+  .dark {
+    --paper: #0D1720; --card: #14212E; --ink: #E8EFF5; --ink-2: #A7B7C5;
+    --ink-3: #6E8093; --line: #24374A; --local: #E8A63C; --local-soft: #2C2415;
+    --remote: #4E92D6; --remote-soft: #142C42; --deep-1: #0A141D;
+    --ok: #3FAE6E; --err: #E06A5E;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 32px -12px rgba(0,0,0,.6);
+    --sidebar: #121E2A;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: #E9EEF3; color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    font-size: 13px; padding: 28px; display: grid; gap: 36px;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  h2 { font-size: 13px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #7E8FA0; margin-bottom: 10px; }
+  .caption { font-size: 12px; color: #7E8FA0; margin-top: 8px; max-width: 76ch; line-height: 1.5; }
+
+  .window {
+    background: var(--paper); border-radius: 10px; box-shadow: var(--shadow);
+    overflow: hidden; border: 1px solid var(--line); max-width: 980px;
+  }
+  /* titlebar + toolbar */
+  .titlebar {
+    display: flex; align-items: center; gap: 8px; padding: 9px 12px;
+    background: var(--paper); border-bottom: 1px solid var(--line);
+  }
+  .dots { display: flex; gap: 6px; margin-right: 6px; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; }
+  .dot:nth-child(1){background:#FF5F57}.dot:nth-child(2){background:#FEBC2E}.dot:nth-child(3){background:#28C840}
+  .wtitle { font-weight: 600; font-size: 12.5px; color: var(--ink-2); flex: 1; text-align: center; }
+  .toolbtns { display: flex; gap: 6px; }
+  .toolbtn {
+    font-size: 11.5px; padding: 3px 10px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink-2);
+  }
+
+  .cols { display: flex; min-height: 250px; }
+  .side {
+    width: 158px; background: var(--sidebar); border-right: 1px solid var(--line);
+    padding: 12px 8px; flex-shrink: 0;
+  }
+  .side .lbl { font-size: 10.5px; font-weight: 600; letter-spacing: .1em; color: var(--ink-3); padding: 0 6px 6px; }
+  .srow { display: flex; align-items: center; gap: 7px; padding: 5px 10px; border-radius: 6px; font-size: 12.5px; color: var(--ink); }
+  .srow.active { background: var(--remote-soft); }
+  .srow .st { width: 7px; height: 7px; border-radius: 50%; background: #7BD88F; }
+  .srow .st.off { background: var(--line); }
+
+  .main { flex: 1; display: flex; flex-direction: column; background: var(--paper); }
+
+  /* ======== TAB STRIP ======== */
+  .tabstrip {
+    display: flex; align-items: stretch; height: 30px;
+    background: var(--paper); border-bottom: 1px solid var(--line);
+    padding: 0 6px 0 0;
+  }
+  .tab {
+    display: flex; align-items: center; gap: 7px;
+    padding: 0 12px; max-width: 200px; min-width: 120px;
+    font-size: 12px; color: var(--ink-2); position: relative;
+    border-right: 1px solid var(--line); cursor: default;
+  }
+  .tab.active {
+    background: var(--card); color: var(--ink); font-weight: 600;
+  }
+  .tab.active::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+    background: var(--remote);
+  }
+  .tab .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .ind { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .ind.up   { background: var(--local); box-shadow: 0 0 0 3px color-mix(in srgb, var(--local) 22%, transparent); }
+  .ind.down { background: var(--remote); box-shadow: 0 0 0 3px color-mix(in srgb, var(--remote) 22%, transparent); }
+  .ind.warn { background: var(--err); box-shadow: 0 0 0 3px color-mix(in srgb, var(--err) 22%, transparent); }
+  .tab .x {
+    width: 15px; height: 15px; border-radius: 4px; display: grid; place-items: center;
+    color: var(--ink-3); font-size: 11px; flex-shrink: 0;
+  }
+  .tab .x.hover { background: color-mix(in srgb, var(--ink-3) 18%, transparent); color: var(--ink); }
+  .tab.form-tab .name { color: var(--ink-3); font-style: italic; }
+  .plus {
+    display: grid; place-items: center; width: 30px; color: var(--ink-3);
+    font-size: 15px; cursor: default;
+  }
+  .plus:hover { color: var(--ink); }
+
+  /* pane area hint */
+  .paneheads { display: flex; border-bottom: 1px solid var(--line); }
+  .panehead { flex: 1; display: flex; align-items: center; gap: 8px; padding: 7px 12px; }
+  .panehead + .panehead { border-left: 1px solid var(--line); }
+  .badge { font-size: 10.5px; font-weight: 600; letter-spacing: .09em; padding: 2px 8px; border-radius: 5px; }
+  .badge.local { color: var(--local); background: var(--local-soft); }
+  .badge.remote { color: var(--remote); background: var(--remote-soft); }
+  .path { font-size: 11.5px; color: var(--ink-3); }
+  .panes { flex: 1; display: flex; min-height: 130px; }
+  .pane { flex: 1; padding: 10px 12px; color: var(--ink-3); font-size: 12px; }
+  .pane + .pane { border-left: 1px solid var(--line); }
+  .row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent); }
+  .row.sel { background: var(--remote-soft); margin: 0 -12px; padding: 4px 12px; color: var(--ink); }
+
+  /* context menu */
+  .menuwrap { position: relative; }
+  .ctxmenu {
+    position: absolute; top: 18px; left: 190px; z-index: 5;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    box-shadow: var(--shadow); padding: 4px; width: 210px; font-size: 12.5px;
+  }
+  .mi { padding: 4px 10px; border-radius: 5px; color: var(--ink); display: flex; justify-content: space-between; align-items: center; }
+  .mi.hl { background: var(--remote); color: #fff; }
+  .mi .sub { color: inherit; opacity: .6; }
+  .msep { height: 1px; background: var(--line); margin: 4px 6px; }
+  .submenu {
+    position: absolute; left: 206px; top: 0;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    box-shadow: var(--shadow); padding: 4px; width: 215px;
+  }
+  .mi.dim { color: var(--ink-3); }
+</style>
+</head>
+<body>
+
+<section>
+  <h2>1 · Tab-Strip — hell, drei Tabs</h2>
+  <div class="window">
+    <div class="titlebar">
+      <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+      <div class="wtitle">macSCP — web-01</div>
+      <div class="toolbtns"><span class="toolbtn">↑ Upload</span><span class="toolbtn">↓ Download</span><span class="toolbtn">⌘T Terminal</span><span class="toolbtn">Trennen</span></div>
+    </div>
+    <div class="cols">
+      <div class="side">
+        <div class="lbl">SESSIONS</div>
+        <div class="srow active"><span class="st"></span>web-01</div>
+        <div class="srow"><span class="st"></span>db-prod</div>
+        <div class="srow"><span class="st off"></span>backup-nas</div>
+      </div>
+      <div class="main">
+        <div class="tabstrip">
+          <div class="tab active"><span class="name">web-01</span><span class="x hover">✕</span></div>
+          <div class="tab"><span class="ind down"></span><span class="name">db-prod</span><span class="x"></span></div>
+          <div class="tab form-tab"><span class="name">Neue Verbindung</span><span class="x"></span></div>
+          <div class="plus">＋</div>
+        </div>
+        <div class="paneheads">
+          <div class="panehead"><span class="badge local">LOKAL</span><span class="path mono">~/Projekte/deploy</span></div>
+          <div class="panehead"><span class="badge remote">REMOTE</span><span class="path mono">/var/www/app</span></div>
+        </div>
+        <div class="panes">
+          <div class="pane">
+            <div class="row"><span>release.tar.gz</span><span>48,2 MB</span></div>
+            <div class="row"><span>notes.md</span><span>2 KB</span></div>
+          </div>
+          <div class="pane">
+            <div class="row sel"><span>current/</span><span>—</span></div>
+            <div class="row"><span>shared/</span><span>—</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="caption">Aktiver Tab: <b>card-Fläche + 2-pt-RemoteBlue-Unterstreichung</b>, Titel semibold; ✕ erscheint nur bei Hover. Inaktive Tabs auf paper, ink-2. „db-prod" lädt gerade herunter → <b>blauer Aktivitätspunkt</b> (Upload wäre Bernstein — dieselbe Semantik wie die Transfer-Pillen). Der dritte Tab ist ein leerer Formular-Tab (kursiv, ink-3). Rechts der ⊕. Strip-Höhe 30 pt, Hairline unten.</p>
+</section>
+
+<section>
+  <h2>2 · Dunkel + Achtung-Indikator</h2>
+  <div class="window dark">
+    <div class="titlebar">
+      <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+      <div class="wtitle">macSCP — db-prod</div>
+      <div class="toolbtns"><span class="toolbtn">↑ Upload</span><span class="toolbtn">↓ Download</span><span class="toolbtn">⌘T Terminal</span><span class="toolbtn">Trennen</span></div>
+    </div>
+    <div class="cols">
+      <div class="side">
+        <div class="lbl">SESSIONS</div>
+        <div class="srow"><span class="st"></span>web-01</div>
+        <div class="srow active"><span class="st"></span>db-prod</div>
+        <div class="srow"><span class="st off"></span>backup-nas</div>
+      </div>
+      <div class="main">
+        <div class="tabstrip">
+          <div class="tab"><span class="ind warn"></span><span class="name">web-01</span><span class="x"></span></div>
+          <div class="tab active"><span class="ind up"></span><span class="name">db-prod</span><span class="x hover">✕</span></div>
+          <div class="plus">＋</div>
+        </div>
+        <div class="paneheads">
+          <div class="panehead"><span class="badge local">LOKAL</span><span class="path mono">~/dumps</span></div>
+          <div class="panehead"><span class="badge remote">REMOTE</span><span class="path mono">/srv/backups</span></div>
+        </div>
+        <div class="panes">
+          <div class="pane">
+            <div class="row sel"><span>dump-2026-07-27.sql.gz</span><span>1,2 GB</span></div>
+          </div>
+          <div class="pane">
+            <div class="row"><span>weekly/</span><span>—</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="caption"><b>Roter Punkt an „web-01"</b>: Der Hintergrund-Tab wartet auf dich (Konflikt-Dialog parkt) oder ein Transfer ist fehlgeschlagen — beim Wechsel dorthin erscheint das Sheet. Der aktive Tab lädt selbst hoch (Bernstein-Punkt). Indikatoren pulsieren dezent bei laufender Aktivität, stehen still bei „Achtung".</p>
+</section>
+
+<section>
+  <h2>3 · Kontextmenü — „Übertragen" mit Ziel-Sessions</h2>
+  <div class="window" style="max-width:700px">
+    <div class="cols" style="min-height:210px">
+      <div class="main menuwrap">
+        <div class="tabstrip">
+          <div class="tab active"><span class="name">web-01</span><span class="x"></span></div>
+          <div class="tab"><span class="ind down"></span><span class="name">db-prod</span><span class="x"></span></div>
+          <div class="tab"><span class="name">backup-nas</span><span class="x"></span></div>
+          <div class="plus">＋</div>
+        </div>
+        <div class="paneheads">
+          <div class="panehead"><span class="badge remote">REMOTE</span><span class="path mono">/var/www/app/releases</span></div>
+        </div>
+        <div class="panes">
+          <div class="pane">
+            <div class="row sel"><span>v2.4.1/</span><span>—</span></div>
+            <div class="row sel"><span>v2.4.0/</span><span>—</span></div>
+            <div class="row"><span>v2.3.9/</span><span>—</span></div>
+          </div>
+        </div>
+        <div class="ctxmenu">
+          <div class="mi hl">Übertragen <span class="sub">▸</span></div>
+          <div class="mi">Umbenennen…</div>
+          <div class="mi dim">Informationen &amp; Rechte…</div>
+          <div class="mi">Pfad kopieren</div>
+          <div class="msep"></div>
+          <div class="mi">Löschen…</div>
+          <div class="submenu">
+            <div class="mi">Zum lokalen Pane</div>
+            <div class="msep"></div>
+            <div class="mi hl">Zu „db-prod" <span class="sub mono">/srv/backups</span></div>
+            <div class="mi">Zu „backup-nas" <span class="sub mono">/volume1</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="caption">Das bisherige „Übertragen" wird zum <b>Submenü</b>: erster Eintrag wie gehabt (zum anderen Pane), darunter alle <b>anderen verbundenen Tabs</b> mit ihrem aktuellen Remote-Pfad als Hinweis. Remote-Auswahl → Ziel-Session = direkter Server-zu-Server-Stream durch die App. Formular-Tabs und die eigene Session tauchen nicht auf; „Informationen &amp; Rechte…" ist hier gedimmt, weil zwei Einträge gewählt sind (Multi-Select-Regel aus M7b).</p>
+</section>
+
+</body>
+</html>
