@@ -38,7 +38,7 @@ echo "signed: $(codesign -dv "$APP" 2>&1 | grep '^Authority=Developer ID Applica
 ZIP="dist/macSCP-${VERSION}.zip"
 ditto -c -k --keepParent "$APP" "$ZIP"
 xcrun notarytool submit "$ZIP" --keychain-profile "$PROFILE" --wait \
-    --output-format json | tee dist/notary-app.json
+    --output-format json | tee dist/notary-app.json || true
 grep -Eq '"status"[[:space:]]*:[[:space:]]*"Accepted"' dist/notary-app.json || {
     echo "error: app notarization not accepted — fetch the log with:" >&2
     echo "  xcrun notarytool log <submission-id> --keychain-profile $PROFILE" >&2
@@ -55,8 +55,11 @@ hdiutil create -volname "macSCP" -srcfolder "$STAGING" -ov -format UDZO "$DMG"
 rm -rf "$STAGING"
 codesign --force --timestamp --sign "$IDENTITY" "$DMG"
 
+# `|| true`: a rejected submission exits non-zero, which under pipefail
+# would abort HERE and skip the guidance below — the grep on the captured
+# JSON is the single source of truth for acceptance.
 xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" --wait \
-    --output-format json | tee dist/notary-dmg.json
+    --output-format json | tee dist/notary-dmg.json || true
 grep -Eq '"status"[[:space:]]*:[[:space:]]*"Accepted"' dist/notary-dmg.json || {
     echo "error: DMG notarization not accepted — fetch the log with:" >&2
     echo "  xcrun notarytool log <submission-id> --keychain-profile $PROFILE" >&2
