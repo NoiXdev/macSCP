@@ -5,3 +5,4 @@ xcuserdata/
 *.xcodeproj
 *.xcworkspace
 .DS_Store
+dist/
