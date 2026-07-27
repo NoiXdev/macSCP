@@ -122,9 +122,12 @@ actor MockRemoteFileSystem: RemoteFileSystem {
     /// Moves the tree entry (and any tracked file data) from `from` to the
     /// FULL destination path `to`. `notFound` if nothing exists at `from`,
     /// `protocolError` if something already exists at `to` (no silent
-    /// overwrite, matching Local/Citadel). Shallow: a directory's own
-    /// children in `tree` are not re-keyed, mirroring `delete`'s file-only
-    /// scope — no test in this suite renames a non-empty directory.
+    /// overwrite, matching Local/Citadel). Re-keys every descendant: the
+    /// directory's own `tree[from]` listing, any deeper nested `tree` keys,
+    /// and the `files`/`written`/`writeModes`/`permissionsByPath` entries
+    /// tracked under `from` or `from/...` all move to the `to`-rooted prefix,
+    /// including the `path` field of every re-keyed `RemoteFileItem` (M7b/T1
+    /// — closes the shallow-rename gap this mock used to document).
     func rename(from: String, to: String) async throws {
         let sourceParent = RemotePath.parent(of: from)
         guard let siblings = tree[sourceParent],
@@ -148,21 +151,51 @@ actor MockRemoteFileSystem: RemoteFileSystem {
         destSiblings.append(movedItem)
         tree[destParent] = destSiblings
 
-        if let data = files[from] {
-            files[to] = data
-            files[from] = nil
+        rekeyTreeAndDescendants(from: from, to: to)
+        rekeyPrefixedKeys(in: &files, from: from, to: to)
+        rekeyPrefixedKeys(in: &written, from: from, to: to)
+        rekeyPrefixedKeys(in: &writeModes, from: from, to: to)
+        rekeyPrefixedKeys(in: &permissionsByPath, from: from, to: to)
+    }
+
+    /// Re-keys `tree[from]` (the renamed directory's own listing, if any)
+    /// and every deeper `tree[from/...]` key onto the `to`-rooted prefix,
+    /// rewriting each descendant item's `path` field to match — its `name`
+    /// is unaffected since only an ancestor segment changed.
+    private func rekeyTreeAndDescendants(from: String, to: String) {
+        let oldPrefix = from + "/"
+        let newPrefix = to + "/"
+        let keysToMove = tree.keys.filter { $0 == from || $0.hasPrefix(oldPrefix) }
+        for key in keysToMove {
+            guard let items = tree.removeValue(forKey: key) else { continue }
+            let newKey = key == from ? to : newPrefix + key.dropFirst(oldPrefix.count)
+            tree[newKey] = items.map { item in
+                let newPath: String
+                if item.path == from {
+                    newPath = to
+                } else if item.path.hasPrefix(oldPrefix) {
+                    newPath = newPrefix + item.path.dropFirst(oldPrefix.count)
+                } else {
+                    newPath = item.path
+                }
+                return RemoteFileItem(
+                    name: item.name, path: newPath, kind: item.kind, size: item.size,
+                    modifiedAt: item.modifiedAt, permissions: item.permissions)
+            }
         }
-        if let data = written[from] {
-            written[to] = data
-            written[from] = nil
-        }
-        if let mode = writeModes[from] {
-            writeModes[to] = mode
-            writeModes[from] = nil
-        }
-        if let perms = permissionsByPath[from] {
-            permissionsByPath[to] = perms
-            permissionsByPath[from] = nil
+    }
+
+    /// Re-keys any dictionary entry keyed exactly `from` or under `from/...`
+    /// onto the `to`-rooted prefix. Shared by `files`/`written`/`writeModes`/
+    /// `permissionsByPath` in `rename`.
+    private func rekeyPrefixedKeys<Value>(in dict: inout [String: Value], from: String, to: String) {
+        let oldPrefix = from + "/"
+        let newPrefix = to + "/"
+        let keysToMove = dict.keys.filter { $0 == from || $0.hasPrefix(oldPrefix) }
+        for key in keysToMove {
+            guard let value = dict.removeValue(forKey: key) else { continue }
+            let newKey = key == from ? to : newPrefix + key.dropFirst(oldPrefix.count)
+            dict[newKey] = value
         }
     }
 

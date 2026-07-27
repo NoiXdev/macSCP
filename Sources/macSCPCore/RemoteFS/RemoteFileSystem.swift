@@ -46,6 +46,8 @@ public protocol RemoteFileSystem: Sendable {
     /// Sets the POSIX permission bits of the entry at `path`. Only the low
     /// 12 bits (rwx for owner/group/other + setuid/setgid/sticky) are
     /// applied — file-type bits are never written (M7a).
+    /// NOTE: both implementations follow symlinks (chmod semantics) — the
+    /// UI must not offer the permission editor for `.symlink` entries (M7b).
     func setPermissions(path: String, permissions: UInt32) async throws
     /// Recursively deletes the entry at `path` (file, symlink, or directory
     /// with its entire contents). Symlinks are deleted, NEVER followed — the

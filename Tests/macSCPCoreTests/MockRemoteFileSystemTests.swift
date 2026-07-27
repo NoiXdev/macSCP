@@ -278,4 +278,19 @@ struct MockRemoteFileSystemTests {
             try await fs.deleteTree(at: "/gibt-es-nicht")
         }
     }
+
+    // MARK: - M7b/T1: dir rename re-keys descendants
+
+    @Test func renameDirectoryRekeysDescendants() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "dir", path: "/dir", kind: .directory)],
+            "/dir": [RemoteFileItem(name: "a.txt", path: "/dir/a.txt", kind: .file, size: 1)],
+        ])
+        try await fs.rename(from: "/dir", to: "/renamed")
+        let root = try await fs.list(path: "/")
+        #expect(root.map(\.name) == ["renamed"])
+        let children = try await fs.list(path: "/renamed")
+        #expect(children.map(\.name) == ["a.txt"])
+        await #expect(throws: RemoteFSError.self) { _ = try await fs.list(path: "/dir") }
+    }
 }
