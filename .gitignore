@@ -6,3 +6,5 @@ xcuserdata/
 *.xcworkspace
 .DS_Store
 dist/
+.claude/
+.superpowers/
