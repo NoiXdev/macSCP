@@ -283,168 +283,180 @@ struct ContentView: View {
     @ViewBuilder
     private var detail: some View {
         let tab = activeTab
-        if let session = tab.session {
-            VStack(spacing: 0) {
-                VSplitView {
-                    HSplitView {
-                        BrowserPane(
-                            title: L10n.string("browser.paneLocal", "Local"),
-                            tint: DesignTokens.localAmber,
-                            softTint: DesignTokens.localSoft,
-                            viewModel: session.local,
-                            side: .local,
-                            pasteboardWriter: { item in
-                                item.kind == .file
-                                    ? NSURL(fileURLWithPath: item.path)
-                                    : nil
-                            },
-                            onMenuAction: { entry, selection in
-                                switch entry {
-                                case .transferToOtherPane:
-                                    transferSelection(
-                                        selection, from: .local, in: tab, session: session)
-                                case .copyPath:
-                                    copyPaths(of: selection)
-                                case .openInEditor:
-                                    break   // never emitted for the local pane (menu model)
-                                case .rename, .infoAndPermissions, .newFolder, .delete:
-                                    break   // handled inside BrowserPane, never forwarded
-                                }
-                            }
-                        )
-                        .frame(minWidth: 280)
-
-                        BrowserPane(
-                            title: L10n.string("browser.paneRemote", "Remote"),
-                            tint: DesignTokens.remoteBlue,
-                            softTint: DesignTokens.remoteSoft,
-                            viewModel: session.remote,
-                            side: .remote,
-                            onDropURLs: { urls in
-                                uploadDropped(urls, in: tab, session: session)
-                            },
-                            onOpenFile: { item in
-                                openInEditor(item, in: tab, session: session)
-                            },
-                            pasteboardWriter: { item in
-                                item.kind == .file
-                                    ? remotePromiseProvider(for: item, in: tab, session: session)
-                                    : nil
-                            },
-                            onMenuAction: { entry, selection in
-                                switch entry {
-                                case .transferToOtherPane:
-                                    transferSelection(
-                                        selection, from: .remote, in: tab, session: session)
-                                case .openInEditor:
-                                    if let item = selection.first {
-                                        openInEditor(item, in: tab, session: session)
+        Group {
+            if let session = tab.session {
+                VStack(spacing: 0) {
+                    VSplitView {
+                        HSplitView {
+                            BrowserPane(
+                                title: L10n.string("browser.paneLocal", "Local"),
+                                tint: DesignTokens.localAmber,
+                                softTint: DesignTokens.localSoft,
+                                viewModel: session.local,
+                                side: .local,
+                                pasteboardWriter: { item in
+                                    item.kind == .file
+                                        ? NSURL(fileURLWithPath: item.path)
+                                        : nil
+                                },
+                                onMenuAction: { entry, selection in
+                                    switch entry {
+                                    case .transferToOtherPane:
+                                        transferSelection(
+                                            selection, from: .local, in: tab, session: session)
+                                    case .copyPath:
+                                        copyPaths(of: selection)
+                                    case .openInEditor:
+                                        break   // never emitted for the local pane (menu model)
+                                    case .rename, .infoAndPermissions, .newFolder, .delete:
+                                        break   // handled inside BrowserPane, never forwarded
                                     }
-                                case .copyPath:
-                                    copyPaths(of: selection)
-                                case .rename, .infoAndPermissions, .newFolder, .delete:
-                                    break   // handled inside BrowserPane, never forwarded
                                 }
+                            )
+                            .frame(minWidth: 280)
+
+                            BrowserPane(
+                                title: L10n.string("browser.paneRemote", "Remote"),
+                                tint: DesignTokens.remoteBlue,
+                                softTint: DesignTokens.remoteSoft,
+                                viewModel: session.remote,
+                                side: .remote,
+                                onDropURLs: { urls in
+                                    uploadDropped(urls, in: tab, session: session)
+                                },
+                                onOpenFile: { item in
+                                    openInEditor(item, in: tab, session: session)
+                                },
+                                pasteboardWriter: { item in
+                                    item.kind == .file
+                                        ? remotePromiseProvider(for: item, in: tab, session: session)
+                                        : nil
+                                },
+                                onMenuAction: { entry, selection in
+                                    switch entry {
+                                    case .transferToOtherPane:
+                                        transferSelection(
+                                            selection, from: .remote, in: tab, session: session)
+                                    case .openInEditor:
+                                        if let item = selection.first {
+                                            openInEditor(item, in: tab, session: session)
+                                        }
+                                    case .copyPath:
+                                        copyPaths(of: selection)
+                                    case .rename, .infoAndPermissions, .newFolder, .delete:
+                                        break   // handled inside BrowserPane, never forwarded
+                                    }
+                                }
+                            )
+                            .frame(minWidth: 280)
+                        }
+                        .frame(minHeight: 200)
+                        .layoutPriority(1)
+
+                        if session.terminal.isVisible {
+                            terminalPanel(session)
+                                .frame(minHeight: 120, idealHeight: 220)
+                        }
+                    }
+
+                    // Resume banner: displayed when the ACTIVE tab has interrupted
+                    // transfers (M5d/T4). Clicking "Resume" re-enqueues them with
+                    // that tab's file systems and resume semantics enabled.
+                    if tab.transferQueue.hasInterrupted {
+                        HStack {
+                            Text(L10n.string(
+                                "transfers.interrupted.banner",
+                                "Interrupted transfers can be resumed."))
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button(L10n.string("transfers.interrupted.resume", "Resume")) {
+                                tab.transferQueue.retryInterrupted(
+                                    source: session.localFS,
+                                    destination: session.remoteFS)
                             }
-                        )
-                        .frame(minWidth: 280)
+                            .controlSize(.small)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4)
+                        .background(Color(nsColor: .controlBackgroundColor))
                     }
-                    .frame(minHeight: 200)
-                    .layoutPriority(1)
 
-                    if session.terminal.isVisible {
-                        terminalPanel(session)
-                            .frame(minHeight: 120, idealHeight: 220)
-                    }
-                }
-
-                // Resume banner: displayed when the ACTIVE tab has interrupted
-                // transfers (M5d/T4). Clicking "Resume" re-enqueues them with
-                // that tab's file systems and resume semantics enabled.
-                if tab.transferQueue.hasInterrupted {
-                    HStack {
-                        Text(L10n.string(
-                            "transfers.interrupted.banner",
-                            "Interrupted transfers can be resumed."))
-                            .font(.caption.weight(.semibold))
+                    // Edit-open error (M5e/T4): subtle inline message, matching
+                    // the resume banner's placement/styling above. Dismissible;
+                    // cleared automatically on the next successful editor open.
+                    if let editErrorMessage = tab.editErrorMessage {
+                        HStack {
+                            Text(editErrorMessage)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .lineLimit(2)
+                            Spacer()
+                            Button {
+                                tab.editErrorMessage = nil
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                            }
+                            .buttonStyle(.plain)
                             .foregroundStyle(.secondary)
-                        Spacer()
-                        Button(L10n.string("transfers.interrupted.resume", "Resume")) {
-                            tab.transferQueue.retryInterrupted(
-                                source: session.localFS,
-                                destination: session.remoteFS)
                         }
-                        .controlSize(.small)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 4)
-                    .background(Color(nsColor: .controlBackgroundColor))
-                }
 
-                // Edit-open error (M5e/T4): subtle inline message, matching
-                // the resume banner's placement/styling above. Dismissible;
-                // cleared automatically on the next successful editor open.
-                if let editErrorMessage = tab.editErrorMessage {
-                    HStack {
-                        Text(editErrorMessage)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                            .lineLimit(2)
-                        Spacer()
-                        Button {
-                            tab.editErrorMessage = nil
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
+                    TransferQueueBar(viewModel: tab.transferQueue)
+                }
+                // The binding deliberately resolves `tabsModel.activeTab` on every
+                // access instead of capturing `tab`: only the tab in front may
+                // present its prompt, and a tab switch must re-resolve the sheet
+                // rather than keep a background tab's bridge alive here.
+                .sheet(
+                    item: Binding(
+                        get: { tabsModel.activeTab.conflictBridge.currentPrompt },
+                        set: { newValue in
+                            if newValue == nil { tabsModel.activeTab.conflictBridge.dismiss() }
                         }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 4)
+                    ),
+                    onDismiss: { tabsModel.activeTab.conflictBridge.dismiss() }
+                ) { item in
+                    ConflictSheetView(
+                        conflict: item.conflict,
+                        onResolve: { resolution, applyToAll in
+                            tabsModel.activeTab.conflictBridge.resolve(
+                                (resolution: resolution, applyToAll: applyToAll))
+                        },
+                        onCancel: { tabsModel.activeTab.conflictBridge.dismiss() }
+                    )
                 }
-
-                TransferQueueBar(viewModel: tab.transferQueue)
-            }
-            // The binding deliberately resolves `tabsModel.activeTab` on every
-            // access instead of capturing `tab`: only the tab in front may
-            // present its prompt, and a tab switch must re-resolve the sheet
-            // rather than keep a background tab's bridge alive here.
-            .sheet(
-                item: Binding(
-                    get: { tabsModel.activeTab.conflictBridge.currentPrompt },
-                    set: { newValue in
-                        if newValue == nil { tabsModel.activeTab.conflictBridge.dismiss() }
-                    }
-                ),
-                onDismiss: { tabsModel.activeTab.conflictBridge.dismiss() }
-            ) { item in
-                ConflictSheetView(
-                    conflict: item.conflict,
-                    onResolve: { resolution, applyToAll in
-                        tabsModel.activeTab.conflictBridge.resolve(
-                            (resolution: resolution, applyToAll: applyToAll))
+            } else {
+                // Align the form to the top instead of centering it vertically
+                // (user feedback 2026-07-10, M5c/T0) — otherwise the compact
+                // window has a lot of empty space below the content.
+                ConnectionFormView(
+                    viewModel: tab.connectionViewModel,
+                    groups: sessionListViewModel.groups,
+                    onSaveEdited: { stored, secret in
+                        sessionListViewModel.updateSession(stored, newSecret: secret)
+                        tab.connectionViewModel.endEditing()
                     },
-                    onCancel: { tabsModel.activeTab.conflictBridge.dismiss() }
-                )
+                    onCancelEdit: { tab.connectionViewModel.endEditing() },
+                    onConnectEdited: { stored in connect(in: tab, stored: stored) }
+                ) { fs in
+                    startSession(in: tab, with: fs)
+                }
+                .frame(maxHeight: .infinity, alignment: .top)
             }
-        } else {
-            // Align the form to the top instead of centering it vertically
-            // (user feedback 2026-07-10, M5c/T0) — otherwise the compact
-            // window has a lot of empty space below the content.
-            ConnectionFormView(
-                viewModel: tab.connectionViewModel,
-                groups: sessionListViewModel.groups,
-                onSaveEdited: { stored, secret in
-                    sessionListViewModel.updateSession(stored, newSecret: secret)
-                    tab.connectionViewModel.endEditing()
-                },
-                onCancelEdit: { tab.connectionViewModel.endEditing() },
-                onConnectEdited: { stored in connect(in: tab, stored: stored) }
-            ) { fs in
-                startSession(in: tab, with: fs)
-            }
-            .frame(maxHeight: .infinity, alignment: .top)
         }
+        // Load-bearing identity (M8a/T3 review): forces this whole per-tab
+        // subtree — the connected browser layout AND the form branch — to
+        // remount on every tab switch. Without it, two connected tabs would
+        // share the same SwiftUI view identities: `SSHTerminalView` binds
+        // `onOutput` and replays its buffer only in `makeNSView` (see
+        // SSHTerminalView.swift:29-30, `updateNSView` is empty), so a tab
+        // switch would keep rendering/typing into the OLD tab's shell
+        // instead of rebinding to the new one. `BrowserPane`/
+        // `ConnectionFormView` `@State` would leak across tabs the same way.
+        .id(tab.id)
     }
 
     // MARK: - Tab lifecycle
@@ -588,10 +600,6 @@ struct ContentView: View {
         // Clear any stale edit error from a previous session so a late
         // openInEditor task cannot misattribute its failure to this session.
         tab.editErrorMessage = nil
-        // Evaluated BEFORE the session is attached: the window only grows on
-        // the FIRST connection: with another tab already connected it is
-        // browser-sized already, and resizing would fight the user's layout.
-        let isFirstConnection = !tabsModel.tabs.contains { $0.isConnected }
         let form = tab.connectionViewModel
         let shellProvider = fs as? RemoteShellProvider
         // One UUID, shared by the session and its edit manager (M5e/T4) — see
@@ -623,14 +631,25 @@ struct ContentView: View {
         // that tab (M5d/T3): interrupted transfers stay in the bar across a
         // disconnect/reconnect so `retryInterrupted` can resume them.
 
-        if isFirstConnection {
-            // Actively grow the window to the browser size (user feedback
-            // 2026-07-10, M5c/T0) — to the last remembered browser size, if any
-            // and larger than the minimum size.
+        // Grow the window to the browser size (user feedback 2026-07-10,
+        // M5c/T0) — to the last remembered browser size, if any and larger
+        // than the minimum size. Gated on actual window GEOMETRY, not tab
+        // connectivity (M8a/T3 review): "no tab connected" is not the same
+        // as "window is form-sized" — a second form tab plus a manually
+        // resized window would otherwise let a later connect yank the
+        // window back down. The target is clamped to at least the current
+        // frame size and the resize only fires when the window is smaller
+        // than that target in either dimension, so a connect can only grow
+        // the window, never shrink it.
+        if let window {
             let targetSize = CGSize(
                 width: max(lastBrowserSize?.width ?? 0, 930),
                 height: max(lastBrowserSize?.height ?? 0, 620))
-            resizeWindow(toWidth: targetSize.width, height: targetSize.height)
+            if window.frame.width < targetSize.width || window.frame.height < targetSize.height {
+                resizeWindow(
+                    toWidth: max(targetSize.width, window.frame.width),
+                    height: max(targetSize.height, window.frame.height))
+            }
         }
 
         var titleName = storedName
