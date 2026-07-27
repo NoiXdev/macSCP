@@ -1,0 +1,25 @@
+#!/bin/bash
+# Renders docs/design/assets/icon.svg into Resources/AppIcon.icns.
+# The .icns is COMMITTED so packaging never needs librsvg; rerun this
+# script only when the icon SVG changes.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+command -v rsvg-convert >/dev/null 2>&1 || {
+    echo "error: rsvg-convert not found — install it with: brew install librsvg" >&2
+    exit 1
+}
+
+SVG="docs/design/assets/icon.svg"
+ICONSET="$(mktemp -d)/AppIcon.iconset"
+ICNS="Resources/AppIcon.icns"
+mkdir -p "$ICONSET" Resources
+
+for size in 16 32 128 256 512; do
+    rsvg-convert -w "$size" -h "$size" "$SVG" -o "$ICONSET/icon_${size}x${size}.png"
+    rsvg-convert -w "$((size * 2))" -h "$((size * 2))" "$SVG" -o "$ICONSET/icon_${size}x${size}@2x.png"
+done
+
+iconutil -c icns "$ICONSET" -o "$ICNS"
+rm -rf "$(dirname "$ICONSET")"
+echo "wrote $ICNS"
