@@ -235,6 +235,18 @@ struct SettingsStoreTests {
         #expect(store.fileAssociations.isEmpty)
     }
 
+    // MARK: - Hidden files (M7a Task 4)
+
+    @Test func showHiddenFilesDefaultsFalseAndPersists() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.showHiddenFiles == false)
+        store.showHiddenFiles = true
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.showHiddenFiles == true)
+    }
+
     @Test func editorSettingsSurviveAlongsideUnknownKeys() throws {
         let dir = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }

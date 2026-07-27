@@ -1,3 +1,8 @@
+/* Settings — General tab (M7a/T4) */
+"settings.tab.general" = "General";
+"settings.general.showHidden" = "Show hidden files";
+"settings.general.showHiddenHint" = "Applies to both panes. Shortcut: ⌘⇧.";
+
 /* Settings — Transfers tab */
 "settings.tab.transfers" = "Transfers";
 "settings.maxConcurrent.label" = "Maximum concurrent transfers";
@@ -122,4 +127,7 @@
 "connection.field.password.unchanged" = "unchanged";
 "connection.field.group" = "Group";
 "connection.saveAndConnect" = "Save & connect";
+
+/* Menu commands (M7a/T4) */
+"menu.toggleHidden" = "Show/Hide Hidden Files";
 "common.save" = "Save";

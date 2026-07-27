@@ -1,3 +1,8 @@
+/* Settings — Allgemein-Tab (M7a/T4) */
+"settings.tab.general" = "Allgemein";
+"settings.general.showHidden" = "Versteckte Dateien anzeigen";
+"settings.general.showHiddenHint" = "Gilt für beide Seiten. Kürzel: ⌘⇧.";
+
 /* Settings — Übertragungen-Tab */
 "settings.tab.transfers" = "Übertragungen";
 "settings.maxConcurrent.label" = "Maximale gleichzeitige Übertragungen";
@@ -122,4 +127,7 @@
 "connection.field.password.unchanged" = "unverändert";
 "connection.field.group" = "Gruppe";
 "connection.saveAndConnect" = "Speichern & verbinden";
+
+/* Menü-Befehle (M7a/T4) */
+"menu.toggleHidden" = "Versteckte Dateien ein-/ausblenden";
 "common.save" = "Speichern";

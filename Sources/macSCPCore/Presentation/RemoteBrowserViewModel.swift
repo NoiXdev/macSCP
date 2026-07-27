@@ -26,6 +26,10 @@ public final class RemoteBrowserViewModel {
         selectedItems.count == 1 ? selectedItems[0] : nil
     }
 
+    /// Display filter for dotfiles (M7a). The caller re-`load()`s after
+    /// changing it — the filter is presentation-only, never in the FS layer.
+    public var showHiddenFiles = false
+
     private let fs: any RemoteFileSystem
 
     public init(fs: any RemoteFileSystem, startPath: String = "/") {
@@ -40,7 +44,10 @@ public final class RemoteBrowserViewModel {
         selectedItems = []
         do {
             let listed = try await fs.list(path: currentPath)
-            items = Self.sortedForDisplay(listed)
+            let visible = showHiddenFiles
+                ? listed
+                : listed.filter { !$0.name.hasPrefix(".") }
+            items = Self.sortedForDisplay(visible)
             state = .loaded
         } catch {
             items = []

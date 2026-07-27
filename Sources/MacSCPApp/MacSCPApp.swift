@@ -27,6 +27,14 @@ struct MacSCPApp: App {
         WindowGroup("macSCP") {
             ContentView(settingsStore: settingsStore)
         }
+        .commands {
+            CommandGroup(after: .sidebar) {
+                Button(L10n.string("menu.toggleHidden", "Show/Hide Hidden Files")) {
+                    settingsStore.showHiddenFiles.toggle()
+                }
+                .keyboardShortcut(".", modifiers: [.command, .shift])
+            }
+        }
 
         // Opened via Cmd-, or the app menu's "Settings…" item (M5c/T3).
         Settings {

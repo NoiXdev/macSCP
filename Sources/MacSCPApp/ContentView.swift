@@ -264,6 +264,18 @@ struct ContentView: View {
         .onChange(of: settingsStore.downloadLimitKBs) { _, newValue in
             transferQueue.downloadLimitBytesPerSec = newValue * 1024
         }
+        // Hidden-files toggle (M7a/T4): applies to the CURRENT session's
+        // panes only — a no-op while disconnected, same as the limit
+        // observers above.
+        .onChange(of: settingsStore.showHiddenFiles) { _, newValue in
+            guard let session else { return }
+            session.local.showHiddenFiles = newValue
+            session.remote.showHiddenFiles = newValue
+            Task {
+                await session.local.refresh()
+                await session.remote.refresh()
+            }
+        }
     }
 
     @ViewBuilder
@@ -471,6 +483,10 @@ struct ContentView: View {
             }),
             editManager: EditSessionManager(sessionID: sessionID, queue: transferQueue)
         )
+        // Hidden-files toggle (M7a/T4): applied once here at session start,
+        // kept in sync afterwards by the `.onChange` observer above.
+        session?.local.showHiddenFiles = settingsStore.showHiddenFiles
+        session?.remote.showHiddenFiles = settingsStore.showHiddenFiles
         // The queue is created ONCE (the `@State` initializer) and OUTLIVES
         // each session (M5d/T3): interrupted transfers stay in the bar across a
         // disconnect/reconnect so `retryInterrupted` can resume them. Only the

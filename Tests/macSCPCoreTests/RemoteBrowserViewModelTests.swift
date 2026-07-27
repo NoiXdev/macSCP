@@ -74,6 +74,23 @@ struct RemoteBrowserViewModelTests {
         #expect(vm.selectedItem == nil)
     }
 
+    // MARK: - Hidden files (M7a Task 4)
+
+    @Test func loadFiltersDotfilesUnlessShowHiddenIsOn() async {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [
+                RemoteFileItem(name: ".env", path: "/.env", kind: .file, size: 1),
+                RemoteFileItem(name: "visible.txt", path: "/visible.txt", kind: .file, size: 1),
+            ],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        #expect(vm.items.map(\.name) == ["visible.txt"])
+        vm.showHiddenFiles = true
+        await vm.load()
+        #expect(vm.items.map(\.name) == [".env", "visible.txt"])
+    }
+
     @Test @MainActor func selectedItemDerivesFromSelectedItems() async {
         let vm = RemoteBrowserViewModel(fs: MockRemoteFileSystem())
         let a = RemoteFileItem(name: "a", path: "/a", kind: .file, size: 1)

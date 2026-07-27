@@ -5,13 +5,20 @@ import macSCPCore
 /// The app's Settings window content, opened via Cmd-, or the app menu's
 /// "Settings…" item (the `Settings` scene is wired up in MacSCPApp.swift).
 ///
-/// Structured as a `TabView` with a "Transfers" tab and an "Open with" tab
-/// (M5e/T2); future tabs (e.g. Terminal, General) slot in the same way.
+/// Structured as a `TabView` with a "General" tab (M7a/T4), a "Transfers"
+/// tab, and an "Open with" tab (M5e/T2); future tabs slot in the same way.
 struct SettingsView: View {
     var store: SettingsStore
 
     var body: some View {
         TabView {
+            GeneralSettingsTab(store: store)
+                .tabItem {
+                    Label(
+                        L10n.string("settings.tab.general", "General"),
+                        systemImage: "gearshape")
+                }
+
             TransfersSettingsTab(store: store)
                 .tabItem {
                     Label(
@@ -27,6 +34,25 @@ struct SettingsView: View {
                 }
         }
         .frame(width: 460, height: 360)
+    }
+}
+
+/// General app options (M7a): currently the hidden-files toggle.
+private struct GeneralSettingsTab: View {
+    @Bindable var store: SettingsStore
+
+    var body: some View {
+        Form {
+            Toggle(
+                L10n.string("settings.general.showHidden", "Show hidden files"),
+                isOn: $store.showHiddenFiles)
+            Text(L10n.string(
+                "settings.general.showHiddenHint",
+                "Applies to both panes. Shortcut: ⌘⇧."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(20)
     }
 }
 

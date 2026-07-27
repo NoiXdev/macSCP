@@ -60,12 +60,14 @@ public final class SettingsStore {
         static let downloadLimitKBs = "downloadLimitKBs"
         static let defaultEditorPath = "defaultEditorPath"
         static let fileAssociations = "fileAssociations"
+        static let showHiddenFiles = "showHiddenFiles"
     }
 
     private enum Defaults {
         static let maxConcurrentTransfers = 3
         static let uploadLimitKBs = 0
         static let downloadLimitKBs = 0
+        static let showHiddenFiles = false
     }
 
     /// Identical to `SessionStore.defaultDirectory` — both stores share the
@@ -170,6 +172,13 @@ public final class SettingsStore {
         }
     }
 
+    /// Show dotfiles in both panes (M7a). Default OFF — the Finder-like
+    /// default; ⌘⇧. and the General settings tab toggle it.
+    public var showHiddenFiles: Bool {
+        get { boolValue(for: Keys.showHiddenFiles, default: Defaults.showHiddenFiles) }
+        set { setBool(newValue, for: Keys.showHiddenFiles) }
+    }
+
     /// Convenience: association lookup with the SAME normalization applied.
     public func associatedApp(forExtension ext: String) -> String? {
         let normalizedExtension = Self.normalizeExtension(ext)
@@ -203,6 +212,18 @@ public final class SettingsStore {
 
     private func clamp(_ value: Int, _ lower: Int, _ upper: Int) -> Int {
         min(max(value, lower), upper)
+    }
+
+    private func boolValue(for key: String, default defaultValue: Bool) -> Bool {
+        guard case .bool(let value)? = raw[key] else {
+            return defaultValue
+        }
+        return value
+    }
+
+    private func setBool(_ value: Bool, for key: String) {
+        raw[key] = .bool(value)
+        persist()
     }
 
     /// Writes the entire raw backing (including unknown keys) back out
