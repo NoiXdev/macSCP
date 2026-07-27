@@ -429,6 +429,14 @@ struct LocalFileSystemTests {
         #expect(!FileManager.default.fileExists(atPath: link.path(percentEncoded: false)))
         #expect(FileManager.default.fileExists(atPath: outside.path(percentEncoded: false)))
         #expect(FileManager.default.fileExists(atPath: keep.path(percentEncoded: false)))
+
+        // Repeated trailing slashes must be equally harmless (final-review
+        // follow-up: a single-strip normalization left "//" following the
+        // link) — recreate the link and delete it with a double slash.
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+        try await fs.deleteTree(at: link.path(percentEncoded: false) + "//")
+        #expect(!FileManager.default.fileExists(atPath: link.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: keep.path(percentEncoded: false)))
     }
 
     @Test func deleteTreeRemovesPlainFile() async throws {

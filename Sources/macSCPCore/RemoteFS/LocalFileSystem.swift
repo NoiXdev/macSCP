@@ -197,7 +197,8 @@ public struct LocalFileSystem: RemoteFileSystem {
         // A trailing slash makes the delete FOLLOW a symlink argument and
         // destroy the TARGET's contents (proven on both backends in the M7a
         // final review) — strip it before anything else.
-        let path = path.count > 1 && path.hasSuffix("/") ? String(path.dropLast()) : path
+        var path = path
+        while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
         guard Self.exists(atPath: path) else {
             throw RemoteFSError.notFound(path: path)
         }
