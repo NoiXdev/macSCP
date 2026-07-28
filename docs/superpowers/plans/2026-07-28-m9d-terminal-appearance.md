@@ -39,7 +39,7 @@ T1 (Core: Settings + Cursor-Enum + FS-Home, inkl. gated Test) → T2 (App: Termi
   - `RemoteFileSystem.homeDirectoryPath() async throws -> String` (Protocol-Erweiterung; ALLE Konformen implementieren)
   - `MockRemoteFileSystem`: konfigurierbares Home (Default `/`) + optionaler Fehlermodus
 
-- [ ] **Step 1: Failing Tests.** `TerminalCursorStyleTests.swift` (neu):
+- [x] **Step 1: Failing Tests.** `TerminalCursorStyleTests.swift` (neu):
 
 ```swift
 import Testing
@@ -71,9 +71,9 @@ struct TerminalCursorStyleTests {
 
 `SettingsStoreTests`-Erweiterung (Datei-Muster): Defaults (nil/13/block/true), Größen-Klemmung Setter (8→9, 99→24) UND Getter (Raw-JSON 0→9, 1000→24), unbekannter Cursor-Raw (`"weird"` in Raw-JSON) liest als `.block`, Roundtrip aller vier, alte settings.json ⇒ Defaults. VM/Mock: Test, dass ein konfiguriertes Mock-Home von `homeDirectoryPath()` geliefert wird und der Fehlermodus wirft.
 
-- [ ] **Step 2: Rot beweisen**, dann implementieren: Enum trivial; Settings nach `showHiddenFiles`/`autoRefreshIntervalSeconds`-Muster (String-Optional-Helfer für `terminalFontName` nachschlagen bzw. analog `stringValue/setString` ergänzen, falls nicht vorhanden — Muster `fileAssociations`/`defaultEditorPath` prüfen); `terminalCursorStyle` speichert RawValue-String, Getter `TerminalCursorStyle(rawValue:) ?? .block`.
-- [ ] **Step 3: FS-API.** Protocol-Doku-Kommentar: „Resolves the connection's home directory (login landing point). Used once at session start; callers fall back to "/" on failure." Citadel: die SFTP-`realpath`-Fähigkeit existiert (Citadel `SFTPClient` — exakten Methodennamen nachschlagen, ~`getRealPath(atPath: ".")`); Fehler-Mapping wie die übrigen Citadel-Methoden. Local: `NSHomeDirectory()`. Mock: `var homePath: String = "/"` + Fehler-Flag, Konstruktions-kompatibel für alle Bestandstests (Defaults!).
-- [ ] **Step 4: Gated Test** (in der Docker-Suite, deren Konventionen folgen; Rig aus dem HAUPT-Checkout starten, `docker compose -f docker/test-server/compose.yml start`, danach LAUFEN LASSEN):
+- [x] **Step 2: Rot beweisen**, dann implementieren: Enum trivial; Settings nach `showHiddenFiles`/`autoRefreshIntervalSeconds`-Muster (String-Optional-Helfer für `terminalFontName` nachschlagen bzw. analog `stringValue/setString` ergänzen, falls nicht vorhanden — Muster `fileAssociations`/`defaultEditorPath` prüfen); `terminalCursorStyle` speichert RawValue-String, Getter `TerminalCursorStyle(rawValue:) ?? .block`.
+- [x] **Step 3: FS-API.** Protocol-Doku-Kommentar: „Resolves the connection's home directory (login landing point). Used once at session start; callers fall back to "/" on failure." Citadel: die SFTP-`realpath`-Fähigkeit existiert (Citadel `SFTPClient` — exakten Methodennamen nachschlagen, ~`getRealPath(atPath: ".")`); Fehler-Mapping wie die übrigen Citadel-Methoden. Local: `NSHomeDirectory()`. Mock: `var homePath: String = "/"` + Fehler-Flag, Konstruktions-kompatibel für alle Bestandstests (Defaults!).
+- [x] **Step 4: Gated Test** (in der Docker-Suite, deren Konventionen folgen; Rig aus dem HAUPT-Checkout starten, `docker compose -f docker/test-server/compose.yml start`, danach LAUFEN LASSEN):
 
 ```swift
     @Test func homeDirectoryPathResolvesAbsoluteAndListable() async throws {
@@ -84,7 +84,7 @@ struct TerminalCursorStyleTests {
     }
 ```
 
-- [ ] **Step 5: Grün + volle Suite (inkl. `MACSCP_ITEST=1 swift test`) + Commit.** `swift test` → 456 + ~10 (echte Zahl festhalten). Commit `feat: add terminal appearance settings and remote home resolution`
+- [x] **Step 5: Grün + volle Suite (inkl. `MACSCP_ITEST=1 swift test`) + Commit.** `swift test` → 456 + ~10 (echte Zahl festhalten). Commit `feat: add terminal appearance settings and remote home resolution`
 
 ---
 
@@ -104,12 +104,12 @@ struct TerminalCursorStyleTests {
 4. Home-Start in `startSession`: VOR der `BrowserSession`-Erzeugung `let home = (try? await fs.homeDirectoryPath()) ?? "/"` und `RemoteBrowserViewModel(fs: fs, startPath: home)`. (`startSession` ist bereits async-fähig? Prüfen — sie wird aus async-Kontexten gerufen; falls sync, den Home-Lookup in den connect-Fluss davor ziehen. Lösung im Report dokumentieren.)
 5. Keys EN/DE (Vorschlag): `settings.tab.terminal` „Terminal"/„Terminal", `settings.terminal.font` „Font"/„Schrift", `settings.terminal.systemFont` „System (SF Mono)"/„System (SF Mono)", `settings.terminal.size %lld` „Size: %lld pt"/„Größe: %lld pt", `settings.terminal.cursor` „Cursor"/„Cursor", `settings.terminal.cursor.block/bar/underline` „Block"/„Balken"/„Unterstrich" (EN Block/Bar/Underline), `settings.terminal.cursorBlink` „Blinking"/„Blinken", `settings.terminal.preview` (Vorschau-Zeile bleibt unlokalisierter Beispieltext — KEIN Key nötig, im Report vermerken). Grep-Gegenprobe beide Kataloge.
 
-- [ ] **Step 1:** SSHTerminalView. **Step 2:** Settings-Tab + Keys. **Step 3:** Home-Start. **Step 4:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test` (Stand T1). **Step 5:** Commit `feat: make the terminal appearance configurable and start in the remote home`.
+- [x] **Step 1:** SSHTerminalView. **Step 2:** Settings-Tab + Keys. **Step 3:** Home-Start. **Step 4:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test` (Stand T1). **Step 5:** Commit `feat: make the terminal appearance configurable and start in the remote home`.
 
 ---
 
 ### Task 3: Abschluss-Verifikation (Koordinator)
 
-- [ ] Gated Suiten: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün, zero skips.
-- [ ] Visueller Smoke (Dev-Wrapper; Maintainer testet ggf. selbst): Verbinden → Remote-Pane startet im HOME (Rig: testuser-Home) statt `/`; Terminal öffnen → Settings: Font wechseln (z. B. Menlo), Größe ändern, Cursor Balken/blinkend → offenes Terminal übernimmt LIVE ohne Inhalt-Verlust; ungültige Größe klemmt; Vorschau folgt; Neustart behält Werte; Regressionen: ⌘T-Replay, Resize→window-change, CI-Farben unverändert.
-- [ ] Plan-Checkboxen, Ledger, Opus-Whole-Branch-Final-Review (Base = Commit vor T1), Fixes, Push develop, CI, Rig `stop`, Memory-Update, Milestone-Zusammenfassung (+ M10-Reihenfolge Known Hosts → Login-Sets → Jump-Host als Nächstes; M9e ssh-agent ggf. in M10b-Design einbeziehen — Login-Set-Auth-Art „Agent"; Release-Bündelung weiter offen).
+- [x] Gated Suiten: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün, zero skips (470/470; Final-Reviewer lief zusätzlich zweimal).
+- [ ] Visueller Smoke — **an den Maintainer delegiert** (Wrapper läuft; Checkliste in der Milestone-Zusammenfassung): Verbinden → Remote-Pane startet im HOME (Rig: testuser-Home) statt `/`; Terminal öffnen → Settings: Font wechseln (z. B. Menlo), Größe ändern, Cursor Balken/blinkend → offenes Terminal übernimmt LIVE ohne Inhalt-Verlust; ungültige Größe klemmt; Vorschau folgt; Neustart behält Werte; Regressionen: ⌘T-Replay, Resize→window-change, CI-Farben unverändert.
+- [x] Plan-Checkboxen, Ledger, Opus-Whole-Branch-Final-Review (Base = Commit vor T1; „No" mit einem Important [Double-Connect-Leak durch async-Handoff, empirisch belegt] → Fix-Commit dfe19ea → Re-Review „Ready to merge: Yes"), Fixes, Push develop, CI, Rig `stop`, Memory-Update, Milestone-Zusammenfassung (+ M10-Reihenfolge Known Hosts → Login-Sets → Jump-Host als Nächstes; M9e ssh-agent ggf. in M10b-Design einbeziehen — Login-Set-Auth-Art „Agent"; Release-Bündelung weiter offen).

@@ -718,10 +718,10 @@ struct ContentView: View {
                     // (older SFTP servers, permission quirks) falls back to
                     // "/" rather than failing the connect.
                     // Accept only usable absolute paths (M9d final review): an
-                // empty/relative realpath result would land the pane in
-                // .failed where "/" always worked.
-                let resolved = (try? await fs.homeDirectoryPath()) ?? "/"
-                let home = resolved.hasPrefix("/") ? resolved : "/"
+                    // empty/relative realpath result would land the pane in
+                    // .failed where "/" always worked.
+                    let resolved = (try? await fs.homeDirectoryPath()) ?? "/"
+                    let home = resolved.hasPrefix("/") ? resolved : "/"
                     startSession(in: tab, with: fs, startPath: home)
                 }
                 .frame(maxHeight: .infinity, alignment: .top)
