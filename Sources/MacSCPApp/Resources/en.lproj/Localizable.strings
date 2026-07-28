@@ -114,6 +114,7 @@
 "sidebar.connect" = "Connect";
 "sidebar.edit" = "Edit…";
 "sidebar.rename" = "Rename";
+"sidebar.auditLog" = "Audit Log…";
 "sidebar.moveTo" = "Move to";
 "sidebar.noGroup" = "No group";
 "sidebar.newGroup" = "New group…";
@@ -248,3 +249,36 @@
 "import.error.newerVersion" = "This file was created by a newer version of macSCP.";
 "import.error.readFailed %@" = "Could not read the file: %@";
 "import.error.title" = "Import Failed";
+
+/* Audit log sheet (M9b/T3) */
+"audit.filter.all" = "All";
+"audit.filter.transfers" = "Transfers";
+"audit.filter.fileOps" = "File Ops";
+"audit.filter.connection" = "Connection";
+"audit.filter.errors" = "Errors";
+"audit.search" = "Search";
+"audit.column.time" = "Time";
+"audit.column.kind" = "Event";
+"audit.column.detail" = "Detail";
+"audit.empty" = "No entries yet.";
+"audit.count %lld" = "%lld entries";
+"audit.countFiltered %lld %lld" = "%lld of %lld";
+"audit.export" = "Export as Text…";
+"audit.export.error %@" = "Could not write the export file: %@";
+"audit.clear" = "Clear Log…";
+"audit.clear.title" = "Clear audit log?";
+"audit.clear.message" = "This removes every entry in this session's log. This cannot be undone.";
+"audit.clear.confirm" = "Clear";
+
+/* Audit log — event kind labels (M9b/T3) */
+"audit.kind.connected" = "Connected";
+"audit.kind.disconnected" = "Disconnected";
+"audit.kind.transferFinished" = "Transfer finished";
+"audit.kind.transferFailed" = "Transfer failed";
+"audit.kind.transferCancelled" = "Transfer cancelled";
+"audit.kind.rename" = "Renamed";
+"audit.kind.delete" = "Deleted";
+"audit.kind.permissions" = "Permissions";
+"audit.kind.newFolder" = "New folder";
+"audit.kind.editUpload" = "Editor upload";
+"audit.kind.crossSessionTransfer" = "Cross-session transfer";

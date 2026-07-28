@@ -41,6 +41,29 @@ struct SessionListViewModelTests {
         #expect(try secrets.password(for: stored.id) == nil)
     }
 
+    @Test func deleteRemovesTheSessionsAuditLog() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        let auditDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-audit-\(UUID().uuidString)")
+        defer {
+            try? FileManager.default.removeItem(at: dir)
+            try? FileManager.default.removeItem(at: auditDir)
+        }
+        let auditStore = AuditLogStore(directory: auditDir)
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: InMemorySecretStore(),
+            auditStore: auditStore)
+
+        let stored = vm.save(name: "weg", host: "h", port: 22, username: "u", password: "p")!
+        auditStore.append(AuditEvent(kind: .connected, detail: "connected to h as u"), for: stored.id)
+        #expect(auditStore.events(for: stored.id).count == 1)
+
+        vm.delete(stored)
+
+        #expect(auditStore.events(for: stored.id).isEmpty)
+    }
+
     @Test func passwordReadsSecret() {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }

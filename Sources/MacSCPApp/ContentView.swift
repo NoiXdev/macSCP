@@ -144,14 +144,18 @@ struct ContentView: View {
     /// Every tab's queue resolves its throttle from this one instance, so
     /// limits apply in aggregate across tabs (M8a/T3).
     let bandwidthLimiter: BandwidthLimiter
+    /// App-wide per-session audit log store (M9b), created once in
+    /// `MacSCPApp` (no singleton) — shared by `sessionListViewModel` (log
+    /// cleanup on delete) and every stored-session tab's `AuditRecorder`
+    /// (see `attachAuditRecorder`).
+    let auditStore: AuditLogStore
     /// Command bridge (M8a/T4): `MacSCPApp` holds no reference to
     /// `ContentView`, so the menu's Cmd-N/Cmd-W/Cmd-1…9 items call into the
     /// closures this view assigns in `.task` below.
     let tabCommands: TabCommands
-    @State private var sessionListViewModel = SessionListViewModel(
-        store: SessionStore(directory: SessionStore.defaultDirectory),
-        secrets: KeychainSecretStore()
-    )
+    /// Assigned in `init` (not a bare default value) so it can pass
+    /// `auditStore` through — mirrors `_tabsModel` below.
+    @State private var sessionListViewModel: SessionListViewModel
     /// Window-scoped tab collection (M8a/T3). Everything that used to be
     /// window-wide session state (connection form, session, queue, conflict
     /// bridge, title, edit error, reconnect flag) now lives per tab in
@@ -175,6 +179,14 @@ struct ContentView: View {
     /// mid-dialog if the underlying transfers finish while it's still open —
     /// blank text under a destructive "Close" button.
     @State private var closeWarningText: String = ""
+
+    // MARK: - Audit log (M9b/T3)
+
+    /// Session whose audit log sheet is open, or `nil` when none is —
+    /// `StoredSession` drives `.sheet(item:)` directly (it's already
+    /// `Identifiable`). Opened from the sidebar's "Audit Log…" entry, works
+    /// whether or not that session is currently connected.
+    @State private var auditLogSession: StoredSession?
 
     // MARK: - Session export/import (M9a/T3)
 
@@ -205,12 +217,21 @@ struct ContentView: View {
     @State private var showImportResultAlert = false
     @State private var importErrorMessage: String?
 
-    init(settingsStore: SettingsStore, bandwidthLimiter: BandwidthLimiter, tabCommands: TabCommands) {
+    init(
+        settingsStore: SettingsStore, bandwidthLimiter: BandwidthLimiter, auditStore: AuditLogStore,
+        tabCommands: TabCommands
+    ) {
         self.settingsStore = settingsStore
         self.bandwidthLimiter = bandwidthLimiter
+        self.auditStore = auditStore
         self.tabCommands = tabCommands
         _tabsModel = State(initialValue: TabsViewModel(
             initial: Self.makeTab(settingsStore: settingsStore, limiter: bandwidthLimiter)))
+        _sessionListViewModel = State(initialValue: SessionListViewModel(
+            store: SessionStore(directory: SessionStore.defaultDirectory),
+            secrets: KeychainSecretStore(),
+            auditStore: auditStore
+        ))
     }
 
     /// The mounted tab. Every view below renders THIS tab's state; switching
@@ -247,7 +268,8 @@ struct ContentView: View {
                 onSelectImported: { fillFromImported($0) },
                 onEdit: { stored in editStored(stored) },
                 onExport: { scope in exportSheetItem = ExportSheetItem(scope: scope) },
-                onImport: { showImportFileImporter = true }
+                onImport: { showImportFileImporter = true },
+                onShowAuditLog: { stored in auditLogSession = stored }
             )
             .frame(minWidth: 170, idealWidth: 190, maxWidth: 260)
 
@@ -353,6 +375,12 @@ struct ContentView: View {
                 scope: item.scope,
                 onExport: { options in performExport(scope: item.scope, options: options) }
             )
+        }
+        // Audit log sheet (M9b/T3): opened from the sidebar context menu,
+        // available whether or not the session is currently connected — it
+        // reads straight from `auditStore`, independent of any tab.
+        .sheet(item: $auditLogSession) { stored in
+            AuditLogSheet(session: stored, store: auditStore)
         }
         .fileExporter(
             isPresented: $showExportFileExporter,
@@ -698,6 +726,33 @@ struct ContentView: View {
         Self.makeTab(settingsStore: settingsStore, limiter: bandwidthLimiter)
     }
 
+    /// Attaches this tab's audit recorder once it connects to a STORED
+    /// session (M9b/T3) — called from both places `activeStoredSessionID`
+    /// gets assigned: `connect(in:stored:)` and `startSession`'s "Save &
+    /// connect" path. Never called for an ad-hoc connect. Must run AFTER
+    /// `tab.session` is populated (`startSession` always sets it first), so
+    /// `tab.session?.remote.auditSink` below has something to wire.
+    ///
+    /// The recorder is captured by value in both closures (it's a plain
+    /// `Sendable` struct over `sessionID` + `auditStore`); the queue sink
+    /// additionally resolves a finished item's `destinationTabID` against
+    /// `tabsModel` to the target tab's `displayTitle` for the
+    /// cross-session-transfer detail — a target tab that's already gone
+    /// resolves to `nil`, which `AuditRecorder.recordTransfer` renders as
+    /// "unknown session".
+    private func attachAuditRecorder(to tab: SessionTab, sessionID: UUID, host: String, username: String) {
+        let recorder = AuditRecorder(sessionID: sessionID, store: auditStore)
+        tab.auditRecorder = recorder
+        recorder.recordConnected(host: host, username: username)
+        tab.transferQueue.auditSink = { item in
+            let targetTitle = item.destinationTabID.flatMap { id in
+                tabsModel.tabs.first(where: { $0.id == id })?.displayTitle
+            }
+            recorder.recordTransfer(item, targetTitle: targetTitle)
+        }
+        tab.session?.remote.auditSink = { event in recorder.recordAction(event) }
+    }
+
     /// Tab-local teardown, in the invariant order: bridge dismiss →
     /// `cancelAll` → `editManager.stopAll` → `terminal.shutdown` →
     /// `remote.disconnect`. Touches ONLY this tab; other tabs' sessions,
@@ -718,6 +773,16 @@ struct ContentView: View {
             await session.editManager.stopAll()
             await session.terminal.shutdown()
             await session.remote.disconnect()
+            // Audit recorder teardown (M9b/T3): only present for a stored
+            // session (`attachAuditRecorder` never runs for an ad-hoc
+            // connect), so this is a no-op otherwise. `recordDisconnected()`
+            // FIRST, then release the recorder and BOTH sinks it wired.
+            if let recorder = tab.auditRecorder {
+                recorder.recordDisconnected()
+                tab.auditRecorder = nil
+                tab.transferQueue.auditSink = nil
+                session.remote.auditSink = nil
+            }
         }
         let form = tab.connectionViewModel
         form.clearPassword()
@@ -958,6 +1023,13 @@ struct ContentView: View {
             tab.activeStoredSessionID = stored?.id
             form.shouldSaveSession = false
             titleName = stored?.name ?? titleName
+            // Audit recorder (M9b/T3): this "Save & connect" path just
+            // turned an ad-hoc connect into a stored session — attach the
+            // recorder here, mirroring `connect(in:stored:)` below.
+            if let stored {
+                attachAuditRecorder(
+                    to: tab, sessionID: stored.id, host: stored.host, username: stored.username)
+            }
         }
 
         // Tab/window title: a stored session's name when this connection is
@@ -1002,6 +1074,11 @@ struct ContentView: View {
             if let fs = await form.connect() {
                 startSession(in: tab, with: fs, storedName: stored.name)
                 tab.activeStoredSessionID = stored.id
+                // Audit recorder (M9b/T3): this IS the stored-session connect
+                // path — attach right after `activeStoredSessionID`, once
+                // `tab.session` (set inside `startSession`) exists.
+                attachAuditRecorder(
+                    to: tab, sessionID: stored.id, host: stored.host, username: stored.username)
             }
         }
     }

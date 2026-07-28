@@ -14,10 +14,18 @@ public final class SessionListViewModel {
 
     private let store: SessionStore
     private let secrets: any SecretStore
+    /// Per-session audit log persistence (M9b) — only consumed here to clean
+    /// up a session's log file on `delete(_:)`. Defaulted so existing call
+    /// sites (and most tests) don't need to know about it.
+    private let auditStore: AuditLogStore
 
-    public init(store: SessionStore, secrets: any SecretStore) {
+    public init(
+        store: SessionStore, secrets: any SecretStore,
+        auditStore: AuditLogStore = AuditLogStore(directory: AuditLogStore.defaultDirectory)
+    ) {
         self.store = store
         self.secrets = secrets
+        self.auditStore = auditStore
         reload()
     }
 
@@ -80,6 +88,9 @@ public final class SessionListViewModel {
         do {
             try store.delete(id: session.id)
             try secrets.deletePassword(for: session.id)
+            // Throw-free by design (M9b) — an orphaned log file is a minor
+            // leak, never a reason to fail the session deletion itself.
+            auditStore.deleteLog(for: session.id)
             reload()
         } catch {
             reload()

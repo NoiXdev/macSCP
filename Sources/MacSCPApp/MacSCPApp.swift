@@ -26,6 +26,11 @@ struct MacSCPApp: App {
     /// its throttle from the same buckets — limits apply in aggregate across
     /// tabs, not per tab.
     @State private var bandwidthLimiter = BandwidthLimiter()
+    /// App-wide per-session audit log persistence (M9b) — one instance for
+    /// the whole app, passed to `ContentView` (no singleton, same pattern as
+    /// `settingsStore`/`bandwidthLimiter` above). A stateless struct over a
+    /// fixed directory, so a plain default-initialized `@State` is enough.
+    @State private var auditStore = AuditLogStore(directory: AuditLogStore.defaultDirectory)
     /// Tab menu command bridge (M8a/T4) — see `TabCommands`.
     @State private var tabCommands = TabCommands()
 
@@ -48,7 +53,7 @@ struct MacSCPApp: App {
         WindowGroup("macSCP") {
             ContentView(
                 settingsStore: settingsStore, bandwidthLimiter: bandwidthLimiter,
-                tabCommands: tabCommands)
+                auditStore: auditStore, tabCommands: tabCommands)
         }
         .commands {
             // Replaces the default "New Window" (⌘N) — this is a single-window,

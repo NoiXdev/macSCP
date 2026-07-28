@@ -114,6 +114,7 @@
 "sidebar.connect" = "Verbinden";
 "sidebar.edit" = "Bearbeiten…";
 "sidebar.rename" = "Umbenennen";
+"sidebar.auditLog" = "Audit-Log…";
 "sidebar.moveTo" = "Verschieben nach";
 "sidebar.noGroup" = "Keine Gruppe";
 "sidebar.newGroup" = "Neue Gruppe…";
@@ -248,3 +249,36 @@
 "import.error.newerVersion" = "Diese Datei wurde mit einer neueren Version von macSCP erstellt.";
 "import.error.readFailed %@" = "Die Datei konnte nicht gelesen werden: %@";
 "import.error.title" = "Import fehlgeschlagen";
+
+/* Audit-Log-Sheet (M9b/T3) */
+"audit.filter.all" = "Alle";
+"audit.filter.transfers" = "Transfers";
+"audit.filter.fileOps" = "Datei-Ops";
+"audit.filter.connection" = "Verbindung";
+"audit.filter.errors" = "Fehler";
+"audit.search" = "Suchen";
+"audit.column.time" = "Zeit";
+"audit.column.kind" = "Ereignis";
+"audit.column.detail" = "Detail";
+"audit.empty" = "Noch keine Einträge.";
+"audit.count %lld" = "%lld Einträge";
+"audit.countFiltered %lld %lld" = "%lld von %lld";
+"audit.export" = "Als Text exportieren…";
+"audit.export.error %@" = "Die Exportdatei konnte nicht geschrieben werden: %@";
+"audit.clear" = "Log leeren…";
+"audit.clear.title" = "Audit-Log leeren?";
+"audit.clear.message" = "Dadurch werden alle Einträge dieses Sitzungsprotokolls entfernt. Dies kann nicht rückgängig gemacht werden.";
+"audit.clear.confirm" = "Leeren";
+
+/* Audit-Log — Ereignis-Label (M9b/T3) */
+"audit.kind.connected" = "Verbunden";
+"audit.kind.disconnected" = "Getrennt";
+"audit.kind.transferFinished" = "Übertragung abgeschlossen";
+"audit.kind.transferFailed" = "Übertragung fehlgeschlagen";
+"audit.kind.transferCancelled" = "Übertragung abgebrochen";
+"audit.kind.rename" = "Umbenannt";
+"audit.kind.delete" = "Gelöscht";
+"audit.kind.permissions" = "Rechte geändert";
+"audit.kind.newFolder" = "Neuer Ordner";
+"audit.kind.editUpload" = "Editor-Upload";
+"audit.kind.crossSessionTransfer" = "Sitzungsübergreifende Übertragung";

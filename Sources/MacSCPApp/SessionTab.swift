@@ -37,6 +37,11 @@ final class SessionTab: Identifiable {
     var editErrorMessage: String?
     /// Stored session this tab is connected to (sidebar highlight).
     var activeStoredSessionID: UUID?
+    /// Per-session audit recorder (M9b) — set only when this tab connects to
+    /// a STORED session (never for an ad-hoc connect), alongside
+    /// `activeStoredSessionID`; nilled in `teardown(_:)` after the final
+    /// `recordDisconnected()` call. See `ContentView.attachAuditRecorder`.
+    var auditRecorder: AuditRecorder?
     var isReconnecting = false
     /// Last-seen value of `transferQueue.totalFailureCount` while this tab was
     /// active — the attention indicator (T4) lights up when

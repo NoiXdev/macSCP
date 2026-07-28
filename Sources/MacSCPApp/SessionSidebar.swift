@@ -19,6 +19,9 @@ struct SessionSidebar: View {
     /// menus all funnel into this one callback with the scope they cover.
     let onExport: (SessionListViewModel.ExportScope) -> Void
     let onImport: () -> Void
+    /// Sidebar session menu "Audit Log…" entry (M9b/T3) — opens the sheet
+    /// for any stored session, connected or not.
+    let onShowAuditLog: (StoredSession) -> Void
 
     /// Not persisted — resets to "all expanded" on relaunch.
     @State private var collapsedGroups: Set<UUID> = []
@@ -163,7 +166,8 @@ struct SessionSidebar: View {
                 onMove: { groupID in viewModel.moveSession(session, toGroup: groupID) },
                 onRequestNewGroupMove: { beginNewGroup(forMoving: session) },
                 onRequestDelete: { sessionPendingDelete = session },
-                onExport: { onExport(.single(session)) }
+                onExport: { onExport(.single(session)) },
+                onShowAuditLog: { onShowAuditLog(session) }
             )
             .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 6))
         }
@@ -320,6 +324,7 @@ private struct SessionRow: View {
     let onRequestNewGroupMove: () -> Void
     let onRequestDelete: () -> Void
     let onExport: () -> Void
+    let onShowAuditLog: () -> Void
 
     @State private var isHovering = false
 
@@ -380,6 +385,8 @@ private struct SessionRow: View {
                 Divider()
                 Button(L10n.string("sidebar.newGroup", "New group…")) { onRequestNewGroupMove() }
             }
+            Divider()
+            Button(L10n.string("sidebar.auditLog", "Audit Log…")) { onShowAuditLog() }
             Divider()
             Button(L10n.string("sidebar.delete", "Delete"), role: .destructive) {
                 onRequestDelete()
