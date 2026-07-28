@@ -41,9 +41,15 @@ public struct AuditRecorder: Sendable {
     ///   the queue's single terminal-transition sink, so a plain `.skipped`/
     ///   `.interrupted` item (or a non-terminal one) is deliberately silent —
     ///   not every terminal state is audit-worthy (M9b spec §1).
+    ///
+    /// The spec (binding, maintainer-approved) requires "Richtung, Name,
+    /// Ziel" (direction, name, destination) — its own worked example is
+    /// `upload report.pdf → /var/www` (M9b/T4 review, finding 3). Every
+    /// detail below therefore names `item.destinationDirectory`, not just
+    /// the file name.
     public func recordTransfer(_ item: TransferQueueViewModel.Item, targetTitle: String?) {
         let verb = item.direction == .upload ? "upload" : "download"
-        let baseDetail = "\(verb) \(item.fileName)"
+        let baseDetail = "\(verb) \(item.fileName) → \(item.destinationDirectory)"
 
         switch item.status {
         case .finished:
@@ -52,7 +58,9 @@ public struct AuditRecorder: Sendable {
             } else if item.destinationTabID != nil {
                 let target = targetTitle ?? "unknown session"
                 store.append(
-                    AuditEvent(kind: .crossSessionTransfer, detail: "to “\(target)”: \(item.fileName)"),
+                    AuditEvent(
+                        kind: .crossSessionTransfer,
+                        detail: "to “\(target)”: \(item.fileName) → \(item.destinationDirectory)"),
                     for: sessionID)
             } else {
                 store.append(AuditEvent(kind: .transferFinished, detail: baseDetail), for: sessionID)

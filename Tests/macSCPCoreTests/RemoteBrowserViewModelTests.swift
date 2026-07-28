@@ -411,6 +411,42 @@ struct RemoteBrowserViewModelTests {
         #expect(capture.events[0].errorMessage == error)
     }
 
+    /// M9b/T4 review (finding 6): `deleteItems` stops at the first failure
+    /// (see `deleteItemsStopsAtFirstFailureLeavingLaterItemsUntouched` above)
+    /// but the audit detail used to list EVERY selected path regardless —
+    /// claiming paths were deleted that never were. The detail must name
+    /// only the paths ACTUALLY deleted, with the failure point named
+    /// separately (chosen shape: `delete <deleted paths> — failed at
+    /// <path>`; the deleted-paths list is empty-but-present when nothing
+    /// was deleted before the first failure).
+    @Test func deleteItemsPartialFailureDetailNamesOnlyDeletedPathsPlusFailure() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [
+                RemoteFileItem(name: "a.txt", path: "/a.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "c.txt", path: "/c.txt", kind: .file, size: 1),
+            ],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        let capture = EventCapture()
+        vm.auditSink = { capture.record($0) }
+        await vm.load()
+        let a = vm.items.first(where: { $0.name == "a.txt" })!
+        let c = vm.items.first(where: { $0.name == "c.txt" })!
+        // Stale item: never seeded, so `deleteTree` fails on it — matches
+        // the stop-at-first-failure test's mock pattern exactly.
+        let staleB = RemoteFileItem(name: "b.txt", path: "/b.txt", kind: .file, size: 1)
+
+        let error = await vm.deleteItems([a, staleB, c])
+
+        #expect(error != nil)
+        #expect(capture.events.count == 1)
+        #expect(capture.events[0].kind == .delete)
+        #expect(capture.events[0].isError == true)
+        #expect(capture.events[0].detail.contains("/a.txt"))
+        #expect(!capture.events[0].detail.contains("/c.txt"))   // never reached, never deleted
+        #expect(capture.events[0].detail.contains("/b.txt"))    // names the failure point
+    }
+
     @Test func nilAuditSinkFiresNothing() async throws {
         let fs = MockRemoteFileSystem(tree: [
             "/": [RemoteFileItem(name: "old.txt", path: "/old.txt", kind: .file, size: 1)],

@@ -66,6 +66,24 @@ struct AuditLogStoreTests {
         #expect(store.events(for: id).map(\.detail) == ["fresh"])
     }
 
+    /// M9b/T4 review (finding 2): `append` now only hands the write off to a
+    /// private serial queue instead of blocking the caller — this proves the
+    /// cache stays coherent across that hand-off. Not timing-based: a
+    /// synchronous `events(for:)` right after three `append` calls must
+    /// still see all three, because `events(for:)`'s `queue.sync` can only
+    /// run after every `append` submitted before it has been applied to the
+    /// cache (FIFO on a serial queue is the flush).
+    @Test func appendDoesNotBlockAndEventsStaysCoherent() throws {
+        let (store, dir) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let id = UUID()
+        store.append(event("one"), for: id)
+        store.append(event("two"), for: id)
+        store.append(event("three"), for: id)
+        let events = store.events(for: id)
+        #expect(events.map(\.detail) == ["one", "two", "three"])
+    }
+
     @Test func unwritableDirectoryNeverThrowsOrDisturbs() throws {
         // Directory path that is actually a FILE (M9a pattern): every write
         // fails internally; append must swallow it silently.

@@ -262,6 +262,18 @@ struct ContentView: View {
                     sessionListViewModel.delete(stored)
                     for tab in tabsModel.tabs where tab.activeStoredSessionID == stored.id {
                         tab.activeStoredSessionID = nil
+                        // Same release as `teardown`'s audit recorder block
+                        // (M9b/T4 review, finding 1): leaving `auditRecorder`
+                        // and its two sinks wired after the STORE's log file
+                        // was just deleted means the next event (teardown's
+                        // own `recordDisconnected()` is guaranteed to fire
+                        // later) recreates `audit/<id>.json` from scratch —
+                        // an unreachable, permanent orphan, since no session
+                        // list entry (and no sidebar menu) points at that id
+                        // anymore.
+                        tab.auditRecorder = nil
+                        tab.transferQueue.auditSink = nil
+                        tab.session?.remote.auditSink = nil
                     }
                 },
                 onNew: { newConnection() },
@@ -744,9 +756,16 @@ struct ContentView: View {
         let recorder = AuditRecorder(sessionID: sessionID, store: auditStore)
         tab.auditRecorder = recorder
         recorder.recordConnected(host: host, username: username)
-        tab.transferQueue.auditSink = { item in
+        // `[weak tabsModel]` (M9b/T4 review, finding 5): `TabsViewModel` is a
+        // class, and this sink is retained by `tab.transferQueue` for the
+        // tab's whole lifetime — a plain (implicit `self`) capture would
+        // deviate from this file's weak-capture convention and pin every
+        // `@State` box on `ContentView` (a full struct copy, including
+        // `tabsModel`'s own storage) alive if the window ever dies without
+        // running `teardown` (which nils this sink out).
+        tab.transferQueue.auditSink = { [weak tabsModel] item in
             let targetTitle = item.destinationTabID.flatMap { id in
-                tabsModel.tabs.first(where: { $0.id == id })?.displayTitle
+                tabsModel?.tabs.first(where: { $0.id == id })?.displayTitle
             }
             recorder.recordTransfer(item, targetTitle: targetTitle)
         }

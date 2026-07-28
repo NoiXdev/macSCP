@@ -19,26 +19,33 @@ struct AuditRecorderTests {
         direction: TransferDirection = .upload,
         status: TransferQueueViewModel.Item.Status,
         destinationTabID: UUID? = nil,
-        isEditUpload: Bool = false
+        isEditUpload: Bool = false,
+        destinationDirectory: String = "/dest"
     ) -> TransferQueueViewModel.Item {
         TransferQueueViewModel.Item(
             id: UUID(), fileName: fileName, direction: direction, status: status,
-            destinationTabID: destinationTabID, isEditUpload: isEditUpload)
+            destinationTabID: destinationTabID, isEditUpload: isEditUpload,
+            destinationDirectory: destinationDirectory)
     }
 
-    @Test func finishedUploadRecordsTransferFinishedWithFileNameInDetail() {
+    /// Spec M9b (binding, maintainer-approved) requires "Richtung, Name,
+    /// Ziel" — its own example is `upload report.pdf → /var/www` (M9b/T4
+    /// review, finding 3). This pins the exact detail shape, not just
+    /// substring presence.
+    @Test func finishedUploadRecordsTransferFinishedWithFileNameAndDestinationInDetail() {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
         let sessionID = UUID()
         let recorder = AuditRecorder(sessionID: sessionID, store: store)
 
-        recorder.recordTransfer(makeItem(fileName: "report.pdf", direction: .upload, status: .finished), targetTitle: nil)
+        recorder.recordTransfer(
+            makeItem(fileName: "report.pdf", direction: .upload, status: .finished, destinationDirectory: "/var/www"),
+            targetTitle: nil)
 
         let events = store.events(for: sessionID)
         #expect(events.count == 1)
         #expect(events[0].kind == .transferFinished)
-        #expect(events[0].detail.contains("upload"))
-        #expect(events[0].detail.contains("report.pdf"))
+        #expect(events[0].detail == "upload report.pdf → /var/www")
         #expect(events[0].isError == false)
     }
 

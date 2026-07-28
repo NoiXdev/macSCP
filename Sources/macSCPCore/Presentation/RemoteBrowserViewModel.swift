@@ -176,18 +176,33 @@ public final class RemoteBrowserViewModel {
     /// at the first failure and returns its localized message — already
     /// deleted entries stay deleted (documented in the spec). Refreshes in
     /// both outcomes so the pane reflects reality.
+    ///
+    /// The audit detail names only the paths ACTUALLY deleted (M9b/T4
+    /// review, finding 6): the previous version listed every path in
+    /// `doomed` even on a partial failure, falsely claiming paths past the
+    /// break point were removed. On failure the detail is
+    /// `delete <deleted paths> — failed at <path>` — the deleted-paths list
+    /// is simply absent (just "delete ") when nothing was deleted before the
+    /// first failure.
     public func deleteItems(_ doomed: [RemoteFileItem]) async -> String? {
+        var deletedPaths: [String] = []
         var failure: String?
+        var failedPath: String?
         for item in doomed {
             do {
                 try await fs.deleteTree(at: item.path)
+                deletedPaths.append(item.path)
             } catch {
                 failure = Self.message(for: error, path: item.path)
+                failedPath = item.path
                 break
             }
         }
         await load()
-        let detail = "delete " + doomed.map(\.path).joined(separator: ", ")
+        var detail = "delete " + deletedPaths.joined(separator: ", ")
+        if let failedPath {
+            detail += " — failed at \(failedPath)"
+        }
         if let failure {
             auditSink?(AuditEvent(kind: .delete, detail: detail, isError: true, errorMessage: failure))
         } else {

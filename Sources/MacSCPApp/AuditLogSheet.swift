@@ -112,7 +112,12 @@ struct AuditLogSheet: View {
                     }
                     .width(min: 120, ideal: 150, max: 200)
                     TableColumn(L10n.string("audit.column.detail", "Detail")) { event in
-                        rowText(event.detail, isError: event.isError, monospaced: true)
+                        // M9b/T4 review (finding 4): the error message was
+                        // already in `errorMessage` (search and export both
+                        // already include it), but the sheet's own detail
+                        // cell silently dropped it — display only, no change
+                        // to the stored event.
+                        rowText(detailText(for: event), isError: event.isError, monospaced: true)
                     }
                 }
             }
@@ -171,6 +176,14 @@ struct AuditLogSheet: View {
                 exportErrorMessage = nil
             }
         }
+    }
+
+    /// Detail cell text (M9b/T4 review, finding 4): error rows append
+    /// ` — <errorMessage>` so the failure reason is visible without opening
+    /// search or export — both of which already included it.
+    private func detailText(for event: AuditEvent) -> String {
+        guard event.isError, let errorMessage = event.errorMessage else { return event.detail }
+        return "\(event.detail) — \(errorMessage)"
     }
 
     @ViewBuilder

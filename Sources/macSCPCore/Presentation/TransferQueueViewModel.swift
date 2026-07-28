@@ -92,6 +92,12 @@ public final class TransferQueueViewModel {
         /// the `.editUpload` kind instead of the plain `.transferFinished`
         /// kind. `false` on every other path.
         public let isEditUpload: Bool
+        /// The destination directory this item writes INTO (M9b/T4 review,
+        /// finding 3) — the audit log spec requires "Richtung, Name, Ziel"
+        /// (direction, name, destination); mirrors `Job.destinationDirectory`
+        /// exactly, threaded through every construction site the same way
+        /// `isEditUpload` is.
+        public let destinationDirectory: String
     }
 
     public private(set) var items: [Item] = []
@@ -362,7 +368,8 @@ public final class TransferQueueViewModel {
         order.append(id)
         items.append(Item(
             id: id, fileName: fileName, direction: direction, status: .queued,
-            destinationTabID: destinationTabID, isEditUpload: false))
+            destinationTabID: destinationTabID, isEditUpload: false,
+            destinationDirectory: destinationDirectory))
         kickWorker()
         return id
     }
@@ -388,7 +395,8 @@ public final class TransferQueueViewModel {
         order.append(id)
         items.append(Item(
             id: id, fileName: fileName, direction: .upload, status: .queued,
-            destinationTabID: nil, isEditUpload: true))
+            destinationTabID: nil, isEditUpload: true,
+            destinationDirectory: remoteDirectory))
         kickWorker()
         return id
     }
@@ -982,10 +990,13 @@ public final class TransferQueueViewModel {
             try await destination.createDirectory(at: destDir)
         } catch {
             try Task.checkCancellation()   // if it was cancellation, propagate it
+            // The directory item itself lives IN the parent (`destinationDirectory`,
+            // this call's own parameter) — `destDir` is the (failed-to-create)
+            // directory, not its destination.
             addTerminalItem(
                 group: groupID, name: directoryName + "/",
                 direction: direction, status: .failed(Self.message(for: error)),
-                destinationTabID: destinationTabID)
+                destinationTabID: destinationTabID, destinationDirectory: destinationDirectory)
             return
         }
 
@@ -998,7 +1009,7 @@ public final class TransferQueueViewModel {
             addTerminalItem(
                 group: groupID, name: directoryName + "/",
                 direction: direction, status: .failed(Self.message(for: error)),
-                destinationTabID: destinationTabID)
+                destinationTabID: destinationTabID, destinationDirectory: destinationDirectory)
             return
         }
 
@@ -1021,9 +1032,12 @@ public final class TransferQueueViewModel {
                     group: groupID, destinationTabID: destinationTabID, crossRemote: crossRemote)
             case .symlink, .other:
                 // Don't follow: terminal `.skipped` item with a " →" suffix.
+                // Lives IN this level's directory, exactly like the file
+                // items enqueued above.
                 addTerminalItem(
                     group: groupID, name: entry.name + " →",
-                    direction: direction, status: .skipped, destinationTabID: destinationTabID)
+                    direction: direction, status: .skipped, destinationTabID: destinationTabID,
+                    destinationDirectory: destDir)
             }
         }
     }
@@ -1043,12 +1057,14 @@ public final class TransferQueueViewModel {
     /// error) and routes it through the same choke point as every other item.
     private func addTerminalItem(
         group groupID: UUID, name: String,
-        direction: TransferDirection, status: Item.Status, destinationTabID: UUID? = nil
+        direction: TransferDirection, status: Item.Status, destinationTabID: UUID? = nil,
+        destinationDirectory: String
     ) {
         let id = UUID()
         items.append(Item(
             id: id, fileName: name, direction: direction, status: .queued,
-            destinationTabID: destinationTabID, isEditUpload: false))
+            destinationTabID: destinationTabID, isEditUpload: false,
+            destinationDirectory: destinationDirectory))
         registerGroupItem(id, group: groupID)
         setStatus(id, status)   // triggers groupItemBecameTerminal
     }
