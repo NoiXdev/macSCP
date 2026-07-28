@@ -175,4 +175,102 @@ public final class SessionListViewModel {
                 String(describing: error))
         }
     }
+
+    /// What subset of the sidebar an export covers.
+    public enum ExportScope {
+        case single(StoredSession)
+        case group(StoredGroup)
+        case all
+    }
+
+    /// Builds an export payload for the given scope (spec M9a §2.2). Groups
+    /// are only included when `includeGroups`, and only those referenced by
+    /// an exported session. Passwords are only looked up when
+    /// `includePasswords`; a missing keychain entry is omitted from the
+    /// payload and counted in `missingPasswordCount` rather than aborting
+    /// the export.
+    public func exportPayload(
+        for scope: ExportScope, includeGroups: Bool, includePasswords: Bool
+    ) -> (payload: SessionExportPayload, missingPasswordCount: Int) {
+        let scopedSessions: [StoredSession]
+        switch scope {
+        case .single(let session):
+            scopedSessions = [session]
+        case .group(let group):
+            scopedSessions = sessions(inGroup: group.id)
+        case .all:
+            scopedSessions = sessions
+        }
+
+        var missingPasswordCount = 0
+        let exportedSessions: [ExportedSession] = scopedSessions.map { session in
+            var password: String?
+            if includePasswords {
+                password = self.password(for: session)
+                if password == nil {
+                    missingPasswordCount += 1
+                }
+            }
+            return ExportedSession(
+                id: session.id, name: session.name, host: session.host, port: session.port,
+                username: session.username, authKind: session.authKind, keyPath: session.keyPath,
+                groupID: includeGroups ? session.groupID : nil, password: password)
+        }
+
+        var exportedGroups: [ExportedGroup] = []
+        if includeGroups {
+            let referencedGroupIDs = Set(scopedSessions.compactMap(\.groupID))
+            exportedGroups = groups
+                .filter { referencedGroupIDs.contains($0.id) }
+                .map { ExportedGroup(id: $0.id, name: $0.name) }
+        }
+
+        let payload = SessionExportPayload(
+            includesSecrets: includePasswords, groups: exportedGroups, sessions: exportedSessions)
+        return (payload, missingPasswordCount)
+    }
+
+    /// The outcome of applying a `SessionImportPlan`.
+    public struct SessionImportResult: Equatable {
+        public var imported: Int
+        public var skipped: Int
+        public var passwordsImported: Int
+        public var passwordFailures: Int
+
+        public init(imported: Int, skipped: Int, passwordsImported: Int, passwordFailures: Int) {
+            self.imported = imported
+            self.skipped = skipped
+            self.passwordsImported = passwordsImported
+            self.passwordFailures = passwordFailures
+        }
+    }
+
+    /// Applies a previously computed `SessionImportPlan` (spec M9a §2.3).
+    /// Purely additive — existing sessions and groups are never mutated. A
+    /// keychain failure for one session's password does not abort the
+    /// import; the session is still created and the failure is counted.
+    public func applyImport(_ plan: SessionImportPlan) -> SessionImportResult {
+        var passwordsImported = 0
+        var passwordFailures = 0
+
+        for group in plan.groupsToCreate {
+            try? store.upsertGroup(group)
+        }
+        for planned in plan.sessionsToImport {
+            try? store.upsert(planned.session)
+            if let password = planned.password {
+                do {
+                    try secrets.savePassword(password, for: planned.session.id)
+                    passwordsImported += 1
+                } catch {
+                    passwordFailures += 1
+                }
+            }
+        }
+
+        reload()
+        return SessionImportResult(
+            imported: plan.sessionsToImport.count, skipped: plan.skipped.count,
+            passwordsImported: passwordsImported, passwordFailures: passwordFailures)
+    }
 }

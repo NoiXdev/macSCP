@@ -151,6 +151,102 @@ struct SessionListViewModelTests {
         #expect(vm.password(for: stored) == "next")
         #expect(vm.sessions.first?.host == "h2")
     }
+
+    @Test func exportPayloadScopesAndCountsMissingPasswords() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let group = vm.createGroup(named: "Prod")!
+        let a = vm.save(name: "a", host: "h1", port: 22, username: "u", password: "pw",
+                        groupID: group.id)!
+        let b = vm.save(name: "b", host: "h2", port: 22, username: "u", password: "pw",
+                        groupID: group.id)!
+        let c = vm.save(name: "c", host: "h3", port: 22, username: "u", password: "pw")!
+        // Only one session keeps its password in the keychain; the other two
+        // simulate a missing secret (e.g. deleted out-of-band).
+        try secrets.deletePassword(for: b.id)
+        try secrets.deletePassword(for: c.id)
+
+        let allResult = vm.exportPayload(for: .all, includeGroups: true, includePasswords: true)
+        #expect(allResult.payload.sessions.count == 3)
+        #expect(allResult.payload.groups.map(\.name) == ["Prod"])
+        #expect(allResult.payload.sessions.filter { $0.password != nil }.count == 1)
+        #expect(allResult.missingPasswordCount == 2)
+        #expect(allResult.payload.includesSecrets == true)
+
+        let groupResult = vm.exportPayload(for: .group(group), includeGroups: true, includePasswords: true)
+        #expect(Set(groupResult.payload.sessions.map(\.name)) == Set(["a", "b"]))
+        #expect(groupResult.payload.groups.map(\.name) == ["Prod"])
+
+        let singleResult = vm.exportPayload(for: .single(c), includeGroups: false, includePasswords: true)
+        #expect(singleResult.payload.sessions.count == 1)
+        #expect(singleResult.payload.groups.isEmpty)
+        #expect(singleResult.payload.sessions.first?.groupID == nil)
+
+        let noSecretsResult = vm.exportPayload(for: .all, includeGroups: true, includePasswords: false)
+        #expect(noSecretsResult.payload.sessions.allSatisfy { $0.password == nil })
+        #expect(noSecretsResult.payload.includesSecrets == false)
+        #expect(noSecretsResult.missingPasswordCount == 0)
+
+        _ = a
+    }
+
+    @Test func applyImportCreatesEverythingAdditively() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let existing = vm.save(name: "existing", host: "other.example.com", port: 22,
+                               username: "u", password: "keep")!
+
+        let plan = SessionImportPlan(
+            groupsToCreate: [StoredGroup(name: "Imported")],
+            sessionsToImport: [
+                PlannedSession(
+                    session: StoredSession(name: "one", host: "h1", username: "root"),
+                    password: "secret1"),
+                PlannedSession(
+                    session: StoredSession(name: "two", host: "h2", username: "root"),
+                    password: nil),
+            ],
+            skipped: [
+                ExportedSession(
+                    id: UUID(), name: "dupe", host: "h1", port: 22, username: "root",
+                    authKind: .password, keyPath: nil, groupID: nil, password: nil),
+            ])
+
+        let result = vm.applyImport(plan)
+
+        #expect(result == SessionListViewModel.SessionImportResult(
+            imported: 2, skipped: 1, passwordsImported: 1, passwordFailures: 0))
+        #expect(vm.sessions.count == 3)
+        #expect(vm.groups.map(\.name) == ["Imported"])
+        let one = vm.sessions.first { $0.name == "one" }!
+        #expect(try secrets.password(for: one.id) == "secret1")
+        // Existing session is untouched.
+        #expect(vm.sessions.first { $0.id == existing.id }?.host == "other.example.com")
+        #expect(try secrets.password(for: existing.id) == "keep")
+    }
+
+    @Test func applyImportSurvivesKeychainFailure() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: FailingSecretStore())
+
+        let plan = SessionImportPlan(
+            groupsToCreate: [],
+            sessionsToImport: [
+                PlannedSession(
+                    session: StoredSession(name: "one", host: "h1", username: "root"),
+                    password: "secret1"),
+            ],
+            skipped: [])
+
+        let result = vm.applyImport(plan)
+
+        #expect(result == SessionListViewModel.SessionImportResult(
+            imported: 1, skipped: 0, passwordsImported: 0, passwordFailures: 1))
+        #expect(vm.sessions.map(\.name) == ["one"])
+    }
 }
 
 private final class FailingSecretStore: SecretStore, @unchecked Sendable {
