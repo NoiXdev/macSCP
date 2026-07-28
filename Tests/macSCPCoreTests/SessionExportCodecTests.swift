@@ -77,4 +77,78 @@ struct SessionExportCodecTests {
             _ = try SessionExportCodec.probe(future)
         }
     }
+
+    /// Builds a syntactically well-formed encrypted envelope with the given
+    /// `iterations` override, the same way `tamperedCiphertextFailsWithSameError`
+    /// tampers the ciphertext — via `JSONSerialization` on a real encoded
+    /// envelope, so salt/ciphertext stay well-formed and only `iterations`
+    /// is hostile.
+    private func envelopeData(iterationsOverride: Any) throws -> Data {
+        let data = try SessionExportCodec.encode(samplePayload(), password: "pw")
+        var envelope = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        envelope["iterations"] = iterationsOverride
+        return try JSONSerialization.data(withJSONObject: envelope)
+    }
+
+    // MARK: - Hostile `iterations` (M9a final review, Finding 1 — critical)
+    //
+    // `decode` used to pass the file's `iterations` straight to
+    // `CCKeyDerivationPBKDF` unchecked. A negative or absurdly large value
+    // traps the process (reproduced: signal 5); an in-range multi-billion
+    // value freezes the main thread for minutes. These three prove the
+    // fixed `decode` rejects all of them up front as a structurally invalid
+    // envelope — password-independent, so no oracle is introduced.
+
+    @Test func negativeIterationsIsRejectedAsNotAnExportFile() throws {
+        let data = try envelopeData(iterationsOverride: -1)
+        #expect(throws: SessionExportError.notAnExportFile) {
+            _ = try SessionExportCodec.decode(data, password: "pw")
+        }
+    }
+
+    @Test func zeroIterationsIsRejectedAsNotAnExportFile() throws {
+        let data = try envelopeData(iterationsOverride: 0)
+        #expect(throws: SessionExportError.notAnExportFile) {
+            _ = try SessionExportCodec.decode(data, password: "pw")
+        }
+    }
+
+    @Test func absurdlyLargeIterationsIsRejectedAsNotAnExportFile() throws {
+        let data = try envelopeData(iterationsOverride: 5_000_000_000)
+        #expect(throws: SessionExportError.notAnExportFile) {
+            _ = try SessionExportCodec.decode(data, password: "pw")
+        }
+    }
+
+    @Test func inRangeVersionGarbageBodyIsRejectedAsNotAnExportFile() throws {
+        let garbage = Data(#"{"format":"macscp-sessions","version":1,"encrypted":"yes"}"#.utf8)
+        #expect(throws: SessionExportError.notAnExportFile) {
+            _ = try SessionExportCodec.decode(garbage, password: nil)
+        }
+    }
+
+    /// Table test: a grab-bag of structurally malformed encrypted envelopes
+    /// — bad salt length, wrong-typed fields, truncated ciphertext base64 —
+    /// each must throw a typed `SessionExportError`, never trap.
+    @Test func malformedEncryptedEnvelopesAlwaysThrowATypedError() throws {
+        let base = try JSONSerialization.jsonObject(
+            with: SessionExportCodec.encode(samplePayload(), password: "pw")) as! [String: Any]
+
+        var wrongSaltLength = base
+        wrongSaltLength["salt"] = Data([0x01, 0x02]).base64EncodedString() // too short for AES-GCM key derivation
+        var wrongTypedIterations = base
+        wrongTypedIterations["iterations"] = "600000" // string, not a number
+        var truncatedCiphertext = base
+        let ciphertext = Data(base64Encoded: base["ciphertext"] as! String)!
+        truncatedCiphertext["ciphertext"] = ciphertext.prefix(4).base64EncodedString()
+        var nonBase64Salt = base
+        nonBase64Salt["salt"] = "not-base64!!!"
+
+        for malformed in [wrongSaltLength, wrongTypedIterations, truncatedCiphertext, nonBase64Salt] {
+            let data = try JSONSerialization.data(withJSONObject: malformed)
+            #expect(throws: SessionExportError.self) {
+                _ = try SessionExportCodec.decode(data, password: "pw")
+            }
+        }
+    }
 }

@@ -35,16 +35,22 @@ public enum SessionImportPlanner {
         existing: [StoredSession], existingGroups: [StoredGroup], incoming: SessionExportPayload
     ) -> SessionImportPlan {
         // Resolve groups first: exact name match against existing groups,
-        // otherwise a fresh group is created. A local mapping tracks
+        // otherwise a fresh group is prepared. A local mapping tracks
         // file-local group id -> resolved (existing or freshly created) id.
+        // Freshly-created groups are held in `freshGroupsByFileID` rather
+        // than committed to `groupsToCreate` immediately — a file whose only
+        // sessions referencing a group are all skipped as duplicates must
+        // not leave a ghost group behind (M9a final review, Finding 2), so
+        // the final `groupsToCreate` is filtered to groups an actually
+        // imported session references, after the session loop below.
         var groupIDMap: [UUID: UUID] = [:]
-        var groupsToCreate: [StoredGroup] = []
+        var freshGroupsByFileID: [UUID: StoredGroup] = [:]
         for fileGroup in incoming.groups {
             if let match = existingGroups.first(where: { $0.name == fileGroup.name }) {
                 groupIDMap[fileGroup.id] = match.id
             } else {
                 let created = StoredGroup(name: fileGroup.name)
-                groupsToCreate.append(created)
+                freshGroupsByFileID[fileGroup.id] = created
                 groupIDMap[fileGroup.id] = created.id
             }
         }
@@ -76,6 +82,15 @@ public enum SessionImportPlanner {
                 keyPath: fileSession.keyPath,
                 groupID: resolvedGroupID)
             sessionsToImport.append(PlannedSession(session: session, password: fileSession.password))
+        }
+
+        // Only commit a freshly-created group if an actually-imported
+        // session ends up referencing it; file order is preserved.
+        let referencedGroupIDs = Set(sessionsToImport.compactMap(\.session.groupID))
+        let groupsToCreate = incoming.groups.compactMap { fileGroup -> StoredGroup? in
+            guard let created = freshGroupsByFileID[fileGroup.id],
+                  referencedGroupIDs.contains(created.id) else { return nil }
+            return created
         }
 
         return SessionImportPlan(

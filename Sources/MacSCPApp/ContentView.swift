@@ -392,7 +392,13 @@ struct ContentView: View {
         ) { result in
             handleImportFileSelection(result)
         }
-        .sheet(isPresented: $showImportPasswordSheet) {
+        .sheet(isPresented: $showImportPasswordSheet, onDismiss: {
+            // Covers every dismissal path, including ESC/click-outside,
+            // which bypasses the sheet's own Cancel button and its
+            // `onCancel` handler below (M9a final review, Finding 4) — the
+            // pending ciphertext must not linger in view state either way.
+            importFileData = nil
+        }) {
             ImportPasswordSheet(
                 onSubmit: { password in
                     guard let data = importFileData else { return nil }
@@ -1365,6 +1371,11 @@ struct ContentView: View {
                 "export.error.writeFailed %@", "Could not write the export file: %@"),
                 String(describing: error))
         }
+        // Clear the encoded (possibly plaintext-password-bearing) export
+        // bytes from view state once the panel has resolved, whether it
+        // succeeded, failed, or the user cancelled the save (M9a final
+        // review, Finding 3) — nothing should keep them around indefinitely.
+        exportDocument = nil
     }
 
     /// Shared formatter for non-typed read/decode failures on the import
@@ -1452,6 +1463,11 @@ struct ContentView: View {
                 "This file was created by a newer version of macSCP.")
         case .passwordRequired, .wrongPasswordOrCorrupted:
             return L10n.string("import.password.wrong", "Wrong password, or the file is corrupted.")
+        case .randomnessUnavailable:
+            // Only ever thrown from `encode`, never from `decode` — this
+            // import-path mapper never actually reaches it. Kept for
+            // exhaustiveness now that the enum has a fourth case.
+            return L10n.string("import.error.notExport", "Not a macSCP sessions file.")
         }
     }
 

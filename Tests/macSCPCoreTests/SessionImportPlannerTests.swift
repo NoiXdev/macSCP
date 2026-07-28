@@ -81,4 +81,21 @@ struct SessionImportPlannerTests {
             incoming: incoming([exported(groupID: UUID())])) // group not in file
         #expect(plan.sessionsToImport[0].session.groupID == nil)
     }
+
+    /// M9a final review, Finding 2 (important): a file whose only sessions
+    /// referencing a group are all skipped as duplicates must not create
+    /// that group — otherwise "0 imported" still leaves a ghost group behind
+    /// in the store.
+    @Test func ghostGroupIsNotCreatedWhenAllItsSessionsAreDuplicates() {
+        let existing = [StoredSession(name: "a", host: "host", port: 22, username: "root")]
+        let ghostGroup = ExportedGroup(id: UUID(), name: "GhostGroup")
+        let plan = SessionImportPlanner.plan(
+            existing: existing, existingGroups: [],
+            incoming: incoming(
+                [exported(host: "host", port: 22, username: "root", groupID: ghostGroup.id)],
+                groups: [ghostGroup]))
+        #expect(plan.groupsToCreate.isEmpty)
+        #expect(plan.sessionsToImport.isEmpty)
+        #expect(plan.skipped.count == 1)
+    }
 }

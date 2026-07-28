@@ -67,6 +67,10 @@ public enum SessionExportError: Error, Equatable {
     /// fails the same way for a wrong password and a tampered file — no
     /// oracle for attackers, one honest message for users.
     case wrongPasswordOrCorrupted
+    /// `SecRandomCopyBytes` failed while generating the export salt. Not
+    /// password-related; surfaced through the same generic encode-failure
+    /// message the UI already shows.
+    case randomnessUnavailable
 }
 
 /// Versioned envelope codec for `.macscpsessions` files (spec M9a §1+§2.1).
@@ -101,7 +105,7 @@ public enum SessionExportCodec {
         let saltResult = salt.withUnsafeMutableBytes {
             SecRandomCopyBytes(kSecRandomDefault, 16, $0.baseAddress!)
         }
-        precondition(saltResult == errSecSuccess, "SecRandomCopyBytes failed")
+        guard saltResult == errSecSuccess else { throw SessionExportError.randomnessUnavailable }
         let key = try derivedKey(password: password, salt: salt, iterations: iterations)
         let plaintext = try JSONEncoder().encode(payload)
         let sealed = try AES.GCM.seal(plaintext, using: key)
@@ -125,6 +129,15 @@ public enum SessionExportCodec {
         guard let password else { throw SessionExportError.passwordRequired }
         guard let salt = envelope.salt, let iterations = envelope.iterations,
               let ciphertext = envelope.ciphertext else {
+            throw SessionExportError.notAnExportFile
+        }
+        // A hostile or corrupt file can carry an out-of-range iteration
+        // count (negative, zero, or absurdly large) that would otherwise
+        // reach CommonCrypto: negative/huge values there trap the process,
+        // and merely-large in-range values freeze the main thread for
+        // minutes. This is a structural envelope check, not a password
+        // check — it rejects before key derivation, so it adds no oracle.
+        guard iterations > 0, iterations <= 10_000_000 else {
             throw SessionExportError.notAnExportFile
         }
         let key = try derivedKey(password: password, salt: salt, iterations: iterations)
