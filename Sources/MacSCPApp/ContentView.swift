@@ -168,6 +168,13 @@ struct ContentView: View {
     /// Tab pending a destructive close confirmation (active transfers) — nil
     /// when no confirmation is showing (M8a/T4).
     @State private var closeRequest: SessionTab?
+    /// Warning text for `closeRequest`, frozen at the moment the dialog is
+    /// requested (M8b review, finding 4). The dialog's `message:` builder
+    /// re-evaluates on every render; recomputing `closeWarningMessage(for:)`
+    /// there instead of reading this snapshot would let the text go blank
+    /// mid-dialog if the underlying transfers finish while it's still open —
+    /// blank text under a destructive "Close" button.
+    @State private var closeWarningText: String = ""
 
     init(settingsStore: SettingsStore, bandwidthLimiter: BandwidthLimiter, tabCommands: TabCommands) {
         self.settingsStore = settingsStore
@@ -305,7 +312,7 @@ struct ContentView: View {
                 closeRequest = nil
             }
         } message: {
-            Text(closeRequest.map(closeWarningMessage(for:)) ?? "")
+            Text(closeWarningText)
         }
         // Session actions live in the window's native toolbar (M5f/T5) —
         // attached at the outer container so it belongs to the window, not
@@ -639,6 +646,11 @@ struct ContentView: View {
     /// otherwise-idle tab closes immediately.
     private func requestClose(_ tab: SessionTab) {
         if tab.transferQueue.isActive || hasIncomingTransfers(for: tab) {
+            // Freeze the warning text NOW (M8b review, finding 4) — the
+            // dialog reads this snapshot for its whole lifetime instead of
+            // recomputing per render, so it can't go blank if the transfers
+            // it describes finish while the confirmation is still up.
+            closeWarningText = closeWarningMessage(for: tab)
             closeRequest = tab
         } else {
             Task { await performClose(tab) }

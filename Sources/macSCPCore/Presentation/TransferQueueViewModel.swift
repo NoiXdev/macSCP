@@ -795,6 +795,21 @@ public final class TransferQueueViewModel {
                 jobs[jobID] = nil
                 runningTransferTasks[jobID] = nil
                 resumeWaiter(jobID, with: .failure(error))
+            } else if job.destinationTabID != nil {
+                // Cross-session transfer (M8b review, finding 1): NOT
+                // resumable. `retryInterrupted` always rebuilds an
+                // `.interrupted` job against the CURRENT tab's own
+                // source/destination file systems — for a job whose
+                // destination is really ANOTHER tab's remote (frozen path,
+                // possibly a now-gone session), that would silently retarget
+                // the resumed stream at this tab's own remote, at the other
+                // tab's path (and `resume: true` could even `.append` onto an
+                // unrelated same-named file there). Surface it as a plain
+                // failure instead, exactly like the edit-upload case above.
+                setStatus(jobID, .failed(CoreL10n.string("core.transfer.interrupted")))
+                jobs[jobID] = nil
+                runningTransferTasks[jobID] = nil
+                resumeWaiter(jobID, with: .failure(error))
             } else {
                 // Connection lost mid-transfer (M5d/T3): mark `.interrupted`
                 // (NOT `.failed`) and RETAIN the job — under its EFFECTIVE
@@ -807,7 +822,8 @@ public final class TransferQueueViewModel {
                     id: jobID, source: source, sourcePath: sourcePath,
                     destination: destination, destinationDirectory: destinationDirectory,
                     fileName: effectiveFileName, direction: job.direction,
-                    onCompleted: nil, resume: false)
+                    onCompleted: nil, resume: false,
+                    destinationTabID: job.destinationTabID, crossRemote: job.crossRemote)
                 runningTransferTasks[jobID] = nil
                 resumeWaiter(jobID, with: .failure(error))
             }

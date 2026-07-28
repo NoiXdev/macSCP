@@ -2832,6 +2832,149 @@ struct TransferQueueViewModelTests {
         try await done.wait()
         #expect(vm.hasActiveItems(destinationTabID: tabID) == false)
     }
+
+    // MARK: - 44 (M8b review, finding 1)
+
+    /// A cross-session job (`destinationTabID != nil`) is NOT resumable
+    /// (M8b review, finding 1): `retryInterrupted` rebuilds an `.interrupted`
+    /// job against the CURRENT tab's own source/destination file systems —
+    /// for a job whose real destination is ANOTHER tab's remote, that would
+    /// silently retarget the resumed stream at this tab's own remote, at the
+    /// other tab's frozen path (`resume: true` could even `.append` onto an
+    /// unrelated same-named file there). A connection loss mid-transfer must
+    /// therefore mark it `.failed`, never `.interrupted` — mirrors the
+    /// existing edit-upload counter-probe
+    /// (`editUploadConnectionFailureIsFailedNotInterrupted`). Proven red
+    /// first: before the fix this asserted `.interrupted`/`hasInterrupted ==
+    /// true`.
+    @Test func crossSessionConnectionLossFailsNotInterrupted() async throws {
+        let tabID = UUID()
+        let content = Data(repeating: 0x99, count: TransferChunk.size)
+        let started = TestSignal(); let gate = TestSignal()
+        let source = QueueTestFS(reads: [
+            "/a.bin": .init(content: content, started: started, gate: gate,
+                            failWith: RemoteFSError.connectionFailed(reason: "socket closed")),
+        ])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.enqueue(
+            fileName: "a.bin", direction: .upload,
+            source: source, sourcePath: "/a.bin",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: nil, destinationTabID: tabID, crossRemote: true)
+
+        try await started.wait()
+        await gate.fire()
+        await waitUntil {
+            if case .failed = vm.items[0].status { return true }; return false
+        }
+        guard case .failed(let message) = vm.items[0].status else {
+            Issue.record("cross-session job should be .failed, was \(String(describing: vm.items[0].status))")
+            return
+        }
+        #expect(message == CoreL10n.string("core.transfer.interrupted"))
+        #expect(vm.items[0].status != .interrupted)
+        #expect(vm.hasInterrupted == false)
+    }
+
+    // MARK: - 45 (M8b review, finding 2)
+
+    /// The interrupt-retain path (`process`'s `connectionFailed` branch) must
+    /// forward `crossRemote` into the retained job — the pre-fix construction
+    /// used the `Job` init's defaults (`destinationTabID: nil, crossRemote:
+    /// false`), which would silently downgrade a resumed cross-remote
+    /// transfer to single-bucket pacing. `crossRemote` isn't observable on
+    /// `Item`, so this proves the round-trip through the queue's ACTUAL
+    /// throttle behavior across an interrupt + `retryInterrupted` cycle:
+    /// upload paces fast, download (secondary) paces much tighter — the
+    /// RESUMED transfer must still pay both, exactly like a fresh crossRemote
+    /// enqueue (`crossRemoteJobResolvesBothBuckets` above). Note: a job with
+    /// `destinationTabID != nil` can no longer reach `.interrupted` at all
+    /// (finding 1), so `crossRemote` is the only M8b field that can still be
+    /// exercised through this path — this test targets exactly that case.
+    @Test func interruptedCrossRemoteJobKeepsBothThrottlesAfterRetry() async throws {
+        let chunk = TransferChunk.size
+        let content = Data(repeating: 0x77, count: chunk * 2)
+        let started = TestSignal(); let gate = TestSignal()
+        let local1 = QueueTestFS(reads: [
+            "/a.bin": .init(content: content, started: started, gate: gate,
+                            failWith: RemoteFSError.connectionFailed(reason: "lost")),
+        ])
+        let remote1 = QueueTestFS(reads: [:])
+
+        let time = VirtualTime()
+        let limiter = BandwidthLimiter(now: time.now, sleep: time.sleep)
+        limiter.uploadLimitBytesPerSec = chunk          // primary: fast
+        limiter.downloadLimitBytesPerSec = chunk / 4    // secondary: much tighter
+
+        let vm = TransferQueueViewModel()
+        vm.limiter = limiter
+        vm.enqueue(
+            fileName: "a.bin", direction: .upload,
+            source: local1, sourcePath: "/a.bin",
+            destination: remote1, destinationDirectory: "/ziel",
+            onCompleted: nil, destinationTabID: nil, crossRemote: true)
+
+        try await started.wait()
+        await gate.fire()
+        await waitUntil { vm.items[0].status == .interrupted }
+
+        // Reconnect: retry against fresh file systems, same limiter.
+        let local2 = QueueTestFS(reads: ["/a.bin": .init(content: content)])
+        let remote2 = QueueTestFS(reads: [:])
+        vm.retryInterrupted(source: local2, destination: remote2)
+        await waitUntil { vm.items[0].status == .finished }
+
+        #expect(await remote2.writtenData(at: "/ziel/a.bin") == content)
+        // Same math as `TransferEngineTests.copyFileConsumesBothThrottles`:
+        // ~1.0s primary + ~3.0s secondary == ~4.0s total. If the retain path
+        // had dropped `crossRemote`, only the primary would pace (~1.0s).
+        let slept = time.totalSlept.secondsAsDouble
+        #expect(slept > 3.8 && slept < 4.2)
+    }
+
+    // MARK: - 46 (M8b review, finding 3)
+
+    /// Queue-level proof of the `crossRemote` double-bucket wiring
+    /// (`process`'s `if job.crossRemote` throttle resolution). The engine
+    /// itself is proven in `TransferEngineTests.copyFileConsumesBothThrottles`,
+    /// but nothing at the QUEUE level previously exercised the wiring that
+    /// resolves `throttle`/`secondaryThrottle` from `limiter?.uploadBucket`/
+    /// `downloadBucket` — setting `secondaryThrottle = nil` there would have
+    /// stayed green. `BandwidthLimiter`'s test-only clock/sleep init (added
+    /// for this finding, analogous to `BandwidthBucket`'s own test init)
+    /// makes both buckets share one deterministic virtual timeline.
+    @Test func crossRemoteQueueJobPacesToTighterDownloadLimit() async throws {
+        let chunk = TransferChunk.size
+        let content = Data(repeating: 0x33, count: chunk * 2)
+        let source = QueueTestFS(reads: ["/a.bin": .init(content: content)])
+        let destination = QueueTestFS(reads: [:])
+        let done = TestSignal()
+
+        let time = VirtualTime()
+        let limiter = BandwidthLimiter(now: time.now, sleep: time.sleep)
+        limiter.uploadLimitBytesPerSec = chunk          // fast upload limit
+        limiter.downloadLimitBytesPerSec = chunk / 4    // tighter download limit
+
+        let vm = TransferQueueViewModel()
+        vm.limiter = limiter
+        vm.enqueue(
+            fileName: "a.bin", direction: .upload,
+            source: source, sourcePath: "/a.bin",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { await done.fire() }, destinationTabID: nil, crossRemote: true)
+        try await done.wait()
+
+        #expect(await destination.writtenData(at: "/ziel/a.bin") == content)
+        // Same math as `TransferEngineTests.copyFileConsumesBothThrottles`:
+        // ~1.0s primary (upload) + ~3.0s secondary (download, tighter) ≈ 4.0s
+        // total. A crossRemote job resolving only the upload bucket (the
+        // pre-M8b single-bucket behavior, or a regression dropping
+        // `secondaryThrottle`) would settle at ≈1.0s instead.
+        let slept = time.totalSlept.secondsAsDouble
+        #expect(slept > 3.8 && slept < 4.2)
+    }
 }
 
 /// Collects (fileName, isPartOfFolderTransfer) pairs reported by a
