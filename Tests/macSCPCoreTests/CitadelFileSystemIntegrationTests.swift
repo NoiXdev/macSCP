@@ -25,10 +25,10 @@ struct CitadelFileSystemIntegrationTests {
         }
     }
 
-    private func connect() async throws -> CitadelFileSystem {
+    private func connect(port: Int = 2222) async throws -> CitadelFileSystem {
         let config = try SSHConnectionConfig(
             host: "127.0.0.1",
-            port: 2222,
+            port: port,
             username: "testuser",
             auth: .password("testpass")
         )
@@ -481,10 +481,10 @@ struct CitadelFileSystemIntegrationTests {
     /// Cleans up a test folder under /config via `docker exec rm -rf`. Used
     /// for directories and as a catch-all after a test's own `fs.delete`
     /// (RemoteFileSystem only deletes FILES, no rmdir/remove for directories).
-    private func cleanupConfigPath(_ path: String) {
+    private func cleanupConfigPath(_ path: String, container: String = "macscp-test-sshd") {
         let rm = Process()
         rm.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        rm.arguments = ["exec", "macscp-test-sshd", "rm", "-rf", path]
+        rm.arguments = ["exec", container, "rm", "-rf", path]
         try? rm.run()
         rm.waitUntilExit()
     }
@@ -1056,6 +1056,51 @@ struct CitadelFileSystemIntegrationTests {
                 return
             }
         }
+    }
+
+    // MARK: - M8b/T3: remote-to-remote streaming across two independent servers
+
+    /// Proves `TransferEngine.copyFile` streams remote-to-remote across TWO
+    /// separate SSH servers (127.0.0.1:2222 and :2223, second rig container
+    /// `macscp-test-sshd-2`) with no local temp file involved by
+    /// construction: the engine only ever holds a source `readStream` and
+    /// feeds it directly into the destination `write`, so nothing local is
+    /// created for this transfer. A ~256 KiB random payload is written to
+    /// server 1, copied server-to-server, and read back from server 2 —
+    /// bytes must match exactly.
+    @Test func remoteToRemoteStreamCopiesByteIdentical() async throws {
+        let fs1 = try await connect(port: 2222)
+        defer { Task { await fs1.disconnect() } }
+        let fs2 = try await connect(port: 2223)
+        defer { Task { await fs2.disconnect() } }
+
+        let sourceName = "macscp-r2r-source-\(UUID().uuidString).bin"
+        let sourcePath = "/config/\(sourceName)"
+        let destinationName = "macscp-r2r-dest-\(UUID().uuidString).bin"
+        let destinationPath = "/config/\(destinationName)"
+        defer {
+            cleanupConfigPath(sourcePath, container: "macscp-test-sshd")
+            cleanupConfigPath(destinationPath, container: "macscp-test-sshd-2")
+        }
+
+        // ~256 KiB random payload, written to server 1 only.
+        let payload = Data((0..<(256 * 1024)).map { _ in UInt8.random(in: 0...255) })
+        let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+        continuation.yield(payload)
+        continuation.finish()
+        try await fs1.write(path: sourcePath, contents: stream)
+
+        // Remote-to-remote: fs1 is the source, fs2 is the destination.
+        try await TransferEngine.copyFile(
+            from: fs1, sourcePath: sourcePath,
+            to: fs2, destinationDirectory: "/config", fileName: destinationName,
+            onProgress: { _ in })
+
+        var readBack = Data()
+        for try await chunk in try await fs2.readStream(path: destinationPath) {
+            readBack.append(chunk)
+        }
+        #expect(readBack == payload)
     }
 }
 
