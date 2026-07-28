@@ -36,7 +36,7 @@ T1 (Core: addedAt + allKeys + remove) → T2 (App: Sheet + Sessions-Menü + Side
   - `KnownHostsStore.allKeys() throws -> [KnownHostKey]` (sortiert host, dann port)
   - `KnownHostsStore.remove(host: String, port: Int) throws` (lowercased-Match; No-op wenn absent; atomar persistiert)
 
-- [ ] **Step 1: Failing Tests** (in `KnownHostsStoreTests.swift`, Fixture-Muster der Datei — Temp-Verzeichnis + Beispiel-Keys übernehmen):
+- [x] **Step 1: Failing Tests** (in `KnownHostsStoreTests.swift`, Fixture-Muster der Datei — Temp-Verzeichnis + Beispiel-Keys übernehmen):
 
 ```swift
     // allKeysListsSorted: drei upserts (b.example:22, a.example:2222, a.example:22)
@@ -56,9 +56,9 @@ T1 (Core: addedAt + allKeys + remove) → T2 (App: Sheet + Sessions-Menü + Side
     //   Verzeichnis -> addedAt bleibt (Codable-Roundtrip).
 ```
 
-- [ ] **Step 2: Rot beweisen.** `swift test --filter KnownHostsStoreTests` → FAIL.
+- [x] **Step 2: Rot beweisen.** `swift test --filter KnownHostsStoreTests` → FAIL.
 
-- [ ] **Step 3: Implementierung.**
+- [x] **Step 3: Implementierung.**
 
 ```swift
     // In KnownHostKey:
@@ -94,9 +94,9 @@ T1 (Core: addedAt + allKeys + remove) → T2 (App: Sheet + Sessions-Menü + Side
 
   `upsert` unverändert lassen (der Init-Default stempelt) — ABER prüfen, wo `KnownHostKey` im TOFU-Validator konstruiert wird (grep `KnownHostKey(`): bestehende Aufrufer kompilieren durch den Default weiter; keiner darf explizit `addedAt: nil` setzen.
 
-- [ ] **Step 4: Grün + volle Suite.** `swift test` → 470 + 5 (echte Zahl festhalten).
+- [x] **Step 4: Grün + volle Suite.** `swift test` → 470 + 5 (echte Zahl festhalten).
 
-- [ ] **Step 5: Commit.** `feat: list, date and remove known host keys`
+- [x] **Step 5: Commit.** `feat: list, date and remove known host keys`
 
 ---
 
@@ -117,12 +117,12 @@ T1 (Core: addedAt + allKeys + remove) → T2 (App: Sheet + Sessions-Menü + Side
 4. TOFU-Prompt (`ConnectionFormView`, M3c-Trust-View): dezente Fußnote/Link-Zeile „Manage known hosts…"/„Bekannte Hosts verwalten…" unter den Buttons — öffnet das Sheet ÜBER dem Formular (eigener Sheet-State in ConnectionFormView mit direktem Store-Zugriff ODER Callback nach oben — die kleinere Lösung wählen und dokumentieren); der Prompt bleibt offen und funktional.
 5. Keys EN/DE (Vorschlag): `menu.sessions`, `menu.knownHosts`, `knownHosts.title`, `knownHosts.search`, `knownHosts.column.host/port/keyType/fingerprint/added`, `knownHosts.count %lld`, `knownHosts.countFiltered %lld %lld`, `knownHosts.copyFingerprint`, `knownHosts.remove`, `knownHosts.remove.title`, `knownHosts.remove.message`, `knownHosts.remove.messageMany %lld`, `knownHosts.remove.confirm`, `knownHosts.empty`, `knownHosts.loadError %@`, `tofu.manageKnownHosts`. Grep-Gegenprobe beide Kataloge.
 
-- [ ] **Step 1:** Sheet. **Step 2:** Menü + TabCommands. **Step 3:** Sidebar + TOFU-Fußnote. **Step 4:** Keys + Gegenprobe. **Step 5:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test` (Stand T1). **Step 6:** Commit `feat: manage known host keys from a dedicated sheet`.
+- [x] **Step 1:** Sheet. **Step 2:** Menü + TabCommands. **Step 3:** Sidebar + TOFU-Fußnote. **Step 4:** Keys + Gegenprobe. **Step 5:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test` (Stand T1). **Step 6:** Commit `feat: manage known host keys from a dedicated sheet`.
 
 ---
 
 ### Task 3: Abschluss-Verifikation (Koordinator)
 
-- [ ] Gated Suiten (Rig aus dem Haupt-Checkout starten): `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün, zero skips.
-- [ ] Visueller Smoke (Dev-Wrapper; Maintainer testet ggf. selbst): ⌘⇧K + Sidebar-Weg + Sessions-Menü öffnen dasselbe Sheet; Rig-Host sichtbar mit Fingerprint + Datum (Alt-Einträge „—"); Suche; Fingerprint kopieren → pbpaste; ENTFERNEN-BEWEIS: Rig-Host entfernen → neu verbinden → TOFU-Prompt erscheint wieder → vertrauen → Eintrag zurück MIT frischem Datum; TOFU-Fußnote öffnet das Sheet, Prompt bleibt gültig; Import/Export-Einträge im Sessions-Menü funktionieren; Regressionen (Sidebar-Menü, ⌘-Shortcuts, Mismatch-Hard-Stop unangetastet — NICHT live testen, nur Code-Diff bestätigen).
-- [ ] Plan-Checkboxen, Ledger, Opus-Whole-Branch-Final-Review (Base = Commit vor T1; TOFU-Nähe explizit reviewen lassen), Fixes, Push develop, CI, Rig `stop`, Memory-Update, Milestone-Zusammenfassung (+ M10b Login-Sets als Nächstes, inkl. M9e-ssh-agent-Prüfung im Design).
+- [x] Gated Suiten: 475/475 zero skips (Final-Reviewer unabhängig wiederholt).
+- [ ] Visueller Smoke — **an den Maintainer delegiert** (Checkliste in der Zusammenfassung).
+- [x] Plan-Checkboxen, Ledger, Opus-Final-Review („Ready to merge: Yes" im ersten Anlauf; zwei Pre-Push-Politur-Punkte gefolgt), Push, CI, Rig stop, Memory, Zusammenfassung.
