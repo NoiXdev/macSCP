@@ -234,4 +234,32 @@ struct AgentAuthTests {
             }
         }
     }
+
+    /// I-3(b), mock-level half: a typed `AgentError` raised while
+    /// establishing the JUMP hop's OWN agent connection must survive
+    /// `CitadelFileSystem`'s stage-aware error mapping (`mapStageAware`) AS
+    /// an `AgentError` — never downgraded to a stringified
+    /// `RemoteFSError.connectionFailed`. `emptyAgentThrowsNoIdentities`/
+    /// `deadSocketThrowsSocketUnavailable` above already prove the
+    /// pass-through for the TARGET hop (`mapConnectError`); this proves the
+    /// same discipline holds for the JUMP hop's distinct mapping path. No
+    /// network is ever touched: the factory override throws before
+    /// `AgentAuthContext.connect()` gets anywhere near a socket.
+    @Test func agentErrorSurvivesJumpStageMapping() async throws {
+        try await withTemporarySSHAuthSock("/tmp/macscp-agent-jumpstage-\(UUID().uuidString).sock") {
+            let config = try SSHConnectionConfig(
+                host: "example.invalid", username: "tester", auth: .password("irrelevant"),
+                jump: .init(host: "jump.invalid", username: "tester", auth: .agent))
+            let store = freshKnownHostsStore()
+            let failingFactory: @Sendable (String) async throws -> SSHAgentClient = { _ in
+                throw AgentError.protocolError(reason: "boom")
+            }
+            await #expect(throws: AgentError.protocolError(reason: "boom")) {
+                try await CitadelFileSystem.AgentClientFactory.$override.withValue(failingFactory) {
+                    _ = try await CitadelFileSystem.connect(
+                        config: config, knownHosts: store, onUnknownHostKey: { _ in true })
+                }
+            }
+        }
+    }
 }

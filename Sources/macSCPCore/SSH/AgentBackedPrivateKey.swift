@@ -74,14 +74,38 @@ enum AgentAlgorithm {
     /// tag) plus the signature tag — internally self-consistent (all three
     /// agree, which is what real servers actually check pairwise), but the
     /// blob's wire tag is `rsa-sha2-512` rather than the RFC's `ssh-rsa`.
+    ///
+    /// KNOWN, VERIFIED INCOMPATIBILITY (T2 review, not hypothetical):
     /// OpenSSH's key-type table treats `rsa-sha2-256`/`rsa-sha2-512` as
-    /// valid (if normally sig-only) names for `KEY_RSA`, and RSA blob bodies
-    /// (`mpint e`, `mpint n`) are identical regardless of which name tags
-    /// them, so a compliant server is expected to still parse the blob as
-    /// the same RSA key and match it against `authorized_keys` by key
-    /// material, not by wire tag. This is exactly the risk the gated
-    /// `agentAuthConnectsRSA` integration test proves against a real
-    /// OpenSSH `sshd` (see the Task 2 report for the observed result).
+    /// valid (if normally sig-only) names for `KEY_RSA` and matches
+    /// `authorized_keys` by parsed key material rather than by wire tag —
+    /// so a real OpenSSH `sshd` accepts this blob (proven live by the gated
+    /// `agentAuthConnectsRSA` integration test against the Docker rig).
+    /// Go's `golang.org/x/crypto/ssh`, however, parses the public-key blob's
+    /// leading string strictly as a KEY FORMAT, not merely a signature
+    /// algorithm, and does not recognize `rsa-sha2-512` there. Verified
+    /// directly against `x/crypto/ssh` (`ParsePublicKey` on a blob tagged
+    /// `rsa-sha2-512`), it rejects with:
+    ///
+    /// ```
+    /// ssh: signature algorithm "rsa-sha2-512" isn't a key format; key is
+    /// malformed and should be re-encoded with type "ssh-rsa"
+    /// ```
+    ///
+    /// Any server built on that library — Gitea, Forgejo, Gogs,
+    /// `gitlab-sshd`, SFTPGo, and others — therefore refuses an RSA-backed
+    /// agent identity through macSCP, even though the identical key works
+    /// fine over OpenSSH `sshd`. ed25519 and ECDSA identities are NOT
+    /// affected: for those algorithms the blob's embedded type tag and the
+    /// signature/algorithm name are the SAME string already (e.g.
+    /// `ssh-ed25519`), so there is no three-way divergence for swift-nio-ssh
+    /// to collapse in the first place — this incompatibility is specific to
+    /// RSA's `rsa-sha2-*` vs. `ssh-rsa` split. The actual fix requires
+    /// upstream swift-nio-ssh to let a `.custom` key's blob-embedded type
+    /// tag diverge from its signature/algorithm name (i.e. stop deriving
+    /// both from the single `publicKeyPrefix`/`keyPrefix` static) — out of
+    /// scope for macSCP itself; tracked as a known limitation, not patched
+    /// here.
     struct RSASha512: AgentSigningAlgorithm {
         static let name = "rsa-sha2-512"
         static let signFlags: UInt32 = SSHAgentCodec.rsaSHA2_512
@@ -109,6 +133,21 @@ enum AgentWireFormat {
         let start = 4 + Int(length)
         guard start <= bytes.count else { return Data() }
         return Data(bytes[start...])
+    }
+
+    /// Reads (without consuming) the leading `string` field itself, decoded
+    /// as UTF-8 — the algorithm/type name `stripLeadingSSHString` discards.
+    /// `nil` for malformed input (too short, or a declared length that
+    /// overruns the buffer). Used by M-4's SIGN_RESPONSE algorithm check.
+    static func leadingSSHString(from data: Data) -> String? {
+        let bytes = [UInt8](data)
+        guard bytes.count >= 4 else { return nil }
+        let length = (UInt32(bytes[0]) << 24) | (UInt32(bytes[1]) << 16)
+            | (UInt32(bytes[2]) << 8) | UInt32(bytes[3])
+        let start = 4
+        let end = start + Int(length)
+        guard end <= bytes.count else { return nil }
+        return String(decoding: bytes[start..<end], as: UTF8.self)
     }
 }
 
@@ -216,6 +255,20 @@ final class AgentBackedPrivateKey<Algorithm: AgentSigningAlgorithm>: NIOSSHPriva
             throw AgentError.protocolError(reason: "agent signature task did not complete")
         }
         let raw = try result.get()
+        // M-4: the agent's SIGN_RESPONSE self-reports the algorithm it
+        // actually signed with — trust nothing about it until that name is
+        // verified against what we asked for. An agent that ignores the
+        // SHA2 flags (or otherwise misbehaves) could re-emit a legacy SHA-1
+        // signature while still tagging it `rsa-sha2-512`; the server would
+        // then be asked to verify a signature under an algorithm name that
+        // does not match how it was actually produced.
+        guard let reportedAlgorithm = AgentWireFormat.leadingSSHString(from: raw) else {
+            throw AgentError.protocolError(reason: "agent SIGN_RESPONSE is missing its algorithm name")
+        }
+        guard reportedAlgorithm == Algorithm.name else {
+            throw AgentError.protocolError(
+                reason: "agent signature algorithm mismatch: expected \(Algorithm.name), got \(reportedAlgorithm)")
+        }
         return AgentSignature<Algorithm>(rawAgentResponse: raw)
     }
 
@@ -230,6 +283,21 @@ final class AgentBackedPrivateKey<Algorithm: AgentSigningAlgorithm>: NIOSSHPriva
 /// offer through the agent — the caller skips that identity rather than
 /// crashing on an unhandled static requirement (see `AgentAlgorithm`).
 enum AgentPrivateKeyFactory {
+    /// The exact same closed set `privateKey(for:client:)` switches over —
+    /// kept as one literal list so the two never drift apart. M-1: lets
+    /// `CitadelFileSystem.connectHop` pre-filter identities of an
+    /// unsupported type BEFORE spending a whole reconnect attempt on one,
+    /// instead of relying on `AgentAuthDelegate` to discover the same thing
+    /// mid-loop by returning `nil` here.
+    private static let supportedKeyTypes: Set<String> = [
+        "ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384",
+        "ecdsa-sha2-nistp521", "ssh-rsa",
+    ]
+
+    static func supports(keyType: String) -> Bool {
+        supportedKeyTypes.contains(keyType)
+    }
+
     static func privateKey(for identity: AgentIdentity, client: SSHAgentClient) -> NIOSSHPrivateKey? {
         switch identity.keyType {
         case "ssh-ed25519":

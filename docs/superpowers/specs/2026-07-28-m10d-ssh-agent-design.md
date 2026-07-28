@@ -109,6 +109,47 @@ Schlüssel verlässt den Agent nie; macSCP spricht das Agent-Protokoll über
 NACH Nutzung des Features; als Grenze dokumentiert, keine Gegenmaßnahme
 in M10d.
 
+### 4a. T2-Review-Nachträge (Reconnect-Verhalten + RSA-Grenze)
+
+**Pro-Identität-RECONNECT statt wiederholter Delegate-Aufrufe (verifiziert):**
+Citadels `SSHAuthenticationMethod.custom(_:)` konsumiert seinen Delegate
+GENAU EINMAL pro Verbindungsversuch (`implementations.removeFirst()` leert
+die einzige `.custom(delegate)`-Eintragung beim ersten Aufruf endgültig).
+Bietet der Agent N Identitäten an, bedeutet das N SEPARATE
+`SSHClient.connect()`/`jump(to:)`-Aufrufe — je einen FRISCHEN
+`SSHAuthenticationMethod.custom(...)`-Wrapper um dieselbe
+`AgentAuthDelegate`-Instanz, deren interner Cursor (`remaining`) so über
+die Aufrufe hinweg fortschreitet (siehe `CitadelFileSystem.connectHop`).
+Aus Sicht des Ziel-Servers erscheint jeder Fehlversuch als ein SEPARATER,
+fehlgeschlagener Login — sysadmin-seitig sichtbar z. B. in `auth.log`/
+`journalctl` als mehrere `Failed publickey`-Einträge statt eines einzigen
+Login-Vorgangs mit mehreren Angeboten. Die Anzahl ist bewusst begrenzt
+(siehe M-3/I-3: Cap auf `min(identities.count, 6)`, MaxAuthTries-Parität),
+damit ein Agent mit vielen Identitäten keinen Login-Spam gegen den Server
+erzeugt.
+
+**Bekannte RSA-Grenze (verifiziert, nicht hypothetisch):** Eine
+`ssh-rsa`-Identität wird über den Agent mit dem Blob-Tag `rsa-sha2-512`
+angeboten (swift-nio-ssh koppelt Algorithmusname und Blob-Tag für
+`.custom`-Schlüssel untrennbar, siehe `AgentBackedPrivateKey.swift`,
+`AgentAlgorithm.RSASha512`-Dokumentation). Gegen echtes OpenSSH `sshd`
+funktioniert das (gated `agentAuthConnectsRSA`-Test, Docker-Rig). Gegen
+Server auf Basis von Go's `golang.org/x/crypto/ssh` (Gitea, Forgejo,
+Gogs, `gitlab-sshd`, SFTPGo u. a.) schlägt es fehl — direkt gegen
+`x/crypto/ssh` verifiziert, exakte Fehlermeldung:
+
+```
+ssh: signature algorithm "rsa-sha2-512" isn't a key format; key is
+malformed and should be re-encoded with type "ssh-rsa"
+```
+
+ed25519- und ECDSA-Identitäten sind NICHT betroffen (Blob-Tag und
+Signaturname sind bei ihnen bereits identisch, keine Drei-Wege-Kopplung
+nötig). Der eigentliche Fix müsste in swift-nio-ssh selbst passieren
+(Blob-Tag und Algorithmus-/Signaturname für `.custom`-Schlüssel
+entkoppelbar machen) — außerhalb des macSCP-Scopes; als bekannte Grenze
+dokumentiert, nicht in M10d behoben.
+
 ## 5. App (Formular + Sets-Editor)
 
 - Auth-Segmente Ziel UND Jump: `Passwort | SSH-Key | Agent`. Agent-Modus

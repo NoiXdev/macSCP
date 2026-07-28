@@ -1422,6 +1422,113 @@ struct CitadelFileSystemIntegrationTests {
             }
         }
     }
+
+    /// I-3(a): the agent holds TWO ed25519 identities and only the SECOND
+    /// one is installed in `authorized_keys`. Proves the per-identity
+    /// reconnect loop (`CitadelFileSystem.connectHop`) actually ADVANCES
+    /// past a rejected identity to try the next one, rather than stopping
+    /// (or looping) on the first — a cursor off-by-one in
+    /// `AgentAuthDelegate.remaining` or in the M-3 attempt cap would show up
+    /// here as a hang, a wrong-error failure, or an early
+    /// `allAuthenticationOptionsFailed` despite a usable identity still
+    /// being available.
+    @Test func agentAuthSecondIdentitySucceeds() async throws {
+        // First identity: generated but deliberately never installed.
+        let firstDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-itest-agentkey-not-installed-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: firstDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: firstDir) }
+        let firstKeyURL = firstDir.appendingPathComponent("id_ed25519")
+        let keygen = Process()
+        keygen.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
+        keygen.arguments = ["-t", "ed25519", "-f", firstKeyURL.path(percentEncoded: false),
+                            "-N", "", "-q", "-C", "macscp-itest-not-installed"]
+        try keygen.run()
+        keygen.waitUntilExit()
+        #expect(keygen.terminationStatus == 0)
+
+        // Second identity: installed in authorized_keys via the shared helper.
+        let (secondDir, secondKeyPath) = try makeInstalledKey(type: "ed25519")
+        defer { try? FileManager.default.removeItem(at: secondDir) }
+
+        let agent = try spawnAgent()
+        defer { killAgent(agent) }
+        try addKey(atPath: firstKeyURL.path(percentEncoded: false), to: agent)
+        try addKey(atPath: secondKeyPath, to: agent)
+
+        let config = try SSHConnectionConfig(
+            host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
+        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-agent-second-\(UUID().uuidString)"))
+        let fs = try await withAgentEnv(agent) {
+            try await connectWithRetry {
+                try await CitadelFileSystem.connect(
+                    config: config, knownHosts: store, onUnknownHostKey: { _ in true })
+            }
+        }
+        defer { Task { await fs.disconnect() } }
+
+        let items = try await fs.list(path: "/data/seed")
+        #expect(items.contains { $0.name == "hello.txt" })
+    }
+
+    /// I-3(b): `.agent` on the JUMP hop, not just the target. The jump
+    /// (container 1, 127.0.0.1:2222) authenticates via a freshly spawned
+    /// agent holding a key installed in container 1's `authorized_keys`; the
+    /// target (sshd2:2222, reachable only THROUGH the jump) authenticates
+    /// with plain password auth. Proves `connectHop`'s per-identity
+    /// reconnect loop works correctly when it is the JUMP hop's attempts
+    /// being retried (not just the already-covered target hop).
+    @Test func agentAuthOnJumpHop() async throws {
+        let (dir, keyPath) = try makeInstalledKey(type: "ed25519")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let agent = try spawnAgent()
+        defer { killAgent(agent) }
+        try addKey(atPath: keyPath, to: agent)
+
+        let config = try SSHConnectionConfig(
+            host: "sshd2", port: 2222, username: "testuser", auth: .password("testpass"),
+            jump: .init(host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent))
+        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-agent-jump-\(UUID().uuidString)"))
+        let fs = try await withAgentEnv(agent) {
+            try await connectWithRetry {
+                try await CitadelFileSystem.connect(
+                    config: config, knownHosts: store, onUnknownHostKey: { _ in true })
+            }
+        }
+        defer { Task { await fs.disconnect() } }
+
+        let items = try await fs.list(path: "/")
+        #expect(!items.isEmpty)
+    }
+
+    /// I-3(c): an ECDSA (P-256) identity through the agent, mirroring
+    /// `agentAuthConnectsEd25519`/`agentAuthConnectsRSA` — the third
+    /// `AgentSigningAlgorithm` family macSCP offers (`AgentAlgorithm.ECDSAP256`)
+    /// had no live-server coverage before this test.
+    @Test func agentAuthConnectsECDSA() async throws {
+        let (dir, keyPath) = try makeInstalledKey(type: "ecdsa", bits: 256)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let agent = try spawnAgent()
+        defer { killAgent(agent) }
+        try addKey(atPath: keyPath, to: agent)
+
+        let config = try SSHConnectionConfig(
+            host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
+        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-agent-ecdsa-\(UUID().uuidString)"))
+        let fs = try await withAgentEnv(agent) {
+            try await connectWithRetry {
+                try await CitadelFileSystem.connect(
+                    config: config, knownHosts: store, onUnknownHostKey: { _ in true })
+            }
+        }
+        defer { Task { await fs.disconnect() } }
+
+        let items = try await fs.list(path: "/data/seed")
+        #expect(items.contains { $0.name == "hello.txt" })
+    }
 }
 
 /// Small thread-safe counter double for the decider calls.

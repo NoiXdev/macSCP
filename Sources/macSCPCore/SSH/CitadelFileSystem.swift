@@ -1,6 +1,7 @@
 import Citadel
 import Foundation
 import NIOCore
+import NIOPosix
 import NIOSSH
 
 /// SFTP implementation of RemoteFileSystem based on Citadel.
@@ -9,11 +10,22 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     private let client: SSHClient
     private let sftp: SFTPClient
     private let jumpClient: SSHClient?
+    /// I-2's dedicated event-loop group, if `.agent` auth caused one to be
+    /// created — `nil` for password/privateKey connections, which stay on
+    /// the shared `.singleton` default. Owned by THIS instance once a
+    /// connection attempt actually succeeds (see `connect()`'s comment on
+    /// why it must not be shut down there): the client's own channel still
+    /// runs on this group's loop, so shutdown is deferred to `disconnect()`.
+    private let dedicatedGroup: MultiThreadedEventLoopGroup?
 
-    private init(client: SSHClient, sftp: SFTPClient, jumpClient: SSHClient? = nil) {
+    private init(
+        client: SSHClient, sftp: SFTPClient, jumpClient: SSHClient? = nil,
+        dedicatedGroup: MultiThreadedEventLoopGroup? = nil
+    ) {
         self.client = client
         self.sftp = sftp
         self.jumpClient = jumpClient
+        self.dedicatedGroup = dedicatedGroup
     }
 
     /// Marks a stage-1 (jump host) failure so the outer retry loop can tell
@@ -77,16 +89,37 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 throw mapConnectError(error)
             }
         }
+        // I-2: agent-backed signing blocks synchronously on a semaphore
+        // (AgentBackedPrivateKey.signature) while a stalled `ssh-add`/hardware
+        // token round trip completes — on the process-wide default group
+        // (`SSHClient.connect`'s `group:` defaults to
+        // `MultiThreadedEventLoopGroup.singleton`, shared by every open tab)
+        // that would freeze every other tab's traffic for the duration of the
+        // stall. Give agent-authenticated connects their OWN single-threaded
+        // group instead, scoped to this `connect()` call's lifetime; the jump
+        // hop's child channel (`SSHClient.jump(to:)`) inherits its parent's
+        // event loop automatically, so this one group covers both hops.
+        let dedicatedGroup: MultiThreadedEventLoopGroup? =
+            (jumpAgent != nil || targetAgent != nil)
+                ? MultiThreadedEventLoopGroup(numberOfThreads: 1) : nil
         do {
             let result = try await connectWithTOFURetries(
                 config: config, knownHosts: knownHosts, onUnknownHostKey: onUnknownHostKey,
-                jumpAgent: jumpAgent, targetAgent: targetAgent)
+                jumpAgent: jumpAgent, targetAgent: targetAgent, group: dedicatedGroup)
             await jumpAgent?.close()
             await targetAgent?.close()
+            // NOT shut down here on success: `result`'s own SSHClient (and,
+            // for a jump, the jump client too) still runs its channel on
+            // this group's event loop. `result` now owns `dedicatedGroup`
+            // (see `attemptConnect`) and releases it in `disconnect()`.
             return result
         } catch {
             await jumpAgent?.close()
             await targetAgent?.close()
+            // No `CitadelFileSystem` survived to take ownership — safe (and
+            // necessary, to avoid leaking the group's thread) to shut it
+            // down here.
+            if let dedicatedGroup { try? await dedicatedGroup.shutdownGracefully() }
             throw error
         }
     }
@@ -103,7 +136,8 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         knownHosts: KnownHostsStore,
         onUnknownHostKey: @escaping @Sendable (HostKeyCandidate) async -> Bool,
         jumpAgent: AgentAuthContext?,
-        targetAgent: AgentAuthContext?
+        targetAgent: AgentAuthContext?,
+        group: MultiThreadedEventLoopGroup?
     ) async throws -> CitadelFileSystem {
         var acceptRetries = 0
         let maxAcceptRetries = config.jump == nil ? 1 : 2  // one accept per hop
@@ -113,7 +147,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             do {
                 return try await attemptConnect(
                     config: config, knownHosts: knownHosts, jumpBox: jumpBox, targetBox: targetBox,
-                    jumpAgent: jumpAgent, targetAgent: targetAgent)
+                    jumpAgent: jumpAgent, targetAgent: targetAgent, group: group)
             } catch {
                 // At most ONE hop can carry a verdict per attempt (stage 2
                 // only starts after stage 1 succeeds) — check the jump hop first.
@@ -205,7 +239,8 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         jumpBox: TOFUHostKeyValidator.Box,
         targetBox: TOFUHostKeyValidator.Box,
         jumpAgent: AgentAuthContext?,
-        targetAgent: AgentAuthContext?
+        targetAgent: AgentAuthContext?,
+        group: MultiThreadedEventLoopGroup?
     ) async throws -> CitadelFileSystem {
         if let jump = config.jump {
             // Stage 1 (jump host) — any failure here (auth, key loading,
@@ -218,12 +253,18 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 jumpClient = try await connectHop(
                     auth: jump.auth, username: jump.username, agent: jumpAgent, box: jumpBox
                 ) { method in
+                    // I-2: `group` is the dedicated event-loop group `connect()`
+                    // creates whenever either hop uses `.agent`; the target
+                    // hop's `jump(to:)` call below inherits THIS group's loop
+                    // via the jump client's own channel, so passing it only
+                    // here still covers both hops.
                     try await SSHClient.connect(
                         host: jump.host,
                         port: jump.port,
                         authenticationMethod: method,
                         hostKeyValidator: .custom(jumpValidator),
-                        reconnect: .never
+                        reconnect: .never,
+                        group: group ?? .singleton
                     )
                 }
             } catch {
@@ -247,7 +288,8 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 }
                 do {
                     let sftp = try await client.openSFTP()
-                    return CitadelFileSystem(client: client, sftp: sftp, jumpClient: jumpClient)
+                    return CitadelFileSystem(
+                        client: client, sftp: sftp, jumpClient: jumpClient, dedicatedGroup: group)
                 } catch {
                     try? await client.close()
                     throw error
@@ -263,17 +305,19 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         let client = try await connectHop(
             auth: config.auth, username: config.username, agent: targetAgent, box: targetBox
         ) { method in
+            // I-2: see the jump-hop call above — same dedicated group.
             try await SSHClient.connect(
                 host: config.host,
                 port: config.port,
                 authenticationMethod: method,
                 hostKeyValidator: .custom(validator),
-                reconnect: .never
+                reconnect: .never,
+                group: group ?? .singleton
             )
         }
         do {
             let sftp = try await client.openSFTP()
-            return CitadelFileSystem(client: client, sftp: sftp)
+            return CitadelFileSystem(client: client, sftp: sftp, dedicatedGroup: group)
         } catch {
             try? await client.close()
             throw error
@@ -323,18 +367,44 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 // ever runs — reaching this means that invariant broke.
                 throw AgentError.noIdentities
             }
+            // M-1: pre-filter to the types `AgentPrivateKeyFactory` actually
+            // offers. `AgentAuthDelegate` already skips an unsupported
+            // identity internally, but only mid-loop inside a single
+            // `nextAuthenticationType` call — the OUTER reconnect loop below
+            // would still spend a whole extra `connectOnce` round trip (fresh
+            // TCP + SSH handshake) on nothing once the real identities are
+            // exhausted, if its bound stayed `agent.identities.count`
+            // instead of the filtered count.
+            let offerableIdentities = agent.identities.filter {
+                AgentPrivateKeyFactory.supports(keyType: $0.keyType)
+            }
             let delegate = AgentAuthDelegate(
-                username: username, identities: agent.identities, client: agent.client)
+                username: username, identities: offerableIdentities, client: agent.client)
+            // M-3: bound the number of per-identity reconnects at
+            // MaxAuthTries parity (OpenSSH's own default is 6) — without a
+            // cap, an agent holding many identities could drive unbounded
+            // reconnects against the server (each one its own visible failed
+            // login, see the M10d design spec §4a).
+            let attempts = min(offerableIdentities.count, 6)
             var lastError: Error = AgentError.noIdentities
-            for _ in agent.identities {
+            // M-2: an outright auth rejection (the server tried the offered
+            // identity and said no) must never be masked by a LATER, unrelated
+            // failure from trying yet another identity (e.g. a transient
+            // transport hiccup) — remember the rejection and prefer it over
+            // whatever `lastError` ends up being.
+            var authRejectionError: Error?
+            for _ in 0..<attempts {
                 do {
                     return try await connectOnce(.custom(delegate))
                 } catch {
                     lastError = error
                     if box.result != nil { throw error }
+                    if case SSHClientError.allAuthenticationOptionsFailed = error {
+                        authRejectionError = error
+                    }
                 }
             }
-            throw lastError
+            throw authRejectionError ?? lastError
         }
     }
 
@@ -752,8 +822,33 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     }
 
     public func disconnect() async {
+        // Close the SFTP child channel explicitly (its own closeFuture),
+        // rather than relying solely on the parent SSH channel's close to
+        // cascade to it, before closing the parent connection(s) and (I-2)
+        // releasing the dedicated event-loop group they ran on.
+        try? await sftp.close()
         try? await client.close()
         try? await jumpClient?.close()
+        // I-2: release the dedicated event-loop group this connection took
+        // ownership of at construction time (see `connect()`).
+        //
+        // KNOWN RESIDUAL (observed during T2 verification, not a regression
+        // introduced by the ordering above): Citadel's `SFTPClient.openSFTP`
+        // schedules an internal 15-second "no reply" timeout task on the
+        // connection's event loop and never cancels it once `openSFTP`
+        // succeeds (`Citadel/Sources/Citadel/SFTP/Client/SFTPClient.swift:535`).
+        // If this connection is closed (and, with `.agent` auth, this
+        // dedicated group shut down) less than 15 seconds after connecting —
+        // routine for a quick browse-and-disconnect — that leftover task
+        // fires against an already-shut-down loop, and NIO prints "Cannot
+        // schedule tasks on an EventLoop that has already shut down"
+        // (currently a logged warning, not a crash). The stray task's own
+        // effect is a no-op (it only fails promises `openSFTP` already
+        // fulfilled on success), so this is cosmetic today, not a
+        // correctness defect — but it lives entirely inside vendored
+        // Citadel and cannot be cancelled from here; fixing it upstream
+        // (or in a future Citadel bump) is out of scope for this fix round.
+        if let dedicatedGroup { try? await dedicatedGroup.shutdownGracefully() }
     }
 }
 
