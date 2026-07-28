@@ -638,10 +638,7 @@ struct ContentView: View {
     /// (`closeRequest`, bound to the confirmation dialog above); an
     /// otherwise-idle tab closes immediately.
     private func requestClose(_ tab: SessionTab) {
-        let hasIncomingTransfers = tabsModel.tabs.contains {
-            $0.id != tab.id && $0.transferQueue.hasActiveItems(destinationTabID: tab.id)
-        }
-        if tab.transferQueue.isActive || hasIncomingTransfers {
+        if tab.transferQueue.isActive || hasIncomingTransfers(for: tab) {
             closeRequest = tab
         } else {
             Task { await performClose(tab) }
@@ -658,15 +655,22 @@ struct ContentView: View {
             lines.append(L10n.string(
                 "tabs.close.activeTransfers", "Active transfers in this tab will be canceled."))
         }
-        let hasIncomingTransfers = tabsModel.tabs.contains {
-            $0.id != tab.id && $0.transferQueue.hasActiveItems(destinationTabID: tab.id)
-        }
-        if hasIncomingTransfers {
+        if hasIncomingTransfers(for: tab) {
             lines.append(L10n.string(
                 "tabs.close.incomingTransfers",
                 "Other tabs are streaming to this session; closing cancels those transfers."))
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// True while any OTHER tab's queue holds a non-terminal item that
+    /// targets this tab (M8b/T4) — closing it would sever those incoming
+    /// cross-session streams. Evaluated live against the tabs collection at
+    /// both call sites (confirm gate and warning text).
+    private func hasIncomingTransfers(for tab: SessionTab) -> Bool {
+        tabsModel.tabs.contains {
+            $0.id != tab.id && $0.transferQueue.hasActiveItems(destinationTabID: tab.id)
+        }
     }
 
     /// Closes a tab: tab-local teardown first, then either removal from the
