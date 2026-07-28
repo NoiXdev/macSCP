@@ -37,7 +37,7 @@ T1 (Core: refreshQuietly + Settings) → T2 (App: Timer + Settings-UI) → T3 Ab
   - `SettingsStore.autoRefreshEnabled: Bool` (get/set, Default `true`)
   - `SettingsStore.autoRefreshIntervalSeconds: Int` (get/set, Default `5`, geklemmt `2...300` in Setter UND Getter)
 
-- [ ] **Step 1: Failing VM-Tests** (Mock-FS-Muster der Datei übernehmen — Helfer für Tree-Mutation/werfende Mocks existieren; Assertions unverändert lassen):
+- [x] **Step 1: Failing VM-Tests** (Mock-FS-Muster der Datei übernehmen — Helfer für Tree-Mutation/werfende Mocks existieren; Assertions unverändert lassen):
 
 ```swift
     // refreshQuietlyUpdatesItemsWithoutStateFlicker:
@@ -57,9 +57,9 @@ T1 (Core: refreshQuietly + Settings) → T2 (App: Timer + Settings-UI) → T3 Ab
     //   — der stille Refresh repariert NICHT (nur „Erneut versuchen" tut das).
 ```
 
-- [ ] **Step 2: Rot beweisen.** `swift test --filter RemoteBrowserViewModelTests` → FAIL (Methode fehlt).
+- [x] **Step 2: Rot beweisen.** `swift test --filter RemoteBrowserViewModelTests` → FAIL (Methode fehlt).
 
-- [ ] **Step 3: Implementierung.** In `RemoteBrowserViewModel`:
+- [x] **Step 3: Implementierung.** In `RemoteBrowserViewModel`:
 
 ```swift
     /// Shared display pipeline for `load()` and `refreshQuietly()` — the
@@ -108,9 +108,9 @@ T1 (Core: refreshQuietly + Settings) → T2 (App: Timer + Settings-UI) → T3 Ab
     }
 ```
 
-- [ ] **Step 4: Failing Settings-Tests** (Muster der Datei): Defaults (true/5), Setter-Klemmung (1→2, 9999→300), Getter-Klemmung (rohen Wert 0 bzw. 100000 direkt in die JSON-Datei schreiben wie die Vorwärtskompatibilitäts-Tests es tun → Lesen liefert 2 bzw. 300), Roundtrip, alte settings.json ohne die Keys lädt mit Defaults. Rot → implementieren → grün.
+- [x] **Step 4: Failing Settings-Tests** (Muster der Datei): Defaults (true/5), Setter-Klemmung (1→2, 9999→300), Getter-Klemmung (rohen Wert 0 bzw. 100000 direkt in die JSON-Datei schreiben wie die Vorwärtskompatibilitäts-Tests es tun → Lesen liefert 2 bzw. 300), Roundtrip, alte settings.json ohne die Keys lädt mit Defaults. Rot → implementieren → grün.
 
-- [ ] **Step 5: Volle Suite + Commit.** `swift test` → 445 + ~8 (echte Zahl festhalten).
+- [x] **Step 5: Volle Suite + Commit.** `swift test` → 445 + ~8 (echte Zahl festhalten).
 
 ```bash
 git add -A
@@ -150,7 +150,7 @@ git commit -m "feat: add a silent remote refresh and its settings"
 2. Settings-UI im Allgemein-Tab unter dem Versteckte-Dateien-Toggle: Toggle (Key `settings.general.autoRefresh` — EN „Auto-refresh remote view", DE „Remote-Ansicht automatisch aktualisieren") + Stepper/TextField-Zeile (Key `settings.general.autoRefreshInterval %lld` — EN „Every %lld seconds", DE „Alle %lld Sekunden"; Formular-Stil der bestehenden Transfer-Settings-Zeilen nachschlagen und übernehmen — dort existiert das Muster Zahlenfeld+Klemmung), Feld disabled wenn Toggle aus.
 3. Keys in BEIDEN Katalogen; Grep-Gegenprobe.
 
-- [ ] **Step 1:** Timer. **Step 2:** Settings-UI + Keys. **Step 3:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test` (Stand T1). **Step 4:** Commit `feat: auto-refresh the active remote pane on an interval`.
+- [x] **Step 1:** Timer. **Step 2:** Settings-UI + Keys. **Step 3:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test` (Stand T1). **Step 4:** Commit `feat: auto-refresh the active remote pane on an interval`.
 
 ---
 
