@@ -58,4 +58,43 @@ struct SSHConnectionConfigTests {
                 config: config, knownHosts: store, onUnknownHostKey: { _ in true })
         }
     }
+
+    // MARK: - M10c/T1: SSHConnectionConfig.Jump
+
+    @Test func jumpDefaultsNil() throws {
+        let config = try SSHConnectionConfig(host: "example.com", username: "tim", auth: .password("x"))
+        #expect(config.jump == nil)
+    }
+
+    @Test func jumpValidatesLikeTarget() throws {
+        #expect(throws: SSHConnectionConfig.ConfigError.emptyJumpHost) {
+            _ = try SSHConnectionConfig(
+                host: "example.com", username: "tim", auth: .password("x"),
+                jump: .init(host: "", username: "j", auth: .password("x")))
+        }
+        #expect(throws: SSHConnectionConfig.ConfigError.emptyJumpUsername) {
+            _ = try SSHConnectionConfig(
+                host: "example.com", username: "tim", auth: .password("x"),
+                jump: .init(host: "b", username: "", auth: .password("x")))
+        }
+        #expect(throws: SSHConnectionConfig.ConfigError.invalidJumpPort(0)) {
+            _ = try SSHConnectionConfig(
+                host: "example.com", username: "tim", auth: .password("x"),
+                jump: .init(host: "b", port: 0, username: "j", auth: .password("x")))
+        }
+        #expect(throws: SSHConnectionConfig.ConfigError.invalidJumpPort(65536)) {
+            _ = try SSHConnectionConfig(
+                host: "example.com", username: "tim", auth: .password("x"),
+                jump: .init(host: "b", port: 65536, username: "j", auth: .password("x")))
+        }
+
+        let config = try SSHConnectionConfig(
+            host: "example.com", username: "tim", auth: .password("x"),
+            jump: .init(host: "b", port: 22, username: "j", auth: .password("x")))
+        #expect(config.jump == SSHConnectionConfig.Jump(host: "b", port: 22, username: "j", auth: .password("x")))
+    }
+
+    @Test func jumpAuthFailedIsNotConnectionFailure() {
+        #expect(RemoteFSError.jumpAuthenticationFailed.isConnectionFailure == false)
+    }
 }

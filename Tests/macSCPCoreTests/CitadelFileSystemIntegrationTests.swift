@@ -1117,6 +1117,58 @@ struct CitadelFileSystemIntegrationTests {
         #expect(home.hasPrefix("/"))
         _ = try await fs.list(path: home)   // landing point must be listable
     }
+
+    // MARK: - M10c/T1: jump host (ProxyJump) two-stage connect
+
+    /// The target ("sshd2", port 2222 — the container's INTERNAL port, as
+    /// seen from inside the jump container, not the host-mapped :2223) is
+    /// only reachable THROUGH the jump host (127.0.0.1:2222,
+    /// macscp-test-sshd). A fresh KnownHostsStore means BOTH hops are
+    /// unknown on the first connect: the decider must be asked exactly
+    /// twice (jump key, then target key), `list("/")` must succeed, and
+    /// `disconnect()` must close the jump client cleanly. A second connect
+    /// with the SAME store must not ask the decider again — both keys are
+    /// now remembered.
+    @Test func jumpConnectListsOverHop() async throws {
+        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-jump-\(UUID().uuidString)"))
+        let config = try SSHConnectionConfig(
+            host: "sshd2", port: 2222, username: "testuser", auth: .password("testpass"),
+            jump: .init(host: "127.0.0.1", port: 2222, username: "testuser", auth: .password("testpass")))
+
+        let asked = CallCounterBox()
+        let fs1 = try await connectWithRetry {
+            try await CitadelFileSystem.connect(
+                config: config, knownHosts: store,
+                onUnknownHostKey: { _ in asked.increment(); return true })
+        }
+        let items = try await fs1.list(path: "/")
+        #expect(!items.isEmpty)
+        #expect(asked.value == 2)   // both hops unknown on the first connect
+        await fs1.disconnect()
+
+        let fs2 = try await CitadelFileSystem.connect(
+            config: config, knownHosts: store,
+            onUnknownHostKey: { _ in asked.increment(); return true })
+        await fs2.disconnect()
+        #expect(asked.value == 2)   // both keys remembered — no second prompt
+    }
+
+    /// A wrong jump password must surface as `RemoteFSError.jumpAuthenticationFailed`
+    /// — NOT `.authenticationFailed` (that case is reserved for the target hop) —
+    /// so the connect form can highlight the jump credentials specifically.
+    @Test func jumpWrongPasswordSurfacesJumpAuthFailed() async throws {
+        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-jump-\(UUID().uuidString)"))
+        let config = try SSHConnectionConfig(
+            host: "sshd2", port: 2222, username: "testuser", auth: .password("testpass"),
+            jump: .init(host: "127.0.0.1", port: 2222, username: "testuser", auth: .password("WRONG")))
+
+        await #expect(throws: RemoteFSError.jumpAuthenticationFailed) {
+            _ = try await CitadelFileSystem.connect(
+                config: config, knownHosts: store, onUnknownHostKey: { _ in true })
+        }
+    }
 }
 
 /// Small thread-safe counter double for the decider calls.

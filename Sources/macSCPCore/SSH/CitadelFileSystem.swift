@@ -8,69 +8,92 @@ import NIOSSH
 public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     private let client: SSHClient
     private let sftp: SFTPClient
+    private let jumpClient: SSHClient?
 
-    private init(client: SSHClient, sftp: SFTPClient) {
+    private init(client: SSHClient, sftp: SFTPClient, jumpClient: SSHClient? = nil) {
         self.client = client
         self.sftp = sftp
+        self.jumpClient = jumpClient
     }
 
-    /// Connects with Trust-on-First-Use host-key verification.
+    /// Marks a stage-1 (jump host) failure so the outer retry loop can tell
+    /// it apart from a stage-2 (target) failure WITHOUT disturbing the
+    /// host-key box evaluation — verdicts still flow through `jumpBox`/
+    /// `targetBox` exactly as before; this only wraps the underlying error
+    /// for `mapStageAware` to route correctly.
+    private struct JumpStageError: Error {
+        let underlying: Error
+    }
+
+    /// Connects with Trust-on-First-Use host-key verification, optionally
+    /// through one jump host (M10c ProxyJump).
     ///
     /// - known & identical → connect silently
-    /// - known & different → `HostKeyError.mismatch` (the decider is NEVER asked)
-    /// - unknown → `onUnknownHostKey`; on `true` → `upsert` + exactly ONE retry,
-    ///   on `false` → `HostKeyError.rejectedByUser` (nothing is stored)
+    /// - known & different → `HostKeyError.mismatch` (the decider is NEVER
+    ///   asked) — on EVERY hop, jump or target
+    /// - unknown → `onUnknownHostKey`; on `true` → `upsert` + retry (bounded
+    ///   to one accept per hop), on `false` → `HostKeyError.rejectedByUser`
+    ///   (nothing is stored)
     ///
     /// Implementation (phase 2 of the drift strategy): Citadel's host-key hook
     /// is the synchronous, Promise-based `NIOSSHClientServerAuthenticationDelegate`
     /// — it cannot call the async decider itself. So the hook rejects
     /// unknown/differing keys and reports the candidate outward via a box;
-    /// here the decider is consulted and, after `upsert`, connects again
-    /// (then the known-identical path takes over silently).
+    /// here the decider is consulted and, after `upsert`, the WHOLE attempt
+    /// (both hops) is retried (then the known-identical path takes over
+    /// silently). Without a jump, this degenerates to the original single-hop
+    /// behavior byte-for-byte: `targetBox` is the only box that ever carries
+    /// a verdict, and exactly one accept-retry is allowed.
     public static func connect(
         config: SSHConnectionConfig,
         knownHosts: KnownHostsStore,
         onUnknownHostKey: @escaping @Sendable (HostKeyCandidate) async -> Bool
     ) async throws -> CitadelFileSystem {
-        let box = TOFUHostKeyValidator.Box()
-        do {
-            return try await attemptConnect(config: config, knownHosts: knownHosts, box: box)
-        } catch {
-            switch box.result {
-            case .mismatch(let host, let expected, let presented):
-                // Hard stop — no override, the decider is NEVER asked.
-                throw HostKeyError.mismatch(host: host, expected: expected, presented: presented)
-            case .lookupFailed(let reason):
-                // Corrupt known_hosts store → hard, typed error instead of a
-                // silent downgrade to TOFU (fail closed).
-                throw RemoteFSError.connectionFailed(reason: "known_hosts store unreadable: \(reason)")
-            case .unknown(let candidate):
-                let accepted = await onUnknownHostKey(candidate)
-                guard accepted else { throw HostKeyError.rejectedByUser }
-                try knownHosts.upsert(KnownHostKey(
-                    host: candidate.host, port: candidate.port,
-                    keyType: candidate.keyType, publicKeyBase64: candidate.publicKeyBase64))
-                // Exactly ONE retry: the key is now known → the hook accepts silently.
-                do {
-                    let retryBox = TOFUHostKeyValidator.Box()
-                    return try await attemptConnect(
-                        config: config, knownHosts: knownHosts, box: retryBox)
-                } catch {
-                    throw mapConnectError(error)
+        var acceptRetries = 0
+        let maxAcceptRetries = config.jump == nil ? 1 : 2  // one accept per hop
+        while true {
+            let jumpBox = TOFUHostKeyValidator.Box()
+            let targetBox = TOFUHostKeyValidator.Box()
+            do {
+                return try await attemptConnect(
+                    config: config, knownHosts: knownHosts, jumpBox: jumpBox, targetBox: targetBox)
+            } catch {
+                // At most ONE hop can carry a verdict per attempt (stage 2
+                // only starts after stage 1 succeeds) — check the jump hop first.
+                switch jumpBox.result ?? targetBox.result {
+                case .mismatch(let host, let expected, let presented):
+                    // Hard stop — no override, the decider is NEVER asked.
+                    throw HostKeyError.mismatch(host: host, expected: expected, presented: presented)
+                case .lookupFailed(let reason):
+                    // Corrupt known_hosts store → hard, typed error instead of a
+                    // silent downgrade to TOFU (fail closed).
+                    throw RemoteFSError.connectionFailed(reason: "known_hosts store unreadable: \(reason)")
+                case .unknown(let candidate):
+                    guard acceptRetries < maxAcceptRetries else { throw mapStageAware(error) }
+                    let accepted = await onUnknownHostKey(candidate)
+                    guard accepted else { throw HostKeyError.rejectedByUser }
+                    try knownHosts.upsert(KnownHostKey(
+                        host: candidate.host, port: candidate.port,
+                        keyType: candidate.keyType, publicKeyBase64: candidate.publicKeyBase64))
+                    acceptRetries += 1
+                    continue  // full reconnect of both hops
+                case .none:
+                    // No host-key verdict → a genuine connection/auth/key error.
+                    throw mapStageAware(error)
                 }
-            case .none:
-                // No host-key verdict → a genuine connection/auth/key error.
-                throw mapConnectError(error)
             }
         }
     }
 
-    /// A single connection attempt with the TOFU validator. Throws raw errors;
-    /// `connect` handles the evaluation (decider, mismatch, mapping).
+    /// A single connection attempt with the TOFU validators. Throws raw
+    /// errors; `connect` handles the evaluation (decider, mismatch, mapping).
+    /// Without a jump, this is byte-identical to the pre-M10c single-hop path
+    /// (the validator runs on `targetBox`).
     private static func attemptConnect(
         config: SSHConnectionConfig,
         knownHosts: KnownHostsStore,
-        box: TOFUHostKeyValidator.Box
+        jumpBox: TOFUHostKeyValidator.Box,
+        targetBox: TOFUHostKeyValidator.Box
     ) async throws -> CitadelFileSystem {
         let authMethod: SSHAuthenticationMethod
         switch config.auth {
@@ -81,8 +104,59 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 username: config.username, keyPath: keyPath, passphrase: passphrase)
         }
 
+        if let jump = config.jump {
+            // Stage 1 (jump host) — any failure here (auth, key loading,
+            // host-key rejection, transport) is marked as a JumpStageError so
+            // the outer loop / mapStageAware can attribute it to the jump hop.
+            let jumpClient: SSHClient
+            do {
+                let jumpAuth: SSHAuthenticationMethod
+                switch jump.auth {
+                case .password(let password):
+                    jumpAuth = .passwordBased(username: jump.username, password: password)
+                case .privateKey(let keyPath, let passphrase):
+                    jumpAuth = try SSHPrivateKeyLoader.authentication(
+                        username: jump.username, keyPath: keyPath, passphrase: passphrase)
+                }
+                let jumpValidator = TOFUHostKeyValidator(
+                    host: jump.host, port: jump.port, knownHosts: knownHosts, box: jumpBox)
+                jumpClient = try await SSHClient.connect(
+                    host: jump.host,
+                    port: jump.port,
+                    authenticationMethod: jumpAuth,
+                    hostKeyValidator: .custom(jumpValidator),
+                    reconnect: .never
+                )
+            } catch {
+                throw JumpStageError(underlying: error)
+            }
+            // Stage 2 (target, reached through the jump channel) — every
+            // failure from here on closes the jump client before propagating.
+            do {
+                let targetValidator = TOFUHostKeyValidator(
+                    host: config.host, port: config.port, knownHosts: knownHosts, box: targetBox)
+                let settings = SSHClientSettings(
+                    host: config.host,
+                    port: config.port,
+                    authenticationMethod: { authMethod },
+                    hostKeyValidator: .custom(targetValidator)
+                )
+                let client = try await jumpClient.jump(to: settings)
+                do {
+                    let sftp = try await client.openSFTP()
+                    return CitadelFileSystem(client: client, sftp: sftp, jumpClient: jumpClient)
+                } catch {
+                    try? await client.close()
+                    throw error
+                }
+            } catch {
+                try? await jumpClient.close()
+                throw error
+            }
+        }
+
         let validator = TOFUHostKeyValidator(
-            host: config.host, port: config.port, knownHosts: knownHosts, box: box)
+            host: config.host, port: config.port, knownHosts: knownHosts, box: targetBox)
         let client = try await SSHClient.connect(
             host: config.host,
             port: config.port,
@@ -119,6 +193,35 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             }
         default:
             return RemoteFSError.connectionFailed(reason: String(describing: error))
+        }
+    }
+
+    /// Like `mapConnectError`, but attributes stage-1 (jump) failures
+    /// distinctly: `allAuthenticationOptionsFailed` becomes
+    /// `.jumpAuthenticationFailed` (not `.authenticationFailed`, so the form
+    /// highlights the jump credentials, not the target's) and an `SSHKeyError`
+    /// from loading the JUMP key is passed through unwrapped — it already
+    /// carries its own context (e.g. `fileNotFound(path:)`). Everything that
+    /// isn't a `JumpStageError` (i.e. every target-hop failure) goes through
+    /// the existing `mapConnectError` unchanged.
+    private static func mapStageAware(_ error: Error) -> Error {
+        guard let jumpStageError = error as? JumpStageError else {
+            return mapConnectError(error)
+        }
+        switch jumpStageError.underlying {
+        case let keyError as SSHKeyError:
+            return keyError
+        case let clientError as SSHClientError:
+            switch clientError {
+            case .allAuthenticationOptionsFailed:
+                return RemoteFSError.jumpAuthenticationFailed
+            default:
+                return RemoteFSError.connectionFailed(
+                    reason: "jump host: \(String(describing: clientError))")
+            }
+        default:
+            return RemoteFSError.connectionFailed(
+                reason: "jump host: \(String(describing: jumpStageError.underlying))")
         }
     }
 
@@ -466,6 +569,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
 
     public func disconnect() async {
         try? await client.close()
+        try? await jumpClient?.close()
     }
 }
 

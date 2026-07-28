@@ -1,6 +1,12 @@
 public enum RemoteFSError: Error, Equatable, Sendable {
     case connectionFailed(reason: String)
     case authenticationFailed
+    /// Stage-1 (jump host) authentication failure (M10c). Kept distinct from
+    /// `.authenticationFailed` so the connect form can highlight the jump
+    /// credentials instead of the target's. `isConnectionFailure` deliberately
+    /// stays false so a mid-transfer classification can never mark it
+    /// resumable.
+    case jumpAuthenticationFailed
     case notFound(path: String)
     case permissionDenied(path: String)
     case protocolError(reason: String)
