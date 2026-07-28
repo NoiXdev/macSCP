@@ -23,6 +23,12 @@ struct ConnectionFormView: View {
     let onConnected: (any RemoteFileSystem) async -> Void
 
     @State private var showKeyImporter = false
+    /// True while `onConnected` runs after a successful connect (M9d final
+    /// review): the connect closure is async now (home-directory lookup), so
+    /// the view model's `.idle` state alone would re-enable the Connect
+    /// button while `tab.session` is still nil — a second click in that
+    /// window would open and LEAK a second SSH connection.
+    @State private var isHandingOff = false
     /// Failure message currently shown as an alert. Deliberately separate
     /// from `viewModel.state` so dismissing the alert keeps the `.failed`
     /// state (and with it the red field highlight) intact.
@@ -203,7 +209,7 @@ struct ConnectionFormView: View {
 
             HStack {
                 Spacer()
-                if isConnecting {
+                if isConnecting || isHandingOff {
                     ProgressView()
                         .controlSize(.small)
                 }
@@ -234,14 +240,16 @@ struct ConnectionFormView: View {
                     Button(L10n.string("connection.connect", "Connect")) {
                         Task {
                             if let fs = await viewModel.connect() {
+                                isHandingOff = true
                                 await onConnected(fs)
+                                isHandingOff = false
                             } else if case .failed(let message, _) = viewModel.state {
                                 alertMessage = message
                             }
                         }
                     }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(isConnecting)
+                    .disabled(isConnecting || isHandingOff)
                     .buttonStyle(.polishedProminent)
                 }
             }

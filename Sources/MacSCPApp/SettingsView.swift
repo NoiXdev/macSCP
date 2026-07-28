@@ -147,6 +147,9 @@ private struct TransfersSettingsTab: View {
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 70)
                         .multilineTextAlignment(.trailing)
+                        // Empty title (grouped-Form label trap) — restore the
+                        // VoiceOver label explicitly (M9d final review).
+                        .accessibilityLabel(L10n.string("settings.bandwidth.upload", "Upload"))
                         // Unit abbreviation, not prose - no localization key
                         // needed (see SettingsView doc comment / task notes).
                         Text(verbatim: "KB/s")
@@ -164,6 +167,7 @@ private struct TransfersSettingsTab: View {
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 70)
                         .multilineTextAlignment(.trailing)
+                        .accessibilityLabel(L10n.string("settings.bandwidth.download", "Download"))
                         Text(verbatim: "KB/s")
                             .foregroundStyle(.secondary)
                     }
@@ -208,6 +212,16 @@ private struct OpenWithSettingsTab: View {
     @State private var importerPresented = false
     /// The extension being typed into the "add rule" row.
     @State private var newRuleExtension: String = ""
+
+    /// Mirrors `SettingsStore`'s private extension normalization (trim,
+    /// strip one leading dot, lowercase) so the Choose-app button gates on
+    /// what the store would actually KEEP — "." trims non-empty but
+    /// normalizes to empty and would be silently dropped (M9d final review).
+    private var normalizedNewRuleExtension: String {
+        var trimmed = newRuleExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix(".") { trimmed.removeFirst() }
+        return trimmed.lowercased()
+    }
 
     var body: some View {
         Form {
@@ -272,11 +286,15 @@ private struct OpenWithSettingsTab: View {
                         )
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 60)
+                        .accessibilityLabel(L10n.string("settings.openWith.rules.extension", "Extension"))
                         Button(L10n.string("settings.openWith.rules.chooseApp", "Choose app…")) {
                             activePicker = .rule(extension: newRuleExtension)
                             importerPresented = true
                         }
-                        .disabled(newRuleExtension.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        // Gate on the NORMALIZED value (M9d final review):
+                        // "." trims to non-empty but normalizes to empty, so
+                        // the store's setter would silently drop the rule.
+                        .disabled(normalizedNewRuleExtension.isEmpty)
                     }
                 }
             } header: {

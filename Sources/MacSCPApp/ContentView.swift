@@ -717,7 +717,11 @@ struct ContentView: View {
                     // login instead of hardcoded "/". A lookup failure
                     // (older SFTP servers, permission quirks) falls back to
                     // "/" rather than failing the connect.
-                    let home = (try? await fs.homeDirectoryPath()) ?? "/"
+                    // Accept only usable absolute paths (M9d final review): an
+                // empty/relative realpath result would land the pane in
+                // .failed where "/" always worked.
+                let resolved = (try? await fs.homeDirectoryPath()) ?? "/"
+                let home = resolved.hasPrefix("/") ? resolved : "/"
                     startSession(in: tab, with: fs, startPath: home)
                 }
                 .frame(maxHeight: .infinity, alignment: .top)
@@ -1127,7 +1131,11 @@ struct ContentView: View {
             form.keyPath = stored.keyPath ?? ""
 
             if let fs = await form.connect() {
-                let home = (try? await fs.homeDirectoryPath()) ?? "/"
+                // Accept only usable absolute paths (M9d final review): an
+                // empty/relative realpath result would land the pane in
+                // .failed where "/" always worked.
+                let resolved = (try? await fs.homeDirectoryPath()) ?? "/"
+                let home = resolved.hasPrefix("/") ? resolved : "/"
                 startSession(in: tab, with: fs, storedName: stored.name, startPath: home)
                 tab.activeStoredSessionID = stored.id
                 // Audit recorder (M9b/T3): this IS the stored-session connect
