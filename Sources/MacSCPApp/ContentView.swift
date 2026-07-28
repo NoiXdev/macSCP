@@ -664,10 +664,14 @@ struct ContentView: View {
 
                     TransferQueueBar(viewModel: tab.transferQueue)
                 }
-                .task {
+                .task(id: session.id) {
                     // Auto-refresh loop (M9c): lives inside the tab's `.id` identity,
                     // so switching tabs (or disconnecting) cancels it and the next
-                    // active tab starts its own. Reads the settings fresh every lap
+                    // active tab starts its own. Keyed on the SESSION id as a
+                    // defensive guard (final review): even a hypothetical
+                    // synchronous session swap without a branch flip would
+                    // restart the loop against the new session.
+                    // Reads the settings fresh every lap
                     // so changes apply without restart; skipped laps just sleep on.
                     while !Task.isCancelled {
                         let seconds = settingsStore.autoRefreshIntervalSeconds

@@ -83,9 +83,13 @@ public final class RemoteBrowserViewModel {
         let path = currentPath
         guard let listed = try? await fs.list(path: path) else { return }
         guard state == .loaded, currentPath == path else { return }
+        // Rebuild the selection FROM the fresh items rather than filtering
+        // the old structs (M9c final review): membership semantics are the
+        // same, but the surviving entries carry current size/date/permission
+        // values and stay in table order.
+        let selectedPaths = Set(selectedItems.map(\.path))
         items = displayItems(from: listed)
-        let visiblePaths = Set(items.map(\.path))
-        selectedItems = selectedItems.filter { visiblePaths.contains($0.path) }
+        selectedItems = items.filter { selectedPaths.contains($0.path) }
     }
 
     public func open(_ item: RemoteFileItem) async {
