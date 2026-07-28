@@ -22,7 +22,7 @@ public struct CrossSessionTarget: Equatable, Sendable, Identifiable {
 /// localized NSMenuItems; keeping the decision logic here makes it unit-
 /// testable (the test target only links macSCPCore — M7a lesson).
 public enum BrowserMenuEntry: Equatable, Sendable {
-    case transferToOtherPane   // submenu "Transfer" — M8 adds per-session targets
+    case transferToOtherPane   // submenu "Transfer" — see transferToSession for the M8b per-session targets
     case transferToSession(CrossSessionTarget)  // M8b: transfer to another tab's remote
     case openInEditor          // remote FILES only (M5e path)
     case rename                // single selection only

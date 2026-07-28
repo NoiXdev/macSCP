@@ -276,8 +276,16 @@ struct RemoteFileTableView: NSViewRepresentable {
                 parent.submenu = submenu
                 return parent
             case .transferToSession:
-                // Wired in M8b/T4.
-                fatalError("transferToSession cases should be hooked into the Transfer submenu, not created standalone")
+                // Wired in M8b/T4 (the bridge passes no targets yet, so this
+                // arm is unreachable today). Degrade gracefully rather than
+                // crash if that invariant is ever broken early: debug builds
+                // assert, release builds render a disabled placeholder.
+                assertionFailure("transferToSession not yet wired — M8b/T4")
+                let placeholder = NSMenuItem(
+                    title: L10n.string("menu.transfer", "Transfer"),
+                    action: nil, keyEquivalent: "")
+                placeholder.isEnabled = false
+                return placeholder
             case .openInEditor:
                 return actionItem(title: L10n.string("menu.openEditor", "Open"), entry: entry, selection: selection)
             case .rename:
