@@ -44,7 +44,7 @@ T1 (Core: LoginSet + Store + loginSetID + Resolver) → T2 (Core: MergePlanner +
   - `ResolvedLogin` (`username: String`, `authKind: StoredSession.AuthKind`, `keyPath: String?`, `secret: String?`)
   - `LoginResolver.resolve(session:sets:secrets:) throws -> ResolvedLogin?` und `LoginResolveError.missingSet`
 
-- [ ] **Step 1: Failing Tests schreiben** (`LoginSetStoreTests.swift` + `LoginResolverTests.swift`; Fixture-Muster von `KnownHostsStoreTests` übernehmen — Temp-Verzeichnis pro Test):
+- [x] **Step 1: Failing Tests schreiben** (`LoginSetStoreTests.swift` + `LoginResolverTests.swift`; Fixture-Muster von `KnownHostsStoreTests` übernehmen — Temp-Verzeichnis pro Test):
 
 ```swift
     // LoginSetStoreTests:
@@ -83,9 +83,9 @@ T1 (Core: LoginSet + Store + loginSetID + Resolver) → T2 (Core: MergePlanner +
     //   mit-testen statt einer dritten Datei.)
 ```
 
-- [ ] **Step 2: Rot beweisen.** `swift test --filter LoginSetStoreTests` und `--filter LoginResolverTests` → FAIL (Typen existieren nicht).
+- [x] **Step 2: Rot beweisen.** `swift test --filter LoginSetStoreTests` und `--filter LoginResolverTests` → FAIL (Typen existieren nicht).
 
-- [ ] **Step 3: Implementierung.**
+- [x] **Step 3: Implementierung.**
 
 `StoredSession.swift` — exakt das `groupID`-Muster (kein Custom-Decoder):
 
@@ -242,9 +242,9 @@ public enum LoginResolver {
 }
 ```
 
-- [ ] **Step 4: Grün + volle Suite.** `swift test` → 475 + neue (echte Zahl festhalten), 0 Failures.
+- [x] **Step 4: Grün + volle Suite.** `swift test` → 475 + neue (echte Zahl festhalten), 0 Failures.
 
-- [ ] **Step 5: Commit.** `feat: add login sets with store, session reference and resolver`
+- [x] **Step 5: Commit.** `feat: add login sets with store, session reference and resolver`
 
 ---
 
@@ -272,7 +272,7 @@ public enum LoginResolver {
 6. `exportPayload`: für Sessions mit Set werden Username/authKind/keyPath und (bei `includePasswords`) das Passwort aus dem SET aufgelöst exportiert; fehlendes Set-Secret zählt in `missingPasswordCount`; ein fehlendes SET exportiert die Session mit ihren (leeren) Eigenwerten — Export bricht nie ab. Exportformat unverändert v1.
 7. `reload()` lädt `loginSets` mit (Store-Fehler ⇒ leere Liste, bestehendes errorMessage-Muster).
 
-- [ ] **Step 1: Failing Tests** (Planner-Datei neu; VM-Tests im bestehenden Muster mit Temp-SessionStore + InMemorySecretStore + LoginSetStore auf demselben Temp-Verzeichnis):
+- [x] **Step 1: Failing Tests** (Planner-Datei neu; VM-Tests im bestehenden Muster mit Temp-SessionStore + InMemorySecretStore + LoginSetStore auf demselben Temp-Verzeichnis):
 
 ```swift
     // LoginMergePlannerTests:
@@ -318,9 +318,9 @@ public enum LoginResolver {
     //   #expect(throws:) auf resolvedLogin(for:).
 ```
 
-- [ ] **Step 2: Rot beweisen.** `swift test --filter LoginMergePlannerTests` und `--filter SessionListViewModelTests` → FAIL.
+- [x] **Step 2: Rot beweisen.** `swift test --filter LoginMergePlannerTests` und `--filter SessionListViewModelTests` → FAIL.
 
-- [ ] **Step 3: Implementierung.**
+- [x] **Step 3: Implementierung.**
 
 `LoginMergePlanner.swift`:
 
@@ -411,9 +411,9 @@ public enum LoginMergePlanner {
     // includePasswords) das Passwort; nil/throw => heutiger Weg.
 ```
 
-- [ ] **Step 4: Grün + volle Suite.** `swift test` → Stand T1 + neue, 0 Failures.
+- [x] **Step 4: Grün + volle Suite.** `swift test` → Stand T1 + neue, 0 Failures.
 
-- [ ] **Step 5: Commit.** `feat: add login merge planning and set lifecycle to the session view model`
+- [x] **Step 5: Commit.** `feat: add login merge planning and set lifecycle to the session view model`
 
 ---
 
@@ -439,12 +439,12 @@ public enum LoginMergePlanner {
    - Edit-Modus des Formulars: `loginSetID` gesetzt ⇒ `loginMode = .set` + Vorauswahl; sonst `.manual` (heutiges Prefill).
 7. Alle neuen Keys EN/DE in BEIDEN Katalogen; Grep-Gegenprobe. Vorschlag: `menu.logins`, `loginSets.title`, `loginSets.usage.one`, `loginSets.usage.many %lld`, `loginSets.new`, `loginSets.edit`, `loginSets.delete`, `loginSets.delete.title`, `loginSets.delete.message %lld`, `loginSets.delete.confirm`, `loginSets.deleteError %lld`, `loginSets.empty`, `loginSets.merge.banner %lld %@`, `loginSets.merge.ignore`, `loginSets.merge.action`, `loginSets.merge.confirmTitle`, `loginSets.merge.confirm`, `loginSets.editor.titleNew`, `loginSets.editor.titleEdit`, `loginSets.editor.name`, `loginSets.editor.username`, `loginSets.editor.keepSecret`, `loginSets.missingSet`, `form.loginMode.set`, `form.loginMode.manual`, `form.selectLogin`, `form.manageLogins`, `form.saveAsSet`, `form.saveAsSet.name` (endgültige Liste beim Implementieren festhalten).
 
-- [ ] **Step 1:** ConnectionViewModel-Felder + Dreiweg-UI im Formular. **Step 2:** LoginSetsSheet + Editor + Merge-Banner. **Step 3:** Menü/Sidebar/TabCommands + ContentView-Wiring (Connect-Auflösung, Save-Pfade, missingSet-Fehler). **Step 4:** Lokalisierungs-Keys + Grep-Gegenprobe beide Kataloge. **Step 5:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test` (Stand T2). **Step 6:** Commit `feat: add reusable login sets with form picker and merge suggestions`.
+- [x] **Step 1:** ConnectionViewModel-Felder + Dreiweg-UI im Formular. **Step 2:** LoginSetsSheet + Editor + Merge-Banner. **Step 3:** Menü/Sidebar/TabCommands + ContentView-Wiring (Connect-Auflösung, Save-Pfade, missingSet-Fehler). **Step 4:** Lokalisierungs-Keys + Grep-Gegenprobe beide Kataloge. **Step 5:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test` (Stand T2). **Step 6:** Commit `feat: add reusable login sets with form picker and merge suggestions`.
 
 ---
 
 ### Task 4: Abschluss-Verifikation (Koordinator)
 
-- [ ] Gated Suiten: Docker-Rig `start` (Haupt-Checkout), `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → alle Tests, zero skips; Rig `stop`.
+- [x] Gated Suiten: Docker-Rig `start` (Haupt-Checkout), `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → alle Tests, zero skips; Rig `stop`.
 - [ ] Visueller Smoke — an den Maintainer delegiert (Checkliste in der Zusammenfassung: Sheet ⌘⇧L, Set anlegen/bearbeiten, Dreiweg im Formular, Merge-Banner mit zwei gleichen Logins, Set löschen ⇒ Verbindungen funktionieren weiter, Connect über Set).
-- [ ] Plan-Checkboxen, Ledger, Opus-Final-Review (Review-Package über `git merge-base`), Fix-Runde falls nötig, Push develop, `gh run watch`, Memory-Update, Zusammenfassung. KEIN Release.
+- [x] Plan-Checkboxen, Ledger, Opus-Final-Review (Review-Package über `git merge-base`), Fix-Runde falls nötig, Push develop, `gh run watch`, Memory-Update, Zusammenfassung. KEIN Release.
