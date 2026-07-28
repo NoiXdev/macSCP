@@ -258,6 +258,14 @@ struct TransferQueueViewModelTests {
         func increment() { value += 1 }
     }
 
+    /// Captures every `Item` snapshot handed to `auditSink` (M9b/T2), in call
+    /// order — lets a test assert exactly how many times it fired and what
+    /// each captured item looked like.
+    @MainActor final class ItemCapture {
+        private(set) var items: [TransferQueueViewModel.Item] = []
+        func record(_ item: TransferQueueViewModel.Item) { items.append(item) }
+    }
+
     /// Tracks the number of concurrently-active writes and the peak reached.
     /// Used by the parallel-slot tests to prove at most `maxConcurrent`
     /// transfers run at once.
@@ -2974,6 +2982,119 @@ struct TransferQueueViewModelTests {
         // `secondaryThrottle`) would settle at ≈1.0s instead.
         let slept = time.totalSlept.secondsAsDouble
         #expect(slept > 3.8 && slept < 4.2)
+    }
+
+    // MARK: - auditSink (M9b/T2)
+
+    /// `auditSink` fires EXACTLY once for a finished item, at the single
+    /// `wasTerminal` choke point in `setStatus` — the same gate
+    /// `totalFailureCount` uses.
+    @Test func auditSinkFiresExactlyOnceOnTerminalTransition() async throws {
+        let content = Data("hello".utf8)
+        let source = QueueTestFS(reads: ["/a.txt": .init(content: content)])
+        let destination = QueueTestFS(reads: [:])
+        let vm = TransferQueueViewModel()
+        let capture = ItemCapture()
+        vm.auditSink = { capture.record($0) }
+
+        try await vm.enqueueAndWait(
+            fileName: "a.txt", direction: .upload,
+            source: source, sourcePath: "/a.txt",
+            destination: destination, destinationDirectory: "/ziel")
+
+        #expect(capture.items.count == 1)
+        #expect(capture.items[0].status == .finished)
+        #expect(capture.items[0].fileName == "a.txt")
+    }
+
+    /// Analogous to `totalFailureCountIncrementsAndSurvivesClearCompleted`:
+    /// once an item has transitioned to terminal and fired `auditSink`,
+    /// removing it from `items` via `clearCompleted()` must NOT cause a
+    /// second (phantom) call — the sink only ever fires from the
+    /// `wasTerminal` gate in `setStatus`, never from list bookkeeping.
+    @Test func auditSinkDoesNotRefireAfterClearCompleted() async throws {
+        let source = QueueTestFS(reads: [:])
+        let destination = QueueTestFS(reads: [:])
+        let vm = TransferQueueViewModel()
+        let capture = ItemCapture()
+        vm.auditSink = { capture.record($0) }
+
+        _ = try? await vm.enqueueAndWait(
+            fileName: "missing.txt", direction: .download,
+            source: source, sourcePath: "/missing.txt",
+            destination: destination, destinationDirectory: "/ziel")
+
+        #expect(capture.items.count == 1)
+
+        vm.clearCompleted()
+
+        #expect(vm.items.isEmpty)
+        #expect(capture.items.count == 1)   // no re-fire from the list mutation
+    }
+
+    /// Progress updates (running → running) never fire `auditSink` — only
+    /// the eventual terminal transition does, regardless of how many
+    /// intermediate progress chunks were reported.
+    @Test func auditSinkNeverFiresForRunningProgressUpdates() async throws {
+        let content = Data(repeating: 0x42, count: TransferChunk.size * 3)
+        let source = QueueTestFS(reads: ["/big.bin": .init(content: content)])
+        let destination = QueueTestFS(reads: [:])
+        let vm = TransferQueueViewModel()
+        let capture = ItemCapture()
+        vm.auditSink = { capture.record($0) }
+
+        try await vm.enqueueAndWait(
+            fileName: "big.bin", direction: .upload,
+            source: source, sourcePath: "/big.bin",
+            destination: destination, destinationDirectory: "/ziel")
+
+        // Multiple `.running` progress updates happened along the way (3
+        // chunks), but only the final `.finished` transition is captured.
+        #expect(capture.items.count == 1)
+        #expect(capture.items[0].status == .finished)
+    }
+
+    /// `enqueueEditUpload`'s item carries `isEditUpload == true`; a normal
+    /// `enqueue`'d item carries `false`.
+    @Test func enqueueEditUploadItemCarriesIsEditUploadTrueNormalItemsFalse() async throws {
+        let content = Data("edited".utf8)
+        let localURL = URL(fileURLWithPath: "/private/tmp/macscp-audit-test/edit.txt")
+        let editSource = QueueTestFS(reads: [
+            localURL.path(percentEncoded: false): .init(content: content),
+        ])
+        let editDestination = QueueTestFS(reads: [:])
+        let vm = TransferQueueViewModel()
+
+        let editID = vm.enqueueEditUpload(
+            fileName: "edit.txt", localURL: localURL,
+            source: editSource, destination: editDestination, remoteDirectory: "/remote")
+        #expect(vm.items.first(where: { $0.id == editID })?.isEditUpload == true)
+
+        let plainSource = QueueTestFS(reads: ["/plain.txt": .init(content: Data("plain".utf8))])
+        let plainDestination = QueueTestFS(reads: [:])
+        let plainID = vm.enqueue(
+            fileName: "plain.txt", direction: .upload,
+            source: plainSource, sourcePath: "/plain.txt",
+            destination: plainDestination, destinationDirectory: "/ziel", onCompleted: nil)
+        #expect(vm.items.first(where: { $0.id == plainID })?.isEditUpload == false)
+
+        await waitUntil { vm.isActive == false }
+    }
+
+    /// A `nil` `auditSink` (the default) has no effect — a transfer
+    /// completes exactly as without M9b instrumentation at all.
+    @Test func nilAuditSinkHasNoEffect() async throws {
+        let source = QueueTestFS(reads: ["/a.txt": .init(content: Data("x".utf8))])
+        let destination = QueueTestFS(reads: [:])
+        let vm = TransferQueueViewModel()
+        // vm.auditSink intentionally left nil.
+
+        try await vm.enqueueAndWait(
+            fileName: "a.txt", direction: .upload,
+            source: source, sourcePath: "/a.txt",
+            destination: destination, destinationDirectory: "/ziel")
+
+        #expect(vm.items.first?.status == .finished)
     }
 }
 

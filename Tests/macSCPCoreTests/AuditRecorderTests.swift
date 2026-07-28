@@ -1,0 +1,190 @@
+import Foundation
+import Testing
+@testable import macSCPCore
+
+@Suite("AuditRecorder")
+@MainActor
+struct AuditRecorderTests {
+    private func makeStore() -> (AuditLogStore, URL) {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AuditRecorderTests-\(UUID().uuidString)", isDirectory: true)
+        return (AuditLogStore(directory: dir), dir)
+    }
+
+    /// Builds a queue item directly via the (internal, `@testable`-visible)
+    /// memberwise init — the simpler route than driving a real queue/FS pair
+    /// through to a terminal state for every mapping case.
+    private func makeItem(
+        fileName: String = "report.pdf",
+        direction: TransferDirection = .upload,
+        status: TransferQueueViewModel.Item.Status,
+        destinationTabID: UUID? = nil,
+        isEditUpload: Bool = false
+    ) -> TransferQueueViewModel.Item {
+        TransferQueueViewModel.Item(
+            id: UUID(), fileName: fileName, direction: direction, status: status,
+            destinationTabID: destinationTabID, isEditUpload: isEditUpload)
+    }
+
+    @Test func finishedUploadRecordsTransferFinishedWithFileNameInDetail() {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sessionID = UUID()
+        let recorder = AuditRecorder(sessionID: sessionID, store: store)
+
+        recorder.recordTransfer(makeItem(fileName: "report.pdf", direction: .upload, status: .finished), targetTitle: nil)
+
+        let events = store.events(for: sessionID)
+        #expect(events.count == 1)
+        #expect(events[0].kind == .transferFinished)
+        #expect(events[0].detail.contains("upload"))
+        #expect(events[0].detail.contains("report.pdf"))
+        #expect(events[0].isError == false)
+    }
+
+    @Test func finishedDownloadDetailSaysDownload() {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sessionID = UUID()
+        let recorder = AuditRecorder(sessionID: sessionID, store: store)
+
+        recorder.recordTransfer(makeItem(fileName: "photo.jpg", direction: .download, status: .finished), targetTitle: nil)
+
+        let events = store.events(for: sessionID)
+        #expect(events[0].detail.contains("download"))
+        #expect(events[0].detail.contains("photo.jpg"))
+    }
+
+    @Test func finishedEditUploadRecordsEditUploadKind() {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sessionID = UUID()
+        let recorder = AuditRecorder(sessionID: sessionID, store: store)
+
+        recorder.recordTransfer(
+            makeItem(fileName: "config.yml", status: .finished, isEditUpload: true), targetTitle: nil)
+
+        let events = store.events(for: sessionID)
+        #expect(events.count == 1)
+        #expect(events[0].kind == .editUpload)
+    }
+
+    @Test func finishedCrossSessionWithTargetTitleRecordsCrossSessionTransferKind() {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sessionID = UUID()
+        let recorder = AuditRecorder(sessionID: sessionID, store: store)
+        let destinationTabID = UUID()
+
+        recorder.recordTransfer(
+            makeItem(fileName: "dump.sql.gz", status: .finished, destinationTabID: destinationTabID),
+            targetTitle: "db-prod")
+
+        let events = store.events(for: sessionID)
+        #expect(events.count == 1)
+        #expect(events[0].kind == .crossSessionTransfer)
+        #expect(events[0].detail.contains("db-prod"))
+        #expect(events[0].detail.contains("dump.sql.gz"))
+    }
+
+    @Test func finishedCrossSessionWithNilTargetTitleSaysUnknownSession() {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sessionID = UUID()
+        let recorder = AuditRecorder(sessionID: sessionID, store: store)
+        let destinationTabID = UUID()
+
+        recorder.recordTransfer(
+            makeItem(status: .finished, destinationTabID: destinationTabID), targetTitle: nil)
+
+        let events = store.events(for: sessionID)
+        #expect(events[0].kind == .crossSessionTransfer)
+        #expect(events[0].detail.contains("unknown session"))
+    }
+
+    @Test func failedRecordsTransferFailedWithErrorMessage() {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sessionID = UUID()
+        let recorder = AuditRecorder(sessionID: sessionID, store: store)
+
+        recorder.recordTransfer(makeItem(status: .failed("boom")), targetTitle: nil)
+
+        let events = store.events(for: sessionID)
+        #expect(events.count == 1)
+        #expect(events[0].kind == .transferFailed)
+        #expect(events[0].isError == true)
+        #expect(events[0].errorMessage == "boom")
+    }
+
+    @Test func cancelledRecordsTransferCancelled() {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sessionID = UUID()
+        let recorder = AuditRecorder(sessionID: sessionID, store: store)
+
+        recorder.recordTransfer(makeItem(status: .cancelled), targetTitle: nil)
+
+        let events = store.events(for: sessionID)
+        #expect(events.count == 1)
+        #expect(events[0].kind == .transferCancelled)
+        #expect(events[0].isError == false)
+    }
+
+    @Test func nonTerminalAndSilentStatusesRecordNothing() {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sessionID = UUID()
+        let recorder = AuditRecorder(sessionID: sessionID, store: store)
+
+        recorder.recordTransfer(makeItem(status: .queued), targetTitle: nil)
+        recorder.recordTransfer(makeItem(status: .running(TransferProgress(bytesTransferred: 0, totalBytes: nil))), targetTitle: nil)
+        recorder.recordTransfer(makeItem(status: .skipped), targetTitle: nil)
+        recorder.recordTransfer(makeItem(status: .interrupted), targetTitle: nil)
+
+        #expect(store.events(for: sessionID).isEmpty)
+    }
+
+    @Test func recordConnectedIncludesHostAndUsername() {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sessionID = UUID()
+        let recorder = AuditRecorder(sessionID: sessionID, store: store)
+
+        recorder.recordConnected(host: "example.com", username: "alice")
+
+        let events = store.events(for: sessionID)
+        #expect(events.count == 1)
+        #expect(events[0].kind == .connected)
+        #expect(events[0].detail.contains("example.com"))
+        #expect(events[0].detail.contains("alice"))
+    }
+
+    @Test func recordDisconnectedRecordsDisconnectedKind() {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sessionID = UUID()
+        let recorder = AuditRecorder(sessionID: sessionID, store: store)
+
+        recorder.recordDisconnected()
+
+        let events = store.events(for: sessionID)
+        #expect(events.count == 1)
+        #expect(events[0].kind == .disconnected)
+    }
+
+    @Test func recordActionAppendsThePassedEventVerbatim() {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sessionID = UUID()
+        let recorder = AuditRecorder(sessionID: sessionID, store: store)
+        let event = AuditEvent(kind: .rename, detail: "rename /a → b")
+
+        recorder.recordAction(event)
+
+        let events = store.events(for: sessionID)
+        #expect(events.count == 1)
+        #expect(events[0].kind == .rename)
+        #expect(events[0].detail == "rename /a → b")
+    }
+}

@@ -32,6 +32,14 @@ public final class RemoteBrowserViewModel {
 
     private let fs: any RemoteFileSystem
 
+    /// Optional audit-log sink (M9b/T2), default nil (no logging — matches
+    /// ad-hoc/unstored sessions). Each of the four actions below fires it
+    /// exactly once, AFTER the action completes: success and failure both
+    /// report (failure with `isError: true` and the localized message the
+    /// action already returns to its caller). The App layer wires this to an
+    /// `AuditRecorder.recordAction` closure for stored sessions.
+    public var auditSink: ((AuditEvent) -> Void)?
+
     public init(fs: any RemoteFileSystem, startPath: String = "/") {
         self.fs = fs
         self.currentPath = startPath
@@ -97,15 +105,19 @@ public final class RemoteBrowserViewModel {
     /// localized error message for inline display in the sheet.
     public func rename(_ item: RemoteFileItem, to newName: String) async -> String? {
         let destination = RemotePath.join(currentPath, newName)
+        let detail = "rename \(item.path) → \(newName)"
         do {
             try await fs.rename(from: item.path, to: destination)
         } catch {
-            return Self.message(for: error, path: item.path)
+            let message = Self.message(for: error, path: item.path)
+            auditSink?(AuditEvent(kind: .rename, detail: detail, isError: true, errorMessage: message))
+            return message
         }
         await load()
         if let renamed = items.first(where: { $0.path == destination }) {
             selectedItems = [renamed]
         }
+        auditSink?(AuditEvent(kind: .rename, detail: detail))
         return nil
     }
 
@@ -121,31 +133,41 @@ public final class RemoteBrowserViewModel {
         // probe and `createDirectory` would silently "succeed" onto the
         // existing directory. Probing the filesystem directly via `stat`
         // sees the real entry regardless of the display filter.
+        let detail = "mkdir \(path)"
         if (try? await fs.stat(path: path)) != nil {
-            return Self.message(
+            let message = Self.message(
                 for: RemoteFSError.protocolError(reason: "destination already exists: \(path)"),
                 path: path)
+            auditSink?(AuditEvent(kind: .newFolder, detail: detail, isError: true, errorMessage: message))
+            return message
         }
         do {
             try await fs.createDirectory(at: path)
         } catch {
-            return Self.message(for: error, path: path)
+            let message = Self.message(for: error, path: path)
+            auditSink?(AuditEvent(kind: .newFolder, detail: detail, isError: true, errorMessage: message))
+            return message
         }
         await load()
         if let created = items.first(where: { $0.path == path }) {
             selectedItems = [created]
         }
+        auditSink?(AuditEvent(kind: .newFolder, detail: detail))
         return nil
     }
 
     /// Applies the low 12 permission bits to `item`, then refreshes.
     public func applyPermissions(_ permissions: UInt32, to item: RemoteFileItem) async -> String? {
+        let detail = "chmod \(PosixPermissions(rawValue: permissions).octalString) \(item.path)"
         do {
             try await fs.setPermissions(path: item.path, permissions: permissions)
         } catch {
-            return Self.message(for: error, path: item.path)
+            let message = Self.message(for: error, path: item.path)
+            auditSink?(AuditEvent(kind: .permissions, detail: detail, isError: true, errorMessage: message))
+            return message
         }
         await load()
+        auditSink?(AuditEvent(kind: .permissions, detail: detail))
         return nil
     }
 
@@ -165,6 +187,12 @@ public final class RemoteBrowserViewModel {
             }
         }
         await load()
+        let detail = "delete " + doomed.map(\.path).joined(separator: ", ")
+        if let failure {
+            auditSink?(AuditEvent(kind: .delete, detail: detail, isError: true, errorMessage: failure))
+        } else {
+            auditSink?(AuditEvent(kind: .delete, detail: detail))
+        }
         return failure
     }
 

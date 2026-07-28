@@ -249,4 +249,178 @@ struct RemoteBrowserViewModelTests {
         #expect(error != nil)
         #expect(vm.items.map(\.name) == ["c.txt"])   // a deleted, loop stopped before c
     }
+
+    // MARK: - auditSink (M9b/T2)
+
+    @MainActor final class EventCapture {
+        private(set) var events: [AuditEvent] = []
+        func record(_ event: AuditEvent) { events.append(event) }
+    }
+
+    @Test func renameSuccessFiresRenameEvent() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "old.txt", path: "/old.txt", kind: .file, size: 1)],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        let capture = EventCapture()
+        vm.auditSink = { capture.record($0) }
+        await vm.load()
+
+        let error = await vm.rename(vm.items[0], to: "new.txt")
+
+        #expect(error == nil)
+        #expect(capture.events.count == 1)
+        #expect(capture.events[0].kind == .rename)
+        #expect(capture.events[0].isError == false)
+        #expect(capture.events[0].detail.contains("/old.txt"))
+        #expect(capture.events[0].detail.contains("new.txt"))
+    }
+
+    @Test func renameFailureFiresIsErrorEventWithLocalizedMessage() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [
+                RemoteFileItem(name: "a.txt", path: "/a.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "b.txt", path: "/b.txt", kind: .file, size: 1),
+            ],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        let capture = EventCapture()
+        vm.auditSink = { capture.record($0) }
+        await vm.load()
+
+        let error = await vm.rename(vm.items[0], to: "b.txt")
+
+        #expect(error != nil)
+        #expect(capture.events.count == 1)
+        #expect(capture.events[0].kind == .rename)
+        #expect(capture.events[0].isError == true)
+        #expect(capture.events[0].errorMessage == error)
+    }
+
+    @Test func createFolderSuccessFiresNewFolderEventWithFullPath() async throws {
+        let fs = MockRemoteFileSystem(tree: ["/": []])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        let capture = EventCapture()
+        vm.auditSink = { capture.record($0) }
+        await vm.load()
+
+        let error = await vm.createFolder(named: "fresh")
+
+        #expect(error == nil)
+        #expect(capture.events.count == 1)
+        #expect(capture.events[0].kind == .newFolder)
+        #expect(capture.events[0].detail.contains("/fresh"))
+        #expect(capture.events[0].isError == false)
+    }
+
+    @Test func createFolderCollisionFiresIsErrorNewFolderEvent() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "taken", path: "/taken", kind: .directory)],
+            "/taken": [],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        let capture = EventCapture()
+        vm.auditSink = { capture.record($0) }
+        await vm.load()
+
+        let error = await vm.createFolder(named: "taken")
+
+        #expect(error != nil)
+        #expect(capture.events.count == 1)
+        #expect(capture.events[0].kind == .newFolder)
+        #expect(capture.events[0].isError == true)
+        #expect(capture.events[0].errorMessage == error)
+    }
+
+    @Test func applyPermissionsSuccessFiresPermissionsEventWithOctal() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "a.txt", path: "/a.txt", kind: .file, size: 1)],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        let capture = EventCapture()
+        vm.auditSink = { capture.record($0) }
+        await vm.load()
+        let item = vm.items[0]
+
+        let error = await vm.applyPermissions(0o640, to: item)
+
+        #expect(error == nil)
+        #expect(capture.events.count == 1)
+        #expect(capture.events[0].kind == .permissions)
+        #expect(capture.events[0].detail.contains("640"))
+        #expect(capture.events[0].detail.contains("/a.txt"))
+        #expect(capture.events[0].isError == false)
+    }
+
+    @Test func applyPermissionsFailureFiresIsErrorPermissionsEvent() async throws {
+        let fs = MockRemoteFileSystem(tree: ["/": []])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        let capture = EventCapture()
+        vm.auditSink = { capture.record($0) }
+        await vm.load()
+        let ghost = RemoteFileItem(name: "ghost.txt", path: "/ghost.txt", kind: .file, size: 1)
+
+        let error = await vm.applyPermissions(0o640, to: ghost)
+
+        #expect(error != nil)
+        #expect(capture.events.count == 1)
+        #expect(capture.events[0].kind == .permissions)
+        #expect(capture.events[0].isError == true)
+        #expect(capture.events[0].errorMessage == error)
+    }
+
+    @Test func deleteItemsWithTwoPathsNamesBothInDetail() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [
+                RemoteFileItem(name: "a.txt", path: "/a.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "b.txt", path: "/b.txt", kind: .file, size: 1),
+            ],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        let capture = EventCapture()
+        vm.auditSink = { capture.record($0) }
+        await vm.load()
+
+        let error = await vm.deleteItems(vm.items)
+
+        #expect(error == nil)
+        #expect(capture.events.count == 1)
+        #expect(capture.events[0].kind == .delete)
+        #expect(capture.events[0].detail.contains("/a.txt"))
+        #expect(capture.events[0].detail.contains("/b.txt"))
+        #expect(capture.events[0].isError == false)
+    }
+
+    @Test func deleteItemsFailureFiresIsErrorDeleteEvent() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "a.txt", path: "/a.txt", kind: .file, size: 1)],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        let capture = EventCapture()
+        vm.auditSink = { capture.record($0) }
+        await vm.load()
+        let a = vm.items[0]
+        let staleB = RemoteFileItem(name: "b.txt", path: "/b.txt", kind: .file, size: 1)
+
+        let error = await vm.deleteItems([a, staleB])
+
+        #expect(error != nil)
+        #expect(capture.events.count == 1)
+        #expect(capture.events[0].kind == .delete)
+        #expect(capture.events[0].isError == true)
+        #expect(capture.events[0].errorMessage == error)
+    }
+
+    @Test func nilAuditSinkFiresNothing() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "old.txt", path: "/old.txt", kind: .file, size: 1)],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        // vm.auditSink intentionally left nil.
+        await vm.load()
+
+        let error = await vm.rename(vm.items[0], to: "new.txt")
+
+        #expect(error == nil)   // no crash, behaves exactly as before M9b
+    }
 }

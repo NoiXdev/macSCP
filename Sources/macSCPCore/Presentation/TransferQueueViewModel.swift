@@ -87,6 +87,11 @@ public final class TransferQueueViewModel {
         /// task can warn before closing a tab that other tabs are still
         /// streaming to; never shown in this item's own display.
         public let destinationTabID: UUID?
+        /// True only for editor write-backs enqueued via `enqueueEditUpload`
+        /// (M9b) — the audit recorder maps a finished item with this flag to
+        /// the `.editUpload` kind instead of the plain `.transferFinished`
+        /// kind. `false` on every other path.
+        public let isEditUpload: Bool
     }
 
     public private(set) var items: [Item] = []
@@ -179,6 +184,14 @@ public final class TransferQueueViewModel {
     /// repeated `setStatus` call for an already-terminal item.
     public private(set) var totalFailureCount = 0
 
+    /// Optional audit-log sink (M9b/T2), default nil (no logging — matches
+    /// ad-hoc/unstored sessions). Called EXACTLY once per item, at the same
+    /// `wasTerminal` choke point in `setStatus` where `totalFailureCount`
+    /// increments — never on a progress update (`.running` → `.running`)
+    /// and never again once an item is already terminal. The App layer wires
+    /// this to an `AuditRecorder.recordTransfer` closure for stored sessions.
+    public var auditSink: ((Item) -> Void)?
+
     // MARK: - Private state
 
     private struct Job {
@@ -215,6 +228,11 @@ public final class TransferQueueViewModel {
         /// buckets must pace it. Direction stays `.upload` regardless (the
         /// target-write side is what the tab indicator reflects).
         let crossRemote: Bool
+        /// True only for editor write-back jobs (M9b) — carried through to
+        /// the `Item` exactly like `destinationTabID`/`crossRemote` above, so
+        /// every reconstruction site (retry, interrupt-retain) threads it
+        /// instead of silently resetting to the default.
+        let isEditUpload: Bool
 
         init(
             id: UUID, source: any RemoteFileSystem, sourcePath: String,
@@ -222,7 +240,8 @@ public final class TransferQueueViewModel {
             fileName: String, direction: TransferDirection,
             onCompleted: (@MainActor () async -> Void)?, resume: Bool = false,
             bypassConflictCheck: Bool = false,
-            destinationTabID: UUID? = nil, crossRemote: Bool = false
+            destinationTabID: UUID? = nil, crossRemote: Bool = false,
+            isEditUpload: Bool = false
         ) {
             self.id = id
             self.source = source
@@ -236,6 +255,7 @@ public final class TransferQueueViewModel {
             self.bypassConflictCheck = bypassConflictCheck
             self.destinationTabID = destinationTabID
             self.crossRemote = crossRemote
+            self.isEditUpload = isEditUpload
         }
     }
 
@@ -342,7 +362,7 @@ public final class TransferQueueViewModel {
         order.append(id)
         items.append(Item(
             id: id, fileName: fileName, direction: direction, status: .queued,
-            destinationTabID: destinationTabID))
+            destinationTabID: destinationTabID, isEditUpload: false))
         kickWorker()
         return id
     }
@@ -364,11 +384,11 @@ public final class TransferQueueViewModel {
             id: id, source: source, sourcePath: localURL.path(percentEncoded: false),
             destination: destination, destinationDirectory: remoteDirectory,
             fileName: fileName, direction: .upload, onCompleted: nil,
-            resume: false, bypassConflictCheck: true)
+            resume: false, bypassConflictCheck: true, isEditUpload: true)
         order.append(id)
         items.append(Item(
             id: id, fileName: fileName, direction: .upload, status: .queued,
-            destinationTabID: nil))
+            destinationTabID: nil, isEditUpload: true))
         kickWorker()
         return id
     }
@@ -499,7 +519,8 @@ public final class TransferQueueViewModel {
                 destination: transferDestination, destinationDirectory: retained.destinationDirectory,
                 fileName: retained.fileName, direction: retained.direction,
                 onCompleted: nil, resume: true,
-                destinationTabID: retained.destinationTabID, crossRemote: retained.crossRemote)
+                destinationTabID: retained.destinationTabID, crossRemote: retained.crossRemote,
+                isEditUpload: retained.isEditUpload)
             order.append(id)
             setStatus(id, .queued)   // terminal → non-terminal: no group accounting
         }
@@ -823,7 +844,8 @@ public final class TransferQueueViewModel {
                     destination: destination, destinationDirectory: destinationDirectory,
                     fileName: effectiveFileName, direction: job.direction,
                     onCompleted: nil, resume: false,
-                    destinationTabID: job.destinationTabID, crossRemote: job.crossRemote)
+                    destinationTabID: job.destinationTabID, crossRemote: job.crossRemote,
+                    isEditUpload: job.isEditUpload)
                 runningTransferTasks[jobID] = nil
                 resumeWaiter(jobID, with: .failure(error))
             }
@@ -1021,7 +1043,7 @@ public final class TransferQueueViewModel {
         let id = UUID()
         items.append(Item(
             id: id, fileName: name, direction: direction, status: .queued,
-            destinationTabID: destinationTabID))
+            destinationTabID: destinationTabID, isEditUpload: false))
         registerGroupItem(id, group: groupID)
         setStatus(id, status)   // triggers groupItemBecameTerminal
     }
@@ -1080,6 +1102,7 @@ public final class TransferQueueViewModel {
             // the same `.failed` status.
             if case .failed = status { totalFailureCount += 1 }
             groupItemBecameTerminal(id, status: status)
+            auditSink?(items[index])
         }
     }
 
