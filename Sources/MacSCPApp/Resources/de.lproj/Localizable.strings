@@ -295,9 +295,10 @@
 "audit.kind.newFolder" = "Neuer Ordner";
 "audit.kind.editUpload" = "Editor-Upload";
 
-/* Sessions-Menü (M10a/T2) */
+/* Sessions-Menü (M10a/T2, M10b/T3) */
 "menu.sessions" = "Sessions";
 "menu.knownHosts" = "Bekannte Hosts…";
+"menu.logins" = "Logins…";
 "menu.exportAllSessions" = "Alle Sitzungen exportieren…";
 "menu.importSessions" = "Sitzungen importieren…";
 
@@ -323,4 +324,41 @@
 
 /* TOFU-Prompt-Fußnote (M10a/T2) */
 "tofu.manageKnownHosts" = "Bekannte Hosts verwalten…";
+
+/* Logins-Sheet (M10b/T3) */
+"loginSets.title" = "Logins";
+"loginSets.count %lld" = "%lld Logins";
+"loginSets.usage.one" = "1 Verbindung";
+"loginSets.usage.many %lld" = "%lld Verbindungen";
+"loginSets.new" = "Neu…";
+"loginSets.edit" = "Bearbeiten…";
+"loginSets.delete" = "Löschen…";
+"loginSets.delete.title" = "Diesen Login löschen?";
+"loginSets.delete.message %lld" = "%lld Verbindungen erhalten diese Zugangsdaten wieder direkt hinterlegt.";
+"loginSets.delete.confirm" = "Löschen";
+"loginSets.deleteError %lld" = "Das gespeicherte Passwort für %lld Verbindungen konnte nicht wiederhergestellt werden.";
+"loginSets.empty" = "Noch keine Logins.";
+"loginSets.subtitle.key %@ %@" = "%@ · SSH-Key (%@)";
+"loginSets.subtitle.password %@" = "%@ · Passwort";
+"loginSets.merge.banner %lld %@" = "%lld Verbindungen verwenden denselben Login „%@“.";
+"loginSets.merge.ignore" = "Ignorieren";
+"loginSets.merge.action" = "Zusammenfassen…";
+"loginSets.merge.confirmTitle" = "Diese Verbindungen zusammenfassen?";
+"loginSets.merge.confirm" = "Zusammenfassen";
+"loginSets.merge.confirmMessage %@ %@" = "%@ werden zum Login „%@“ zusammengefasst.";
+"loginSets.editor.titleNew" = "Neuer Login";
+"loginSets.editor.titleEdit" = "Login bearbeiten";
+"loginSets.editor.name" = "Name";
+"loginSets.editor.username" = "Benutzername";
+"loginSets.editor.keepSecret" = "leer lassen, um beizubehalten";
+"loginSets.missingSet" = "Das hinterlegte Login dieser Verbindung wurde nicht gefunden. Login wählen oder Zugangsdaten eingeben.";
+
+/* Verbindungsformular — Dreiweg-Login-Umschalter (M10b/T3) */
+"form.loginMode.label" = "Login";
+"form.loginMode.set" = "Login-Set";
+"form.loginMode.manual" = "Manuell";
+"form.selectLogin" = "Login auswählen";
+"form.manageLogins" = "Logins verwalten…";
+"form.saveAsSet" = "Als neues Login-Set speichern";
+"form.saveAsSet.name" = "Name des Login-Sets";
 "audit.kind.crossSessionTransfer" = "Sitzungsübergreifende Übertragung";

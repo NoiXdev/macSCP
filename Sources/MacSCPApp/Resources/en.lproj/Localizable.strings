@@ -295,9 +295,10 @@
 "audit.kind.newFolder" = "New folder";
 "audit.kind.editUpload" = "Editor upload";
 
-/* Sessions menu (M10a/T2) */
+/* Sessions menu (M10a/T2, M10b/T3) */
 "menu.sessions" = "Sessions";
 "menu.knownHosts" = "Known Hosts…";
+"menu.logins" = "Logins…";
 "menu.exportAllSessions" = "Export All Sessions…";
 "menu.importSessions" = "Import Sessions…";
 
@@ -323,4 +324,41 @@
 
 /* TOFU prompt footnote (M10a/T2) */
 "tofu.manageKnownHosts" = "Manage known hosts…";
+
+/* Login-sets sheet (M10b/T3) */
+"loginSets.title" = "Logins";
+"loginSets.count %lld" = "%lld logins";
+"loginSets.usage.one" = "1 connection";
+"loginSets.usage.many %lld" = "%lld connections";
+"loginSets.new" = "New…";
+"loginSets.edit" = "Edit…";
+"loginSets.delete" = "Delete…";
+"loginSets.delete.title" = "Delete this login?";
+"loginSets.delete.message %lld" = "%lld connections will keep these credentials stored directly again.";
+"loginSets.delete.confirm" = "Delete";
+"loginSets.deleteError %lld" = "Could not restore the stored password for %lld connections.";
+"loginSets.empty" = "No login sets yet.";
+"loginSets.subtitle.key %@ %@" = "%@ · SSH key (%@)";
+"loginSets.subtitle.password %@" = "%@ · Password";
+"loginSets.merge.banner %lld %@" = "%lld connections use the same login “%@”.";
+"loginSets.merge.ignore" = "Ignore";
+"loginSets.merge.action" = "Merge…";
+"loginSets.merge.confirmTitle" = "Merge these connections?";
+"loginSets.merge.confirm" = "Merge";
+"loginSets.merge.confirmMessage %@ %@" = "%@ will be merged into the login “%@”.";
+"loginSets.editor.titleNew" = "New login";
+"loginSets.editor.titleEdit" = "Edit login";
+"loginSets.editor.name" = "Name";
+"loginSets.editor.username" = "Username";
+"loginSets.editor.keepSecret" = "leave empty to keep";
+"loginSets.missingSet" = "The stored login for this connection was not found. Choose a login or enter credentials.";
+
+/* Connection form — three-way login switcher (M10b/T3) */
+"form.loginMode.label" = "Login";
+"form.loginMode.set" = "Login set";
+"form.loginMode.manual" = "Manual";
+"form.selectLogin" = "Select a login";
+"form.manageLogins" = "Manage logins…";
+"form.saveAsSet" = "Save as new login set";
+"form.saveAsSet.name" = "Login set name";
 "audit.kind.crossSessionTransfer" = "Cross-session transfer";

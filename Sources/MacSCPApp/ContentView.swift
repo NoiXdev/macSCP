@@ -196,6 +196,14 @@ struct ContentView: View {
     /// window-wide store.
     @State private var showKnownHostsSheet = false
 
+    // MARK: - Login sets (M10b/T3)
+
+    /// Drives the login-sets management sheet — opened from the Sessions
+    /// menu (⌘⇧L) and the sidebar's background context menu. Same
+    /// no-item-payload shape as `showKnownHostsSheet` above (always the same
+    /// window-wide `sessionListViewModel`).
+    @State private var showLoginSetsSheet = false
+
     // MARK: - Session export/import (M9a/T3)
 
     /// Wraps `ExportScope` so it can drive `.sheet(item:)` — `ExportScope`
@@ -290,7 +298,8 @@ struct ContentView: View {
                 onExport: { scope in exportSheetItem = ExportSheetItem(scope: scope) },
                 onImport: { showImportFileImporter = true },
                 onShowAuditLog: { stored in auditLogSession = stored },
-                onShowKnownHosts: { showKnownHostsSheet = true }
+                onShowKnownHosts: { showKnownHostsSheet = true },
+                onShowLogins: { showLoginSetsSheet = true }
             )
             .frame(minWidth: 170, idealWidth: 190, maxWidth: 260)
 
@@ -372,6 +381,12 @@ struct ContentView: View {
                 guard window?.isKeyWindow == true else { return }
                 showKnownHostsSheet = true
             }
+            // "Logins…" (M10b/T3) — same key-window guard, opens the
+            // login-sets management sheet.
+            tabCommands.showLogins = {
+                guard window?.isKeyWindow == true else { return }
+                showLoginSetsSheet = true
+            }
             tabCommands.exportAllSessions = {
                 guard window?.isKeyWindow == true else { return }
                 exportSheetItem = ExportSheetItem(scope: .all)
@@ -424,6 +439,13 @@ struct ContentView: View {
         // TOFU state the connect flow reads from.
         .sheet(isPresented: $showKnownHostsSheet) {
             KnownHostsSheet(store: KnownHostsStore(directory: SessionStore.defaultDirectory))
+        }
+        // Login-sets sheet (M10b/T3) — shares `sessionListViewModel` (not a
+        // fresh store) so the Sessions-menu/sidebar entry point and the
+        // form's own local "Manage logins…" sheet (`ConnectionFormView`)
+        // always show the exact same, up-to-date list.
+        .sheet(isPresented: $showLoginSetsSheet) {
+            LoginSetsSheet(sessionList: sessionListViewModel)
         }
         .fileExporter(
             isPresented: $showExportFileExporter,
@@ -735,8 +757,22 @@ struct ContentView: View {
                 ConnectionFormView(
                     viewModel: tab.connectionViewModel,
                     groups: sessionListViewModel.groups,
+                    sessionList: sessionListViewModel,
+                    resolveLoginSetForSubmit: { resolveSelectedLoginSet(in: tab) },
                     onSaveEdited: { stored, secret in
-                        sessionListViewModel.updateSession(stored, newSecret: secret)
+                        var stored = stored
+                        var effectiveSecret = secret
+                        if let newSetID = maybeCreateNewLoginSet(from: tab.connectionViewModel) {
+                            // The secret now lives under the new set's id —
+                            // don't also duplicate it into the session's own
+                            // keychain slot.
+                            stored.loginSetID = newSetID
+                            effectiveSecret = nil
+                        } else if stored.loginSetID != nil {
+                            // Set mode: the set already owns the secret.
+                            effectiveSecret = nil
+                        }
+                        sessionListViewModel.updateSession(stored, newSecret: effectiveSecret)
                         tab.connectionViewModel.endEditing()
                     },
                     onCancelEdit: { tab.connectionViewModel.endEditing() },
@@ -1017,6 +1053,59 @@ struct ContentView: View {
 
     // MARK: - Connecting
 
+    // MARK: - Login sets (M10b/T3)
+
+    /// Fills the form's manual-looking fields from a login set — called
+    /// right before Connect/Save whenever the form is in Set mode, so the
+    /// EXISTING connect/save validators (which only know about
+    /// username/authChoice/keyPath/password) see the set's current values.
+    /// The secret is read from the keychain under the SET's own id, exactly
+    /// where `saveLoginSet`/`deleteLoginSet` keep it — a synthetic
+    /// `StoredSession` carrying that id is enough for `password(for:)` to
+    /// find it, no separate lookup API needed on `SessionListViewModel`.
+    private func fillForm(_ form: ConnectionViewModel, from set: LoginSet) {
+        form.username = set.username
+        form.authChoice = set.authKind == .privateKey ? .privateKey : .password
+        form.keyPath = set.keyPath ?? ""
+        let synthetic = StoredSession(
+            id: set.id, name: set.name, host: "", username: set.username,
+            authKind: set.authKind, keyPath: set.keyPath)
+        form.password = sessionListViewModel.password(for: synthetic) ?? ""
+    }
+
+    /// `ConnectionFormView.resolveLoginSetForSubmit` implementation: a no-op
+    /// outside Set mode or while nothing is selected (the button is disabled
+    /// in that case anyway — this is the defensive belt-and-suspenders half).
+    private func resolveSelectedLoginSet(in tab: SessionTab) {
+        let form = tab.connectionViewModel
+        guard form.loginMode == .set,
+            let id = form.selectedLoginSetID,
+            let set = sessionListViewModel.loginSets.first(where: { $0.id == id })
+        else { return }
+        fillForm(form, from: set)
+    }
+
+    /// Manual mode + "Save as new login set": creates the set from the
+    /// form's current fields (secret included) and returns its id, or `nil`
+    /// when the toggle isn't active (or the form is in Set mode, where
+    /// there's nothing new to create). The name is the field's trimmed
+    /// value, or `suggestedSetName(forUsername:)` when left blank (spec §3).
+    private func maybeCreateNewLoginSet(from form: ConnectionViewModel) -> UUID? {
+        guard form.loginMode == .manual, form.saveAsNewLoginSet else { return nil }
+        let username = form.username.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedName = form.newLoginSetName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = trimmedName.isEmpty
+            ? sessionListViewModel.suggestedSetName(forUsername: username)
+            : trimmedName
+        let authKind: StoredSession.AuthKind = form.authChoice == .privateKey ? .privateKey : .password
+        let keyPath = authKind == .privateKey
+            ? form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            : nil
+        let newSet = LoginSet(name: name, username: username, authKind: authKind, keyPath: keyPath)
+        sessionListViewModel.saveLoginSet(newSet, secret: form.password.isEmpty ? nil : form.password)
+        return newSet.id
+    }
+
     /// After a successful connect: build the panes of THIS tab and save the
     /// session if requested. `storedName` is the display name for the tab/
     /// window title when connecting to an already-stored session
@@ -1098,6 +1187,11 @@ struct ContentView: View {
 
         var titleName = storedName
         if form.shouldSaveSession {
+            // Set mode: reference the picked set directly. Manual mode +
+            // "Save as new login set": create the set FIRST, then reference
+            // it — either way `password:` below is safely ignored by `save`
+            // once `loginSetID` is non-nil (see its doc comment).
+            let newSetID = maybeCreateNewLoginSet(from: form)
             let stored = sessionListViewModel.save(
                 name: form.saveName.trimmingCharacters(in: .whitespacesAndNewlines),
                 host: form.host.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1108,7 +1202,8 @@ struct ContentView: View {
                 keyPath: form.authChoice == .privateKey
                     ? form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
                     : nil,
-                groupID: form.selectedGroupID
+                groupID: form.selectedGroupID,
+                loginSetID: form.loginMode == .set ? form.selectedLoginSetID : newSetID
             )
             tab.activeStoredSessionID = stored?.id
             form.shouldSaveSession = false
@@ -1154,12 +1249,42 @@ struct ContentView: View {
             let form = tab.connectionViewModel
             form.host = stored.host
             form.port = String(stored.port)
-            form.username = stored.username
             form.saveName = stored.name
             form.shouldSaveSession = false
-            form.password = sessionListViewModel.password(for: stored) ?? ""
-            form.authChoice = stored.authKind == .privateKey ? .privateKey : .password
-            form.keyPath = stored.keyPath ?? ""
+
+            // Resolve what this session should actually connect with (M10b/T3):
+            // its own data for a manual session, or its set's credentials —
+            // a dangling `loginSetID` throws rather than silently falling
+            // back (`LoginResolver`'s doc comment).
+            do {
+                if let resolved = try sessionListViewModel.resolvedLogin(for: stored) {
+                    form.username = resolved.username
+                    form.authChoice = resolved.authKind == .privateKey ? .privateKey : .password
+                    form.keyPath = resolved.keyPath ?? ""
+                    form.password = resolved.secret ?? ""
+                } else {
+                    form.username = stored.username
+                    form.authChoice = stored.authKind == .privateKey ? .privateKey : .password
+                    form.keyPath = stored.keyPath ?? ""
+                    form.password = sessionListViewModel.password(for: stored) ?? ""
+                }
+                form.loginMode = stored.loginSetID != nil ? .set : .manual
+                form.selectedLoginSetID = stored.loginSetID
+            } catch is LoginResolveError {
+                // Missing set: do NOT connect — show the form instead, with
+                // the mismatch surfaced through its existing error field
+                // (spec §2/§6). The user picks a login or enters credentials.
+                form.username = stored.username
+                form.authChoice = stored.authKind == .privateKey ? .privateKey : .password
+                form.keyPath = stored.keyPath ?? ""
+                form.password = ""
+                form.loginMode = .manual
+                form.selectedLoginSetID = nil
+                form.showFailure(message: L10n.string(
+                    "loginSets.missingSet",
+                    "The stored login for this connection was not found. Choose a login or enter credentials."))
+                return
+            }
 
             if let fs = await form.connect() {
                 // Accept only usable absolute paths (M9d final review): an

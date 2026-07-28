@@ -7,6 +7,21 @@ struct ConnectionFormView: View {
     /// `shouldSaveSession` is on) — passed in by `ContentView` from
     /// `SessionListViewModel.groups`.
     var groups: [StoredGroup] = []
+    /// Full view model (M10b/T3), not just an array like `groups` above:
+    /// the three-way login block needs `loginSets` for its picker AND
+    /// `suggestedSetName(forUsername:)` for the "save as new set" name
+    /// prompt AND — since "Manage logins…" opens the SAME sheet locally
+    /// (mockup section 4C, TOFU-footnote pattern) — a live reference so
+    /// edits made there are immediately visible everywhere else this
+    /// instance is shared (the sidebar, this very picker), unlike
+    /// `KnownHostsSheet`'s throwaway store instance.
+    let sessionList: SessionListViewModel
+    /// Called right before `connect()`/`validateForEditSave()` whenever the
+    /// form is in Set mode (M10b/T3): fills username/authChoice/keyPath/
+    /// password from the selected login set so the existing validators
+    /// below see current, non-stale data — no separate Set-mode validation
+    /// path needed in `ConnectionViewModel`.
+    var resolveLoginSetForSubmit: () -> Void = {}
     /// Edit mode "Save": persists the edited session (see `newSecret`'s
     /// empty-means-unchanged rule below), then leaves edit mode.
     var onSaveEdited: (StoredSession, String?) -> Void = { _, _ in }
@@ -42,12 +57,23 @@ struct ConnectionFormView: View {
     /// behavioral gain. The trust prompt underneath is unaffected either
     /// way — it's driven by `viewModel.hostKeyPrompt`, not by this sheet.
     @State private var showKnownHostsSheet = false
+    /// Drives the login-sets management sheet's "Manage logins…" link
+    /// (M10b/T3, mockup section 4C) — opened LOCALLY from the Set-mode
+    /// picker, same pattern as `showKnownHostsSheet` above.
+    @State private var showLoginSetsSheet = false
 
     private var isConnecting: Bool { viewModel.state == .connecting }
 
     private var isEditMode: Bool {
         if case .edit = viewModel.mode { return true }
         return false
+    }
+
+    /// True while Set mode has nothing selected yet — the three connect/save
+    /// actions stay disabled instead of the removed username/password
+    /// checks, which don't apply once those fields are hidden (spec §5).
+    private var loginSetModeIncomplete: Bool {
+        viewModel.loginMode == .set && viewModel.selectedLoginSetID == nil
     }
 
     /// The field whose validation failed most recently — gets the red outline.
@@ -92,6 +118,24 @@ struct ConnectionFormView: View {
         .sheet(isPresented: $showKnownHostsSheet) {
             KnownHostsSheet(store: KnownHostsStore(directory: SessionStore.defaultDirectory))
         }
+        // "Manage logins…" (M10b/T3, mockup section 4C): opens the SAME
+        // sheet locally, sharing `sessionList` (not a fresh store instance
+        // like `showKnownHostsSheet` above) so an edit/delete/merge made
+        // here is immediately reflected in the Set-mode picker and the
+        // sidebar, which read the same observable object.
+        .sheet(isPresented: $showLoginSetsSheet) {
+            LoginSetsSheet(sessionList: sessionList)
+        }
+        // Surfaces a `.failed` state set from OUTSIDE this view's own button
+        // handlers (M10b/T3: `ContentView.connect(in:stored:)` calls
+        // `viewModel.showFailure` when a stored session's login set is
+        // missing) through the same alert the Connect/Save buttons already
+        // populate inline — one mechanism for both origins.
+        .onChange(of: viewModel.state) { _, newState in
+            if case .failed(let message, _) = newState {
+                alertMessage = message
+            }
+        }
     }
 
     @ViewBuilder
@@ -122,70 +166,122 @@ struct ConnectionFormView: View {
                 }
                 .errorHighlight(failedField == .port)
 
-                let usernameLabel = L10n.string("connection.field.username", "Username")
-                FormRow(label: usernameLabel) {
-                    TextField(
-                        usernameLabel, text: $viewModel.username,
-                        prompt: Text(verbatim: ""))
-                }
-                .errorHighlight(failedField == .username)
-
-                let authMethodLabel = L10n.string("connection.field.authMethod", "Authentication")
-                FormRow(label: authMethodLabel) {
-                    Picker(authMethodLabel, selection: Binding(
-                        get: { viewModel.authChoice },
-                        set: { viewModel.selectAuthChoice($0) }
-                    )) {
-                        Text(L10n.string("connection.auth.password", "Password"))
-                            .tag(ConnectionViewModel.AuthChoice.password)
-                        Text(L10n.string("connection.auth.privateKey", "SSH key"))
-                            .tag(ConnectionViewModel.AuthChoice.privateKey)
+                // Three-way login switcher (M10b/T3, mockup section 3): sits
+                // above the auth block it replaces/wraps. Set mode shows a
+                // login-set picker instead of Username/Auth/Password/Key;
+                // Manual mode is today's block, with the "save as new set"
+                // toggle appended.
+                let loginModeLabel = L10n.string("form.loginMode.label", "Login")
+                FormRow(label: loginModeLabel) {
+                    Picker(loginModeLabel, selection: $viewModel.loginMode) {
+                        Text(L10n.string("form.loginMode.set", "Login set"))
+                            .tag(ConnectionViewModel.LoginMode.set)
+                        Text(L10n.string("form.loginMode.manual", "Manual"))
+                            .tag(ConnectionViewModel.LoginMode.manual)
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
                 }
 
-                if viewModel.authChoice == .password {
-                    let passwordLabel = L10n.string("connection.auth.password", "Password")
-                    FormRow(label: passwordLabel) {
-                        SecureField(
-                            passwordLabel, text: $viewModel.password,
-                            prompt: isEditMode
-                                ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
-                                : Text(verbatim: "")
-                        )
-                    }
-                    .errorHighlight(failedField == .password)
-                } else {
-                    let keyPathLabel = L10n.string("connection.field.keyPath", "Key path")
-                    FormRow(label: keyPathLabel) {
-                        HStack(spacing: 6) {
-                            TextField(
-                                keyPathLabel, text: $viewModel.keyPath,
-                                prompt: Text(L10n.string(
-                                    "connection.field.keyPath.placeholder", "~/.ssh/id_ed25519"))
-                            )
-                            // "…" is a pure symbol (ellipsis "browse" affordance), not
-                            // natural-language text — identical in every locale, so it
-                            // stays a literal rather than a catalog key.
-                            Button("…") { showKeyImporter = true }
-                                .buttonStyle(.polished)
-                                .help(L10n.string("connection.field.keyPath.browseHelp", "Choose key file"))
+                if viewModel.loginMode == .set {
+                    FormRow(label: loginModeLabel) {
+                        HStack(spacing: 10) {
+                            Picker(loginModeLabel, selection: $viewModel.selectedLoginSetID) {
+                                Text(L10n.string("form.selectLogin", "Select a login")).tag(UUID?.none)
+                                ForEach(sessionList.loginSets) { set in
+                                    Text("\(set.name) — \(set.username)").tag(UUID?.some(set.id))
+                                }
+                            }
+                            .labelsHidden()
+                            Button(L10n.string("form.manageLogins", "Manage logins…")) {
+                                showLoginSetsSheet = true
+                            }
+                            .buttonStyle(.plain)
+                            .font(.caption)
+                            .foregroundStyle(DesignTokens.inkTertiary)
                         }
                     }
-                    .errorHighlight(failedField == .keyPath)
-
-                    let passphraseLabel = L10n.string("connection.field.passphrase", "Passphrase (optional)")
-                    FormRow(label: passphraseLabel) {
-                        SecureField(
-                            passphraseLabel,
-                            text: $viewModel.password,
-                            prompt: isEditMode
-                                ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
-                                : Text(verbatim: "")
-                        )
+                } else {
+                    let usernameLabel = L10n.string("connection.field.username", "Username")
+                    FormRow(label: usernameLabel) {
+                        TextField(
+                            usernameLabel, text: $viewModel.username,
+                            prompt: Text(verbatim: ""))
                     }
-                    .errorHighlight(failedField == .password)
+                    .errorHighlight(failedField == .username)
+
+                    let authMethodLabel = L10n.string("connection.field.authMethod", "Authentication")
+                    FormRow(label: authMethodLabel) {
+                        Picker(authMethodLabel, selection: Binding(
+                            get: { viewModel.authChoice },
+                            set: { viewModel.selectAuthChoice($0) }
+                        )) {
+                            Text(L10n.string("connection.auth.password", "Password"))
+                                .tag(ConnectionViewModel.AuthChoice.password)
+                            Text(L10n.string("connection.auth.privateKey", "SSH key"))
+                                .tag(ConnectionViewModel.AuthChoice.privateKey)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                    }
+
+                    if viewModel.authChoice == .password {
+                        let passwordLabel = L10n.string("connection.auth.password", "Password")
+                        FormRow(label: passwordLabel) {
+                            SecureField(
+                                passwordLabel, text: $viewModel.password,
+                                prompt: isEditMode
+                                    ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
+                                    : Text(verbatim: "")
+                            )
+                        }
+                        .errorHighlight(failedField == .password)
+                    } else {
+                        let keyPathLabel = L10n.string("connection.field.keyPath", "Key path")
+                        FormRow(label: keyPathLabel) {
+                            HStack(spacing: 6) {
+                                TextField(
+                                    keyPathLabel, text: $viewModel.keyPath,
+                                    prompt: Text(L10n.string(
+                                        "connection.field.keyPath.placeholder", "~/.ssh/id_ed25519"))
+                                )
+                                // "…" is a pure symbol (ellipsis "browse" affordance), not
+                                // natural-language text — identical in every locale, so it
+                                // stays a literal rather than a catalog key.
+                                Button("…") { showKeyImporter = true }
+                                    .buttonStyle(.polished)
+                                    .help(L10n.string("connection.field.keyPath.browseHelp", "Choose key file"))
+                            }
+                        }
+                        .errorHighlight(failedField == .keyPath)
+
+                        let passphraseLabel = L10n.string("connection.field.passphrase", "Passphrase (optional)")
+                        FormRow(label: passphraseLabel) {
+                            SecureField(
+                                passphraseLabel,
+                                text: $viewModel.password,
+                                prompt: isEditMode
+                                    ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
+                                    : Text(verbatim: "")
+                            )
+                        }
+                        .errorHighlight(failedField == .password)
+                    }
+
+                    FormRow(label: "") {
+                        Toggle(
+                            L10n.string("form.saveAsSet", "Save as new login set"),
+                            isOn: $viewModel.saveAsNewLoginSet)
+                    }
+
+                    if viewModel.saveAsNewLoginSet {
+                        let setNameLabel = L10n.string("form.saveAsSet.name", "Login set name")
+                        FormRow(label: setNameLabel) {
+                            TextField(
+                                setNameLabel, text: $viewModel.newLoginSetName,
+                                prompt: Text(sessionList.suggestedSetName(forUsername: viewModel.username)))
+                        }
+                    }
                 }
 
                 if !isEditMode {
@@ -236,6 +332,7 @@ struct ConnectionFormView: View {
                     }
                     .buttonStyle(.polished)
                     Button(L10n.string("common.save", "Save")) {
+                        resolveLoginSetForSubmit()
                         if let session = viewModel.validateForEditSave() {
                             onSaveEdited(session, viewModel.password.isEmpty ? nil : viewModel.password)
                         } else if case .failed(let message, _) = viewModel.state {
@@ -243,7 +340,9 @@ struct ConnectionFormView: View {
                         }
                     }
                     .buttonStyle(.polished)
+                    .disabled(loginSetModeIncomplete)
                     Button(L10n.string("connection.saveAndConnect", "Save & connect")) {
+                        resolveLoginSetForSubmit()
                         if let session = viewModel.validateForEditSave() {
                             onSaveEdited(session, viewModel.password.isEmpty ? nil : viewModel.password)
                             onConnectEdited(session)
@@ -253,8 +352,10 @@ struct ConnectionFormView: View {
                     }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.polishedProminent)
+                    .disabled(loginSetModeIncomplete)
                 } else {
                     Button(L10n.string("connection.connect", "Connect")) {
+                        resolveLoginSetForSubmit()
                         Task {
                             if let fs = await viewModel.connect() {
                                 isHandingOff = true
@@ -266,7 +367,7 @@ struct ConnectionFormView: View {
                         }
                     }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(isConnecting || isHandingOff)
+                    .disabled(isConnecting || isHandingOff || loginSetModeIncomplete)
                     .buttonStyle(.polishedProminent)
                 }
             }

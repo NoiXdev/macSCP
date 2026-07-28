@@ -25,6 +25,9 @@ struct SessionSidebar: View {
     /// Background context menu "Known Hosts…" entry (M10a/T2) — opens the
     /// known-hosts management sheet.
     let onShowKnownHosts: () -> Void
+    /// Background context menu "Logins…" entry (M10b/T3) — opens the
+    /// login-sets management sheet, directly below "Known Hosts…".
+    let onShowLogins: () -> Void
 
     /// Not persisted — resets to "all expanded" on relaunch.
     @State private var collapsedGroups: Set<UUID> = []
@@ -247,6 +250,7 @@ struct SessionSidebar: View {
         Button(L10n.string("sidebar.newGroup", "New group…")) { beginNewGroup(forMoving: nil) }
         Divider()
         Button(L10n.string("menu.knownHosts", "Known Hosts…")) { onShowKnownHosts() }
+        Button(L10n.string("menu.logins", "Logins…")) { onShowLogins() }
         Divider()
         Button(L10n.string("export.menu.all", "Export All…")) { onExport(.all) }
             .disabled(viewModel.sessions.isEmpty)

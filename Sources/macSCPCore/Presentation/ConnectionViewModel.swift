@@ -29,6 +29,16 @@ public final class ConnectionViewModel {
         case privateKey
     }
 
+    /// The form's three-way login switcher (M10b/T3, mockup section 3):
+    /// `.set` picks a reusable `LoginSet` instead of entering credentials
+    /// directly; `.manual` is today's behavior (username/password/key
+    /// entered on the connection itself). Default `.manual` — a brand-new
+    /// form starts exactly as it always has.
+    public enum LoginMode: String, CaseIterable, Sendable {
+        case set
+        case manual
+    }
+
     /// Whether the form creates a brand-new connection or edits a stored
     /// session in place (M5f/T4). `edit` carries the session's id so
     /// `validateForEditSave()` can rebuild the same `StoredSession`.
@@ -59,6 +69,23 @@ public final class ConnectionViewModel {
     /// Group assignment shown by the picker — applies while saving a new
     /// session (`shouldSaveSession == true`) AND while editing a stored one.
     public var selectedGroupID: UUID?
+    /// Three-way login switcher state (M10b/T3). The App layer reads this to
+    /// decide whether to show the login-set picker or the manual
+    /// username/password/key fields; it also fills `username`/`authChoice`/
+    /// `keyPath`/`password` from the selected set right before connect/save
+    /// (`ContentView.fillForm(_:from:)`), so those fields still carry the
+    /// values the rest of this view model already knows how to validate and
+    /// connect with — `.set` needs no separate connect/validate path here.
+    public var loginMode: LoginMode = .manual
+    /// The chosen login set in `.set` mode, `nil` while none is selected yet.
+    public var selectedLoginSetID: UUID?
+    /// Manual mode only: "Save as new login set" toggle (M10b/T3) — the App
+    /// layer creates the set from the current fields before persisting the
+    /// session, then attaches its id as `loginSetID`.
+    public var saveAsNewLoginSet: Bool = false
+    /// Name for the new set created by `saveAsNewLoginSet`; an empty value
+    /// falls back to `SessionListViewModel.suggestedSetName(forUsername:)`.
+    public var newLoginSetName: String = ""
     public private(set) var state: State = .idle
     /// `.new` while the form creates a connection; `.edit` while it edits a
     /// stored session (see `beginEditing`/`endEditing`).
@@ -163,6 +190,15 @@ public final class ConnectionViewModel {
         continuation.resume(returning: trust)
     }
 
+    /// Surfaces a failure found by the App layer (M10b/T3: a stored
+    /// session's `loginSetID` no longer resolves to a set) through the same
+    /// `.failed` state `connect()`/`validateForEditSave()` use — the form
+    /// gets the identical red-highlight/alert treatment without a second
+    /// error-reporting mechanism.
+    public func showFailure(message: String, field: Field? = nil) {
+        state = .failed(message: message, field: field)
+    }
+
     /// Removes the plaintext password from the state (e.g. after disconnecting).
     public func clearPassword() {
         password = ""
@@ -191,6 +227,13 @@ public final class ConnectionViewModel {
         saveName = stored.name
         selectedGroupID = stored.groupID
         password = ""
+        // A referenced login set (M10b/T3) puts the form straight into Set
+        // mode with that set preselected; a manual session goes to Manual
+        // exactly as before — see the doc comment on `loginMode`.
+        loginMode = stored.loginSetID != nil ? .set : .manual
+        selectedLoginSetID = stored.loginSetID
+        saveAsNewLoginSet = false
+        newLoginSetName = ""
         mode = .edit(sessionID: stored.id)
         state = .idle
     }
@@ -209,6 +252,8 @@ public final class ConnectionViewModel {
         keyPath = ""
         shouldSaveSession = false
         saveName = ""
+        saveAsNewLoginSet = false
+        newLoginSetName = ""
         state = .idle
     }
 
@@ -221,6 +266,8 @@ public final class ConnectionViewModel {
     public func exitEditMode() {
         mode = .new
         selectedGroupID = nil
+        loginMode = .manual
+        selectedLoginSetID = nil
     }
 
     /// Validates the form for saving an edited session (password may be
@@ -265,7 +312,12 @@ public final class ConnectionViewModel {
             username: trimmedUsername,
             authKind: authChoice == .privateKey ? .privateKey : .password,
             keyPath: authChoice == .privateKey ? trimmedKeyPath : nil,
-            groupID: selectedGroupID)
+            groupID: selectedGroupID,
+            // Set mode (M10b/T3): the session references the selected set
+            // instead of carrying its own credentials. `ContentView` fills
+            // username/authChoice/keyPath from that set before this
+            // validator runs, so the checks above still see valid data.
+            loginSetID: loginMode == .set ? selectedLoginSetID : nil)
     }
 
     static func failedState(for error: Error) -> State {

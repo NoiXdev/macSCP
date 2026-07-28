@@ -18,6 +18,9 @@ final class TabCommands {
     /// M9a handlers (`exportSheetItem`/`showImportFileImporter`) — the
     /// sidebar's own "Export All…"/"Import…" entries are untouched.
     var showKnownHosts: (() -> Void)?
+    /// "Logins…" (M10b/T3) — same bridge shape/key-window guard as
+    /// `showKnownHosts` above, opens the login-sets management sheet.
+    var showLogins: (() -> Void)?
     var exportAllSessions: (() -> Void)?
     var importSessions: (() -> Void)?
 }
@@ -108,6 +111,10 @@ struct MacSCPApp: App {
                     tabCommands.showKnownHosts?()
                 }
                 .keyboardShortcut("k", modifiers: [.command, .shift])
+                Button(L10n.string("menu.logins", "Logins…")) {
+                    tabCommands.showLogins?()
+                }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
                 Divider()
                 Button(L10n.string("menu.exportAllSessions", "Export All Sessions…")) {
                     tabCommands.exportAllSessions?()
