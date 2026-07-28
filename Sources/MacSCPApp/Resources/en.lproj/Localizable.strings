@@ -352,6 +352,8 @@
 "loginSets.editor.username" = "Username";
 "loginSets.editor.keepSecret" = "leave empty to keep";
 "loginSets.missingSet" = "The stored login for this connection was not found. Choose a login or enter credentials.";
+"loginSets.badge.key" = "KEY";
+"loginSets.badge.pass" = "PASS";
 
 /* Connection form — three-way login switcher (M10b/T3) */
 "form.loginMode.label" = "Login";

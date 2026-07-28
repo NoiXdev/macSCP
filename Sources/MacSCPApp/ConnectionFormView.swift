@@ -184,7 +184,7 @@ struct ConnectionFormView: View {
                 }
 
                 if viewModel.loginMode == .set {
-                    FormRow(label: loginModeLabel) {
+                    FormRow(label: "") {
                         HStack(spacing: 10) {
                             Picker(loginModeLabel, selection: $viewModel.selectedLoginSetID) {
                                 Text(L10n.string("form.selectLogin", "Select a login")).tag(UUID?.none)

@@ -352,6 +352,8 @@
 "loginSets.editor.username" = "Benutzername";
 "loginSets.editor.keepSecret" = "leer lassen, um beizubehalten";
 "loginSets.missingSet" = "Das hinterlegte Login dieser Verbindung wurde nicht gefunden. Login wählen oder Zugangsdaten eingeben.";
+"loginSets.badge.key" = "KEY";
+"loginSets.badge.pass" = "PASS";
 
 /* Verbindungsformular — Dreiweg-Login-Umschalter (M10b/T3) */
 "form.loginMode.label" = "Login";

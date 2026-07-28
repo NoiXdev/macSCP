@@ -776,7 +776,15 @@ struct ContentView: View {
                         tab.connectionViewModel.endEditing()
                     },
                     onCancelEdit: { tab.connectionViewModel.endEditing() },
-                    onConnectEdited: { stored in connect(in: tab, stored: stored) }
+                    onConnectEdited: { stored in
+                        // onSaveEdited may have rewired loginSetID (e.g. "save as new
+                        // login set") on its own local copy of `stored`, which never
+                        // reaches this closure's parameter. `updateSession` inside
+                        // onSaveEdited already reloaded the list synchronously, so look
+                        // up the just-persisted session by id and connect with that.
+                        let current = sessionListViewModel.sessions.first(where: { $0.id == stored.id }) ?? stored
+                        connect(in: tab, stored: current)
+                    }
                 ) { fs in
                     // Remote home start (M9d): resolved once per connect,
                     // right before the browser session is built, so the

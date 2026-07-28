@@ -148,13 +148,12 @@ struct LoginSetsSheet: View {
         .padding(.vertical, 2)
     }
 
-    /// "KEY"/"PASS" — pure symbols (like `KnownHostsSheet.keyTypeBadge`'s
-    /// uppercased key type), never natural-language text, so they stay
-    /// literals rather than catalog keys.
     @ViewBuilder
     private func authKindBadge(_ kind: StoredSession.AuthKind) -> some View {
         let isKey = kind == .privateKey
-        Text(isKey ? "KEY" : "PASS")
+        Text(isKey
+            ? L10n.string("loginSets.badge.key", "KEY")
+            : L10n.string("loginSets.badge.pass", "PASS"))
             .font(.system(size: 10, weight: .semibold))
             .padding(.horizontal, 7)
             .padding(.vertical, 2)
