@@ -102,10 +102,16 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         let dedicatedGroup: MultiThreadedEventLoopGroup? =
             (jumpAgent != nil || targetAgent != nil)
                 ? MultiThreadedEventLoopGroup(numberOfThreads: 1) : nil
+        // R-1: tracks whether THIS call ever reached `client.openSFTP()` on
+        // `dedicatedGroup` before failing — see the flag type's doc comment
+        // and the `catch` below for why that gates immediate vs. deferred
+        // shutdown.
+        let sftpOpenAttempted = SFTPOpenAttemptFlag()
         do {
             let result = try await connectWithTOFURetries(
                 config: config, knownHosts: knownHosts, onUnknownHostKey: onUnknownHostKey,
-                jumpAgent: jumpAgent, targetAgent: targetAgent, group: dedicatedGroup)
+                jumpAgent: jumpAgent, targetAgent: targetAgent, group: dedicatedGroup,
+                sftpOpenAttempted: sftpOpenAttempted)
             await jumpAgent?.close()
             await targetAgent?.close()
             // NOT shut down here on success: `result`'s own SSHClient (and,
@@ -116,10 +122,31 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         } catch {
             await jumpAgent?.close()
             await targetAgent?.close()
-            // No `CitadelFileSystem` survived to take ownership — safe (and
-            // necessary, to avoid leaking the group's thread) to shut it
-            // down here.
-            if let dedicatedGroup { try? await dedicatedGroup.shutdownGracefully() }
+            // No `CitadelFileSystem` survived to take ownership — the group
+            // would otherwise leak its thread, so it must be released here.
+            if let dedicatedGroup {
+                if sftpOpenAttempted.attempted {
+                    // R-1: this attempt got as far as calling `client.openSFTP()`
+                    // on `dedicatedGroup` before failing (e.g. `openSFTP` itself
+                    // timed out) — Citadel already scheduled its uncancelled 15s
+                    // "no reply" timer on this group's loop the moment `openSFTP`
+                    // was called, win or lose (see `disconnect()`'s comment for
+                    // the exact citation). Shutting the group down immediately
+                    // here would race that timer exactly like `disconnect()`
+                    // used to, so defer it the same way.
+                    Task.detached {  // outlive Citadel's uncancelled 15s openSFTP timer (SFTPClient.swift:535)
+                        try? await Task.sleep(for: .seconds(16))
+                        try? await dedicatedGroup.shutdownGracefully()
+                    }
+                } else {
+                    // `openSFTP` was never reached (host-key rejection, auth
+                    // failure, or a transport error during the SSH handshake
+                    // itself) — Citadel's timer was never scheduled on this
+                    // group, so there's nothing to outlive; shutting down
+                    // immediately is correct and avoids leaking the thread.
+                    try? await dedicatedGroup.shutdownGracefully()
+                }
+            }
             throw error
         }
     }
@@ -137,7 +164,8 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         onUnknownHostKey: @escaping @Sendable (HostKeyCandidate) async -> Bool,
         jumpAgent: AgentAuthContext?,
         targetAgent: AgentAuthContext?,
-        group: MultiThreadedEventLoopGroup?
+        group: MultiThreadedEventLoopGroup?,
+        sftpOpenAttempted: SFTPOpenAttemptFlag
     ) async throws -> CitadelFileSystem {
         var acceptRetries = 0
         let maxAcceptRetries = config.jump == nil ? 1 : 2  // one accept per hop
@@ -147,7 +175,8 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             do {
                 return try await attemptConnect(
                     config: config, knownHosts: knownHosts, jumpBox: jumpBox, targetBox: targetBox,
-                    jumpAgent: jumpAgent, targetAgent: targetAgent, group: group)
+                    jumpAgent: jumpAgent, targetAgent: targetAgent, group: group,
+                    sftpOpenAttempted: sftpOpenAttempted)
             } catch {
                 // At most ONE hop can carry a verdict per attempt (stage 2
                 // only starts after stage 1 succeeds) — check the jump hop first.
@@ -226,6 +255,28 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         }
     }
 
+    /// R-1: lets `attemptConnect` signal back to `connect()`'s failure-cleanup
+    /// path whether Citadel's `openSFTP()` was ever invoked on `dedicatedGroup`
+    /// before the error that unwinds the whole `connect()` call. `openSFTP`
+    /// schedules its internal 15s timer (see `disconnect()`'s comment for the
+    /// exact citation) as soon as it is CALLED, even if it then fails — so
+    /// this must be set the moment the call is made, not on success. Same
+    /// `NSLock`-boxed-reference shape as `TOFUHostKeyValidator.Box` above.
+    private final class SFTPOpenAttemptFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+
+        func markAttempted() {
+            lock.lock(); defer { lock.unlock() }
+            value = true
+        }
+
+        var attempted: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return value
+        }
+    }
+
     /// A single connection attempt with the TOFU validators. Throws raw
     /// errors; `connect` handles the evaluation (decider, mismatch, mapping).
     /// Without a jump, this is behaviorally unchanged from the pre-M10c
@@ -240,7 +291,8 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         targetBox: TOFUHostKeyValidator.Box,
         jumpAgent: AgentAuthContext?,
         targetAgent: AgentAuthContext?,
-        group: MultiThreadedEventLoopGroup?
+        group: MultiThreadedEventLoopGroup?,
+        sftpOpenAttempted: SFTPOpenAttemptFlag
     ) async throws -> CitadelFileSystem {
         if let jump = config.jump {
             // Stage 1 (jump host) — any failure here (auth, key loading,
@@ -287,6 +339,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                     return try await jumpClient.jump(to: settings)
                 }
                 do {
+                    sftpOpenAttempted.markAttempted()
                     let sftp = try await client.openSFTP()
                     return CitadelFileSystem(
                         client: client, sftp: sftp, jumpClient: jumpClient, dedicatedGroup: group)
@@ -316,6 +369,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             )
         }
         do {
+            sftpOpenAttempted.markAttempted()
             let sftp = try await client.openSFTP()
             return CitadelFileSystem(client: client, sftp: sftp, dedicatedGroup: group)
         } catch {
@@ -390,8 +444,9 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             // M-2: an outright auth rejection (the server tried the offered
             // identity and said no) must never be masked by a LATER, unrelated
             // failure from trying yet another identity (e.g. a transient
-            // transport hiccup) — remember the rejection and prefer it over
-            // whatever `lastError` ends up being.
+            // transport hiccup). The assignment below runs unconditionally on
+            // EVERY rejection seen, so it holds the LAST one, not the first —
+            // still preferred over whatever `lastError` ends up being.
             var authRejectionError: Error?
             for _ in 0..<attempts {
                 do {
@@ -829,26 +884,28 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         try? await sftp.close()
         try? await client.close()
         try? await jumpClient?.close()
-        // I-2: release the dedicated event-loop group this connection took
-        // ownership of at construction time (see `connect()`).
-        //
-        // KNOWN RESIDUAL (observed during T2 verification, not a regression
-        // introduced by the ordering above): Citadel's `SFTPClient.openSFTP`
-        // schedules an internal 15-second "no reply" timeout task on the
-        // connection's event loop and never cancels it once `openSFTP`
-        // succeeds (`Citadel/Sources/Citadel/SFTP/Client/SFTPClient.swift:535`).
-        // If this connection is closed (and, with `.agent` auth, this
-        // dedicated group shut down) less than 15 seconds after connecting —
-        // routine for a quick browse-and-disconnect — that leftover task
-        // fires against an already-shut-down loop, and NIO prints "Cannot
-        // schedule tasks on an EventLoop that has already shut down"
-        // (currently a logged warning, not a crash). The stray task's own
-        // effect is a no-op (it only fails promises `openSFTP` already
-        // fulfilled on success), so this is cosmetic today, not a
-        // correctness defect — but it lives entirely inside vendored
-        // Citadel and cannot be cancelled from here; fixing it upstream
-        // (or in a future Citadel bump) is out of scope for this fix round.
-        if let dedicatedGroup { try? await dedicatedGroup.shutdownGracefully() }
+        // I-2/R-1: release the dedicated event-loop group this connection
+        // took ownership of at construction time (see `connect()`) — but not
+        // immediately. Citadel's `SFTPClient.openSFTP` schedules an internal
+        // 15-second "no reply" timeout task on the connection's event loop
+        // unconditionally when it's CALLED, and never cancels it once
+        // `openSFTP` succeeds
+        // (`Citadel/Sources/Citadel/SFTP/Client/SFTPClient.swift:535`).
+        // Shutting `dedicatedGroup` down right here, before that timer fires,
+        // used to race it: measured at 5 NIO "Cannot schedule tasks on an
+        // EventLoop that has already shut down" ERRORs per 5 successful agent
+        // sessions (routine quick browse-and-disconnect, well under 15s) —
+        // currently a logged error, but NIO documents this becoming a forced
+        // crash on future versions. The timer lives entirely inside vendored
+        // Citadel and cannot be cancelled from here, so outlive it instead of
+        // racing it: detached from this call (so `disconnect()` itself still
+        // returns immediately) and past the 15s mark.
+        if let dedicatedGroup {
+            Task.detached {  // outlive Citadel's uncancelled 15s openSFTP timer (SFTPClient.swift:535)
+                try? await Task.sleep(for: .seconds(16))
+                try? await dedicatedGroup.shutdownGracefully()
+            }
+        }
     }
 }
 

@@ -1503,6 +1503,46 @@ struct CitadelFileSystemIntegrationTests {
         #expect(!items.isEmpty)
     }
 
+    /// R-8: the jump-hop counterpart to `agentAuthWrongKeyFailsAuth` — an
+    /// agent whose ONLY identity is NOT in container 1's `authorized_keys`,
+    /// used for the JUMP hop's `.agent` auth (target still plain password).
+    /// Must surface as `RemoteFSError.jumpAuthenticationFailed`, not
+    /// `.authenticationFailed` (that's reserved for the target hop) and not
+    /// `.connectionFailed` (a stringified fallback would mean the jump-stage
+    /// error mapping silently failed to recognize the rejection) — the
+    /// combination of `.agent` + full rejection + jump hop had no coverage
+    /// before this test.
+    @Test func agentAuthOnJumpHopWrongKeyFailsJumpAuth() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-itest-agentkey-jump-wrong-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let keyURL = dir.appendingPathComponent("id_ed25519")
+        let keygen = Process()
+        keygen.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
+        keygen.arguments = ["-t", "ed25519", "-f", keyURL.path(percentEncoded: false),
+                            "-N", "", "-q", "-C", "macscp-itest-jump-wrong"]
+        try keygen.run()
+        keygen.waitUntilExit()
+        #expect(keygen.terminationStatus == 0)
+
+        let agent = try spawnAgent()
+        defer { killAgent(agent) }
+        try addKey(atPath: keyURL.path(percentEncoded: false), to: agent)
+
+        let config = try SSHConnectionConfig(
+            host: "sshd2", port: 2222, username: "testuser", auth: .password("testpass"),
+            jump: .init(host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent))
+        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-agent-jump-wrong-\(UUID().uuidString)"))
+        await withAgentEnv(agent) {
+            await #expect(throws: RemoteFSError.jumpAuthenticationFailed) {
+                _ = try await CitadelFileSystem.connect(
+                    config: config, knownHosts: store, onUnknownHostKey: { _ in true })
+            }
+        }
+    }
+
     /// I-3(c): an ECDSA (P-256) identity through the agent, mirroring
     /// `agentAuthConnectsEd25519`/`agentAuthConnectsRSA` — the third
     /// `AgentSigningAlgorithm` family macSCP offers (`AgentAlgorithm.ECDSAP256`)
