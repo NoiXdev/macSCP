@@ -53,6 +53,24 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key><string>15.0</string>
     <key>NSHumanReadableCopyright</key><string>© 2026 Tim Rösner</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key><string>dev.noix.macscp.sessions</string>
+            <key>UTTypeDescription</key><string>macSCP Sessions</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.json</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>macscpsessions</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
 </dict>
 </plist>
 PLIST

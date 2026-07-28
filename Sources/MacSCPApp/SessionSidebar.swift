@@ -15,6 +15,10 @@ struct SessionSidebar: View {
     let onNew: () -> Void
     let onSelectImported: (SSHConfigHost) -> Void
     let onEdit: (StoredSession) -> Void
+    /// Sidebar export entries (M9a/T3): session/group/background context
+    /// menus all funnel into this one callback with the scope they cover.
+    let onExport: (SessionListViewModel.ExportScope) -> Void
+    let onImport: () -> Void
 
     /// Not persisted — resets to "all expanded" on relaunch.
     @State private var collapsedGroups: Set<UUID> = []
@@ -158,7 +162,8 @@ struct SessionSidebar: View {
                 onCancelRename: cancelRename,
                 onMove: { groupID in viewModel.moveSession(session, toGroup: groupID) },
                 onRequestNewGroupMove: { beginNewGroup(forMoving: session) },
-                onRequestDelete: { sessionPendingDelete = session }
+                onRequestDelete: { sessionPendingDelete = session },
+                onExport: { onExport(.single(session)) }
             )
             .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 6))
         }
@@ -188,6 +193,9 @@ struct SessionSidebar: View {
         .contextMenu {
             Button(L10n.string("sidebar.rename", "Rename")) {
                 startRename(id: group.id, currentName: group.name)
+            }
+            Button(L10n.string("export.menu.group", "Export Group…")) {
+                onExport(.group(group))
             }
             Button(L10n.string("sidebar.group.dissolve", "Dissolve group")) {
                 viewModel.dissolveGroup(group)
@@ -230,6 +238,10 @@ struct SessionSidebar: View {
     private var backgroundMenu: some View {
         Button(L10n.string("sidebar.newConnection", "New connection")) { onNew() }
         Button(L10n.string("sidebar.newGroup", "New group…")) { beginNewGroup(forMoving: nil) }
+        Divider()
+        Button(L10n.string("export.menu.all", "Export All…")) { onExport(.all) }
+            .disabled(viewModel.sessions.isEmpty)
+        Button(L10n.string("import.menu", "Import…")) { onImport() }
     }
 
     // MARK: - Inline rename
@@ -307,6 +319,7 @@ private struct SessionRow: View {
     let onMove: (UUID?) -> Void
     let onRequestNewGroupMove: () -> Void
     let onRequestDelete: () -> Void
+    let onExport: () -> Void
 
     @State private var isHovering = false
 
@@ -346,6 +359,7 @@ private struct SessionRow: View {
         .contextMenu {
             Button(L10n.string("sidebar.connect", "Connect")) { onSelect() }
             Button(L10n.string("sidebar.edit", "Edit…")) { onEdit() }
+            Button(L10n.string("export.menu.single", "Export…")) { onExport() }
             Button(L10n.string("sidebar.rename", "Rename")) { onStartRename() }
             Menu(L10n.string("sidebar.moveTo", "Move to")) {
                 if session.groupID != nil {

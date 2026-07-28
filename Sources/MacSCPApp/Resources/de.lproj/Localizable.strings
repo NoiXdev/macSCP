@@ -204,3 +204,46 @@
 
 /* Schließen-Warnung: eingehende sitzungsübergreifende Übertragungen (M8b/T4) */
 "tabs.close.incomingTransfers" = "Andere Tabs übertragen gerade zu dieser Session; Schließen bricht diese Übertragungen ab.";
+
+/* Sitzungs-Export/Import — Sidebar-Menüs (M9a/T3) */
+"export.menu.single" = "Exportieren…";
+"export.menu.group" = "Gruppe exportieren…";
+"export.menu.all" = "Alle exportieren…";
+"import.menu" = "Importieren…";
+
+/* Sitzungs-Export/Import — Export-Sheet */
+"export.sheet.title" = "Sitzungen exportieren";
+"export.summary %lld" = "%lld Verbindungen";
+"export.includeGroups" = "Gruppenzuordnung einschließen";
+"export.includePasswords" = "Passwörter einschließen";
+"export.encrypted" = "Verschlüsselt";
+"export.unencrypted" = "Unverschlüsselt";
+"export.password" = "Passwort";
+"export.passwordRepeat" = "Passwort wiederholen";
+"export.passwordHint" = "Ein langes Passwort erschwert das Knacken der Exportdatei, falls sie abgefangen wird.";
+"export.plaintextWarning" = "Passwörter werden in dieser Datei im Klartext gespeichert. Jeder, der sie erhält, kann sie lesen.";
+"export.confirmAnyway" = "Trotzdem exportieren…";
+"export.action" = "Exportieren…";
+
+/* Sitzungs-Export/Import — Export-Ergebnis/Fehler */
+"export.missingPasswords %lld" = "Ohne Passwort exportiert: %lld";
+"export.result.title" = "Export abgeschlossen";
+"export.error.title" = "Export fehlgeschlagen";
+"export.error.encodeFailed %@" = "Der Export konnte nicht vorbereitet werden: %@";
+"export.error.writeFailed %@" = "Die Exportdatei konnte nicht geschrieben werden: %@";
+
+/* Sitzungs-Export/Import — Import-Passwort-Sheet */
+"import.password.title" = "Passwort erforderlich";
+"import.password.wrong" = "Falsches Passwort oder die Datei ist beschädigt.";
+"import.password.unlock" = "Entsperren";
+
+/* Sitzungs-Export/Import — Import-Ergebnis/Fehler */
+"import.result.title" = "Import abgeschlossen";
+"import.result.body %lld %lld %lld" = "%lld importiert, %lld als Duplikate übersprungen, %lld Passwörter importiert";
+"import.result.passwordFailures %lld" = "Passwörter, die nicht gespeichert werden konnten: %lld";
+"import.result.storeFailures %lld" = "Wegen eines Fehlers nicht gespeichert: %lld";
+"import.result.plaintextNotice" = "Die Datei enthielt unverschlüsselte Passwörter.";
+"import.error.notExport" = "Keine macSCP-Sitzungsdatei.";
+"import.error.newerVersion" = "Diese Datei wurde mit einer neueren Version von macSCP erstellt.";
+"import.error.readFailed %@" = "Die Datei konnte nicht gelesen werden: %@";
+"import.error.title" = "Import fehlgeschlagen";

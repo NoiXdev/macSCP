@@ -176,6 +176,35 @@ struct ContentView: View {
     /// blank text under a destructive "Close" button.
     @State private var closeWarningText: String = ""
 
+    // MARK: - Session export/import (M9a/T3)
+
+    /// Wraps `ExportScope` so it can drive `.sheet(item:)` — `ExportScope`
+    /// itself has no stable identity of its own that covers all three cases
+    /// (`.all` has none at all).
+    private struct ExportSheetItem: Identifiable {
+        let id = UUID()
+        let scope: SessionListViewModel.ExportScope
+    }
+
+    @State private var exportSheetItem: ExportSheetItem?
+    /// Set by `performExport` right before `showExportFileExporter` — the
+    /// `fileExporter` completion handler reads it to decide whether the
+    /// "exported without password" alert is needed (spec M9a §3.3).
+    @State private var exportDocument: SessionExportDocument?
+    @State private var showExportFileExporter = false
+    @State private var exportMissingPasswordCount = 0
+    @State private var showExportMissingPasswordAlert = false
+    @State private var exportErrorMessage: String?
+
+    @State private var showImportFileImporter = false
+    /// Bytes read from the chosen import file, held between the initial
+    /// `probe` and the (optional) password prompt's `decode` attempt.
+    @State private var importFileData: Data?
+    @State private var showImportPasswordSheet = false
+    @State private var importResultMessage: String = ""
+    @State private var showImportResultAlert = false
+    @State private var importErrorMessage: String?
+
     init(settingsStore: SettingsStore, bandwidthLimiter: BandwidthLimiter, tabCommands: TabCommands) {
         self.settingsStore = settingsStore
         self.bandwidthLimiter = bandwidthLimiter
@@ -216,7 +245,9 @@ struct ContentView: View {
                 },
                 onNew: { newConnection() },
                 onSelectImported: { fillFromImported($0) },
-                onEdit: { stored in editStored(stored) }
+                onEdit: { stored in editStored(stored) },
+                onExport: { scope in exportSheetItem = ExportSheetItem(scope: scope) },
+                onImport: { showImportFileImporter = true }
             )
             .frame(minWidth: 170, idealWidth: 190, maxWidth: 260)
 
@@ -313,6 +344,80 @@ struct ContentView: View {
             }
         } message: {
             Text(closeWarningText)
+        }
+        // Export sheet (M9a/T3): one view for all three scopes, opened by
+        // the sidebar's context menus via `exportSheetItem`.
+        .sheet(item: $exportSheetItem) { item in
+            SessionExportSheet(
+                viewModel: sessionListViewModel,
+                scope: item.scope,
+                onExport: { options in performExport(scope: item.scope, options: options) }
+            )
+        }
+        .fileExporter(
+            isPresented: $showExportFileExporter,
+            document: exportDocument,
+            contentType: .macscpSessions,
+            defaultFilename: "macSCP Sessions.macscpsessions"
+        ) { result in
+            handleExportResult(result)
+        }
+        .alert(
+            L10n.string("export.error.title", "Export Failed"),
+            isPresented: Binding(
+                get: { exportErrorMessage != nil },
+                set: { isPresented in if !isPresented { exportErrorMessage = nil } })
+        ) {
+            Button(L10n.string("common.ok", "OK"), role: .cancel) {}
+        } message: {
+            Text(exportErrorMessage ?? "")
+        }
+        .alert(
+            L10n.string("export.result.title", "Export Complete"),
+            isPresented: $showExportMissingPasswordAlert
+        ) {
+            Button(L10n.string("common.ok", "OK"), role: .cancel) {}
+        } message: {
+            Text(String(
+                format: L10n.string("export.missingPasswords %lld", "Exported without password: %lld"),
+                exportMissingPasswordCount))
+        }
+        // Import flow (M9a/T3): file picker → probe → optional password
+        // sheet → decode/plan/apply → result/error alert. No auto-connect
+        // after import (spec M9a §3.5).
+        .fileImporter(
+            isPresented: $showImportFileImporter,
+            allowedContentTypes: [.macscpSessions, .json],
+            allowsMultipleSelection: false
+        ) { result in
+            handleImportFileSelection(result)
+        }
+        .sheet(isPresented: $showImportPasswordSheet) {
+            ImportPasswordSheet(
+                onSubmit: { password in
+                    guard let data = importFileData else { return nil }
+                    return finishImport(data: data, password: password)
+                },
+                onCancel: { importFileData = nil }
+            )
+        }
+        .alert(
+            L10n.string("import.error.title", "Import Failed"),
+            isPresented: Binding(
+                get: { importErrorMessage != nil },
+                set: { isPresented in if !isPresented { importErrorMessage = nil } })
+        ) {
+            Button(L10n.string("common.ok", "OK"), role: .cancel) {}
+        } message: {
+            Text(importErrorMessage ?? "")
+        }
+        .alert(
+            L10n.string("import.result.title", "Import Complete"),
+            isPresented: $showImportResultAlert
+        ) {
+            Button(L10n.string("common.ok", "OK"), role: .cancel) {}
+        } message: {
+            Text(importResultMessage)
         }
         // Session actions live in the window's native toolbar (M5f/T5) —
         // attached at the outer container so it belongs to the window, not
@@ -1216,5 +1321,163 @@ struct ContentView: View {
                     TransferQueueViewModel.message(for: error))
             }
         }
+    }
+
+    // MARK: - Session export/import (M9a/T3)
+
+    /// Builds the export payload, encodes it, and arms `fileExporter` — the
+    /// sheet's Export button calls this and stays open (showing the
+    /// returned message) on failure, or dismisses itself on `nil` (spec
+    /// M9a §3.3). Encoding failure is rare (random salt generation, AES-GCM
+    /// sealing) but not impossible, so it is reported inline rather than
+    /// asserted away.
+    private func performExport(
+        scope: SessionListViewModel.ExportScope, options: SessionExportOptions
+    ) -> String? {
+        let (payload, missingPasswordCount) = sessionListViewModel.exportPayload(
+            for: scope, includeGroups: options.includeGroups, includePasswords: options.includePasswords)
+        do {
+            let data = try SessionExportCodec.encode(payload, password: options.password)
+            exportDocument = SessionExportDocument(data: data)
+            // Only meaningful when passwords were actually requested —
+            // `exportPayload` only counts missing entries in that case.
+            exportMissingPasswordCount = options.includePasswords ? missingPasswordCount : 0
+            showExportFileExporter = true
+            return nil
+        } catch {
+            return String(format: L10n.string(
+                "export.error.encodeFailed %@", "Could not prepare the export: %@"),
+                String(describing: error))
+        }
+    }
+
+    /// `fileExporter` completion: on success, surfaces the "exported without
+    /// password" notice when applicable (spec M9a §3.3); on failure, a
+    /// generic localized write-error alert.
+    private func handleExportResult(_ result: Result<URL, Error>) {
+        switch result {
+        case .success:
+            if exportMissingPasswordCount > 0 {
+                showExportMissingPasswordAlert = true
+            }
+        case .failure(let error):
+            exportErrorMessage = String(format: L10n.string(
+                "export.error.writeFailed %@", "Could not write the export file: %@"),
+                String(describing: error))
+        }
+    }
+
+    /// `fileImporter` completion: reads the chosen file with security-scoped
+    /// access (the URL comes from an NSOpenPanel outside this app's own
+    /// sandbox container, the same access pattern the key importer in
+    /// `ConnectionFormView` relies on) and probes whether it's encrypted
+    /// before deciding whether the password sheet is needed.
+    private func handleImportFileSelection(_ result: Result<[URL], Error>) {
+        switch result {
+        case .failure(let error):
+            importErrorMessage = String(format: L10n.string(
+                "import.error.readFailed %@", "Could not read the file: %@"),
+                String(describing: error))
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            let didAccess = url.startAccessingSecurityScopedResource()
+            defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let data = try Data(contentsOf: url)
+                if try SessionExportCodec.probe(data) {
+                    importFileData = data
+                    showImportPasswordSheet = true
+                } else {
+                    _ = finishImport(data: data, password: nil)
+                }
+            } catch let error as SessionExportError {
+                importErrorMessage = importErrorText(for: error)
+            } catch {
+                importErrorMessage = String(format: L10n.string(
+                    "import.error.readFailed %@", "Could not read the file: %@"),
+                    String(describing: error))
+            }
+        }
+    }
+
+    /// Decode → plan → apply for a chosen import file (spec M9a §3.4). No
+    /// auto-connect afterwards (spec M9a §3.5) — only the store/keychain are
+    /// touched. Returns an inline message for the CALLER to show (only
+    /// meaningful for the password sheet's "wrong password" case, so it can
+    /// stay open for another attempt); every other error kind is pushed to
+    /// the top-level `importErrorMessage` alert directly and `nil` is
+    /// returned so a presenting sheet dismisses.
+    @discardableResult
+    private func finishImport(data: Data, password: String?) -> String? {
+        do {
+            let payload = try SessionExportCodec.decode(data, password: password)
+            let plan = SessionImportPlanner.plan(
+                existing: sessionListViewModel.sessions,
+                existingGroups: sessionListViewModel.groups,
+                incoming: payload)
+            let result = sessionListViewModel.applyImport(plan)
+            importResultMessage = importResultText(
+                result, includesSecrets: payload.includesSecrets, encrypted: password != nil)
+            showImportResultAlert = true
+            importFileData = nil
+            return nil
+        } catch SessionExportError.wrongPasswordOrCorrupted {
+            return L10n.string("import.password.wrong", "Wrong password, or the file is corrupted.")
+        } catch let error as SessionExportError {
+            importErrorMessage = importErrorText(for: error)
+            return nil
+        } catch {
+            importErrorMessage = String(format: L10n.string(
+                "import.error.readFailed %@", "Could not read the file: %@"),
+                String(describing: error))
+            return nil
+        }
+    }
+
+    /// Maps the two non-password `SessionExportError` cases the top-level
+    /// alert can show (spec M9a §3.5). `.passwordRequired` and
+    /// `.wrongPasswordOrCorrupted` are only ever thrown from a `decode` call
+    /// that already supplied a password (handled inline by the password
+    /// sheet instead), so they fall back to the same generic text here —
+    /// defensive only, never actually reached.
+    private func importErrorText(for error: SessionExportError) -> String {
+        switch error {
+        case .notAnExportFile:
+            return L10n.string("import.error.notExport", "Not a macSCP sessions file.")
+        case .unsupportedVersion:
+            return L10n.string(
+                "import.error.newerVersion",
+                "This file was created by a newer version of macSCP.")
+        case .passwordRequired, .wrongPasswordOrCorrupted:
+            return L10n.string("import.password.wrong", "Wrong password, or the file is corrupted.")
+        }
+    }
+
+    /// Assembles the multi-line import result alert body (spec M9a §3.4):
+    /// the base imported/skipped/passwords-imported line, plus optional
+    /// lines for password-save failures, store-write failures, and an
+    /// unencrypted-secrets notice when the file wasn't itself encrypted.
+    private func importResultText(
+        _ result: SessionListViewModel.SessionImportResult, includesSecrets: Bool, encrypted: Bool
+    ) -> String {
+        var lines = [String(format: L10n.string(
+            "import.result.body %lld %lld %lld",
+            "%lld imported, %lld skipped as duplicates, %lld passwords imported"),
+            result.imported, result.skipped, result.passwordsImported)]
+        if result.passwordFailures > 0 {
+            lines.append(String(format: L10n.string(
+                "import.result.passwordFailures %lld", "Passwords that could not be saved: %lld"),
+                result.passwordFailures))
+        }
+        if result.storeFailures > 0 {
+            lines.append(String(format: L10n.string(
+                "import.result.storeFailures %lld", "Not saved due to an error: %lld"),
+                result.storeFailures))
+        }
+        if includesSecrets && !encrypted {
+            lines.append(L10n.string(
+                "import.result.plaintextNotice", "The file contained unencrypted passwords."))
+        }
+        return lines.joined(separator: "\n")
     }
 }

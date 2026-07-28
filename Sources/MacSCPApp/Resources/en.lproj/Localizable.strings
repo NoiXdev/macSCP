@@ -204,3 +204,46 @@
 
 /* Tab close warning: incoming cross-session transfers (M8b/T4) */
 "tabs.close.incomingTransfers" = "Other tabs are streaming to this session; closing cancels those transfers.";
+
+/* Session export/import — sidebar menus (M9a/T3) */
+"export.menu.single" = "Export…";
+"export.menu.group" = "Export Group…";
+"export.menu.all" = "Export All…";
+"import.menu" = "Import…";
+
+/* Session export/import — export sheet */
+"export.sheet.title" = "Export Sessions";
+"export.summary %lld" = "%lld connections";
+"export.includeGroups" = "Include group assignment";
+"export.includePasswords" = "Include passwords";
+"export.encrypted" = "Encrypted";
+"export.unencrypted" = "Unencrypted";
+"export.password" = "Password";
+"export.passwordRepeat" = "Repeat password";
+"export.passwordHint" = "A long password makes the export harder to crack if the file is intercepted.";
+"export.plaintextWarning" = "Passwords will be stored in plain text in this file. Anyone who obtains it can read them.";
+"export.confirmAnyway" = "Export Anyway…";
+"export.action" = "Export…";
+
+/* Session export/import — export result/errors */
+"export.missingPasswords %lld" = "Exported without password: %lld";
+"export.result.title" = "Export Complete";
+"export.error.title" = "Export Failed";
+"export.error.encodeFailed %@" = "Could not prepare the export: %@";
+"export.error.writeFailed %@" = "Could not write the export file: %@";
+
+/* Session export/import — import password sheet */
+"import.password.title" = "Password Required";
+"import.password.wrong" = "Wrong password, or the file is corrupted.";
+"import.password.unlock" = "Unlock";
+
+/* Session export/import — import result/errors */
+"import.result.title" = "Import Complete";
+"import.result.body %lld %lld %lld" = "%lld imported, %lld skipped as duplicates, %lld passwords imported";
+"import.result.passwordFailures %lld" = "Passwords that could not be saved: %lld";
+"import.result.storeFailures %lld" = "Not saved due to an error: %lld";
+"import.result.plaintextNotice" = "The file contained unencrypted passwords.";
+"import.error.notExport" = "Not a macSCP sessions file.";
+"import.error.newerVersion" = "This file was created by a newer version of macSCP.";
+"import.error.readFailed %@" = "Could not read the file: %@";
+"import.error.title" = "Import Failed";
