@@ -65,18 +65,24 @@ struct LoginSetStoreTests {
         #expect(try store.all() == [])
     }
 
+    /// M10d guard: `.agent` became a KNOWN authKind (raw "agent") in this
+    /// milestone, so this forward-compat fixture must exercise a DIFFERENT,
+    /// still-unknown raw value ("future-x", a placeholder for whatever the
+    /// NEXT auth kind ends up being called) — otherwise this test would
+    /// silently stop testing forward compatibility and instead just re-test
+    /// `.agent`'s own (now normal) round trip.
     @Test func unknownAuthKindIsHiddenButPreserved() throws {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let agentID = UUID()
+        let futureID = UUID()
         let keepID = UUID()
         let deleteMeID = UUID()
         let fileURL = dir.appendingPathComponent("logins.json")
         try Data("""
         {
           "sets": [
-            {"id": "\(agentID.uuidString)", "name": "Agent Set", "username": "a", "authKind": "agent"},
+            {"id": "\(futureID.uuidString)", "name": "Future Set", "username": "a", "authKind": "future-x"},
             {"id": "\(keepID.uuidString)", "name": "Keep", "username": "keep", "authKind": "password"},
             {"id": "\(deleteMeID.uuidString)", "name": "DeleteMe", "username": "gone", "authKind": "password"}
           ],
@@ -92,9 +98,9 @@ struct LoginSetStoreTests {
         try store.upsert(LoginSet(name: "NewOne", username: "n"))
         try store.delete(id: deleteMeID)
 
-        // ...the "agent" record must still be present in the raw file.
+        // ...the "future-x" record must still be present in the raw file.
         let raw = try String(contentsOf: fileURL, encoding: .utf8)
-        #expect(raw.contains("agent"))
+        #expect(raw.contains("future-x"))
         let stillVisible = try store.all()
         #expect(stillVisible.map(\.name).sorted() == ["Keep", "NewOne"])
     }

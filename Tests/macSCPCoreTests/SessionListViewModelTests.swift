@@ -668,6 +668,175 @@ struct SessionListViewModelTests {
         #expect(try secrets.password(for: imported.jump!.secretID) == "jump-secret")
     }
 
+    // MARK: - Agent auth (M10d/T3)
+
+    @Test func saveSwitchingTargetToAgentDeletesSessionSecret() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw")!
+        #expect(try secrets.password(for: stored.id) == "pw")
+
+        _ = vm.save(name: "web", host: "h", port: 22, username: "u", password: "", authKind: .agent)
+
+        #expect(try secrets.password(for: stored.id) == nil)
+        #expect(vm.sessions.first?.authKind == .agent)
+    }
+
+    @Test func updateSessionSwitchingTargetToAgentDeletesSessionSecret() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw")!
+        var updated = stored
+        updated.authKind = .agent
+
+        vm.updateSession(updated, newSecret: nil)
+
+        #expect(try secrets.password(for: stored.id) == nil)
+        #expect(vm.sessions.first?.authKind == .agent)
+    }
+
+    @Test func saveJumpSwitchingManualToAgentDeletesJumpSecretSlot() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
+        _ = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw",
+                   jump: jump, jumpSecret: "jp")!
+        #expect(try secrets.password(for: jump.secretID) == "jp")
+
+        // Same secretID, but the jump now switches to agent mode -- the old
+        // manual slot must still be cleaned up even though the id itself
+        // didn't change (unlike the existing "removed/replaced slot" cases
+        // `cleanOrphanedJumpSlot` already covered).
+        let agentJump = StoredSession.JumpSpec(
+            host: "bastion.example.com", username: "jumper", authKind: .agent, secretID: jump.secretID)
+        _ = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw", jump: agentJump)
+
+        #expect(try secrets.password(for: jump.secretID) == nil)
+        #expect(vm.sessions.first?.jump?.authKind == .agent)
+    }
+
+    @Test func updateSessionJumpSwitchingManualToAgentDeletesJumpSecretSlot() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
+        let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw",
+                             jump: jump, jumpSecret: "jp")!
+        #expect(try secrets.password(for: jump.secretID) == "jp")
+
+        var updated = stored
+        updated.jump?.authKind = .agent
+        vm.updateSession(updated, newSecret: nil)
+
+        #expect(try secrets.password(for: jump.secretID) == nil)
+    }
+
+    @Test func saveNeverStoresPasswordForAgentTarget() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "leaked",
+                             authKind: .agent)!
+
+        #expect(try secrets.password(for: stored.id) == nil)
+    }
+
+    @Test func saveNeverStoresJumpSecretForAgentJump() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper", authKind: .agent)
+        _ = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw",
+                   jump: jump, jumpSecret: "leaked")!
+
+        #expect(try secrets.password(for: jump.secretID) == nil)
+    }
+
+    @Test func exportPayloadSkipsSecretForAgentAndDoesNotCountMissing() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "",
+                             authKind: .agent)!
+
+        let result = vm.exportPayload(for: .single(stored), includeGroups: false, includePasswords: true)
+
+        #expect(result.payload.sessions.first?.authKind == .agent)
+        #expect(result.payload.sessions.first?.password == nil)
+        #expect(result.missingPasswordCount == 0)
+    }
+
+    @Test func exportPayloadSkipsJumpSecretForAgentAndDoesNotCountMissing() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper", authKind: .agent)
+        let stored = vm.save(name: "web", host: "target.example.com", port: 22, username: "u",
+                             password: "pw", jump: jump)!
+
+        let result = vm.exportPayload(for: .single(stored), includeGroups: false, includePasswords: true)
+
+        #expect(result.payload.sessions.first?.jumpAuthKind == .agent)
+        #expect(result.payload.sessions.first?.jumpPassword == nil)
+        #expect(result.missingPasswordCount == 0)
+    }
+
+    @Test func deleteLoginSetRestoresAgentSetWithoutSecretTransferOrFailure() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "Agent Set", username: "deploy", authKind: .agent)
+        vm.saveLoginSet(set, secret: nil)
+        let stored = vm.save(name: "web", host: "h", port: 22, username: "ignored",
+                             password: "", loginSetID: set.id)!
+
+        let result = vm.deleteLoginSet(set)
+
+        #expect(result == SessionListViewModel.LoginSetDeleteResult(restored: 1, secretFailures: 0))
+        let restored = vm.sessions.first { $0.id == stored.id }!
+        #expect(restored.loginSetID == nil)
+        #expect(restored.username == "deploy")
+        #expect(restored.authKind == .agent)
+        #expect(restored.keyPath == nil)
+        #expect(try secrets.password(for: stored.id) == nil)
+    }
+
+    @Test func saveLoginSetNeverStoresSecretForAgentKind() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "Agent", username: "deploy", authKind: .agent)
+
+        vm.saveLoginSet(set, secret: "should-not-be-stored")
+
+        #expect(try secrets.password(for: set.id) == nil)
+    }
+
+    @Test func resolvedLoginForAgentSetYieldsAgentAuthKindWithNilSecret() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "Agent", username: "deploy", authKind: .agent)
+        vm.saveLoginSet(set, secret: nil)
+        let stored = vm.save(name: "web", host: "h", port: 22, username: "ignored",
+                             password: "", loginSetID: set.id)!
+
+        let resolved = try vm.resolvedLogin(for: stored)
+        #expect(resolved == ResolvedLogin(username: "deploy", authKind: .agent, keyPath: nil, secret: nil))
+    }
+
+    @Test func applyMergeCreatesAgentSetWithoutSecretRead() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let a = vm.save(name: "a", host: "h1", port: 22, username: "root", password: "", authKind: .agent)!
+        let b = vm.save(name: "b", host: "h2", port: 22, username: "root", password: "", authKind: .agent)!
+
+        let candidates = vm.mergeCandidates()
+        #expect(candidates.count == 1)
+        let candidate = candidates.first!
+        #expect(candidate.authKind == .agent)
+
+        let set = vm.applyMerge(candidate, name: "root")
+
+        #expect(set?.authKind == .agent)
+        #expect(try secrets.password(for: set!.id) == nil)
+        for session in [a, b] {
+            #expect(vm.sessions.first { $0.id == session.id }?.loginSetID == set?.id)
+        }
+    }
+
     @Test func resolvedJumpLoginResolvesOrThrows() throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }

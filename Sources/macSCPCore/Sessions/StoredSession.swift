@@ -4,10 +4,14 @@ import Foundation
 /// Passwords live exclusively in the SecretStore (keychain), addressed via
 /// the session id.
 public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
-    /// M3b: password + privateKey; ssh-agent still open (M3e).
+    /// M3b: password + privateKey; M10d added ssh-agent as a third kind.
     public enum AuthKind: String, Codable, Sendable {
         case password
         case privateKey
+        /// Authenticate through the local ssh-agent (M10d): no secret is
+        /// ever stored for this kind — `keyPath` stays nil and the
+        /// SecretStore slot (session id / jump `secretID`) is never written.
+        case agent
     }
 
     /// A jump host ("ProxyJump") hop configured for a session (M10c): the

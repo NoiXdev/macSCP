@@ -22,4 +22,16 @@ struct StoredSessionCompatTests {
         let decoded = try JSONDecoder().decode([StoredSession].self, from: data)
         #expect(decoded.first == session)
     }
+
+    /// M10d: `.agent` carries no secret and no key path — the session only
+    /// remembers the username, exactly like a legacy password session would,
+    /// but with the third raw value.
+    @Test func agentSessionRoundtrips() throws {
+        let session = StoredSession(
+            name: "agent-server", host: "example.com", username: "tim", authKind: .agent)
+        let data = try JSONEncoder().encode([session])
+        let decoded = try JSONDecoder().decode([StoredSession].self, from: data)
+        #expect(decoded.first == session)
+        #expect(decoded.first?.keyPath == nil)
+    }
 }

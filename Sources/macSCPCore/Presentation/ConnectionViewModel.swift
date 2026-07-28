@@ -30,10 +30,12 @@ public final class ConnectionViewModel {
         case failed(message: String, field: Field?)
     }
 
-    /// Auth choice in the form. In key mode, `password` serves as the passphrase.
+    /// Auth choice in the form. In key mode, `password` serves as the
+    /// passphrase; agent mode (M10d) needs neither password nor key path.
     public enum AuthChoice: String, CaseIterable, Sendable {
         case password
         case privateKey
+        case agent
     }
 
     /// The form's three-way login switcher (M10b/T3, mockup section 3):
@@ -141,6 +143,29 @@ public final class ConnectionViewModel {
         self.connector = connector
     }
 
+    /// Maps the form's `AuthChoice` to the persisted `StoredSession.AuthKind`
+    /// (M10d/T3) -- the single place both the target's and the jump's
+    /// choice-to-kind mapping go through, so a third auth kind only needs
+    /// updating here instead of at every call site.
+    private static func storedAuthKind(for choice: AuthChoice) -> StoredSession.AuthKind {
+        switch choice {
+        case .password: return .password
+        case .privateKey: return .privateKey
+        case .agent: return .agent
+        }
+    }
+
+    /// The reverse of `storedAuthKind(for:)` -- used by `beginEditing` to
+    /// prefill the form's auth choice (target and jump) from a persisted
+    /// `AuthKind`.
+    private static func authChoice(for kind: StoredSession.AuthKind) -> AuthChoice {
+        switch kind {
+        case .password: return .password
+        case .privateKey: return .privateKey
+        case .agent: return .agent
+        }
+    }
+
     /// Returns the connected file system or nil; errors land in `state`.
     /// Re-entrancy safe: calls made while `.connecting` are dropped, so a
     /// double-click doesn't open a second (orphaned) connection.
@@ -151,16 +176,19 @@ public final class ConnectionViewModel {
             state = .failed(message: CoreL10n.string("core.connect.portNumeric"), field: .port)
             return nil
         }
-        if authChoice == .password {
+        switch authChoice {
+        case .password:
             guard !password.isEmpty else {
                 state = .failed(message: CoreL10n.string("core.connect.passwordEmpty"), field: .password)
                 return nil
             }
-        } else {
+        case .privateKey:
             guard !keyPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 state = .failed(message: CoreL10n.string("core.connect.keyPathEmpty"), field: .keyPath)
                 return nil
             }
+        case .agent:
+            break // Agent mode needs neither a password nor a key path.
         }
         if let jumpFailure = validateJump(requireSecret: true) {
             state = jumpFailure
@@ -181,6 +209,8 @@ public final class ConnectionViewModel {
                 auth = .privateKey(
                     keyPath: keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
                     passphrase: password.isEmpty ? nil : password)
+            case .agent:
+                auth = .agent
             }
             let config = try SSHConnectionConfig(
                 host: host.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -276,7 +306,7 @@ public final class ConnectionViewModel {
         host = stored.host
         port = String(stored.port)
         username = stored.username
-        authChoice = stored.authKind == .privateKey ? .privateKey : .password
+        authChoice = Self.authChoice(for: stored.authKind)
         keyPath = stored.keyPath ?? ""
         saveName = stored.name
         selectedGroupID = stored.groupID
@@ -300,7 +330,7 @@ public final class ConnectionViewModel {
             jumpHost = jump.host
             jumpPort = String(jump.port)
             jumpUsername = jump.username
-            jumpAuthChoice = jump.authKind == .privateKey ? .privateKey : .password
+            jumpAuthChoice = Self.authChoice(for: jump.authKind)
             jumpKeyPath = jump.keyPath ?? ""
             jumpPassword = ""
             jumpLoginMode = jump.loginSetID != nil ? .set : .manual
@@ -424,7 +454,7 @@ public final class ConnectionViewModel {
             host: trimmedHost,
             port: portNumber,
             username: trimmedUsername,
-            authKind: authChoice == .privateKey ? .privateKey : .password,
+            authKind: Self.storedAuthKind(for: authChoice),
             keyPath: authChoice == .privateKey ? trimmedKeyPath : nil,
             groupID: selectedGroupID,
             // Set mode (M10b/T3): the session references the selected set
@@ -479,18 +509,21 @@ public final class ConnectionViewModel {
             guard !jumpUsername.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 return .failed(message: CoreL10n.string("core.connect.jumpUsernameEmpty"), field: .jumpUsername)
             }
-            if jumpAuthChoice == .password {
+            switch jumpAuthChoice {
+            case .password:
                 if requireSecret {
                     guard !jumpPassword.isEmpty else {
                         return .failed(
                             message: CoreL10n.string("core.connect.jumpPasswordEmpty"), field: .jumpPassword)
                     }
                 }
-            } else {
+            case .privateKey:
                 guard !jumpKeyPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     return .failed(
                         message: CoreL10n.string("core.connect.jumpKeyPathEmpty"), field: .jumpKeyPath)
                 }
+            case .agent:
+                break // Agent mode needs neither a secret nor a key path, regardless of requireSecret.
             }
         }
         return nil
@@ -516,6 +549,8 @@ public final class ConnectionViewModel {
             auth = .privateKey(
                 keyPath: jumpKeyPath.trimmingCharacters(in: .whitespacesAndNewlines),
                 passphrase: jumpPassword.isEmpty ? nil : jumpPassword)
+        case .agent:
+            auth = .agent
         }
         return SSHConnectionConfig.Jump(
             host: jumpHost.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -544,7 +579,7 @@ public final class ConnectionViewModel {
         guard jumpEnabled else { return nil }
         let trimmedHost = jumpHost.trimmingCharacters(in: .whitespacesAndNewlines)
         let portNumber = Int(jumpPort.trimmingCharacters(in: .whitespaces)) ?? 22
-        let authKind: StoredSession.AuthKind = jumpAuthChoice == .privateKey ? .privateKey : .password
+        let authKind = Self.storedAuthKind(for: jumpAuthChoice)
         let trimmedUsername = jumpUsername.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedKeyPath = jumpKeyPath.trimmingCharacters(in: .whitespacesAndNewlines)
         switch jumpLoginMode {

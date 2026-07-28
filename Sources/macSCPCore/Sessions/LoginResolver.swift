@@ -37,6 +37,11 @@ public enum LoginResolver {
         guard let set = sets.first(where: { $0.id == setID }) else {
             throw LoginResolveError.missingSet
         }
+        // Agent sets carry no secret and no key path (M10d) -- the keychain
+        // is never read for them.
+        guard set.authKind != .agent else {
+            return ResolvedLogin(username: set.username, authKind: .agent, keyPath: nil, secret: nil)
+        }
         let secret = (try? secrets.password(for: set.id)) ?? nil
         return ResolvedLogin(
             username: set.username, authKind: set.authKind,
@@ -51,6 +56,12 @@ public enum LoginResolver {
         spec: StoredSession.JumpSpec, sets: [LoginSet], secrets: any SecretStore
     ) throws -> ResolvedLogin {
         guard let setID = spec.loginSetID else {
+            // Agent jumps carry no secret and no key path (M10d) -- the
+            // keychain is never read for them, even though `secretID` is
+            // still present on the spec (unused in this mode).
+            guard spec.authKind != .agent else {
+                return ResolvedLogin(username: spec.username, authKind: .agent, keyPath: nil, secret: nil)
+            }
             let secret = (try? secrets.password(for: spec.secretID)) ?? nil
             return ResolvedLogin(
                 username: spec.username, authKind: spec.authKind,
@@ -58,6 +69,9 @@ public enum LoginResolver {
         }
         guard let set = sets.first(where: { $0.id == setID }) else {
             throw LoginResolveError.missingSet
+        }
+        guard set.authKind != .agent else {
+            return ResolvedLogin(username: set.username, authKind: .agent, keyPath: nil, secret: nil)
         }
         let secret = (try? secrets.password(for: set.id)) ?? nil
         return ResolvedLogin(

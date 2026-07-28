@@ -128,4 +128,21 @@ struct SessionImportPlannerTests {
         #expect(plan.sessionsToImport[0].session.jump == nil)
         #expect(plan.sessionsToImport[0].jumpPassword == nil)
     }
+
+    // MARK: - Agent auth (M10d/T3)
+
+    @Test func plannedSessionCarriesAgentAuthKindThrough() {
+        let file = ExportedSession(
+            id: UUID(), name: "web", host: "h", port: 22, username: "root",
+            authKind: .agent, keyPath: nil, groupID: nil, password: nil,
+            jumpHost: "bastion.example.com", jumpPort: 22, jumpUsername: "jumper",
+            jumpAuthKind: .agent, jumpKeyPath: nil, jumpPassword: nil)
+        let plan = SessionImportPlanner.plan(existing: [], existingGroups: [], incoming: incoming([file]))
+
+        let planned = plan.sessionsToImport[0]
+        #expect(planned.session.authKind == .agent)
+        #expect(planned.session.jump?.authKind == .agent)
+        #expect(planned.password == nil)
+        #expect(planned.jumpPassword == nil)
+    }
 }

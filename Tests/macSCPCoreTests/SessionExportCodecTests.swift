@@ -183,4 +183,25 @@ struct SessionExportCodecTests {
         let decoded = try SessionExportCodec.decode(data, password: nil)
         #expect(decoded == payload)
     }
+
+    // MARK: - Agent auth (M10d/T3)
+
+    /// `authKind`/`jumpAuthKind` == "agent" travels as a plain value through
+    /// the envelope, just like "password"/"privateKey" — no special casing
+    /// needed in the codec itself.
+    @Test func agentAuthKindRoundtripsThroughEncodeDecode() throws {
+        let payload = SessionExportPayload(
+            includesSecrets: false,
+            groups: [],
+            sessions: [ExportedSession(
+                id: UUID(), name: "web", host: "h", port: 22, username: "u",
+                authKind: .agent, keyPath: nil, groupID: nil, password: nil,
+                jumpHost: "bastion.example.com", jumpPort: 22, jumpUsername: "jumper",
+                jumpAuthKind: .agent, jumpKeyPath: nil, jumpPassword: nil)])
+        let data = try SessionExportCodec.encode(payload, password: nil)
+        let decoded = try SessionExportCodec.decode(data, password: nil)
+        #expect(decoded == payload)
+        #expect(decoded.sessions.first?.authKind == .agent)
+        #expect(decoded.sessions.first?.jumpAuthKind == .agent)
+    }
 }

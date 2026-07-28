@@ -506,6 +506,71 @@ struct ConnectionViewModelTests {
         #expect(vm.jumpLoginMode == .manual)
         #expect(vm.jumpSelectedLoginSetID == nil)
     }
+    // MARK: - Agent auth (M10d/T3)
+
+    @Test func agentAuthSkipsPasswordAndKeyPathValidationAndBuildsAgentAuth() async {
+        let vm = makeVM(connector: { config, _ in
+            #expect(config.auth == .agent)
+            return MockRemoteFileSystem(tree: ["/": []])
+        })
+        vm.authChoice = .agent
+        vm.password = ""
+        vm.keyPath = ""
+        let fs = await vm.connect()
+        #expect(fs != nil)
+    }
+
+    @Test @MainActor func validateForEditSaveMapsAgentAuthChoice() {
+        let vm = makeVM()
+        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u"))
+        vm.authChoice = .agent
+        vm.password = ""
+        vm.keyPath = ""
+
+        let result = vm.validateForEditSave()
+
+        #expect(result?.authKind == .agent)
+        #expect(result?.keyPath == nil)
+    }
+
+    @Test @MainActor func beginEditingMapsAgentAuthKindToAgentChoice() {
+        let vm = makeVM()
+        let stored = StoredSession(name: "web", host: "h", username: "u", authKind: .agent)
+        vm.beginEditing(stored)
+        #expect(vm.authChoice == .agent)
+    }
+
+    @Test func jumpAgentModeRequiresNeitherSecretNorKeyPath() async {
+        let vm = makeVM(connector: { config, _ in
+            #expect(config.jump?.auth == .agent)
+            return MockRemoteFileSystem(tree: ["/": []])
+        })
+        vm.jumpEnabled = true
+        vm.jumpHost = "bastion.example.com"
+        vm.jumpUsername = "bastion-user"
+        vm.jumpAuthChoice = .agent
+        vm.jumpPassword = ""
+        vm.jumpKeyPath = ""
+        let fs = await vm.connect()
+        #expect(fs != nil)
+    }
+
+    /// `requireSecret` is irrelevant for agent (brief point 1): even
+    /// `connect()`'s `requireSecret: true` branch must not demand anything
+    /// for an agent-mode jump.
+    @Test @MainActor func jumpAgentModeSurvivesEditSaveWithoutSecretOrKeyPath() {
+        let vm = makeVM()
+        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u"))
+        vm.jumpEnabled = true
+        vm.jumpHost = "bastion.example.com"
+        vm.jumpUsername = "bastion-user"
+        vm.jumpAuthChoice = .agent
+
+        let result = vm.validateForEditSave()
+
+        #expect(result?.jump?.authKind == .agent)
+        #expect(result?.jump?.keyPath == nil)
+    }
 }
 
 private actor CallCounter {

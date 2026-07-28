@@ -59,6 +59,14 @@ public enum LoginMergePlanner {
                 key = LoginGroupKey(
                     username: session.username, authKind: .password,
                     keyPath: nil, password: password)
+            case .agent:
+                // Agent sessions group by username ALONE (M10d spec §3): no
+                // secret to compare, no key path -- and `authKind: .agent`
+                // in the key means they never collapse into a password or
+                // privateKey group even when the username matches.
+                key = LoginGroupKey(
+                    username: session.username, authKind: .agent,
+                    keyPath: nil, password: nil)
             }
             if groups[key] == nil {
                 order.append(key)

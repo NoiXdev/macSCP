@@ -102,6 +102,33 @@ struct LoginResolverTests {
         #expect(all.first?.jump == nil)
     }
 
+    // MARK: - Agent auth (M10d/T3)
+
+    /// `.agent` resolution must never touch the keychain (spec §3): the
+    /// double below fails the test if `password(for:)` is ever called.
+    @Test func agentSetResolvesWithoutKeychainRead() throws {
+        let set = LoginSet(name: "Agent", username: "deploy", authKind: .agent)
+        let session = StoredSession(name: "web", host: "example.com", username: "unused", loginSetID: set.id)
+
+        let resolved = try LoginResolver.resolve(session: session, sets: [set], secrets: NoReadAllowedSecretStore())
+        #expect(resolved == ResolvedLogin(username: "deploy", authKind: .agent, keyPath: nil, secret: nil))
+    }
+
+    @Test func resolveJumpManualAgentDoesNotReadKeychain() throws {
+        let spec = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper", authKind: .agent)
+
+        let resolved = try LoginResolver.resolveJump(spec: spec, sets: [], secrets: NoReadAllowedSecretStore())
+        #expect(resolved == ResolvedLogin(username: "jumper", authKind: .agent, keyPath: nil, secret: nil))
+    }
+
+    @Test func resolveJumpSetAgentDoesNotReadKeychain() throws {
+        let set = LoginSet(name: "Bastion", username: "deploy", authKind: .agent)
+        let spec = StoredSession.JumpSpec(host: "bastion.example.com", username: "unused", loginSetID: set.id)
+
+        let resolved = try LoginResolver.resolveJump(spec: spec, sets: [set], secrets: NoReadAllowedSecretStore())
+        #expect(resolved == ResolvedLogin(username: "deploy", authKind: .agent, keyPath: nil, secret: nil))
+    }
+
     @Test func jumpSpecRoundtripKeepsSecretID() throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-jump-roundtrip-\(UUID().uuidString)")
@@ -116,4 +143,17 @@ struct LoginResolverTests {
         let reloaded = try SessionStore(directory: dir).all()
         #expect(reloaded.first?.jump == jump)
     }
+}
+
+/// Test double proving `.agent` resolution never reaches into the keychain
+/// (M10d spec §3): `password(for:)` fails the test if called at all.
+/// `savePassword`/`deletePassword` are unused by these tests but must exist
+/// to satisfy the protocol.
+private final class NoReadAllowedSecretStore: SecretStore, @unchecked Sendable {
+    func savePassword(_ password: String, for sessionID: UUID) throws {}
+    func password(for sessionID: UUID) throws -> String? {
+        Issue.record("agent resolution must not read the keychain")
+        return nil
+    }
+    func deletePassword(for sessionID: UUID) throws {}
 }

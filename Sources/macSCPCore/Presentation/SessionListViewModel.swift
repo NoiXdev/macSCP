@@ -97,9 +97,17 @@ public final class SessionListViewModel {
         do {
             try store.upsert(session)
             if loginSetID == nil {
-                try secrets.savePassword(password, for: session.id)
+                if authKind == .agent {
+                    // Agent mode needs no secret (M10d) -- clean up a
+                    // leftover manual slot from before the switch, mirroring
+                    // the "no session-level secret needed" set-mode branch.
+                    try? secrets.deletePassword(for: session.id)
+                } else {
+                    try secrets.savePassword(password, for: session.id)
+                }
             }
-            if let jump, jump.loginSetID == nil, let jumpSecret, !jumpSecret.isEmpty {
+            if let jump, jump.loginSetID == nil, jump.authKind != .agent,
+               let jumpSecret, !jumpSecret.isEmpty {
                 try secrets.savePassword(jumpSecret, for: jump.secretID)
             }
             cleanOrphanedJumpSlot(previous: previousJump, new: jump)
@@ -113,17 +121,19 @@ public final class SessionListViewModel {
         }
     }
 
-    /// Slot hygiene (M10c): an old MANUAL jump (`secretID` slot, `loginSetID
-    /// == nil`) becomes orphaned when the new state no longer references
-    /// that exact slot — the jump was removed, switched to set mode, or
-    /// replaced with a freshly generated `JumpSpec`. Throw-free by design
-    /// (M9b/M10b pattern): a stray keychain entry is a harmless residual,
-    /// never a reason to fail the save/update itself.
+    /// Slot hygiene (M10c, extended M10d): an old MANUAL jump (`secretID`
+    /// slot, `loginSetID == nil`) becomes orphaned when the new state no
+    /// longer references that exact slot — the jump was removed, switched
+    /// to set mode, replaced with a freshly generated `JumpSpec`, or (M10d)
+    /// switched to agent mode, which needs no secret even when `secretID`
+    /// itself didn't change. Throw-free by design (M9b/M10b pattern): a
+    /// stray keychain entry is a harmless residual, never a reason to fail
+    /// the save/update itself.
     private func cleanOrphanedJumpSlot(
         previous: StoredSession.JumpSpec?, new: StoredSession.JumpSpec?
     ) {
         guard let previous, previous.loginSetID == nil else { return }
-        if let new, new.loginSetID == nil, new.secretID == previous.secretID {
+        if let new, new.loginSetID == nil, new.authKind != .agent, new.secretID == previous.secretID {
             return // Still referenced by the new manual jump -- keep it.
         }
         try? secrets.deletePassword(for: previous.secretID)
@@ -172,10 +182,14 @@ public final class SessionListViewModel {
         let previousJump = sessions.first(where: { $0.id == updated.id })?.jump
         do {
             try store.upsert(updated)
-            if let newSecret, !newSecret.isEmpty {
+            if updated.authKind == .agent {
+                // Agent mode needs no secret (M10d) -- clean up a leftover
+                // manual slot from before the switch.
+                try? secrets.deletePassword(for: updated.id)
+            } else if let newSecret, !newSecret.isEmpty {
                 try secrets.savePassword(newSecret, for: updated.id)
             }
-            if let jump = updated.jump, jump.loginSetID == nil,
+            if let jump = updated.jump, jump.loginSetID == nil, jump.authKind != .agent,
                let jumpSecret, !jumpSecret.isEmpty {
                 try secrets.savePassword(jumpSecret, for: jump.secretID)
             }
@@ -262,11 +276,14 @@ public final class SessionListViewModel {
 
     /// Saves a set; a non-nil, non-empty secret overwrites the keychain
     /// entry stored under the SET id (nil/empty keeps it — the editor's
-    /// "unchanged" prompt semantics, same as `updateSession`).
+    /// "unchanged" prompt semantics, same as `updateSession`). Agent sets
+    /// (M10d) never write a secret at all, regardless of what's passed —
+    /// the invariant "no keychain data for agent" holds even if a caller
+    /// passes one by mistake.
     public func saveLoginSet(_ set: LoginSet, secret: String?) {
         do {
             try loginSetStore.upsert(set)
-            if let secret, !secret.isEmpty {
+            if set.authKind != .agent, let secret, !secret.isEmpty {
                 try secrets.savePassword(secret, for: set.id)
             }
             reload()
@@ -512,7 +529,9 @@ public final class SessionListViewModel {
             let keyPath = resolved?.keyPath ?? session.keyPath
 
             var password: String?
-            if includePasswords {
+            // Agent entries (M10d) never carry a secret and are never
+            // counted as missing one -- there is nothing to be missing.
+            if includePasswords, authKind != .agent {
                 password = resolved != nil ? resolved?.secret : self.password(for: session)
                 if password == nil {
                     missingPasswordCount += 1
@@ -536,7 +555,7 @@ public final class SessionListViewModel {
                 jumpUsername = resolvedJump?.username ?? jump.username
                 jumpAuthKind = resolvedJump?.authKind ?? jump.authKind
                 jumpKeyPath = resolvedJump?.keyPath ?? jump.keyPath
-                if includePasswords {
+                if includePasswords, jumpAuthKind != .agent {
                     jumpPassword = resolvedJump?.secret
                     if jumpPassword == nil {
                         missingPasswordCount += 1

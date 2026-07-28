@@ -27,10 +27,11 @@ public struct LoginSet: Equatable, Identifiable, Sendable {
 /// SessionStore pattern: stateless, atomic writes.
 ///
 /// Forward compatibility: entries are persisted as raw records whose
-/// `authKind` is a plain string. A record with an UNKNOWN raw (e.g. a
-/// future "agent" set written by a newer app version, M10d) is never
-/// surfaced by `all()` — it must not be misread as a password set — but
-/// it survives upsert/delete of other entries untouched.
+/// `authKind` is a plain string. A record with an UNKNOWN raw (e.g. some
+/// future auth kind written by a newer app version — `.agent`, M10d, was
+/// exactly this kind of forward-compat case until it became a known raw
+/// itself) is never surfaced by `all()` — it must not be misread as a
+/// password set — but it survives upsert/delete of other entries untouched.
 public struct LoginSetStore: Sendable {
     private struct Record: Codable {
         var id: UUID
