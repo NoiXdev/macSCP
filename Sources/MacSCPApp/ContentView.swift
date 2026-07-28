@@ -1367,17 +1367,23 @@ struct ContentView: View {
         }
     }
 
+    /// Shared formatter for non-typed read/decode failures on the import
+    /// path — single source for the message so the three call sites cannot
+    /// drift apart (T3 review).
+    private func readErrorMessage(_ error: Error) -> String {
+        String(format: L10n.string(
+            "import.error.readFailed %@", "Could not read the file: %@"),
+            String(describing: error))
+    }
+
     /// `fileImporter` completion: reads the chosen file with security-scoped
     /// access (the URL comes from an NSOpenPanel outside this app's own
-    /// sandbox container, the same access pattern the key importer in
-    /// `ConnectionFormView` relies on) and probes whether it's encrypted
-    /// before deciding whether the password sheet is needed.
+    /// sandbox container) and probes whether it's encrypted before deciding
+    /// whether the password sheet is needed.
     private func handleImportFileSelection(_ result: Result<[URL], Error>) {
         switch result {
         case .failure(let error):
-            importErrorMessage = String(format: L10n.string(
-                "import.error.readFailed %@", "Could not read the file: %@"),
-                String(describing: error))
+            importErrorMessage = readErrorMessage(error)
         case .success(let urls):
             guard let url = urls.first else { return }
             let didAccess = url.startAccessingSecurityScopedResource()
@@ -1393,9 +1399,7 @@ struct ContentView: View {
             } catch let error as SessionExportError {
                 importErrorMessage = importErrorText(for: error)
             } catch {
-                importErrorMessage = String(format: L10n.string(
-                    "import.error.readFailed %@", "Could not read the file: %@"),
-                    String(describing: error))
+                importErrorMessage = readErrorMessage(error)
             }
         }
     }
@@ -1427,9 +1431,7 @@ struct ContentView: View {
             importErrorMessage = importErrorText(for: error)
             return nil
         } catch {
-            importErrorMessage = String(format: L10n.string(
-                "import.error.readFailed %@", "Could not read the file: %@"),
-                String(describing: error))
+            importErrorMessage = readErrorMessage(error)
             return nil
         }
     }

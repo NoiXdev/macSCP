@@ -141,6 +141,9 @@ struct SessionExportSheet: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            // labelsHidden strips the VoiceOver label too — restore it
+            // explicitly (T3 review).
+            .accessibilityLabel(L10n.string("export.encryptionLabel", "Encryption"))
             .disabled(isWorking)
             .onChange(of: encryptionMode) { _, _ in isConfirmingPlaintext = false }
 

@@ -216,6 +216,7 @@
 "export.summary %lld" = "%lld Verbindungen";
 "export.includeGroups" = "Gruppenzuordnung einschließen";
 "export.includePasswords" = "Passwörter einschließen";
+"export.encryptionLabel" = "Verschlüsselung";
 "export.encrypted" = "Verschlüsselt";
 "export.unencrypted" = "Unverschlüsselt";
 "export.password" = "Passwort";
