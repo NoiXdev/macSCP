@@ -40,7 +40,7 @@ T1 (AuditEvent + AuditLogStore, Core) → T2 (AuditRecorder + Sinks, Core) → T
   - `public struct AuditLogStore: Sendable { public init(directory: URL); public static var defaultDirectory: URL; public func append(_ event: AuditEvent, for sessionID: UUID); public func events(for sessionID: UUID) -> [AuditEvent]; public func clear(for sessionID: UUID); public func deleteLog(for sessionID: UUID) }` — `append` kappt auf die neuesten 1000 (chronologische Reihenfolge in der Datei), alle Mutationen atomar, ALLE Methoden werfen nie.
   - `static let maxEntriesPerSession = 1000` (internal, testbar via `@testable`).
 
-- [ ] **Step 1: Failing Tests** — `Tests/macSCPCoreTests/AuditLogStoreTests.swift`:
+- [x] **Step 1: Failing Tests** — `Tests/macSCPCoreTests/AuditLogStoreTests.swift`:
 
 ```swift
 import Foundation
@@ -128,9 +128,9 @@ struct AuditLogStoreTests {
 }
 ```
 
-- [ ] **Step 2: Rot beweisen.** `swift test --filter AuditLogStoreTests` → FAIL (Typen fehlen).
+- [x] **Step 2: Rot beweisen.** `swift test --filter AuditLogStoreTests` → FAIL (Typen fehlen).
 
-- [ ] **Step 3: Implementierung.** `AuditEvent.swift` exakt laut Interfaces-Block (mit Doku-Kommentaren: detail = fertiger englischer Klartext, Anzeige lokalisiert nur Kind-Labels). `AuditLogStore.swift` nach `SessionStore`-Muster:
+- [x] **Step 3: Implementierung.** `AuditEvent.swift` exakt laut Interfaces-Block (mit Doku-Kommentaren: detail = fertiger englischer Klartext, Anzeige lokalisiert nur Kind-Labels). `AuditLogStore.swift` nach `SessionStore`-Muster:
 
 ```swift
 import Foundation
@@ -195,9 +195,9 @@ public struct AuditLogStore: Sendable {
 
 (Hinweis: `UUID.uuidString` als Dateiname ist stabil; Datums-Kodierung bleibt beim JSONEncoder-Default — Roundtrip-Test deckt das.)
 
-- [ ] **Step 4: Grün + volle Suite.** Filter-Suite PASS; `swift test` → 412 + 5 = 417 (echte Zahl festhalten); Build sauber.
+- [x] **Step 4: Grün + volle Suite.** Filter-Suite PASS; `swift test` → 412 + 5 = 417 (echte Zahl festhalten); Build sauber.
 
-- [ ] **Step 5: Commit.** `feat: add the per-session audit log store`
+- [x] **Step 5: Commit.** `feat: add the per-session audit log store`
 
 ---
 
@@ -217,7 +217,7 @@ public struct AuditLogStore: Sendable {
   - `TransferQueueViewModel.Item.isEditUpload: Bool` (public let, Default false; `true` nur auf dem `enqueueEditUpload`-Pfad — analog `destinationTabID` durchgereicht).
   - `RemoteBrowserViewModel.auditSink: ((AuditEvent) -> Void)?` (public var, Default nil) — die vier Aktionen melden nach Abschluss: Erfolg z. B. `AuditEvent(kind: .rename, detail: "rename <altPfad> → <neuerName>")`; Fehler dasselbe Kind mit `isError: true, errorMessage: <der zurückgegebene String>`. Kinds: rename/newFolder/permissions (Detail `chmod <octal> <pfad>`)/delete (Detail `delete <pfad1>, <pfad2>, …`).
 
-- [ ] **Step 1: Failing Recorder-Tests** (`AuditRecorderTests.swift` — Temp-Store wie T1; Items über einen internen Test-Konstruktor oder den vorhandenen Weg bauen, den die Queue-Tests nutzen — Datei vorher lesen):
+- [x] **Step 1: Failing Recorder-Tests** (`AuditRecorderTests.swift` — Temp-Store wie T1; Items über einen internen Test-Konstruktor oder den vorhandenen Weg bauen, den die Queue-Tests nutzen — Datei vorher lesen):
 
 ```swift
     // Assertions (Helper an die realen Konstruktionswege anpassen):
@@ -232,13 +232,13 @@ public struct AuditLogStore: Sendable {
     // recordConnected/Disconnected -> kinds .connected/.disconnected, Host+User im Detail
 ```
 
-- [ ] **Step 2: Rot**, dann `AuditRecorder` implementieren, grün.
+- [x] **Step 2: Rot**, dann `AuditRecorder` implementieren, grün.
 
-- [ ] **Step 3: Failing Sink-Tests.** Queue (`TransferQueueViewModelTests.swift`, vorhandene Gate-/Mock-Muster): (a) auditSink erhält pro Item EXAKT einen Aufruf beim Terminal-Übergang (finished-Fall; Zähler-Closure), (b) wiederholtes `setStatus` auf bereits-terminalem Item feuert NICHT erneut (Muster des totalFailureCount-Doppelzähl-Tests), (c) Progress-Updates (running→running) feuern nie, (d) `enqueueEditUpload`-Item trägt `isEditUpload == true`, normale Items `false`, (e) nil-Sink = kein Effekt (Bestands-Regression läuft ohnehin über die volle Suite). VM (`RemoteBrowserViewModelTests.swift`, Mock-FS-Muster der Datei): rename-Erfolg feuert Event mit kind .rename; rename-Fehler (Mock wirft) feuert isError-Event mit der lokalisierten Meldung; deleteItems mit 2 Pfaden nennt beide im Detail; nil-Sink feuert nichts.
+- [x] **Step 3: Failing Sink-Tests.** Queue (`TransferQueueViewModelTests.swift`, vorhandene Gate-/Mock-Muster): (a) auditSink erhält pro Item EXAKT einen Aufruf beim Terminal-Übergang (finished-Fall; Zähler-Closure), (b) wiederholtes `setStatus` auf bereits-terminalem Item feuert NICHT erneut (Muster des totalFailureCount-Doppelzähl-Tests), (c) Progress-Updates (running→running) feuern nie, (d) `enqueueEditUpload`-Item trägt `isEditUpload == true`, normale Items `false`, (e) nil-Sink = kein Effekt (Bestands-Regression läuft ohnehin über die volle Suite). VM (`RemoteBrowserViewModelTests.swift`, Mock-FS-Muster der Datei): rename-Erfolg feuert Event mit kind .rename; rename-Fehler (Mock wirft) feuert isError-Event mit der lokalisierten Meldung; deleteItems mit 2 Pfaden nennt beide im Detail; nil-Sink feuert nichts.
 
-- [ ] **Step 4: Rot**, dann Sinks implementieren: Queue — `public var auditSink: ((Item) -> Void)?`; am `wasTerminal`-Gate (`if status.isTerminal && !wasTerminal { … }`) nach den bestehenden Zeilen `auditSink?(items[index])`; `Item.isEditUpload` ergänzen (alle drei Item-Konstruktionsstellen + Job analog `destinationTabID`; `enqueueEditUpload` setzt true; `retryInterrupted`-Retain reicht durch). VM — `public var auditSink: ((AuditEvent) -> Void)?`; in den vier Aktionen nach dem Ergebnis das Event bauen (Erfolg/Fehler) und `auditSink?(event)` (VOR dem return; Detail-Formate aus dem Interfaces-Block). Grün.
+- [x] **Step 4: Rot**, dann Sinks implementieren: Queue — `public var auditSink: ((Item) -> Void)?`; am `wasTerminal`-Gate (`if status.isTerminal && !wasTerminal { … }`) nach den bestehenden Zeilen `auditSink?(items[index])`; `Item.isEditUpload` ergänzen (alle drei Item-Konstruktionsstellen + Job analog `destinationTabID`; `enqueueEditUpload` setzt true; `retryInterrupted`-Retain reicht durch). VM — `public var auditSink: ((AuditEvent) -> Void)?`; in den vier Aktionen nach dem Ergebnis das Event bauen (Erfolg/Fehler) und `auditSink?(event)` (VOR dem return; Detail-Formate aus dem Interfaces-Block). Grün.
 
-- [ ] **Step 5: Volle Suite + Commit.** `swift test` (417 + ~12; echte Zahl festhalten). Commit `feat: record transfers and file actions into the audit log`
+- [x] **Step 5: Volle Suite + Commit.** `swift test` (417 + ~12; echte Zahl festhalten). Commit `feat: record transfers and file actions into the audit log`
 
 ---
 
@@ -259,12 +259,12 @@ public struct AuditLogStore: Sendable {
 4. `AuditLogSheet(session:store:)` (~640×480): Titel = Session-Name; Filter-Segmente Alle/Transfers/Datei-Ops/Verbindung/Fehler (Kategorie-Zuordnung Spec §1: Transfers = transferFinished/Failed/Cancelled/editUpload/crossSessionTransfer; Datei-Ops = rename/delete/permissions/newFolder; Verbindung = connected/disconnected; Fehler = isError-Querschnitt); Suchfeld (case-insensitiv über detail + errorMessage); Tabelle NEUESTE OBEN: Zeit `dd.MM. HH:mm:ss` (DateFormatter, lokal), lokalisiertes Kind-Label, Detail monospaced, Fehlerzeilen rot getönt; Fußzeile: Zähler („%lld Einträge" bzw. „%lld von %lld"), „Als Text exportieren…" (fileExporter `.plainText`, Zeilenformat `[<ISO8601>] <KIND-rawValue> <detail>` + ` — error: <message>` bei Fehlern, Default-Name „<SessionName> Audit Log"), „Log leeren…" (destruktiv + confirmationDialog, ruft `clear(for:)` und lädt neu); leerer Zustand Hinweistext. Laden beim Öffnen, kein Live-Refresh.
 5. Keys EN/DE (Vorschlag): `sidebar.auditLog`, `audit.filter.all/transfers/fileOps/connection/errors`, `audit.search`, `audit.empty`, `audit.count %lld`, `audit.countFiltered %lld %lld`, `audit.export`, `audit.clear`, `audit.clear.title`, `audit.clear.message`, `audit.clear.confirm`, plus je Kind ein Label `audit.kind.<rawValue>` (11 Stück). Grep-Gegenprobe beide Kataloge.
 
-- [ ] **Step 1:** SessionListViewModel-Injektion + delete-Hook (TDD: Test zuerst rot). **Step 2:** SessionTab/ContentView-Verdrahtung (Recorder-Lebenszyklus, Sink-Mapping). **Step 3:** AuditLogSheet + Sidebar-Eintrag + Sheet-State. **Step 4:** Katalog-Keys + Gegenprobe. **Step 5:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test` (Stand T2 + 1). **Step 6:** Commit `feat: show a per-session audit log from the sidebar`.
+- [x] **Step 1:** SessionListViewModel-Injektion + delete-Hook (TDD: Test zuerst rot). **Step 2:** SessionTab/ContentView-Verdrahtung (Recorder-Lebenszyklus, Sink-Mapping). **Step 3:** AuditLogSheet + Sidebar-Eintrag + Sheet-State. **Step 4:** Katalog-Keys + Gegenprobe. **Step 5:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test` (Stand T2 + 1). **Step 6:** Commit `feat: show a per-session audit log from the sidebar`.
 
 ---
 
 ### Task 4: Abschluss-Verifikation (Koordinator)
 
-- [ ] Gated Suiten (Rig-Start aus dem Haupt-Checkout): `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün, zero skips.
-- [ ] Visueller Smoke (Dev-Wrapper; Maintainer testet ggf. selbst — Checkliste übergeben): gespeicherte Session verbinden → Transfer + Umbenennen + Löschen + chmod + Neuer Ordner ausführen → trennen → „Audit-Log…" zeigt alles korrekt (Reihenfolge neueste oben, Zeiten lokal, Fehlertransfer rot); Filter + Suche; Cross-Session-Transfer zeigt Ziel-Titel; Editor-Upload als eigenes Kind; Ad-hoc-Verbindung loggt NICHTS; „Leeren" mit Rückfrage; Text-Export öffnen und Format prüfen; Session löschen ⇒ Log-Datei weg (`ls Application Support/macSCP/audit/`); Regressionen Sidebar-Menü/M9a-Einträge.
-- [ ] Plan-Checkboxen, Ledger, Opus-Whole-Branch-Final-Review (Base = Commit vor T1), Fixes, Push develop, CI, Rig `stop`, Memory-Update, Milestone-Zusammenfassung (+ M9c Auto-Refresh als Nächstes; Release-Bündelung weiter offen).
+- [x] Gated Suiten (Rig-Start aus dem Haupt-Checkout): `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün, zero skips (443 vor / 445 nach den Final-Review-Fixes).
+- [ ] Visueller Smoke — **an den Maintainer delegiert** (Wrapper läuft; Checkliste in der Milestone-Zusammenfassung): gespeicherte Session verbinden → Transfer + Umbenennen + Löschen + chmod + Neuer Ordner ausführen → trennen → „Audit-Log…" zeigt alles korrekt (Reihenfolge neueste oben, Zeiten lokal, Fehlertransfer rot); Filter + Suche; Cross-Session-Transfer zeigt Ziel-Titel; Editor-Upload als eigenes Kind; Ad-hoc-Verbindung loggt NICHTS; „Leeren" mit Rückfrage; Text-Export öffnen und Format prüfen; Session löschen ⇒ Log-Datei weg (`ls Application Support/macSCP/audit/`); Regressionen Sidebar-Menü/M9a-Einträge.
+- [x] Plan-Checkboxen, Ledger, Opus-Whole-Branch-Final-Review (Base = Commit vor T1; „No" mit drei Importants → Fix-Commit 1b42157 → Re-Review „Ready to merge: Yes"), Fixes, Push develop, CI, Rig `stop`, Memory-Update, Milestone-Zusammenfassung (+ M9c Auto-Refresh als Nächstes; Release-Bündelung weiter offen).
