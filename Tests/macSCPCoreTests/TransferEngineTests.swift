@@ -140,6 +140,69 @@ struct TransferEngineTests {
         #expect(totalSeconds <= 3.2)
     }
 
+    // MARK: - Double Throttle (M8b/T1)
+
+    /// A cross-remote transfer is real download AND upload on this machine's
+    /// link, so every chunk must pay BOTH buckets, sequentially (primary then
+    /// secondary), and the observed pace follows the TIGHTER one.
+    ///
+    /// 2 chunks (128 KiB, `TransferChunk.size` each): primary paces at exactly
+    /// 1 chunk/s (64 KiB/s — its own burst covers chunk 1 for free, chunk 2
+    /// costs exactly 1.0s), secondary paces at a quarter of that (16 KiB/s —
+    /// its burst covers only a quarter-chunk, so chunk 2 costs it 3.0s once
+    /// its debt from chunk 1 is included). Both buckets share ONE virtual
+    /// clock, so a sleep issued by either one advances the same timeline the
+    /// other refills from — exactly mirroring two independent links that
+    /// happen to be paced back-to-back. Total virtual sleep is deterministic:
+    /// 1.0s (primary, chunk 2) + 3.0s (secondary, chunk 2) = 4.0s.
+    @Test func copyFileConsumesBothThrottles() async throws {
+        let content = Data(repeating: 0x11, count: TransferChunk.size * 2)
+        let source = makeSource(content: content)
+        let destination = MockRemoteFileSystem(tree: ["/ziel": []])
+
+        let time = VirtualTime()
+        let primary = BandwidthBucket(bytesPerSecond: TransferChunk.size, now: time.now, sleep: time.sleep)
+        let secondary = BandwidthBucket(
+            bytesPerSecond: TransferChunk.size / 4, now: time.now, sleep: time.sleep)
+
+        try await TransferEngine.copyFile(
+            from: source, sourcePath: "/quelle.bin",
+            to: destination, destinationDirectory: "/ziel", fileName: "quelle.bin",
+            throttle: primary, secondaryThrottle: secondary,
+            onProgress: { _ in }
+        )
+
+        #expect(await destination.writtenData(at: "/ziel/quelle.bin") == content)
+        let totalSeconds = time.totalSlept.secondsAsDouble
+        #expect(totalSeconds >= 3.8)
+        #expect(totalSeconds <= 4.2)
+    }
+
+    /// Same setup as above but WITHOUT a secondary throttle: only the primary
+    /// bucket paces the transfer (regression — must behave exactly like
+    /// pre-M8b `copyFile`). Total virtual sleep ≈ 1.0s (chunk 1 free from the
+    /// burst, chunk 2 costs exactly 1.0s).
+    @Test func copyFileSecondaryThrottleNilBehavesAsBefore() async throws {
+        let content = Data(repeating: 0x11, count: TransferChunk.size * 2)
+        let source = makeSource(content: content)
+        let destination = MockRemoteFileSystem(tree: ["/ziel": []])
+
+        let time = VirtualTime()
+        let primary = BandwidthBucket(bytesPerSecond: TransferChunk.size, now: time.now, sleep: time.sleep)
+
+        try await TransferEngine.copyFile(
+            from: source, sourcePath: "/quelle.bin",
+            to: destination, destinationDirectory: "/ziel", fileName: "quelle.bin",
+            throttle: primary, secondaryThrottle: nil,
+            onProgress: { _ in }
+        )
+
+        #expect(await destination.writtenData(at: "/ziel/quelle.bin") == content)
+        let totalSeconds = time.totalSlept.secondsAsDouble
+        #expect(totalSeconds >= 0.9)
+        #expect(totalSeconds <= 1.1)
+    }
+
     // MARK: - Resume (M5d/T2)
 
     /// Destination already holds the first 2 of 5 chunks. `resume: true` must

@@ -86,11 +86,16 @@ public enum TransferEngine {
     ///     direction's concurrent transfers, so the limit applies in
     ///     aggregate rather than per-transfer. See `BandwidthBucket`'s doc
     ///     comment for the pacing/debt model.
+    ///   - secondaryThrottle: Second bucket for cross-remote transfers (M8b):
+    ///     a remote→remote stream is real download AND upload on this
+    ///     machine's link, so every chunk pays both buckets; the pace follows
+    ///     the tighter one.
     public static func copyFile(
         from source: any RemoteFileSystem, sourcePath: String,
         to destination: any RemoteFileSystem, destinationDirectory: String, fileName: String,
         resume: Bool = false,
         throttle: BandwidthBucket? = nil,
+        secondaryThrottle: BandwidthBucket? = nil,
         onProgress: @escaping @Sendable (TransferProgress) -> Void
     ) async throws {
         let total = try await source.stat(path: sourcePath).size
@@ -139,6 +144,13 @@ public enum TransferEngine {
             // place of it.
             if let throttle {
                 try await throttle.consume(chunk.count)
+            }
+            // Second bucket (M8b): a cross-remote stream is upload AND
+            // download at once, so it pays both — sequentially, no lock held
+            // across either await, so this can never deadlock against the
+            // other direction's transfers sharing the same buckets.
+            if let secondaryThrottle {
+                try await secondaryThrottle.consume(chunk.count)
             }
             return chunk
         })

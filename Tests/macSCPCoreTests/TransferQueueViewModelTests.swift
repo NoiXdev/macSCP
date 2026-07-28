@@ -2745,6 +2745,93 @@ struct TransferQueueViewModelTests {
         await gate2.fire()
         await waitUntil { vm.isActive == false }
     }
+
+    // MARK: - Cross-remote double-bucket + destination-tab tracking (M8b/T1)
+
+    /// `crossRemote: true` resolves the throttle wiring to BOTH app-global
+    /// buckets (proven at the engine level in `TransferEngineTests`); here we
+    /// only need the job to complete normally through the queue and land with
+    /// `.upload` direction — the tab indicator's amber color depends on that.
+    @Test func crossRemoteJobResolvesBothBuckets() async throws {
+        let content = Data("cross-remote".utf8)
+        let source = QueueTestFS(reads: ["/quelle.bin": .init(content: content)])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.limiter = BandwidthLimiter()
+        vm.limiter?.uploadLimitBytesPerSec = 1_000_000
+        vm.limiter?.downloadLimitBytesPerSec = 1_000_000
+
+        let done = TestSignal()
+        vm.enqueue(
+            fileName: "quelle.bin", direction: .upload,
+            source: source, sourcePath: "/quelle.bin",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { await done.fire() }, destinationTabID: nil, crossRemote: true)
+        try await done.wait()
+
+        #expect(vm.items.first?.direction == .upload)
+        #expect(vm.items.first?.status == .finished)
+    }
+
+    /// `hasActiveItems(destinationTabID:)` is true exactly while a
+    /// non-terminal item carries the given tab id — false for an unrelated
+    /// id, and false again once the job completes.
+    @Test func hasActiveItemsTracksDestinationTab() async throws {
+        let tabID = UUID()
+        let content = Data("x".utf8)
+        let started = TestSignal(); let gate = TestSignal()
+        let source = QueueTestFS(reads: ["/quelle.bin": .init(content: content, started: started, gate: gate)])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.enqueue(
+            fileName: "quelle.bin", direction: .upload,
+            source: source, sourcePath: "/quelle.bin",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: nil, destinationTabID: tabID)
+
+        try await started.wait()
+        #expect(vm.hasActiveItems(destinationTabID: tabID) == true)
+        #expect(vm.hasActiveItems(destinationTabID: UUID()) == false)
+
+        await gate.fire()
+        await waitUntil { vm.isActive == false }
+        #expect(vm.hasActiveItems(destinationTabID: tabID) == false)
+    }
+
+    /// `enqueueTree` forwards `destinationTabID` to every expanded file item —
+    /// `hasActiveItems` sees the tab as active while any of them is still
+    /// running, and stops seeing it once the whole tree finishes.
+    @Test func enqueueTreeForwardsDestinationTabID() async throws {
+        let tabID = UUID()
+        let startedA = TestSignal(); let gateA = TestSignal()
+        let startedB = TestSignal(); let gateB = TestSignal()
+        let source = QueueTestFS(
+            reads: [
+                "/dir/a.txt": .init(content: Data("aaa".utf8), started: startedA, gate: gateA),
+                "/dir/sub/b.txt": .init(content: Data("bbb".utf8), started: startedB, gate: gateB),
+            ],
+            listings: treeListings())
+        let destination = QueueTestFS(reads: [:])
+        let done = TestSignal()
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 2
+        vm.enqueueTree(
+            directoryName: "dir", direction: .download,
+            source: source, sourceDirectory: "/dir",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { await done.fire() }, destinationTabID: tabID)
+
+        try await startedA.wait()
+        try await startedB.wait()
+        #expect(vm.hasActiveItems(destinationTabID: tabID) == true)
+
+        await gateA.fire(); await gateB.fire()
+        try await done.wait()
+        #expect(vm.hasActiveItems(destinationTabID: tabID) == false)
+    }
 }
 
 /// Collects (fileName, isPartOfFolderTransfer) pairs reported by a

@@ -82,6 +82,11 @@ public final class TransferQueueViewModel {
         public internal(set) var fileName: String   // `.rename` updates the displayed name
         public let direction: TransferDirection
         public internal(set) var status: Status
+        /// Opaque reference to the tab this item writes INTO (M8b) — `nil` for
+        /// same-session transfers. Used only by `hasActiveItems`, so a later
+        /// task can warn before closing a tab that other tabs are still
+        /// streaming to; never shown in this item's own display.
+        public let destinationTabID: UUID?
     }
 
     public private(set) var items: [Item] = []
@@ -102,6 +107,13 @@ public final class TransferQueueViewModel {
     /// "Resume interrupted" banner (M5d/T4) and gates `retryInterrupted`.
     public var hasInterrupted: Bool {
         items.contains { $0.status == .interrupted }
+    }
+
+    /// True while any non-terminal item targets the given tab (M8b) — the
+    /// app asks every OTHER tab's queue before closing a tab, so a close
+    /// can warn when it would sever incoming cross-session streams.
+    public func hasActiveItems(destinationTabID: UUID) -> Bool {
+        items.contains { $0.destinationTabID == destinationTabID && !$0.status.isTerminal }
     }
 
     /// UI decider for destination conflicts. `nil` (default) ⇒ silent overwrite
@@ -193,13 +205,24 @@ public final class TransferQueueViewModel {
         /// no prompt is shown. Unlike `resume`, the engine still overwrites (no
         /// offset continuation). Default `false` on every other path.
         let bypassConflictCheck: Bool
+        /// Opaque reference to the tab this job writes INTO (M8b) — carried
+        /// through to the `Item` so `hasActiveItems` can find it; the job
+        /// itself never dereferences it.
+        let destinationTabID: UUID?
+        /// True for a remote→remote transfer routed through this app (M8b): the
+        /// stream is simultaneously a download from the source and an upload
+        /// to the destination on this machine's link, so BOTH app-global
+        /// buckets must pace it. Direction stays `.upload` regardless (the
+        /// target-write side is what the tab indicator reflects).
+        let crossRemote: Bool
 
         init(
             id: UUID, source: any RemoteFileSystem, sourcePath: String,
             destination: any RemoteFileSystem, destinationDirectory: String,
             fileName: String, direction: TransferDirection,
             onCompleted: (@MainActor () async -> Void)?, resume: Bool = false,
-            bypassConflictCheck: Bool = false
+            bypassConflictCheck: Bool = false,
+            destinationTabID: UUID? = nil, crossRemote: Bool = false
         ) {
             self.id = id
             self.source = source
@@ -211,6 +234,8 @@ public final class TransferQueueViewModel {
             self.onCompleted = onCompleted
             self.resume = resume
             self.bypassConflictCheck = bypassConflictCheck
+            self.destinationTabID = destinationTabID
+            self.crossRemote = crossRemote
         }
     }
 
@@ -290,20 +315,34 @@ public final class TransferQueueViewModel {
 
     /// Enqueues and starts the worker if it's sleeping. ALWAYS enqueues —
     /// no more `isRunning`-based dropping.
+    ///
+    /// - Parameters:
+    ///   - destinationTabID: Opaque reference to the tab this transfer writes
+    ///     INTO (M8b) — `nil` (default) for a same-session transfer. Only
+    ///     consumed by `hasActiveItems`.
+    ///   - crossRemote: `true` for a remote→remote transfer routed through
+    ///     this app (M8b) — the stream pays BOTH app-global bandwidth buckets
+    ///     (real download from the source, real upload to the destination on
+    ///     this machine's link). `false` (default) keeps the pre-M8b
+    ///     single-bucket resolution.
     @discardableResult
     public func enqueue(
         fileName: String, direction: TransferDirection,
         source: any RemoteFileSystem, sourcePath: String,
         destination: any RemoteFileSystem, destinationDirectory: String,
-        onCompleted: (@MainActor () async -> Void)?
+        onCompleted: (@MainActor () async -> Void)?,
+        destinationTabID: UUID? = nil, crossRemote: Bool = false
     ) -> UUID {
         let id = UUID()
         jobs[id] = Job(
             id: id, source: source, sourcePath: sourcePath,
             destination: destination, destinationDirectory: destinationDirectory,
-            fileName: fileName, direction: direction, onCompleted: onCompleted)
+            fileName: fileName, direction: direction, onCompleted: onCompleted,
+            destinationTabID: destinationTabID, crossRemote: crossRemote)
         order.append(id)
-        items.append(Item(id: id, fileName: fileName, direction: direction, status: .queued))
+        items.append(Item(
+            id: id, fileName: fileName, direction: direction, status: .queued,
+            destinationTabID: destinationTabID))
         kickWorker()
         return id
     }
@@ -327,7 +366,9 @@ public final class TransferQueueViewModel {
             fileName: fileName, direction: .upload, onCompleted: nil,
             resume: false, bypassConflictCheck: true)
         order.append(id)
-        items.append(Item(id: id, fileName: fileName, direction: .upload, status: .queued))
+        items.append(Item(
+            id: id, fileName: fileName, direction: .upload, status: .queued,
+            destinationTabID: nil))
         kickWorker()
         return id
     }
@@ -391,11 +432,18 @@ public final class TransferQueueViewModel {
     /// rather than ending regularly), onCompleted does NOT fire — a refresh after
     /// a full cancellation would be pointless. But as soon as at least one item
     /// finished OR the expansion completed regularly, it fires.
+    /// - Parameters:
+    ///   - destinationTabID: Opaque reference to the tab this tree writes INTO
+    ///     (M8b) — forwarded to EVERY expanded file item, so `hasActiveItems`
+    ///     sees the whole tree, not just individual files.
+    ///   - crossRemote: See `enqueue(...)` — forwarded to every expanded file
+    ///     item so each pays both app-global buckets.
     public func enqueueTree(
         directoryName: String, direction: TransferDirection,
         source: any RemoteFileSystem, sourceDirectory: String,
         destination: any RemoteFileSystem, destinationDirectory: String,
-        onCompleted: (@MainActor () async -> Void)?
+        onCompleted: (@MainActor () async -> Void)?,
+        destinationTabID: UUID? = nil, crossRemote: Bool = false
     ) {
         let groupID = UUID()
         groups[groupID] = TreeGroup(onCompleted: onCompleted)
@@ -406,7 +454,7 @@ public final class TransferQueueViewModel {
                     directoryName: directoryName, direction: direction,
                     source: source, sourceDirectory: sourceDirectory,
                     destination: destination, destinationDirectory: destinationDirectory,
-                    group: groupID)
+                    group: groupID, destinationTabID: destinationTabID, crossRemote: crossRemote)
                 self.finishExpansion(groupID, succeeded: true)
             } catch {
                 // Only cancellation propagates up to here — branch-local errors
@@ -450,7 +498,8 @@ public final class TransferQueueViewModel {
                 id: id, source: transferSource, sourcePath: retained.sourcePath,
                 destination: transferDestination, destinationDirectory: retained.destinationDirectory,
                 fileName: retained.fileName, direction: retained.direction,
-                onCompleted: nil, resume: true)
+                onCompleted: nil, resume: true,
+                destinationTabID: retained.destinationTabID, crossRemote: retained.crossRemote)
             order.append(id)
             setStatus(id, .queued)   // terminal → non-terminal: no group accounting
         }
@@ -691,8 +740,18 @@ public final class TransferQueueViewModel {
         // Direction-dependent shared bucket (M6a): resolved HERE, at the
         // moment the transfer actually starts — a Settings change rebuilds
         // the bucket and therefore only applies to items starting next.
-        let throttle = job.direction == .upload
-            ? limiter?.uploadBucket : limiter?.downloadBucket
+        let throttle: BandwidthBucket?
+        let secondaryThrottle: BandwidthBucket?
+        if job.crossRemote {
+            // Cross-remote (M8b): the stream is upload to the target AND
+            // download from the source — both app-global buckets pay.
+            throttle = limiter?.uploadBucket
+            secondaryThrottle = limiter?.downloadBucket
+        } else {
+            throttle = job.direction == .upload
+                ? limiter?.uploadBucket : limiter?.downloadBucket
+            secondaryThrottle = nil
+        }
         // Resume flag (M5d/T3): only a retry job sets it — the engine then
         // continues from the destination offset instead of overwriting.
         let resume = job.resume
@@ -702,6 +761,7 @@ public final class TransferQueueViewModel {
                 to: destination, destinationDirectory: destinationDirectory, fileName: fileName,
                 resume: resume,
                 throttle: throttle,
+                secondaryThrottle: secondaryThrottle,
                 onProgress: { progressContinuation.yield($0) }
             )
         }
@@ -869,7 +929,7 @@ public final class TransferQueueViewModel {
         directoryName: String, direction: TransferDirection,
         source: any RemoteFileSystem, sourceDirectory: String,
         destination: any RemoteFileSystem, destinationDirectory: String,
-        group groupID: UUID
+        group groupID: UUID, destinationTabID: UUID? = nil, crossRemote: Bool = false
     ) async throws {
         try Task.checkCancellation()
         let destDir = RemotePath.join(destinationDirectory, directoryName)
@@ -881,7 +941,8 @@ public final class TransferQueueViewModel {
             try Task.checkCancellation()   // if it was cancellation, propagate it
             addTerminalItem(
                 group: groupID, name: directoryName + "/",
-                direction: direction, status: .failed(Self.message(for: error)))
+                direction: direction, status: .failed(Self.message(for: error)),
+                destinationTabID: destinationTabID)
             return
         }
 
@@ -893,7 +954,8 @@ public final class TransferQueueViewModel {
             try Task.checkCancellation()
             addTerminalItem(
                 group: groupID, name: directoryName + "/",
-                direction: direction, status: .failed(Self.message(for: error)))
+                direction: direction, status: .failed(Self.message(for: error)),
+                destinationTabID: destinationTabID)
             return
         }
 
@@ -906,19 +968,19 @@ public final class TransferQueueViewModel {
                     fileName: entry.name, direction: direction,
                     source: source, sourcePath: entry.path,
                     destination: destination, destinationDirectory: destDir,
-                    onCompleted: nil)
+                    onCompleted: nil, destinationTabID: destinationTabID, crossRemote: crossRemote)
                 registerGroupItem(id, group: groupID)
             case .directory:
                 try await expandTree(
                     directoryName: entry.name, direction: direction,
                     source: source, sourceDirectory: entry.path,
                     destination: destination, destinationDirectory: destDir,
-                    group: groupID)
+                    group: groupID, destinationTabID: destinationTabID, crossRemote: crossRemote)
             case .symlink, .other:
                 // Don't follow: terminal `.skipped` item with a " →" suffix.
                 addTerminalItem(
                     group: groupID, name: entry.name + " →",
-                    direction: direction, status: .skipped)
+                    direction: direction, status: .skipped, destinationTabID: destinationTabID)
             }
         }
     }
@@ -938,10 +1000,12 @@ public final class TransferQueueViewModel {
     /// error) and routes it through the same choke point as every other item.
     private func addTerminalItem(
         group groupID: UUID, name: String,
-        direction: TransferDirection, status: Item.Status
+        direction: TransferDirection, status: Item.Status, destinationTabID: UUID? = nil
     ) {
         let id = UUID()
-        items.append(Item(id: id, fileName: name, direction: direction, status: .queued))
+        items.append(Item(
+            id: id, fileName: name, direction: direction, status: .queued,
+            destinationTabID: destinationTabID))
         registerGroupItem(id, group: groupID)
         setStatus(id, status)   // triggers groupItemBecameTerminal
     }
