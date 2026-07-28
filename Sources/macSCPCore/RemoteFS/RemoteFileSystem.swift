@@ -55,6 +55,9 @@ public protocol RemoteFileSystem: Sendable {
     /// a cancellation leaves a partially deleted tree in place (documented,
     /// M7a). A plain file behaves exactly like `delete`.
     func deleteTree(at path: String) async throws
+    /// Resolves the connection's home directory (login landing point). Used
+    /// once at session start; callers fall back to "/" on failure.
+    func homeDirectoryPath() async throws -> String
     func disconnect() async
 }
 

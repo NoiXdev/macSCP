@@ -453,6 +453,17 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         }
     }
 
+    /// Resolves the login home directory via SFTP `realpath(".")`
+    /// (SSH_FXP_REALPATH) — the canonical way an SFTP client discovers the
+    /// server's landing directory, same idea as `pwd` right after login.
+    public func homeDirectoryPath() async throws -> String {
+        do {
+            return try await sftp.getRealPath(atPath: ".")
+        } catch {
+            throw Self.mapSFTPError(error, path: ".")
+        }
+    }
+
     public func disconnect() async {
         try? await client.close()
     }

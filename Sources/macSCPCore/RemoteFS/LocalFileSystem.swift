@@ -209,6 +209,11 @@ public struct LocalFileSystem: RemoteFileSystem {
         }
     }
 
+    /// The macOS sandbox/user home — always succeeds, never throws.
+    public func homeDirectoryPath() async throws -> String {
+        NSHomeDirectory()
+    }
+
     public func disconnect() async {}
 
     /// `path` "exists" if it is a symlink (even a dangling one) OR

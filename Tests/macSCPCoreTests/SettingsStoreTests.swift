@@ -349,4 +349,109 @@ struct SettingsStoreTests {
         #expect(store.autoRefreshEnabled == true)
         #expect(store.autoRefreshIntervalSeconds == 5)
     }
+
+    // MARK: - Terminal appearance (M9d Task 1)
+
+    @Test func terminalAppearanceDefaults() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.terminalFontName == nil)
+        #expect(store.terminalFontSize == 13)
+        #expect(store.terminalCursorStyle == .block)
+        #expect(store.terminalCursorBlink == true)
+    }
+
+    @Test func terminalFontSizeSetterClampsBelowRange() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.terminalFontSize = 8
+        #expect(store.terminalFontSize == 9)
+    }
+
+    @Test func terminalFontSizeSetterClampsAboveRange() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.terminalFontSize = 99
+        #expect(store.terminalFontSize == 24)
+    }
+
+    /// Forward-compat pattern (see `outOfRangeValuesOnDiskAreClampedOnLoad`):
+    /// a hand-edited settings.json can carry an out-of-range raw value
+    /// directly, bypassing the setter — the GETTER must clamp too.
+    @Test func terminalFontSizeGetterClampsRawValueBelowRange() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"terminalFontSize": 0}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        #expect(store.terminalFontSize == 9)
+    }
+
+    @Test func terminalFontSizeGetterClampsRawValueAboveRange() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"terminalFontSize": 1000}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        #expect(store.terminalFontSize == 24)
+    }
+
+    /// An unrecognized raw cursor style string (e.g. a future value this
+    /// app version doesn't know, or hand-edited garbage) must read as the
+    /// safe default `.block`, never crash or propagate `nil`.
+    @Test func terminalCursorStyleUnknownRawValueReadsAsBlock() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"terminalCursorStyle": "weird"}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        #expect(store.terminalCursorStyle == .block)
+    }
+
+    @Test func terminalAppearanceSettingsRoundtrip() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.terminalFontName = "Menlo"
+        store.terminalFontSize = 16
+        store.terminalCursorStyle = .bar
+        store.terminalCursorBlink = false
+
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.terminalFontName == "Menlo")
+        #expect(reloaded.terminalFontSize == 16)
+        #expect(reloaded.terminalCursorStyle == .bar)
+        #expect(reloaded.terminalCursorBlink == false)
+    }
+
+    @Test func loadingOldSettingsFileWithoutTerminalAppearanceKeysUsesDefaults() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"maxConcurrentTransfers": 4, "uploadLimitKBs": 10, "downloadLimitKBs": 20}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        #expect(store.terminalFontName == nil)
+        #expect(store.terminalFontSize == 13)
+        #expect(store.terminalCursorStyle == .block)
+        #expect(store.terminalCursorBlink == true)
+    }
 }

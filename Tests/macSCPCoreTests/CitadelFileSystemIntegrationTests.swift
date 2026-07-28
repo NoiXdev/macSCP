@@ -1102,6 +1102,21 @@ struct CitadelFileSystemIntegrationTests {
         }
         #expect(readBack == payload)
     }
+
+    // MARK: - M9d/T1: remote home directory resolution
+
+    /// The rig's SFTP user lands in some absolute home directory (the exact
+    /// value is a rig implementation detail — only the shape is pinned):
+    /// it must be an absolute path and it must be listable, since the UI
+    /// uses it as the remote pane's landing point at session start.
+    @Test func homeDirectoryPathResolvesAbsoluteAndListable() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        let home = try await fs.homeDirectoryPath()
+        #expect(home.hasPrefix("/"))
+        _ = try await fs.list(path: home)   // landing point must be listable
+    }
 }
 
 /// Small thread-safe counter double for the decider calls.

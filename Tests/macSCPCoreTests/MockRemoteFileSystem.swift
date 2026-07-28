@@ -22,10 +22,34 @@ actor MockRemoteFileSystem: RemoteFileSystem {
     /// the silent-refresh error-swallowing tests. `nil` (the default)
     /// "heals" the mock back to normal tree-backed listing.
     private var listFailure: Error?
+    /// Configurable login-landing home (M9d/T1). Default `/` — keeps every
+    /// existing test construction-compatible.
+    private var homePath: String = "/"
+    /// Test-only failure injection for `homeDirectoryPath` (M9d/T1): while
+    /// set, `homeDirectoryPath` throws this error instead of returning
+    /// `homePath`. `nil` (the default) is normal operation.
+    private var homeDirectoryFailure: Error?
 
     init(tree: [String: [RemoteFileItem]] = [:], files: [String: Data] = [:]) {
         self.tree = tree
         self.files = files
+    }
+
+    /// Test-only configuration of the mock's login-landing home (M9d/T1).
+    func setHomePath(_ path: String) {
+        homePath = path
+    }
+
+    /// Test-only failure injection toggle (M9d/T1). See `homeDirectoryFailure`.
+    func setHomeDirectoryFailure(_ error: Error?) {
+        homeDirectoryFailure = error
+    }
+
+    func homeDirectoryPath() async throws -> String {
+        if let homeDirectoryFailure {
+            throw homeDirectoryFailure
+        }
+        return homePath
     }
 
     func list(path: String) async throws -> [RemoteFileItem] {

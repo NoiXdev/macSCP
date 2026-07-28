@@ -235,6 +235,8 @@ struct TransferQueueViewModelTests {
             throw RemoteFSError.protocolError(reason: "unsupported in this test double")
         }
 
+        func homeDirectoryPath() async throws -> String { "/" }
+
         func disconnect() async {}
 
         private static func chunked(_ data: Data) -> [Data] {
@@ -1625,6 +1627,7 @@ struct TransferQueueViewModelTests {
         func deleteTree(at path: String) async throws {
             throw RemoteFSError.protocolError(reason: "unsupported in this test double")
         }
+        func homeDirectoryPath() async throws -> String { "/" }
         func disconnect() async {}
     }
 

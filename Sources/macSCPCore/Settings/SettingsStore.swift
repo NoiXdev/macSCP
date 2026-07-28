@@ -63,6 +63,10 @@ public final class SettingsStore {
         static let showHiddenFiles = "showHiddenFiles"
         static let autoRefreshEnabled = "autoRefreshEnabled"
         static let autoRefreshIntervalSeconds = "autoRefreshIntervalSeconds"
+        static let terminalFontName = "terminalFontName"
+        static let terminalFontSize = "terminalFontSize"
+        static let terminalCursorStyle = "terminalCursorStyle"
+        static let terminalCursorBlink = "terminalCursorBlink"
     }
 
     private enum Defaults {
@@ -72,6 +76,9 @@ public final class SettingsStore {
         static let showHiddenFiles = false
         static let autoRefreshEnabled = true
         static let autoRefreshIntervalSeconds = 5
+        static let terminalFontSize = 13
+        static let terminalCursorStyle = TerminalCursorStyle.block
+        static let terminalCursorBlink = true
     }
 
     /// Identical to `SessionStore.defaultDirectory` — both stores share the
@@ -200,6 +207,47 @@ public final class SettingsStore {
         set { setInt(clamp(newValue, 2, 300), for: Keys.autoRefreshIntervalSeconds) }
     }
 
+    /// Custom terminal font family name (M9d); nil/empty = use the system
+    /// monospaced default. Persisted like `defaultEditorPath`.
+    public var terminalFontName: String? {
+        get { stringValue(for: Keys.terminalFontName) }
+        set { setString(newValue, for: Keys.terminalFontName) }
+    }
+
+    /// Terminal font point size, clamped to 9...24 on BOTH ends (default 13)
+    /// — same forward-compat pattern as `autoRefreshIntervalSeconds`: a
+    /// hand-edited settings.json cannot produce an unreadable terminal.
+    public var terminalFontSize: Int {
+        get {
+            clamp(
+                intValue(for: Keys.terminalFontSize, default: Defaults.terminalFontSize),
+                9, 24)
+        }
+        set { setInt(clamp(newValue, 9, 24), for: Keys.terminalFontSize) }
+    }
+
+    /// Terminal cursor shape (M9d). An unrecognized raw value on disk
+    /// (future app version, or hand-edited garbage) reads as `.block`
+    /// instead of crashing or propagating `nil`.
+    public var terminalCursorStyle: TerminalCursorStyle {
+        get {
+            guard case .string(let value)? = raw[Keys.terminalCursorStyle] else {
+                return Defaults.terminalCursorStyle
+            }
+            return TerminalCursorStyle(rawValue: value) ?? .block
+        }
+        set {
+            raw[Keys.terminalCursorStyle] = .string(newValue.rawValue)
+            persist()
+        }
+    }
+
+    /// Whether the terminal cursor blinks (M9d). Default ON.
+    public var terminalCursorBlink: Bool {
+        get { boolValue(for: Keys.terminalCursorBlink, default: Defaults.terminalCursorBlink) }
+        set { setBool(newValue, for: Keys.terminalCursorBlink) }
+    }
+
     /// Convenience: association lookup with the SAME normalization applied.
     public func associatedApp(forExtension ext: String) -> String? {
         let normalizedExtension = Self.normalizeExtension(ext)
@@ -233,6 +281,25 @@ public final class SettingsStore {
 
     private func clamp(_ value: Int, _ lower: Int, _ upper: Int) -> Int {
         min(max(value, lower), upper)
+    }
+
+    /// Generic string-optional backing (same nil/empty-collapsing rule as
+    /// `defaultEditorPath`'s hand-rolled getter/setter): empty and missing
+    /// both read as `nil`, and setting `nil` or "" clears the key.
+    private func stringValue(for key: String) -> String? {
+        guard case .string(let value)? = raw[key], !value.isEmpty else {
+            return nil
+        }
+        return value
+    }
+
+    private func setString(_ value: String?, for key: String) {
+        if let value, !value.isEmpty {
+            raw[key] = .string(value)
+        } else {
+            raw[key] = nil
+        }
+        persist()
     }
 
     private func boolValue(for key: String, default defaultValue: Bool) -> Bool {

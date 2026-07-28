@@ -293,4 +293,25 @@ struct MockRemoteFileSystemTests {
         #expect(children.map(\.name) == ["a.txt"])
         await #expect(throws: RemoteFSError.self) { _ = try await fs.list(path: "/dir") }
     }
+
+    // MARK: - homeDirectoryPath (M9d Task 1)
+
+    @Test func homeDirectoryPathDefaultsToRoot() async throws {
+        let fs = makeMock()
+        #expect(try await fs.homeDirectoryPath() == "/")
+    }
+
+    @Test func homeDirectoryPathReturnsConfiguredHome() async throws {
+        let fs = makeMock()
+        await fs.setHomePath("/home/testuser")
+        #expect(try await fs.homeDirectoryPath() == "/home/testuser")
+    }
+
+    @Test func homeDirectoryPathThrowsWhenFailureModeEnabled() async throws {
+        let fs = makeMock()
+        await fs.setHomeDirectoryFailure(RemoteFSError.protocolError(reason: "no home"))
+        await #expect(throws: RemoteFSError.protocolError(reason: "no home")) {
+            _ = try await fs.homeDirectoryPath()
+        }
+    }
 }

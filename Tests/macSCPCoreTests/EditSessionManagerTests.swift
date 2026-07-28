@@ -121,6 +121,10 @@ struct EditSessionManagerTests {
             try await inner.deleteTree(at: path)
         }
 
+        func homeDirectoryPath() async throws -> String {
+            try await inner.homeDirectoryPath()
+        }
+
         func disconnect() async {
             await inner.disconnect()
         }
