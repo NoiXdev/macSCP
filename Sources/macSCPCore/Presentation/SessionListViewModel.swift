@@ -273,10 +273,12 @@ public final class SessionListViewModel {
 
         do {
             try loginSetStore.delete(id: set.id)
+            // Only wipe the set's own keychain secret once the store record
+            // is actually gone -- a throwing `delete` must leave the set (and
+            // its secret) intact rather than orphaning a set with no secret.
             try? secrets.deletePassword(for: set.id)
             reload()
         } catch {
-            try? secrets.deletePassword(for: set.id)
             reload()
             errorMessage = String(
                 format: CoreL10n.string("core.login.deleteFailed %@"), String(describing: error))
@@ -303,11 +305,17 @@ public final class SessionListViewModel {
     }
 
     /// Creates a set from a merge candidate and rewires every session in the
-    /// group onto it. The secret of the FIRST session in `sessionIDs` (input
-    /// order) is copied under the new set id; every group session's own
-    /// secret is then removed (throw-free — a leftover keychain entry is a
-    /// harmless residual, never a reason to abort). A store failure while
-    /// creating the set aborts before anything is rewired.
+    /// group onto it. The source secret is the first group session that
+    /// actually HAS one (not blindly `sessionIDs.first` — a `.privateKey`
+    /// group can have an earlier member with no stored passphrase while a
+    /// later one does) and is copied under the new set id; every group
+    /// session's own secret is then removed (throw-free — a leftover
+    /// keychain entry is a harmless residual, never a reason to abort). A
+    /// store failure while creating the set aborts before anything is
+    /// rewired. Session secrets are deleted only "nach erfolgreicher
+    /// Umstellung" (spec §4): if carrying the secret onto the new set fails,
+    /// the just-created set is rolled back, no session is rewired, and every
+    /// session keeps its own secret.
     public func applyMerge(_ candidate: LoginMergeCandidate, name: String) -> LoginSet? {
         let groupSessions = candidate.sessionIDs.compactMap { id in
             sessions.first { $0.id == id }
@@ -326,9 +334,27 @@ public final class SessionListViewModel {
             return nil
         }
 
-        if let secret = (try? secrets.password(for: first.id)) ?? nil {
-            try? secrets.savePassword(secret, for: set.id)
+        let source = groupSessions.first { (try? secrets.password(for: $0.id)) ?? nil != nil } ?? first
+        var carryError: (any Error)?
+        if let secret = (try? secrets.password(for: source.id)) ?? nil {
+            do {
+                try secrets.savePassword(secret, for: set.id)
+            } catch {
+                carryError = error
+            }
         }
+        if let carryError {
+            // The secret never made it onto the set -- roll the set back and
+            // leave every session exactly as it was (still un-rewired, still
+            // holding its own secret).
+            try? loginSetStore.delete(id: set.id)
+            reload()
+            errorMessage = String(
+                format: CoreL10n.string("core.login.mergeFailed %@"),
+                String(describing: carryError))
+            return nil
+        }
+
         for session in groupSessions {
             var updated = session
             updated.loginSetID = set.id

@@ -268,6 +268,8 @@ public final class ConnectionViewModel {
         selectedGroupID = nil
         loginMode = .manual
         selectedLoginSetID = nil
+        saveAsNewLoginSet = false
+        newLoginSetName = ""
     }
 
     /// Validates the form for saving an edited session (password may be

@@ -762,7 +762,9 @@ struct ContentView: View {
                     onSaveEdited: { stored, secret in
                         var stored = stored
                         var effectiveSecret = secret
-                        if let newSetID = maybeCreateNewLoginSet(from: tab.connectionViewModel) {
+                        if let newSetID = maybeCreateNewLoginSet(
+                            from: tab.connectionViewModel, editedSession: stored
+                        ) {
                             // The secret now lives under the new set's id —
                             // don't also duplicate it into the session's own
                             // keychain slot.
@@ -1094,11 +1096,21 @@ struct ContentView: View {
     }
 
     /// Manual mode + "Save as new login set": creates the set from the
-    /// form's current fields (secret included) and returns its id, or `nil`
-    /// when the toggle isn't active (or the form is in Set mode, where
-    /// there's nothing new to create). The name is the field's trimmed
-    /// value, or `suggestedSetName(forUsername:)` when left blank (spec §3).
-    private func maybeCreateNewLoginSet(from form: ConnectionViewModel) -> UUID? {
+    /// form's current fields and returns its id, or `nil` when the toggle
+    /// isn't active (or the form is in Set mode, where there's nothing new
+    /// to create). The name is the field's trimmed value, or
+    /// `suggestedSetName(forUsername:)` when left blank (spec §3).
+    ///
+    /// `editedSession` is the session being edited when this runs from the
+    /// edit-save path (`nil` for a brand-new connection). In edit mode
+    /// `form.password` is intentionally empty ("leave empty to keep the
+    /// existing secret" — see `ConnectionViewModel.beginEditing`), so an
+    /// empty field here does NOT mean "no secret": it means the session's
+    /// existing keychain secret must MOVE onto the new set rather than be
+    /// dropped, or the session becomes unreachable after the rewire (B1).
+    private func maybeCreateNewLoginSet(
+        from form: ConnectionViewModel, editedSession: StoredSession? = nil
+    ) -> UUID? {
         guard form.loginMode == .manual, form.saveAsNewLoginSet else { return nil }
         let username = form.username.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedName = form.newLoginSetName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1110,7 +1122,10 @@ struct ContentView: View {
             ? form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
             : nil
         let newSet = LoginSet(name: name, username: username, authKind: authKind, keyPath: keyPath)
-        sessionListViewModel.saveLoginSet(newSet, secret: form.password.isEmpty ? nil : form.password)
+        let carried = form.password.isEmpty
+            ? (editedSession.flatMap { sessionListViewModel.password(for: $0) })
+            : form.password
+        sessionListViewModel.saveLoginSet(newSet, secret: carried)
         return newSet.id
     }
 

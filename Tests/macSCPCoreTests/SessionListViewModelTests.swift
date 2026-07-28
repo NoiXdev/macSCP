@@ -377,6 +377,64 @@ struct SessionListViewModelTests {
         #expect(vm.sessions.first { $0.id == b.id }?.username == "root")
     }
 
+    @Test func applyMergeAbortsAndRewiresNothingWhenCarryingSecretToSetFails() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = NewIDFailingSecretStore()
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: secrets,
+            loginSetStore: LoginSetStore(directory: dir))
+
+        let a = vm.save(name: "a", host: "h1", port: 22, username: "root", password: "a")!
+        let b = vm.save(name: "b", host: "h2", port: 22, username: "root", password: "a")!
+        // Only the two existing session ids may be written from here on --
+        // the new set's (never-before-seen) id will throw, simulating a
+        // keychain failure specifically while carrying the secret onto it.
+        secrets.failNewIDs = true
+
+        let candidates = vm.mergeCandidates()
+        #expect(candidates.count == 1)
+        let candidate = candidates.first!
+
+        let result = vm.applyMerge(candidate, name: "root")
+
+        #expect(result == nil)
+        // Nothing was rewired -- both sessions must still be unset.
+        #expect(vm.sessions.first { $0.id == a.id }?.loginSetID == nil)
+        #expect(vm.sessions.first { $0.id == b.id }?.loginSetID == nil)
+        // Both session secrets survive untouched.
+        #expect(try secrets.password(for: a.id) == "a")
+        #expect(try secrets.password(for: b.id) == "a")
+        // No set was left behind in the store.
+        #expect(vm.loginSets.isEmpty)
+    }
+
+    @Test func applyMergeUsesFirstSessionWithASecretAsSource() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // Two .privateKey sessions sharing username/keyPath: `a` (first in
+        // input order) has NO stored secret, `b` does -- the merge must
+        // still carry `b`'s secret onto the new set rather than silently
+        // dropping it because the naive "always use the first session"
+        // picked a secret-less source.
+        let a = vm.save(name: "a", host: "h1", port: 22, username: "root",
+                        password: "irrelevant", authKind: .privateKey, keyPath: "/k")!
+        _ = vm.save(name: "b", host: "h2", port: 22, username: "root",
+                   password: "passphrase", authKind: .privateKey, keyPath: "/k")!
+        try secrets.deletePassword(for: a.id)
+
+        let candidates = vm.mergeCandidates()
+        #expect(candidates.count == 1)
+        let candidate = candidates.first!
+        #expect(candidate.sessionIDs.first == a.id)
+
+        let set = vm.applyMerge(candidate, name: "root")
+
+        #expect(set != nil)
+        #expect(try secrets.password(for: set!.id) == "passphrase")
+    }
+
     @Test func applyMergeCreatesSetAndRewires() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -474,6 +532,38 @@ private final class SelectiveFailingSecretStore: SecretStore, @unchecked Sendabl
 
     func savePassword(_ password: String, for sessionID: UUID) throws {
         if sessionID == failingSessionID {
+            throw KeychainError(status: -1)
+        }
+        lock.lock(); defer { lock.unlock() }
+        storage[sessionID] = password
+    }
+
+    func password(for sessionID: UUID) throws -> String? {
+        lock.lock(); defer { lock.unlock() }
+        return storage[sessionID]
+    }
+
+    func deletePassword(for sessionID: UUID) throws {
+        lock.lock(); defer { lock.unlock() }
+        storage[sessionID] = nil
+    }
+}
+
+/// Test double: like `InMemorySecretStore`, but once `failNewIDs` is set,
+/// `savePassword` throws for any id that doesn't already have a stored
+/// entry -- used to simulate a keychain failure specifically while carrying
+/// a secret onto a BRAND-NEW id (e.g. a freshly created login set), while
+/// pre-existing secrets stay readable/writable normally (M10b B2 review).
+private final class NewIDFailingSecretStore: SecretStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [UUID: String] = [:]
+    var failNewIDs = false
+
+    func savePassword(_ password: String, for sessionID: UUID) throws {
+        lock.lock()
+        let alreadyExists = storage[sessionID] != nil
+        lock.unlock()
+        if failNewIDs && !alreadyExists {
             throw KeychainError(status: -1)
         }
         lock.lock(); defer { lock.unlock() }
