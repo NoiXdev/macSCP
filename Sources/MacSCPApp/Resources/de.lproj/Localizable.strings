@@ -2,6 +2,8 @@
 "settings.tab.general" = "Allgemein";
 "settings.general.showHidden" = "Versteckte Dateien anzeigen";
 "settings.general.showHiddenHint" = "Gilt für beide Seiten. Kürzel: ⌘⇧.";
+"settings.general.autoRefresh" = "Remote-Ansicht automatisch aktualisieren";
+"settings.general.autoRefreshInterval %lld" = "Alle %lld Sekunden";
 
 /* Settings — Übertragungen-Tab */
 "settings.tab.transfers" = "Übertragungen";

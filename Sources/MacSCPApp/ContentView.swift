@@ -664,6 +664,18 @@ struct ContentView: View {
 
                     TransferQueueBar(viewModel: tab.transferQueue)
                 }
+                .task {
+                    // Auto-refresh loop (M9c): lives inside the tab's `.id` identity,
+                    // so switching tabs (or disconnecting) cancels it and the next
+                    // active tab starts its own. Reads the settings fresh every lap
+                    // so changes apply without restart; skipped laps just sleep on.
+                    while !Task.isCancelled {
+                        let seconds = settingsStore.autoRefreshIntervalSeconds
+                        try? await Task.sleep(for: .seconds(seconds))
+                        guard !Task.isCancelled, settingsStore.autoRefreshEnabled else { continue }
+                        await session.remote.refreshQuietly()
+                    }
+                }
                 .sheet(
                     item: Binding(
                         get: { bridge.currentPrompt },

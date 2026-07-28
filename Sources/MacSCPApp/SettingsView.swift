@@ -37,7 +37,8 @@ struct SettingsView: View {
     }
 }
 
-/// General app options (M7a): currently the hidden-files toggle.
+/// General app options (M7a): the hidden-files toggle, plus (M9c) the
+/// auto-refresh toggle and its interval.
 private struct GeneralSettingsTab: View {
     @Bindable var store: SettingsStore
 
@@ -51,6 +52,23 @@ private struct GeneralSettingsTab: View {
                 "Applies to both panes. Shortcut: ⌘⇧."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            Toggle(
+                L10n.string("settings.general.autoRefresh", "Auto-refresh remote view"),
+                isOn: $store.autoRefreshEnabled)
+            Stepper(
+                value: Binding(
+                    get: { store.autoRefreshIntervalSeconds },
+                    set: { store.autoRefreshIntervalSeconds = $0 }
+                ),
+                in: 2...300
+            ) {
+                Text(String(
+                    format: L10n.string(
+                        "settings.general.autoRefreshInterval %lld", "Every %lld seconds"),
+                    store.autoRefreshIntervalSeconds))
+            }
+            .disabled(!store.autoRefreshEnabled)
         }
         .padding(20)
     }

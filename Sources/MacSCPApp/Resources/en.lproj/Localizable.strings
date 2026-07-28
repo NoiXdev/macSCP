@@ -2,6 +2,8 @@
 "settings.tab.general" = "General";
 "settings.general.showHidden" = "Show hidden files";
 "settings.general.showHiddenHint" = "Applies to both panes. Shortcut: ⌘⇧.";
+"settings.general.autoRefresh" = "Auto-refresh remote view";
+"settings.general.autoRefreshInterval %lld" = "Every %lld seconds";
 
 /* Settings — Transfers tab */
 "settings.tab.transfers" = "Transfers";
