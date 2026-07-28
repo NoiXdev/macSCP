@@ -61,14 +61,22 @@ public final class SessionListViewModel {
     /// `loginSetID`, when non-nil, makes the session reference a login set
     /// (M10b): `password` is then ignored and no session-level keychain
     /// entry is written, since the set owns the secret instead.
+    /// `jump` (M10c) attaches a jump host hop; `jumpSecret` of `nil` or empty
+    /// leaves an existing MANUAL jump's keychain slot untouched, a non-empty
+    /// value overwrites it. Slot hygiene: an old manual jump whose slot is no
+    /// longer referenced by the new state (jump removed, or switched to set
+    /// mode) has its keychain entry cleaned up.
     @discardableResult
     public func save(
         name: String, host: String, port: Int, username: String, password: String,
         authKind: StoredSession.AuthKind = .password, keyPath: String? = nil,
-        groupID: UUID? = nil, loginSetID: UUID? = nil
+        groupID: UUID? = nil, loginSetID: UUID? = nil,
+        jump: StoredSession.JumpSpec? = nil, jumpSecret: String? = nil
     ) -> StoredSession? {
         let session: StoredSession
+        var previousJump: StoredSession.JumpSpec?
         if let existing = sessions.first(where: { $0.name == name }) {
+            previousJump = existing.jump
             var updated = existing
             updated.host = host
             updated.port = port
@@ -77,17 +85,22 @@ public final class SessionListViewModel {
             updated.keyPath = keyPath
             updated.groupID = groupID
             updated.loginSetID = loginSetID
+            updated.jump = jump
             session = updated
         } else {
             session = StoredSession(name: name, host: host, port: port,
                                     username: username, authKind: authKind, keyPath: keyPath,
-                                    groupID: groupID, loginSetID: loginSetID)
+                                    groupID: groupID, loginSetID: loginSetID, jump: jump)
         }
         do {
             try store.upsert(session)
             if loginSetID == nil {
                 try secrets.savePassword(password, for: session.id)
             }
+            if let jump, jump.loginSetID == nil, let jumpSecret, !jumpSecret.isEmpty {
+                try secrets.savePassword(jumpSecret, for: jump.secretID)
+            }
+            cleanOrphanedJumpSlot(previous: previousJump, new: jump)
             reload()
             return session
         } catch {
@@ -98,10 +111,31 @@ public final class SessionListViewModel {
         }
     }
 
+    /// Slot hygiene (M10c): an old MANUAL jump (`secretID` slot, `loginSetID
+    /// == nil`) becomes orphaned when the new state no longer references
+    /// that exact slot — the jump was removed, switched to set mode, or
+    /// replaced with a freshly generated `JumpSpec`. Throw-free by design
+    /// (M9b/M10b pattern): a stray keychain entry is a harmless residual,
+    /// never a reason to fail the save/update itself.
+    private func cleanOrphanedJumpSlot(
+        previous: StoredSession.JumpSpec?, new: StoredSession.JumpSpec?
+    ) {
+        guard let previous, previous.loginSetID == nil else { return }
+        if let new, new.loginSetID == nil, new.secretID == previous.secretID {
+            return // Still referenced by the new manual jump -- keep it.
+        }
+        try? secrets.deletePassword(for: previous.secretID)
+    }
+
     public func delete(_ session: StoredSession) {
         do {
             try store.delete(id: session.id)
             try secrets.deletePassword(for: session.id)
+            if let jump = session.jump {
+                // Throw-free: a stray jump secret is a harmless residual,
+                // never a reason to fail the session deletion itself.
+                try? secrets.deletePassword(for: jump.secretID)
+            }
             // Throw-free by design (M9b) — an orphaned log file is a minor
             // leak, never a reason to fail the session deletion itself.
             auditStore.deleteLog(for: session.id)
@@ -129,12 +163,21 @@ public final class SessionListViewModel {
 
     /// Persists an updated session. `newSecret` of `nil` or empty leaves the
     /// existing Keychain secret untouched; a non-empty value overwrites it.
-    public func updateSession(_ updated: StoredSession, newSecret: String?) {
+    /// `jumpSecret` (M10c) is the same "unchanged when nil/empty" semantics
+    /// for a MANUAL `updated.jump`'s own slot; slot hygiene for an orphaned
+    /// old jump secret runs the same as in `save`.
+    public func updateSession(_ updated: StoredSession, newSecret: String?, jumpSecret: String? = nil) {
+        let previousJump = sessions.first(where: { $0.id == updated.id })?.jump
         do {
             try store.upsert(updated)
             if let newSecret, !newSecret.isEmpty {
                 try secrets.savePassword(newSecret, for: updated.id)
             }
+            if let jump = updated.jump, jump.loginSetID == nil,
+               let jumpSecret, !jumpSecret.isEmpty {
+                try secrets.savePassword(jumpSecret, for: jump.secretID)
+            }
+            cleanOrphanedJumpSlot(previous: previousJump, new: updated.jump)
             reload()
         } catch {
             reload()
@@ -203,9 +246,11 @@ public final class SessionListViewModel {
 
     // MARK: - Login sets (M10b)
 
-    /// Sessions currently referencing the given set.
+    /// Sessions currently referencing the given set, either as their target
+    /// login or their jump's login (M10c) — a session referencing the set on
+    /// both counts once, since this filters sessions, not references.
     public func sessionsUsing(setID: UUID) -> [StoredSession] {
-        sessions.filter { $0.loginSetID == setID }
+        sessions.filter { $0.loginSetID == setID || $0.jump?.loginSetID == setID }
     }
 
     /// How many sessions currently reference the given set.
@@ -247,6 +292,15 @@ public final class SessionListViewModel {
     /// for one session is counted, never aborts — the session is still
     /// restored (values + nil reference), only its secret is missing.
     /// Afterwards the set and its secret are removed.
+    ///
+    /// M10c: a session's JUMP can independently reference the same set —
+    /// that reference is restored the same way (set's values copied into the
+    /// `JumpSpec`, set's secret copied into the jump's OWN `secretID` slot,
+    /// `jump.loginSetID` nilled). A session referencing the set on BOTH the
+    /// target and the jump has both restored but is counted only ONCE in
+    /// `restored`/`secretFailures` — `sessionsUsing` already de-duplicates
+    /// per session, and any secret-copy failure on either reference marks
+    /// that one session as a failure, not two.
     public func deleteLoginSet(_ set: LoginSet) -> LoginSetDeleteResult {
         let affected = sessionsUsing(setID: set.id)
         let setSecret = (try? secrets.password(for: set.id)) ?? nil
@@ -254,20 +308,43 @@ public final class SessionListViewModel {
 
         for session in affected {
             var restored = session
-            restored.username = set.username
-            restored.authKind = set.authKind
-            restored.keyPath = set.keyPath
-            restored.loginSetID = nil
+            var sessionHadSecretFailure = false
+
+            if restored.loginSetID == set.id {
+                restored.username = set.username
+                restored.authKind = set.authKind
+                restored.keyPath = set.keyPath
+                restored.loginSetID = nil
+                if let setSecret {
+                    do {
+                        try secrets.savePassword(setSecret, for: session.id)
+                    } catch {
+                        sessionHadSecretFailure = true
+                    }
+                }
+            }
+
+            if var jump = restored.jump, jump.loginSetID == set.id {
+                jump.username = set.username
+                jump.authKind = set.authKind
+                jump.keyPath = set.keyPath
+                jump.loginSetID = nil
+                if let setSecret {
+                    do {
+                        try secrets.savePassword(setSecret, for: jump.secretID)
+                    } catch {
+                        sessionHadSecretFailure = true
+                    }
+                }
+                restored.jump = jump
+            }
+
             // Throw-free by design: a session's own store write failing here
             // is not distinguished from a keychain failure by the spec, and
             // must not abort restoring the remaining sessions.
             try? store.upsert(restored)
-            if let setSecret {
-                do {
-                    try secrets.savePassword(setSecret, for: session.id)
-                } catch {
-                    secretFailures += 1
-                }
+            if sessionHadSecretFailure {
+                secretFailures += 1
             }
         }
 
@@ -387,6 +464,14 @@ public final class SessionListViewModel {
         try LoginResolver.resolve(session: session, sets: loginSets, secrets: secrets)
     }
 
+    /// Resolves what a session's jump host should actually connect with
+    /// (M10c). `nil` when the session has no jump; a dangling `loginSetID`
+    /// on the jump throws, same as `resolvedLogin` (spec §2).
+    public func resolvedJumpLogin(for session: StoredSession) throws -> ResolvedLogin? {
+        guard let jump = session.jump else { return nil }
+        return try LoginResolver.resolveJump(spec: jump, sets: loginSets, secrets: secrets)
+    }
+
     /// What subset of the sidebar an export covers.
     public enum ExportScope {
         case single(StoredSession)
@@ -431,10 +516,38 @@ public final class SessionListViewModel {
                     missingPasswordCount += 1
                 }
             }
+
+            // Jump fields (M10c): always the RESOLVED values -- a set
+            // reference becomes the set's own values; a dangling set falls
+            // back to the spec's own values (export never aborts).
+            var jumpHost: String?
+            var jumpPort: Int?
+            var jumpUsername: String?
+            var jumpAuthKind: StoredSession.AuthKind?
+            var jumpKeyPath: String?
+            var jumpPassword: String?
+            if let jump = session.jump {
+                let resolvedJump = try? LoginResolver.resolveJump(
+                    spec: jump, sets: loginSets, secrets: secrets)
+                jumpHost = jump.host
+                jumpPort = jump.port
+                jumpUsername = resolvedJump?.username ?? jump.username
+                jumpAuthKind = resolvedJump?.authKind ?? jump.authKind
+                jumpKeyPath = resolvedJump?.keyPath ?? jump.keyPath
+                if includePasswords {
+                    jumpPassword = resolvedJump?.secret
+                    if jumpPassword == nil {
+                        missingPasswordCount += 1
+                    }
+                }
+            }
+
             return ExportedSession(
                 id: session.id, name: session.name, host: session.host, port: session.port,
                 username: username, authKind: authKind, keyPath: keyPath,
-                groupID: includeGroups ? session.groupID : nil, password: password)
+                groupID: includeGroups ? session.groupID : nil, password: password,
+                jumpHost: jumpHost, jumpPort: jumpPort, jumpUsername: jumpUsername,
+                jumpAuthKind: jumpAuthKind, jumpKeyPath: jumpKeyPath, jumpPassword: jumpPassword)
         }
 
         var exportedGroups: [ExportedGroup] = []
@@ -506,6 +619,18 @@ public final class SessionListViewModel {
             if let password = planned.password {
                 do {
                     try secrets.savePassword(password, for: planned.session.id)
+                    passwordsImported += 1
+                } catch {
+                    passwordFailures += 1
+                }
+            }
+            // Jump secret (M10c): stored under the FRESH secretID the
+            // planner generated for `planned.session.jump`. Counted the same
+            // way as the target's password -- a keychain failure here is one
+            // more `passwordFailures`, never fatal to the import.
+            if let jump = planned.session.jump, let jumpPassword = planned.jumpPassword {
+                do {
+                    try secrets.savePassword(jumpPassword, for: jump.secretID)
                     passwordsImported += 1
                 } catch {
                     passwordFailures += 1

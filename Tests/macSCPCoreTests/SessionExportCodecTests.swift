@@ -151,4 +151,32 @@ struct SessionExportCodecTests {
             }
         }
     }
+
+    // MARK: - Jump host fields (M10c)
+
+    @Test func legacyPayloadWithoutJumpFieldsDecodesNilJump() throws {
+        let raw = Data("""
+        {"format":"macscp-sessions","version":1,"encrypted":false,"payload":{"includesSecrets":false,\
+        "groups":[],"sessions":[{"id":"\(UUID().uuidString)","name":"web","host":"h","port":22,\
+        "username":"u","authKind":"password"}]}}
+        """.utf8)
+        let payload = try SessionExportCodec.decode(raw, password: nil)
+        #expect(payload.sessions.first?.jumpHost == nil)
+        #expect(payload.sessions.first?.jumpPassword == nil)
+    }
+
+    @Test func jumpFieldsRoundtripThroughEncodeDecode() throws {
+        let groupID = UUID()
+        let payload = SessionExportPayload(
+            includesSecrets: true,
+            groups: [ExportedGroup(id: groupID, name: "Prod")],
+            sessions: [ExportedSession(
+                id: UUID(), name: "web", host: "h", port: 22, username: "u",
+                authKind: .password, keyPath: nil, groupID: groupID, password: "pw",
+                jumpHost: "bastion.example.com", jumpPort: 2222, jumpUsername: "jumper",
+                jumpAuthKind: .privateKey, jumpKeyPath: "/k", jumpPassword: "jp")])
+        let data = try SessionExportCodec.encode(payload, password: nil)
+        let decoded = try SessionExportCodec.decode(data, password: nil)
+        #expect(decoded == payload)
+    }
 }

@@ -41,11 +41,26 @@ public struct ExportedSession: Codable, Equatable, Sendable {
     /// Present only when the export included secrets AND the keychain had
     /// one for this session at export time.
     public var password: String?
+    /// Jump host fields (M10c), always RESOLVED (a set reference becomes the
+    /// set's own values at export time — sets themselves are never
+    /// exported). `nil` when the session has no jump, or on legacy payloads
+    /// written before M10c (no custom decoder — decodes nil like groupID).
+    public var jumpHost: String?
+    public var jumpPort: Int?
+    public var jumpUsername: String?
+    public var jumpAuthKind: StoredSession.AuthKind?
+    public var jumpKeyPath: String?
+    /// Present only when the export included secrets AND the keychain had
+    /// one for the jump at export time.
+    public var jumpPassword: String?
 
     public init(
         id: UUID, name: String, host: String, port: Int, username: String,
         authKind: StoredSession.AuthKind, keyPath: String?, groupID: UUID?,
-        password: String?
+        password: String?,
+        jumpHost: String? = nil, jumpPort: Int? = nil, jumpUsername: String? = nil,
+        jumpAuthKind: StoredSession.AuthKind? = nil, jumpKeyPath: String? = nil,
+        jumpPassword: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -56,6 +71,12 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         self.keyPath = keyPath
         self.groupID = groupID
         self.password = password
+        self.jumpHost = jumpHost
+        self.jumpPort = jumpPort
+        self.jumpUsername = jumpUsername
+        self.jumpAuthKind = jumpAuthKind
+        self.jumpKeyPath = jumpKeyPath
+        self.jumpPassword = jumpPassword
     }
 }
 

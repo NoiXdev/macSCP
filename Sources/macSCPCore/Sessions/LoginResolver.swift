@@ -42,4 +42,26 @@ public enum LoginResolver {
             username: set.username, authKind: set.authKind,
             keyPath: set.keyPath, secret: secret)
     }
+
+    /// Resolves a jump host's login (M10c): unlike `resolve`, this is ALWAYS
+    /// non-nil — a jump either carries its own credentials (manual mode,
+    /// secret read from `spec.secretID`) or a set's. A dangling
+    /// `loginSetID` throws, same as `resolve`.
+    public static func resolveJump(
+        spec: StoredSession.JumpSpec, sets: [LoginSet], secrets: any SecretStore
+    ) throws -> ResolvedLogin {
+        guard let setID = spec.loginSetID else {
+            let secret = (try? secrets.password(for: spec.secretID)) ?? nil
+            return ResolvedLogin(
+                username: spec.username, authKind: spec.authKind,
+                keyPath: spec.keyPath, secret: secret)
+        }
+        guard let set = sets.first(where: { $0.id == setID }) else {
+            throw LoginResolveError.missingSet
+        }
+        let secret = (try? secrets.password(for: set.id)) ?? nil
+        return ResolvedLogin(
+            username: set.username, authKind: set.authKind,
+            keyPath: set.keyPath, secret: secret)
+    }
 }

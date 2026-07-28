@@ -98,4 +98,34 @@ struct SessionImportPlannerTests {
         #expect(plan.sessionsToImport.isEmpty)
         #expect(plan.skipped.count == 1)
     }
+
+    // MARK: - Jump host fields (M10c)
+
+    @Test func plannedSessionCarriesJumpFieldsWithFreshSecretID() {
+        let file = ExportedSession(
+            id: UUID(), name: "web", host: "h", port: 22, username: "root",
+            authKind: .password, keyPath: nil, groupID: nil, password: nil,
+            jumpHost: "bastion.example.com", jumpPort: 2222, jumpUsername: "jumper",
+            jumpAuthKind: .privateKey, jumpKeyPath: "/k", jumpPassword: "jp")
+        let plan = SessionImportPlanner.plan(existing: [], existingGroups: [], incoming: incoming([file]))
+
+        let planned = plan.sessionsToImport[0]
+        let jump = planned.session.jump
+        #expect(jump?.host == "bastion.example.com")
+        #expect(jump?.port == 2222)
+        #expect(jump?.username == "jumper")
+        #expect(jump?.authKind == .privateKey)
+        #expect(jump?.keyPath == "/k")
+        // Sets are never imported -- a jump referencing one falls back to
+        // manual mode with the resolved values baked into the spec.
+        #expect(jump?.loginSetID == nil)
+        #expect(planned.jumpPassword == "jp")
+    }
+
+    @Test func plannedSessionOmitsJumpWhenFileSessionHasNone() {
+        let plan = SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming([exported()]))
+        #expect(plan.sessionsToImport[0].session.jump == nil)
+        #expect(plan.sessionsToImport[0].jumpPassword == nil)
+    }
 }

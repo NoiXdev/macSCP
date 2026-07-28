@@ -510,6 +510,178 @@ struct SessionListViewModelTests {
             try vm.resolvedLogin(for: stored)
         }
     }
+
+    // MARK: - Jump host (M10c)
+
+    @Test func saveCleansOrphanedJumpSlotWhenJumpRemoved() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
+        let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw",
+                             jump: jump, jumpSecret: "jp")!
+        #expect(try secrets.password(for: jump.secretID) == "jp")
+
+        _ = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw")
+
+        #expect(try secrets.password(for: jump.secretID) == nil)
+        #expect(vm.sessions.first { $0.id == stored.id }?.jump == nil)
+    }
+
+    @Test func saveCleansOrphanedJumpSlotWhenSwitchingToSetMode() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "Bastion", username: "jumper")
+        vm.saveLoginSet(set, secret: "s")
+        let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
+        _ = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw",
+                   jump: jump, jumpSecret: "jp")!
+        #expect(try secrets.password(for: jump.secretID) == "jp")
+
+        let setJump = StoredSession.JumpSpec(
+            host: "bastion.example.com", username: "unused", loginSetID: set.id)
+        _ = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw", jump: setJump)
+
+        #expect(try secrets.password(for: jump.secretID) == nil)
+        #expect(vm.sessions.first?.jump?.loginSetID == set.id)
+    }
+
+    @Test func deleteSessionCleansJumpSlot() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
+        let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw",
+                             jump: jump, jumpSecret: "jp")!
+        #expect(try secrets.password(for: jump.secretID) == "jp")
+
+        vm.delete(stored)
+
+        #expect(try secrets.password(for: jump.secretID) == nil)
+    }
+
+    @Test func deleteLoginSetRestoresJumpReference() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "Bastion", username: "jumper", authKind: .privateKey, keyPath: "/k")
+        vm.saveLoginSet(set, secret: "pp")
+
+        let jump = StoredSession.JumpSpec(
+            host: "bastion.example.com", username: "unused", loginSetID: set.id)
+        let stored = vm.save(name: "web", host: "target.example.com", port: 22, username: "u",
+                             password: "pw", jump: jump)!
+        #expect(vm.usageCount(of: set.id) == 1)
+
+        let result = vm.deleteLoginSet(set)
+
+        #expect(result == SessionListViewModel.LoginSetDeleteResult(restored: 1, secretFailures: 0))
+        let restored = vm.sessions.first { $0.id == stored.id }!
+        #expect(restored.jump?.loginSetID == nil)
+        #expect(restored.jump?.username == "jumper")
+        #expect(restored.jump?.authKind == .privateKey)
+        #expect(restored.jump?.keyPath == "/k")
+        #expect(try secrets.password(for: restored.jump!.secretID) == "pp")
+        // Only the jump was referencing the set -- the target itself is
+        // untouched.
+        #expect(restored.username == "u")
+        #expect(vm.loginSets.isEmpty)
+    }
+
+    @Test func deleteLoginSetRestoresBothReferences() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "Shared", username: "shared")
+        vm.saveLoginSet(set, secret: "s3cr3t")
+
+        let jump = StoredSession.JumpSpec(
+            host: "bastion.example.com", username: "unused", loginSetID: set.id)
+        let stored = vm.save(name: "web", host: "target.example.com", port: 22, username: "ignored",
+                             password: "", loginSetID: set.id, jump: jump)!
+        #expect(vm.usageCount(of: set.id) == 1) // counted once despite two references
+
+        let result = vm.deleteLoginSet(set)
+
+        // A session referencing the set on BOTH the target and the jump is
+        // still restored exactly once.
+        #expect(result == SessionListViewModel.LoginSetDeleteResult(restored: 1, secretFailures: 0))
+        let restored = vm.sessions.first { $0.id == stored.id }!
+        #expect(restored.loginSetID == nil)
+        #expect(restored.username == "shared")
+        #expect(restored.jump?.loginSetID == nil)
+        #expect(restored.jump?.username == "shared")
+        #expect(try secrets.password(for: stored.id) == "s3cr3t")
+        #expect(try secrets.password(for: restored.jump!.secretID) == "s3cr3t")
+    }
+
+    @Test func exportResolvesJump() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "Bastion", username: "jumper")
+        vm.saveLoginSet(set, secret: "jp")
+        let jump = StoredSession.JumpSpec(
+            host: "bastion.example.com", port: 2222, username: "unused", loginSetID: set.id)
+        let stored = vm.save(name: "web", host: "target.example.com", port: 22, username: "u",
+                             password: "pw", jump: jump)!
+
+        let withJump = vm.exportPayload(for: .single(stored), includeGroups: false, includePasswords: true)
+        let exportedJump = withJump.payload.sessions.first!
+        #expect(exportedJump.jumpHost == "bastion.example.com")
+        #expect(exportedJump.jumpPort == 2222)
+        #expect(exportedJump.jumpUsername == "jumper")
+        #expect(exportedJump.jumpAuthKind == .password)
+        #expect(exportedJump.jumpPassword == "jp")
+        #expect(withJump.missingPasswordCount == 0)
+
+        let noJump = vm.save(name: "plain", host: "h2", port: 22, username: "u", password: "pw")!
+        let withoutJump = vm.exportPayload(for: .single(noJump), includeGroups: false, includePasswords: true)
+        let exportedPlain = withoutJump.payload.sessions.first!
+        #expect(exportedPlain.jumpHost == nil)
+        #expect(exportedPlain.jumpPort == nil)
+        #expect(exportedPlain.jumpUsername == nil)
+        #expect(exportedPlain.jumpAuthKind == nil)
+        #expect(exportedPlain.jumpKeyPath == nil)
+        #expect(exportedPlain.jumpPassword == nil)
+
+        try secrets.deletePassword(for: set.id)
+        let missingSecret = vm.exportPayload(for: .single(stored), includeGroups: false, includePasswords: true)
+        #expect(missingSecret.payload.sessions.first?.jumpPassword == nil)
+        #expect(missingSecret.missingPasswordCount == 1)
+    }
+
+    @Test func applyImportStoresJumpPasswordUnderFreshSecretID() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
+        let plan = SessionImportPlan(
+            groupsToCreate: [],
+            sessionsToImport: [
+                PlannedSession(
+                    session: StoredSession(name: "one", host: "h1", username: "root", jump: jump),
+                    password: "target-secret", jumpPassword: "jump-secret"),
+            ],
+            skipped: [])
+
+        let result = vm.applyImport(plan)
+
+        #expect(result.imported == 1)
+        #expect(result.passwordFailures == 0)
+        let imported = vm.sessions.first { $0.name == "one" }!
+        #expect(try secrets.password(for: imported.id) == "target-secret")
+        #expect(try secrets.password(for: imported.jump!.secretID) == "jump-secret")
+    }
+
+    @Test func resolvedJumpLoginResolvesOrThrows() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw")!
+        #expect(try vm.resolvedJumpLogin(for: stored) == nil)
+
+        let jump = StoredSession.JumpSpec(
+            host: "bastion.example.com", username: "unused", loginSetID: UUID())
+        let withJump = vm.save(name: "web2", host: "h2", port: 22, username: "u", password: "pw",
+                               jump: jump)!
+        #expect(throws: LoginResolveError.missingSet) {
+            _ = try vm.resolvedJumpLogin(for: withJump)
+        }
+    }
 }
 
 private final class FailingSecretStore: SecretStore, @unchecked Sendable {

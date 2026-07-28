@@ -6,10 +6,15 @@ import Foundation
 public struct PlannedSession: Equatable, Sendable {
     public var session: StoredSession
     public var password: String?
+    /// Carried-along secret for `session.jump`, if any (M10c) — stored under
+    /// the jump's FRESH `secretID` when applied, mirroring `password` for
+    /// the target.
+    public var jumpPassword: String?
 
-    public init(session: StoredSession, password: String?) {
+    public init(session: StoredSession, password: String?, jumpPassword: String? = nil) {
         self.session = session
         self.password = password
+        self.jumpPassword = jumpPassword
     }
 }
 
@@ -72,6 +77,21 @@ public enum SessionImportPlanner {
             seenKeys.insert(key)
 
             let resolvedGroupID = fileSession.groupID.flatMap { groupIDMap[$0] }
+            // Jump fields are only present together (all-or-nothing from
+            // `exportPayload`) -- `jumpHost`/`jumpUsername` gate construction.
+            // `secretID` is left at its default, generating a FRESH slot;
+            // `loginSetID` is always nil -- login sets are never imported, so
+            // a jump that referenced one becomes plain manual mode with the
+            // resolved values baked in at export time.
+            var jump: StoredSession.JumpSpec?
+            if let jumpHost = fileSession.jumpHost, let jumpUsername = fileSession.jumpUsername {
+                jump = StoredSession.JumpSpec(
+                    host: jumpHost,
+                    port: fileSession.jumpPort ?? 22,
+                    username: jumpUsername,
+                    authKind: fileSession.jumpAuthKind ?? .password,
+                    keyPath: fileSession.jumpKeyPath)
+            }
             let session = StoredSession(
                 id: UUID(),
                 name: fileSession.name,
@@ -80,8 +100,11 @@ public enum SessionImportPlanner {
                 username: fileSession.username,
                 authKind: fileSession.authKind,
                 keyPath: fileSession.keyPath,
-                groupID: resolvedGroupID)
-            sessionsToImport.append(PlannedSession(session: session, password: fileSession.password))
+                groupID: resolvedGroupID,
+                jump: jump)
+            sessionsToImport.append(PlannedSession(
+                session: session, password: fileSession.password,
+                jumpPassword: jump != nil ? fileSession.jumpPassword : nil))
         }
 
         // Only commit a freshly-created group if an actually-imported
