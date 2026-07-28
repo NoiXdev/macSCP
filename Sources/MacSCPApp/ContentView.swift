@@ -758,7 +758,10 @@ struct ContentView: View {
                     viewModel: tab.connectionViewModel,
                     groups: sessionListViewModel.groups,
                     sessionList: sessionListViewModel,
-                    resolveLoginSetForSubmit: { resolveSelectedLoginSet(in: tab) },
+                    resolveLoginSetForSubmit: {
+                        resolveSelectedLoginSet(in: tab)
+                        return resolveSelectedJumpLoginSet(in: tab)
+                    },
                     onSaveEdited: { stored, secret in
                         var stored = stored
                         var effectiveSecret = secret
@@ -774,7 +777,16 @@ struct ContentView: View {
                             // Set mode: the set already owns the secret.
                             effectiveSecret = nil
                         }
-                        sessionListViewModel.updateSession(stored, newSecret: effectiveSecret)
+                        // Jump secret (M10c/T3): `stored.jump` was already
+                        // built by `validateForEditSave()` (Set mode carries
+                        // only `loginSetID`, Manual carries the manual
+                        // fields + the EXISTING `secretID` it remembered) --
+                        // `updateSession` itself gates on `jump.loginSetID
+                        // == nil` before writing this, so passing it
+                        // unconditionally is safe.
+                        sessionListViewModel.updateSession(
+                            stored, newSecret: effectiveSecret,
+                            jumpSecret: tab.connectionViewModel.jumpPassword)
                         tab.connectionViewModel.endEditing()
                     },
                     onCancelEdit: { tab.connectionViewModel.endEditing() },
@@ -1095,6 +1107,50 @@ struct ContentView: View {
         fillForm(form, from: set)
     }
 
+    /// Same as `fillForm(_:from:)` but for the jump block's own login
+    /// (M10c/T3) — fills `jumpUsername`/`jumpAuthChoice`/`jumpKeyPath`/
+    /// `jumpPassword` instead of the target's fields. Kept as a separate
+    /// function rather than a generalized field-pair helper: the two call
+    /// sites bind to different `ConnectionViewModel` properties, and a
+    /// shared abstraction would only add indirection for two short bodies.
+    private func fillJumpForm(_ form: ConnectionViewModel, from set: LoginSet) {
+        form.jumpUsername = set.username
+        form.jumpAuthChoice = set.authKind == .privateKey ? .privateKey : .password
+        form.jumpKeyPath = set.keyPath ?? ""
+        let synthetic = StoredSession(
+            id: set.id, name: set.name, host: "", username: set.username,
+            authKind: set.authKind, keyPath: set.keyPath)
+        form.jumpPassword = sessionListViewModel.password(for: synthetic) ?? ""
+    }
+
+    /// `ConnectionFormView.resolveLoginSetForSubmit`'s jump half (M10c/T3):
+    /// fills the jump's manual fields from the currently selected login set,
+    /// mirroring `resolveSelectedLoginSet` for the target. Returns `true`
+    /// (no-op) when the jump is off, in Manual mode, or nothing is selected
+    /// yet (Connect/Save are already disabled for that last case via
+    /// `jumpLoginSetModeIncomplete`, the belt-and-suspenders half). Returns
+    /// `false` when the selection is DANGLING — the set was removed, e.g.
+    /// via "Manage logins…" while this form stayed open (spec §4a) — after
+    /// surfacing that through `showFailure` with the M10b `loginSets.
+    /// missingSet` key; the caller must not proceed to connect/validate in
+    /// that case.
+    private func resolveSelectedJumpLoginSet(in tab: SessionTab) -> Bool {
+        let form = tab.connectionViewModel
+        guard form.jumpEnabled, form.jumpLoginMode == .set, let id = form.jumpSelectedLoginSetID else {
+            return true
+        }
+        guard let set = sessionListViewModel.loginSets.first(where: { $0.id == id }) else {
+            form.showFailure(
+                message: L10n.string(
+                    "loginSets.missingSet",
+                    "The stored login for this connection was not found. Choose a login or enter credentials."),
+                field: .jumpHost)
+            return false
+        }
+        fillJumpForm(form, from: set)
+        return true
+    }
+
     /// Manual mode + "Save as new login set": creates the set from the
     /// form's current fields and returns its id, or `nil` when the toggle
     /// isn't active (or the form is in Set mode, where there's nothing new
@@ -1226,7 +1282,14 @@ struct ContentView: View {
                     ? form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
                     : nil,
                 groupID: form.selectedGroupID,
-                loginSetID: form.loginMode == .set ? form.selectedLoginSetID : newSetID
+                loginSetID: form.loginMode == .set ? form.selectedLoginSetID : newSetID,
+                // Jump (M10c/T3): `existingSecretID` is nil here -- this is
+                // a BRAND-NEW session, so there is no previous manual slot
+                // to preserve (unlike `validateForEditSave()`'s own
+                // internal `buildJumpSpec` call, which reuses
+                // `existingJumpSecretID`).
+                jump: form.buildJumpSpec(),
+                jumpSecret: form.jumpPassword
             )
             tab.activeStoredSessionID = stored?.id
             form.shouldSaveSession = false
@@ -1293,16 +1356,63 @@ struct ContentView: View {
                 }
                 form.loginMode = stored.loginSetID != nil ? .set : .manual
                 form.selectedLoginSetID = stored.loginSetID
+
+                // Jump (M10c/T3): same resolution as above, for the jump's
+                // OWN login — `resolvedJumpLogin` is `nil` only when the
+                // session has no jump at all; a resolved jump fills the
+                // manual-looking fields regardless of whether it came from
+                // a set or the jump's own manual secret, exactly like the
+                // target's resolution just above.
+                if let jump = stored.jump {
+                    form.jumpEnabled = true
+                    form.jumpHost = jump.host
+                    form.jumpPort = String(jump.port)
+                    form.jumpLoginMode = jump.loginSetID != nil ? .set : .manual
+                    form.jumpSelectedLoginSetID = jump.loginSetID
+                    if let resolvedJump = try sessionListViewModel.resolvedJumpLogin(for: stored) {
+                        form.jumpUsername = resolvedJump.username
+                        form.jumpAuthChoice = resolvedJump.authKind == .privateKey ? .privateKey : .password
+                        form.jumpKeyPath = resolvedJump.keyPath ?? ""
+                        form.jumpPassword = resolvedJump.secret ?? ""
+                    }
+                } else {
+                    form.jumpEnabled = false
+                    form.jumpHost = ""
+                    form.jumpPort = "22"
+                    form.jumpUsername = ""
+                    form.jumpAuthChoice = .password
+                    form.jumpKeyPath = ""
+                    form.jumpPassword = ""
+                    form.jumpLoginMode = .manual
+                    form.jumpSelectedLoginSetID = nil
+                }
             } catch is LoginResolveError {
-                // Missing set: do NOT connect — show the form instead, with
-                // the mismatch surfaced through its existing error field
-                // (spec §2/§6). The user picks a login or enters credentials.
+                // Missing set (target OR jump, M10c/T3): do NOT connect —
+                // show the form instead, with the mismatch surfaced through
+                // its existing error field (spec §2/§6). The user picks a
+                // login or enters credentials. Both target and jump fields
+                // fall back to the session's own raw values so the form
+                // isn't left half-filled depending on which side the
+                // dangling reference was actually on.
                 form.username = stored.username
                 form.authChoice = stored.authKind == .privateKey ? .privateKey : .password
                 form.keyPath = stored.keyPath ?? ""
                 form.password = ""
                 form.loginMode = .manual
                 form.selectedLoginSetID = nil
+                if let jump = stored.jump {
+                    form.jumpEnabled = true
+                    form.jumpHost = jump.host
+                    form.jumpPort = String(jump.port)
+                    form.jumpUsername = jump.username
+                    form.jumpAuthChoice = jump.authKind == .privateKey ? .privateKey : .password
+                    form.jumpKeyPath = jump.keyPath ?? ""
+                    form.jumpPassword = ""
+                    form.jumpLoginMode = .manual
+                    form.jumpSelectedLoginSetID = nil
+                } else {
+                    form.jumpEnabled = false
+                }
                 form.showFailure(message: L10n.string(
                     "loginSets.missingSet",
                     "The stored login for this connection was not found. Choose a login or enter credentials."))

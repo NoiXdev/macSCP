@@ -364,3 +364,8 @@
 "form.saveAsSet" = "Save as new login set";
 "form.saveAsSet.name" = "Login set name";
 "audit.kind.crossSessionTransfer" = "Cross-session transfer";
+
+/* Connection form — jump host block (M10c/T3, mockup section 2) */
+"form.jump.label" = "Jump host";
+"form.jump.toggle" = "Connect through an intermediate host (ProxyJump)";
+"form.jump.host.placeholder" = "bastion.example.com";

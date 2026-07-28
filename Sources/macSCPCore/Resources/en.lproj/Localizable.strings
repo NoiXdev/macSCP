@@ -19,6 +19,14 @@
 "core.connect.keyPathEmpty" = "Enter the path to the SSH key.";
 "core.connect.saveNameEmpty" = "Enter a name for the saved session.";
 
+/* ConnectionViewModel jump-host form validation (M10c/T3) */
+"core.connect.jumpHostEmpty" = "Jump host must not be empty.";
+"core.connect.jumpPortNumeric" = "Jump port must be a number.";
+"core.connect.jumpSetRequired" = "Choose a login for the jump host.";
+"core.connect.jumpUsernameEmpty" = "Jump host username must not be empty.";
+"core.connect.jumpPasswordEmpty" = "Jump host password must not be empty.";
+"core.connect.jumpKeyPathEmpty" = "Enter the path to the jump host's SSH key.";
+
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "Host must not be empty.";
 "core.connect.emptyUsername" = "Username must not be empty.";
@@ -29,6 +37,11 @@
 "core.connect.keyPassphraseRequired" = "The SSH key is encrypted — enter a passphrase.";
 "core.connect.keyWrongPassphrase" = "The passphrase is incorrect.";
 "core.connect.keyUnsupportedFormat" = "SSH key format is not supported (currently: OpenSSH ed25519).";
+
+/* ConnectionViewModel.failedState(for:) — jump host (M10c/T3) */
+"core.connect.invalidJumpPort %@" = "Invalid jump port: %@.";
+"core.connect.jumpAuthFailed" = "Jump host authentication failed — check username or password.";
+"core.connect.jumpTunnelRejected" = "The jump host refused to open the tunnel to the target (TCP forwarding may be disabled).";
 
 /* Host-key TOFU prompts — keep full severity in every language. */
 "core.hostkey.mismatch %@ %@ %@" = "WARNING: The host key for %1$@ has changed! Expected %2$@, presented %3$@. Possible man-in-the-middle attack — connection aborted.";

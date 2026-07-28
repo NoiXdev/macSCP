@@ -398,6 +398,53 @@ struct ConnectionViewModelTests {
             field: nil))
         #expect(vm.hostKeyPrompt == nil)
     }
+
+    // MARK: - Jump host (M10c/T3)
+
+    @Test func jumpValidationRequiresHost() async {
+        let vm = makeVM()
+        vm.jumpEnabled = true
+        vm.jumpHost = ""
+        vm.jumpUsername = "bastion-user"
+        vm.jumpPassword = "bastion-pass"
+        let fs = await vm.connect()
+        #expect(fs == nil)
+        #expect(vm.state == .failed(
+            message: CoreL10n.string("core.connect.jumpHostEmpty"), field: .jumpHost))
+    }
+
+    @Test @MainActor func jumpSetModeRequiresSelection() {
+        let vm = makeVM()
+        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u"))
+        vm.jumpEnabled = true
+        vm.jumpHost = "bastion.example.com"
+        vm.jumpLoginMode = .set
+        vm.jumpSelectedLoginSetID = nil
+        #expect(vm.validateForEditSave() == nil)
+        #expect(vm.state == .failed(
+            message: CoreL10n.string("core.connect.jumpSetRequired"), field: .jumpHost))
+    }
+
+    @Test @MainActor func jumpFieldsResetOnExitEditMode() {
+        let vm = makeVM()
+        let jump = StoredSession.JumpSpec(
+            host: "bastion.example.com", port: 2200, username: "bastion-user",
+            authKind: .privateKey, keyPath: "/k")
+        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u", jump: jump))
+        #expect(vm.jumpEnabled) // sanity: beginEditing actually picked the jump up
+
+        vm.exitEditMode()
+
+        #expect(vm.jumpEnabled == false)
+        #expect(vm.jumpHost.isEmpty)
+        #expect(vm.jumpPort == "22")
+        #expect(vm.jumpUsername.isEmpty)
+        #expect(vm.jumpPassword.isEmpty)
+        #expect(vm.jumpKeyPath.isEmpty)
+        #expect(vm.jumpAuthChoice == .password)
+        #expect(vm.jumpLoginMode == .manual)
+        #expect(vm.jumpSelectedLoginSetID == nil)
+    }
 }
 
 private actor CallCounter {

@@ -17,11 +17,17 @@ struct ConnectionFormView: View {
     /// `KnownHostsSheet`'s throwaway store instance.
     let sessionList: SessionListViewModel
     /// Called right before `connect()`/`validateForEditSave()` whenever the
-    /// form is in Set mode (M10b/T3): fills username/authChoice/keyPath/
-    /// password from the selected login set so the existing validators
-    /// below see current, non-stale data — no separate Set-mode validation
-    /// path needed in `ConnectionViewModel`.
-    var resolveLoginSetForSubmit: () -> Void = {}
+    /// form is in Set mode (M10b/T3) for the TARGET login, or the jump is
+    /// enabled and ALSO in Set mode (M10c/T3): fills username/authChoice/
+    /// keyPath/password (target) and/or jumpUsername/jumpAuthChoice/
+    /// jumpKeyPath/jumpPassword (jump) from their respective selected login
+    /// sets, so the existing validators below see current, non-stale data —
+    /// no separate Set-mode validation path needed in `ConnectionViewModel`.
+    /// Returns `false` when a selected set no longer resolves (dangling
+    /// reference — spec §4a): the caller has already surfaced that failure
+    /// via `viewModel.showFailure`, and the button handlers below must NOT
+    /// proceed to connect/validate in that case.
+    var resolveLoginSetForSubmit: () -> Bool = { true }
     /// Edit mode "Save": persists the edited session (see `newSecret`'s
     /// empty-means-unchanged rule below), then leaves edit mode.
     var onSaveEdited: (StoredSession, String?) -> Void = { _, _ in }
@@ -38,6 +44,10 @@ struct ConnectionFormView: View {
     let onConnected: (any RemoteFileSystem) async -> Void
 
     @State private var showKeyImporter = false
+    /// Same as `showKeyImporter` but for the jump's own key file (M10c/T3) —
+    /// a separate flag because the two `fileImporter`s write to different
+    /// fields (`viewModel.keyPath` vs. `viewModel.jumpKeyPath`).
+    @State private var showJumpKeyImporter = false
     /// True while `onConnected` runs after a successful connect (M9d final
     /// review): the connect closure is async now (home-directory lookup), so
     /// the view model's `.idle` state alone would re-enable the Connect
@@ -76,6 +86,13 @@ struct ConnectionFormView: View {
         viewModel.loginMode == .set && viewModel.selectedLoginSetID == nil
     }
 
+    /// Same as `loginSetModeIncomplete`, for the jump's own login switcher
+    /// (M10c/T3) — the jump's Set mode with nothing picked yet also keeps
+    /// Connect/Save disabled, not just the target's.
+    private var jumpLoginSetModeIncomplete: Bool {
+        viewModel.jumpEnabled && viewModel.jumpLoginMode == .set && viewModel.jumpSelectedLoginSetID == nil
+    }
+
     /// The field whose validation failed most recently — gets the red outline.
     private var failedField: ConnectionViewModel.Field? {
         if case .failed(_, let field) = viewModel.state { return field }
@@ -97,6 +114,11 @@ struct ConnectionFormView: View {
         .fileImporter(isPresented: $showKeyImporter, allowedContentTypes: [.item]) { result in
             if case .success(let url) = result {
                 viewModel.keyPath = url.path(percentEncoded: false)
+            }
+        }
+        .fileImporter(isPresented: $showJumpKeyImporter, allowedContentTypes: [.item]) { result in
+            if case .success(let url) = result {
+                viewModel.jumpKeyPath = url.path(percentEncoded: false)
             }
         }
         .alert(
@@ -284,6 +306,119 @@ struct ConnectionFormView: View {
                     }
                 }
 
+                // Jump host block (M10c/T3, mockup section 2): a toggle below
+                // the target's own auth block; enabled, it reuses the SAME
+                // three-way login building blocks above (Set picker with
+                // "Manage logins…", or Manual username/auth/password/key),
+                // just bound to the jump's own fields instead of the
+                // target's — minus "Save as new login set" (spec §3: YAGNI
+                // for the jump).
+                let jumpLabel = L10n.string("form.jump.label", "Jump host")
+                FormRow(label: jumpLabel) {
+                    Toggle(
+                        L10n.string("form.jump.toggle", "Connect through an intermediate host (ProxyJump)"),
+                        isOn: $viewModel.jumpEnabled)
+                }
+
+                if viewModel.jumpEnabled {
+                    FormRow(label: "") {
+                        TextField(
+                            jumpLabel, text: $viewModel.jumpHost,
+                            prompt: Text(L10n.string("form.jump.host.placeholder", "bastion.example.com")))
+                    }
+                    .errorHighlight(failedField == .jumpHost)
+
+                    FormRow(label: "") {
+                        TextField(portLabel, text: $viewModel.jumpPort, prompt: Text(verbatim: ""))
+                    }
+                    .errorHighlight(failedField == .jumpPort)
+
+                    FormRow(label: loginModeLabel) {
+                        Picker(loginModeLabel, selection: $viewModel.jumpLoginMode) {
+                            Text(L10n.string("form.loginMode.set", "Login set"))
+                                .tag(ConnectionViewModel.LoginMode.set)
+                            Text(L10n.string("form.loginMode.manual", "Manual"))
+                                .tag(ConnectionViewModel.LoginMode.manual)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                    }
+
+                    if viewModel.jumpLoginMode == .set {
+                        FormRow(label: "") {
+                            HStack(spacing: 10) {
+                                Picker(loginModeLabel, selection: $viewModel.jumpSelectedLoginSetID) {
+                                    Text(L10n.string("form.selectLogin", "Select a login")).tag(UUID?.none)
+                                    ForEach(sessionList.loginSets) { set in
+                                        Text("\(set.name) — \(set.username)").tag(UUID?.some(set.id))
+                                    }
+                                }
+                                .labelsHidden()
+                                Button(L10n.string("form.manageLogins", "Manage logins…")) {
+                                    showLoginSetsSheet = true
+                                }
+                                .buttonStyle(.plain)
+                                .font(.caption)
+                                .foregroundStyle(DesignTokens.inkTertiary)
+                            }
+                        }
+                    } else {
+                        let jumpUsernameLabel = L10n.string("connection.field.username", "Username")
+                        FormRow(label: jumpUsernameLabel) {
+                            TextField(jumpUsernameLabel, text: $viewModel.jumpUsername, prompt: Text(verbatim: ""))
+                        }
+                        .errorHighlight(failedField == .jumpUsername)
+
+                        let jumpAuthMethodLabel = L10n.string("connection.field.authMethod", "Authentication")
+                        FormRow(label: jumpAuthMethodLabel) {
+                            Picker(jumpAuthMethodLabel, selection: $viewModel.jumpAuthChoice) {
+                                Text(L10n.string("connection.auth.password", "Password"))
+                                    .tag(ConnectionViewModel.AuthChoice.password)
+                                Text(L10n.string("connection.auth.privateKey", "SSH key"))
+                                    .tag(ConnectionViewModel.AuthChoice.privateKey)
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                        }
+
+                        if viewModel.jumpAuthChoice == .password {
+                            let jumpPasswordLabel = L10n.string("connection.auth.password", "Password")
+                            FormRow(label: jumpPasswordLabel) {
+                                SecureField(
+                                    jumpPasswordLabel, text: $viewModel.jumpPassword,
+                                    prompt: isEditMode
+                                        ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
+                                        : Text(verbatim: ""))
+                            }
+                            .errorHighlight(failedField == .jumpPassword)
+                        } else {
+                            let jumpKeyPathLabel = L10n.string("connection.field.keyPath", "Key path")
+                            FormRow(label: jumpKeyPathLabel) {
+                                HStack(spacing: 6) {
+                                    TextField(
+                                        jumpKeyPathLabel, text: $viewModel.jumpKeyPath,
+                                        prompt: Text(L10n.string(
+                                            "connection.field.keyPath.placeholder", "~/.ssh/id_ed25519")))
+                                    Button("…") { showJumpKeyImporter = true }
+                                        .buttonStyle(.polished)
+                                        .help(L10n.string("connection.field.keyPath.browseHelp", "Choose key file"))
+                                }
+                            }
+                            .errorHighlight(failedField == .jumpKeyPath)
+
+                            let jumpPassphraseLabel = L10n.string("connection.field.passphrase", "Passphrase (optional)")
+                            FormRow(label: jumpPassphraseLabel) {
+                                SecureField(
+                                    jumpPassphraseLabel, text: $viewModel.jumpPassword,
+                                    prompt: isEditMode
+                                        ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
+                                        : Text(verbatim: ""))
+                            }
+                            .errorHighlight(failedField == .jumpPassword)
+                        }
+                    }
+                }
+
                 if !isEditMode {
                     FormRow(label: "") {
                         Toggle(
@@ -332,7 +467,7 @@ struct ConnectionFormView: View {
                     }
                     .buttonStyle(.polished)
                     Button(L10n.string("common.save", "Save")) {
-                        resolveLoginSetForSubmit()
+                        guard resolveLoginSetForSubmit() else { return }
                         if let session = viewModel.validateForEditSave() {
                             onSaveEdited(session, viewModel.password.isEmpty ? nil : viewModel.password)
                         } else if case .failed(let message, _) = viewModel.state {
@@ -340,9 +475,9 @@ struct ConnectionFormView: View {
                         }
                     }
                     .buttonStyle(.polished)
-                    .disabled(loginSetModeIncomplete)
+                    .disabled(loginSetModeIncomplete || jumpLoginSetModeIncomplete)
                     Button(L10n.string("connection.saveAndConnect", "Save & connect")) {
-                        resolveLoginSetForSubmit()
+                        guard resolveLoginSetForSubmit() else { return }
                         if let session = viewModel.validateForEditSave() {
                             onSaveEdited(session, viewModel.password.isEmpty ? nil : viewModel.password)
                             onConnectEdited(session)
@@ -352,10 +487,10 @@ struct ConnectionFormView: View {
                     }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.polishedProminent)
-                    .disabled(loginSetModeIncomplete)
+                    .disabled(loginSetModeIncomplete || jumpLoginSetModeIncomplete)
                 } else {
                     Button(L10n.string("connection.connect", "Connect")) {
-                        resolveLoginSetForSubmit()
+                        guard resolveLoginSetForSubmit() else { return }
                         Task {
                             if let fs = await viewModel.connect() {
                                 isHandingOff = true
@@ -367,7 +502,7 @@ struct ConnectionFormView: View {
                         }
                     }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(isConnecting || isHandingOff || loginSetModeIncomplete)
+                    .disabled(isConnecting || isHandingOff || loginSetModeIncomplete || jumpLoginSetModeIncomplete)
                     .buttonStyle(.polishedProminent)
                 }
             }

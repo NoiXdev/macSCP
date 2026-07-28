@@ -15,6 +15,13 @@ public final class ConnectionViewModel {
         case password
         case saveName
         case keyPath
+        /// Jump-host fields (M10c/T3) — highlighted while the jump block is
+        /// enabled and one of its own values fails validation.
+        case jumpHost
+        case jumpPort
+        case jumpUsername
+        case jumpPassword
+        case jumpKeyPath
     }
 
     public enum State: Equatable {
@@ -86,6 +93,36 @@ public final class ConnectionViewModel {
     /// Name for the new set created by `saveAsNewLoginSet`; an empty value
     /// falls back to `SessionListViewModel.suggestedSetName(forUsername:)`.
     public var newLoginSetName: String = ""
+
+    /// Jump host block (M10c/T3, mockup section 2): an optional intermediate
+    /// hop the connection tunnels through. Off by default -- a brand-new
+    /// form connects directly, exactly as before this feature existed.
+    public var jumpEnabled: Bool = false
+    public var jumpHost: String = ""
+    public var jumpPort: String = "22"
+    public var jumpUsername: String = ""
+    /// Password (or key passphrase, in `.privateKey` mode) for the jump's
+    /// OWN manual credentials -- same dual role as `password` above.
+    public var jumpPassword: String = ""
+    public var jumpKeyPath: String = ""
+    public var jumpAuthChoice: AuthChoice = .password
+    /// The jump's own three-way login switcher (M10c/T3): the SAME building
+    /// blocks the target uses (`loginMode`/`selectedLoginSetID`), reused for
+    /// the jump's login instead of duplicating the mechanism. Unlike the
+    /// target, the jump offers no "save as new login set" -- YAGNI (spec §3).
+    public var jumpLoginMode: LoginMode = .manual
+    public var jumpSelectedLoginSetID: UUID?
+
+    /// The jump's existing MANUAL keychain slot when editing a session that
+    /// already had one (M10c/T3), remembered by `beginEditing` so
+    /// `validateForEditSave()` can reuse the SAME `secretID` in
+    /// `buildJumpSpec(existingSecretID:)` -- otherwise leaving `jumpPassword`
+    /// empty ("leave unchanged") would resolve against a freshly generated,
+    /// never-written slot instead of the one that actually holds the secret.
+    /// `nil` for a brand-new jump, or when the session had no jump / a
+    /// set-mode jump (no manual slot to preserve either way).
+    private var existingJumpSecretID: UUID?
+
     public private(set) var state: State = .idle
     /// `.new` while the form creates a connection; `.edit` while it edits a
     /// stored session (see `beginEditing`/`endEditing`).
@@ -125,6 +162,10 @@ public final class ConnectionViewModel {
                 return nil
             }
         }
+        if let jumpFailure = validateJump() {
+            state = jumpFailure
+            return nil
+        }
         if shouldSaveSession,
            saveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             state = .failed(
@@ -145,7 +186,8 @@ public final class ConnectionViewModel {
                 host: host.trimmingCharacters(in: .whitespacesAndNewlines),
                 port: portNumber,
                 username: username.trimmingCharacters(in: .whitespacesAndNewlines),
-                auth: auth
+                auth: auth,
+                jump: buildJumpConfig()
             )
             state = .connecting
             let fs = try await connector(config) { [weak self] candidate in
@@ -154,7 +196,9 @@ public final class ConnectionViewModel {
             state = .idle
             return fs
         } catch {
-            state = Self.failedState(for: error)
+            state = Self.failedState(
+                for: error, jumpEnabled: jumpEnabled,
+                jumpKeyPath: jumpKeyPath.trimmingCharacters(in: .whitespacesAndNewlines))
             return nil
         }
     }
@@ -234,6 +278,36 @@ public final class ConnectionViewModel {
         selectedLoginSetID = stored.loginSetID
         saveAsNewLoginSet = false
         newLoginSetName = ""
+        // Jump host (M10c/T3): a remembered `JumpSpec` puts the block
+        // straight into its own Set/Manual mode with that state prefilled --
+        // mirrors the target's own loginSetID handling above. The jump's
+        // password is likewise NEVER loaded from the keychain (same "empty
+        // means unchanged" rule); `existingJumpSecretID` is remembered so
+        // `validateForEditSave()` can reuse the SAME manual slot instead of
+        // orphaning it under a freshly generated one.
+        if let jump = stored.jump {
+            jumpEnabled = true
+            jumpHost = jump.host
+            jumpPort = String(jump.port)
+            jumpUsername = jump.username
+            jumpAuthChoice = jump.authKind == .privateKey ? .privateKey : .password
+            jumpKeyPath = jump.keyPath ?? ""
+            jumpPassword = ""
+            jumpLoginMode = jump.loginSetID != nil ? .set : .manual
+            jumpSelectedLoginSetID = jump.loginSetID
+            existingJumpSecretID = jump.loginSetID == nil ? jump.secretID : nil
+        } else {
+            jumpEnabled = false
+            jumpHost = ""
+            jumpPort = "22"
+            jumpUsername = ""
+            jumpAuthChoice = .password
+            jumpKeyPath = ""
+            jumpPassword = ""
+            jumpLoginMode = .manual
+            jumpSelectedLoginSetID = nil
+            existingJumpSecretID = nil
+        }
         mode = .edit(sessionID: stored.id)
         state = .idle
     }
@@ -263,6 +337,11 @@ public final class ConnectionViewModel {
     /// paths would make a later Save overwrite the wrong stored session,
     /// while the field values are owned by the caller (teardown/connect set
     /// them explicitly right after).
+    /// Jump fields reset entirely here rather than only in `endEditing()`
+    /// (M10c/T3, same sticky-toggle lesson M10b learned for `loginMode`/
+    /// `selectedLoginSetID` above): `jumpEnabled` is itself a MODE switch,
+    /// so a stale "on" from a previous edit must not survive into whatever
+    /// the caller (teardown/connectStored/import) fills in next.
     public func exitEditMode() {
         mode = .new
         selectedGroupID = nil
@@ -270,6 +349,16 @@ public final class ConnectionViewModel {
         selectedLoginSetID = nil
         saveAsNewLoginSet = false
         newLoginSetName = ""
+        jumpEnabled = false
+        jumpHost = ""
+        jumpPort = "22"
+        jumpUsername = ""
+        jumpPassword = ""
+        jumpKeyPath = ""
+        jumpAuthChoice = .password
+        jumpLoginMode = .manual
+        jumpSelectedLoginSetID = nil
+        existingJumpSecretID = nil
     }
 
     /// Validates the form for saving an edited session (password may be
@@ -305,6 +394,10 @@ public final class ConnectionViewModel {
                 return nil
             }
         }
+        if let jumpFailure = validateJump() {
+            state = jumpFailure
+            return nil
+        }
         state = .idle
         return StoredSession(
             id: sessionID,
@@ -319,10 +412,127 @@ public final class ConnectionViewModel {
             // instead of carrying its own credentials. `ContentView` fills
             // username/authChoice/keyPath from that set before this
             // validator runs, so the checks above still see valid data.
-            loginSetID: loginMode == .set ? selectedLoginSetID : nil)
+            loginSetID: loginMode == .set ? selectedLoginSetID : nil,
+            jump: buildJumpSpec(existingSecretID: existingJumpSecretID))
     }
 
-    static func failedState(for error: Error) -> State {
+    /// Validates the optional jump block (M10c/T3, spec §3) when
+    /// `jumpEnabled`: host non-empty, port numeric, and per `jumpLoginMode`
+    /// either a selected login set or manual username + password/key-path
+    /// (matching `jumpAuthChoice`) -- the exact same shape `connect()`
+    /// enforces for the target's own fields, just for the jump's. Returns
+    /// the `.failed` state to publish, or `nil` when the jump is off or
+    /// fully valid. Shared between `connect()` and `validateForEditSave()`
+    /// so both surfaces enforce identical rules.
+    ///
+    /// Set mode only checks that a set is actually SELECTED here -- like the
+    /// target's own `loginMode == .set` path, it trusts the App layer to
+    /// have already filled `jumpUsername`/`jumpAuthChoice`/`jumpKeyPath`/
+    /// `jumpPassword` from that set (`ContentView`'s `fillForm`-style
+    /// pattern) before calling into this validator; a DANGLING set
+    /// reference is an App-layer concern (spec §4a/§4c), not this
+    /// view model's -- it has no access to the actual `LoginSet` data.
+    private func validateJump() -> State? {
+        guard jumpEnabled else { return nil }
+        guard !jumpHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .failed(message: CoreL10n.string("core.connect.jumpHostEmpty"), field: .jumpHost)
+        }
+        guard Int(jumpPort.trimmingCharacters(in: .whitespaces)) != nil else {
+            return .failed(message: CoreL10n.string("core.connect.jumpPortNumeric"), field: .jumpPort)
+        }
+        switch jumpLoginMode {
+        case .set:
+            guard jumpSelectedLoginSetID != nil else {
+                return .failed(message: CoreL10n.string("core.connect.jumpSetRequired"), field: .jumpHost)
+            }
+        case .manual:
+            guard !jumpUsername.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return .failed(message: CoreL10n.string("core.connect.jumpUsernameEmpty"), field: .jumpUsername)
+            }
+            if jumpAuthChoice == .password {
+                guard !jumpPassword.isEmpty else {
+                    return .failed(
+                        message: CoreL10n.string("core.connect.jumpPasswordEmpty"), field: .jumpPassword)
+                }
+            } else {
+                guard !jumpKeyPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    return .failed(
+                        message: CoreL10n.string("core.connect.jumpKeyPathEmpty"), field: .jumpKeyPath)
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Builds `SSHConnectionConfig.Jump` for `connect()` from the jump's
+    /// manual-looking fields, or `nil` when the jump toggle is off. Built
+    /// unconditionally from `jumpUsername`/`jumpAuthChoice`/`jumpKeyPath`/
+    /// `jumpPassword` regardless of `jumpLoginMode` -- exactly like the
+    /// target's own `auth` above ignores `loginMode`, trusting the App layer
+    /// to have already filled those fields from the selected set in Set
+    /// mode. `validateJump()` has already guaranteed these are non-empty
+    /// where required, so this never needs to fail.
+    private func buildJumpConfig() -> SSHConnectionConfig.Jump? {
+        guard jumpEnabled else { return nil }
+        let auth: SSHConnectionConfig.AuthMethod
+        switch jumpAuthChoice {
+        case .password:
+            auth = .password(jumpPassword)
+        case .privateKey:
+            auth = .privateKey(
+                keyPath: jumpKeyPath.trimmingCharacters(in: .whitespacesAndNewlines),
+                passphrase: jumpPassword.isEmpty ? nil : jumpPassword)
+        }
+        return SSHConnectionConfig.Jump(
+            host: jumpHost.trimmingCharacters(in: .whitespacesAndNewlines),
+            port: Int(jumpPort.trimmingCharacters(in: .whitespaces)) ?? 22,
+            username: jumpUsername.trimmingCharacters(in: .whitespacesAndNewlines),
+            auth: auth)
+    }
+
+    /// Builds the jump's `StoredSession.JumpSpec` for `validateForEditSave()`,
+    /// or `nil` when the jump toggle is off. Public so `ContentView`'s
+    /// NEW-session save path (`SessionListViewModel.save(jump:jumpSecret:)`)
+    /// can build the identical spec this validator builds internally for the
+    /// EDIT-save path (`updateSession(_:newSecret:jumpSecret:)`), instead of
+    /// duplicating the field-mapping logic in the App layer.
+    ///
+    /// Set mode carries only `loginSetID` (no manual credentials -- the set
+    /// owns them, same as the target's own `loginSetID` branch above); manual
+    /// mode carries the manual-looking jump fields. `existingSecretID`, when
+    /// non-nil, is reused for a still-manual jump so an empty `jumpPassword`
+    /// ("leave unchanged") keeps resolving to the SAME keychain slot instead
+    /// of orphaning it under a freshly generated one -- `validateForEditSave`
+    /// passes its own remembered `existingJumpSecretID`; a brand-new
+    /// session's save path passes `nil` (there is no previous secret to
+    /// preserve).
+    public func buildJumpSpec(existingSecretID: UUID? = nil) -> StoredSession.JumpSpec? {
+        guard jumpEnabled else { return nil }
+        let trimmedHost = jumpHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        let portNumber = Int(jumpPort.trimmingCharacters(in: .whitespaces)) ?? 22
+        let authKind: StoredSession.AuthKind = jumpAuthChoice == .privateKey ? .privateKey : .password
+        let trimmedUsername = jumpUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedKeyPath = jumpKeyPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch jumpLoginMode {
+        case .set:
+            return StoredSession.JumpSpec(
+                host: trimmedHost, port: portNumber, username: trimmedUsername,
+                authKind: authKind,
+                keyPath: jumpAuthChoice == .privateKey ? trimmedKeyPath : nil,
+                loginSetID: jumpSelectedLoginSetID)
+        case .manual:
+            return StoredSession.JumpSpec(
+                host: trimmedHost, port: portNumber, username: trimmedUsername,
+                authKind: authKind,
+                keyPath: jumpAuthChoice == .privateKey ? trimmedKeyPath : nil,
+                loginSetID: nil,
+                secretID: existingSecretID ?? UUID())
+        }
+    }
+
+    static func failedState(
+        for error: Error, jumpEnabled: Bool = false, jumpKeyPath: String = ""
+    ) -> State {
         switch error {
         case SSHConnectionConfig.ConfigError.emptyHost:
             return .failed(message: CoreL10n.string("core.connect.emptyHost"), field: .host)
@@ -332,18 +542,50 @@ public final class ConnectionViewModel {
             return .failed(
                 message: String(format: CoreL10n.string("core.connect.invalidPort %@"), String(port)),
                 field: .port)
+        // Jump ConfigErrors (M10c/T3): defense-in-depth mirrors of
+        // `validateJump()` above -- a UI submission never reaches these
+        // (the form already validated), but `SSHConnectionConfig`'s own init
+        // re-checks unconditionally, so every one of its errors needs a
+        // mapping here too.
+        case SSHConnectionConfig.ConfigError.emptyJumpHost:
+            return .failed(message: CoreL10n.string("core.connect.jumpHostEmpty"), field: .jumpHost)
+        case SSHConnectionConfig.ConfigError.emptyJumpUsername:
+            return .failed(message: CoreL10n.string("core.connect.jumpUsernameEmpty"), field: .jumpUsername)
+        case SSHConnectionConfig.ConfigError.invalidJumpPort(let port):
+            return .failed(
+                message: String(format: CoreL10n.string("core.connect.invalidJumpPort %@"), String(port)),
+                field: .jumpPort)
+        // Jump auth failure (M10c/T1 review hand-off): highlights the JUMP
+        // password field instead of the target's -- `.authenticationFailed`
+        // above stays the target-only case.
+        case RemoteFSError.jumpAuthenticationFailed:
+            return .failed(message: CoreL10n.string("core.connect.jumpAuthFailed"), field: .jumpPassword)
         case RemoteFSError.authenticationFailed:
             return .failed(
                 message: CoreL10n.string("core.connect.authFailed"),
                 field: nil)
+        // Jump host refusing TCP forwarding (M10c/T1 review hand-off,
+        // finding 2): Citadel/NIOSSH surfaces this as a plain
+        // `connectionFailed(reason:)` whose text contains
+        // "channelSetupRejected" -- caught here, ONLY while a jump is
+        // configured, so a matching reason on a direct (no-jump) connection
+        // still falls through to the generic message below.
+        case RemoteFSError.connectionFailed(let reason)
+            where jumpEnabled && reason.contains("channelSetupRejected"):
+            return .failed(message: CoreL10n.string("core.connect.jumpTunnelRejected"), field: nil)
         case RemoteFSError.connectionFailed(let reason):
             return .failed(
                 message: String(format: CoreL10n.string("core.connect.connectionFailed %@"), reason),
                 field: nil)
         case SSHKeyError.fileNotFound(let path):
+            // Jump key vs. target key (M10c/T1 review hand-off, finding 1):
+            // both surface as the same bare `fileNotFound(path:)` -- compare
+            // the path against the jump's OWN key path to tell which one
+            // actually failed to load, so the form highlights the right row.
+            let isJumpKey = jumpEnabled && !jumpKeyPath.isEmpty && path == jumpKeyPath
             return .failed(
                 message: String(format: CoreL10n.string("core.connect.keyNotFound %@"), path),
-                field: .keyPath)
+                field: isJumpKey ? .jumpKeyPath : .keyPath)
         case SSHKeyError.passphraseRequired:
             return .failed(
                 message: CoreL10n.string("core.connect.keyPassphraseRequired"),
