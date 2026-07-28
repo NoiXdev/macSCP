@@ -44,7 +44,7 @@ T1 (Doppel-Bucket + destinationTabID, Core) → T2 (Menü-Modell, Core) → T3 (
   - `crossRemote: true` ⇒ Throttle-Auflösung: primär = `limiter?.uploadBucket`, sekundär = `limiter?.downloadBucket` (Richtung des Jobs ist `.upload` — Ziel-Schreiben; der Indikator zeigt Bernstein).
   - `TransferQueueViewModel.hasActiveItems(destinationTabID: UUID) -> Bool` — true, wenn ein nicht-terminales Item (queued/running/im Konflikt) diese Ziel-Tab-ID trägt.
 
-- [ ] **Step 1: Failing Tests.** In `TransferEngineTests.swift` (bestehende Muster der Datei für FS-Mocks/Bucket-Uhr übernehmen — Helper-Namen anpassen, Assertions unverändert):
+- [x] **Step 1: Failing Tests.** In `TransferEngineTests.swift` (bestehende Muster der Datei für FS-Mocks/Bucket-Uhr übernehmen — Helper-Namen anpassen, Assertions unverändert):
 
 ```swift
     @Test func copyFileConsumesBothThrottles() async throws {
@@ -88,9 +88,9 @@ In `TransferQueueViewModelTests.swift`:
     }
 ```
 
-- [ ] **Step 2: Rot beweisen.** `swift test --filter TransferEngineTests` und `--filter TransferQueueViewModelTests` → FAIL (Parameter existieren nicht).
+- [x] **Step 2: Rot beweisen.** `swift test --filter TransferEngineTests` und `--filter TransferQueueViewModelTests` → FAIL (Parameter existieren nicht).
 
-- [ ] **Step 3: Engine.** In `copyFile` den Parameter `secondaryThrottle: BandwidthBucket? = nil` ergänzen (nach `throttle`), Doku-Zeile: „Second bucket for cross-remote transfers (M8b): a remote→remote stream is real download AND upload on this machine's link, so every chunk pays both buckets; the pace follows the tighter one." Im Chunk-Loop nach dem bestehenden `try await throttle.consume(chunk.count)`:
+- [x] **Step 3: Engine.** In `copyFile` den Parameter `secondaryThrottle: BandwidthBucket? = nil` ergänzen (nach `throttle`), Doku-Zeile: „Second bucket for cross-remote transfers (M8b): a remote→remote stream is real download AND upload on this machine's link, so every chunk pays both buckets; the pace follows the tighter one." Im Chunk-Loop nach dem bestehenden `try await throttle.consume(chunk.count)`:
 
 ```swift
             if let secondaryThrottle {
@@ -98,7 +98,7 @@ In `TransferQueueViewModelTests.swift`:
             }
 ```
 
-- [ ] **Step 4: Queue.** `Job` um `let destinationTabID: UUID?` und `let crossRemote: Bool` erweitern; `Item` um `public let destinationTabID: UUID?` (für `hasActiveItems`; Anzeige unverändert). `enqueue`/`enqueueTree` um die Parameter mit Defaults erweitern (`enqueueTree` reicht beide an jedes expandierte File-Item weiter). Throttle-Auflösung beim Job-Start:
+- [x] **Step 4: Queue.** `Job` um `let destinationTabID: UUID?` und `let crossRemote: Bool` erweitern; `Item` um `public let destinationTabID: UUID?` (für `hasActiveItems`; Anzeige unverändert). `enqueue`/`enqueueTree` um die Parameter mit Defaults erweitern (`enqueueTree` reicht beide an jedes expandierte File-Item weiter). Throttle-Auflösung beim Job-Start:
 
 ```swift
         let throttle: BandwidthBucket?
@@ -128,9 +128,9 @@ In `TransferQueueViewModelTests.swift`:
 
 (Exakte `isTerminal`-Zugriffsform an `Item.Status` der Datei anpassen.)
 
-- [ ] **Step 5: Grün + volle Suite.** `swift test` → 376 + neue (Zahl im Report festhalten); Build sauber.
+- [x] **Step 5: Grün + volle Suite.** `swift test` → 376 + neue (Zahl im Report festhalten); Build sauber.
 
-- [ ] **Step 6: Commit.** `feat: pay both bandwidth buckets on cross-remote transfers`
+- [x] **Step 6: Commit.** `feat: pay both bandwidth buckets on cross-remote transfers`
 
 ---
 
@@ -147,7 +147,7 @@ In `TransferQueueViewModelTests.swift`:
   - `entries(for:side:crossSessionTargets:)` — neuer Parameter `crossSessionTargets: [CrossSessionTarget] = []`; die bestehende Zwei-Parameter-Form bleibt als Überladung/Default funktionsfähig (Bestandsaufrufer + Tests unverändert).
   - Regel: `transferToSession`-Einträge erscheinen genau dann, wenn auch `transferToOtherPane` erscheint (gleiches Übertragbarkeits-Gate), direkt NACH ihm, in Listen-Reihenfolge (= Strip-Reihenfolge, die die App liefert). Leere Liste ⇒ Rückgabe exakt wie heute.
 
-- [ ] **Step 1: Failing Tests** (an den Stil der bestehenden `BrowserContextMenuTests` angleichen):
+- [x] **Step 1: Failing Tests** (an den Stil der bestehenden `BrowserContextMenuTests` angleichen):
 
 ```swift
     @Test func crossSessionTargetsFollowTransferEntry() {
@@ -180,9 +180,9 @@ In `TransferQueueViewModelTests.swift`:
     }
 ```
 
-- [ ] **Step 2: Rot beweisen**, dann implementieren: Nach dem `transferToOtherPane`-Append `entries.append(contentsOf: crossSessionTargets.map { .transferToSession($0) })`. Doku-Kommentare aktualisieren (der `transferToOtherPane`-Kommentar sagt bereits „M8 adds per-session targets").
+- [x] **Step 2: Rot beweisen**, dann implementieren: Nach dem `transferToOtherPane`-Append `entries.append(contentsOf: crossSessionTargets.map { .transferToSession($0) })`. Doku-Kommentare aktualisieren (der `transferToOtherPane`-Kommentar sagt bereits „M8 adds per-session targets").
 
-- [ ] **Step 3: Grün + volle Suite + Commit.** `feat: add cross-session targets to the context-menu model`
+- [x] **Step 3: Grün + volle Suite + Commit.** `feat: add cross-session targets to the context-menu model`
 
 ---
 
@@ -196,9 +196,9 @@ In `TransferQueueViewModelTests.swift`:
 - Consumes: `TransferEngine.copyFile(..., secondaryThrottle:)` (T1), bestehende Docker-Suite-Helfer (Connect-Config testuser/testpass, Port-Konstante, Cleanup-Muster).
 - Produces: zweiter sshd-Dienst auf **127.0.0.1:2223** (gleiches Image-PIN `lscr.io/linuxserver/openssh-server:10.3_p1-r0-ls230`, Container `macscp-test-sshd-2`, gleiche env, gleiche `sshd_config.d`-Mounts, EIGENES leeres Seed-Verzeichnis `./seed2:/data/seed:ro` — Verzeichnis mit `.gitkeep` anlegen).
 
-- [ ] **Step 1: Compose erweitern** (Service `sshd2` als Kopie von `sshd` mit `container_name: macscp-test-sshd-2`, `ports: ["2223:2222"]`, `./seed2`-Mount). Rig aus dem HAUPT-Checkout neu erzeugen — einmalig ist hier `docker compose -f docker/test-server/compose.yml up -d` nötig (neuer Service; Host-Key-Rotation des ersten Containers vermeiden: `up -d` erzeugt nur den NEUEN Service neu, wenn der alte unverändert läuft — mit `docker compose ... up -d --no-recreate` absichern). Beide Container laufen lassen.
+- [x] **Step 1: Compose erweitern** (Service `sshd2` als Kopie von `sshd` mit `container_name: macscp-test-sshd-2`, `ports: ["2223:2222"]`, `./seed2`-Mount). Rig aus dem HAUPT-Checkout neu erzeugen — einmalig ist hier `docker compose -f docker/test-server/compose.yml up -d` nötig (neuer Service; Host-Key-Rotation des ersten Containers vermeiden: `up -d` erzeugt nur den NEUEN Service neu, wenn der alte unverändert läuft — mit `docker compose ... up -d --no-recreate` absichern). Beide Container laufen lassen.
 
-- [ ] **Step 2: Failing gated Test** (in der bestehenden Docker-Suite, gleiche Gate-Konvention):
+- [x] **Step 2: Failing gated Test** (in der bestehenden Docker-Suite, gleiche Gate-Konvention):
 
 ```swift
     @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSCP_ITEST"] == "1"))
@@ -217,9 +217,9 @@ In `TransferQueueViewModelTests.swift`:
 
 Rot beweisen heißt hier: der Test scheitert VOR Step 1 (nur ein Server) — Reihenfolge im Task: Test zuerst schreiben, `MACSCP_ITEST=1 swift test --filter <name>` gegen das alte Rig → FAIL (connection refused 2223), dann Compose-Step, dann grün.
 
-- [ ] **Step 3: Grün beweisen.** `MACSCP_ITEST=1 swift test` KOMPLETT (alle gated Suiten, beide Container) + ungated `swift test`.
+- [x] **Step 3: Grün beweisen.** `MACSCP_ITEST=1 swift test` KOMPLETT (alle gated Suiten, beide Container) + ungated `swift test`.
 
-- [ ] **Step 4: Commit.** `feat: add a second test server and prove remote-to-remote streaming`
+- [x] **Step 4: Commit.** `feat: add a second test server and prove remote-to-remote streaming`
 
 ---
 
@@ -243,12 +243,12 @@ Rot beweisen heißt hier: der Test scheitert VOR Step 1 (nur ein Server) — Rei
 4. **Schließen-Warnung:** `requestClose` fragt zusätzlich, ob IRGENDEIN anderer Tab `hasActiveItems(destinationTabID: tab.id)` meldet; dann Confirm mit eigenem Text `tabs.close.incomingTransfers` („Other tabs are streaming to this session; closing cancels those transfers." / „Andere Tabs übertragen gerade zu dieser Session; Schließen bricht diese Übertragungen ab.") — beide Gründe können gemeinsam zutreffen (Texte kombinieren: eigener + eingehender Hinweis untereinander).
 5. Keys EN/DE: `menu.transfer.submenu` „Transfer"/„Übertragen", `menu.transfer.toSession` „To “%@”"/„Zu „%@"", `tabs.close.incomingTransfers` (siehe oben).
 
-- [ ] **Step 1:** Brücke + Durchreichung; **Step 2:** Handler; **Step 3:** Schließen-Warnung; **Step 4:** Katalog-Keys + Gegenprobe (jeder Key in BEIDEN Dateien); **Step 5:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test` (Stand T3); **Step 6:** Commit `feat: transfer selections to other session tabs from the context menu`.
+- [x] **Step 1:** Brücke + Durchreichung; **Step 2:** Handler; **Step 3:** Schließen-Warnung; **Step 4:** Katalog-Keys + Gegenprobe (jeder Key in BEIDEN Dateien); **Step 5:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test` (Stand T3); **Step 6:** Commit `feat: transfer selections to other session tabs from the context menu`.
 
 ---
 
 ### Task 5: Abschluss-Verifikation (Koordinator)
 
-- [ ] Gated Suiten mit BEIDEN Containern: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün, zero skips.
-- [ ] Visueller Smoke (Dev-Wrapper; Maintainer testet ggf. selbst — Checkliste übergeben): Submenü zeigt nur verbundene andere Tabs (Formular-Tab nie, eigener nie) mit Pfad-Untertitel; lokale Auswahl → Ziel-Tab-Remote (Queue im Quell-Tab, Ziel-Pane refresht); Remote-Auswahl → Server-zu-Server (docker exec-Beweis auf Container 2, kein lokales Tempfile); Drossel: Remote→Remote bei Limit X drückt BEIDE Richtungen (Rate ≈ min); Ordner-Transfer cross-session inkl. Konflikt-Sheet im QUELL-Tab; Ziel-Tab schließen während Stream → Warn-Text, nach Bestätigung fehlgeschlagener Transfer im Quell-Tab (kein Hänger); ohne zweiten Tab Menü-Optik wie heute; Regressionen: transferToOtherPane, M7b-Dialoge.
-- [ ] Plan-Checkboxen, Ledger, Opus-Whole-Branch-Final-Review (Base = Commit vor T1), Fixes, Push develop, CI, Rig `stop`, Memory-Update, Milestone-Zusammenfassung (+ Frage: Release v1.1.0 jetzt taggen — M7+M8 komplett).
+- [x] Gated Suiten mit BEIDEN Containern: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün, zero skips (386 vor / 389 nach den Final-Review-Fixes).
+- [ ] Visueller Smoke — **an den Maintainer delegiert** (Wrapper läuft; Checkliste in der Milestone-Zusammenfassung): Submenü zeigt nur verbundene andere Tabs (Formular-Tab nie, eigener nie) mit Pfad-Untertitel; lokale Auswahl → Ziel-Tab-Remote (Queue im Quell-Tab, Ziel-Pane refresht); Remote-Auswahl → Server-zu-Server (docker exec-Beweis auf Container 2, kein lokales Tempfile); Drossel: Remote→Remote bei Limit X drückt BEIDE Richtungen (Rate ≈ min); Ordner-Transfer cross-session inkl. Konflikt-Sheet im QUELL-Tab; Ziel-Tab schließen während Stream → Warn-Text, nach Bestätigung fehlgeschlagener Transfer im Quell-Tab (kein Hänger); ohne zweiten Tab Menü-Optik wie heute; Regressionen: transferToOtherPane, M7b-Dialoge.
+- [x] Plan-Checkboxen, Ledger, Opus-Whole-Branch-Final-Review (Base = Commit vor T1; „No" mit einem Critical → Fix-Commit d147ed5 → Re-Review „Ready to merge: Yes"), Fixes, Push develop, CI, Rig `stop`, Memory-Update, Milestone-Zusammenfassung (+ Frage: Release v1.1.0 jetzt taggen — M7+M8 komplett).
