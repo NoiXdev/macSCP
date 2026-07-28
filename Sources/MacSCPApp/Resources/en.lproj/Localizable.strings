@@ -198,3 +198,9 @@
 "menu.newTab" = "New Tab";
 "menu.closeTab" = "Close Tab";
 "menu.selectTab" = "Tab %lld";
+
+/* Cross-session transfer (M8b/T4) */
+"menu.transfer.toSession" = "To “%@”";
+
+/* Tab close warning: incoming cross-session transfers (M8b/T4) */
+"tabs.close.incomingTransfers" = "Other tabs are streaming to this session; closing cancels those transfers.";

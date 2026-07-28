@@ -21,12 +21,20 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// at every call site instead of an implicit side effect of the wiring.
     let side: BrowserPaneSide
     var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)? = nil
+    /// Cross-session transfer targets (M8b/T4) — evaluated fresh on EVERY
+    /// `menuNeedsUpdate` call, not cached here, so a menu opened later in the
+    /// session always shows the current set of other tabs and their current
+    /// remote directories (menu build freezes the path into `CrossSessionTarget`
+    /// at that moment — Spec §5.3). `nil` (the local pane's default before
+    /// `ContentView` wires it) yields the pre-M8b flat "Transfer" entry.
+    var crossSessionTargets: (() -> [CrossSessionTarget])? = nil
 
     func makeCoordinator() -> Coordinator {
         let coordinator = Coordinator(onOpen: onOpen, onSelect: onSelect, side: side)
         coordinator.onOpenFile = onOpenFile
         coordinator.pasteboardWriter = pasteboardWriter
         coordinator.onMenuAction = onMenuAction
+        coordinator.crossSessionTargets = crossSessionTargets
         return coordinator
     }
 
@@ -91,6 +99,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.onOpenFile = onOpenFile
         context.coordinator.pasteboardWriter = pasteboardWriter
         context.coordinator.onMenuAction = onMenuAction
+        context.coordinator.crossSessionTargets = crossSessionTargets
         guard let table = nsView.documentView as? NSTableView else { return }
         if itemsChanged {
             // reloadData() clears the selection without a delegate call —
@@ -124,6 +133,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         var onOpenFile: ((RemoteFileItem) -> Void)?
         var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)?
         var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)?
+        var crossSessionTargets: (() -> [CrossSessionTarget])?
         let side: BrowserPaneSide
         weak var table: NSTableView?
         var suppressSelectionCallback = false
@@ -254,33 +264,74 @@ struct RemoteFileTableView: NSViewRepresentable {
                 }
             }
             menu.removeAllItems()
-            for entry in BrowserContextMenu.entries(for: selection, side: side) {
+            let entries = BrowserContextMenu.entries(
+                for: selection, side: side, crossSessionTargets: crossSessionTargets?() ?? [])
+            // `.transferToOtherPane` is immediately followed (per the Core
+            // model, `BrowserContextMenu.entries`) by zero or more
+            // `.transferToSession` entries — those join the SAME "Transfer"
+            // submenu rather than becoming a second parent item (M8b/T4
+            // requirement 2). Consumed together here; without any cross-
+            // session targets this produces the exact same single-item
+            // submenu as before M8b (byte-identical flat structure).
+            var index = 0
+            while index < entries.count {
+                let entry = entries[index]
+                if entry == .transferToOtherPane {
+                    var targets: [CrossSessionTarget] = []
+                    index += 1
+                    while index < entries.count, case .transferToSession(let target) = entries[index] {
+                        targets.append(target)
+                        index += 1
+                    }
+                    menu.addItem(makeTransferItem(selection: selection, targets: targets))
+                    continue
+                }
                 if entry == .delete, menu.items.isEmpty == false {
                     menu.addItem(.separator())
                 }
                 menu.addItem(makeItem(entry, selection: selection))
+                index += 1
             }
+        }
+
+        /// Builds the single "Transfer" submenu: the existing "to the other
+        /// pane" item first, then — only when `targets` is non-empty — a
+        /// separator followed by one item per cross-session target, titled
+        /// via `menu.transfer.toSession` with the target's remote path as
+        /// the item's subtitle (M8b/T4 requirement 2).
+        private func makeTransferItem(
+            selection: [RemoteFileItem], targets: [CrossSessionTarget]
+        ) -> NSMenuItem {
+            let parent = NSMenuItem(
+                title: L10n.string("menu.transfer", "Transfer"), action: nil, keyEquivalent: "")
+            let submenu = NSMenu()
+            submenu.addItem(actionItem(
+                title: L10n.string("menu.transfer.otherPane", "To the other pane"),
+                entry: .transferToOtherPane, selection: selection))
+            if !targets.isEmpty {
+                submenu.addItem(.separator())
+                for target in targets {
+                    let item = actionItem(
+                        title: String(
+                            format: L10n.string("menu.transfer.toSession", "To “%@”"), target.title),
+                        entry: .transferToSession(target), selection: selection)
+                    item.subtitle = target.remotePath
+                    submenu.addItem(item)
+                }
+            }
+            parent.submenu = submenu
+            return parent
         }
 
         private func makeItem(_ entry: BrowserMenuEntry, selection: [RemoteFileItem]) -> NSMenuItem {
             switch entry {
-            case .transferToOtherPane:
-                // Submenu now with a single target — M8 hooks per-session
-                // targets into the same submenu.
-                let parent = NSMenuItem(
-                    title: L10n.string("menu.transfer", "Transfer"), action: nil, keyEquivalent: "")
-                let submenu = NSMenu()
-                submenu.addItem(actionItem(
-                    title: L10n.string("menu.transfer.otherPane", "To the other pane"),
-                    entry: entry, selection: selection))
-                parent.submenu = submenu
-                return parent
-            case .transferToSession:
-                // Wired in M8b/T4 (the bridge passes no targets yet, so this
-                // arm is unreachable today). Degrade gracefully rather than
-                // crash if that invariant is ever broken early: debug builds
-                // assert, release builds render a disabled placeholder.
-                assertionFailure("transferToSession not yet wired — M8b/T4")
+            case .transferToOtherPane, .transferToSession:
+                // Both consumed inline by `menuNeedsUpdate` (folded into one
+                // "Transfer" submenu via `makeTransferItem`) — never reaches
+                // here. Degrade gracefully rather than crash if that
+                // invariant is ever broken: debug builds assert, release
+                // builds render a disabled placeholder.
+                assertionFailure("transferToOtherPane/transferToSession are handled in menuNeedsUpdate")
                 let placeholder = NSMenuItem(
                     title: L10n.string("menu.transfer", "Transfer"),
                     action: nil, keyEquivalent: "")

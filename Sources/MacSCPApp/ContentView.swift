@@ -305,8 +305,7 @@ struct ContentView: View {
                 closeRequest = nil
             }
         } message: {
-            Text(L10n.string(
-                "tabs.close.activeTransfers", "Active transfers in this tab will be canceled."))
+            Text(closeRequest.map(closeWarningMessage(for:)) ?? "")
         }
         // Session actions live in the window's native toolbar (M5f/T5) —
         // attached at the outer container so it belongs to the window, not
@@ -395,8 +394,10 @@ struct ContentView: View {
                                     case .transferToOtherPane:
                                         transferSelection(
                                             selection, from: .local, in: tab, session: session)
-                                    case .transferToSession:
-                                        break   // Wired in M8b/T4.
+                                    case .transferToSession(let target):
+                                        transferToSession(
+                                            selection, from: .local, target: target,
+                                            in: tab, session: session)
                                     case .copyPath:
                                         copyPaths(of: selection)
                                     case .openInEditor:
@@ -404,7 +405,8 @@ struct ContentView: View {
                                     case .rename, .infoAndPermissions, .newFolder, .delete:
                                         break   // handled inside BrowserPane, never forwarded
                                     }
-                                }
+                                },
+                                crossSessionTargets: { crossSessionTargets(for: tab) }
                             )
                             .frame(minWidth: 280)
 
@@ -430,8 +432,10 @@ struct ContentView: View {
                                     case .transferToOtherPane:
                                         transferSelection(
                                             selection, from: .remote, in: tab, session: session)
-                                    case .transferToSession:
-                                        break   // Wired in M8b/T4.
+                                    case .transferToSession(let target):
+                                        transferToSession(
+                                            selection, from: .remote, target: target,
+                                            in: tab, session: session)
                                     case .openInEditor:
                                         if let item = selection.first {
                                             openInEditor(item, in: tab, session: session)
@@ -441,7 +445,8 @@ struct ContentView: View {
                                     case .rename, .infoAndPermissions, .newFolder, .delete:
                                         break   // handled inside BrowserPane, never forwarded
                                     }
-                                }
+                                },
+                                crossSessionTargets: { crossSessionTargets(for: tab) }
                             )
                             .frame(minWidth: 280)
                         }
@@ -627,15 +632,41 @@ struct ContentView: View {
         activate(tabsModel.tabs[index].id)
     }
 
-    /// Tab close entry point (strip ✕, ⌘W): a tab with active transfers
-    /// requires destructive confirmation (`closeRequest`, bound to the
-    /// confirmation dialog above); an idle tab closes immediately.
+    /// Tab close entry point (strip ✕, ⌘W): a tab with active transfers OF
+    /// ITS OWN, or that is currently the DESTINATION of another tab's
+    /// cross-session transfer (M8b/T4), requires destructive confirmation
+    /// (`closeRequest`, bound to the confirmation dialog above); an
+    /// otherwise-idle tab closes immediately.
     private func requestClose(_ tab: SessionTab) {
-        if tab.transferQueue.isActive {
+        let hasIncomingTransfers = tabsModel.tabs.contains {
+            $0.id != tab.id && $0.transferQueue.hasActiveItems(destinationTabID: tab.id)
+        }
+        if tab.transferQueue.isActive || hasIncomingTransfers {
             closeRequest = tab
         } else {
             Task { await performClose(tab) }
         }
+    }
+
+    /// Combined close-warning text (M8b/T4): a tab can have its OWN active
+    /// transfers, be the destination of ANOTHER tab's cross-session
+    /// transfer, or both — both reasons are shown (one per line) when they
+    /// co-occur, so the user isn't left guessing which one applies.
+    private func closeWarningMessage(for tab: SessionTab) -> String {
+        var lines: [String] = []
+        if tab.transferQueue.isActive {
+            lines.append(L10n.string(
+                "tabs.close.activeTransfers", "Active transfers in this tab will be canceled."))
+        }
+        let hasIncomingTransfers = tabsModel.tabs.contains {
+            $0.id != tab.id && $0.transferQueue.hasActiveItems(destinationTabID: tab.id)
+        }
+        if hasIncomingTransfers {
+            lines.append(L10n.string(
+                "tabs.close.incomingTransfers",
+                "Other tabs are streaming to this session; closing cancels those transfers."))
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// Closes a tab: tab-local teardown first, then either removal from the
@@ -994,6 +1025,79 @@ struct ContentView: View {
                     destination: session.localFS,
                     destinationDirectory: session.local.currentPath,
                     onCompleted: { [weak local = session.local] in await local?.refresh() })
+            }
+        }
+    }
+
+    /// Cross-session transfer targets for `tab`'s context menu (M8b/T4):
+    /// every OTHER tab that currently has a live session, in tab-strip
+    /// order, mapped to its remote pane's CURRENT directory. Called fresh
+    /// from inside `menuNeedsUpdate` on every menu open (never cached) —
+    /// the menu itself freezes the resulting path into `CrossSessionTarget`
+    /// at build time (Spec §5.3), so staleness is bounded to "between two
+    /// menu opens", never longer.
+    private func crossSessionTargets(for tab: SessionTab) -> [CrossSessionTarget] {
+        tabsModel.tabs.compactMap { other in
+            guard other.id != tab.id, let session = other.session else { return nil }
+            return CrossSessionTarget(
+                id: other.id, title: other.displayTitle, remotePath: session.remote.currentPath)
+        }
+    }
+
+    /// Context-menu transfer to ANOTHER tab's remote (M8b/T4): same
+    /// per-item enqueue as `transferSelection`, but the destination is
+    /// `target`'s remote file system/directory (frozen at menu-build time)
+    /// instead of this tab's own other pane. Always enqueued on the SOURCE
+    /// tab's queue (`tab.transferQueue`), regardless of which tab owns the
+    /// destination. If the target tab disconnected between menu build and
+    /// click, `targetTab.session` is `nil` — enqueue is silently skipped, no
+    /// crash (Spec §5.3; the queue only surfaces an error for already
+    /// in-flight jobs, not for a destination that was never enqueued).
+    private func transferToSession(
+        _ selection: [RemoteFileItem], from side: BrowserPaneSide, target: CrossSessionTarget,
+        in tab: SessionTab, session: BrowserSession
+    ) {
+        guard let targetTab = tabsModel.tabs.first(where: { $0.id == target.id }),
+              let targetSession = targetTab.session
+        else { return }
+        let queue = tab.transferQueue
+        for item in selection where item.kind != .symlink {
+            switch (side, item.kind) {
+            case (.local, .directory):
+                queue.enqueueTree(
+                    directoryName: item.name, direction: .upload,
+                    source: session.localFS, sourceDirectory: item.path,
+                    destination: targetSession.remoteFS,
+                    destinationDirectory: target.remotePath,
+                    onCompleted: { [weak remote = targetSession.remote] in await remote?.refresh() },
+                    destinationTabID: target.id)
+            case (.local, _):
+                queue.enqueue(
+                    fileName: item.name, direction: .upload,
+                    source: session.localFS, sourcePath: item.path,
+                    destination: targetSession.remoteFS,
+                    destinationDirectory: target.remotePath,
+                    onCompleted: { [weak remote = targetSession.remote] in await remote?.refresh() },
+                    destinationTabID: target.id)
+            case (.remote, .directory):
+                // Remote→remote (crossRemote): direction stays `.upload` —
+                // the destination is always a remote file system here, the
+                // "download" branch only exists for remote→LOCAL transfers.
+                queue.enqueueTree(
+                    directoryName: item.name, direction: .upload,
+                    source: session.remoteFS, sourceDirectory: item.path,
+                    destination: targetSession.remoteFS,
+                    destinationDirectory: target.remotePath,
+                    onCompleted: { [weak remote = targetSession.remote] in await remote?.refresh() },
+                    destinationTabID: target.id, crossRemote: true)
+            case (.remote, _):
+                queue.enqueue(
+                    fileName: item.name, direction: .upload,
+                    source: session.remoteFS, sourcePath: item.path,
+                    destination: targetSession.remoteFS,
+                    destinationDirectory: target.remotePath,
+                    onCompleted: { [weak remote = targetSession.remote] in await remote?.refresh() },
+                    destinationTabID: target.id, crossRemote: true)
             }
         }
     }

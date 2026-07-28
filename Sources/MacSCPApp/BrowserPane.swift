@@ -21,6 +21,9 @@ struct BrowserPane: View {
     var onOpenFile: ((RemoteFileItem) -> Void)? = nil
     var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)? = nil
     var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)? = nil
+    /// Cross-session transfer targets for the context menu (M8b/T4) —
+    /// forwarded verbatim to `RemoteFileTableView`; see its doc comment.
+    var crossSessionTargets: (() -> [CrossSessionTarget])? = nil
 
     @State private var isDropTargeted = false
     // Sheet/alert state for the four dialogs the pane handles internally
@@ -90,7 +93,8 @@ struct BrowserPane: View {
                         case .delete: deleteRequest = selection
                         default: onMenuAction?(entry, selection)
                         }
-                    }
+                    },
+                    crossSessionTargets: crossSessionTargets
                 )
                 .allowsHitTesting(viewModel.state == .loaded)
 
