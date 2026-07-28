@@ -472,6 +472,40 @@ struct ConnectionViewModelTests {
         #expect(vm.jumpLoginMode == .manual)
         #expect(vm.jumpSelectedLoginSetID == nil)
     }
+
+    /// Pins the public `clearJumpFields()` primitive directly (App-layer
+    /// re-review F-1): `ContentView`'s `connect(in:stored:)` calls this on
+    /// BOTH early-return failure paths (a dangling target login set, and a
+    /// jump-only missing set with no jump on the session) so a jump block
+    /// typed for a DIFFERENT session's form can never survive into the next
+    /// one. `exitEditMode()` already exercises this transitively via
+    /// `jumpFieldsResetOnExitEditMode` above; this test calls the method
+    /// directly, independent of edit mode, to prove it resets every jump
+    /// field on its own.
+    @Test @MainActor func clearJumpFieldsResetsEverything() {
+        let vm = makeVM()
+        vm.jumpEnabled = true
+        vm.jumpHost = "bastion.example.com"
+        vm.jumpPort = "2200"
+        vm.jumpUsername = "bastion-user"
+        vm.jumpAuthChoice = .privateKey
+        vm.jumpKeyPath = "/k"
+        vm.jumpPassword = "secret"
+        vm.jumpLoginMode = .set
+        vm.jumpSelectedLoginSetID = UUID()
+
+        vm.clearJumpFields()
+
+        #expect(vm.jumpEnabled == false)
+        #expect(vm.jumpHost.isEmpty)
+        #expect(vm.jumpPort == "22")
+        #expect(vm.jumpUsername.isEmpty)
+        #expect(vm.jumpPassword.isEmpty)
+        #expect(vm.jumpKeyPath.isEmpty)
+        #expect(vm.jumpAuthChoice == .password)
+        #expect(vm.jumpLoginMode == .manual)
+        #expect(vm.jumpSelectedLoginSetID == nil)
+    }
 }
 
 private actor CallCounter {

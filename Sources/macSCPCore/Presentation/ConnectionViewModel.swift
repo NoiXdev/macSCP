@@ -307,16 +307,7 @@ public final class ConnectionViewModel {
             jumpSelectedLoginSetID = jump.loginSetID
             existingJumpSecretID = jump.loginSetID == nil ? jump.secretID : nil
         } else {
-            jumpEnabled = false
-            jumpHost = ""
-            jumpPort = "22"
-            jumpUsername = ""
-            jumpAuthChoice = .password
-            jumpKeyPath = ""
-            jumpPassword = ""
-            jumpLoginMode = .manual
-            jumpSelectedLoginSetID = nil
-            existingJumpSecretID = nil
+            clearJumpFields()
         }
         mode = .edit(sessionID: stored.id)
         state = .idle
@@ -359,13 +350,24 @@ public final class ConnectionViewModel {
         selectedLoginSetID = nil
         saveAsNewLoginSet = false
         newLoginSetName = ""
+        clearJumpFields()
+    }
+
+    /// Resets every jump-related field to its blank "no jump" state: the
+    /// jump toggle, its host/port/login fields, and the internal
+    /// existing-secret bookkeeping. The single source of truth for "no jump
+    /// block survives here" — used by `exitEditMode()`, `beginEditing()`'s
+    /// no-jump branch, and (via `ContentView`'s `applyRawJumpFallback`) both
+    /// of `connect(in:stored:)`'s early-return failure paths, so a jump
+    /// block typed for one session's form can never leak into another's.
+    public func clearJumpFields() {
         jumpEnabled = false
         jumpHost = ""
         jumpPort = "22"
         jumpUsername = ""
-        jumpPassword = ""
-        jumpKeyPath = ""
         jumpAuthChoice = .password
+        jumpKeyPath = ""
+        jumpPassword = ""
         jumpLoginMode = .manual
         jumpSelectedLoginSetID = nil
         existingJumpSecretID = nil
@@ -501,7 +503,9 @@ public final class ConnectionViewModel {
     /// target's own `auth` above ignores `loginMode`, trusting the App layer
     /// to have already filled those fields from the selected set in Set
     /// mode. `validateJump()` has already guaranteed these are non-empty
-    /// where required, so this never needs to fail.
+    /// where required, so this never needs to fail -- true because this
+    /// method's only caller is `connect()`, which always validates with
+    /// `requireSecret: true` (see `validateJump`'s own doc comment).
     private func buildJumpConfig() -> SSHConnectionConfig.Jump? {
         guard jumpEnabled else { return nil }
         let auth: SSHConnectionConfig.AuthMethod

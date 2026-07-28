@@ -1374,6 +1374,11 @@ struct ContentView: View {
                 form.password = ""
                 form.loginMode = .manual
                 form.selectedLoginSetID = nil
+                // A stale jump block from a DIFFERENT session's form must not
+                // survive this early return (F-1 fix): the jump `do`/`catch`
+                // below is never reached on this path, so apply the same
+                // raw-jump fallback it would have applied.
+                applyRawJumpFallback(form, from: stored)
                 form.showFailure(message: L10n.string(
                     "loginSets.missingSet",
                     "The stored login for this connection was not found. Choose a login or enter credentials."))
@@ -1402,34 +1407,17 @@ struct ContentView: View {
                         form.jumpPassword = resolvedJump.secret ?? ""
                     }
                 } else {
-                    form.jumpEnabled = false
-                    form.jumpHost = ""
-                    form.jumpPort = "22"
-                    form.jumpUsername = ""
-                    form.jumpAuthChoice = .password
-                    form.jumpKeyPath = ""
-                    form.jumpPassword = ""
-                    form.jumpLoginMode = .manual
-                    form.jumpSelectedLoginSetID = nil
+                    form.clearJumpFields()
                 }
             } catch is LoginResolveError {
                 // Missing set (jump only): the target fields resolved above
                 // stay untouched — only the jump falls back to its raw
                 // manual-looking values, and `field: .jumpHost` (not the
-                // target's `.host`) highlights the right row.
-                if let jump = stored.jump {
-                    form.jumpEnabled = true
-                    form.jumpHost = jump.host
-                    form.jumpPort = String(jump.port)
-                    form.jumpUsername = jump.username
-                    form.jumpAuthChoice = jump.authKind == .privateKey ? .privateKey : .password
-                    form.jumpKeyPath = jump.keyPath ?? ""
-                    form.jumpPassword = ""
-                    form.jumpLoginMode = .manual
-                    form.jumpSelectedLoginSetID = nil
-                } else {
-                    form.jumpEnabled = false
-                }
+                // target's `.host`) highlights the right row. Shares the
+                // fallback with the target catch above (F-1 fix) so both
+                // early-return paths leave the jump block in the identical,
+                // fully-reset-or-fully-raw state.
+                applyRawJumpFallback(form, from: stored)
                 form.showFailure(
                     message: L10n.string(
                         "loginSets.missingSet",
@@ -1452,6 +1440,26 @@ struct ContentView: View {
                 attachAuditRecorder(
                     to: tab, sessionID: stored.id, host: stored.host, username: stored.username)
             }
+        }
+    }
+
+    /// Fills the jump block from the session's own raw JumpSpec values (no set
+    /// resolution), or clears it entirely when the session has no jump. Used by
+    /// BOTH early-return failure paths so a stale jump block from a previous form
+    /// state can never survive into a different session's connect.
+    private func applyRawJumpFallback(_ form: ConnectionViewModel, from stored: StoredSession) {
+        if let jump = stored.jump {
+            form.jumpEnabled = true
+            form.jumpHost = jump.host
+            form.jumpPort = String(jump.port)
+            form.jumpUsername = jump.username
+            form.jumpAuthChoice = jump.authKind == .privateKey ? .privateKey : .password
+            form.jumpKeyPath = jump.keyPath ?? ""
+            form.jumpPassword = ""
+            form.jumpLoginMode = .manual
+            form.jumpSelectedLoginSetID = nil
+        } else {
+            form.clearJumpFields()
         }
     }
 
