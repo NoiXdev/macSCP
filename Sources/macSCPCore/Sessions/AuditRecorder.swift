@@ -52,7 +52,7 @@ public struct AuditRecorder: Sendable {
             } else if item.destinationTabID != nil {
                 let target = targetTitle ?? "unknown session"
                 store.append(
-                    AuditEvent(kind: .crossSessionTransfer, detail: "to \"\(target)\": \(item.fileName)"),
+                    AuditEvent(kind: .crossSessionTransfer, detail: "to “\(target)”: \(item.fileName)"),
                     for: sessionID)
             } else {
                 store.append(AuditEvent(kind: .transferFinished, detail: baseDetail), for: sessionID)

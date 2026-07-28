@@ -845,6 +845,11 @@ public final class TransferQueueViewModel {
                     fileName: effectiveFileName, direction: job.direction,
                     onCompleted: nil, resume: false,
                     destinationTabID: job.destinationTabID, crossRemote: job.crossRemote,
+                    // Defensive symmetry: edit uploads classify connection
+                    // loss as .failed above (bypassConflictCheck), so a
+                    // retained job can never carry isEditUpload == true
+                    // today — forwarded anyway so a future reclassification
+                    // cannot silently drop the flag (M9b/T2 review).
                     isEditUpload: job.isEditUpload)
                 runningTransferTasks[jobID] = nil
                 resumeWaiter(jobID, with: .failure(error))
