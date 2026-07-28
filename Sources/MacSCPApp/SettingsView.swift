@@ -42,7 +42,15 @@ struct SettingsView: View {
                         systemImage: "terminal")
                 }
         }
-        .frame(width: 460, height: 420)
+        // Height bumped 420 -> 460 for this M9d polish pass: switching
+        // General/Terminal to Section-based `.formStyle(.grouped)` (in line
+        // with Transfers/Open-with) adds header/footer/inter-section
+        // spacing that flat un-sectioned rows didn't need, and the
+        // Terminal tab's live preview sits below two Sections - rendered
+        // measurements showed content coming within ~30-40pt of the old
+        // 420pt frame BEFORE subtracting the native tab-strip's own height,
+        // so 420 was too tight going forward.
+        .frame(width: 460, height: 460)
     }
 }
 
@@ -53,33 +61,38 @@ private struct GeneralSettingsTab: View {
 
     var body: some View {
         Form {
-            Toggle(
-                L10n.string("settings.general.showHidden", "Show hidden files"),
-                isOn: $store.showHiddenFiles)
-            Text(L10n.string(
-                "settings.general.showHiddenHint",
-                "Applies to both panes. Shortcut: ⌘⇧."))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Toggle(
-                L10n.string("settings.general.autoRefresh", "Auto-refresh remote view"),
-                isOn: $store.autoRefreshEnabled)
-            Stepper(
-                value: Binding(
-                    get: { store.autoRefreshIntervalSeconds },
-                    set: { store.autoRefreshIntervalSeconds = $0 }
-                ),
-                in: 2...300
-            ) {
-                Text(String(
-                    format: L10n.string(
-                        "settings.general.autoRefreshInterval %lld", "Every %lld seconds"),
-                    store.autoRefreshIntervalSeconds))
+            Section {
+                Toggle(
+                    L10n.string("settings.general.showHidden", "Show hidden files"),
+                    isOn: $store.showHiddenFiles)
+            } footer: {
+                Text(L10n.string(
+                    "settings.general.showHiddenHint",
+                    "Applies to both panes. Shortcut: ⌘⇧."))
+                    .foregroundStyle(.secondary)
             }
-            .disabled(!store.autoRefreshEnabled)
+
+            Section {
+                Toggle(
+                    L10n.string("settings.general.autoRefresh", "Auto-refresh remote view"),
+                    isOn: $store.autoRefreshEnabled)
+                Stepper(
+                    value: Binding(
+                        get: { store.autoRefreshIntervalSeconds },
+                        set: { store.autoRefreshIntervalSeconds = $0 }
+                    ),
+                    in: 2...300
+                ) {
+                    Text(String(
+                        format: L10n.string(
+                            "settings.general.autoRefreshInterval %lld", "Every %lld seconds"),
+                        store.autoRefreshIntervalSeconds))
+                }
+                .disabled(!store.autoRefreshEnabled)
+            }
         }
-        .padding(20)
+        .formStyle(.grouped)
+        .padding()
     }
 }
 
@@ -112,26 +125,48 @@ private struct TransfersSettingsTab: View {
                     .foregroundStyle(.secondary)
             }
 
+            // NOTE (bandwidth-row duplicate-value bug, fixed): `TextField(_
+            // titleKey:value:format:)`'s title is NOT a placeholder inside a
+            // `Form` styled `.formStyle(.grouped)` - macOS renders it as a
+            // permanent label next to the field (same treatment as
+            // `Toggle`/`Picker`/`Stepper` titles). The previous code passed
+            // "0" as the title, so the row showed "Upload  0  <field: 0>" -
+            // the literal "0" label duplicating the real (also-zero-by-
+            // default) bound value. Fix: empty title (the outer
+            // `LabeledContent` already supplies "Upload"/"Download" as the
+            // row label) plus an explicit "KB/s" unit suffix.
             Section {
                 LabeledContent(L10n.string("settings.bandwidth.upload", "Upload")) {
-                    TextField(
-                        "0", value: Binding(
-                            get: { store.uploadLimitKBs },
-                            set: { store.uploadLimitKBs = $0 }
-                        ), format: .number
-                    )
-                    .frame(width: 80)
-                    .multilineTextAlignment(.trailing)
+                    HStack(spacing: 6) {
+                        TextField(
+                            "", value: Binding(
+                                get: { store.uploadLimitKBs },
+                                set: { store.uploadLimitKBs = $0 }
+                            ), format: .number
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 70)
+                        .multilineTextAlignment(.trailing)
+                        // Unit abbreviation, not prose - no localization key
+                        // needed (see SettingsView doc comment / task notes).
+                        Text(verbatim: "KB/s")
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 LabeledContent(L10n.string("settings.bandwidth.download", "Download")) {
-                    TextField(
-                        "0", value: Binding(
-                            get: { store.downloadLimitKBs },
-                            set: { store.downloadLimitKBs = $0 }
-                        ), format: .number
-                    )
-                    .frame(width: 80)
-                    .multilineTextAlignment(.trailing)
+                    HStack(spacing: 6) {
+                        TextField(
+                            "", value: Binding(
+                                get: { store.downloadLimitKBs },
+                                set: { store.downloadLimitKBs = $0 }
+                            ), format: .number
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 70)
+                        .multilineTextAlignment(.trailing)
+                        Text(verbatim: "KB/s")
+                            .foregroundStyle(.secondary)
+                    }
                 }
             } header: {
                 Text(L10n.string("settings.bandwidth.header", "Bandwidth limit upload/download"))
@@ -215,12 +250,27 @@ private struct OpenWithSettingsTab: View {
                     }
                 }
 
+                // ROOT CAUSE (button-looked-disabled bug, fixed): as with
+                // the bandwidth rows above, a `TextField`'s title is a
+                // permanent label in a `.formStyle(.grouped)` Form, NOT an
+                // empty-state placeholder. Passing the example text "php" as
+                // the title made it appear PERMANENTLY next to the field -
+                // identical whether or not the user had typed anything -
+                // so an untouched, still-empty field looked already filled
+                // in with "php". The "Choose app..." disabled condition
+                // below was always correct (it reflects the real, empty
+                // `newRuleExtension`); the field's misleading label just
+                // masked that nothing had actually been typed. Fix: empty
+                // title + the real `prompt:` parameter, which IS a true
+                // dimmed hint shown only while the field is empty and
+                // disappears once real text is entered.
                 LabeledContent(L10n.string("settings.openWith.rules.extension", "Extension")) {
                     HStack {
                         TextField(
-                            L10n.string("settings.openWith.rules.extensionPlaceholder", "php"),
-                            text: $newRuleExtension
+                            "", text: $newRuleExtension,
+                            prompt: Text(L10n.string("settings.openWith.rules.extensionPlaceholder", "php"))
                         )
+                        .textFieldStyle(.roundedBorder)
                         .frame(width: 60)
                         Button(L10n.string("settings.openWith.rules.chooseApp", "Choose app…")) {
                             activePicker = .rule(extension: newRuleExtension)
@@ -336,45 +386,54 @@ private struct TerminalSettingsTab: View {
     }
 
     var body: some View {
-        Form {
-            Picker(
-                L10n.string("settings.terminal.font", "Font"),
-                selection: $store.terminalFontName
-            ) {
-                Text(L10n.string("settings.terminal.systemFont", "System (SF Mono)"))
-                    .tag(String?.none)
-                ForEach(Self.fixedPitchFontChoices) { choice in
-                    Text(choice.family)
-                        .tag(String?(choice.fontName))
+        VStack(spacing: 16) {
+            Form {
+                Section {
+                    Picker(
+                        L10n.string("settings.terminal.font", "Font"),
+                        selection: $store.terminalFontName
+                    ) {
+                        Text(L10n.string("settings.terminal.systemFont", "System (SF Mono)"))
+                            .tag(String?.none)
+                        ForEach(Self.fixedPitchFontChoices) { choice in
+                            Text(choice.family)
+                                .tag(String?(choice.fontName))
+                        }
+                    }
+
+                    Stepper(value: $store.terminalFontSize, in: 9...24) {
+                        Text(String(
+                            format: L10n.string("settings.terminal.size %lld", "Size: %lld pt"),
+                            store.terminalFontSize))
+                    }
+                }
+
+                Section {
+                    Picker(
+                        L10n.string("settings.terminal.cursor", "Cursor"),
+                        selection: $store.terminalCursorStyle
+                    ) {
+                        Text(L10n.string("settings.terminal.cursor.block", "Block"))
+                            .tag(TerminalCursorStyle.block)
+                        Text(L10n.string("settings.terminal.cursor.bar", "Bar"))
+                            .tag(TerminalCursorStyle.bar)
+                        Text(L10n.string("settings.terminal.cursor.underline", "Underline"))
+                            .tag(TerminalCursorStyle.underline)
+                    }
+                    .pickerStyle(.segmented)
+
+                    Toggle(
+                        L10n.string("settings.terminal.cursorBlink", "Blinking"),
+                        isOn: $store.terminalCursorBlink)
                 }
             }
-
-            Stepper(value: $store.terminalFontSize, in: 9...24) {
-                Text(String(
-                    format: L10n.string("settings.terminal.size %lld", "Size: %lld pt"),
-                    store.terminalFontSize))
-            }
-
-            Picker(
-                L10n.string("settings.terminal.cursor", "Cursor"),
-                selection: $store.terminalCursorStyle
-            ) {
-                Text(L10n.string("settings.terminal.cursor.block", "Block"))
-                    .tag(TerminalCursorStyle.block)
-                Text(L10n.string("settings.terminal.cursor.bar", "Bar"))
-                    .tag(TerminalCursorStyle.bar)
-                Text(L10n.string("settings.terminal.cursor.underline", "Underline"))
-                    .tag(TerminalCursorStyle.underline)
-            }
-            .pickerStyle(.segmented)
-
-            Toggle(
-                L10n.string("settings.terminal.cursorBlink", "Blinking"),
-                isOn: $store.terminalCursorBlink)
+            .formStyle(.grouped)
 
             // Preview: fixed, unlocalized sample text (a shell prompt reads
             // the same in every locale) rendered with the chosen font/size,
-            // on the same colors the real terminal uses.
+            // on the same colors the real terminal uses. Kept outside the
+            // Form/Section grid (it isn't a label/control row) but aligned
+            // to the same horizontal inset as the grouped sections above.
             Text(verbatim: "deploy@web-01:~ $ ls -la")
                 .font(previewFont)
                 .foregroundStyle(Color(nsColor: DesignTokens.terminalText))
@@ -382,8 +441,8 @@ private struct TerminalSettingsTab: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(nsColor: DesignTokens.terminalBackground))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
+                .padding(.horizontal)
         }
-        .formStyle(.grouped)
-        .padding()
+        .padding(.vertical)
     }
 }
