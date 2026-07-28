@@ -275,6 +275,9 @@ struct RemoteFileTableView: NSViewRepresentable {
                     entry: entry, selection: selection))
                 parent.submenu = submenu
                 return parent
+            case .transferToSession:
+                // Wired in M8b/T4.
+                fatalError("transferToSession cases should be hooked into the Transfer submenu, not created standalone")
             case .openInEditor:
                 return actionItem(title: L10n.string("menu.openEditor", "Open"), entry: entry, selection: selection)
             case .rename:

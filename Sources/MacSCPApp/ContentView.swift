@@ -395,6 +395,8 @@ struct ContentView: View {
                                     case .transferToOtherPane:
                                         transferSelection(
                                             selection, from: .local, in: tab, session: session)
+                                    case .transferToSession:
+                                        break   // Wired in M8b/T4.
                                     case .copyPath:
                                         copyPaths(of: selection)
                                     case .openInEditor:
@@ -428,6 +430,8 @@ struct ContentView: View {
                                     case .transferToOtherPane:
                                         transferSelection(
                                             selection, from: .remote, in: tab, session: session)
+                                    case .transferToSession:
+                                        break   // Wired in M8b/T4.
                                     case .openInEditor:
                                         if let item = selection.first {
                                             openInEditor(item, in: tab, session: session)
