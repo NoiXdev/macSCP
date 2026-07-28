@@ -21,6 +21,10 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
     /// The flat group this session belongs to, if any. Optional so legacy
     /// JSON without this field keeps decoding as `nil` (no custom decoder).
     public var groupID: UUID?
+    /// The login set this session's credentials come from, if any (M10b).
+    /// Optional so legacy JSON without this field keeps decoding as `nil`
+    /// (nil = the session carries its own credentials, "manual" mode).
+    public var loginSetID: UUID?
 
     public init(
         id: UUID = UUID(),
@@ -30,7 +34,8 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         username: String,
         authKind: AuthKind = .password,
         keyPath: String? = nil,
-        groupID: UUID? = nil
+        groupID: UUID? = nil,
+        loginSetID: UUID? = nil
     ) {
         self.id = id
         self.name = name
@@ -40,5 +45,6 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         self.authKind = authKind
         self.keyPath = keyPath
         self.groupID = groupID
+        self.loginSetID = loginSetID
     }
 }
