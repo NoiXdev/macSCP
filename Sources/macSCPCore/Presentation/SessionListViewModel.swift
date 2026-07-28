@@ -236,12 +236,20 @@ public final class SessionListViewModel {
         public var skipped: Int
         public var passwordsImported: Int
         public var passwordFailures: Int
+        /// Sessions whose `store.upsert` write failed (e.g. an unwritable
+        /// store directory). These are excluded from `imported` and never
+        /// get a password save, so no orphaned keychain entry is created.
+        public var storeFailures: Int
 
-        public init(imported: Int, skipped: Int, passwordsImported: Int, passwordFailures: Int) {
+        public init(
+            imported: Int, skipped: Int, passwordsImported: Int, passwordFailures: Int,
+            storeFailures: Int
+        ) {
             self.imported = imported
             self.skipped = skipped
             self.passwordsImported = passwordsImported
             self.passwordFailures = passwordFailures
+            self.storeFailures = storeFailures
         }
     }
 
@@ -249,15 +257,32 @@ public final class SessionListViewModel {
     /// Purely additive — existing sessions and groups are never mutated. A
     /// keychain failure for one session's password does not abort the
     /// import; the session is still created and the failure is counted.
+    /// A store-write failure for one session does not abort the import
+    /// either, but that session is skipped entirely — including its
+    /// password save, so no keychain entry is orphaned for a session that
+    /// never landed in the store — and it is counted in `storeFailures`
+    /// rather than `imported`.
     public func applyImport(_ plan: SessionImportPlan) -> SessionImportResult {
+        var imported = 0
         var passwordsImported = 0
         var passwordFailures = 0
+        var storeFailures = 0
 
         for group in plan.groupsToCreate {
+            // A failed group write is not fatal: sessions still import
+            // (possibly without their groupID association). SessionStore's
+            // load() already nils out any dangling groupID defensively, so
+            // no session ends up referencing a group that doesn't exist.
             try? store.upsertGroup(group)
         }
         for planned in plan.sessionsToImport {
-            try? store.upsert(planned.session)
+            do {
+                try store.upsert(planned.session)
+                imported += 1
+            } catch {
+                storeFailures += 1
+                continue
+            }
             if let password = planned.password {
                 do {
                     try secrets.savePassword(password, for: planned.session.id)
@@ -270,7 +295,8 @@ public final class SessionListViewModel {
 
         reload()
         return SessionImportResult(
-            imported: plan.sessionsToImport.count, skipped: plan.skipped.count,
-            passwordsImported: passwordsImported, passwordFailures: passwordFailures)
+            imported: imported, skipped: plan.skipped.count,
+            passwordsImported: passwordsImported, passwordFailures: passwordFailures,
+            storeFailures: storeFailures)
     }
 }

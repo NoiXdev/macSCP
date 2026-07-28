@@ -156,8 +156,8 @@ struct SessionListViewModelTests {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let group = vm.createGroup(named: "Prod")!
-        let a = vm.save(name: "a", host: "h1", port: 22, username: "u", password: "pw",
-                        groupID: group.id)!
+        _ = vm.save(name: "a", host: "h1", port: 22, username: "u", password: "pw",
+                    groupID: group.id)!
         let b = vm.save(name: "b", host: "h2", port: 22, username: "u", password: "pw",
                         groupID: group.id)!
         let c = vm.save(name: "c", host: "h3", port: 22, username: "u", password: "pw")!
@@ -186,8 +186,6 @@ struct SessionListViewModelTests {
         #expect(noSecretsResult.payload.sessions.allSatisfy { $0.password == nil })
         #expect(noSecretsResult.payload.includesSecrets == false)
         #expect(noSecretsResult.missingPasswordCount == 0)
-
-        _ = a
     }
 
     @Test func applyImportCreatesEverythingAdditively() throws {
@@ -215,7 +213,8 @@ struct SessionListViewModelTests {
         let result = vm.applyImport(plan)
 
         #expect(result == SessionListViewModel.SessionImportResult(
-            imported: 2, skipped: 1, passwordsImported: 1, passwordFailures: 0))
+            imported: 2, skipped: 1, passwordsImported: 1, passwordFailures: 0,
+            storeFailures: 0))
         #expect(vm.sessions.count == 3)
         #expect(vm.groups.map(\.name) == ["Imported"])
         let one = vm.sessions.first { $0.name == "one" }!
@@ -244,8 +243,40 @@ struct SessionListViewModelTests {
         let result = vm.applyImport(plan)
 
         #expect(result == SessionListViewModel.SessionImportResult(
-            imported: 1, skipped: 0, passwordsImported: 0, passwordFailures: 1))
+            imported: 1, skipped: 0, passwordsImported: 0, passwordFailures: 1,
+            storeFailures: 0))
         #expect(vm.sessions.map(\.name) == ["one"])
+    }
+
+    @Test func applyImportReportsOnlyActuallyWrittenSessionsAndSkipsOrphanedPassword() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // `dir` is a plain file, not a directory: SessionStore.persist()'s
+        // createDirectory(at:) throws, simulating an unwritable store while
+        // load() (called first, and tolerant of a missing path) still
+        // succeeds with an empty store.
+        try Data("blocked".utf8).write(to: dir)
+
+        let secrets = InMemorySecretStore()
+        let vm = SessionListViewModel(store: SessionStore(directory: dir), secrets: secrets)
+
+        let planned = PlannedSession(
+            session: StoredSession(name: "one", host: "h1", username: "root"),
+            password: "secret1")
+        let plan = SessionImportPlan(
+            groupsToCreate: [], sessionsToImport: [planned], skipped: [])
+
+        let result = vm.applyImport(plan)
+
+        #expect(result == SessionListViewModel.SessionImportResult(
+            imported: 0, skipped: 0, passwordsImported: 0, passwordFailures: 0,
+            storeFailures: 1))
+        #expect(vm.sessions.isEmpty)
+        // The store write failed, so the password must never have been
+        // saved -- otherwise it would orphan a keychain entry for a
+        // session that doesn't exist in the store.
+        #expect(try secrets.password(for: planned.session.id) == nil)
     }
 }
 
