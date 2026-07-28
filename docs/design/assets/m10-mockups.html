@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>macSCP — Mockups: Known Hosts, Jump-Host, Login-Sets</title>
+<style>
+  :root {
+    --paper: #F4F7FA; --card: #FFFFFF; --ink: #14212E; --ink-2: #4A5B6B;
+    --ink-3: #7E8FA0; --line: #DAE3EB; --local: #DE9426; --local-soft: #FBF1DF;
+    --remote: #2D71B8; --remote-soft: #E3EEF9; --ok: #2E9A5B; --err: #C2453A;
+    --shadow: 0 1px 2px rgba(15,30,43,.06), 0 12px 32px -12px rgba(15,30,43,.18);
+  }
+  .dark {
+    --paper: #0D1720; --card: #14212E; --ink: #E8EFF5; --ink-2: #A7B7C5;
+    --ink-3: #6E8093; --line: #24374A; --local: #E8A63C; --local-soft: #2C2415;
+    --remote: #4E92D6; --remote-soft: #142C42; --ok: #3FAE6E; --err: #E06A5E;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 32px -12px rgba(0,0,0,.6);
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: #E9EEF3; color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+    font-size: 13px; padding: 28px; display: grid; gap: 40px;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  h2 { font-size: 13px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #7E8FA0; margin-bottom: 10px; }
+  .caption { font-size: 12px; color: #7E8FA0; margin-top: 8px; max-width: 82ch; line-height: 1.5; }
+
+  .sheet {
+    background: var(--paper); border-radius: 10px; box-shadow: var(--shadow);
+    border: 1px solid var(--line); max-width: 720px; padding: 18px 20px;
+  }
+  .sheet h3 { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+  .toolrow { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .search {
+    flex: 1; padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--card); color: var(--ink-3); font-size: 12px;
+  }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg span { padding: 4px 10px; font-size: 11.5px; color: var(--ink-2); background: var(--card); }
+  .seg span.on { background: var(--remote-soft); color: var(--remote); font-weight: 600; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  th { font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  td { padding: 7px 10px; font-size: 12px; border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent); vertical-align: middle; }
+  tr.sel td { background: var(--remote-soft); }
+  .fp { font-size: 11px; color: var(--ink-2); }
+  .keybadge { font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 5px; background: var(--remote-soft); color: var(--remote); }
+  .footer { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+  .count { font-size: 11.5px; color: var(--ink-3); flex: 1; }
+  .btn { font-size: 12px; padding: 5px 14px; border-radius: 7px; border: 1px solid var(--line); background: var(--card); color: var(--ink-2); }
+  .btn.primary { background: var(--remote); color: #fff; border-color: var(--remote); font-weight: 600; }
+  .btn.destructive { color: var(--err); border-color: color-mix(in srgb, var(--err) 40%, transparent); }
+
+  /* form rows */
+  .frow { display: grid; grid-template-columns: 130px 1fr; gap: 10px; align-items: center; margin-bottom: 10px; }
+  .frow label { text-align: right; font-size: 12.5px; color: var(--ink-2); }
+  .field { padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); font-size: 12.5px; color: var(--ink); }
+  .field.placeholder { color: var(--ink-3); }
+  .inline { display: flex; gap: 8px; align-items: center; }
+  .hint { font-size: 11px; color: var(--ink-3); }
+  .toggle { width: 34px; height: 20px; border-radius: 10px; background: var(--remote); position: relative; flex-shrink: 0; }
+  .toggle::after { content: ""; position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; }
+  .toggle.off { background: var(--line); }
+  .toggle.off::after { right: auto; left: 2px; }
+
+  .idrow { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; }
+  .idrow .name { font-weight: 600; font-size: 12.5px; }
+  .idrow .sub { font-size: 11.5px; color: var(--ink-3); }
+  .idrow .spacer { flex: 1; }
+  .usebadge { font-size: 10.5px; color: var(--ink-3); }
+
+  .banner {
+    display: flex; gap: 10px; align-items: center; padding: 10px 12px;
+    background: var(--local-soft); border: 1px solid color-mix(in srgb, var(--local) 40%, transparent);
+    border-radius: 8px; margin-bottom: 12px; font-size: 12px;
+  }
+  .banner b { color: var(--ink); }
+</style>
+</head>
+<body>
+
+<section>
+  <h2>1 · Known-Hosts-Verwaltung (Sheet, Zugang: Einstellungen → Tab „Sicherheit" + Hauptmenü)</h2>
+  <div class="sheet">
+    <h3>Bekannte Hosts</h3>
+    <div class="toolrow">
+      <div class="search">Suchen (Host oder Fingerprint) …</div>
+    </div>
+    <table>
+      <tr><th>Host</th><th>Port</th><th>Schlüssel</th><th>Fingerprint (SHA256)</th><th>Hinzugefügt</th></tr>
+      <tr><td>web-01.example.com</td><td>22</td><td><span class="keybadge">ED25519</span></td><td class="fp mono">SHA256:Yqp3…jK9w=</td><td>09.07.2026</td></tr>
+      <tr class="sel"><td>db-prod.internal</td><td>22</td><td><span class="keybadge">ED25519</span></td><td class="fp mono">SHA256:R8sm…Q2xd=</td><td>12.07.2026</td></tr>
+      <tr><td>backup-nas.local</td><td>2222</td><td><span class="keybadge">RSA</span></td><td class="fp mono">SHA256:Lw0t…8vHe=</td><td>27.07.2026</td></tr>
+    </table>
+    <div class="footer">
+      <span class="count">3 Hosts</span>
+      <span class="btn">Fingerprint kopieren</span>
+      <span class="btn destructive">Entfernen…</span>
+      <span class="btn primary">Schließen</span>
+    </div>
+  </div>
+  <p class="caption"><b>Verhalten:</b> Liste aus dem KnownHostsStore, Suche über Host + Fingerprint, Mehrfachauswahl. „Entfernen…" mit Rückfrage-Text: <i>„Beim nächsten Verbinden wird der Host wie ein unbekannter behandelt (neuer TOFU-Prompt)."</i> — Entfernen ist damit das offizielle Werkzeug für rotierte Server-Keys (bisher: JSON von Hand editieren). Kein „Bearbeiten" — Fingerprints sind nicht editierbar, das wäre ein Sicherheits-Fußschuss.</p>
+</section>
+
+<section>
+  <h2>2 · Jump-Host im Verbindungsformular</h2>
+  <div class="sheet" style="max-width:560px">
+    <h3>Neue Verbindung</h3>
+    <div class="frow"><label>Host</label><div class="field">db-prod.internal</div></div>
+    <div class="frow"><label>Port</label><div class="field">22</div></div>
+    <div class="frow"><label>Benutzername</label><div class="field">deploy</div></div>
+    <div class="frow"><label>Authentifizierung</label><div class="field">SSH-Key · ~/.ssh/id_ed25519</div></div>
+    <div class="frow">
+      <label>Jump-Host</label>
+      <div class="inline"><div class="toggle"></div><span class="hint">Über einen Zwischenhost verbinden (ProxyJump)</span></div>
+    </div>
+    <div class="frow"><label></label><div class="field">bastion.example.com</div></div>
+    <div class="frow"><label></label><div class="inline"><div class="field" style="width:90px">22</div><div class="field" style="flex:1">jumpuser</div></div></div>
+    <div class="frow"><label></label><div class="field">Login: Deploy (Prod) — deploy · Key ▾</div></div>
+    <div class="frow"><label></label><span class="hint">Login-Set aus Abschnitt 3 — oder „Manuell" wählen (Passwort/Key wie gehabt). Der Jump-Host bekommt seinen eigenen TOFU-Fingerprint-Check. Ein Hop (keine Ketten).</span></div>
+    <div class="footer"><span class="count"></span><span class="btn">Abbrechen</span><span class="btn primary">Verbinden</span></div>
+  </div>
+  <p class="caption"><b>Verhalten:</b> Toggle im Formular (Default aus); eingeschaltet erscheinen Bastion-Host/Port + die LOGIN-Auswahl: ein Login-Set (empfohlen) ODER „Manuell" mit User + Passwort/Key. Der Ziel-Host kann genauso ein Set nutzen — Bastion und Ziel dürfen verschiedene Sets haben. Beide Fingerprints laufen durch den normalen TOFU-Fluss (Mismatch = harter Stopp, wie immer). Gespeicherte Sessions merken sich die Jump-Konfiguration; der ssh-config-Import könnte ProxyJump-Zeilen später mit einlesen. Bewusst EIN Hop — Ketten (Jump über Jump) wären Backlog.</p>
+</section>
+
+<section>
+  <h2>3 · Login-Sets („Logins", analog Bekannte Hosts) + Zusammenfassen-Vorschlag</h2>
+  <div class="sheet">
+    <h3>Logins</h3>
+    <div class="banner">
+      <span>💡</span>
+      <span><b>3 Verbindungen</b> verwenden denselben Login (<b>deploy</b> + SSH-Key <span class="mono">id_ed25519</span>): web-01, web-02, staging.<br>Zu einem gemeinsamen Login zusammenfassen?</span>
+      <span class="spacer" style="flex:1"></span>
+      <span class="btn">Ignorieren</span>
+      <span class="btn primary">Zusammenfassen…</span>
+    </div>
+    <div class="idrow">
+      <span class="keybadge">KEY</span>
+      <div><div class="name">Deploy (Prod)</div><div class="sub">deploy · ~/.ssh/id_ed25519</div></div>
+      <span class="spacer"></span>
+      <span class="usebadge">5 Verbindungen</span>
+    </div>
+    <div class="idrow">
+      <span class="keybadge" style="background:var(--local-soft);color:var(--local)">PASS</span>
+      <div><div class="name">Root Legacy</div><div class="sub">root · Passwort (Keychain)</div></div>
+      <span class="spacer"></span>
+      <span class="usebadge">2 Verbindungen</span>
+    </div>
+    <div class="footer">
+      <span class="count">2 Logins</span>
+      <span class="btn">Neu…</span>
+      <span class="btn">Bearbeiten…</span>
+      <span class="btn destructive">Löschen…</span>
+      <span class="btn primary">Schließen</span>
+    </div>
+  </div>
+  <div class="sheet" style="max-width:560px; margin-top:14px">
+    <h3>Verbindungsformular — Login-Auswahl (Dreiweg, gilt für Ziel UND Jump-Host)</h3>
+    <div class="frow">
+      <label>Login</label>
+      <div class="seg" style="width:fit-content">
+        <span class="on">Login-Set</span><span>Manuell</span>
+      </div>
+    </div>
+    <div style="font-size:11px;color:#7E8FA0;margin:2px 0 8px 140px">Modus A — Set nutzen:</div>
+    <div class="frow"><label></label><div class="inline"><div class="field" style="flex:1">Deploy (Prod) — deploy · Key ▾</div><span class="hint" style="text-decoration:underline">Logins verwalten…</span></div></div>
+    <div style="height:1px;background:var(--line);margin:10px 0"></div>
+    <div style="font-size:11px;color:#7E8FA0;margin:2px 0 8px 140px">Modus B — Manuell (wie heute):</div>
+    <div class="frow"><label>Benutzername</label><div class="field">deploy</div></div>
+    <div class="frow"><label>Authentifizierung</label><div class="field">SSH-Key · ~/.ssh/id_ed25519</div></div>
+    <div class="frow">
+      <label></label>
+      <div class="inline"><div class="toggle off"></div><span class="hint">Als neues Login-Set speichern</span></div>
+    </div>
+    <div class="frow"><label></label><div class="field placeholder">Name des Login-Sets (z. B. „Deploy (Prod)")</div></div>
+  </div>
+  <p class="caption"><b>Dreiweg pro Login-Stelle (Ziel-Host UND Jump-Host):</b> (A) <b>Login-Set</b> wählen — der Picker listet alle Sets, daneben „Logins verwalten…". (B) <b>Manuell</b> — Benutzername + Passwort/Key direkt an der Verbindung, wie heute; Daten bleiben verbindungs-lokal. (B+) Im Manuell-Modus optional der Toggle <b>„Als neues Login-Set speichern"</b> mit Namensfeld — beim Verbinden/Speichern entsteht das Set und die Verbindung referenziert es sofort. Der Umschalter merkt sich je Verbindung seinen Modus; „Bearbeiten…" einer Session zeigt den jeweiligen Zustand.<br><b>Set-Modell:</b> Ein Login-Set = Name + Benutzername + Auth (Passwort im Keychain ODER Key-Pfad + optionale Passphrase). Verbindungen können ein Set referenzieren statt eigener Zugangsdaten — Passwort ändern heißt dann: einmal im Set ändern, gilt überall. <b>Gleichheits-Erkennung:</b> beim Öffnen des Logins-Bereichs (und nach Imports) werden bestehende Verbindungen mit identischem (user + Auth-Art + Key-Pfad bzw. identischem Keychain-Passwort) gruppiert; der Banner schlägt das Zusammenfassen vor — „Zusammenfassen…" zeigt vorher die betroffenen Verbindungen und legt dann EIN Set an, auf das alle umgestellt werden (rückgängig-freundlich: die Sessions behalten funktionierende Referenzen, nichts wird gelöscht). „Ignorieren" merkt sich die Gruppe und nervt nicht erneut. Löschen eines Sets fragt nach und stellt betroffene Verbindungen auf „Manuell" mit kopierten Werten zurück — nie kaputte Verbindungen.</p>
+</section>
+
+<section>
+  <h2>4 · Aufruf-Wege — wo Bekannte Hosts &amp; Logins erreichbar sind</h2>
+  <div style="display:flex; gap:20px; flex-wrap:wrap; align-items:flex-start">
+    <div>
+      <div style="font-size:11px;color:#7E8FA0;margin-bottom:6px">A) Menüleiste — neues Menü „Sessions"</div>
+      <div class="sheet" style="max-width:420px; padding:0; overflow:hidden">
+        <div style="display:flex; gap:0; background:var(--card); border-bottom:1px solid var(--line); font-size:12.5px">
+          <span style="padding:6px 10px; font-weight:700"> macSCP</span>
+          <span style="padding:6px 10px; color:var(--ink-2)">Ablage</span>
+          <span style="padding:6px 10px; color:var(--ink-2)">Bearbeiten</span>
+          <span style="padding:6px 10px; background:var(--remote); color:#fff; border-radius:4px 4px 0 0">Sessions</span>
+          <span style="padding:6px 10px; color:var(--ink-2)">Fenster</span>
+        </div>
+        <div style="width:230px; background:var(--card); border-right:1px solid var(--line); box-shadow:var(--shadow); margin-left:96px; padding:4px; font-size:12.5px">
+          <div style="padding:4px 10px">Neuer Tab <span style="float:right;color:var(--ink-3)">⌘N</span></div>
+          <div style="height:1px;background:var(--line);margin:4px 6px"></div>
+          <div style="padding:4px 10px; background:var(--remote); color:#fff; border-radius:5px">Logins… <span style="float:right;opacity:.7">⌘⇧L</span></div>
+          <div style="padding:4px 10px">Bekannte Hosts… <span style="float:right;color:var(--ink-3)">⌘⇧K</span></div>
+          <div style="height:1px;background:var(--line);margin:4px 6px"></div>
+          <div style="padding:4px 10px">Sessions importieren…</div>
+          <div style="padding:4px 10px">Alle Sessions exportieren…</div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div style="font-size:11px;color:#7E8FA0;margin-bottom:6px">B) Sidebar — Hintergrund-Rechtsklick (Ergänzung)</div>
+      <div class="sheet" style="max-width:250px; padding:4px; font-size:12.5px">
+        <div style="padding:4px 10px">Neue Verbindung</div>
+        <div style="padding:4px 10px">Neue Gruppe…</div>
+        <div style="height:1px;background:var(--line);margin:4px 6px"></div>
+        <div style="padding:4px 10px; background:var(--remote); color:#fff; border-radius:5px">Logins…</div>
+        <div style="padding:4px 10px">Bekannte Hosts…</div>
+        <div style="height:1px;background:var(--line);margin:4px 6px"></div>
+        <div style="padding:4px 10px">Alle exportieren…</div>
+        <div style="padding:4px 10px">Importieren…</div>
+      </div>
+    </div>
+    <div>
+      <div style="font-size:11px;color:#7E8FA0;margin-bottom:6px">C) Kontext-Einstiege</div>
+      <div class="sheet" style="max-width:300px; font-size:12px; display:grid; gap:8px">
+        <div><b>Verbindungsformular:</b> neben dem Login-Picker ein kleiner Link „Logins verwalten…" (öffnet das Logins-Sheet).</div>
+        <div><b>TOFU-Prompt:</b> Fußnote „Bekannte Hosts verwalten…" (öffnet das Known-Hosts-Sheet — z. B. um einen rotierten Key zu entfernen).</div>
+      </div>
+    </div>
+  </div>
+  <p class="caption"><b>Vorschlag:</b> EIN neues Menü „Sessions" in der Menüleiste bündelt alles Verwaltende (Logins ⌘⇧L, Bekannte Hosts ⌘⇧K, Import/Export — die heute schon existierenden Export/Import-Einträge des Sidebar-Menüs erscheinen dort zusätzlich). Dieselben zwei Einträge auch im Sidebar-Hintergrund-Rechtsklick (kurzer Weg, wo man ohnehin Sessions verwaltet). Dazu zwei Kontext-Einstiege an den Stellen, wo man sie wirklich braucht (Formular → Logins; TOFU-Prompt → Known Hosts). Beide Bereiche öffnen als Sheets im Hauptfenster — kein neues Fenster, kein Settings-Umbau (die Settings bleiben App-Verhalten: Allgemein/Transfers/Öffnen mit).</p>
+</section>
+
+</body>
+</html>
