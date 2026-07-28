@@ -1145,6 +1145,10 @@ struct CitadelFileSystemIntegrationTests {
         let items = try await fs1.list(path: "/")
         #expect(!items.isEmpty)
         #expect(asked.value == 2)   // both hops unknown on the first connect
+        // Both hops actually learned — not just "asked twice" (an attempt
+        // could be swallowed without ever reaching `upsert`).
+        #expect(try store.find(host: "127.0.0.1", port: 2222) != nil)
+        #expect(try store.find(host: "sshd2", port: 2222) != nil)
         await fs1.disconnect()
 
         let fs2 = try await CitadelFileSystem.connect(
@@ -1167,6 +1171,76 @@ struct CitadelFileSystemIntegrationTests {
         await #expect(throws: RemoteFSError.jumpAuthenticationFailed) {
             _ = try await CitadelFileSystem.connect(
                 config: config, knownHosts: store, onUnknownHostKey: { _ in true })
+        }
+    }
+
+    /// The invariant "mismatch = hard stop, decider never consulted" must
+    /// hold on EVERY hop, not just the (already-tested) single-hop case.
+    /// Here the JUMP hop's remembered key is tampered with; the target hop
+    /// must never even be reached, so nothing about it is learned.
+    @Test func jumpHopMismatchIsHardStop() async throws {
+        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-jump-\(UUID().uuidString)"))
+        try store.upsert(KnownHostKey(
+            host: "127.0.0.1", port: 2222,
+            keyType: "ssh-ed25519", publicKeyBase64: "QUJDREVG"))   // deliberately wrong
+        let config = try SSHConnectionConfig(
+            host: "sshd2", port: 2222, username: "testuser", auth: .password("testpass"),
+            jump: .init(host: "127.0.0.1", port: 2222, username: "testuser", auth: .password("testpass")))
+
+        do {
+            _ = try await CitadelFileSystem.connect(
+                config: config, knownHosts: store,
+                onUnknownHostKey: { _ in
+                    Issue.record("decider must never be consulted on mismatch")
+                    return true
+                })
+            Issue.record("expected mismatch")
+        } catch let error as HostKeyError {
+            guard case .mismatch = error else {
+                Issue.record("expected mismatch, was: \(error)")
+                return
+            }
+        }
+        #expect(try store.find(host: "sshd2", port: 2222) == nil)   // target never reached
+    }
+
+    /// Same invariant, TARGET hop this time: both keys are learned via a
+    /// clean connect first, then the target's remembered key is tampered
+    /// with. The mismatch must still hard-stop even though the jump hop
+    /// itself verified cleanly.
+    @Test func targetHopMismatchIsHardStop() async throws {
+        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-jump-\(UUID().uuidString)"))
+        let config = try SSHConnectionConfig(
+            host: "sshd2", port: 2222, username: "testuser", auth: .password("testpass"),
+            jump: .init(host: "127.0.0.1", port: 2222, username: "testuser", auth: .password("testpass")))
+
+        let fs = try await connectWithRetry {
+            try await CitadelFileSystem.connect(
+                config: config, knownHosts: store, onUnknownHostKey: { _ in true })
+        }
+        await fs.disconnect()
+        #expect(try store.find(host: "sshd2", port: 2222) != nil)
+
+        // Tamper with the TARGET entry only — the jump entry stays valid.
+        try store.upsert(KnownHostKey(
+            host: "sshd2", port: 2222,
+            keyType: "ssh-ed25519", publicKeyBase64: "QUJDREVG"))   // deliberately wrong
+
+        do {
+            _ = try await CitadelFileSystem.connect(
+                config: config, knownHosts: store,
+                onUnknownHostKey: { _ in
+                    Issue.record("decider must never be consulted on mismatch")
+                    return true
+                })
+            Issue.record("expected mismatch")
+        } catch let error as HostKeyError {
+            guard case .mismatch = error else {
+                Issue.record("expected mismatch, was: \(error)")
+                return
+            }
         }
     }
 }

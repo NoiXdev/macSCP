@@ -41,9 +41,10 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// unknown/differing keys and reports the candidate outward via a box;
     /// here the decider is consulted and, after `upsert`, the WHOLE attempt
     /// (both hops) is retried (then the known-identical path takes over
-    /// silently). Without a jump, this degenerates to the original single-hop
-    /// behavior byte-for-byte: `targetBox` is the only box that ever carries
-    /// a verdict, and exactly one accept-retry is allowed.
+    /// silently). Without a jump, this is behaviorally unchanged from the
+    /// original single-hop path (one accept-retry, same error mapping):
+    /// `targetBox` is the only box that ever carries a verdict, and exactly
+    /// one accept-retry is allowed.
     public static func connect(
         config: SSHConnectionConfig,
         knownHosts: KnownHostsStore,
@@ -87,8 +88,11 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
 
     /// A single connection attempt with the TOFU validators. Throws raw
     /// errors; `connect` handles the evaluation (decider, mismatch, mapping).
-    /// Without a jump, this is byte-identical to the pre-M10c single-hop path
-    /// (the validator runs on `targetBox`).
+    /// Without a jump, this is behaviorally unchanged from the pre-M10c
+    /// single-hop path (one accept-retry, same error mapping) — the box is
+    /// evaluated on every attempt, which differs only in the
+    /// `.lookupFailed`-on-retry case (now a fail-closed typed error, strictly
+    /// better than before).
     private static func attemptConnect(
         config: SSHConnectionConfig,
         knownHosts: KnownHostsStore,
@@ -220,6 +224,14 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                     reason: "jump host: \(String(describing: clientError))")
             }
         default:
+            // Typed security errors (host-key verdicts, key-loading failures)
+            // must never be downgraded to a resumable generic failure — only
+            // stringify what's left after `mapConnectError` has had a chance
+            // to recognize a typed error underneath.
+            let mapped = mapConnectError(jumpStageError.underlying)
+            if mapped is HostKeyError || mapped is SSHKeyError {
+                return mapped
+            }
             return RemoteFSError.connectionFailed(
                 reason: "jump host: \(String(describing: jumpStageError.underlying))")
         }
