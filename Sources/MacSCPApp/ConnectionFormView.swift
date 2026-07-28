@@ -18,7 +18,9 @@ struct ConnectionFormView: View {
     /// which reloads the secret from the keychain (covers "empty password
     /// means unchanged" automatically).
     var onConnectEdited: (StoredSession) -> Void = { _ in }
-    let onConnected: (any RemoteFileSystem) -> Void
+    /// `async` (M9d): the caller resolves the remote home directory before
+    /// building the browser session, so it needs to `await` inside here.
+    let onConnected: (any RemoteFileSystem) async -> Void
 
     @State private var showKeyImporter = false
     /// Failure message currently shown as an alert. Deliberately separate
@@ -232,7 +234,7 @@ struct ConnectionFormView: View {
                     Button(L10n.string("connection.connect", "Connect")) {
                         Task {
                             if let fs = await viewModel.connect() {
-                                onConnected(fs)
+                                await onConnected(fs)
                             } else if case .failed(let message, _) = viewModel.state {
                                 alertMessage = message
                             }

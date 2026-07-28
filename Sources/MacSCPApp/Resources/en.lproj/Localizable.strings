@@ -14,6 +14,17 @@
 "settings.bandwidth.upload" = "Upload";
 "settings.bandwidth.download" = "Download";
 
+/* Settings — Terminal tab (M9d) */
+"settings.tab.terminal" = "Terminal";
+"settings.terminal.font" = "Font";
+"settings.terminal.systemFont" = "System (SF Mono)";
+"settings.terminal.size %lld" = "Size: %lld pt";
+"settings.terminal.cursor" = "Cursor";
+"settings.terminal.cursor.block" = "Block";
+"settings.terminal.cursor.bar" = "Bar";
+"settings.terminal.cursor.underline" = "Underline";
+"settings.terminal.cursorBlink" = "Blinking";
+
 /* Settings — Open with tab */
 "settings.tab.openWith" = "Open with";
 "settings.openWith.defaultEditor.header" = "Default editor";

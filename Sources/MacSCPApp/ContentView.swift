@@ -711,7 +711,14 @@ struct ContentView: View {
                     onCancelEdit: { tab.connectionViewModel.endEditing() },
                     onConnectEdited: { stored in connect(in: tab, stored: stored) }
                 ) { fs in
-                    startSession(in: tab, with: fs)
+                    // Remote home start (M9d): resolved once per connect,
+                    // right before the browser session is built, so the
+                    // remote pane opens where the user actually lands after
+                    // login instead of hardcoded "/". A lookup failure
+                    // (older SFTP servers, permission quirks) falls back to
+                    // "/" rather than failing the connect.
+                    let home = (try? await fs.homeDirectoryPath()) ?? "/"
+                    startSession(in: tab, with: fs, startPath: home)
                 }
                 .frame(maxHeight: .infinity, alignment: .top)
             }
@@ -950,7 +957,7 @@ struct ContentView: View {
             Color(nsColor: DesignTokens.terminalBackground)
             switch session.terminal.state {
             case .running, .opening:
-                SSHTerminalView(viewModel: session.terminal)
+                SSHTerminalView(viewModel: session.terminal, settingsStore: settingsStore)
             case .ended(let message):
                 VStack(spacing: 8) {
                     Text(message ?? L10n.string("terminal.ended", "Shell ended."))
@@ -983,8 +990,21 @@ struct ContentView: View {
     /// survives toggling "Save as session" off and earlier sessions, so an
     /// UNSAVED connection could inherit a stale, unrelated name (M5f/T5
     /// review).
+    // NOTE (M9d): `startSession` stays SYNCHRONOUS deliberately. Its two call
+    // sites are already inside `async` contexts (the connect button's `Task`
+    // in `ConnectionFormView`, and `connect(in:stored:)`'s `Task` below), so
+    // the remote home directory is resolved there — with `await` — and
+    // handed in as `startPath`. Marking `startSession` itself `async` was
+    // tried first and had to be reverted: it made the compiler apply
+    // stricter concurrency checking to the WHOLE function body, which then
+    // flagged the pre-existing (harmless, `RemoteShellProvider` isn't
+    // `Sendable`) `shellProvider` capture in the `openShell` closure below as
+    // a new warning. Keeping this function sync avoids that regression
+    // entirely while still resolving the home directory exactly once per
+    // connect.
     private func startSession(
-        in tab: SessionTab, with fs: any RemoteFileSystem, storedName: String? = nil
+        in tab: SessionTab, with fs: any RemoteFileSystem, storedName: String? = nil,
+        startPath: String = "/"
     ) {
         // Clear any stale edit error from a previous session so a late
         // openInEditor task cannot misattribute its failure to this session.
@@ -1000,7 +1020,7 @@ struct ContentView: View {
             localFS: LocalFileSystem(),
             remoteFS: fs,
             local: RemoteBrowserViewModel(fs: LocalFileSystem(), startPath: NSHomeDirectory()),
-            remote: RemoteBrowserViewModel(fs: fs),
+            remote: RemoteBrowserViewModel(fs: fs, startPath: startPath),
             terminal: TerminalPanelViewModel(openShell: { term, cols, rows in
                 guard let shellProvider else {
                     throw RemoteFSError.protocolError(
@@ -1107,7 +1127,8 @@ struct ContentView: View {
             form.keyPath = stored.keyPath ?? ""
 
             if let fs = await form.connect() {
-                startSession(in: tab, with: fs, storedName: stored.name)
+                let home = (try? await fs.homeDirectoryPath()) ?? "/"
+                startSession(in: tab, with: fs, storedName: stored.name, startPath: home)
                 tab.activeStoredSessionID = stored.id
                 // Audit recorder (M9b/T3): this IS the stored-session connect
                 // path — attach right after `activeStoredSessionID`, once
