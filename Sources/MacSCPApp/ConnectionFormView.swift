@@ -242,6 +242,8 @@ struct ConnectionFormView: View {
                                 .tag(ConnectionViewModel.AuthChoice.password)
                             Text(L10n.string("connection.auth.privateKey", "SSH key"))
                                 .tag(ConnectionViewModel.AuthChoice.privateKey)
+                            Text(L10n.string("connection.auth.agent", "Agent"))
+                                .tag(ConnectionViewModel.AuthChoice.agent)
                         }
                         .pickerStyle(.segmented)
                         .labelsHidden()
@@ -258,7 +260,7 @@ struct ConnectionFormView: View {
                             )
                         }
                         .errorHighlight(failedField == .password)
-                    } else {
+                    } else if viewModel.authChoice == .privateKey {
                         let keyPathLabel = L10n.string("connection.field.keyPath", "Key path")
                         FormRow(label: keyPathLabel) {
                             HStack(spacing: 6) {
@@ -289,6 +291,9 @@ struct ConnectionFormView: View {
                         }
                         .errorHighlight(failedField == .password)
                     }
+                    // .agent (M10d/T4): neither a secret nor a key path is
+                    // needed — the private key never leaves the running
+                    // ssh-agent — so no row shows here at all.
 
                     FormRow(label: "") {
                         Toggle(
@@ -379,6 +384,8 @@ struct ConnectionFormView: View {
                                     .tag(ConnectionViewModel.AuthChoice.password)
                                 Text(L10n.string("connection.auth.privateKey", "SSH key"))
                                     .tag(ConnectionViewModel.AuthChoice.privateKey)
+                                Text(L10n.string("connection.auth.agent", "Agent"))
+                                    .tag(ConnectionViewModel.AuthChoice.agent)
                             }
                             .pickerStyle(.segmented)
                             .labelsHidden()
@@ -394,7 +401,7 @@ struct ConnectionFormView: View {
                                         : Text(verbatim: ""))
                             }
                             .errorHighlight(failedField == .jumpPassword)
-                        } else {
+                        } else if viewModel.jumpAuthChoice == .privateKey {
                             let jumpKeyPathLabel = L10n.string("connection.field.keyPath", "Key path")
                             FormRow(label: jumpKeyPathLabel) {
                                 HStack(spacing: 6) {
@@ -419,6 +426,8 @@ struct ConnectionFormView: View {
                             }
                             .errorHighlight(failedField == .jumpPassword)
                         }
+                        // .agent (M10d/T4): same as the target block above —
+                        // no secret/key row for the jump's own agent auth.
                     }
                 }
 

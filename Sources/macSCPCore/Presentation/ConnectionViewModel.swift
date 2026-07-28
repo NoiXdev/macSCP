@@ -146,8 +146,12 @@ public final class ConnectionViewModel {
     /// Maps the form's `AuthChoice` to the persisted `StoredSession.AuthKind`
     /// (M10d/T3) -- the single place both the target's and the jump's
     /// choice-to-kind mapping go through, so a third auth kind only needs
-    /// updating here instead of at every call site.
-    private static func storedAuthKind(for choice: AuthChoice) -> StoredSession.AuthKind {
+    /// updating here instead of at every call site. Public (M10d/T4): the
+    /// App layer's own three-way mappings (login-set prefill, "save as new
+    /// login set", edit-session prefill) reuse this SAME mapping instead of
+    /// re-deriving their own two-way `.privateKey ? : .password` ternary that
+    /// would silently misdisplay `.agent` as `.password`.
+    public static func storedAuthKind(for choice: AuthChoice) -> StoredSession.AuthKind {
         switch choice {
         case .password: return .password
         case .privateKey: return .privateKey
@@ -157,8 +161,9 @@ public final class ConnectionViewModel {
 
     /// The reverse of `storedAuthKind(for:)` -- used by `beginEditing` to
     /// prefill the form's auth choice (target and jump) from a persisted
-    /// `AuthKind`.
-    private static func authChoice(for kind: StoredSession.AuthKind) -> AuthChoice {
+    /// `AuthKind`. Public (M10d/T4): same App-layer reuse rationale as
+    /// `storedAuthKind(for:)` above.
+    public static func authChoice(for kind: StoredSession.AuthKind) -> AuthChoice {
         switch kind {
         case .password: return .password
         case .privateKey: return .privateKey
@@ -228,7 +233,8 @@ public final class ConnectionViewModel {
         } catch {
             state = Self.failedState(
                 for: error, jumpEnabled: jumpEnabled,
-                jumpKeyPath: jumpKeyPath.trimmingCharacters(in: .whitespacesAndNewlines))
+                jumpKeyPath: jumpKeyPath.trimmingCharacters(in: .whitespacesAndNewlines),
+                jumpAuthChoice: jumpAuthChoice)
             return nil
         }
     }
@@ -600,7 +606,8 @@ public final class ConnectionViewModel {
     }
 
     static func failedState(
-        for error: Error, jumpEnabled: Bool = false, jumpKeyPath: String = ""
+        for error: Error, jumpEnabled: Bool = false, jumpKeyPath: String = "",
+        jumpAuthChoice: AuthChoice = .password
     ) -> State {
         switch error {
         case SSHConnectionConfig.ConfigError.emptyHost:
@@ -643,6 +650,46 @@ public final class ConnectionViewModel {
             where jumpEnabled && reason.contains("channelSetupRejected"):
             return .failed(message: CoreL10n.string("core.connect.jumpTunnelRejected"), field: nil)
         case RemoteFSError.connectionFailed(let reason):
+            return .failed(
+                message: String(format: CoreL10n.string("core.connect.connectionFailed %@"), reason),
+                field: nil)
+        // Agent errors (M10d/T4): `.socketUnavailable`/`.noIdentities` are
+        // their OWN honest, localized conditions (spec §2/§5) -- never
+        // stringified into the generic connectionFailed text below. Neither
+        // case carries a hop tag (`mapStageAware` deliberately returns the
+        // SAME `AgentError` type for a jump-hop failure as for a target-hop
+        // one -- see its doc comment), so the field is attributed from the
+        // form's OWN state instead of the error: a jump configured for
+        // `.agent` auth establishes and lists its agent identities BEFORE
+        // the target ever does (`CitadelFileSystem.connect`'s jump-first
+        // ordering), so whenever the jump itself uses `.agent` this error
+        // can only have come from there. `.jumpUsername` (not
+        // `.jumpPassword`/`.jumpKeyPath`) is the row that stays VISIBLE in
+        // agent mode -- highlighting a hidden secret row would give the
+        // user no feedback at all.
+        case AgentError.socketUnavailable:
+            return .failed(
+                message: CoreL10n.string("core.connect.agentSocketUnavailable"),
+                field: (jumpEnabled && jumpAuthChoice == .agent) ? .jumpUsername : nil)
+        case AgentError.noIdentities:
+            return .failed(
+                message: CoreL10n.string("core.connect.agentNoIdentities"),
+                field: (jumpEnabled && jumpAuthChoice == .agent) ? .jumpUsername : nil)
+        // `.refused` (agent said no to every offered identity) and
+        // `.protocolError` (transport/parsing misbehaved) aren't honest
+        // "fix your setup" conditions the way the two cases above are --
+        // they fall back to the same generic connect-failure text every
+        // other unclassified error uses, reason interpolated (spec/brief
+        // point 3). `field: nil` throughout: unlike the two cases above,
+        // these can equally originate from either hop, and there's no
+        // ordering guarantee to lean on.
+        case AgentError.refused:
+            return .failed(
+                message: String(
+                    format: CoreL10n.string("core.connect.connectionFailed %@"),
+                    String(describing: AgentError.refused)),
+                field: nil)
+        case AgentError.protocolError(let reason):
             return .failed(
                 message: String(format: CoreL10n.string("core.connect.connectionFailed %@"), reason),
                 field: nil)

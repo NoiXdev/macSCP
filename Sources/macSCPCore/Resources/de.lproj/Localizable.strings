@@ -38,6 +38,10 @@
 "core.connect.keyWrongPassphrase" = "Passphrase ist falsch.";
 "core.connect.keyUnsupportedFormat" = "SSH-Key-Format wird nicht unterstützt (aktuell: OpenSSH ed25519).";
 
+/* ConnectionViewModel.failedState(for:) — SSH-Agent (M10d/T4) */
+"core.connect.agentSocketUnavailable" = "Kein SSH-Agent erreichbar (SSH_AUTH_SOCK).";
+"core.connect.agentNoIdentities" = "Der SSH-Agent hat keine Identitäten geladen.";
+
 /* ConnectionViewModel.failedState(for:) — Jump-Host (M10c/T3) */
 "core.connect.invalidJumpPort %@" = "Ungültiger Jump-Port: %@.";
 "core.connect.jumpAuthFailed" = "Anmeldung am Jump-Host fehlgeschlagen — Benutzername oder Passwort prüfen.";

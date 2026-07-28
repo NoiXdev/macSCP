@@ -150,27 +150,44 @@ struct LoginSetsSheet: View {
 
     @ViewBuilder
     private func authKindBadge(_ kind: StoredSession.AuthKind) -> some View {
-        let isKey = kind == .privateKey
-        Text(isKey
-            ? L10n.string("loginSets.badge.key", "KEY")
-            : L10n.string("loginSets.badge.pass", "PASS"))
+        let (label, soft, ink) = badgeStyle(for: kind)
+        Text(label)
             .font(.system(size: 10, weight: .semibold))
             .padding(.horizontal, 7)
             .padding(.vertical, 2)
-            .background(
-                isKey ? DesignTokens.remoteSoft : DesignTokens.localSoft,
-                in: RoundedRectangle(cornerRadius: 5))
-            .foregroundStyle(isKey ? DesignTokens.remoteBlue : DesignTokens.localAmber)
+            .background(soft, in: RoundedRectangle(cornerRadius: 5))
+            .foregroundStyle(ink)
+    }
+
+    /// Label + colors for `authKindBadge` above, one three-way switch
+    /// (M10d/T4 added `.agent`) instead of the two-way `isKey ? : `
+    /// ternary this replaced — a ternary can only ever pick one of two
+    /// outcomes, so a third kind falling through it would silently render
+    /// as PASS.
+    private func badgeStyle(for kind: StoredSession.AuthKind) -> (label: String, soft: Color, ink: Color) {
+        switch kind {
+        case .privateKey:
+            return (L10n.string("loginSets.badge.key", "KEY"), DesignTokens.remoteSoft, DesignTokens.remoteBlue)
+        case .agent:
+            return (L10n.string("loginSets.badge.agent", "AGENT"), DesignTokens.agentSoft, DesignTokens.agentGreen)
+        case .password:
+            return (L10n.string("loginSets.badge.pass", "PASS"), DesignTokens.localSoft, DesignTokens.localAmber)
+        }
     }
 
     private func subtitle(for set: LoginSet) -> String {
-        if set.authKind == .privateKey {
+        switch set.authKind {
+        case .privateKey:
             return String(
                 format: L10n.string("loginSets.subtitle.key %@ %@", "%@ · SSH key (%@)"),
                 set.username, set.keyPath ?? "")
+        case .agent:
+            return String(
+                format: L10n.string("loginSets.subtitle.agent %@", "%@ · Agent"), set.username)
+        case .password:
+            return String(
+                format: L10n.string("loginSets.subtitle.password %@", "%@ · Password"), set.username)
         }
-        return String(
-            format: L10n.string("loginSets.subtitle.password %@", "%@ · Password"), set.username)
     }
 
     private func usageText(_ count: Int) -> String {
@@ -290,7 +307,11 @@ private struct LoginSetEditorView: View {
         self.onCancel = onCancel
         _name = State(initialValue: existing?.name ?? "")
         _username = State(initialValue: existing?.username ?? "")
-        _authChoice = State(initialValue: existing?.authKind == .privateKey ? .privateKey : .password)
+        // Three-way mapping (M10d/T4): reuses the SAME Core helper
+        // `ConnectionViewModel.authChoice(for:)` the target/jump prefill
+        // paths use, instead of a two-way ternary that would silently
+        // misdisplay `.agent` as Password.
+        _authChoice = State(initialValue: ConnectionViewModel.authChoice(for: existing?.authKind ?? .password))
         _keyPath = State(initialValue: existing?.keyPath ?? "")
     }
 
@@ -325,6 +346,8 @@ private struct LoginSetEditorView: View {
                         .tag(ConnectionViewModel.AuthChoice.password)
                     Text(L10n.string("connection.auth.privateKey", "SSH key"))
                         .tag(ConnectionViewModel.AuthChoice.privateKey)
+                    Text(L10n.string("connection.auth.agent", "Agent"))
+                        .tag(ConnectionViewModel.AuthChoice.agent)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -339,7 +362,7 @@ private struct LoginSetEditorView: View {
                             ? Text(L10n.string("loginSets.editor.keepSecret", "leave empty to keep"))
                             : Text(verbatim: ""))
                 }
-            } else {
+            } else if authChoice == .privateKey {
                 let keyPathLabel = L10n.string("connection.field.keyPath", "Key path")
                 EditorRow(label: keyPathLabel) {
                     HStack(spacing: 6) {
@@ -361,6 +384,8 @@ private struct LoginSetEditorView: View {
                             : Text(verbatim: ""))
                 }
             }
+            // .agent (M10d/T4): only Name + Username apply (spec §5.2) — no
+            // secret/key row, and Save-gating below stays name+username only.
 
             HStack {
                 Spacer()
@@ -371,7 +396,10 @@ private struct LoginSetEditorView: View {
                         id: existing?.id ?? UUID(),
                         name: name.trimmingCharacters(in: .whitespacesAndNewlines),
                         username: username.trimmingCharacters(in: .whitespacesAndNewlines),
-                        authKind: authChoice == .privateKey ? .privateKey : .password,
+                        // Three-way mapping (M10d/T4): same Core helper as
+                        // the initializer above — a two-way ternary here
+                        // would silently save an agent-mode set as `.password`.
+                        authKind: ConnectionViewModel.storedAuthKind(for: authChoice),
                         keyPath: authChoice == .privateKey
                             ? keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
                             : nil)

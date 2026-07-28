@@ -47,6 +47,7 @@
 "connection.field.authMethod" = "Authentication";
 "connection.auth.password" = "Password";
 "connection.auth.privateKey" = "SSH key";
+"connection.auth.agent" = "Agent";
 "connection.field.keyPath" = "Key path";
 "connection.field.keyPath.placeholder" = "~/.ssh/id_ed25519";
 "connection.field.keyPath.browseHelp" = "Choose key file";
@@ -340,6 +341,7 @@
 "loginSets.empty" = "No login sets yet.";
 "loginSets.subtitle.key %@ %@" = "%@ · SSH key (%@)";
 "loginSets.subtitle.password %@" = "%@ · Password";
+"loginSets.subtitle.agent %@" = "%@ · Agent";
 "loginSets.merge.banner %lld %@" = "%lld connections use the same login “%@”.";
 "loginSets.merge.ignore" = "Ignore";
 "loginSets.merge.action" = "Merge…";
@@ -354,6 +356,7 @@
 "loginSets.missingSet" = "The stored login for this connection was not found. Choose a login or enter credentials.";
 "loginSets.badge.key" = "KEY";
 "loginSets.badge.pass" = "PASS";
+"loginSets.badge.agent" = "AGENT";
 
 /* Connection form — three-way login switcher (M10b/T3) */
 "form.loginMode.label" = "Login";

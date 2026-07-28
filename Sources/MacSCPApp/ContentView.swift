@@ -1087,8 +1087,14 @@ struct ContentView: View {
     /// find it, no separate lookup API needed on `SessionListViewModel`.
     private func fillForm(_ form: ConnectionViewModel, from set: LoginSet) {
         form.username = set.username
-        form.authChoice = set.authKind == .privateKey ? .privateKey : .password
+        form.authChoice = ConnectionViewModel.authChoice(for: set.authKind)
         form.keyPath = set.keyPath ?? ""
+        // Agent sets carry no secret (M10d/T4) — skip the keychain lookup
+        // entirely rather than looking up a slot that was never written.
+        guard set.authKind != .agent else {
+            form.password = ""
+            return
+        }
         let synthetic = StoredSession(
             id: set.id, name: set.name, host: "", username: set.username,
             authKind: set.authKind, keyPath: set.keyPath)
@@ -1115,8 +1121,14 @@ struct ContentView: View {
     /// shared abstraction would only add indirection for two short bodies.
     private func fillJumpForm(_ form: ConnectionViewModel, from set: LoginSet) {
         form.jumpUsername = set.username
-        form.jumpAuthChoice = set.authKind == .privateKey ? .privateKey : .password
+        form.jumpAuthChoice = ConnectionViewModel.authChoice(for: set.authKind)
         form.jumpKeyPath = set.keyPath ?? ""
+        // Agent sets carry no secret (M10d/T4) — skip the keychain lookup
+        // entirely rather than looking up a slot that was never written.
+        guard set.authKind != .agent else {
+            form.jumpPassword = ""
+            return
+        }
         let synthetic = StoredSession(
             id: set.id, name: set.name, host: "", username: set.username,
             authKind: set.authKind, keyPath: set.keyPath)
@@ -1173,14 +1185,21 @@ struct ContentView: View {
         let name = trimmedName.isEmpty
             ? sessionListViewModel.suggestedSetName(forUsername: username)
             : trimmedName
-        let authKind: StoredSession.AuthKind = form.authChoice == .privateKey ? .privateKey : .password
+        // Three-way mapping (M10d/T4): reuses the Core helper instead of a
+        // two-way ternary, which would silently save an agent-mode form as
+        // a `.password` set.
+        let authKind = ConnectionViewModel.storedAuthKind(for: form.authChoice)
         let keyPath = authKind == .privateKey
             ? form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
             : nil
         let newSet = LoginSet(name: name, username: username, authKind: authKind, keyPath: keyPath)
-        let carried = form.password.isEmpty
+        // Agent sets never carry a secret (M10d/T4) — `saveLoginSet` already
+        // refuses to write one for `.agent`, but skip the (then-discarded)
+        // keychain lookup for the edited session's OWN secret too, rather
+        // than reading a value that will never be used.
+        let carried: String? = authKind == .agent ? nil : (form.password.isEmpty
             ? (editedSession.flatMap { sessionListViewModel.password(for: $0) })
-            : form.password
+            : form.password)
         sessionListViewModel.saveLoginSet(newSet, secret: carried)
         return newSet.id
     }
@@ -1277,7 +1296,11 @@ struct ContentView: View {
                 port: Int(form.port.trimmingCharacters(in: .whitespaces)) ?? 22,
                 username: form.username.trimmingCharacters(in: .whitespacesAndNewlines),
                 password: form.password,
-                authKind: form.authChoice == .password ? .password : .privateKey,
+                // Three-way mapping (M10d/T4, found alongside the hand-off
+                // list's sites): the old two-way `.password ? : .privateKey`
+                // ternary would silently save an agent-mode connection as a
+                // private-key session.
+                authKind: ConnectionViewModel.storedAuthKind(for: form.authChoice),
                 keyPath: form.authChoice == .privateKey
                     ? form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
                     : nil,
@@ -1345,12 +1368,12 @@ struct ContentView: View {
             do {
                 if let resolved = try sessionListViewModel.resolvedLogin(for: stored) {
                     form.username = resolved.username
-                    form.authChoice = resolved.authKind == .privateKey ? .privateKey : .password
+                    form.authChoice = ConnectionViewModel.authChoice(for: resolved.authKind)
                     form.keyPath = resolved.keyPath ?? ""
                     form.password = resolved.secret ?? ""
                 } else {
                     form.username = stored.username
-                    form.authChoice = stored.authKind == .privateKey ? .privateKey : .password
+                    form.authChoice = ConnectionViewModel.authChoice(for: stored.authKind)
                     form.keyPath = stored.keyPath ?? ""
                     form.password = sessionListViewModel.password(for: stored) ?? ""
                 }
@@ -1369,7 +1392,7 @@ struct ContentView: View {
                 // a dangling jump set discarded a perfectly good target
                 // login pick.
                 form.username = stored.username
-                form.authChoice = stored.authKind == .privateKey ? .privateKey : .password
+                form.authChoice = ConnectionViewModel.authChoice(for: stored.authKind)
                 form.keyPath = stored.keyPath ?? ""
                 form.password = ""
                 form.loginMode = .manual
@@ -1402,7 +1425,7 @@ struct ContentView: View {
                     form.jumpSelectedLoginSetID = jump.loginSetID
                     if let resolvedJump = try sessionListViewModel.resolvedJumpLogin(for: stored) {
                         form.jumpUsername = resolvedJump.username
-                        form.jumpAuthChoice = resolvedJump.authKind == .privateKey ? .privateKey : .password
+                        form.jumpAuthChoice = ConnectionViewModel.authChoice(for: resolvedJump.authKind)
                         form.jumpKeyPath = resolvedJump.keyPath ?? ""
                         form.jumpPassword = resolvedJump.secret ?? ""
                     }
@@ -1453,7 +1476,7 @@ struct ContentView: View {
             form.jumpHost = jump.host
             form.jumpPort = String(jump.port)
             form.jumpUsername = jump.username
-            form.jumpAuthChoice = jump.authKind == .privateKey ? .privateKey : .password
+            form.jumpAuthChoice = ConnectionViewModel.authChoice(for: jump.authKind)
             form.jumpKeyPath = jump.keyPath ?? ""
             form.jumpPassword = ""
             form.jumpLoginMode = .manual
