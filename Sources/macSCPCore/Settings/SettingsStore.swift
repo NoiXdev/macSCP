@@ -61,6 +61,8 @@ public final class SettingsStore {
         static let defaultEditorPath = "defaultEditorPath"
         static let fileAssociations = "fileAssociations"
         static let showHiddenFiles = "showHiddenFiles"
+        static let autoRefreshEnabled = "autoRefreshEnabled"
+        static let autoRefreshIntervalSeconds = "autoRefreshIntervalSeconds"
     }
 
     private enum Defaults {
@@ -68,6 +70,8 @@ public final class SettingsStore {
         static let uploadLimitKBs = 0
         static let downloadLimitKBs = 0
         static let showHiddenFiles = false
+        static let autoRefreshEnabled = true
+        static let autoRefreshIntervalSeconds = 5
     }
 
     /// Identical to `SessionStore.defaultDirectory` — both stores share the
@@ -177,6 +181,23 @@ public final class SettingsStore {
     public var showHiddenFiles: Bool {
         get { boolValue(for: Keys.showHiddenFiles, default: Defaults.showHiddenFiles) }
         set { setBool(newValue, for: Keys.showHiddenFiles) }
+    }
+
+    /// Auto-refresh of the active tab's remote pane (M9c). Default ON.
+    public var autoRefreshEnabled: Bool {
+        get { boolValue(for: Keys.autoRefreshEnabled, default: Defaults.autoRefreshEnabled) }
+        set { setBool(newValue, for: Keys.autoRefreshEnabled) }
+    }
+
+    /// Interval in seconds, clamped to 2...300 on BOTH ends so a hand-edited
+    /// settings.json cannot produce SFTP spam or a dead timer.
+    public var autoRefreshIntervalSeconds: Int {
+        get {
+            clamp(
+                intValue(for: Keys.autoRefreshIntervalSeconds, default: Defaults.autoRefreshIntervalSeconds),
+                2, 300)
+        }
+        set { setInt(clamp(newValue, 2, 300), for: Keys.autoRefreshIntervalSeconds) }
     }
 
     /// Convenience: association lookup with the SAME normalization applied.

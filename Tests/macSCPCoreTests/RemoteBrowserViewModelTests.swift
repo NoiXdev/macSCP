@@ -447,6 +447,80 @@ struct RemoteBrowserViewModelTests {
         #expect(capture.events[0].detail.contains("/b.txt"))    // names the failure point
     }
 
+    // MARK: - refreshQuietly (M9c Task 1)
+
+    @Test func refreshQuietlyUpdatesItemsWithoutStateFlicker() async {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "a.txt", path: "/a.txt", kind: .file, size: 1)],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        #expect(vm.items.map(\.name) == ["a.txt"])
+
+        await fs.addItem(
+            RemoteFileItem(name: "b.txt", path: "/b.txt", kind: .file, size: 2), to: "/")
+
+        await vm.refreshQuietly()
+        #expect(vm.items.map(\.name) == ["a.txt", "b.txt"])
+        #expect(vm.state == .loaded)
+    }
+
+    @Test func refreshQuietlyPrunesVanishedAndHiddenFromSelection() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [
+                RemoteFileItem(name: "a.txt", path: "/a.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "b.txt", path: "/b.txt", kind: .file, size: 1),
+                RemoteFileItem(name: ".hidden", path: "/.hidden", kind: .file, size: 1),
+            ],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        vm.showHiddenFiles = true
+        await vm.load()
+        #expect(vm.items.map(\.name) == [".hidden", "a.txt", "b.txt"])
+        vm.selectedItems = vm.items   // select all three
+
+        try await fs.deleteTree(at: "/b.txt")   // b.txt vanishes from the server
+        vm.showHiddenFiles = false              // .hidden now filtered out
+
+        await vm.refreshQuietly()
+        #expect(vm.selectedItems.map(\.name) == ["a.txt"])
+    }
+
+    @Test func refreshQuietlySwallowsErrors() async {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "a.txt", path: "/a.txt", kind: .file, size: 1)],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        #expect(vm.state == .loaded)
+
+        await fs.setListFailure(RemoteFSError.connectionFailed(reason: "closed"))
+
+        await vm.refreshQuietly()
+        #expect(vm.state == .loaded)
+        #expect(vm.items.map(\.name) == ["a.txt"])
+    }
+
+    @Test func refreshQuietlyBailsWhenNotLoaded() async {
+        let fs = MockRemoteFileSystem(tree: [:])
+        await fs.setListFailure(RemoteFSError.connectionFailed(reason: "closed"))
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        guard case .failed = vm.state else {
+            Issue.record("expected .failed state after loading against a throwing mock")
+            return
+        }
+
+        await fs.setListFailure(nil)   // "heal" the mock — server is reachable again
+
+        await vm.refreshQuietly()
+        guard case .failed = vm.state else {
+            Issue.record("refreshQuietly must not repair a failed state — only a manual retry does")
+            return
+        }
+        #expect(vm.items.isEmpty)
+    }
+
     @Test func nilAuditSinkFiresNothing() async throws {
         let fs = MockRemoteFileSystem(tree: [
             "/": [RemoteFileItem(name: "old.txt", path: "/old.txt", kind: .file, size: 1)],

@@ -17,6 +17,11 @@ actor MockRemoteFileSystem: RemoteFileSystem {
     private(set) var deletedPaths: [String] = []
     /// Permission bits set via `setPermissions`, keyed by path (M7a/T1).
     private(set) var permissionsByPath: [String: UInt32] = [:]
+    /// Test-only failure injection (M9c/T1): while set, `list` throws this
+    /// error regardless of the tree contents, simulating a dead server for
+    /// the silent-refresh error-swallowing tests. `nil` (the default)
+    /// "heals" the mock back to normal tree-backed listing.
+    private var listFailure: Error?
 
     init(tree: [String: [RemoteFileItem]] = [:], files: [String: Data] = [:]) {
         self.tree = tree
@@ -24,10 +29,28 @@ actor MockRemoteFileSystem: RemoteFileSystem {
     }
 
     func list(path: String) async throws -> [RemoteFileItem] {
+        if let listFailure {
+            throw listFailure
+        }
         guard let items = tree[path] else {
             throw RemoteFSError.notFound(path: path)
         }
         return items
+    }
+
+    /// Test-only direct tree mutation (M9c/T1): appends `item` to
+    /// `directory`'s listing without going through a mutating protocol
+    /// method, simulating a remote directory that changed between two
+    /// `list` calls (e.g. another client created a file).
+    func addItem(_ item: RemoteFileItem, to directory: String) {
+        var siblings = tree[directory] ?? []
+        siblings.append(item)
+        tree[directory] = siblings
+    }
+
+    /// Test-only failure injection toggle (M9c/T1). See `listFailure`.
+    func setListFailure(_ error: Error?) {
+        listFailure = error
     }
 
     func stat(path: String) async throws -> RemoteFileItem {

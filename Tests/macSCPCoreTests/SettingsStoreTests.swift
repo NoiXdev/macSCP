@@ -267,4 +267,86 @@ struct SettingsStoreTests {
         #expect(raw["defaultEditorPath"] == .string("/Applications/TextEdit.app"))
         #expect(raw["fileAssociations"] == .object(["php": .string("/Applications/PhpStorm.app")]))
     }
+
+    // MARK: - Auto-refresh (M9c Task 1)
+
+    @Test func autoRefreshDefaultsToEnabledWithFiveSecondInterval() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.autoRefreshEnabled == true)
+        #expect(store.autoRefreshIntervalSeconds == 5)
+    }
+
+    @Test func autoRefreshIntervalSetterClampsBelowRange() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.autoRefreshIntervalSeconds = 1
+        #expect(store.autoRefreshIntervalSeconds == 2)
+    }
+
+    @Test func autoRefreshIntervalSetterClampsAboveRange() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.autoRefreshIntervalSeconds = 9999
+        #expect(store.autoRefreshIntervalSeconds == 300)
+    }
+
+    /// Forward-compat pattern (see `outOfRangeValuesOnDiskAreClampedOnLoad`):
+    /// a hand-edited or corrupted settings.json can carry an out-of-range
+    /// raw value directly, bypassing the setter entirely — the GETTER must
+    /// clamp too, not just the setter.
+    @Test func autoRefreshIntervalGetterClampsRawValueBelowRange() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"autoRefreshIntervalSeconds": 0}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        #expect(store.autoRefreshIntervalSeconds == 2)
+    }
+
+    @Test func autoRefreshIntervalGetterClampsRawValueAboveRange() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"autoRefreshIntervalSeconds": 100000}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        #expect(store.autoRefreshIntervalSeconds == 300)
+    }
+
+    @Test func autoRefreshSettingsPersistenceRoundtrips() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.autoRefreshEnabled = false
+        store.autoRefreshIntervalSeconds = 30
+
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.autoRefreshEnabled == false)
+        #expect(reloaded.autoRefreshIntervalSeconds == 30)
+    }
+
+    @Test func loadingOldSettingsFileWithoutAutoRefreshKeysUsesDefaults() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"maxConcurrentTransfers": 4, "uploadLimitKBs": 10, "downloadLimitKBs": 20}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        #expect(store.autoRefreshEnabled == true)
+        #expect(store.autoRefreshIntervalSeconds == 5)
+    }
 }

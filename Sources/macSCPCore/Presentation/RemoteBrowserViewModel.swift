@@ -52,15 +52,40 @@ public final class RemoteBrowserViewModel {
         selectedItems = []
         do {
             let listed = try await fs.list(path: currentPath)
-            let visible = showHiddenFiles
-                ? listed
-                : listed.filter { !$0.name.hasPrefix(".") }
-            items = Self.sortedForDisplay(visible)
+            items = displayItems(from: listed)
             state = .loaded
         } catch {
             items = []
             state = .failed(message: Self.message(for: error, path: currentPath))
         }
+    }
+
+    /// Shared display pipeline for `load()` and `refreshQuietly()` — the
+    /// hidden-files filter and sort MUST stay identical between the two.
+    private func displayItems(from listed: [RemoteFileItem]) -> [RemoteFileItem] {
+        let visible = showHiddenFiles
+            ? listed
+            : listed.filter { !$0.name.hasPrefix(".") }
+        return Self.sortedForDisplay(visible)
+    }
+
+    /// Silent background refresh (M9c): re-lists the current directory and
+    /// swaps the rows WITHOUT touching `state` — no spinner, no hit-test
+    /// block, selection preserved (pruned to paths still visible, which
+    /// also closes the M7a backlog note about the hidden filter). Errors
+    /// are swallowed silently: a dead server must not paint a failure
+    /// screen every few seconds — any manual action still surfaces real
+    /// problems. Both guards are needed: the state can change while the
+    /// listing is in flight (e.g. a manual `load()` or `open()`), and the
+    /// late writer must lose.
+    public func refreshQuietly() async {
+        guard state == .loaded else { return }
+        let path = currentPath
+        guard let listed = try? await fs.list(path: path) else { return }
+        guard state == .loaded, currentPath == path else { return }
+        items = displayItems(from: listed)
+        let visiblePaths = Set(items.map(\.path))
+        selectedItems = selectedItems.filter { visiblePaths.contains($0.path) }
     }
 
     public func open(_ item: RemoteFileItem) async {
