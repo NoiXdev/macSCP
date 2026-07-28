@@ -71,7 +71,10 @@ struct KnownHostsSheet: View {
                 Text(errorMessage).font(.caption).foregroundStyle(.red).lineLimit(2)
             }
 
-            if filteredRows.isEmpty {
+            // Only claim "no known hosts" when the list is GENUINELY empty
+            // (final review): after a load error the empty table must not
+            // suggest the store is empty — the red message above is the truth.
+            if filteredRows.isEmpty && errorMessage == nil {
                 Spacer(minLength: 0)
                 Text(L10n.string("knownHosts.empty", "No known hosts yet."))
                     .foregroundStyle(.secondary)

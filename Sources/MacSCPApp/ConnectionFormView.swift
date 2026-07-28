@@ -301,10 +301,10 @@ struct ConnectionFormView: View {
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.polishedProminent)
             }
-            // Discreet footnote (M10a/T2, mockup section 4): the escape
-            // hatch for a rotated server key — trusting the NEW fingerprint
-            // above doesn't help if the user actually wants to inspect/forget
-            // the OLD one first.
+            // Discreet footnote (M10a/T2, mockup section 4): quick access to
+            // inspect what is already trusted without abandoning the pending
+            // prompt. (This prompt only exists on the UNKNOWN-key path — a
+            // rotated key is a mismatch hard stop and never reaches it.)
             Button(L10n.string("tofu.manageKnownHosts", "Manage known hosts…")) {
                 showKnownHostsSheet = true
             }
