@@ -188,6 +188,14 @@ struct ContentView: View {
     /// whether or not that session is currently connected.
     @State private var auditLogSession: StoredSession?
 
+    // MARK: - Known hosts (M10a/T2)
+
+    /// Drives the known-hosts management sheet — opened from the Sessions
+    /// menu (⌘⇧K) and the sidebar's background context menu. No item payload
+    /// needed (unlike `auditLogSession`): the sheet always shows the same,
+    /// window-wide store.
+    @State private var showKnownHostsSheet = false
+
     // MARK: - Session export/import (M9a/T3)
 
     /// Wraps `ExportScope` so it can drive `.sheet(item:)` — `ExportScope`
@@ -281,7 +289,8 @@ struct ContentView: View {
                 onEdit: { stored in editStored(stored) },
                 onExport: { scope in exportSheetItem = ExportSheetItem(scope: scope) },
                 onImport: { showImportFileImporter = true },
-                onShowAuditLog: { stored in auditLogSession = stored }
+                onShowAuditLog: { stored in auditLogSession = stored },
+                onShowKnownHosts: { showKnownHostsSheet = true }
             )
             .frame(minWidth: 170, idealWidth: 190, maxWidth: 260)
 
@@ -355,6 +364,22 @@ struct ContentView: View {
                     requestClose(tab)
                 }
             }
+            // Sessions menu bridge (M10a/T2) — same key-window guard as the
+            // tab commands above. Export/import route through the EXISTING
+            // M9a state (`exportSheetItem`/`showImportFileImporter`), not a
+            // duplicate handler.
+            tabCommands.showKnownHosts = {
+                guard window?.isKeyWindow == true else { return }
+                showKnownHostsSheet = true
+            }
+            tabCommands.exportAllSessions = {
+                guard window?.isKeyWindow == true else { return }
+                exportSheetItem = ExportSheetItem(scope: .all)
+            }
+            tabCommands.importSessions = {
+                guard window?.isKeyWindow == true else { return }
+                showImportFileImporter = true
+            }
         }
         // Destructive confirmation for closing a tab with active transfers
         // (M8a/T4) — mirrors `SessionSidebar`'s delete-confirmation pattern.
@@ -393,6 +418,12 @@ struct ContentView: View {
         // reads straight from `auditStore`, independent of any tab.
         .sheet(item: $auditLogSession) { stored in
             AuditLogSheet(session: stored, store: auditStore)
+        }
+        // Known-hosts sheet (M10a/T2) — same directory the connector's
+        // `KnownHostsStore` uses (`makeTab` below), so it reflects the same
+        // TOFU state the connect flow reads from.
+        .sheet(isPresented: $showKnownHostsSheet) {
+            KnownHostsSheet(store: KnownHostsStore(directory: SessionStore.defaultDirectory))
         }
         .fileExporter(
             isPresented: $showExportFileExporter,

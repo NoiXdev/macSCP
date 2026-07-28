@@ -33,6 +33,15 @@ struct ConnectionFormView: View {
     /// from `viewModel.state` so dismissing the alert keeps the `.failed`
     /// state (and with it the red field highlight) intact.
     @State private var alertMessage: String?
+    /// Drives the TOFU prompt's "Manage known hosts…" footnote (M10a/T2).
+    /// Local `@State` sheet with its own `KnownHostsStore` instance, rather
+    /// than a callback bubbled up to `ContentView` — `ConnectionFormView`
+    /// already knows the store's fixed directory (same one the connector in
+    /// `ContentView.makeTab` uses), so a callback would only add an extra
+    /// closure parameter threaded through `SessionTab`/`ContentView` for no
+    /// behavioral gain. The trust prompt underneath is unaffected either
+    /// way — it's driven by `viewModel.hostKeyPrompt`, not by this sheet.
+    @State private var showKnownHostsSheet = false
 
     private var isConnecting: Bool { viewModel.state == .connecting }
 
@@ -74,6 +83,14 @@ struct ConnectionFormView: View {
             Button(L10n.string("common.ok", "OK"), role: .cancel) {}
         } message: {
             Text(alertMessage ?? "")
+        }
+        // Opened from the TOFU prompt's footnote below — kept at the outer
+        // `body` level (like the alert above) so it presents over whichever
+        // sub-view (`hostKeyPromptView` or `formContent`) is currently shown,
+        // and so the prompt underneath stays mounted and functional while
+        // the sheet is up.
+        .sheet(isPresented: $showKnownHostsSheet) {
+            KnownHostsSheet(store: KnownHostsStore(directory: SessionStore.defaultDirectory))
         }
     }
 
@@ -284,6 +301,17 @@ struct ConnectionFormView: View {
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.polishedProminent)
             }
+            // Discreet footnote (M10a/T2, mockup section 4): the escape
+            // hatch for a rotated server key — trusting the NEW fingerprint
+            // above doesn't help if the user actually wants to inspect/forget
+            // the OLD one first.
+            Button(L10n.string("tofu.manageKnownHosts", "Manage known hosts…")) {
+                showKnownHostsSheet = true
+            }
+            .buttonStyle(.plain)
+            .font(.caption)
+            .foregroundStyle(DesignTokens.inkTertiary)
+            .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }
 

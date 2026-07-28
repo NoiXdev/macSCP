@@ -294,4 +294,32 @@
 "audit.kind.permissions" = "Permissions";
 "audit.kind.newFolder" = "New folder";
 "audit.kind.editUpload" = "Editor upload";
+
+/* Sessions menu (M10a/T2) */
+"menu.sessions" = "Sessions";
+"menu.knownHosts" = "Known Hosts…";
+"menu.exportAllSessions" = "Export All Sessions…";
+"menu.importSessions" = "Import Sessions…";
+
+/* Known hosts sheet (M10a/T2) */
+"knownHosts.title" = "Known Hosts";
+"knownHosts.search" = "Search (host or fingerprint)";
+"knownHosts.column.host" = "Host";
+"knownHosts.column.port" = "Port";
+"knownHosts.column.keyType" = "Key type";
+"knownHosts.column.fingerprint" = "Fingerprint";
+"knownHosts.column.added" = "Added";
+"knownHosts.count %lld" = "%lld hosts";
+"knownHosts.countFiltered %lld %lld" = "%lld of %lld";
+"knownHosts.copyFingerprint" = "Copy Fingerprint";
+"knownHosts.remove" = "Remove…";
+"knownHosts.remove.title" = "Remove known host?";
+"knownHosts.remove.message" = "The host will be treated as unknown on the next connect (new trust prompt).";
+"knownHosts.remove.messageMany %lld" = "%lld hosts will be treated as unknown on the next connect (new trust prompts).";
+"knownHosts.remove.confirm" = "Remove";
+"knownHosts.empty" = "No known hosts yet.";
+"knownHosts.loadError %@" = "Could not load known hosts: %@";
+
+/* TOFU prompt footnote (M10a/T2) */
+"tofu.manageKnownHosts" = "Manage known hosts…";
 "audit.kind.crossSessionTransfer" = "Cross-session transfer";

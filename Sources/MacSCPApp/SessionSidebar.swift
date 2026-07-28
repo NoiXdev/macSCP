@@ -22,6 +22,9 @@ struct SessionSidebar: View {
     /// Sidebar session menu "Audit Log…" entry (M9b/T3) — opens the sheet
     /// for any stored session, connected or not.
     let onShowAuditLog: (StoredSession) -> Void
+    /// Background context menu "Known Hosts…" entry (M10a/T2) — opens the
+    /// known-hosts management sheet.
+    let onShowKnownHosts: () -> Void
 
     /// Not persisted — resets to "all expanded" on relaunch.
     @State private var collapsedGroups: Set<UUID> = []
@@ -242,6 +245,8 @@ struct SessionSidebar: View {
     private var backgroundMenu: some View {
         Button(L10n.string("sidebar.newConnection", "New connection")) { onNew() }
         Button(L10n.string("sidebar.newGroup", "New group…")) { beginNewGroup(forMoving: nil) }
+        Divider()
+        Button(L10n.string("menu.knownHosts", "Known Hosts…")) { onShowKnownHosts() }
         Divider()
         Button(L10n.string("export.menu.all", "Export All…")) { onExport(.all) }
             .disabled(viewModel.sessions.isEmpty)

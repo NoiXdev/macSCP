@@ -13,6 +13,13 @@ final class TabCommands {
     var newTab: (() -> Void)?
     var closeActiveTab: (() -> Void)?
     var selectTab: ((Int) -> Void)?
+    /// Sessions menu bridge (M10a/T2): "Known Hosts…" opens the management
+    /// sheet; the export/import closures bind to `ContentView`'s EXISTING
+    /// M9a handlers (`exportSheetItem`/`showImportFileImporter`) — the
+    /// sidebar's own "Export All…"/"Import…" entries are untouched.
+    var showKnownHosts: (() -> Void)?
+    var exportAllSessions: (() -> Void)?
+    var importSessions: (() -> Void)?
 }
 
 @main
@@ -90,6 +97,24 @@ struct MacSCPApp: App {
                     settingsStore.showHiddenFiles.toggle()
                 }
                 .keyboardShortcut(".", modifiers: [.command, .shift])
+            }
+            // "Sessions" menu (M10a/T2, mockup section 4): bundles the
+            // management sheets and the sidebar's existing export/import
+            // actions in one menu-bar home. Same key-window guard as the
+            // other `tabCommands` closures above — `ContentView.task` wires
+            // these against `window?.isKeyWindow`.
+            CommandMenu(L10n.string("menu.sessions", "Sessions")) {
+                Button(L10n.string("menu.knownHosts", "Known Hosts…")) {
+                    tabCommands.showKnownHosts?()
+                }
+                .keyboardShortcut("k", modifiers: [.command, .shift])
+                Divider()
+                Button(L10n.string("menu.exportAllSessions", "Export All Sessions…")) {
+                    tabCommands.exportAllSessions?()
+                }
+                Button(L10n.string("menu.importSessions", "Import Sessions…")) {
+                    tabCommands.importSessions?()
+                }
             }
         }
 
