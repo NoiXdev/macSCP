@@ -42,7 +42,7 @@ T1 (SessionExportCodec, Core) → T2 (SessionImportPlanner + VM, Core) → T3 (U
   - `public enum SessionExportCodec { public static func encode(_ payload: SessionExportPayload, password: String?) throws -> Data; public static func decode(_ data: Data, password: String?) throws -> SessionExportPayload; public static func probe(_ data: Data) throws -> Bool }`
   - `probe` wirft `notAnExportFile`/`unsupportedVersion`, liefert sonst `encrypted`.
 
-- [ ] **Step 1: Failing Tests** — `Tests/macSCPCoreTests/SessionExportCodecTests.swift`:
+- [x] **Step 1: Failing Tests** — `Tests/macSCPCoreTests/SessionExportCodecTests.swift`:
 
 ```swift
 import Foundation
@@ -127,9 +127,9 @@ struct SessionExportCodecTests {
 }
 ```
 
-- [ ] **Step 2: Rot beweisen.** Run: `swift test --filter SessionExportCodecTests` → FAIL (Typen fehlen).
+- [x] **Step 2: Rot beweisen.** Run: `swift test --filter SessionExportCodecTests` → FAIL (Typen fehlen).
 
-- [ ] **Step 3: Implementierung** — `Sources/macSCPCore/Sessions/SessionExportCodec.swift`:
+- [x] **Step 3: Implementierung** — `Sources/macSCPCore/Sessions/SessionExportCodec.swift`:
 
 ```swift
 import CommonCrypto
@@ -302,9 +302,9 @@ public enum SessionExportCodec {
 
 (Hinweis: `import CommonCrypto` funktioniert in SPM auf macOS direkt; sollte der Modul-Import fehlschlagen, ist die Fallback-Route ein kleines System-Library-Target — NICHT nötig auf aktuellem Xcode, erst probieren. `Data`-Felder werden von JSONEncoder als Base64 kodiert — deckt das Spec-Format ab.)
 
-- [ ] **Step 4: Grün + volle Suite.** `swift test --filter SessionExportCodecTests` → PASS; `swift test` → 389 + 7 = 396 (Zahl im Report festhalten); `swift build` sauber.
+- [x] **Step 4: Grün + volle Suite.** `swift test --filter SessionExportCodecTests` → PASS; `swift test` → 389 + 7 = 396 (Zahl im Report festhalten); `swift build` sauber.
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```bash
 git add Sources/macSCPCore/Sessions/SessionExportCodec.swift Tests/macSCPCoreTests/SessionExportCodecTests.swift
@@ -333,7 +333,7 @@ git commit -m "feat: add the versioned session export codec"
 
 **Regeln (Spec §2.2/§2.3, bindend):** Dublette ⇔ (host.lowercased(), port, username) gegen Bestand; in-Datei-Dubletten keep-first; Gruppen-Match per exaktem Namen gegen Bestand, sonst Neuanlage mit frischer UUID; jede importierte Session frische UUID; Passwörter hängen am Plan-Eintrag; `applyImport` additiv, Keychain-Fehler brechen nicht ab (Session bleibt, `passwordFailures` zählt); `exportPayload` lässt fehlende Keychain-Passwörter aus und zählt sie; Gruppen nur bei `includeGroups` und nur referenzierte; bei `includeGroups == false` sind alle `groupID`s im Payload nil.
 
-- [ ] **Step 1: Failing Planner-Tests** — `Tests/macSCPCoreTests/SessionImportPlannerTests.swift`:
+- [x] **Step 1: Failing Planner-Tests** — `Tests/macSCPCoreTests/SessionImportPlannerTests.swift`:
 
 ```swift
 import Foundation
@@ -422,9 +422,9 @@ struct SessionImportPlannerTests {
 }
 ```
 
-- [ ] **Step 2: Rot beweisen**, dann Planner implementieren (reine Funktion; Dubletten-Schlüssel `"\(host.lowercased())|\(port)|\(username)"`; erst Gruppen auflösen — Name-Match gegen `existingGroups`, sonst `StoredGroup(name:)` frisch anlegen und im lokalen Mapping Datei-ID→neue Gruppe führen; dann Sessions in Dateireihenfolge: gegen Bestands-Set + gesehene-Tripel-Set prüfen, bei Import `StoredSession(id: UUID(), …)` mit aufgelöster groupID bauen). Grün beweisen.
+- [x] **Step 2: Rot beweisen**, dann Planner implementieren (reine Funktion; Dubletten-Schlüssel `"\(host.lowercased())|\(port)|\(username)"`; erst Gruppen auflösen — Name-Match gegen `existingGroups`, sonst `StoredGroup(name:)` frisch anlegen und im lokalen Mapping Datei-ID→neue Gruppe führen; dann Sessions in Dateireihenfolge: gegen Bestands-Set + gesehene-Tripel-Set prüfen, bei Import `StoredSession(id: UUID(), …)` mit aufgelöster groupID bauen). Grün beweisen.
 
-- [ ] **Step 3: Failing VM-Tests** — in `SessionListViewModelTests.swift` (bestehende Muster/Fixtures der Datei nutzen; `InMemorySecretStore` + `FailingSecretStore` existieren):
+- [x] **Step 3: Failing VM-Tests** — in `SessionListViewModelTests.swift` (bestehende Muster/Fixtures der Datei nutzen; `InMemorySecretStore` + `FailingSecretStore` existieren):
 
 ```swift
     @Test func exportPayloadScopesAndCountsMissingPasswords() {
@@ -455,9 +455,9 @@ struct SessionImportPlannerTests {
 
 (Kommentar-Skizzen in echte Assertions ausformulieren — die Erwartungswerte stehen drin; Fixture-Konstruktion an die vorhandenen Tests der Datei angleichen.)
 
-- [ ] **Step 4: Rot**, dann VM-Methoden implementieren: `exportPayload` mappt Scope → Sessions (Gruppen-Scope über `sessions(inGroup:)`), sammelt referenzierte Gruppen nur bei `includeGroups`, holt Passwörter via `password(for:)` nur bei `includePasswords` (nil ⇒ `missingPasswordCount += 1`), `includesSecrets = includePasswords`. `applyImport` schreibt Gruppen (`store.upsertGroup`), dann Sessions (`store.upsert`), Passwörter via `secrets.savePassword` in do/catch (Fehler ⇒ `passwordFailures += 1`), am Ende `reload()`; `skipped = plan.skipped.count`. Grün.
+- [x] **Step 4: Rot**, dann VM-Methoden implementieren: `exportPayload` mappt Scope → Sessions (Gruppen-Scope über `sessions(inGroup:)`), sammelt referenzierte Gruppen nur bei `includeGroups`, holt Passwörter via `password(for:)` nur bei `includePasswords` (nil ⇒ `missingPasswordCount += 1`), `includesSecrets = includePasswords`. `applyImport` schreibt Gruppen (`store.upsertGroup`), dann Sessions (`store.upsert`), Passwörter via `secrets.savePassword` in do/catch (Fehler ⇒ `passwordFailures += 1`), am Ende `reload()`; `skipped = plan.skipped.count`. Grün.
 
-- [ ] **Step 5: Volle Suite + Commit.** `swift test` (396 + 9 ≈ 405; echte Zahl festhalten).
+- [x] **Step 5: Volle Suite + Commit.** `swift test` (396 + 9 ≈ 405; echte Zahl festhalten).
 
 ```bash
 git add -A
@@ -485,12 +485,12 @@ git commit -m "feat: plan and apply session imports with duplicate detection"
 5. Fehler-Alerts: `notAnExportFile` („Not a macSCP sessions file."), `unsupportedVersion` („This file was created by a newer version of macSCP."), Schreib-/Lesefehler generisch lokalisiert. Kein Auto-Connect nach Import.
 6. Alle Keys EN/DE (Vorschlag: `export.menu.single/group/all`, `import.menu`, `export.sheet.title`, `export.summary %lld`, `export.includeGroups`, `export.includePasswords`, `export.encrypted`, `export.unencrypted`, `export.password`, `export.passwordRepeat`, `export.passwordHint`, `export.plaintextWarning`, `export.confirmAnyway`, `export.action`, `export.missingPasswords %lld`, `import.password.title`, `import.password.wrong`, `import.result.title`, `import.result.body`-Bausteine, `import.error.notExport`, `import.error.newerVersion`) — exakte Wortlaute EN zuerst, DE-Übersetzung; Grep-Gegenprobe beide Kataloge.
 
-- [ ] **Step 1:** Sheets-Datei (Export-Sheet, Passwort-Sheet; NameEntrySheet-Stil: Titel, Felder, isWorking, `.polished`-Buttons). **Step 2:** Sidebar-Einträge + Callbacks. **Step 3:** ContentView-Verkabelung (State, fileExporter/fileImporter, Fehler-/Ergebnis-Alerts). **Step 4:** UTType in `scripts/package-app`-Plist + ggf. Doku-Zeile. **Step 5:** Katalog-Keys + Gegenprobe. **Step 6:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test` (Stand T2). **Step 7:** Commit `feat: export and import stored sessions from the sidebar`.
+- [x] **Step 1:** Sheets-Datei (Export-Sheet, Passwort-Sheet; NameEntrySheet-Stil: Titel, Felder, isWorking, `.polished`-Buttons). **Step 2:** Sidebar-Einträge + Callbacks. **Step 3:** ContentView-Verkabelung (State, fileExporter/fileImporter, Fehler-/Ergebnis-Alerts). **Step 4:** UTType in `scripts/package-app`-Plist + ggf. Doku-Zeile. **Step 5:** Katalog-Keys + Gegenprobe. **Step 6:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test` (Stand T2). **Step 7:** Commit `feat: export and import stored sessions from the sidebar`.
 
 ---
 
 ### Task 4: Abschluss-Verifikation (Koordinator)
 
-- [ ] Gated Suiten (Rig-Start aus dem Haupt-Checkout): `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün, zero skips.
-- [ ] Visueller Smoke (Dev-Wrapper; Maintainer testet ggf. selbst — Checkliste übergeben): Export einzeln/Gruppe/alle (Datei-Inhalt prüfen: Klartext lesbar, verschlüsselt opak); Passwörter-Toggle + Klartext-Warnweg (zweistufiger Button); verschlüsselter Roundtrip inkl. falschem Passwort (Meldung im Sheet); Import mit Dubletten (Bericht zählt korrekt); Gruppen-Match vs. Neuanlage; frische Session verbindet mit importiertem Passwort (Keychain-Prompt-Verhalten beachten); leerer Bestand dimmt Export-Menüs; Regressionen Sidebar (Gruppen-CRUD, Rename, D&D-Menüwege).
-- [ ] Plan-Checkboxen, Ledger, Opus-Whole-Branch-Final-Review (Base = Commit vor T1; Krypto-Teil explizit reviewen lassen), Fixes, Push develop, CI, Rig `stop`, Memory-Update, Milestone-Zusammenfassung (+ Hinweis: Release-Bündelung M9 offen; M9b Audit-Log als Nächstes).
+- [x] Gated Suiten (Rig-Start aus dem Haupt-Checkout): `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün, zero skips (406 vor / 412 nach den Final-Review-Fixes).
+- [ ] Visueller Smoke — **an den Maintainer delegiert** (Wrapper läuft; Checkliste in der Milestone-Zusammenfassung): Export einzeln/Gruppe/alle (Datei-Inhalt prüfen: Klartext lesbar, verschlüsselt opak); Passwörter-Toggle + Klartext-Warnweg (zweistufiger Button); verschlüsselter Roundtrip inkl. falschem Passwort (Meldung im Sheet); Import mit Dubletten (Bericht zählt korrekt); Gruppen-Match vs. Neuanlage; frische Session verbindet mit importiertem Passwort (Keychain-Prompt-Verhalten beachten); leerer Bestand dimmt Export-Menüs; Regressionen Sidebar (Gruppen-CRUD, Rename, D&D-Menüwege).
+- [x] Plan-Checkboxen, Ledger, Opus-Whole-Branch-Final-Review (Base = Commit vor T1; Krypto explizit — „No" mit einem Critical → Fix-Commit 648d7d0 → Re-Review „Ready to merge: Yes"), Fixes, Push develop, CI, Rig `stop`, Memory-Update, Milestone-Zusammenfassung (+ Hinweis: Release-Bündelung M9 offen; M9b Audit-Log als Nächstes).
