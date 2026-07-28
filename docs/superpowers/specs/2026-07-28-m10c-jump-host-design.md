@@ -80,6 +80,21 @@ sich die Jump-Konfiguration. Bewusst EIN Hop — Ketten sind Backlog.
   Werte + Set-Secret; fehlendes referenziertes Set ⇒ ehrliche Meldung,
   kein stiller Fallback — wie M10b fürs Ziel).
 
+**Bekannte Einschränkung (Final-Review M-5, KnownHosts):** Der bekannte
+Schlüssel des ZIELS wird ausschließlich über dessen eigene literale
+Adresse (`host`/`port`) verwaltet — `CitadelFileSystem` reicht beim
+Zwei-Hop-Connect `config.host`/`config.port` unverändert an den
+Ziel-`TOFUHostKeyValidator` durch, ohne den benutzten Jump in den
+Schlüssel einzubeziehen. Zwei verschiedene Maschinen, die zufällig unter
+derselben literalen Ziel-Adresse über unterschiedliche Bastions erreicht
+werden, teilen sich dadurch EINEN KnownHosts-Eintrag. Das ist bewusst
+fail-closed: ein abweichender Schlüssel löst weiterhin den harten Stop
+(`HostKeyError.mismatch`, kein Decider-Aufruf) aus statt eines stillen
+Falls — die Sicherheitseigenschaft bleibt gewahrt, nur die Fehlermeldung
+nennt aktuell nicht den Jump-Kontext ("über welchen Bastion"). Ein
+jump-bewusster Schlüssel (z. B. `host@via-jump-host`) ist Backlog, kein
+M10c-Scope.
+
 ## 3. Formular (exakt Mockup Abschnitt 2)
 
 - Toggle „Über einen Zwischenhost verbinden (ProxyJump)", Default AUS.

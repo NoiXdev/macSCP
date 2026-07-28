@@ -421,8 +421,35 @@ struct ConnectionViewModelTests {
         vm.jumpLoginMode = .set
         vm.jumpSelectedLoginSetID = nil
         #expect(vm.validateForEditSave() == nil)
+        // field: nil (final review M-3) -- no Field case exists for the
+        // picker; `.jumpHost` would misleadingly outline the host field.
         #expect(vm.state == .failed(
-            message: CoreL10n.string("core.connect.jumpSetRequired"), field: .jumpHost))
+            message: CoreL10n.string("core.connect.jumpSetRequired"), field: nil))
+    }
+
+    /// Final review I-1 (BLOCKER): edit mode deliberately leaves
+    /// `jumpPassword` empty ("unchanged", see `beginEditing`'s doc comment).
+    /// Before the fix, `validateForEditSave()` reused `connect()`'s
+    /// `validateJump()` unconditionally, which hard-required a non-empty
+    /// `jumpPassword` in manual/password mode — making a session with a
+    /// manual password jump impossible to save without retyping the jump
+    /// secret. This proves the save now succeeds and reuses the SAME
+    /// `secretID`, not a freshly generated one.
+    @Test @MainActor func editSaveKeepsJumpSecretIDWithEmptyPassword() {
+        let vm = makeVM()
+        let originalSecretID = UUID()
+        let jump = StoredSession.JumpSpec(
+            host: "bastion.example.com", port: 22, username: "bastion-user",
+            authKind: .password, secretID: originalSecretID)
+        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u", jump: jump))
+        #expect(vm.jumpEnabled) // sanity: beginEditing actually picked the jump up
+        #expect(vm.jumpPassword.isEmpty) // sanity: "leave unchanged" starting point
+
+        let saved = vm.validateForEditSave()
+
+        #expect(saved != nil)
+        #expect(saved?.jump?.secretID == originalSecretID)
+        #expect(saved?.jump?.loginSetID == nil)
     }
 
     @Test @MainActor func jumpFieldsResetOnExitEditMode() {

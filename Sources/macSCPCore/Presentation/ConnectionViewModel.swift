@@ -162,7 +162,7 @@ public final class ConnectionViewModel {
                 return nil
             }
         }
-        if let jumpFailure = validateJump() {
+        if let jumpFailure = validateJump(requireSecret: true) {
             state = jumpFailure
             return nil
         }
@@ -256,6 +256,16 @@ public final class ConnectionViewModel {
         guard choice != authChoice else { return }
         authChoice = choice
         clearPassword()
+    }
+
+    /// User-initiated mode switch (picker) for the JUMP's own auth choice
+    /// (final review M-2): mirrors `selectAuthChoice` above -- clears
+    /// `jumpPassword` so it doesn't carry over into the other mode instead
+    /// of being silently reused as the wrong secret/passphrase.
+    public func selectJumpAuthChoice(_ choice: AuthChoice) {
+        guard choice != jumpAuthChoice else { return }
+        jumpAuthChoice = choice
+        jumpPassword = ""
     }
 
     /// Fills the form from a stored session for in-place editing. The secret
@@ -394,7 +404,14 @@ public final class ConnectionViewModel {
                 return nil
             }
         }
-        if let jumpFailure = validateJump() {
+        // requireSecret: false (final review I-1) -- edit mode deliberately
+        // leaves `jumpPassword` empty ("unchanged", see `beginEditing`);
+        // requiring it here would make a session with a manual password jump
+        // impossible to save without retyping the jump secret. Safe because
+        // `onConnectEdited` (ContentView.swift) re-reads the persisted
+        // session and resolves the jump secret from the keychain, mirroring
+        // the target's own connect-vs-edit password asymmetry above.
+        if let jumpFailure = validateJump(requireSecret: false) {
             state = jumpFailure
             return nil
         }
@@ -432,7 +449,16 @@ public final class ConnectionViewModel {
     /// pattern) before calling into this validator; a DANGLING set
     /// reference is an App-layer concern (spec §4a/§4c), not this
     /// view model's -- it has no access to the actual `LoginSet` data.
-    private func validateJump() -> State? {
+    ///
+    /// `requireSecret` (final review I-1): `connect()` passes `true` -- a
+    /// live connection needs an actual password/passphrase in hand.
+    /// `validateForEditSave()` passes `false`, because edit mode deliberately
+    /// leaves `jumpPassword` empty to mean "unchanged" (see `beginEditing`);
+    /// requiring it there would make a session with a manual password jump
+    /// impossible to save without retyping the jump secret. Mirrors the
+    /// asymmetry `connect()`/`validateForEditSave()` already have for the
+    /// TARGET's own password (the latter never checks `password` at all).
+    private func validateJump(requireSecret: Bool) -> State? {
         guard jumpEnabled else { return nil }
         guard !jumpHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return .failed(message: CoreL10n.string("core.connect.jumpHostEmpty"), field: .jumpHost)
@@ -443,16 +469,20 @@ public final class ConnectionViewModel {
         switch jumpLoginMode {
         case .set:
             guard jumpSelectedLoginSetID != nil else {
-                return .failed(message: CoreL10n.string("core.connect.jumpSetRequired"), field: .jumpHost)
+                // No Field case exists for the picker (final review M-3);
+                // `.jumpHost` would misleadingly outline the host field.
+                return .failed(message: CoreL10n.string("core.connect.jumpSetRequired"), field: nil)
             }
         case .manual:
             guard !jumpUsername.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 return .failed(message: CoreL10n.string("core.connect.jumpUsernameEmpty"), field: .jumpUsername)
             }
             if jumpAuthChoice == .password {
-                guard !jumpPassword.isEmpty else {
-                    return .failed(
-                        message: CoreL10n.string("core.connect.jumpPasswordEmpty"), field: .jumpPassword)
+                if requireSecret {
+                    guard !jumpPassword.isEmpty else {
+                        return .failed(
+                            message: CoreL10n.string("core.connect.jumpPasswordEmpty"), field: .jumpPassword)
+                    }
                 }
             } else {
                 guard !jumpKeyPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {

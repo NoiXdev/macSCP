@@ -64,8 +64,10 @@ public final class SessionListViewModel {
     /// `jump` (M10c) attaches a jump host hop; `jumpSecret` of `nil` or empty
     /// leaves an existing MANUAL jump's keychain slot untouched, a non-empty
     /// value overwrites it. Slot hygiene: an old manual jump whose slot is no
-    /// longer referenced by the new state (jump removed, or switched to set
-    /// mode) has its keychain entry cleaned up.
+    /// longer referenced by the new state — jump removed, switched to set
+    /// mode, or replaced with a freshly-generated manual `JumpSpec` (a
+    /// changed `secretID`) — has its keychain entry cleaned up (see
+    /// `cleanOrphanedJumpSlot`'s own doc comment below for the exact rule).
     @discardableResult
     public func save(
         name: String, host: String, port: Int, username: String, password: String,

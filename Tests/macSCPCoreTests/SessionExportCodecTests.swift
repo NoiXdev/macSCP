@@ -162,6 +162,10 @@ struct SessionExportCodecTests {
         """.utf8)
         let payload = try SessionExportCodec.decode(raw, password: nil)
         #expect(payload.sessions.first?.jumpHost == nil)
+        #expect(payload.sessions.first?.jumpPort == nil)
+        #expect(payload.sessions.first?.jumpUsername == nil)
+        #expect(payload.sessions.first?.jumpAuthKind == nil)
+        #expect(payload.sessions.first?.jumpKeyPath == nil)
         #expect(payload.sessions.first?.jumpPassword == nil)
     }
 

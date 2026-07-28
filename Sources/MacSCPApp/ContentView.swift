@@ -1356,13 +1356,39 @@ struct ContentView: View {
                 }
                 form.loginMode = stored.loginSetID != nil ? .set : .manual
                 form.selectedLoginSetID = stored.loginSetID
+            } catch is LoginResolveError {
+                // Missing set (target, M10c/T3): do NOT connect — show the
+                // form instead, with the mismatch surfaced through its
+                // existing error field (spec §2/§6). The user picks a login
+                // or enters credentials. Falls back to the session's own raw
+                // values so the form isn't left half-filled.
+                //
+                // Kept in its OWN do/catch, independent of the jump's below
+                // (final review M-1): sharing one catch meant a JUMP-only
+                // `.missingSet` also reset this (valid) target resolution —
+                // a dangling jump set discarded a perfectly good target
+                // login pick.
+                form.username = stored.username
+                form.authChoice = stored.authKind == .privateKey ? .privateKey : .password
+                form.keyPath = stored.keyPath ?? ""
+                form.password = ""
+                form.loginMode = .manual
+                form.selectedLoginSetID = nil
+                form.showFailure(message: L10n.string(
+                    "loginSets.missingSet",
+                    "The stored login for this connection was not found. Choose a login or enter credentials."))
+                return
+            }
 
-                // Jump (M10c/T3): same resolution as above, for the jump's
-                // OWN login — `resolvedJumpLogin` is `nil` only when the
-                // session has no jump at all; a resolved jump fills the
-                // manual-looking fields regardless of whether it came from
-                // a set or the jump's own manual secret, exactly like the
-                // target's resolution just above.
+            // Jump (M10c/T3): same resolution as above, for the jump's OWN
+            // login — `resolvedJumpLogin` is `nil` only when the session has
+            // no jump at all; a resolved jump fills the manual-looking
+            // fields regardless of whether it came from a set or the jump's
+            // own manual secret, exactly like the target's resolution above.
+            // In its OWN do/catch (final review M-1, see comment above): a
+            // jump-only `.missingSet` must fall back on the JUMP side only,
+            // leaving the target fields resolved above untouched.
+            do {
                 if let jump = stored.jump {
                     form.jumpEnabled = true
                     form.jumpHost = jump.host
@@ -1387,19 +1413,10 @@ struct ContentView: View {
                     form.jumpSelectedLoginSetID = nil
                 }
             } catch is LoginResolveError {
-                // Missing set (target OR jump, M10c/T3): do NOT connect —
-                // show the form instead, with the mismatch surfaced through
-                // its existing error field (spec §2/§6). The user picks a
-                // login or enters credentials. Both target and jump fields
-                // fall back to the session's own raw values so the form
-                // isn't left half-filled depending on which side the
-                // dangling reference was actually on.
-                form.username = stored.username
-                form.authChoice = stored.authKind == .privateKey ? .privateKey : .password
-                form.keyPath = stored.keyPath ?? ""
-                form.password = ""
-                form.loginMode = .manual
-                form.selectedLoginSetID = nil
+                // Missing set (jump only): the target fields resolved above
+                // stay untouched — only the jump falls back to its raw
+                // manual-looking values, and `field: .jumpHost` (not the
+                // target's `.host`) highlights the right row.
                 if let jump = stored.jump {
                     form.jumpEnabled = true
                     form.jumpHost = jump.host
@@ -1413,9 +1430,11 @@ struct ContentView: View {
                 } else {
                     form.jumpEnabled = false
                 }
-                form.showFailure(message: L10n.string(
-                    "loginSets.missingSet",
-                    "The stored login for this connection was not found. Choose a login or enter credentials."))
+                form.showFailure(
+                    message: L10n.string(
+                        "loginSets.missingSet",
+                        "The stored login for this connection was not found. Choose a login or enter credentials."),
+                    field: .jumpHost)
                 return
             }
 

@@ -371,7 +371,10 @@ struct ConnectionFormView: View {
 
                         let jumpAuthMethodLabel = L10n.string("connection.field.authMethod", "Authentication")
                         FormRow(label: jumpAuthMethodLabel) {
-                            Picker(jumpAuthMethodLabel, selection: $viewModel.jumpAuthChoice) {
+                            Picker(jumpAuthMethodLabel, selection: Binding(
+                                get: { viewModel.jumpAuthChoice },
+                                set: { viewModel.selectJumpAuthChoice($0) }
+                            )) {
                                 Text(L10n.string("connection.auth.password", "Password"))
                                     .tag(ConnectionViewModel.AuthChoice.password)
                                 Text(L10n.string("connection.auth.privateKey", "SSH key"))
