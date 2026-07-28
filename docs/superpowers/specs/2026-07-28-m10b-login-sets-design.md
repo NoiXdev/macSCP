@@ -22,14 +22,15 @@ gleiche bestehende Logins.
 
 ## 1. Core-Modell
 
-- `public struct LoginSet: Codable, Equatable, Identifiable, Sendable`:
+- `public struct LoginSet: Equatable, Identifiable, Sendable`:
   `id: UUID`, `name: String`, `username: String`,
-  `authKind: AuthKind` (`enum AuthKind: String, Codable` mit `password`,
-  `privateKey` — String-Raw für Vorwärtskompatibilität: ein unbekannter
-  Raw-Wert wird beim Laden ÜBERSPRUNGEN, der Eintrag bleibt in der Datei
-  erhalten — ein künftiges „agent"-Set (M10d) darf von einer alten
-  App-Version nie als Passwort-Set fehlinterpretiert werden),
+  `authKind: StoredSession.AuthKind` (WIEDERVERWENDET — kein Duplikat-Enum),
   `keyPath: String?` (nur privateKey).
+- Vorwärtskompatibilität: der Store persistiert intern Records mit
+  `authKind` als String-Raw. Ein UNBEKANNTER Raw-Wert (z. B. ein
+  künftiges „agent" aus M10d) wird von `all()` NICHT als Set geliefert
+  (nie als Passwort-Set fehlinterpretiert), aber der Record bleibt in der
+  Datei erhalten — auch über upsert/delete anderer Einträge hinweg.
 - Secrets: Passwort bzw. Key-Passphrase liegen im Keychain UNTER DER
   SET-ID (bestehender `SecretStore`; kein neues Secret-Format, nie in
   `logins.json`).
