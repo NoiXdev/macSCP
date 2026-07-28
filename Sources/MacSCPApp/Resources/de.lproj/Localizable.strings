@@ -319,6 +319,7 @@
 "knownHosts.remove.confirm" = "Entfernen";
 "knownHosts.empty" = "Noch keine bekannten Hosts.";
 "knownHosts.loadError %@" = "Bekannte Hosts konnten nicht geladen werden: %@";
+"knownHosts.removeError %@" = "Der Host-Schlüssel konnte nicht entfernt werden: %@";
 
 /* TOFU-Prompt-Fußnote (M10a/T2) */
 "tofu.manageKnownHosts" = "Bekannte Hosts verwalten…";

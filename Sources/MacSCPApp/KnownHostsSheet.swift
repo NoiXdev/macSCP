@@ -201,18 +201,27 @@ struct KnownHostsSheet: View {
 
     /// Removes every selected row, then reloads and clears the selection
     /// (spec) — a partial failure mid-loop still reloads so the list stays
-    /// consistent with what's actually left on disk.
+    /// consistent with what's actually left on disk. The remove error is
+    /// captured SEPARATELY and re-applied after the reload (T2 review):
+    /// `load()` clears `errorMessage` on its success path, and reading
+    /// usually still works even when the write just failed — without this,
+    /// a failed "forget this host" would silently show the row again with
+    /// zero feedback.
     private func removeSelected() {
+        var removeError: String?
         for row in selectedRows {
             do {
                 try store.remove(host: row.key.host, port: row.key.port)
             } catch {
-                errorMessage = String(
-                    format: L10n.string("knownHosts.loadError %@", "Could not load known hosts: %@"),
+                removeError = String(
+                    format: L10n.string("knownHosts.removeError %@", "Could not remove the host key: %@"),
                     String(describing: error))
             }
         }
         selection = []
         load()
+        if let removeError {
+            errorMessage = removeError
+        }
     }
 }
