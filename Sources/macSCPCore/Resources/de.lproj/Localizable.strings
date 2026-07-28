@@ -45,3 +45,8 @@
 
 /* Session groups (M5f/T2) */
 "core.session.groupSaveFailed %@" = "Gruppe konnte nicht gespeichert werden: %@";
+
+/* Login sets (M10b/T2) */
+"core.login.saveFailed %@" = "Login konnte nicht gespeichert werden: %@";
+"core.login.deleteFailed %@" = "Login konnte nicht gelöscht werden: %@";
+"core.login.mergeFailed %@" = "Logins konnten nicht zusammengeführt werden: %@";

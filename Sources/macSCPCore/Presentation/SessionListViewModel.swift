@@ -10,6 +10,8 @@ public final class SessionListViewModel {
     /// Flat groups shown as collapsible sidebar sections, in creation order
     /// (not sorted).
     public private(set) var groups: [StoredGroup] = []
+    /// Reusable logins (M10b), loaded name-sorted by the store.
+    public private(set) var loginSets: [LoginSet] = []
     public private(set) var errorMessage: String?
 
     private let store: SessionStore
@@ -18,14 +20,19 @@ public final class SessionListViewModel {
     /// up a session's log file on `delete(_:)`. Defaulted so existing call
     /// sites (and most tests) don't need to know about it.
     private let auditStore: AuditLogStore
+    /// Login-set persistence (M10b). Defaulted so existing call sites don't
+    /// need to know about it.
+    private let loginSetStore: LoginSetStore
 
     public init(
         store: SessionStore, secrets: any SecretStore,
-        auditStore: AuditLogStore = AuditLogStore(directory: AuditLogStore.defaultDirectory)
+        auditStore: AuditLogStore = AuditLogStore(directory: AuditLogStore.defaultDirectory),
+        loginSetStore: LoginSetStore = LoginSetStore(directory: SessionStore.defaultDirectory)
     ) {
         self.store = store
         self.secrets = secrets
         self.auditStore = auditStore
+        self.loginSetStore = loginSetStore
         reload()
     }
 
@@ -42,6 +49,7 @@ public final class SessionListViewModel {
             errorMessage = String(
                 format: CoreL10n.string("core.session.loadFailed %@"), String(describing: error))
         }
+        loginSets = (try? loginSetStore.all()) ?? []
     }
 
     /// Sessions belonging to the given group, or ungrouped sessions when
@@ -50,11 +58,14 @@ public final class SessionListViewModel {
         sessions.filter { $0.groupID == groupID }
     }
 
+    /// `loginSetID`, when non-nil, makes the session reference a login set
+    /// (M10b): `password` is then ignored and no session-level keychain
+    /// entry is written, since the set owns the secret instead.
     @discardableResult
     public func save(
         name: String, host: String, port: Int, username: String, password: String,
         authKind: StoredSession.AuthKind = .password, keyPath: String? = nil,
-        groupID: UUID? = nil
+        groupID: UUID? = nil, loginSetID: UUID? = nil
     ) -> StoredSession? {
         let session: StoredSession
         if let existing = sessions.first(where: { $0.name == name }) {
@@ -65,15 +76,18 @@ public final class SessionListViewModel {
             updated.authKind = authKind
             updated.keyPath = keyPath
             updated.groupID = groupID
+            updated.loginSetID = loginSetID
             session = updated
         } else {
             session = StoredSession(name: name, host: host, port: port,
                                     username: username, authKind: authKind, keyPath: keyPath,
-                                    groupID: groupID)
+                                    groupID: groupID, loginSetID: loginSetID)
         }
         do {
             try store.upsert(session)
-            try secrets.savePassword(password, for: session.id)
+            if loginSetID == nil {
+                try secrets.savePassword(password, for: session.id)
+            }
             reload()
             return session
         } catch {
@@ -187,6 +201,166 @@ public final class SessionListViewModel {
         }
     }
 
+    // MARK: - Login sets (M10b)
+
+    /// Sessions currently referencing the given set.
+    public func sessionsUsing(setID: UUID) -> [StoredSession] {
+        sessions.filter { $0.loginSetID == setID }
+    }
+
+    /// How many sessions currently reference the given set.
+    public func usageCount(of setID: UUID) -> Int {
+        sessionsUsing(setID: setID).count
+    }
+
+    /// Saves a set; a non-nil, non-empty secret overwrites the keychain
+    /// entry stored under the SET id (nil/empty keeps it — the editor's
+    /// "unchanged" prompt semantics, same as `updateSession`).
+    public func saveLoginSet(_ set: LoginSet, secret: String?) {
+        do {
+            try loginSetStore.upsert(set)
+            if let secret, !secret.isEmpty {
+                try secrets.savePassword(secret, for: set.id)
+            }
+            reload()
+        } catch {
+            reload()
+            errorMessage = String(
+                format: CoreL10n.string("core.login.saveFailed %@"), String(describing: error))
+        }
+    }
+
+    /// The outcome of `deleteLoginSet`.
+    public struct LoginSetDeleteResult: Equatable {
+        public var restored: Int
+        public var secretFailures: Int
+
+        public init(restored: Int, secretFailures: Int) {
+            self.restored = restored
+            self.secretFailures = secretFailures
+        }
+    }
+
+    /// Spec §3 "delete = restoration": every referencing session gets the
+    /// set's username/authKind/keyPath copied back, the set's secret copied
+    /// into ITS OWN keychain slot, `loginSetID` nilled. A keychain failure
+    /// for one session is counted, never aborts — the session is still
+    /// restored (values + nil reference), only its secret is missing.
+    /// Afterwards the set and its secret are removed.
+    public func deleteLoginSet(_ set: LoginSet) -> LoginSetDeleteResult {
+        let affected = sessionsUsing(setID: set.id)
+        let setSecret = (try? secrets.password(for: set.id)) ?? nil
+        var secretFailures = 0
+
+        for session in affected {
+            var restored = session
+            restored.username = set.username
+            restored.authKind = set.authKind
+            restored.keyPath = set.keyPath
+            restored.loginSetID = nil
+            // Throw-free by design: a session's own store write failing here
+            // is not distinguished from a keychain failure by the spec, and
+            // must not abort restoring the remaining sessions.
+            try? store.upsert(restored)
+            if let setSecret {
+                do {
+                    try secrets.savePassword(setSecret, for: session.id)
+                } catch {
+                    secretFailures += 1
+                }
+            }
+        }
+
+        do {
+            try loginSetStore.delete(id: set.id)
+            try? secrets.deletePassword(for: set.id)
+            reload()
+        } catch {
+            try? secrets.deletePassword(for: set.id)
+            reload()
+            errorMessage = String(
+                format: CoreL10n.string("core.login.deleteFailed %@"), String(describing: error))
+        }
+
+        return LoginSetDeleteResult(restored: affected.count, secretFailures: secretFailures)
+    }
+
+    /// Suggests merging manual sessions that share the same effective login
+    /// (spec §4). Merge-ignored groups are read fresh from the store each
+    /// call, so a change to `ignoreMerge` is reflected immediately.
+    public func mergeCandidates() -> [LoginMergeCandidate] {
+        LoginMergePlanner.candidates(
+            sessions: sessions,
+            ignoredGroups: (try? loginSetStore.ignoredMergeGroups()) ?? [],
+            secrets: secrets)
+    }
+
+    /// Persists "don't suggest merging these sessions again" (spec §4).
+    /// Throw-free: a failure to persist the ignore is a harmless miss (the
+    /// banner may reappear), never a reason to interrupt the user.
+    public func ignoreMerge(_ candidate: LoginMergeCandidate) {
+        try? loginSetStore.addIgnoredMergeGroup(Set(candidate.sessionIDs))
+    }
+
+    /// Creates a set from a merge candidate and rewires every session in the
+    /// group onto it. The secret of the FIRST session in `sessionIDs` (input
+    /// order) is copied under the new set id; every group session's own
+    /// secret is then removed (throw-free — a leftover keychain entry is a
+    /// harmless residual, never a reason to abort). A store failure while
+    /// creating the set aborts before anything is rewired.
+    public func applyMerge(_ candidate: LoginMergeCandidate, name: String) -> LoginSet? {
+        let groupSessions = candidate.sessionIDs.compactMap { id in
+            sessions.first { $0.id == id }
+        }
+        guard let first = groupSessions.first else { return nil }
+
+        let set = LoginSet(
+            name: name, username: candidate.username, authKind: candidate.authKind,
+            keyPath: candidate.keyPath)
+        do {
+            try loginSetStore.upsert(set)
+        } catch {
+            reload()
+            errorMessage = String(
+                format: CoreL10n.string("core.login.mergeFailed %@"), String(describing: error))
+            return nil
+        }
+
+        if let secret = (try? secrets.password(for: first.id)) ?? nil {
+            try? secrets.savePassword(secret, for: set.id)
+        }
+        for session in groupSessions {
+            var updated = session
+            updated.loginSetID = set.id
+            try? store.upsert(updated)
+            try? secrets.deletePassword(for: session.id)
+        }
+
+        reload()
+        return set
+    }
+
+    /// A conflict-free name for a new set (pattern of the file-conflict
+    /// names used elsewhere): the username itself, or `"<username> (2)"`,
+    /// `"(3)"`, … the first one not colliding case-insensitively with an
+    /// existing set's name.
+    public func suggestedSetName(forUsername username: String) -> String {
+        let existingNames = Set(loginSets.map { $0.name.lowercased() })
+        guard existingNames.contains(username.lowercased()) else { return username }
+        var counter = 2
+        while existingNames.contains("\(username) (\(counter))".lowercased()) {
+            counter += 1
+        }
+        return "\(username) (\(counter))"
+    }
+
+    /// Resolves what a session should actually connect with: its own data
+    /// for a manual session, or its set's credentials. A dangling
+    /// `loginSetID` throws rather than silently falling back (spec §2).
+    public func resolvedLogin(for session: StoredSession) throws -> ResolvedLogin? {
+        try LoginResolver.resolve(session: session, sets: loginSets, secrets: secrets)
+    }
+
     /// What subset of the sidebar an export covers.
     public enum ExportScope {
         case single(StoredSession)
@@ -215,16 +389,25 @@ public final class SessionListViewModel {
 
         var missingPasswordCount = 0
         let exportedSessions: [ExportedSession] = scopedSessions.map { session in
+            // A set-backed session exports the SET's username/authKind/
+            // keyPath (and, with includePasswords, the SET's secret) instead
+            // of its own — a missing/dangling set just falls back to the
+            // session's own (possibly empty) values; export never aborts.
+            let resolved = (try? resolvedLogin(for: session)) ?? nil
+            let username = resolved?.username ?? session.username
+            let authKind = resolved?.authKind ?? session.authKind
+            let keyPath = resolved?.keyPath ?? session.keyPath
+
             var password: String?
             if includePasswords {
-                password = self.password(for: session)
+                password = resolved != nil ? resolved?.secret : self.password(for: session)
                 if password == nil {
                     missingPasswordCount += 1
                 }
             }
             return ExportedSession(
                 id: session.id, name: session.name, host: session.host, port: session.port,
-                username: session.username, authKind: session.authKind, keyPath: session.keyPath,
+                username: username, authKind: authKind, keyPath: keyPath,
                 groupID: includeGroups ? session.groupID : nil, password: password)
         }
 

@@ -9,7 +9,9 @@ struct SessionListViewModelTests {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
         let secrets = InMemorySecretStore()
-        let vm = SessionListViewModel(store: SessionStore(directory: dir), secrets: secrets)
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: secrets,
+            loginSetStore: LoginSetStore(directory: dir))
         return (vm, secrets, dir)
     }
 
@@ -301,6 +303,155 @@ struct SessionListViewModelTests {
         // session that doesn't exist in the store.
         #expect(try secrets.password(for: planned.session.id) == nil)
     }
+
+    // MARK: - Login sets (M10b)
+
+    @Test func saveWithLoginSetSkipsSessionSecret() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "Root", username: "root")
+        vm.saveLoginSet(set, secret: "s3cr3t")
+        #expect(vm.loginSets.map(\.id) == [set.id])
+
+        let stored = vm.save(name: "web", host: "h", port: 22, username: "ignored",
+                             password: "should-not-be-stored", loginSetID: set.id)!
+
+        #expect(stored.loginSetID == set.id)
+        #expect(try secrets.password(for: stored.id) == nil)
+    }
+
+    @Test func deleteLoginSetRestoresSessions() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "Deploy Key", username: "deploy", authKind: .privateKey, keyPath: "/k")
+        vm.saveLoginSet(set, secret: "pp")
+
+        let a = vm.save(name: "a", host: "h1", port: 22, username: "ignored",
+                        password: "", loginSetID: set.id)!
+        let b = vm.save(name: "b", host: "h2", port: 22, username: "ignored",
+                        password: "", loginSetID: set.id)!
+        #expect(vm.usageCount(of: set.id) == 2)
+        #expect(Set(vm.sessionsUsing(setID: set.id).map(\.id)) == Set([a.id, b.id]))
+
+        let result = vm.deleteLoginSet(set)
+
+        #expect(result == SessionListViewModel.LoginSetDeleteResult(restored: 2, secretFailures: 0))
+        for session in [a, b] {
+            let restored = vm.sessions.first { $0.id == session.id }!
+            #expect(restored.loginSetID == nil)
+            #expect(restored.username == "deploy")
+            #expect(restored.authKind == .privateKey)
+            #expect(restored.keyPath == "/k")
+            #expect(try secrets.password(for: session.id) == "pp")
+        }
+        #expect(vm.loginSets.isEmpty)
+        #expect(try secrets.password(for: set.id) == nil)
+    }
+
+    @Test func deleteLoginSetCountsSecretFailure() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = SelectiveFailingSecretStore()
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: secrets,
+            loginSetStore: LoginSetStore(directory: dir))
+
+        let set = LoginSet(name: "Root", username: "root")
+        vm.saveLoginSet(set, secret: "s3cr3t")
+
+        let a = vm.save(name: "a", host: "h1", port: 22, username: "ignored",
+                        password: "", loginSetID: set.id)!
+        let b = vm.save(name: "b", host: "h2", port: 22, username: "ignored",
+                        password: "", loginSetID: set.id)!
+        secrets.failingSessionID = b.id
+
+        let result = vm.deleteLoginSet(set)
+
+        #expect(result == SessionListViewModel.LoginSetDeleteResult(restored: 2, secretFailures: 1))
+        // Both sessions are restored (values + nil reference) regardless of
+        // the keychain failure -- only the secret copy for `b` is missing.
+        #expect(vm.sessions.first { $0.id == a.id }?.loginSetID == nil)
+        #expect(vm.sessions.first { $0.id == b.id }?.loginSetID == nil)
+        #expect(vm.sessions.first { $0.id == a.id }?.username == "root")
+        #expect(vm.sessions.first { $0.id == b.id }?.username == "root")
+    }
+
+    @Test func applyMergeCreatesSetAndRewires() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let a = vm.save(name: "a", host: "h1", port: 22, username: "root", password: "a")!
+        let b = vm.save(name: "b", host: "h2", port: 22, username: "root", password: "a")!
+
+        let candidates = vm.mergeCandidates()
+        #expect(candidates.count == 1)
+        let candidate = candidates.first!
+
+        let set = vm.applyMerge(candidate, name: "root")
+
+        #expect(set?.username == "root")
+        #expect(set?.authKind == .password)
+        #expect(try secrets.password(for: set!.id) == "a")
+        for session in [a, b] {
+            #expect(vm.sessions.first { $0.id == session.id }?.loginSetID == set?.id)
+            #expect(try secrets.password(for: session.id) == nil)
+        }
+    }
+
+    @Test func suggestedSetNameAvoidsCollision() {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(vm.suggestedSetName(forUsername: "root") == "root")
+
+        vm.saveLoginSet(LoginSet(name: "root", username: "root"), secret: nil)
+        vm.saveLoginSet(LoginSet(name: "root (2)", username: "root"), secret: nil)
+
+        #expect(vm.suggestedSetName(forUsername: "root") == "root (3)")
+    }
+
+    @Test func ignoreMergePersists() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        _ = vm.save(name: "a", host: "h1", port: 22, username: "root", password: "a")!
+        _ = vm.save(name: "b", host: "h2", port: 22, username: "root", password: "a")!
+
+        #expect(vm.mergeCandidates().count == 1)
+        let candidate = vm.mergeCandidates().first!
+        vm.ignoreMerge(candidate)
+
+        #expect(vm.mergeCandidates().isEmpty)
+    }
+
+    @Test func exportResolvesLoginSet() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "Deploy", username: "deploy")
+        vm.saveLoginSet(set, secret: "s")
+        let stored = vm.save(name: "web", host: "h", port: 22, username: "ignored",
+                             password: "", loginSetID: set.id)!
+
+        let withSecret = vm.exportPayload(for: .single(stored), includeGroups: false, includePasswords: true)
+        #expect(withSecret.payload.sessions.first?.username == "deploy")
+        #expect(withSecret.payload.sessions.first?.password == "s")
+        #expect(withSecret.missingPasswordCount == 0)
+
+        try secrets.deletePassword(for: set.id)
+        let withoutSecret = vm.exportPayload(for: .single(stored), includeGroups: false, includePasswords: true)
+        #expect(withoutSecret.payload.sessions.first?.username == "deploy")
+        #expect(withoutSecret.payload.sessions.first?.password == nil)
+        #expect(withoutSecret.missingPasswordCount == 1)
+    }
+
+    @Test func resolvedLoginMissingSetThrows() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let stored = vm.save(name: "web", host: "h", port: 22, username: "ignored",
+                             password: "", loginSetID: UUID())!
+
+        #expect(throws: LoginResolveError.missingSet) {
+            try vm.resolvedLogin(for: stored)
+        }
+    }
 }
 
 private final class FailingSecretStore: SecretStore, @unchecked Sendable {
@@ -310,5 +461,32 @@ private final class FailingSecretStore: SecretStore, @unchecked Sendable {
     func password(for sessionID: UUID) throws -> String? { nil }
     func deletePassword(for sessionID: UUID) throws {
         throw KeychainError(status: -1)
+    }
+}
+
+/// Test double: like `InMemorySecretStore`, but `savePassword` throws for one
+/// designated session id -- used to prove a single keychain failure during
+/// `deleteLoginSet` is counted, not fatal (M10b Task 2).
+private final class SelectiveFailingSecretStore: SecretStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [UUID: String] = [:]
+    var failingSessionID: UUID?
+
+    func savePassword(_ password: String, for sessionID: UUID) throws {
+        if sessionID == failingSessionID {
+            throw KeychainError(status: -1)
+        }
+        lock.lock(); defer { lock.unlock() }
+        storage[sessionID] = password
+    }
+
+    func password(for sessionID: UUID) throws -> String? {
+        lock.lock(); defer { lock.unlock() }
+        return storage[sessionID]
+    }
+
+    func deletePassword(for sessionID: UUID) throws {
+        lock.lock(); defer { lock.unlock() }
+        storage[sessionID] = nil
     }
 }
