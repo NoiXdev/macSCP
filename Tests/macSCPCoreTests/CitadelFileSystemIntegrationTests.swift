@@ -374,17 +374,24 @@ struct CitadelFileSystemIntegrationTests {
     }
 
     /// Generates a runtime key and installs the public key in the container.
-    private func makeInstalledKey() throws -> (dir: URL, keyPath: String) {
+    /// `type`/`bits` default to the original M3b ed25519 shape; M10d/T2
+    /// reuses this for RSA (`-t rsa -b 2048`) so the gated agent tests share
+    /// the exact same docker-exec authorized_keys installation pattern.
+    private func makeInstalledKey(type: String = "ed25519", bits: Int? = nil) throws -> (dir: URL, keyPath: String) {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-itest-key-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let keyURL = dir.appendingPathComponent("id_ed25519")
+        let keyURL = dir.appendingPathComponent("id_\(type)")
 
         do {
             let keygen = Process()
             keygen.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
-            keygen.arguments = ["-t", "ed25519", "-f", keyURL.path(percentEncoded: false),
-                                "-N", "", "-q", "-C", "macscp-itest"]
+            var arguments = ["-t", type, "-f", keyURL.path(percentEncoded: false),
+                             "-N", "", "-q", "-C", "macscp-itest"]
+            if let bits {
+                arguments += ["-b", String(bits)]
+            }
+            keygen.arguments = arguments
             try keygen.run()
             keygen.waitUntilExit()
             #expect(keygen.terminationStatus == 0)
@@ -1240,6 +1247,178 @@ struct CitadelFileSystemIntegrationTests {
             guard case .mismatch = error else {
                 Issue.record("expected mismatch, was: \(error)")
                 return
+            }
+        }
+    }
+
+    // MARK: - M10d/T2: ssh-agent authentication (RISK)
+
+    private struct SpawnedAgent {
+        let socketPath: String
+        let pid: Int32
+    }
+
+    private struct AgentSpawnError: Error {
+        let detail: String
+    }
+
+    /// Starts a BRAND-NEW `ssh-agent -s` process this test owns exclusively
+    /// (parsed from its own stdout) — never the maintainer's real agent.
+    /// Killed in the caller's `defer`.
+    private func spawnAgent() throws -> SpawnedAgent {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-agent")
+        process.arguments = ["-s"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw AgentSpawnError(detail: "ssh-agent -s exited \(process.terminationStatus)")
+        }
+        let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        func value(named name: String) -> String? {
+            for line in output.split(separator: "\n") where line.hasPrefix("\(name)=") {
+                return String(line.dropFirst(name.count + 1).prefix { $0 != ";" })
+            }
+            return nil
+        }
+        guard let socketPath = value(named: "SSH_AUTH_SOCK"),
+              let pidString = value(named: "SSH_AGENT_PID"), let pid = Int32(pidString)
+        else {
+            throw AgentSpawnError(detail: "could not parse ssh-agent -s output: \(output)")
+        }
+        return SpawnedAgent(socketPath: socketPath, pid: pid)
+    }
+
+    /// Terminates the spawned agent process (teardown — never touches the
+    /// user's own agent, only the PID this test itself started).
+    private func killAgent(_ agent: SpawnedAgent) {
+        let kill = Process()
+        kill.executableURL = URL(fileURLWithPath: "/bin/kill")
+        kill.arguments = ["-TERM", String(agent.pid)]
+        try? kill.run()
+        kill.waitUntilExit()
+    }
+
+    private func addKey(atPath keyPath: String, to agent: SpawnedAgent) throws {
+        let add = Process()
+        add.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-add")
+        add.arguments = [keyPath]
+        add.environment = [
+            "SSH_AUTH_SOCK": agent.socketPath,
+            "PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin",
+        ]
+        try add.run()
+        add.waitUntilExit()
+        #expect(add.terminationStatus == 0)
+    }
+
+    /// Points THIS test process's `SSH_AUTH_SOCK` at `agent` for the
+    /// duration of `body`, restoring whatever was there before. `.agent`
+    /// auth reads `SSH_AUTH_SOCK` from the process environment exactly
+    /// once per `connect()` (see `CitadelFileSystem.AgentAuthContext`), so
+    /// this is how the gated tests make macSCP talk to their own spawned
+    /// agent instead of the maintainer's.
+    @discardableResult
+    private func withAgentEnv<T>(
+        _ agent: SpawnedAgent, _ body: () async throws -> T
+    ) async rethrows -> T {
+        let original = ProcessInfo.processInfo.environment["SSH_AUTH_SOCK"]
+        setenv("SSH_AUTH_SOCK", agent.socketPath, 1)
+        defer {
+            if let original {
+                setenv("SSH_AUTH_SOCK", original, 1)
+            } else {
+                unsetenv("SSH_AUTH_SOCK")
+            }
+        }
+        return try await body()
+    }
+
+    /// `.agent` connects with an ed25519 identity: the agent holds the ONE
+    /// key installed in `authorized_keys`, `connect()` lists it once and
+    /// offers it, and `list("/data/seed")` proves the SSH+SFTP session is
+    /// actually usable afterward.
+    @Test func agentAuthConnectsEd25519() async throws {
+        let (dir, keyPath) = try makeInstalledKey(type: "ed25519")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let agent = try spawnAgent()
+        defer { killAgent(agent) }
+        try addKey(atPath: keyPath, to: agent)
+
+        let config = try SSHConnectionConfig(
+            host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
+        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-agent-ed25519-\(UUID().uuidString)"))
+        let fs = try await withAgentEnv(agent) {
+            try await connectWithRetry {
+                try await CitadelFileSystem.connect(
+                    config: config, knownHosts: store, onUnknownHostKey: { _ in true })
+            }
+        }
+        defer { Task { await fs.disconnect() } }
+
+        let items = try await fs.list(path: "/data/seed")
+        #expect(items.contains { $0.name == "hello.txt" })
+    }
+
+    /// THE RSA RISK test: an `ssh-rsa`-blob identity must authenticate via
+    /// `rsa-sha2-512` against a REAL OpenSSH `sshd` — the only way to prove
+    /// the algorithm-name/blob-tag shape `AgentAlgorithm.RSASha512` settles
+    /// for (see that type's doc comment) is actually accepted end to end.
+    @Test func agentAuthConnectsRSA() async throws {
+        let (dir, keyPath) = try makeInstalledKey(type: "rsa", bits: 2048)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let agent = try spawnAgent()
+        defer { killAgent(agent) }
+        try addKey(atPath: keyPath, to: agent)
+
+        let config = try SSHConnectionConfig(
+            host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
+        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-agent-rsa-\(UUID().uuidString)"))
+        let fs = try await withAgentEnv(agent) {
+            try await connectWithRetry {
+                try await CitadelFileSystem.connect(
+                    config: config, knownHosts: store, onUnknownHostKey: { _ in true })
+            }
+        }
+        defer { Task { await fs.disconnect() } }
+
+        let items = try await fs.list(path: "/data/seed")
+        #expect(items.contains { $0.name == "hello.txt" })
+    }
+
+    /// An agent holding a key that is NOT in `authorized_keys` must fail
+    /// bounded with `RemoteFSError.authenticationFailed` — no hang, and the
+    /// SAME typed error target-side password auth already produces.
+    @Test func agentAuthWrongKeyFailsAuth() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-itest-agentkey-wrong-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let keyURL = dir.appendingPathComponent("id_ed25519")
+        let keygen = Process()
+        keygen.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
+        keygen.arguments = ["-t", "ed25519", "-f", keyURL.path(percentEncoded: false),
+                            "-N", "", "-q", "-C", "macscp-itest-wrong"]
+        try keygen.run()
+        keygen.waitUntilExit()
+        #expect(keygen.terminationStatus == 0)
+
+        let agent = try spawnAgent()
+        defer { killAgent(agent) }
+        try addKey(atPath: keyURL.path(percentEncoded: false), to: agent)
+
+        let config = try SSHConnectionConfig(
+            host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
+        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-agent-wrong-\(UUID().uuidString)"))
+        await withAgentEnv(agent) {
+            await #expect(throws: RemoteFSError.authenticationFailed) {
+                _ = try await CitadelFileSystem.connect(
+                    config: config, knownHosts: store, onUnknownHostKey: { _ in true })
             }
         }
     }

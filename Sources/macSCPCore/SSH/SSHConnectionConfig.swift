@@ -8,6 +8,10 @@ public struct SSHConnectionConfig: Equatable, Sendable {
         /// OpenSSH key (M3b: ed25519). Passphrase nil/empty = unencrypted key.
         /// Warning: plaintext passphrase — never log/interpolate it.
         case privateKey(keyPath: String, passphrase: String?)
+        /// Authenticate through the local ssh-agent (M10d): no secret is
+        /// stored by macSCP — signatures are forwarded to the agent process
+        /// listening on `SSH_AUTH_SOCK`.
+        case agent
     }
 
     /// Optional intermediate hop (ProxyJump, M10c). Exactly one hop —

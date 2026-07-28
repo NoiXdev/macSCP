@@ -45,10 +45,65 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// original single-hop path (one accept-retry, same error mapping):
     /// `targetBox` is the only box that ever carries a verdict, and exactly
     /// one accept-retry is allowed.
+    ///
+    /// M10d (`.agent`): per spec, whichever hop(s) use `.agent` get their
+    /// ssh-agent connection established and identities listed EXACTLY ONCE
+    /// here, BEFORE the TOFU retry loop below, reused across every retry,
+    /// and closed on every exit (success or failure). Each hop that needs
+    /// the agent gets its OWN `AgentAuthContext` (independent socket
+    /// connection, same underlying `SSH_AUTH_SOCK` agent process) rather
+    /// than a single shared client — simpler than coordinating concurrent
+    /// access from two hops, with no correctness cost since ssh-agent
+    /// natively serves multiple connections.
     public static func connect(
         config: SSHConnectionConfig,
         knownHosts: KnownHostsStore,
         onUnknownHostKey: @escaping @Sendable (HostKeyCandidate) async -> Bool
+    ) async throws -> CitadelFileSystem {
+        var jumpAgent: AgentAuthContext?
+        if let jump = config.jump, isAgentAuth(jump.auth) {
+            do {
+                jumpAgent = try await AgentAuthContext.connect()
+            } catch {
+                throw mapStageAware(JumpStageError(underlying: error))
+            }
+        }
+        var targetAgent: AgentAuthContext?
+        if isAgentAuth(config.auth) {
+            do {
+                targetAgent = try await AgentAuthContext.connect()
+            } catch {
+                await jumpAgent?.close()
+                throw mapConnectError(error)
+            }
+        }
+        do {
+            let result = try await connectWithTOFURetries(
+                config: config, knownHosts: knownHosts, onUnknownHostKey: onUnknownHostKey,
+                jumpAgent: jumpAgent, targetAgent: targetAgent)
+            await jumpAgent?.close()
+            await targetAgent?.close()
+            return result
+        } catch {
+            await jumpAgent?.close()
+            await targetAgent?.close()
+            throw error
+        }
+    }
+
+    /// The TOFU accept-retry loop itself, unchanged in shape from before
+    /// M10d — `jumpAgent`/`targetAgent` are just threaded through to
+    /// `attemptConnect` so the SAME already-listed identities are reused
+    /// across every retry (a host-key accept-and-retry reconnects both hops
+    /// from scratch, so trying every identity again from the start on such
+    /// a retry is correct: the previous attempt never got far enough into
+    /// user-auth to consume any of them).
+    private static func connectWithTOFURetries(
+        config: SSHConnectionConfig,
+        knownHosts: KnownHostsStore,
+        onUnknownHostKey: @escaping @Sendable (HostKeyCandidate) async -> Bool,
+        jumpAgent: AgentAuthContext?,
+        targetAgent: AgentAuthContext?
     ) async throws -> CitadelFileSystem {
         var acceptRetries = 0
         let maxAcceptRetries = config.jump == nil ? 1 : 2  // one accept per hop
@@ -57,7 +112,8 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             let targetBox = TOFUHostKeyValidator.Box()
             do {
                 return try await attemptConnect(
-                    config: config, knownHosts: knownHosts, jumpBox: jumpBox, targetBox: targetBox)
+                    config: config, knownHosts: knownHosts, jumpBox: jumpBox, targetBox: targetBox,
+                    jumpAgent: jumpAgent, targetAgent: targetAgent)
             } catch {
                 // At most ONE hop can carry a verdict per attempt (stage 2
                 // only starts after stage 1 succeeds) — check the jump hop first.
@@ -86,6 +142,56 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         }
     }
 
+    private static func isAgentAuth(_ auth: SSHConnectionConfig.AuthMethod) -> Bool {
+        if case .agent = auth { return true }
+        return false
+    }
+
+    /// Test hook for how `connect()` establishes the ssh-agent connection.
+    ///
+    /// The brief asks for an injectable factory WITHOUT changing `connect`'s
+    /// public signature, so this is a `@TaskLocal` override rather than a
+    /// new parameter: scoped to the structured task tree that sets it via
+    /// `withValue`, so parallel tests never race on shared mutable state the
+    /// way a plain `static var` would. Defaults to the real
+    /// `SSHAgentClient.connect(socketPath:)`.
+    enum AgentClientFactory {
+        @TaskLocal static var override: (@Sendable (String) async throws -> SSHAgentClient)?
+
+        static var current: @Sendable (String) async throws -> SSHAgentClient {
+            override ?? { socketPath in try await SSHAgentClient.connect(socketPath: socketPath) }
+        }
+    }
+
+    /// The ONE ssh-agent connection + identity list a hop's `.agent` auth
+    /// reuses across every connect attempt (spec §1: listed once, kept open
+    /// for signing, closed exactly once when `connect()` returns or throws).
+    private struct AgentAuthContext: Sendable {
+        let client: SSHAgentClient
+        let identities: [AgentIdentity]
+
+        static func connect() async throws -> AgentAuthContext {
+            guard let socketPath = ProcessInfo.processInfo.environment["SSH_AUTH_SOCK"],
+                  !socketPath.isEmpty
+            else {
+                throw AgentError.socketUnavailable
+            }
+            let client = try await AgentClientFactory.current(socketPath)
+            do {
+                let identities = try await client.listIdentities()
+                guard !identities.isEmpty else { throw AgentError.noIdentities }
+                return AgentAuthContext(client: client, identities: identities)
+            } catch {
+                await client.close()
+                throw error
+            }
+        }
+
+        func close() async {
+            await client.close()
+        }
+    }
+
     /// A single connection attempt with the TOFU validators. Throws raw
     /// errors; `connect` handles the evaluation (decider, mismatch, mapping).
     /// Without a jump, this is behaviorally unchanged from the pre-M10c
@@ -97,40 +203,29 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         config: SSHConnectionConfig,
         knownHosts: KnownHostsStore,
         jumpBox: TOFUHostKeyValidator.Box,
-        targetBox: TOFUHostKeyValidator.Box
+        targetBox: TOFUHostKeyValidator.Box,
+        jumpAgent: AgentAuthContext?,
+        targetAgent: AgentAuthContext?
     ) async throws -> CitadelFileSystem {
-        let authMethod: SSHAuthenticationMethod
-        switch config.auth {
-        case .password(let password):
-            authMethod = .passwordBased(username: config.username, password: password)
-        case .privateKey(let keyPath, let passphrase):
-            authMethod = try SSHPrivateKeyLoader.authentication(
-                username: config.username, keyPath: keyPath, passphrase: passphrase)
-        }
-
         if let jump = config.jump {
             // Stage 1 (jump host) — any failure here (auth, key loading,
             // host-key rejection, transport) is marked as a JumpStageError so
             // the outer loop / mapStageAware can attribute it to the jump hop.
             let jumpClient: SSHClient
             do {
-                let jumpAuth: SSHAuthenticationMethod
-                switch jump.auth {
-                case .password(let password):
-                    jumpAuth = .passwordBased(username: jump.username, password: password)
-                case .privateKey(let keyPath, let passphrase):
-                    jumpAuth = try SSHPrivateKeyLoader.authentication(
-                        username: jump.username, keyPath: keyPath, passphrase: passphrase)
-                }
                 let jumpValidator = TOFUHostKeyValidator(
                     host: jump.host, port: jump.port, knownHosts: knownHosts, box: jumpBox)
-                jumpClient = try await SSHClient.connect(
-                    host: jump.host,
-                    port: jump.port,
-                    authenticationMethod: jumpAuth,
-                    hostKeyValidator: .custom(jumpValidator),
-                    reconnect: .never
-                )
+                jumpClient = try await connectHop(
+                    auth: jump.auth, username: jump.username, agent: jumpAgent, box: jumpBox
+                ) { method in
+                    try await SSHClient.connect(
+                        host: jump.host,
+                        port: jump.port,
+                        authenticationMethod: method,
+                        hostKeyValidator: .custom(jumpValidator),
+                        reconnect: .never
+                    )
+                }
             } catch {
                 throw JumpStageError(underlying: error)
             }
@@ -139,13 +234,17 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             do {
                 let targetValidator = TOFUHostKeyValidator(
                     host: config.host, port: config.port, knownHosts: knownHosts, box: targetBox)
-                let settings = SSHClientSettings(
-                    host: config.host,
-                    port: config.port,
-                    authenticationMethod: { authMethod },
-                    hostKeyValidator: .custom(targetValidator)
-                )
-                let client = try await jumpClient.jump(to: settings)
+                let client = try await connectHop(
+                    auth: config.auth, username: config.username, agent: targetAgent, box: targetBox
+                ) { method in
+                    let settings = SSHClientSettings(
+                        host: config.host,
+                        port: config.port,
+                        authenticationMethod: { method },
+                        hostKeyValidator: .custom(targetValidator)
+                    )
+                    return try await jumpClient.jump(to: settings)
+                }
                 do {
                     let sftp = try await client.openSFTP()
                     return CitadelFileSystem(client: client, sftp: sftp, jumpClient: jumpClient)
@@ -161,19 +260,81 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
 
         let validator = TOFUHostKeyValidator(
             host: config.host, port: config.port, knownHosts: knownHosts, box: targetBox)
-        let client = try await SSHClient.connect(
-            host: config.host,
-            port: config.port,
-            authenticationMethod: authMethod,
-            hostKeyValidator: .custom(validator),
-            reconnect: .never
-        )
+        let client = try await connectHop(
+            auth: config.auth, username: config.username, agent: targetAgent, box: targetBox
+        ) { method in
+            try await SSHClient.connect(
+                host: config.host,
+                port: config.port,
+                authenticationMethod: method,
+                hostKeyValidator: .custom(validator),
+                reconnect: .never
+            )
+        }
         do {
             let sftp = try await client.openSFTP()
             return CitadelFileSystem(client: client, sftp: sftp)
         } catch {
             try? await client.close()
             throw error
+        }
+    }
+
+    /// Builds the `SSHAuthenticationMethod` for ONE connect attempt and
+    /// drives that attempt via `connectOnce`.
+    ///
+    /// For password/privateKey this is exactly the pre-M10d behavior: a
+    /// FRESH auth method built for this one call (M10c lesson —
+    /// `SSHAuthenticationMethod` consumes its offer list, so it must never
+    /// be reused across attempts).
+    ///
+    /// For `.agent` it is NOT a single call: Citadel's
+    /// `SSHAuthenticationMethod.custom(_:)` forwards to the wrapped
+    /// `NIOSSHClientUserAuthenticationDelegate` exactly ONCE per connection
+    /// attempt (see `AgentAuthDelegate`'s doc comment for the exact
+    /// vendored-source citation) — offering N identities in sequence
+    /// therefore means N separate `connectOnce` calls, each wrapping a
+    /// FRESH `SSHAuthenticationMethod.custom(...)` around the SAME
+    /// `AgentAuthDelegate` instance so its internal cursor advances to the
+    /// next not-yet-tried identity. A host-key verdict captured in `box`
+    /// during any of those calls stops the loop immediately and rethrows:
+    /// it would recur identically for every remaining identity (host-key
+    /// validation happens before user-auth) and must be handled by the TOFU
+    /// retry loop in `connect`, not masked as if it were an identity
+    /// rejection.
+    private static func connectHop(
+        auth: SSHConnectionConfig.AuthMethod,
+        username: String,
+        agent: AgentAuthContext?,
+        box: TOFUHostKeyValidator.Box,
+        connectOnce: (SSHAuthenticationMethod) async throws -> SSHClient
+    ) async throws -> SSHClient {
+        switch auth {
+        case .password(let password):
+            return try await connectOnce(.passwordBased(username: username, password: password))
+        case .privateKey(let keyPath, let passphrase):
+            let method = try SSHPrivateKeyLoader.authentication(
+                username: username, keyPath: keyPath, passphrase: passphrase)
+            return try await connectOnce(method)
+        case .agent:
+            guard let agent else {
+                // `connect()` always establishes an `AgentAuthContext` for
+                // every hop whose `auth` is `.agent` before attemptConnect
+                // ever runs — reaching this means that invariant broke.
+                throw AgentError.noIdentities
+            }
+            let delegate = AgentAuthDelegate(
+                username: username, identities: agent.identities, client: agent.client)
+            var lastError: Error = AgentError.noIdentities
+            for _ in agent.identities {
+                do {
+                    return try await connectOnce(.custom(delegate))
+                } catch {
+                    lastError = error
+                    if box.result != nil { throw error }
+                }
+            }
+            throw lastError
         }
     }
 
@@ -185,6 +346,11 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         case let error as HostKeyError:
             return error
         case let error as RemoteFSError:
+            return error
+        case let error as AgentError:
+            // `.socketUnavailable`/`.noIdentities` are their OWN honest,
+            // localized conditions (spec §2/§5) — never stringified into a
+            // generic connectionFailed. T4 maps these to localized text.
             return error
         case let error as SSHClientError:
             // Auth errors surface via Citadel as allAuthenticationOptionsFailed
@@ -215,6 +381,12 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         switch jumpStageError.underlying {
         case let keyError as SSHKeyError:
             return keyError
+        case let agentError as AgentError:
+            // Same discipline as mapConnectError: typed, never stringified.
+            // The jump context is implicit (T4 already knows which segment
+            // — target or jump — it is mapping) so no wrapping is needed
+            // here beyond keeping the type intact.
+            return agentError
         case let clientError as SSHClientError:
             switch clientError {
             case .allAuthenticationOptionsFailed:
