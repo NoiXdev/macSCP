@@ -436,4 +436,6 @@
 "externalTerminal.passwordHint.open" = "Open";
 "externalTerminal.error.title" = "Couldn't Open External Terminal";
 "externalTerminal.error.applicationNotFound %@" = "Couldn't find “%@”.";
+"externalTerminal.error.noCustomAppChosen" = "No app has been chosen yet.";
 "externalTerminal.error.scriptWriteFailed %@" = "Couldn't write the launch script: %@";
+"externalTerminal.error.launchFailed %@" = "Couldn't launch the app: %@";

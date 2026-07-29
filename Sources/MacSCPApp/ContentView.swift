@@ -322,15 +322,19 @@ struct ContentView: View {
                 Button(L10n.string("externalTerminal.passwordHint.dontShowAgain", "Don't show again")) {
                     if let request = pendingPasswordHintRequest {
                         settingsStore.externalTerminalPasswordHintShown = true
-                        performExternalOpen(
-                            config: request.config, target: request.target, customPath: request.customPath)
+                        Task {
+                            await performExternalOpen(
+                                config: request.config, target: request.target, customPath: request.customPath)
+                        }
                     }
                     pendingPasswordHintRequest = nil
                 }
                 Button(L10n.string("externalTerminal.passwordHint.open", "Open")) {
                     if let request = pendingPasswordHintRequest {
-                        performExternalOpen(
-                            config: request.config, target: request.target, customPath: request.customPath)
+                        Task {
+                            await performExternalOpen(
+                                config: request.config, target: request.target, customPath: request.customPath)
+                        }
                     }
                     pendingPasswordHintRequest = nil
                 }
@@ -2007,23 +2011,35 @@ struct ContentView: View {
                 config: config, target: target, customPath: customPath)
             return
         }
-        performExternalOpen(config: config, target: target, customPath: customPath)
+        Task {
+            await performExternalOpen(config: config, target: target, customPath: customPath)
+        }
     }
 
     /// Writes and launches the disposable script via `ExternalTerminalLauncher`;
     /// any `LaunchError` becomes a concrete alert message (spec §4 item 7) —
-    /// never a silent failure or a fallback to a different app.
-    private func performExternalOpen(config: SSHConnectionConfig, target: TerminalTarget, customPath: String?) {
+    /// never a silent failure or a fallback to a different app. `async`
+    /// because `ExternalTerminalLauncher.open` now awaits `NSWorkspace`'s
+    /// own launch completion (review finding I-2) instead of firing it with
+    /// `completionHandler: nil`; callers wrap this in `Task { }`.
+    private func performExternalOpen(config: SSHConnectionConfig, target: TerminalTarget, customPath: String?) async {
         do {
-            try ExternalTerminalLauncher.open(config: config, target: target, customPath: customPath)
+            try await ExternalTerminalLauncher.open(config: config, target: target, customPath: customPath)
         } catch ExternalTerminalLauncher.LaunchError.applicationNotFound(let name) {
             externalTerminalErrorMessage = String(
                 format: L10n.string("externalTerminal.error.applicationNotFound %@", "Couldn't find \u{201C}%@\u{201D}."),
                 name)
+        } catch ExternalTerminalLauncher.LaunchError.noCustomAppChosen {
+            externalTerminalErrorMessage = L10n.string(
+                "externalTerminal.error.noCustomAppChosen", "No app has been chosen yet.")
         } catch ExternalTerminalLauncher.LaunchError.scriptWriteFailed(let reason) {
             externalTerminalErrorMessage = String(
                 format: L10n.string(
                     "externalTerminal.error.scriptWriteFailed %@", "Couldn't write the launch script: %@"),
+                reason)
+        } catch ExternalTerminalLauncher.LaunchError.launchFailed(let reason) {
+            externalTerminalErrorMessage = String(
+                format: L10n.string("externalTerminal.error.launchFailed %@", "Couldn't launch the app: %@"),
                 reason)
         } catch {
             externalTerminalErrorMessage = error.localizedDescription

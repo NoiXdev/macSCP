@@ -20,9 +20,20 @@ enum ExternalTerminalLauncher {
         /// The chosen app (name for `.terminalApp`/`.iTerm`, path for
         /// `.custom`) could not be resolved to a launchable application.
         case applicationNotFound(String)
+        /// `target == .custom` but no app has been chosen yet (`customPath`
+        /// is nil/empty) — distinct from `.applicationNotFound`, which
+        /// always names a concrete (but unusable) app/path (review finding
+        /// I-1, M11d final review): without this case the empty path fell
+        /// through to `.applicationNotFound("")` and the alert named
+        /// nothing ("Couldn't find “”.").
+        case noCustomAppChosen
         /// The disposable script could not be written; `String` is the
         /// underlying reason (e.g. an `Error`'s description).
         case scriptWriteFailed(String)
+        /// `NSWorkspace` accepted the launch request but it failed
+        /// asynchronously (e.g. a damaged/quarantined bundle); `String` is
+        /// the underlying reason (review finding I-2, M11d final review).
+        case launchFailed(String)
     }
 
     private static let terminalAppBundleID = "com.apple.Terminal"
@@ -48,17 +59,26 @@ enum ExternalTerminalLauncher {
     /// caller directly, never routed through this launcher. The case only
     /// exists here for `TerminalTarget`'s exhaustiveness — the UI never
     /// calls this with `.builtIn` (see `ContentView.requestExternalTerminal`).
+    /// `async throws` (not the `completionHandler: nil` fire-and-forget this
+    /// used to be, review finding I-2): `NSWorkspace`'s launch can fail
+    /// AFTER being accepted — a damaged or quarantined bundle, for
+    /// instance — and that failure must reach the caller the same way every
+    /// other `LaunchError` does, not vanish silently while leaving the
+    /// disposable script behind.
     static func open(
         config: SSHConnectionConfig, target: TerminalTarget, customPath: String?,
         root: URL = defaultRoot
-    ) throws {
+    ) async throws {
         guard target != .builtIn else { return }
         let appURL = try resolveApplication(target: target, customPath: customPath)
         let scriptURL = try writeScript(for: config, root: root)
-        NSWorkspace.shared.open(
-            [scriptURL], withApplicationAt: appURL,
-            configuration: NSWorkspace.OpenConfiguration(),
-            completionHandler: nil)
+        do {
+            _ = try await NSWorkspace.shared.open(
+                [scriptURL], withApplicationAt: appURL,
+                configuration: NSWorkspace.OpenConfiguration())
+        } catch {
+            throw LaunchError.launchFailed(error.localizedDescription)
+        }
     }
 
     /// Removes the entire `macscp-terminal` temp tree at app launch, mirror
@@ -89,10 +109,13 @@ enum ExternalTerminalLauncher {
             else { throw LaunchError.applicationNotFound("iTerm") }
             return url
         case .custom:
-            guard isValidCustomApp(atPath: customPath) else {
-                throw LaunchError.applicationNotFound(customPath ?? "")
+            guard let customPath, !customPath.isEmpty else {
+                throw LaunchError.noCustomAppChosen
             }
-            return URL(fileURLWithPath: customPath!)
+            guard isValidCustomApp(atPath: customPath) else {
+                throw LaunchError.applicationNotFound(customPath)
+            }
+            return URL(fileURLWithPath: customPath)
         }
     }
 

@@ -32,8 +32,8 @@
 "settings.terminal.target.terminalApp" = "Terminal";
 "settings.terminal.target.iTerm" = "iTerm";
 "settings.terminal.target.custom" = "Eigene App…";
-"settings.terminal.target.footer" = "Beide Wege, eine Sitzung zu öffnen, bleiben unabhängig von dieser Einstellung über das Menü „Terminal" erreichbar.";
-"settings.terminal.target.builtInFallback.footer" = "Ist „Eingebautes Terminal" gewählt, öffnet dieser Menüpunkt deine eigene App, falls eine festgelegt ist, sonst Terminal.";
+"settings.terminal.target.footer" = "Beide Wege, eine Sitzung zu öffnen, bleiben unabhängig von dieser Einstellung über das Menü „Terminal“ erreichbar.";
+"settings.terminal.target.builtInFallback.footer" = "Ist „Eingebautes Terminal“ gewählt, öffnet dieser Menüpunkt deine eigene App, falls eine festgelegt ist, sonst Terminal.";
 "settings.terminal.target.noneChosen" = "Keine App gewählt";
 
 /* Settings — Tab „Öffnen mit" */
@@ -436,4 +436,6 @@
 "externalTerminal.passwordHint.open" = "Öffnen";
 "externalTerminal.error.title" = "Externes Terminal konnte nicht geöffnet werden";
 "externalTerminal.error.applicationNotFound %@" = "„%@“ wurde nicht gefunden.";
+"externalTerminal.error.noCustomAppChosen" = "Es wurde noch keine App ausgewählt.";
 "externalTerminal.error.scriptWriteFailed %@" = "Das Start-Skript konnte nicht geschrieben werden: %@";
+"externalTerminal.error.launchFailed %@" = "Die App konnte nicht gestartet werden: %@";

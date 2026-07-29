@@ -68,20 +68,28 @@ struct SSHCommandBuilderTests {
         #expect(args[args.count - 1] == config.host)
     }
 
-    @Test func hostileHostIsNeverParsedAsAnOption() throws {
-        // "-V" makes real ssh print its version and exit 0 instead of
-        // connecting, if it ever reaches ssh as a bare leading-dash token.
-        let versionFlagConfig = try SSHConnectionConfig(host: "-V", username: "tim", auth: .password("x"))
-        #expect(SSHCommandBuilder.arguments(for: versionFlagConfig) == ["-l", "tim", "--", "-V"])
-
-        // "-oProxyCommand=..." is the classic ssh-option-injection escalation
-        // path; verifying the argv shape here pins that "--" makes it a
-        // literal (invalid) hostname, never an option, in ssh's own parser.
-        let proxyCommandConfig = try SSHConnectionConfig(
-            host: "-oProxyCommand=/bin/sh", username: "tim", auth: .password("x"))
-        #expect(
-            SSHCommandBuilder.arguments(for: proxyCommandConfig)
-                == ["-l", "tim", "--", "-oProxyCommand=/bin/sh"])
+    @Test func hostileHostIsRejectedBeforeEverReachingCommandBuilder() {
+        // Was "hostileHostIsNeverParsedAsAnOption" (M11d fix round 1): it
+        // used to construct these configs directly and inspect
+        // `SSHCommandBuilder`'s `--`-based argv shape as a defense-in-depth
+        // layer. M11d final review, C-1 closes this off one layer earlier —
+        // `SSHConnectionConfig.init`'s strict host whitelist now refuses to
+        // construct ANY host starting with `-` (or containing shell
+        // metacharacters like `=`, `/`) at all, so a value like this can no
+        // longer reach `SSHCommandBuilder` in the first place. The `--`
+        // placement itself is untouched (see `dashDashPrecedesHostDirectly`
+        // above) and remains a second, structural line of defense even
+        // though the whitelist makes it unreachable via the public API today.
+        #expect(throws: SSHConnectionConfig.ConfigError.invalidHost) {
+            // "-V" makes real ssh print its version and exit 0 instead of
+            // connecting, if it ever reached ssh as a bare leading-dash token.
+            _ = try SSHConnectionConfig(host: "-V", username: "tim", auth: .password("x"))
+        }
+        #expect(throws: SSHConnectionConfig.ConfigError.invalidHost) {
+            // "-oProxyCommand=..." is the classic ssh-option-injection
+            // escalation path.
+            _ = try SSHConnectionConfig(host: "-oProxyCommand=/bin/sh", username: "tim", auth: .password("x"))
+        }
     }
 
     // MARK: - Finding 2 (M11d fix round 1): `ssh -J` splits its destination
@@ -103,16 +111,23 @@ struct SSHCommandBuilderTests {
     }
 
     @Test(arguments: [
-        // (keyPath, username, host)
-        ("/pfad mit leer/id", "tim", "example.com"),
-        ("/k", "ti'm", "example.com"),
-        ("/k", "tim", "a;rm -rf /"),
-        ("/k", "tim", "$(whoami)"),
-        ("/k", "tim", "`id`"),
+        // Only `keyPath` varies now (M11d final review, C-1): the
+        // host/username hostile forms this used to cover ("ti'm",
+        // "a;rm -rf /", "$(whoami)", "`id`") are rejected earlier, at
+        // construction, by `SSHConnectionConfig`'s own whitelist — they can
+        // no longer reach this layer at all. `keyPath` has no whitelist
+        // (a private-key path is free-form filesystem text), so it's the
+        // one field left that still needs the shell-quoting layer proven
+        // safe against metacharacters/spaces/quotes.
+        "/pfad mit leer/id",
+        "/k'k",
+        "/k;rm -rf /",
+        "/k$(whoami)",
+        "/k`id`",
     ])
-    func quotingIsSafe(keyPath: String, username: String, host: String) throws {
+    func quotingIsSafe(keyPath: String) throws {
         let config = try SSHConnectionConfig(
-            host: host, username: username,
+            host: "example.com", username: "tim",
             auth: .privateKey(keyPath: keyPath, passphrase: nil))
         let shell = SSHCommandBuilder.shellCommand(for: config)
 
@@ -120,7 +135,7 @@ struct SSHCommandBuilderTests {
         // embedded single quotes escaped as '\''. Round-trip the generated
         // string through a POSIX-shell word split and require it to reproduce
         // arguments(for:) exactly — this is what proves shell metacharacters
-        // in the host/username/key path never take effect.
+        // in the key path never take effect.
         let words = posixShellSplit(shell)
         #expect(words.first == "ssh")
         #expect(Array(words.dropFirst()) == SSHCommandBuilder.arguments(for: config))

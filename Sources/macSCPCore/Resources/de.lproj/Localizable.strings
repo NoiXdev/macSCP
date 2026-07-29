@@ -30,6 +30,8 @@
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "Host darf nicht leer sein.";
 "core.connect.emptyUsername" = "Benutzername darf nicht leer sein.";
+"core.connect.hostInvalid" = "Host darf nur Buchstaben, Ziffern sowie . - _ : % enthalten (kein führendes -).";
+"core.connect.usernameInvalid" = "Benutzername darf nur Buchstaben, Ziffern sowie . - _ enthalten (kein führendes -).";
 "core.connect.invalidPort %@" = "Ungültiger Port: %@.";
 "core.connect.authFailed" = "Anmeldung fehlgeschlagen — Benutzername oder Passwort prüfen.";
 "core.connect.connectionFailed %@" = "Verbindung fehlgeschlagen: %@";
@@ -48,9 +50,9 @@
 "core.connect.jumpAuthFailed" = "Anmeldung am Jump-Host fehlgeschlagen — Benutzername oder Passwort prüfen.";
 "core.connect.jumpTunnelRejected" = "Der Jump-Host hat den Tunnel zum Ziel verweigert (TCP-Weiterleitung ist dort möglicherweise deaktiviert).";
 
-/* ConnectionViewModel.failedState(for:) — Komma-Ablehnung im Jump (M11d Fix-Runde 1) */
-"core.connect.jumpHostInvalid" = "Jump-Host darf kein Komma enthalten.";
-"core.connect.jumpUsernameInvalid" = "Benutzername für den Jump-Host darf kein Komma enthalten.";
+/* ConnectionViewModel.failedState(for:) — Whitelist für Jump-Host/-Benutzername (M11d Abschluss-Review, C-1) */
+"core.connect.jumpHostInvalid" = "Jump-Host darf nur Buchstaben, Ziffern sowie . - _ : % enthalten (kein führendes -).";
+"core.connect.jumpUsernameInvalid" = "Benutzername für den Jump-Host darf nur Buchstaben, Ziffern sowie . - _ enthalten (kein führendes -).";
 
 /* ConnectionViewModel — Jump-Quellen-Umschalter, Session-Modus (M11a/T3) */
 "core.connect.jumpSessionRequired" = "Verbindung für den Jump-Host auswählen.";

@@ -746,6 +746,14 @@ public final class ConnectionViewModel {
             return .failed(message: CoreL10n.string("core.connect.emptyHost"), field: .host)
         case SSHConnectionConfig.ConfigError.emptyUsername:
             return .failed(message: CoreL10n.string("core.connect.emptyUsername"), field: .username)
+        // Host/username whitelist ConfigErrors (M11d final review, C-1):
+        // defense in depth mirroring the jump-side whitelist below -- a UI
+        // submission should never reach these either, but `SSHConnectionConfig`'s
+        // init re-checks unconditionally.
+        case SSHConnectionConfig.ConfigError.invalidHost:
+            return .failed(message: CoreL10n.string("core.connect.hostInvalid"), field: .host)
+        case SSHConnectionConfig.ConfigError.invalidUsername:
+            return .failed(message: CoreL10n.string("core.connect.usernameInvalid"), field: .username)
         case SSHConnectionConfig.ConfigError.invalidPort(let port):
             return .failed(
                 message: String(format: CoreL10n.string("core.connect.invalidPort %@"), String(port)),
@@ -767,11 +775,12 @@ public final class ConnectionViewModel {
                 field: .jumpPort)
         case SSHConnectionConfig.ConfigError.emptyJumpKeyPath:
             return .failed(message: CoreL10n.string("core.connect.jumpKeyPathEmpty"), field: .jumpKeyPath)
-        // Comma-in-jump-value ConfigErrors (M11d fix round 1): `ssh -J`
-        // splits its destination-spec value on `,` itself, so a jump
-        // host/username containing a comma would insert an extra,
-        // unapproved hop that ssh contacts first. Rejected at the one
-        // source of Jump validation, same as every other jump field above.
+        // Jump host/username whitelist ConfigErrors (M11d final review,
+        // C-1): `ssh -J` turns a jump host into an implicit `ProxyCommand`
+        // it executes via `/bin/sh -c` WITHOUT validating it for shell
+        // metacharacters, so a comma-only guard was not enough -- rejected
+        // at the one source of Jump validation, same as every other jump
+        // field above.
         case SSHConnectionConfig.ConfigError.invalidJumpHost:
             return .failed(message: CoreL10n.string("core.connect.jumpHostInvalid"), field: .jumpHost)
         case SSHConnectionConfig.ConfigError.invalidJumpUsername:
