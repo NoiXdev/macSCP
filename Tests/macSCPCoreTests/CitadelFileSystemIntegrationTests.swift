@@ -365,6 +365,21 @@ struct CitadelFileSystemIntegrationTests {
         return Int(out) ?? -1
     }
 
+    /// Remote POSIX mode as an octal string (e.g. `"644"`) via
+    /// `docker exec stat -c %a` (M11c/T4 recursive-permissions test).
+    private func remotePermissions(_ path: String) -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
+        process.arguments = ["exec", "macscp-test-sshd", "stat", "-c", "%a", path]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
+        process.waitUntilExit()
+        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
     /// Remote mtime (epoch seconds) via `docker exec stat -c %Y` (M5d/T2
     /// "resume on complete file writes nothing" test).
     private func remoteMtime(_ path: String) -> Int {
@@ -1045,6 +1060,81 @@ struct CitadelFileSystemIntegrationTests {
         // whatever remains (a `notFound` here just means the first call
         // already finished the job).
         try? await fs.deleteTree(at: base)
+    }
+
+    // MARK: - M11c/T4: PermissionsTreeApplier (RISK)
+
+    /// `PermissionsTreeApplier.apply` against the real Citadel/SFTP backend:
+    /// a 2-level tree (root directory + a file + a subdirectory with its own
+    /// file — four real entries) plus a symlink INSIDE the tree pointing at
+    /// a file OUTSIDE the tree, created via docker-exec `ln -s` exactly like
+    /// the `deleteTree` symlink test above. The walk must chmod every real
+    /// entry to the new permissions while counting the symlink as skipped —
+    /// and, the security property this test exists to prove, NEVER follow
+    /// the symlink to chmod its outside target. The outside target is
+    /// chowned to `testuser` (same as the tree) precisely so that a
+    /// regression which DID follow the link would succeed in changing its
+    /// mode rather than silently failing on a permission error — making the
+    /// final assertion a real proof, not a coincidence of ownership.
+    @Test func recursivePermissionsSkipSymlinksAndLeaveTargetsUntouched() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        let base = "/config/macscp-permstree-\(UUID().uuidString)"
+        let sub = "\(base)/sub"
+        let rootFile = "\(base)/a.txt"
+        let subFile = "\(sub)/b.txt"
+        let linkPath = "\(base)/link"
+        let outsideFile = "/config/macscp-permstree-outside-\(UUID().uuidString).txt"
+        defer {
+            cleanupConfigPath(base)
+            cleanupConfigPath(outsideFile)
+        }
+
+        let seed = Process()
+        seed.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
+        seed.arguments = [
+            "exec", "macscp-test-sshd", "sh", "-c",
+            "mkdir -p '\(sub)' && echo root > '\(rootFile)' && echo sub > '\(subFile)'"
+                + " && echo outside > '\(outsideFile)' && chmod 600 '\(outsideFile)'"
+                + " && chown 1000:1000 '\(outsideFile)'"
+                + " && ln -s '\(outsideFile)' '\(linkPath)'"
+                // docker exec runs as root, so everything under `base` is
+                // root-owned by default (matching the deleteTree symlink
+                // test's convention) — chown to testuser (uid 1000) so the
+                // SFTP-side setPermissions calls below can actually chmod
+                // the seeded entries.
+                + " && chown -R 1000:1000 '\(base)'",
+        ]
+        try seed.run()
+        seed.waitUntilExit()
+        #expect(seed.terminationStatus == 0)
+
+        let originalOutsideMode = remotePermissions(outsideFile)
+        #expect(originalOutsideMode == "600")
+
+        let result = await PermissionsTreeApplier.apply(
+            root: base, kind: .directory, filePermissions: 0o644, directoryPermissions: 0o755, on: fs)
+
+        // Four real entries: base (dir), a.txt (file), sub (dir), sub/b.txt
+        // (file). The symlink is counted separately and never touched.
+        #expect(result.changed == 4)
+        #expect(result.skippedSymlinks == 1)
+        #expect(result.failed == 0)
+        #expect(result.cancelled == false)
+
+        // Every real entry now carries the new mode (docker exec stat -c %a).
+        #expect(remotePermissions(base) == "755")
+        #expect(remotePermissions(rootFile) == "644")
+        #expect(remotePermissions(sub) == "755")
+        #expect(remotePermissions(subFile) == "644")
+
+        // SECURITY: the symlink's target OUTSIDE the tree keeps its
+        // original, distinctive mode — proves `setPermissions` was never
+        // called through the link (it would have changed to 0o644, since
+        // the target is a regular file the walk's file-permissions branch
+        // would apply were it ever handed the link's resolved target).
+        #expect(remotePermissions(outsideFile) == originalOutsideMode)
     }
 
     @Test func tamperedKnownKeyFailsHardWithMismatch() async throws {
