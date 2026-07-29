@@ -54,7 +54,7 @@ T1 (Core: sessionID + Resolver + Eligibility) → T2 (Core: Rückstellung + Expo
 6. Decode-Kompatibilität: `sessions.json` ohne `sessionID` liest nil; Roundtrip erhält den Wert.
 7. Zwei neue CoreL10n-Meldungen (beide Kataloge): `core.connect.jumpSessionMissing` (EN „The connection used as jump host no longer exists." / DE „Die als Zwischenhost genutzte Verbindung existiert nicht mehr.") und `core.connect.jumpChainNotSupported` (EN „The selected jump host connects through another jump host; chains are not supported." / DE „Die gewählte Verbindung nutzt selbst einen Zwischenhost; Ketten werden nicht unterstützt.").
 
-- [ ] **Step 1: Failing Tests**
+- [x] **Step 1: Failing Tests**
 
 ```swift
     // LoginResolverTests (Ergänzungen):
@@ -86,10 +86,10 @@ T1 (Core: sessionID + Resolver + Eligibility) → T2 (Core: Rückstellung + Expo
     //   OHNE sessionID -> jump?.sessionID == nil, übrige Felder intakt.
 ```
 
-- [ ] **Step 2: Rot beweisen.** `swift test --filter LoginResolverTests` und `--filter JumpSessionEligibility` → FAIL.
-- [ ] **Step 3: Implementierung** (Modell → Eligibility → Resolver; die Wrapper-Entscheidung aus dem Interfaces-Block dokumentieren).
-- [ ] **Step 4: Grün + volle Suite.** `swift test` → 595 + neue.
-- [ ] **Step 5: Commit.** `feat: reference a saved connection as the jump host`
+- [x] **Step 2: Rot beweisen.** `swift test --filter LoginResolverTests` und `--filter JumpSessionEligibility` → FAIL.
+- [x] **Step 3: Implementierung** (Modell → Eligibility → Resolver; die Wrapper-Entscheidung aus dem Interfaces-Block dokumentieren).
+- [x] **Step 4: Grün + volle Suite.** `swift test` → 595 + neue.
+- [x] **Step 5: Commit.** `feat: reference a saved connection as the jump host`
 
 ---
 
@@ -113,7 +113,7 @@ T1 (Core: sessionID + Resolver + Eligibility) → T2 (Core: Rückstellung + Expo
 4. `exportPayload`: Sessions mit Session-Jump exportieren die AUFGELÖSTEN Jump-Werte (`resolveJump` mit Session-Liste); `jumpPassword` nur bei `includePasswords`; fehlende/kaputte Referenz ⇒ Spec-Eigenwerte, Export bricht nie ab; fehlendes Secret zählt in `missingPasswordCount`. Format bleibt v1, die Referenz wandert NICHT mit.
 5. `reload()`/übrige APIs unverändert.
 
-- [ ] **Step 1: Failing Tests**
+- [x] **Step 1: Failing Tests**
 
 ```swift
     // deleteRestoresJumpReferences: Bastion-Session (user/pass "s"),
@@ -133,8 +133,8 @@ T1 (Core: sessionID + Resolver + Eligibility) → T2 (Core: Rückstellung + Expo
     //   kein Abbruch.
 ```
 
-- [ ] **Step 2: Rot beweisen.** `swift test --filter SessionListViewModelTests` → FAIL.
-- [ ] **Step 3: Implementierung.** **Step 4: Grün + volle Suite.** **Step 5: Commit** `feat: restore jump references when their connection is deleted`.
+- [x] **Step 2: Rot beweisen.** `swift test --filter SessionListViewModelTests` → FAIL.
+- [x] **Step 3: Implementierung.** **Step 4: Grün + volle Suite.** **Step 5: Commit** `feat: restore jump references when their connection is deleted`.
 
 ---
 
@@ -158,13 +158,13 @@ T1 (Core: sessionID + Resolver + Eligibility) → T2 (Core: Rückstellung + Expo
    d. Lösch-Rückfrage der Sidebar nennt zusätzlich die Anzahl referenzierender Verbindungen, wenn `sessionsUsingAsJump` nicht leer ist (EN „%lld connections use this connection as their jump host and will keep its data directly." / DE „%lld Verbindungen nutzen diese Verbindung als Zwischenhost und behalten deren Daten direkt hinterlegt."); `secretFailures > 0` nach dem Löschen ⇒ rote Meldung wie beim Login-Set-Löschen.
 5. Alle neuen Keys EN/DE in beiden App-Katalogen (+ die beiden Core-Keys aus T1); Grep-Gegenprobe Key-Set-Gleichheit.
 
-- [ ] **Step 1:** VM-Felder + Validierung + 3 Tests (`jumpSessionModeRequiresSelection`, `jumpSessionModeSkipsManualChecks`, `jumpSourceFieldsResetOnExitEditMode`) rot→grün. **Step 2:** Formular (Umschalter, Picker, Zusammenfassung). **Step 3:** ContentView-Wiring a–d. **Step 4:** L10n + Gegenprobe. **Step 5:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test`. **Step 6:** Commit `feat: pick a saved connection as the jump host in the form`.
+- [x] **Step 1:** VM-Felder + Validierung + 3 Tests (`jumpSessionModeRequiresSelection`, `jumpSessionModeSkipsManualChecks`, `jumpSourceFieldsResetOnExitEditMode`) rot→grün. **Step 2:** Formular (Umschalter, Picker, Zusammenfassung). **Step 3:** ContentView-Wiring a–d. **Step 4:** L10n + Gegenprobe. **Step 5:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test`. **Step 6:** Commit `feat: pick a saved connection as the jump host in the form`.
 
 ---
 
 ### Task 4: Abschluss-Verifikation (Koordinator)
 
-- [ ] Gated Rig-Test ergänzen (in der bestehenden Docker-Suite): gespeicherte Bastion-Session (127.0.0.1:2222) als `sessionID`-Jump für ein Ziel auf `sshd2:2222` ⇒ `list("/")` ok; zweiter Test: Bastion-Session mit eigenem Jump ⇒ `jumpChainNotSupported` (ohne Netzwerkzugriff).
-- [ ] Rig `start`, `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → alle grün, zero skips, keine Leichen (ssh-agent, temp-Verzeichnisse); Rig `stop`.
+- [x] Gated Rig-Test ergänzen (in der bestehenden Docker-Suite): gespeicherte Bastion-Session (127.0.0.1:2222) als `sessionID`-Jump für ein Ziel auf `sshd2:2222` ⇒ `list("/")` ok; zweiter Test: Bastion-Session mit eigenem Jump ⇒ `jumpChainNotSupported` (ohne Netzwerkzugriff).
+- [x] Rig `start`, `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → alle grün, zero skips, keine Leichen (ssh-agent, temp-Verzeichnisse); Rig `stop`.
 - [ ] Visueller Smoke — an den Maintainer delegiert (Checkliste: Umschalter + Picker, Verbindung über eine gespeicherte Bastion, Bastion löschen ⇒ Rückfrage nennt die Anzahl ⇒ danach funktioniert die Verbindung weiter, Ketten-Ablehnung, Export/Import einer Session mit Session-Jump).
-- [ ] Plan-Checkboxen, Ledger, Opus-Final-Review (Package über `git merge-base origin/develop HEAD`), Fix-Runden bis „Yes", Push develop, `gh run watch`, Memory, Zusammenfassung. KEIN Release.
+- [x] Plan-Checkboxen, Ledger, Opus-Final-Review (Package über `git merge-base origin/develop HEAD`), Fix-Runden bis „Yes", Push develop, `gh run watch`, Memory, Zusammenfassung. KEIN Release.
