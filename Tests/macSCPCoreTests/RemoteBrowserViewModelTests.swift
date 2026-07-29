@@ -277,6 +277,40 @@ struct RemoteBrowserViewModelTests {
         }
     }
 
+    /// Cancellation-INDEPENDENT one-shot signal (mirrors `PlainSignal` in
+    /// `PermissionsTreeApplierTests`/`TransferEngineTests`, duplicated per
+    /// file per that established convention): `wait()` ignores task
+    /// cancellation on the WAITING side, since it is the walker's own
+    /// `Task.isCancelled` checks — not this signal — that must observe
+    /// cancellation in `recursiveApplyMarksCancelledRunAndStillReloads`.
+    private final class PlainSignal: @unchecked Sendable {
+        private let lock = NSLock()
+        private var fired = false
+        private var continuations: [CheckedContinuation<Void, Never>] = []
+
+        func fire() {
+            lock.lock()
+            fired = true
+            let pending = continuations
+            continuations.removeAll()
+            lock.unlock()
+            for continuation in pending { continuation.resume() }
+        }
+
+        func wait() async {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                lock.lock()
+                if fired {
+                    lock.unlock()
+                    continuation.resume()
+                } else {
+                    continuations.append(continuation)
+                    lock.unlock()
+                }
+            }
+        }
+    }
+
     @Test func renameSuccessFiresRenameEvent() async throws {
         let fs = MockRemoteFileSystem(tree: [
             "/": [RemoteFileItem(name: "old.txt", path: "/old.txt", kind: .file, size: 1)],
@@ -417,7 +451,10 @@ struct RemoteBrowserViewModelTests {
         #expect(capture.events[0].detail.contains("644"))
         #expect(capture.events[0].detail.contains("755"))
         #expect(capture.events[0].detail.contains("/r"))
-        #expect(capture.events[0].detail.contains("4")) // changed count
+        // M11c/T2 review (finding 2): `.contains("4")` is vacuous — it also
+        // matches the "4" inside the octal literal "644". Pin the exact
+        // counts fragment `applyPermissionsRecursively` actually writes.
+        #expect(capture.events[0].detail.contains("(changed 4, skipped 0, failed 0)"))
     }
 
     @Test func recursiveApplyMarksErrorWhenAnyEntryFailed() async throws {
@@ -502,6 +539,52 @@ struct RemoteBrowserViewModelTests {
 
         #expect(progressCapture.snapshots.count == 3) // /r, a.txt, b.txt
         #expect(progressCapture.snapshots.last == result)
+    }
+
+    /// M11c/T2 review (finding 1): the brief requires that a cancelled
+    /// recursive run still reloads the listing AND is marked as cancelled in
+    /// the single audit event — both held by inspection but neither was ever
+    /// driven by an actual `Task.cancel()` at this layer. Mirrors
+    /// `PermissionsTreeApplierTests.cancellationStopsAndReportsPartial`'s
+    /// block-after-`setPermissions` + signal machinery, now hung off
+    /// `MockRemoteFileSystem.blockAfterSetPermissions` instead of a second,
+    /// bespoke test double.
+    @Test func recursiveApplyMarksCancelledRunAndStillReloads() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "r", path: "/r", kind: .directory)],
+            "/r": [RemoteFileItem(name: "a.txt", path: "/r/a.txt", kind: .file, size: 1)],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        let capture = EventCapture()
+        vm.auditSink = { capture.record($0) }
+        await vm.load()
+        let root = vm.items[0]
+        // "/" (the browser's own currentPath), not "/r" (the walk's own
+        // target subtree) — same isolation reasoning as
+        // `recursiveApplyReloadsListing` above.
+        let callsBefore = await fs.listCallCounts["/"] ?? 0
+
+        let reached = PlainSignal()
+        // The root directory's own setPermissions("/r", ...) is the walk's
+        // very first call — blocking there lets the test cancel right after
+        // exactly one entry has landed, deterministically.
+        await fs.blockAfterSetPermissions(at: "/r", onReached: { reached.fire() })
+
+        let task = Task { @MainActor in
+            await vm.applyPermissionsRecursively(
+                filePermissions: 0o644, directoryPermissions: 0o755, to: root)
+        }
+        await reached.wait()
+        task.cancel()
+        let result = await task.value
+
+        #expect(result.cancelled == true)
+        let callsAfter = await fs.listCallCounts["/"] ?? 0
+        #expect(callsAfter == callsBefore + 1)   // reload still ran despite cancellation
+        #expect(capture.events.count == 1)
+        #expect(capture.events[0].kind == .permissions)
+        #expect(capture.events[0].detail.contains("— cancelled"))
+        #expect(capture.events[0].isError == (result.failed > 0))
     }
 
     @Test func deleteItemsWithTwoPathsNamesBothInDetail() async throws {

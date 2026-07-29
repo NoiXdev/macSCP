@@ -21,6 +21,11 @@ actor MockRemoteFileSystem: RemoteFileSystem {
     /// lets a recursive-walk test fail exactly one entry inside an
     /// otherwise-healthy tree, without a second file-system double.
     private var permissionsFailures: [String: Error] = [:]
+    /// Test-only cancellation hook (M11c/T2 review, finding 1): the path to
+    /// block on and the closure to fire once `setPermissions` for that path
+    /// has actually landed. See `blockAfterSetPermissions` below.
+    private var blockPath: String?
+    private var blockHook: (@Sendable () -> Void)?
     /// Number of `list` calls made so far, per path (M11c/T2), for tests
     /// that assert the browser reloaded ITS OWN current directory after a
     /// recursive permissions run — keyed by path rather than a single total
@@ -271,11 +276,28 @@ actor MockRemoteFileSystem: RemoteFileSystem {
             throw RemoteFSError.notFound(path: path)
         }
         permissionsByPath[path] = permissions & 0o7777
+        if path == blockPath, let blockHook {
+            blockHook()
+            while !Task.isCancelled { await Task.yield() }
+        }
     }
 
     /// Test-only failure injection toggle (M11c/T2). See `permissionsFailures`.
     func setPermissionsFailure(_ error: Error?, at path: String) {
         permissionsFailures[path] = error
+    }
+
+    /// Test-only cancellation hook (M11c/T2 review, finding 1): after
+    /// `setPermissions` succeeds for `path`, fires `onReached` and then spins
+    /// cancellation-UNAWARE until the enclosing Task is cancelled — mirrors
+    /// `RecordingFS.blockAfterSetPermissions` in `PermissionsTreeApplierTests`
+    /// (itself mirroring `RecordingSpinDestination` in `TransferEngineTests`).
+    /// Lets a test cancel deterministically right after this one call
+    /// completes, with no race on whether the cancellation lands before the
+    /// walk's next `Task.isCancelled` check.
+    func blockAfterSetPermissions(at path: String, onReached: @escaping @Sendable () -> Void) {
+        blockPath = path
+        blockHook = onReached
     }
 
     /// Recursively removes `path` from the in-memory tree. A directory
