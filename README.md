@@ -16,6 +16,8 @@ and move files between them with drag and drop, buttons, or the Finder.
   passwords and passphrases live only in the macOS Keychain.
 - **SSH key authentication** — OpenSSH ed25519 keys, with or without
   passphrase; entries from `~/.ssh/config` appear automatically.
+- **SSH agent support** — authenticate with the identities already loaded
+  in your local agent; the private key never leaves it.
 - **Host-key pinning** — first-connect confirmation with the key
   fingerprint; a changed host key is a hard stop, never a dialog.
 - **Integrated terminal** — a real shell on the same connection,

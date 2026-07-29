@@ -15,8 +15,14 @@ struct CitadelShellIntegrationTests {
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: 2222, username: "testuser",
             auth: .password("testpass"))
-        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("macscp-kh-\(UUID().uuidString)"))
+        let knownHostsDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-\(UUID().uuidString)")
+        // The store is only consulted DURING the connect (TOFU upsert); once
+        // this function returns, the directory is dead weight — remove it so
+        // repeated gated runs stop littering the temp directory (M11e/T3,
+        // same sweep the other two integration suites already had).
+        defer { try? FileManager.default.removeItem(at: knownHostsDirectory) }
+        let store = KnownHostsStore(directory: knownHostsDirectory)
         do {
             return try await CitadelFileSystem.connect(
                 config: config, knownHosts: store, onUnknownHostKey: { _ in true })
