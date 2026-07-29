@@ -239,6 +239,24 @@ struct ContentView: View {
     @State private var showImportResultAlert = false
     @State private var importErrorMessage: String?
 
+    // MARK: - External terminal (M11d/T2)
+
+    /// One requested external-terminal open, captured between the moment the
+    /// toolbar button/menu entry fires and the moment the password hint (if
+    /// shown) is answered — `performExternalOpen` needs all four values.
+    private struct ExternalTerminalRequest {
+        let config: SSHConnectionConfig
+        let target: TerminalTarget
+        let customPath: String?
+    }
+
+    /// Non-nil while the "external terminals can't receive a saved password"
+    /// hint is showing (spec §4 item 6) — drives its alert below.
+    @State private var pendingPasswordHintRequest: ExternalTerminalRequest?
+    /// Set by `performExternalOpen` on `ExternalTerminalLauncher.LaunchError`
+    /// — drives the error alert below (spec §4 item 7).
+    @State private var externalTerminalErrorMessage: String?
+
     init(
         settingsStore: SettingsStore, bandwidthLimiter: BandwidthLimiter, auditStore: AuditLogStore,
         tabCommands: TabCommands, updateModel: UpdateCheckModel
@@ -268,7 +286,75 @@ struct ContentView: View {
         tabsModel.isLastTab && !tabsModel.activeTab.isConnected
     }
 
+    /// Mirrored into `tabCommands.isActiveTabConnected` via `.onChange` below
+    /// (M11d/T2) — `MacSCPApp`'s "Terminal" menu lives in a separate Scene
+    /// that doesn't observe `tabsModel`, so this is the value it reads to
+    /// enable/disable its two entries.
+    private var isActiveTabConnected: Bool { activeTab.isConnected }
+
     var body: some View {
+        // Split from `mainContent` (M11d/T2 build fix): the External
+        // Terminal `.onChange`/two `.alert`s below, chained directly onto
+        // the already-large modifier chain, made the type checker time out
+        // ("unable to type-check this expression in reasonable time") —
+        // splitting the chain into two smaller expressions fixes that
+        // without changing behavior.
+        mainContent
+            // Keeps `tabCommands.isActiveTabConnected` in sync (M11d/T2) —
+            // see that property's doc comment for why `MacSCPApp`'s
+            // "Terminal" menu needs this mirrored instead of reading
+            // `tabsModel` directly. `initial: true` seeds it once at first
+            // render too, not just on later transitions.
+            .onChange(of: isActiveTabConnected, initial: true) { _, newValue in
+                tabCommands.isActiveTabConnected = newValue
+            }
+            // Password-login hint (M11d/T2, spec §4 item 6): shown once
+            // before the FIRST external-terminal open of a
+            // password-authenticated session, since macSCP cannot hand a
+            // saved password to an outside process — ssh prompts there
+            // instead. "Don't show again" persists the flag before opening;
+            // "Open" opens without persisting it, so the hint reappears
+            // next time.
+            .alert(
+                L10n.string("externalTerminal.passwordHint.title", "Password Login"),
+                isPresented: passwordHintPresented
+            ) {
+                Button(L10n.string("externalTerminal.passwordHint.dontShowAgain", "Don't show again")) {
+                    if let request = pendingPasswordHintRequest {
+                        settingsStore.externalTerminalPasswordHintShown = true
+                        performExternalOpen(
+                            config: request.config, target: request.target, customPath: request.customPath)
+                    }
+                    pendingPasswordHintRequest = nil
+                }
+                Button(L10n.string("externalTerminal.passwordHint.open", "Open")) {
+                    if let request = pendingPasswordHintRequest {
+                        performExternalOpen(
+                            config: request.config, target: request.target, customPath: request.customPath)
+                    }
+                    pendingPasswordHintRequest = nil
+                }
+                .keyboardShortcut(.defaultAction)
+            } message: {
+                Text(L10n.string(
+                    "externalTerminal.passwordHint.message",
+                    "macSCP can't hand a saved password to an external terminal — ssh will ask you for it there."))
+            }
+            // External-terminal launch failures (M11d/T2, spec §4 item 7):
+            // `ExternalTerminalLauncher.LaunchError` is mapped to a concrete
+            // message (app name/path, or the write-failure reason) in
+            // `performExternalOpen` below.
+            .alert(
+                L10n.string("externalTerminal.error.title", "Couldn't Open External Terminal"),
+                isPresented: externalTerminalErrorPresented
+            ) {
+                Button(L10n.string("common.ok", "OK"), role: .cancel) {}
+            } message: {
+                Text(externalTerminalErrorMessage ?? "")
+            }
+    }
+
+    private var mainContent: some View {
         HSplitView {
             SessionSidebar(
                 viewModel: sessionListViewModel,
@@ -414,6 +500,18 @@ struct ContentView: View {
             tabCommands.importSessions = {
                 guard window?.isKeyWindow == true else { return }
                 showImportFileImporter = true
+            }
+            // "Terminal" menu bridge (M11d/T2) — same key-window guard as
+            // the tab commands above. Unlike the toolbar button, these two
+            // ALWAYS route to their own specific action regardless of
+            // `settingsStore.terminalTarget` (spec §4 item 5).
+            tabCommands.toggleTerminal = {
+                guard window?.isKeyWindow == true else { return }
+                activeTab.session?.terminal.toggle()
+            }
+            tabCommands.openExternalTerminal = {
+                guard window?.isKeyWindow == true else { return }
+                requestExternalTerminal(for: activeTab)
             }
         }
         // Destructive confirmation for closing a tab with active transfers
@@ -583,12 +681,24 @@ struct ContentView: View {
                     uploadButton(in: activeTab, session: session)
                     downloadButton(in: activeTab, session: session)
                     Button {
-                        session.terminal.toggle()
+                        // ⌘T/toolbar follow the setting (spec §4 item 5):
+                        // `.builtIn` toggles the panel exactly like before
+                        // this feature existed, anything else opens
+                        // externally. Both routes stay reachable regardless
+                        // — the "Terminal" menu (`tabCommands`) always
+                        // offers the other one too.
+                        if settingsStore.terminalTarget == .builtIn {
+                            session.terminal.toggle()
+                        } else {
+                            requestExternalTerminal(for: activeTab)
+                        }
                     } label: {
                         Label(L10n.string("browser.terminalToggle", "Terminal"), systemImage: "terminal")
                     }
                     .keyboardShortcut("t", modifiers: .command)
-                    .help(L10n.string("browser.terminalToggleHelp", "Show/hide terminal (⌘T)"))
+                    .help(settingsStore.terminalTarget == .builtIn
+                        ? L10n.string("browser.terminalToggleHelp", "Show/hide terminal (⌘T)")
+                        : L10n.string("browser.terminalOpenExternalHelp", "Open in external terminal (⌘T)"))
                     Button(L10n.string("browser.disconnect", "Disconnect")) {
                         disconnectToForm(activeTab)
                     }
@@ -625,6 +735,24 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    /// Extracted from the `.alert(isPresented:)` call above (M11d/T2 build
+    /// fix): inlined there, the whole modifier chain's combined closures made
+    /// the type checker time out ("unable to type-check this expression in
+    /// reasonable time") — a named computed `Binding` sidesteps that without
+    /// changing behavior.
+    private var passwordHintPresented: Binding<Bool> {
+        Binding(
+            get: { pendingPasswordHintRequest != nil },
+            set: { isPresented in if !isPresented { pendingPasswordHintRequest = nil } })
+    }
+
+    /// Same fix as `passwordHintPresented` above, for the error alert.
+    private var externalTerminalErrorPresented: Binding<Bool> {
+        Binding(
+            get: { externalTerminalErrorMessage != nil },
+            set: { isPresented in if !isPresented { externalTerminalErrorMessage = nil } })
     }
 
     @ViewBuilder
@@ -1836,6 +1964,53 @@ struct ContentView: View {
             defer { tab.isReconnecting = false }
             await teardown(tab)
             shrinkIfPristine()
+        }
+    }
+
+    // MARK: - External terminal (M11d/T2)
+
+    /// Entry point for both routes to an external terminal (the toolbar
+    /// button when `terminalTarget != .builtIn`, and the "Terminal" menu's
+    /// "Open in External Terminal" entry, which ignores the setting
+    /// entirely). Shows the password hint first when it applies (spec §4
+    /// item 6); otherwise opens immediately.
+    private func requestExternalTerminal(for tab: SessionTab) {
+        // No session, or somehow no resolved config for one (never happens
+        // in practice — a connected tab always has one, set by
+        // `ConnectionViewModel.connect()` on success): nothing to open.
+        guard tab.isConnected, let config = tab.connectionViewModel.lastConnectedConfig else { return }
+        // The menu route ignores `terminalTarget` (it always means
+        // "external"); the toolbar route already checked it before calling
+        // here, but `.builtIn` still needs a concrete target to launch —
+        // fall back to Terminal.app rather than silently doing nothing.
+        let target = settingsStore.terminalTarget == .builtIn ? .terminalApp : settingsStore.terminalTarget
+        let customPath = settingsStore.customTerminalAppPath
+
+        if case .password = config.auth, !settingsStore.externalTerminalPasswordHintShown {
+            pendingPasswordHintRequest = ExternalTerminalRequest(
+                config: config, target: target, customPath: customPath)
+            return
+        }
+        performExternalOpen(config: config, target: target, customPath: customPath)
+    }
+
+    /// Writes and launches the disposable script via `ExternalTerminalLauncher`;
+    /// any `LaunchError` becomes a concrete alert message (spec §4 item 7) —
+    /// never a silent failure or a fallback to a different app.
+    private func performExternalOpen(config: SSHConnectionConfig, target: TerminalTarget, customPath: String?) {
+        do {
+            try ExternalTerminalLauncher.open(config: config, target: target, customPath: customPath)
+        } catch ExternalTerminalLauncher.LaunchError.applicationNotFound(let name) {
+            externalTerminalErrorMessage = String(
+                format: L10n.string("externalTerminal.error.applicationNotFound %@", "Couldn't find \u{201C}%@\u{201D}."),
+                name)
+        } catch ExternalTerminalLauncher.LaunchError.scriptWriteFailed(let reason) {
+            externalTerminalErrorMessage = String(
+                format: L10n.string(
+                    "externalTerminal.error.scriptWriteFailed %@", "Couldn't write the launch script: %@"),
+                reason)
+        } catch {
+            externalTerminalErrorMessage = error.localizedDescription
         }
     }
 

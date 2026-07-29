@@ -26,6 +26,14 @@
 "settings.terminal.cursor.bar" = "Bar";
 "settings.terminal.cursor.underline" = "Underline";
 "settings.terminal.cursorBlink" = "Blinking";
+"settings.terminal.target.header" = "External Terminal";
+"settings.terminal.target" = "Open sessions in";
+"settings.terminal.target.builtIn" = "Built-in Terminal";
+"settings.terminal.target.terminalApp" = "Terminal";
+"settings.terminal.target.iTerm" = "iTerm";
+"settings.terminal.target.custom" = "Custom App…";
+"settings.terminal.target.footer" = "Both ways to open a session stay available from the Terminal menu, regardless of this setting.";
+"settings.terminal.target.noneChosen" = "No app chosen";
 
 /* Settings — Open with tab */
 "settings.tab.openWith" = "Open with";
@@ -85,6 +93,7 @@
 /* Browser toolbar & panes */
 "browser.terminalToggle" = "Terminal";
 "browser.terminalToggleHelp" = "Show/hide terminal (⌘T)";
+"browser.terminalOpenExternalHelp" = "Open in external terminal (⌘T)";
 "browser.disconnect" = "Disconnect";
 "browser.paneLocal" = "Local";
 "browser.paneRemote" = "Remote";
@@ -318,6 +327,9 @@
 "menu.logins" = "Logins…";
 "menu.exportAllSessions" = "Export All Sessions…";
 "menu.importSessions" = "Import Sessions…";
+"menu.terminal" = "Terminal";
+"menu.terminal.toggle" = "Show/Hide Terminal";
+"menu.terminal.openExternal" = "Open in External Terminal";
 
 /* Known hosts sheet (M10a/T2) */
 "knownHosts.title" = "Known Hosts";
@@ -415,3 +427,12 @@
 "update.error.httpStatus %lld" = "GitHub returned an unexpected error (HTTP %lld).";
 "update.error.rateLimited" = "Too many requests to GitHub right now. Try again later.";
 "update.error.malformedResponse" = "The response from GitHub could not be understood.";
+
+/* External terminal — password hint + launch errors (M11d/T2) */
+"externalTerminal.passwordHint.title" = "Password Login";
+"externalTerminal.passwordHint.message" = "macSCP can't hand a saved password to an external terminal — ssh will ask you for it there.";
+"externalTerminal.passwordHint.dontShowAgain" = "Don't show again";
+"externalTerminal.passwordHint.open" = "Open";
+"externalTerminal.error.title" = "Couldn't Open External Terminal";
+"externalTerminal.error.applicationNotFound %@" = "Couldn't find “%@”.";
+"externalTerminal.error.scriptWriteFailed %@" = "Couldn't write the launch script: %@";

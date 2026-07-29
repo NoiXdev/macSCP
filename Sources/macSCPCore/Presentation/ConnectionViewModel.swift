@@ -80,6 +80,15 @@ public final class ConnectionViewModel {
         public let candidate: HostKeyCandidate
     }
 
+    /// The `SSHConnectionConfig` behind the most recently SUCCESSFUL
+    /// `connect()` — including the already-resolved jump, exactly as the
+    /// connector used it (M11d/T2: the external-terminal launcher needs
+    /// these same values to reproduce the connection in a disposable
+    /// script). `nil` until the first successful connect; a failed attempt
+    /// leaves the previous value untouched, since a failed connect never
+    /// changes what session (if any) is actually active.
+    public private(set) var lastConnectedConfig: SSHConnectionConfig?
+
     public var host: String = ""
     public var port: String = "22"
     public var username: String = ""
@@ -251,6 +260,7 @@ public final class ConnectionViewModel {
                 await self?.presentHostKeyPrompt(for: candidate) ?? false
             }
             state = .idle
+            lastConnectedConfig = config
             return fs
         } catch {
             state = Self.failedState(

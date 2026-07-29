@@ -522,4 +522,97 @@ struct SettingsStoreTests {
         #expect(raw["updateCheckEnabled"] == .bool(false))
         #expect(raw["lastUpdateCheck"] == .number(timestamp.timeIntervalSince1970))
     }
+
+    // MARK: - External terminal (M11d Task 2)
+
+    @Test func externalTerminalDefaultsToBuiltInNilFalse() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.terminalTarget == .builtIn)
+        #expect(store.customTerminalAppPath == nil)
+        #expect(store.externalTerminalPasswordHintShown == false)
+    }
+
+    @Test(arguments: [
+        TerminalTarget.builtIn, .terminalApp, .iTerm, .custom,
+    ])
+    func externalTerminalSettingsRoundtrip(target: TerminalTarget) {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.terminalTarget = target
+        store.customTerminalAppPath = "/Applications/iTerm.app"
+        store.externalTerminalPasswordHintShown = true
+
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.terminalTarget == target)
+        #expect(reloaded.customTerminalAppPath == "/Applications/iTerm.app")
+        #expect(reloaded.externalTerminalPasswordHintShown == true)
+    }
+
+    @Test func customTerminalAppPathSetToEmptyOrNilClearsIt() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.customTerminalAppPath = "/Applications/iTerm.app"
+        store.customTerminalAppPath = ""
+        #expect(store.customTerminalAppPath == nil)
+
+        store.customTerminalAppPath = "/Applications/iTerm.app"
+        store.customTerminalAppPath = nil
+        #expect(store.customTerminalAppPath == nil)
+    }
+
+    /// An unrecognized raw target string (future app version, or hand-edited
+    /// garbage) must read as the safe default `.builtIn` — same pattern as
+    /// `terminalCursorStyleUnknownRawValueReadsAsBlock`.
+    @Test func terminalTargetUnknownRawValueReadsAsBuiltIn() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"terminalTarget": "weird"}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        #expect(store.terminalTarget == .builtIn)
+    }
+
+    @Test func loadingOldSettingsFileWithoutExternalTerminalKeysUsesDefaults() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"maxConcurrentTransfers": 4, "uploadLimitKBs": 10, "downloadLimitKBs": 20}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        #expect(store.terminalTarget == .builtIn)
+        #expect(store.customTerminalAppPath == nil)
+        #expect(store.externalTerminalPasswordHintShown == false)
+    }
+
+    @Test func externalTerminalSurvivesAlongsideUnknownKeys() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"maxConcurrentTransfers": 4, "futureFeatureEnabled": true, "futureLabel": "keep-me"}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        store.terminalTarget = .custom
+        store.customTerminalAppPath = "/Applications/iTerm.app"
+
+        let data = try Data(contentsOf: fileURL(dir))
+        let raw = try JSONDecoder().decode([String: JSONValue].self, from: data)
+        #expect(raw["futureFeatureEnabled"] == .bool(true))
+        #expect(raw["futureLabel"] == .string("keep-me"))
+        #expect(raw["terminalTarget"] == .string("custom"))
+        #expect(raw["customTerminalAppPath"] == .string("/Applications/iTerm.app"))
+    }
 }

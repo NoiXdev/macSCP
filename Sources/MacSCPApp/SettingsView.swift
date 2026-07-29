@@ -357,6 +357,10 @@ private struct OpenWithSettingsTab: View {
 /// so the controls below can bind directly to `$store.*`.
 private struct TerminalSettingsTab: View {
     @Bindable var store: SettingsStore
+    /// Drives the custom-terminal-app picker (M11d/T2) — same
+    /// `.fileImporter` pattern as `OpenWithSettingsTab`'s default-editor
+    /// picker.
+    @State private var showCustomAppPicker = false
 
     /// One selectable fixed-pitch font family in the font popup.
     ///
@@ -414,6 +418,17 @@ private struct TerminalSettingsTab: View {
         return .system(size: CGFloat(store.terminalFontSize), design: .monospaced)
     }
 
+    /// Display name for `store.customTerminalAppPath`, or a placeholder when
+    /// none is chosen yet — same idea as `OpenWithSettingsTab.appDisplayName`
+    /// but with terminal-specific wording ("no app chosen" instead of
+    /// "system default": there IS no system default terminal app).
+    private var customAppDisplayName: String {
+        guard let path = store.customTerminalAppPath, !path.isEmpty else {
+            return L10n.string("settings.terminal.target.noneChosen", "No app chosen")
+        }
+        return FileManager.default.displayName(atPath: path)
+    }
+
     var body: some View {
         VStack(spacing: 16) {
             Form {
@@ -455,8 +470,55 @@ private struct TerminalSettingsTab: View {
                         L10n.string("settings.terminal.cursorBlink", "Blinking"),
                         isOn: $store.terminalCursorBlink)
                 }
+
+                // External terminal (M11d/T2): which app a session's shell
+                // opens in. Both routes to a shell (toggle the built-in
+                // panel, or open externally) stay reachable from the
+                // "Terminal" menu regardless of this choice — it only picks
+                // what ⌘T/the toolbar button do (footer below).
+                Section {
+                    Picker(
+                        L10n.string("settings.terminal.target", "Open sessions in"),
+                        selection: $store.terminalTarget
+                    ) {
+                        Text(L10n.string("settings.terminal.target.builtIn", "Built-in Terminal"))
+                            .tag(TerminalTarget.builtIn)
+                        Text(L10n.string("settings.terminal.target.terminalApp", "Terminal"))
+                            .tag(TerminalTarget.terminalApp)
+                        Text(L10n.string("settings.terminal.target.iTerm", "iTerm"))
+                            .tag(TerminalTarget.iTerm)
+                        Text(L10n.string("settings.terminal.target.custom", "Custom App…"))
+                            .tag(TerminalTarget.custom)
+                    }
+
+                    if store.terminalTarget == .custom {
+                        HStack {
+                            Text(customAppDisplayName)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button(L10n.string("settings.openWith.choose", "Choose…")) {
+                                showCustomAppPicker = true
+                            }
+                        }
+                    }
+                } header: {
+                    Text(L10n.string("settings.terminal.target.header", "External Terminal"))
+                } footer: {
+                    Text(L10n.string(
+                        "settings.terminal.target.footer",
+                        "Both ways to open a session stay available from the Terminal menu, "
+                            + "regardless of this setting."))
+                        .foregroundStyle(.secondary)
+                }
             }
             .formStyle(.grouped)
+            .fileImporter(
+                isPresented: $showCustomAppPicker,
+                allowedContentTypes: [.application]
+            ) { result in
+                guard case .success(let url) = result else { return }
+                store.customTerminalAppPath = url.path(percentEncoded: false)
+            }
 
             // Preview: fixed, unlocalized sample text (a shell prompt reads
             // the same in every locale) rendered with the chosen font/size,

@@ -23,6 +23,19 @@ final class TabCommands {
     var showLogins: (() -> Void)?
     var exportAllSessions: (() -> Void)?
     var importSessions: (() -> Void)?
+    /// Terminal menu (M11d/T2): these two entries always offer BOTH ways to
+    /// open a session's shell, regardless of `SettingsStore.terminalTarget`
+    /// — the setting only picks what ⌘T/the toolbar button do, it never
+    /// takes either capability away.
+    var toggleTerminal: (() -> Void)?
+    var openExternalTerminal: (() -> Void)?
+    /// Mirrors `ContentView`'s active tab connection state (M11d/T2): this
+    /// `TabCommands` instance is the only thing `MacSCPApp`'s `.commands`
+    /// closure observes, and that closure builds a separate Scene that does
+    /// NOT see `ContentView`'s own `tabsModel` — so the enabled state of the
+    /// two Terminal menu entries above has to be mirrored here explicitly
+    /// (see `ContentView`'s `.onChange(of: isActiveTabConnected)`).
+    var isActiveTabConnected = false
 }
 
 @main
@@ -53,6 +66,9 @@ struct MacSCPApp: App {
         // hard-killed previous run (M6a) — first, before anything else
         // touches the temp tree.
         EditSessionManager.sweepOrphanedTempDirectories()
+        // Same sweep for orphaned external-terminal launch scripts (M11d/T2)
+        // — see `ExternalTerminalLauncher.sweepOrphanedTempDirectories`.
+        ExternalTerminalLauncher.sweepOrphanedTempDirectories()
         // Without an app bundle (started via `swift run`) the process runs
         // as an accessory — only the regular policy brings a window and a
         // Dock icon. A real `.app` bundle lands in M6.
@@ -142,6 +158,23 @@ struct MacSCPApp: App {
                 Button(L10n.string("menu.importSessions", "Import Sessions…")) {
                     tabCommands.importSessions?()
                 }
+            }
+            // "Terminal" menu (M11d/T2, spec §4): always offers BOTH ways to
+            // open a session's shell — the toolbar button/⌘T follow
+            // `SettingsStore.terminalTarget`, but these two entries never
+            // change with that setting, so switching it never takes a
+            // capability away. Both disabled while the active tab has no
+            // connected session (`tabCommands.isActiveTabConnected`, kept in
+            // sync by `ContentView`).
+            CommandMenu(L10n.string("menu.terminal", "Terminal")) {
+                Button(L10n.string("menu.terminal.toggle", "Show/Hide Terminal")) {
+                    tabCommands.toggleTerminal?()
+                }
+                .disabled(!tabCommands.isActiveTabConnected)
+                Button(L10n.string("menu.terminal.openExternal", "Open in External Terminal")) {
+                    tabCommands.openExternalTerminal?()
+                }
+                .disabled(!tabCommands.isActiveTabConnected)
             }
         }
 

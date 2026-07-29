@@ -69,6 +69,9 @@ public final class SettingsStore {
         static let terminalCursorBlink = "terminalCursorBlink"
         static let updateCheckEnabled = "updateCheckEnabled"
         static let lastUpdateCheck = "lastUpdateCheck"
+        static let terminalTarget = "terminalTarget"
+        static let customTerminalAppPath = "customTerminalAppPath"
+        static let externalTerminalPasswordHintShown = "externalTerminalPasswordHintShown"
     }
 
     private enum Defaults {
@@ -275,6 +278,42 @@ public final class SettingsStore {
             }
             persist()
         }
+    }
+
+    /// Where a session's shell opens (M11d) — built-in panel, a well-known
+    /// external app, or a custom one. Default `.builtIn`, so an old
+    /// settings.json (predating this feature) keeps today's behavior
+    /// unchanged. An unrecognized raw value (future app version, or
+    /// hand-edited garbage) reads as `.builtIn` instead of crashing or
+    /// propagating `nil` — same pattern as `terminalCursorStyle`.
+    public var terminalTarget: TerminalTarget {
+        get {
+            guard case .string(let value)? = raw[Keys.terminalTarget] else {
+                return .builtIn
+            }
+            return TerminalTarget(rawValue: value) ?? .builtIn
+        }
+        set {
+            raw[Keys.terminalTarget] = .string(newValue.rawValue)
+            persist()
+        }
+    }
+
+    /// Absolute path to the .app bundle used when `terminalTarget == .custom`
+    /// (M11d); nil/empty when unset. Same nil/empty-collapsing accessor
+    /// pattern as `defaultEditorPath`/`terminalFontName`.
+    public var customTerminalAppPath: String? {
+        get { stringValue(for: Keys.customTerminalAppPath) }
+        set { setString(newValue, for: Keys.customTerminalAppPath) }
+    }
+
+    /// Whether the "external terminals can't receive a saved password" hint
+    /// (M11d) has already been dismissed with "Don't show again". Default
+    /// OFF (unshown) — the hint appears once, then never again once this
+    /// flips true.
+    public var externalTerminalPasswordHintShown: Bool {
+        get { boolValue(for: Keys.externalTerminalPasswordHintShown, default: false) }
+        set { setBool(newValue, for: Keys.externalTerminalPasswordHintShown) }
     }
 
     /// Convenience: association lookup with the SAME normalization applied.

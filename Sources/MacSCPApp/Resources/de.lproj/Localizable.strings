@@ -26,6 +26,14 @@
 "settings.terminal.cursor.bar" = "Balken";
 "settings.terminal.cursor.underline" = "Unterstrich";
 "settings.terminal.cursorBlink" = "Blinken";
+"settings.terminal.target.header" = "Externes Terminal";
+"settings.terminal.target" = "Sitzungen öffnen in";
+"settings.terminal.target.builtIn" = "Eingebautes Terminal";
+"settings.terminal.target.terminalApp" = "Terminal";
+"settings.terminal.target.iTerm" = "iTerm";
+"settings.terminal.target.custom" = "Eigene App…";
+"settings.terminal.target.footer" = "Beide Wege, eine Sitzung zu öffnen, bleiben unabhängig von dieser Einstellung über das Menü „Terminal" erreichbar.";
+"settings.terminal.target.noneChosen" = "Keine App gewählt";
 
 /* Settings — Tab „Öffnen mit" */
 "settings.tab.openWith" = "Öffnen mit";
@@ -85,6 +93,7 @@
 /* Browser-Toolbar & Panes */
 "browser.terminalToggle" = "Terminal";
 "browser.terminalToggleHelp" = "Terminal ein-/ausblenden (⌘T)";
+"browser.terminalOpenExternalHelp" = "Im externen Terminal öffnen (⌘T)";
 "browser.disconnect" = "Trennen";
 "browser.paneLocal" = "Lokal";
 "browser.paneRemote" = "Remote";
@@ -318,6 +327,9 @@
 "menu.logins" = "Logins…";
 "menu.exportAllSessions" = "Alle Sitzungen exportieren…";
 "menu.importSessions" = "Sitzungen importieren…";
+"menu.terminal" = "Terminal";
+"menu.terminal.toggle" = "Terminal ein-/ausblenden";
+"menu.terminal.openExternal" = "Im externen Terminal öffnen";
 
 /* Bekannte-Hosts-Sheet (M10a/T2) */
 "knownHosts.title" = "Bekannte Hosts";
@@ -415,3 +427,12 @@
 "update.error.httpStatus %lld" = "GitHub hat einen unerwarteten Fehler zurückgegeben (HTTP %lld).";
 "update.error.rateLimited" = "Zu viele Anfragen an GitHub gerade jetzt. Versuche es später erneut.";
 "update.error.malformedResponse" = "Die Antwort von GitHub konnte nicht verarbeitet werden.";
+
+/* Externes Terminal — Passwort-Hinweis + Start-Fehler (M11d/T2) */
+"externalTerminal.passwordHint.title" = "Passwort-Anmeldung";
+"externalTerminal.passwordHint.message" = "macSCP kann ein gespeichertes Passwort nicht an ein externes Terminal übergeben — ssh fragt dort danach.";
+"externalTerminal.passwordHint.dontShowAgain" = "Nicht mehr anzeigen";
+"externalTerminal.passwordHint.open" = "Öffnen";
+"externalTerminal.error.title" = "Externes Terminal konnte nicht geöffnet werden";
+"externalTerminal.error.applicationNotFound %@" = "„%@“ wurde nicht gefunden.";
+"externalTerminal.error.scriptWriteFailed %@" = "Das Start-Skript konnte nicht geschrieben werden: %@";
