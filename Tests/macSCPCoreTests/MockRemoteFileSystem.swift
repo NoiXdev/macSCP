@@ -17,6 +17,16 @@ actor MockRemoteFileSystem: RemoteFileSystem {
     private(set) var deletedPaths: [String] = []
     /// Permission bits set via `setPermissions`, keyed by path (M7a/T1).
     private(set) var permissionsByPath: [String: UInt32] = [:]
+    /// Test-only per-path failure injection for `setPermissions` (M11c/T2):
+    /// lets a recursive-walk test fail exactly one entry inside an
+    /// otherwise-healthy tree, without a second file-system double.
+    private var permissionsFailures: [String: Error] = [:]
+    /// Number of `list` calls made so far, per path (M11c/T2), for tests
+    /// that assert the browser reloaded ITS OWN current directory after a
+    /// recursive permissions run — keyed by path rather than a single total
+    /// so a walk that also lists deeper paths (the target subtree) doesn't
+    /// get confused with the browser's own reload of `currentPath`.
+    private(set) var listCallCounts: [String: Int] = [:]
     /// Test-only failure injection (M9c/T1): while set, `list` throws this
     /// error regardless of the tree contents, simulating a dead server for
     /// the silent-refresh error-swallowing tests. `nil` (the default)
@@ -53,6 +63,7 @@ actor MockRemoteFileSystem: RemoteFileSystem {
     }
 
     func list(path: String) async throws -> [RemoteFileItem] {
+        listCallCounts[path, default: 0] += 1
         if let listFailure {
             throw listFailure
         }
@@ -247,13 +258,24 @@ actor MockRemoteFileSystem: RemoteFileSystem {
     }
 
     /// Records the low-12-bit permission mask for `path` (M7a/T1); `notFound`
-    /// if nothing exists there in the mock tree.
+    /// if nothing exists there in the mock tree. Honors a per-path failure
+    /// injected via `setPermissionsFailure` first (M11c/T2), letting a
+    /// recursive-walk test fail exactly one entry inside an otherwise-normal
+    /// tree.
     func setPermissions(path: String, permissions: UInt32) async throws {
+        if let failure = permissionsFailures[path] {
+            throw failure
+        }
         let parent = RemotePath.parent(of: path)
         guard let siblings = tree[parent], siblings.contains(where: { $0.path == path }) else {
             throw RemoteFSError.notFound(path: path)
         }
         permissionsByPath[path] = permissions & 0o7777
+    }
+
+    /// Test-only failure injection toggle (M11c/T2). See `permissionsFailures`.
+    func setPermissionsFailure(_ error: Error?, at path: String) {
+        permissionsFailures[path] = error
     }
 
     /// Recursively removes `path` from the in-memory tree. A directory

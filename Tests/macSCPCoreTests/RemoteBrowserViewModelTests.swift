@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import macSCPCore
 
@@ -257,6 +258,25 @@ struct RemoteBrowserViewModelTests {
         func record(_ event: AuditEvent) { events.append(event) }
     }
 
+    /// Thread-safe capture of `applyPermissionsRecursively`'s `progress`
+    /// snapshots (M11c/T2) — the callback is `@Sendable` and may fire from
+    /// off the main actor, mirroring `ProgressRecorder` in
+    /// `PermissionsTreeApplierTests`.
+    private final class RecursiveProgressCapture: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _snapshots: [PermissionsTreeResult] = []
+        var snapshots: [PermissionsTreeResult] {
+            lock.lock()
+            defer { lock.unlock() }
+            return _snapshots
+        }
+        func record(_ r: PermissionsTreeResult) {
+            lock.lock()
+            defer { lock.unlock() }
+            _snapshots.append(r)
+        }
+    }
+
     @Test func renameSuccessFiresRenameEvent() async throws {
         let fs = MockRemoteFileSystem(tree: [
             "/": [RemoteFileItem(name: "old.txt", path: "/old.txt", kind: .file, size: 1)],
@@ -367,6 +387,121 @@ struct RemoteBrowserViewModelTests {
         #expect(capture.events[0].kind == .permissions)
         #expect(capture.events[0].isError == true)
         #expect(capture.events[0].errorMessage == error)
+    }
+
+    // MARK: - applyPermissionsRecursively (M11c/T2)
+
+    @Test func recursiveApplyWritesOneAuditEventWithCounts() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "r", path: "/r", kind: .directory)],
+            "/r": [
+                RemoteFileItem(name: "a.txt", path: "/r/a.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "sub", path: "/r/sub", kind: .directory),
+            ],
+            "/r/sub": [RemoteFileItem(name: "b.txt", path: "/r/sub/b.txt", kind: .file, size: 1)],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        let capture = EventCapture()
+        vm.auditSink = { capture.record($0) }
+        await vm.load()
+        let root = vm.items[0]
+
+        let result = await vm.applyPermissionsRecursively(
+            filePermissions: 0o644, directoryPermissions: 0o755, to: root)
+
+        #expect(result == PermissionsTreeResult(changed: 4))
+        #expect(capture.events.count == 1)
+        #expect(capture.events[0].kind == .permissions)
+        #expect(capture.events[0].isError == false)
+        #expect(capture.events[0].detail.contains("chmod -R"))
+        #expect(capture.events[0].detail.contains("644"))
+        #expect(capture.events[0].detail.contains("755"))
+        #expect(capture.events[0].detail.contains("/r"))
+        #expect(capture.events[0].detail.contains("4")) // changed count
+    }
+
+    @Test func recursiveApplyMarksErrorWhenAnyEntryFailed() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "r", path: "/r", kind: .directory)],
+            "/r": [RemoteFileItem(name: "a.txt", path: "/r/a.txt", kind: .file, size: 1)],
+        ])
+        await fs.setPermissionsFailure(
+            RemoteFSError.permissionDenied(path: "/r/a.txt"), at: "/r/a.txt")
+        let vm = RemoteBrowserViewModel(fs: fs)
+        let capture = EventCapture()
+        vm.auditSink = { capture.record($0) }
+        await vm.load()
+        let root = vm.items[0]
+
+        let result = await vm.applyPermissionsRecursively(
+            filePermissions: 0o644, directoryPermissions: 0o755, to: root)
+
+        #expect(result.failed == 1)
+        #expect(capture.events.count == 1)
+        #expect(capture.events[0].kind == .permissions)
+        #expect(capture.events[0].isError == true)
+        #expect(capture.events[0].errorMessage == result.firstErrorMessage)
+    }
+
+    @Test func recursiveApplyReloadsListing() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "r", path: "/r", kind: .directory)],
+            "/r": [RemoteFileItem(name: "a.txt", path: "/r/a.txt", kind: .file, size: 1)],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        let root = vm.items[0]
+        // Counted per-path: the walk itself lists `/r` (the target's own
+        // subtree), a DIFFERENT path from the browser's own `currentPath`
+        // ("/") — so only the "/" count isolates the reload from the walk's
+        // own listing traffic.
+        let callsBefore = await fs.listCallCounts["/"] ?? 0
+
+        _ = await vm.applyPermissionsRecursively(
+            filePermissions: 0o644, directoryPermissions: 0o755, to: root)
+
+        let callsAfter = await fs.listCallCounts["/"] ?? 0
+        #expect(callsAfter == callsBefore + 1)   // load() re-listed the current directory
+    }
+
+    @Test func recursiveApplyReloadsListingEvenAfterFailure() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "r", path: "/r", kind: .directory)],
+            "/r": [RemoteFileItem(name: "a.txt", path: "/r/a.txt", kind: .file, size: 1)],
+        ])
+        await fs.setPermissionsFailure(
+            RemoteFSError.permissionDenied(path: "/r/a.txt"), at: "/r/a.txt")
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        let root = vm.items[0]
+        let callsBefore = await fs.listCallCounts["/"] ?? 0
+
+        _ = await vm.applyPermissionsRecursively(
+            filePermissions: 0o644, directoryPermissions: 0o755, to: root)
+
+        let callsAfter = await fs.listCallCounts["/"] ?? 0
+        #expect(callsAfter == callsBefore + 1)   // reload runs even when an entry failed
+    }
+
+    @Test func recursiveApplyForwardsProgress() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "r", path: "/r", kind: .directory)],
+            "/r": [
+                RemoteFileItem(name: "a.txt", path: "/r/a.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "b.txt", path: "/r/b.txt", kind: .file, size: 1),
+            ],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        let root = vm.items[0]
+        let progressCapture = RecursiveProgressCapture()
+
+        let result = await vm.applyPermissionsRecursively(
+            filePermissions: 0o644, directoryPermissions: 0o755, to: root,
+            progress: { progressCapture.record($0) })
+
+        #expect(progressCapture.snapshots.count == 3) // /r, a.txt, b.txt
+        #expect(progressCapture.snapshots.last == result)
     }
 
     @Test func deleteItemsWithTwoPathsNamesBothInDetail() async throws {

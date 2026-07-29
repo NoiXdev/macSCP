@@ -200,6 +200,51 @@ public final class RemoteBrowserViewModel {
         return nil
     }
 
+    /// Applies permissions across `item`'s subtree (M11c/T2): a directory
+    /// gets `directoryPermissions` and every file underneath gets
+    /// `filePermissions` (a non-directory root gets `filePermissions` only,
+    /// per `PermissionsTreeApplier`). Symlinks are never touched — see that
+    /// walker's doc comments for the security rationale. `progress` is
+    /// forwarded to the walk unchanged, for a live UI. The listing is
+    /// reloaded exactly once after the walk finishes, regardless of outcome
+    /// (success, partial failure, or cooperative cancellation) — unlike the
+    /// single-item `applyPermissions` above, a failed reload is not skipped
+    /// here because a recursive run can partially succeed even when it
+    /// ultimately reports a failure, and the pane must reflect that. Exactly
+    /// one audit event is written for the whole run: `isError` is set only
+    /// when at least one entry failed, and `errorMessage` carries the
+    /// walk's first failure message. The result is returned unchanged — the
+    /// UI (T3) is responsible for phrasing it for display.
+    public func applyPermissionsRecursively(
+        filePermissions: UInt32,
+        directoryPermissions: UInt32,
+        to item: RemoteFileItem,
+        progress: (@Sendable (PermissionsTreeResult) -> Void)? = nil
+    ) async -> PermissionsTreeResult {
+        let result = await PermissionsTreeApplier.apply(
+            root: item.path, kind: item.kind, filePermissions: filePermissions,
+            directoryPermissions: directoryPermissions, on: fs, progress: progress)
+
+        await load()
+
+        let fileOctal = PosixPermissions(rawValue: filePermissions).octalString
+        let directoryOctal = PosixPermissions(rawValue: directoryPermissions).octalString
+        var detail = "chmod -R \(fileOctal)/\(directoryOctal) \(item.path)"
+            + " (changed \(result.changed), skipped \(result.skippedSymlinks), failed \(result.failed))"
+        if result.cancelled {
+            detail += " — cancelled"
+        }
+
+        if result.failed > 0 {
+            auditSink?(AuditEvent(
+                kind: .permissions, detail: detail, isError: true,
+                errorMessage: result.firstErrorMessage))
+        } else {
+            auditSink?(AuditEvent(kind: .permissions, detail: detail))
+        }
+        return result
+    }
+
     /// Deletes all `doomed` entries sequentially via `deleteTree` (a plain
     /// file behaves like `delete`; a symlink is removed as the link). Stops
     /// at the first failure and returns its localized message — already
