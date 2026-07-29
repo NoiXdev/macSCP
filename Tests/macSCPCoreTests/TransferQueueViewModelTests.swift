@@ -1369,9 +1369,25 @@ struct TransferQueueViewModelTests {
         try await started.wait()
         await waitUntil { vm.items[0].status.isRunning }
 
-        // Timeout race: with cooperative cancellation, cancelAll returns
-        // promptly; without it, the transfer would hang/run until its natural end.
-        let returnedInTime = await completesWithin(.seconds(2)) { await vm.cancelAll() }
+        // Hang guard, not a performance race: the source double's
+        // `spinUntilCancelledAt` loop only ever exits via `Task.isCancelled`
+        // (see its doc comment), so a REGRESSED `cancelAll` that forgets to
+        // cancel the running transfer task would hang this test forever
+        // instead of failing loudly — `completesWithin` turns that into a
+        // fast, readable failure. The bound is intentionally generous: a
+        // correct `cancelAll` returns in low tens of milliseconds even under
+        // load, but CI's full-suite run schedules ~50 Swift Testing suites
+        // concurrently against a small (3-core) cooperative thread-pool, and
+        // `cancelAll` here unwinds through several MainActor hops (task
+        // cancel → engine `checkCancellation` → consumer drain → status
+        // update) that all compete for turns on that pool. Reproduced locally
+        // under heavy artificial contention (many busy-loop processes
+        // alongside the full 652-test suite): these hops measured up to ~3.7s
+        // wall-clock, still far short of the actual (unbounded) hang this
+        // guards against. 30s keeps an order-of-magnitude margin above that
+        // measured contention while still failing well within a CI run
+        // instead of requiring the job-level timeout to trip.
+        let returnedInTime = await completesWithin(.seconds(30)) { await vm.cancelAll() }
         #expect(returnedInTime)
         #expect(vm.items[0].status == .cancelled)   // NOT .finished
         #expect(vm.isActive == false)
@@ -1521,7 +1537,15 @@ struct TransferQueueViewModelTests {
             && vm.items[2].status == .queued
         }
 
-        let returnedInTime = await completesWithin(.seconds(2)) { await vm.cancelAll() }
+        // Hang guard, not a performance race — see the identical reasoning on
+        // `cancelAllStopsRunningTransferCooperatively` above: `gate0`/`gate1`
+        // are never fired, so a REGRESSED `cancelAll` that fails to cancel
+        // these waiters would hang this test forever. 30s (instead of the
+        // original 2s) gives an order-of-magnitude margin over the low
+        // seconds of MainActor-hop delay measured under heavy full-suite
+        // contention locally, while still failing fast for a genuine
+        // (unbounded) deadlock.
+        let returnedInTime = await completesWithin(.seconds(30)) { await vm.cancelAll() }
         #expect(returnedInTime)
         #expect(vm.items[0].status == .cancelled)
         #expect(vm.items[1].status == .cancelled)
