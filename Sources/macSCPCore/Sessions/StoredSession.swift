@@ -33,6 +33,14 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         /// passphrase). Always present, even in set mode, where it stays
         /// unused/orphan-cleaned rather than absent.
         public var secretID: UUID
+        /// The saved session this jump references, if any (M11a). Non-nil =
+        /// "session" mode: `host`/`port`/`username`/`authKind`/`keyPath`/
+        /// `loginSetID` above are inactive (kept only as a data carrier for
+        /// delete-restoration) and the referenced session's own host/port
+        /// and login are used instead. Optional so legacy JSON without this
+        /// field keeps decoding as `nil` (no custom decoder, same pattern as
+        /// `groupID`/`loginSetID`/`jump`).
+        public var sessionID: UUID?
 
         public init(
             host: String,
@@ -41,7 +49,8 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
             authKind: AuthKind = .password,
             keyPath: String? = nil,
             loginSetID: UUID? = nil,
-            secretID: UUID = UUID()
+            secretID: UUID = UUID(),
+            sessionID: UUID? = nil
         ) {
             self.host = host
             self.port = port
@@ -50,6 +59,7 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
             self.keyPath = keyPath
             self.loginSetID = loginSetID
             self.secretID = secretID
+            self.sessionID = sessionID
         }
     }
 
