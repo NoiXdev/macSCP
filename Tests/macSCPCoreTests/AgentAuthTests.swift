@@ -247,9 +247,14 @@ struct AgentAuthTests {
         try SSHConnectionConfig(host: "example.invalid", username: "tester", auth: .agent)
     }
 
-    private func freshKnownHostsStore() -> KnownHostsStore {
-        KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("macscp-kh-agent-\(UUID().uuidString)"))
+    /// Returns a store on a fresh temp directory PLUS that directory, so the
+    /// caller can `defer` its removal (M11e/T3: these four call sites used to
+    /// leak one directory per run, mirroring the leak already swept from
+    /// `CitadelFileSystemIntegrationTests`).
+    private func freshKnownHostsStore() -> (store: KnownHostsStore, directory: URL) {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-agent-\(UUID().uuidString)")
+        return (KnownHostsStore(directory: directory), directory)
     }
 
     /// An agent reachable but reporting zero identities surfaces as the
@@ -260,7 +265,8 @@ struct AgentAuthTests {
     @Test func emptyAgentThrowsNoIdentities() async throws {
         try await withTemporarySSHAuthSock("/tmp/macscp-agent-unit-test-\(UUID().uuidString).sock") {
             let config = try agentConfig()
-            let store = freshKnownHostsStore()
+            let (store, knownHostsDirectory) = freshKnownHostsStore()
+            defer { try? FileManager.default.removeItem(at: knownHostsDirectory) }
             await #expect(throws: AgentError.noIdentities) {
                 try await CitadelFileSystem.AgentClientFactory.$override.withValue({ _ in
                     SSHAgentClient(transport: MockAgentTransport(response: Self.emptyIdentitiesAnswerFrame()))
@@ -283,7 +289,8 @@ struct AgentAuthTests {
     @Test func allUnsupportedIdentitiesThrowNoUsableIdentities() async throws {
         try await withTemporarySSHAuthSock("/tmp/macscp-agent-unsupported-\(UUID().uuidString).sock") {
             let config = try agentConfig()
-            let store = freshKnownHostsStore()
+            let (store, knownHostsDirectory) = freshKnownHostsStore()
+            defer { try? FileManager.default.removeItem(at: knownHostsDirectory) }
             await #expect(throws: AgentError.noUsableIdentities) {
                 try await CitadelFileSystem.AgentClientFactory.$override.withValue({ _ in
                     SSHAgentClient(transport: MockAgentTransport(
@@ -304,7 +311,8 @@ struct AgentAuthTests {
     @Test func deadSocketThrowsSocketUnavailable() async throws {
         try await withTemporarySSHAuthSock("/nonexistent/macscp-agent-unit-test.sock") {
             let config = try agentConfig()
-            let store = freshKnownHostsStore()
+            let (store, knownHostsDirectory) = freshKnownHostsStore()
+            defer { try? FileManager.default.removeItem(at: knownHostsDirectory) }
             await #expect(throws: AgentError.socketUnavailable) {
                 _ = try await CitadelFileSystem.connect(
                     config: config, knownHosts: store, onUnknownHostKey: { _ in true })
@@ -327,7 +335,8 @@ struct AgentAuthTests {
             let config = try SSHConnectionConfig(
                 host: "example.invalid", username: "tester", auth: .password("irrelevant"),
                 jump: .init(host: "jump.invalid", username: "tester", auth: .agent))
-            let store = freshKnownHostsStore()
+            let (store, knownHostsDirectory) = freshKnownHostsStore()
+            defer { try? FileManager.default.removeItem(at: knownHostsDirectory) }
             let failingFactory: @Sendable (String) async throws -> SSHAgentClient = { _ in
                 throw AgentError.protocolError(reason: "boom")
             }

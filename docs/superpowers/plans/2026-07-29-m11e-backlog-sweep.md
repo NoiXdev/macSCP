@@ -43,7 +43,7 @@ T1 (Core-Härtungen + Ziel-Set-Asymmetrie) → T2 (Audit-Jump-Kontext + Test-Hyg
 5. **Ziel-Set-Asymmetrie:** `resolveSelectedLoginSet(in:)` liefert `Bool`: `true` bei nil-Set-Modus (nichts zu tun) und bei erfolgreicher Auflösung; `false` wenn `loginMode == .set` und die referenzierte ID NICHT in `sessionListViewModel.loginSets` liegt — in dem Fall `form.showFailure(message: L10n.string("loginSets.missingSet", …), field: nil)` (identisch zum Jump-Gegenstück, das `.jumpHost` nutzt; fürs Ziel ist `nil` richtig, da kein passendes Feld existiert). Der bestehende Sammel-Aufrufer (`resolveLoginSetForSubmit`) verundet beide Ergebnisse und gibt weiterhin `Bool` zurück; die drei Button-Handler bleiben unverändert.
 6. Neue Core-Meldung für `noUsableIdentities` in beiden Core-Katalogen (EN: „The SSH agent has no usable identities (unsupported key types)." / DE: „Der SSH-Agent hat keine nutzbaren Identitäten (nicht unterstützte Schlüsseltypen)."), verdrahtet an derselben Stelle wie die bestehenden Agent-Meldungen (grep `socketUnavailable` in der App/VM-Fehlerabbildung).
 
-- [ ] **Step 1: Failing Tests**
+- [x] **Step 1: Failing Tests**
 
 ```swift
     // SSHAgentClientTests:
@@ -66,10 +66,10 @@ T1 (Core-Härtungen + Ziel-Set-Asymmetrie) → T2 (Audit-Jump-Kontext + Test-Hyg
     //   (Regression-Guard, nicht neu schreiben).
 ```
 
-- [ ] **Step 2: Rot beweisen.** `swift test --filter SSHAgentClientTests` und `--filter AgentAuthTests` → FAIL.
-- [ ] **Step 3: Implementierung** in der Reihenfolge 1→5 der Verhaltens-Anforderungen; nach jedem Punkt kompilieren.
-- [ ] **Step 4: Grün + volle Suite.** `swift test` → 589 + neue, 0 Failures.
-- [ ] **Step 5: Commit.** `fix: harden the agent client and refuse dangling target login sets`
+- [x] **Step 2: Rot beweisen.** `swift test --filter SSHAgentClientTests` und `--filter AgentAuthTests` → FAIL.
+- [x] **Step 3: Implementierung** in der Reihenfolge 1→5 der Verhaltens-Anforderungen; nach jedem Punkt kompilieren.
+- [x] **Step 4: Grün + volle Suite.** `swift test` → 589 + neue, 0 Failures.
+- [x] **Step 5: Commit.** `fix: harden the agent client and refuse dangling target login sets`
 
 ---
 
@@ -87,7 +87,7 @@ T1 (Core-Härtungen + Ziel-Set-Asymmetrie) → T2 (Audit-Jump-Kontext + Test-Hyg
 3. **Temp-Cleanup:** jeder Test in `CitadelFileSystemIntegrationTests`, der ein temporäres KnownHosts-Verzeichnis anlegt, räumt es per `defer { try? FileManager.default.removeItem(at: dir) }` auf — inklusive der drei vorbestehenden Stellen (grep `NSTemporaryDirectory` / `temporaryDirectory` in der Datei; das Muster steht bereits an einer Stelle).
 4. **Mock-Queue-Test:** `transportErrorMapsToProtocolErrorDuringOperation` prüft aktuell den Mock-Erschöpfungs-Pfad. Auf einen einzigen do/catch mit EINEM gestellten Transport-Fehler umstellen, sodass die Assertion wirklich die Fehler-Abbildung trifft.
 
-- [ ] **Step 1: Failing Tests**
+- [x] **Step 1: Failing Tests**
 
 ```swift
     // AuditRecorder-Suite:
@@ -98,10 +98,10 @@ T1 (Core-Härtungen + Ziel-Set-Asymmetrie) → T2 (Audit-Jump-Kontext + Test-Hyg
     //   Detail enthält KEINEN Bastion-Benutzernamen (kein " as " nach "via").
 ```
 
-- [ ] **Step 2: Rot beweisen.** `swift test --filter Audit` → FAIL.
-- [ ] **Step 3: Implementierung** Punkt 1, dann die Test-Hygiene-Punkte 2–4 (reine Testarbeit, kein Produktionscode).
-- [ ] **Step 4: Grün + volle Suite + gated.** `swift test` UND `MACSCP_ITEST=1 swift test --filter CitadelFileSystemIntegrationTests` → grün; zusätzlich zweimal hintereinander gated laufen lassen und bestätigen, dass keine temporären `known_hosts`-Verzeichnisse zurückbleiben (Pfad-Zählung vorher/nachher im Report).
-- [ ] **Step 5: Commit.** `test: serialize the agent env and record the jump host in the audit log`
+- [x] **Step 2: Rot beweisen.** `swift test --filter Audit` → FAIL.
+- [x] **Step 3: Implementierung** Punkt 1, dann die Test-Hygiene-Punkte 2–4 (reine Testarbeit, kein Produktionscode).
+- [x] **Step 4: Grün + volle Suite + gated.** `swift test` UND `MACSCP_ITEST=1 swift test --filter CitadelFileSystemIntegrationTests` → grün; zusätzlich zweimal hintereinander gated laufen lassen und bestätigen, dass keine temporären `known_hosts`-Verzeichnisse zurückbleiben (Pfad-Zählung vorher/nachher im Report).
+- [x] **Step 5: Commit.** `test: serialize the agent env and record the jump host in the audit log`
 
 ---
 
@@ -110,6 +110,6 @@ T1 (Core-Härtungen + Ziel-Set-Asymmetrie) → T2 (Audit-Jump-Kontext + Test-Hyg
 **Files:**
 - Modify: `README.md` (neuer Abschnitt `## Known limitations` vor `## Install`)
 
-- [ ] **Step 1: README-Abschnitt** (Englisch, drei Punkte exakt nach Spec §1: RSA-über-Agent gegen Go-basierte Server; mehrere Agent-Identitäten als getrennte Login-Versuche + fail2ban-Risiko; Audit-Log-Ort). Sachlicher Ton, keine Marketing-Sprache, keine Stack-Begriffe im Intro-Teil des README (der neue Abschnitt selbst darf technisch sein).
-- [ ] **Step 2: Gated Suiten** am finalen Stand: Rig `start`, `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → alle grün, zero skips, keine zurückgelassenen ssh-agent-Prozesse; Rig `stop`.
-- [ ] **Step 3:** Plan-Checkboxen, Ledger, Opus-Final-Review (Package über `git merge-base origin/develop HEAD`), Fix-Runden bis „Yes", Push develop, `gh run watch`, Memory, Zusammenfassung. KEIN Release.
+- [x] **Step 1: README-Abschnitt** (Englisch, drei Punkte exakt nach Spec §1: RSA-über-Agent gegen Go-basierte Server; mehrere Agent-Identitäten als getrennte Login-Versuche + fail2ban-Risiko; Audit-Log-Ort). Sachlicher Ton, keine Marketing-Sprache, keine Stack-Begriffe im Intro-Teil des README (der neue Abschnitt selbst darf technisch sein).
+- [x] **Step 2: Gated Suiten** am finalen Stand: Rig `start`, `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → alle grün, zero skips, keine zurückgelassenen ssh-agent-Prozesse; Rig `stop`.
+- [x] **Step 3:** Plan-Checkboxen, Ledger, Opus-Final-Review (Package über `git merge-base origin/develop HEAD`), Fix-Runden bis „Yes", Push develop, `gh run watch`, Memory, Zusammenfassung. KEIN Release.

@@ -27,6 +27,21 @@ and move files between them with drag and drop, buttons, or the Finder.
   editor; saving uploads it back automatically.
 - **English and German** interface.
 
+## Known limitations
+
+- **RSA identities from an SSH agent.** They authenticate against OpenSSH
+  servers, but servers built on Go's `x/crypto/ssh` — Gitea, Forgejo,
+  SFTPGo, `gitlab-sshd` and others — reject them. The app currently
+  reports this as an ordinary authentication failure. Ed25519 and ECDSA
+  identities are unaffected; use one of those with such servers.
+- **Several identities in your agent.** They are offered as separate
+  login attempts (at most six per connection). On a server running
+  fail2ban with its default `maxretry = 5`, a single connect attempt can
+  therefore trip the jail and get your address banned.
+- **Where the connection log lives.** Per-session audit logs are stored
+  in `~/Library/Application Support/macSCP/audit/`, one file per saved
+  connection. Deleting a saved connection deletes its log.
+
 ## Install
 
 1. Download the latest DMG from the [releases page](https://github.com/NoiXdev/macSCP/releases).
