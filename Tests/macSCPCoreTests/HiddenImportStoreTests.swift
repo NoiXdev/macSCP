@@ -156,4 +156,16 @@ struct ImportedHostPartitionTests {
         let result = ImportedHostPartition.split(hosts: [], hiddenAliases: ["zulu", "alpha", "mike"])
         #expect(result.orphaned == ["alpha", "mike", "zulu"])
     }
+
+    /// Pins the tie-breaker in `sortAliasesForDisplay` (M11f/T1 review): two
+    /// aliases that differ only by case compare as `.orderedSame` under
+    /// `localizedCaseInsensitiveCompare`, and `Array.sorted` is not
+    /// guaranteed stable, so without the plain `<` tie-breaker this pair's
+    /// order flips between runs (reviewer measured 5 of 6 process runs one
+    /// way, 1 the other). "Prod" < "prod" lexicographically (uppercase
+    /// sorts first in ASCII), so this must always come out in that order.
+    @Test func orphanedOrderIsDeterministicForCaseOnlyDifferingAliases() {
+        let result = ImportedHostPartition.split(hosts: [], hiddenAliases: ["Prod", "prod"])
+        #expect(result.orphaned == ["Prod", "prod"])
+    }
 }

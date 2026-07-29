@@ -80,6 +80,7 @@
 "sidebar.delete" = "Löschen";
 "sidebar.importedHeader" = "IMPORTIERT";
 "sidebar.importedHelp" = "Aus ~/.ssh/config — füllt das Formular (Geheimnisse werden nicht importiert)";
+"sidebar.imported.hide" = "Ausblenden";
 
 /* Konflikt-Sheet */
 "conflict.title" = "Datei existiert bereits";
@@ -326,6 +327,8 @@
 "menu.sessions" = "Sessions";
 "menu.knownHosts" = "Bekannte Hosts…";
 "menu.logins" = "Logins…";
+"menu.hiddenImports" = "Ausgeblendete Importe…";
+"menu.hiddenImports %@" = "Ausgeblendete Importe (%@)…";
 "menu.exportAllSessions" = "Alle Sitzungen exportieren…";
 "menu.importSessions" = "Sitzungen importieren…";
 "menu.terminal" = "Terminal";
@@ -351,6 +354,16 @@
 "knownHosts.empty" = "Noch keine bekannten Hosts.";
 "knownHosts.loadError %@" = "Bekannte Hosts konnten nicht geladen werden: %@";
 "knownHosts.removeError %@" = "Der Host-Schlüssel konnte nicht entfernt werden: %@";
+
+/* Sheet für ausgeblendete Importe (M11f/T2) */
+"hiddenImports.title" = "Ausgeblendete Importe";
+"hiddenImports.empty" = "Rechtsklick auf eine importierte Verbindung in der Seitenleiste und „Ausblenden“ wählen, damit sie hier erscheint.";
+"hiddenImports.orphaned" = "nicht mehr in ~/.ssh/config";
+"hiddenImports.unhide" = "Wieder einblenden";
+"hiddenImports.removeFromList" = "Aus der Liste entfernen";
+"hiddenImports.count %lld" = "%lld ausgeblendet";
+"hiddenImports.loadError %@" = "Ausgeblendete Importe konnten nicht geladen werden: %@";
+"hiddenImports.unhideError %@" = "Der Import konnte nicht wiederhergestellt werden: %@";
 
 /* TOFU-Prompt-Fußnote (M10a/T2) */
 "tofu.manageKnownHosts" = "Bekannte Hosts verwalten…";

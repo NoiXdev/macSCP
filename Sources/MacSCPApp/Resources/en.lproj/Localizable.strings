@@ -80,6 +80,7 @@
 "sidebar.delete" = "Delete";
 "sidebar.importedHeader" = "IMPORTED";
 "sidebar.importedHelp" = "From ~/.ssh/config — fills the form (secrets are not imported)";
+"sidebar.imported.hide" = "Hide";
 
 /* Transfer conflict sheet */
 "conflict.title" = "File already exists";
@@ -326,6 +327,8 @@
 "menu.sessions" = "Sessions";
 "menu.knownHosts" = "Known Hosts…";
 "menu.logins" = "Logins…";
+"menu.hiddenImports" = "Hidden Imports…";
+"menu.hiddenImports %@" = "Hidden Imports (%@)…";
 "menu.exportAllSessions" = "Export All Sessions…";
 "menu.importSessions" = "Import Sessions…";
 "menu.terminal" = "Terminal";
@@ -351,6 +354,16 @@
 "knownHosts.empty" = "No known hosts yet.";
 "knownHosts.loadError %@" = "Could not load known hosts: %@";
 "knownHosts.removeError %@" = "Could not remove the host key: %@";
+
+/* Hidden imports sheet (M11f/T2) */
+"hiddenImports.title" = "Hidden Imports";
+"hiddenImports.empty" = "Right-click an imported connection in the sidebar and choose “Hide” to have it show up here.";
+"hiddenImports.orphaned" = "no longer in ~/.ssh/config";
+"hiddenImports.unhide" = "Show Again";
+"hiddenImports.removeFromList" = "Remove from List";
+"hiddenImports.count %lld" = "%lld hidden";
+"hiddenImports.loadError %@" = "Could not load hidden imports: %@";
+"hiddenImports.unhideError %@" = "Could not restore the import: %@";
 
 /* TOFU prompt footnote (M10a/T2) */
 "tofu.manageKnownHosts" = "Manage known hosts…";

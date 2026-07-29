@@ -169,6 +169,17 @@ struct ContentView: View {
     /// `sessionListViewModel` and the two injected stores stay window-wide.
     @State private var tabsModel: TabsViewModel<SessionTab>
     @State private var importedHosts: [SSHConfigHost] = []
+    /// The full, unfiltered `~/.ssh/config` parse (M11f/T2) — read from disk
+    /// exactly once in `.task` below. `refreshImportedHosts()` re-derives
+    /// `importedHosts`/`hiddenImportAliases` from THIS, never by re-reading
+    /// the config file, so hiding/unhiding an entry can never race a
+    /// concurrent edit of the file the user made in a text editor.
+    @State private var fullImportedHosts: [SSHConfigHost] = []
+    /// Aliases currently hidden from the IMPORTED sidebar section (M11f/T2),
+    /// freshly read from `HiddenImportStore` by every `refreshImportedHosts()`
+    /// call. Its count drives the Sessions-menu/background-menu "Hidden
+    /// Imports…" title (see `tabCommands.hiddenImportsCount` below).
+    @State private var hiddenImportAliases: [String] = []
     /// Handed over by `WindowAccessor` — basis for the active resize calls
     /// on state transitions (M5c/T0).
     @State private var window: NSWindow?
@@ -209,6 +220,15 @@ struct ContentView: View {
     /// no-item-payload shape as `showKnownHostsSheet` above (always the same
     /// window-wide `sessionListViewModel`).
     @State private var showLoginSetsSheet = false
+
+    // MARK: - Hidden imports (M11f/T2)
+
+    /// Drives the hidden-imports management sheet — opened from the
+    /// Sessions menu (⌘⇧I) and the sidebar's background context menu. Same
+    /// no-item-payload shape as `showKnownHostsSheet`/`showLoginSetsSheet`
+    /// above: the sheet always reflects `fullImportedHosts` plus a fresh
+    /// `HiddenImportStore` read of its own.
+    @State private var showHiddenImportsSheet = false
 
     // MARK: - Session export/import (M9a/T3)
 
@@ -308,6 +328,14 @@ struct ContentView: View {
             .onChange(of: isActiveTabConnected, initial: true) { _, newValue in
                 tabCommands.isActiveTabConnected = newValue
             }
+            // Mirrors `hiddenImportAliases.count` into the command bridge
+            // (M11f/T2, same rationale as `isActiveTabConnected` above):
+            // `MacSCPApp`'s "Sessions" menu lives in a separate Scene that
+            // doesn't observe this view's `@State`, so the "Hidden
+            // Imports…" title's count suffix has to be mirrored here too.
+            .onChange(of: hiddenImportAliases.count, initial: true) { _, newValue in
+                tabCommands.hiddenImportsCount = newValue
+            }
             // Password-login hint (M11d/T2, spec §4 item 6): shown once
             // before the FIRST external-terminal open of a
             // password-authenticated session, since macSCP cannot hand a
@@ -401,7 +429,10 @@ struct ContentView: View {
                 onImport: { showImportFileImporter = true },
                 onShowAuditLog: { stored in auditLogSession = stored },
                 onShowKnownHosts: { showKnownHostsSheet = true },
-                onShowLogins: { showLoginSetsSheet = true }
+                onShowLogins: { showLoginSetsSheet = true },
+                onHideImported: { host in hideImported(host) },
+                onShowHiddenImports: { showHiddenImportsSheet = true },
+                hiddenImportsCount: hiddenImportAliases.count
             )
             .frame(minWidth: 170, idealWidth: 190, maxWidth: 260)
 
@@ -434,7 +465,11 @@ struct ContentView: View {
         .navigationTitle(activeTab.titleName.map { "macSCP — \($0)" } ?? "macSCP")
         .background(WindowAccessor { window = $0 })
         .task {
-            importedHosts = SSHConfigImporter.load(path: SSHConfigImporter.defaultPath)
+            // Full inventory, read once (M11f/T2) — `refreshImportedHosts()`
+            // below (and every later hide/unhide) re-splits THIS instead of
+            // re-parsing the config file.
+            fullImportedHosts = SSHConfigImporter.load(path: SSHConfigImporter.defaultPath)
+            refreshImportedHosts()
             // Seed the shared limiter from the settings once per window; the
             // `.onChange` observers below keep it in sync afterwards. KBs → bytes/s.
             bandwidthLimiter.uploadLimitBytesPerSec = settingsStore.uploadLimitKBs * 1024
@@ -496,6 +531,12 @@ struct ContentView: View {
             tabCommands.showLogins = {
                 guard window?.isKeyWindow == true else { return }
                 showLoginSetsSheet = true
+            }
+            // "Hidden Imports…" (M11f/T2) — same key-window guard, opens the
+            // hidden-imports management sheet.
+            tabCommands.showHiddenImports = {
+                guard window?.isKeyWindow == true else { return }
+                showHiddenImportsSheet = true
             }
             tabCommands.exportAllSessions = {
                 guard window?.isKeyWindow == true else { return }
@@ -568,6 +609,19 @@ struct ContentView: View {
         // always show the exact same, up-to-date list.
         .sheet(isPresented: $showLoginSetsSheet) {
             LoginSetsSheet(sessionList: sessionListViewModel)
+        }
+        // Hidden-imports sheet (M11f/T2) — `fullImportedHosts` is the SAME
+        // full inventory `refreshImportedHosts()` reads from, so the sheet's
+        // "still in config"/"orphaned" split matches the sidebar exactly.
+        // `onChange` re-derives `importedHosts`/`hiddenImportAliases` after
+        // every unhide, so the sidebar's IMPORTED section and the menu
+        // count stay live while the sheet is still open.
+        .sheet(isPresented: $showHiddenImportsSheet) {
+            HiddenImportsSheet(
+                store: HiddenImportStore(directory: SessionStore.defaultDirectory),
+                hosts: fullImportedHosts,
+                onChange: { refreshImportedHosts() }
+            )
         }
         .fileExporter(
             isPresented: $showExportFileExporter,
@@ -1933,6 +1987,32 @@ struct ContentView: View {
             form.authChoice = .password
             form.keyPath = ""
         }
+    }
+
+    /// Recomputes `importedHosts` (the sidebar's VISIBLE list) and
+    /// `hiddenImportAliases` from `fullImportedHosts` and a fresh
+    /// `HiddenImportStore` read (M11f/T2). Called once at startup (right
+    /// after `fullImportedHosts` is populated in `.task`) and again after
+    /// every hide/unhide — deliberately WITHOUT re-parsing
+    /// `~/.ssh/config`, since hiding/unhiding never changes what is
+    /// actually in that file. A store read failure (rare: e.g. a corrupt
+    /// `hidden-imports.json`) falls back to "nothing hidden" rather than
+    /// hiding the whole IMPORTED section — the sidebar's own error surface
+    /// is `viewModel.errorMessage`, unrelated to this store.
+    private func refreshImportedHosts() {
+        let aliases = (try? HiddenImportStore(directory: SessionStore.defaultDirectory).allHidden()) ?? []
+        hiddenImportAliases = aliases
+        importedHosts = ImportedHostPartition.split(hosts: fullImportedHosts, hiddenAliases: aliases).visible
+    }
+
+    /// Sidebar imported-row context menu "Hide" (M11f/T2, spec: no
+    /// confirmation dialog). Best-effort: a rare disk-write failure just
+    /// leaves the row visible for another try — there is no dedicated error
+    /// surface for this quiet, one-click action (unlike the hidden-imports
+    /// sheet's own `unhide`, which does show store errors).
+    private func hideImported(_ host: SSHConfigHost) {
+        try? HiddenImportStore(directory: SessionStore.defaultDirectory).hide(host.alias)
+        refreshImportedHosts()
     }
 
     /// Sidebar "New connection": blank the active tab's form when it is

@@ -31,6 +31,16 @@ struct SessionSidebar: View {
     /// Background context menu "Logins…" entry (M10b/T3) — opens the
     /// login-sets management sheet, directly below "Known Hosts…".
     let onShowLogins: () -> Void
+    /// Imported-row context menu "Hide" entry (M11f/T2) — no confirmation
+    /// dialog (spec); the row disappears from `importedHosts` as soon as
+    /// `ContentView` recomputes it.
+    let onHideImported: (SSHConfigHost) -> Void
+    /// Background context menu "Hidden Imports…" entry (M11f/T2) — opens
+    /// the hidden-imports management sheet, directly below "Logins…".
+    let onShowHiddenImports: () -> Void
+    /// Drives the "Hidden Imports…" entry's count suffix (M11f/T2) — see
+    /// `hiddenImportsMenuTitle(count:)`.
+    let hiddenImportsCount: Int
 
     /// Not persisted — resets to "all expanded" on relaunch.
     @State private var collapsedGroups: Set<UUID> = []
@@ -277,6 +287,11 @@ struct SessionSidebar: View {
                     .help(L10n.string(
                         "sidebar.importedHelp",
                         "From ~/.ssh/config — fills the form (secrets are not imported)"))
+                    .contextMenu {
+                        Button(L10n.string("sidebar.imported.hide", "Hide")) {
+                            onHideImported(host)
+                        }
+                    }
                 }
             } header: {
                 Text(L10n.string("sidebar.importedHeader", "IMPORTED"))
@@ -294,6 +309,7 @@ struct SessionSidebar: View {
         Divider()
         Button(L10n.string("menu.knownHosts", "Known Hosts…")) { onShowKnownHosts() }
         Button(L10n.string("menu.logins", "Logins…")) { onShowLogins() }
+        Button(hiddenImportsMenuTitle(count: hiddenImportsCount)) { onShowHiddenImports() }
         Divider()
         Button(L10n.string("export.menu.all", "Export All…")) { onExport(.all) }
             .disabled(viewModel.sessions.isEmpty)

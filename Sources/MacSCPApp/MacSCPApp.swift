@@ -21,6 +21,15 @@ final class TabCommands {
     /// "Logins…" (M10b/T3) — same bridge shape/key-window guard as
     /// `showKnownHosts` above, opens the login-sets management sheet.
     var showLogins: (() -> Void)?
+    /// "Hidden Imports…" (M11f/T2) — same bridge shape/key-window guard as
+    /// `showKnownHosts`/`showLogins` above, opens the hidden-imports
+    /// management sheet.
+    var showHiddenImports: (() -> Void)?
+    /// Mirrors `ContentView`'s `hiddenImportAliases.count` (M11f/T2, same
+    /// rationale as `isActiveTabConnected` below): the "Hidden Imports…"
+    /// menu title's count suffix needs this observed value since `MacSCPApp`
+    /// builds a separate Scene that does not see `ContentView`'s `@State`.
+    var hiddenImportsCount = 0
     var exportAllSessions: (() -> Void)?
     var importSessions: (() -> Void)?
     /// Terminal menu (M11d/T2): these two entries always offer BOTH ways to
@@ -151,6 +160,14 @@ struct MacSCPApp: App {
                     tabCommands.showLogins?()
                 }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
+                // "Hidden Imports…" (M11f/T2): the count suffix is the ONLY
+                // way back once every imported entry is hidden and the
+                // IMPORTED sidebar section itself disappears — see
+                // `hiddenImportsMenuTitle(count:)`.
+                Button(hiddenImportsMenuTitle(count: tabCommands.hiddenImportsCount)) {
+                    tabCommands.showHiddenImports?()
+                }
+                .keyboardShortcut("i", modifiers: [.command, .shift])
                 Divider()
                 Button(L10n.string("menu.exportAllSessions", "Export All Sessions…")) {
                     tabCommands.exportAllSessions?()
