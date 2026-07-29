@@ -151,7 +151,12 @@ struct BrowserPane: View {
         .sheet(item: $infoTarget) { target in
             InfoPermissionsSheet(
                 item: target,
-                onApply: { perms in await viewModel.applyPermissions(perms, to: target) })
+                onApply: { perms in await viewModel.applyPermissions(perms, to: target) },
+                onApplyRecursively: { filePerms, dirPerms, progress in
+                    await viewModel.applyPermissionsRecursively(
+                        filePermissions: filePerms, directoryPermissions: dirPerms,
+                        to: target, progress: progress)
+                })
         }
         .alert(
             L10n.string("delete.title", "Delete?"),

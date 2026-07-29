@@ -190,6 +190,20 @@
 "info.perm.group" = "Group";
 "info.perm.other" = "Others";
 
+/* Recursive permissions (M11c/T3) */
+"info.recursive.toggle" = "Apply to all enclosed items";
+"info.recursive.same" = "Same permissions";
+"info.recursive.separate" = "Separate";
+"info.recursive.filesLabel" = "Files";
+"info.recursive.directoriesLabel" = "Folders";
+"info.recursive.applyButton" = "Apply Recursively";
+"info.recursive.confirmTitle" = "Apply Recursively?";
+"info.recursive.confirmMessage" = "Apply permissions to every item inside %@? This cannot be undone.";
+"info.recursive.progressPrefix" = "Applying…";
+"info.recursive.resultFormat" = "%lld changed, %lld skipped, %lld failed";
+"info.recursive.skippedHint" = "Skipped items are symlinks, which are left untouched.";
+"info.recursive.cancelledHint" = "Cancelled — some items may not have been updated.";
+
 /* Delete confirmation (M7b/T3) */
 "delete.title" = "Delete?";
 "delete.confirm" = "Delete";

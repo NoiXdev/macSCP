@@ -190,6 +190,20 @@
 "info.perm.group" = "Gruppe";
 "info.perm.other" = "Andere";
 
+/* Recursive permissions (M11c/T3) */
+"info.recursive.toggle" = "Auf alle Unterobjekte anwenden";
+"info.recursive.same" = "Gleiche Rechte";
+"info.recursive.separate" = "Getrennt";
+"info.recursive.filesLabel" = "Dateien";
+"info.recursive.directoriesLabel" = "Ordner";
+"info.recursive.applyButton" = "Rekursiv anwenden";
+"info.recursive.confirmTitle" = "Rekursiv anwenden?";
+"info.recursive.confirmMessage" = "Rechte auf alle Objekte in %@ anwenden? Das lässt sich nicht rückgängig machen.";
+"info.recursive.progressPrefix" = "Wird angewendet…";
+"info.recursive.resultFormat" = "%lld geändert, %lld übersprungen, %lld fehlgeschlagen";
+"info.recursive.skippedHint" = "Übersprungene Objekte sind Symlinks, die unangetastet bleiben.";
+"info.recursive.cancelledHint" = "Abgebrochen — einige Objekte wurden möglicherweise nicht aktualisiert.";
+
 /* Löschen-Bestätigung (M7b/T3) */
 "delete.title" = "Löschen?";
 "delete.confirm" = "Löschen";
