@@ -146,6 +146,23 @@ struct ConnectionViewModelTests {
         #expect(vm.password == "aus-dem-schluesselbund")
     }
 
+    /// Review finding (M11d fix round 1): `lastConnectedConfig` carries the
+    /// same raw secret as `password`/`keyPath` (it's built from them in
+    /// `connect()`), so the disconnect-time scrub must forget it too --
+    /// otherwise it survives in `SessionTab.connectionViewModel` across every
+    /// later disconnect/reconnect in that tab, defeating `clearPassword()`'s
+    /// own purpose for exactly this secret.
+    @Test func clearRetainedSecretsForgetsPasswordAndLastConnectedConfig() async {
+        let vm = makeVM()
+        _ = await vm.connect()
+        #expect(vm.lastConnectedConfig != nil)
+
+        vm.password = "still-here"
+        vm.clearRetainedSecrets()
+        #expect(vm.password.isEmpty)
+        #expect(vm.lastConnectedConfig == nil)
+    }
+
     @Test func secondConnectWhileConnectingIsRejected() async {
         let counter = CallCounter()
         let (stream, continuation) = AsyncStream<Void>.makeStream()

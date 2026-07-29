@@ -89,14 +89,26 @@ enum ExternalTerminalLauncher {
             else { throw LaunchError.applicationNotFound("iTerm") }
             return url
         case .custom:
-            guard let customPath, !customPath.isEmpty,
-                FileManager.default.fileExists(atPath: customPath),
-                Bundle(path: customPath)?.bundleIdentifier != nil
-            else {
+            guard isValidCustomApp(atPath: customPath) else {
                 throw LaunchError.applicationNotFound(customPath ?? "")
             }
-            return URL(fileURLWithPath: customPath)
+            return URL(fileURLWithPath: customPath!)
         }
+    }
+
+    /// Whether `path` points at a real, launchable application bundle — the
+    /// same check `resolveApplication(target: .custom, ...)` performs right
+    /// before launching. Exposed (not `private`) so `ContentView
+    /// .requestExternalTerminal` can decide, ahead of ever calling `open`,
+    /// whether a configured custom app is usable as the `.builtIn` fallback
+    /// (review finding, M11d fix round 1) instead of silently substituting
+    /// Terminal.app for a validly configured custom app.
+    static func isValidCustomApp(atPath path: String?) -> Bool {
+        guard let path, !path.isEmpty,
+            FileManager.default.fileExists(atPath: path),
+            Bundle(path: path)?.bundleIdentifier != nil
+        else { return false }
+        return true
     }
 
     /// Writes `SSHCommandBuilder.scriptContents(for:)` to a fresh UUID-named

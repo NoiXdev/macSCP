@@ -316,6 +316,26 @@ public final class ConnectionViewModel {
         password = ""
     }
 
+    /// Full disconnect-time scrub (review finding, M11d fix round 1): clears
+    /// the form's own plaintext password AND the retained
+    /// `lastConnectedConfig` -- the external-terminal launcher's copy of the
+    /// SAME raw secret, which lives in a separate property `clearPassword()`
+    /// alone never touches. `ContentView.teardown(_:)` calls this instead of
+    /// `clearPassword()` directly: `SessionTab.connectionViewModel` survives
+    /// for the tab's whole lifetime, so without this the first connect's
+    /// plaintext password would keep sitting in `lastConnectedConfig` across
+    /// every later disconnect/reconnect in that tab, defeating
+    /// `clearPassword()`'s own purpose for exactly this secret. The other
+    /// `clearPassword()` call sites (`selectAuthChoice` above,
+    /// `ContentView.fillFromImported`) run only on a form that's already
+    /// disconnected -- no live `lastConnectedConfig` there beyond what
+    /// teardown already cleared -- so they keep using the narrower
+    /// `clearPassword()`.
+    public func clearRetainedSecrets() {
+        clearPassword()
+        lastConnectedConfig = nil
+    }
+
     /// User-initiated mode switch (picker): clears the secret so the
     /// password/passphrase doesn't carry over into the other mode.
     /// Programmatic restore (connectStored) sets authChoice directly —

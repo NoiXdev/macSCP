@@ -33,6 +33,7 @@
 "settings.terminal.target.iTerm" = "iTerm";
 "settings.terminal.target.custom" = "Eigene App…";
 "settings.terminal.target.footer" = "Beide Wege, eine Sitzung zu öffnen, bleiben unabhängig von dieser Einstellung über das Menü „Terminal" erreichbar.";
+"settings.terminal.target.builtInFallback.footer" = "Ist „Eingebautes Terminal" gewählt, öffnet dieser Menüpunkt deine eigene App, falls eine festgelegt ist, sonst Terminal.";
 "settings.terminal.target.noneChosen" = "Keine App gewählt";
 
 /* Settings — Tab „Öffnen mit" */

@@ -504,11 +504,24 @@ private struct TerminalSettingsTab: View {
                 } header: {
                     Text(L10n.string("settings.terminal.target.header", "External Terminal"))
                 } footer: {
-                    Text(L10n.string(
-                        "settings.terminal.target.footer",
-                        "Both ways to open a session stay available from the Terminal menu, "
-                            + "regardless of this setting."))
-                        .foregroundStyle(.secondary)
+                    // Two short, factual notes (review finding, M11d fix
+                    // round 1, second sentence): the first is the existing
+                    // "both routes stay reachable" note; the second makes
+                    // the `.builtIn` fallback visible — otherwise a user who
+                    // set a custom app but left this picker on "Built-in"
+                    // has no way to know the menu item quietly uses Terminal
+                    // instead of their configured app.
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(L10n.string(
+                            "settings.terminal.target.footer",
+                            "Both ways to open a session stay available from the Terminal menu, "
+                                + "regardless of this setting."))
+                        Text(L10n.string(
+                            "settings.terminal.target.builtInFallback.footer",
+                            "When \u{201C}Built-in\u{201D} is selected, that menu item opens your "
+                                + "custom app if one is set, otherwise Terminal."))
+                    }
+                    .foregroundStyle(.secondary)
                 }
             }
             .formStyle(.grouped)

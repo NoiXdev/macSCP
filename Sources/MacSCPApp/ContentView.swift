@@ -1124,7 +1124,14 @@ struct ContentView: View {
             }
         }
         let form = tab.connectionViewModel
-        form.clearPassword()
+        // `clearRetainedSecrets()` (not the narrower `clearPassword()`):
+        // this tab's `connectionViewModel` survives past this teardown, so
+        // its `lastConnectedConfig` (the external-terminal launcher's own
+        // copy of the same secret) must be forgotten here too, or it would
+        // keep the first connect's plaintext password in memory across
+        // every later disconnect/reconnect in this tab (review finding,
+        // M11d fix round 1).
+        form.clearRetainedSecrets()
         form.authChoice = .password
         form.keyPath = ""
         // Reset any pending edit context: a stale `.edit(sessionID:)`
@@ -1981,10 +1988,19 @@ struct ContentView: View {
         guard tab.isConnected, let config = tab.connectionViewModel.lastConnectedConfig else { return }
         // The menu route ignores `terminalTarget` (it always means
         // "external"); the toolbar route already checked it before calling
-        // here, but `.builtIn` still needs a concrete target to launch —
-        // fall back to Terminal.app rather than silently doing nothing.
-        let target = settingsStore.terminalTarget == .builtIn ? .terminalApp : settingsStore.terminalTarget
+        // here, but `.builtIn` still needs a concrete target to launch.
+        // Review finding (M11d fix round 1): honour a validly configured
+        // custom app here instead of always substituting Terminal.app —
+        // a user who set a custom app but left the main setting on
+        // "Built-in" would otherwise silently get Apple Terminal. Only fall
+        // back to Terminal.app when no usable custom app is configured.
         let customPath = settingsStore.customTerminalAppPath
+        let target: TerminalTarget
+        if settingsStore.terminalTarget == .builtIn {
+            target = ExternalTerminalLauncher.isValidCustomApp(atPath: customPath) ? .custom : .terminalApp
+        } else {
+            target = settingsStore.terminalTarget
+        }
 
         if case .password = config.auth, !settingsStore.externalTerminalPasswordHintShown {
             pendingPasswordHintRequest = ExternalTerminalRequest(

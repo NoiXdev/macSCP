@@ -33,6 +33,7 @@
 "settings.terminal.target.iTerm" = "iTerm";
 "settings.terminal.target.custom" = "Custom App…";
 "settings.terminal.target.footer" = "Both ways to open a session stay available from the Terminal menu, regardless of this setting.";
+"settings.terminal.target.builtInFallback.footer" = "When “Built-in” is selected, that menu item opens your custom app if one is set, otherwise Terminal.";
 "settings.terminal.target.noneChosen" = "No app chosen";
 
 /* Settings — Open with tab */
