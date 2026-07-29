@@ -106,8 +106,13 @@ public final class SessionListViewModel {
                     try secrets.savePassword(password, for: session.id)
                 }
             }
-            if let jump, jump.loginSetID == nil, jump.authKind != .agent,
-               let jumpSecret, !jumpSecret.isEmpty {
+            // `sessionID == nil` is load-bearing (M11a/T3 review): a jump that
+            // borrows a saved connection has no secret of its own — the
+            // referenced session owns it. Enforcing that HERE, not only at the
+            // call sites, keeps a future caller from silently copying the
+            // resolved secret into this jump's otherwise unused slot.
+            if let jump, jump.loginSetID == nil, jump.sessionID == nil,
+               jump.authKind != .agent, let jumpSecret, !jumpSecret.isEmpty {
                 try secrets.savePassword(jumpSecret, for: jump.secretID)
             }
             cleanOrphanedJumpSlot(previous: previousJump, new: jump)
@@ -279,8 +284,10 @@ public final class SessionListViewModel {
             } else if let newSecret, !newSecret.isEmpty {
                 try secrets.savePassword(newSecret, for: updated.id)
             }
-            if let jump = updated.jump, jump.loginSetID == nil, jump.authKind != .agent,
-               let jumpSecret, !jumpSecret.isEmpty {
+            // Same invariant as `save` above: a session-referencing jump never
+            // owns a secret, regardless of what the caller passes.
+            if let jump = updated.jump, jump.loginSetID == nil, jump.sessionID == nil,
+               jump.authKind != .agent, let jumpSecret, !jumpSecret.isEmpty {
                 try secrets.savePassword(jumpSecret, for: jump.secretID)
             }
             cleanOrphanedJumpSlot(previous: previousJump, new: updated.jump)

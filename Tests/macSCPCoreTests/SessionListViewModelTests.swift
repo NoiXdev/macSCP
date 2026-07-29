@@ -744,6 +744,30 @@ struct SessionListViewModelTests {
         #expect(vm.sessions.first(where: { $0.name == "web" })?.jump?.sessionID == bastion.id)
     }
 
+    /// M11a/T3 review (defense in depth): a session-referencing jump owns NO
+    /// secret — the referenced connection does. The write guard therefore
+    /// lives in the store layer too, not only at the App call sites: even a
+    /// caller that hands over the resolved secret must not get it copied into
+    /// this jump's (unused) slot. Covers both `save` and `updateSession`.
+    @Test func sessionModeJumpNeverStoresASecretEvenIfOffered() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let bastion = vm.save(name: "bastion", host: "b.example.com", port: 22,
+                              username: "root", password: "bp")!
+
+        let sessionJump = StoredSession.JumpSpec(
+            host: "ignored", username: "ignored", sessionID: bastion.id)
+        let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw",
+                             jump: sessionJump, jumpSecret: "leaked-on-save")!
+        #expect(try secrets.password(for: sessionJump.secretID) == nil)
+
+        var updated = stored
+        updated.name = "web renamed"
+        vm.updateSession(updated, newSecret: nil, jumpSecret: "leaked-on-update")
+        #expect(try secrets.password(for: sessionJump.secretID) == nil)
+        #expect(vm.sessions.first(where: { $0.name == "web renamed" })?.jump?.sessionID == bastion.id)
+    }
+
     @Test func updateSessionJumpSwitchingManualToAgentDeletesJumpSecretSlot() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
