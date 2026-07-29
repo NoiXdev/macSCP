@@ -71,4 +71,4 @@ SSH test rig from `docker/test-server/` (`MACSCP_ITEST=1`).
 
 ## License
 
-[MIT](LICENSE) — © 2026 Tim Rösner.
+[MIT](LICENSE) — © 2026 noix.
