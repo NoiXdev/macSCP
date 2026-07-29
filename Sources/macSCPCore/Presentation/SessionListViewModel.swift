@@ -283,7 +283,12 @@ public final class SessionListViewModel {
     public func saveLoginSet(_ set: LoginSet, secret: String?) {
         do {
             try loginSetStore.upsert(set)
-            if set.authKind != .agent, let secret, !secret.isEmpty {
+            if set.authKind == .agent {
+                // C-1: an agent set never keeps a secret -- clean up a
+                // leftover slot from before a switch to agent mode, mirroring
+                // the session-level hygiene in `save`/`updateSession`.
+                try? secrets.deletePassword(for: set.id)
+            } else if let secret, !secret.isEmpty {
                 try secrets.savePassword(secret, for: set.id)
             }
             reload()
@@ -322,7 +327,12 @@ public final class SessionListViewModel {
     /// that one session as a failure, not two.
     public func deleteLoginSet(_ set: LoginSet) -> LoginSetDeleteResult {
         let affected = sessionsUsing(setID: set.id)
-        let setSecret = (try? secrets.password(for: set.id)) ?? nil
+        // C-1: an agent set carries no secret to restore, even if a stale
+        // slot survives from before an edit switched the set to agent mode
+        // (`saveLoginSet` scrubs new switches, but an already-agent set must
+        // never read/transfer a leftover secret either).
+        let setSecret: String? = set.authKind == .agent
+            ? nil : ((try? secrets.password(for: set.id)) ?? nil)
         var secretFailures = 0
 
         for session in affected {

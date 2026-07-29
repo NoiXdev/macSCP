@@ -95,8 +95,13 @@ public enum SSHAgentCodec {
 
         var offset = 1
         let count = try readUInt32(bytes, at: &offset)
+        // M-1: no `reserveCapacity(Int(count))` -- `count` is untrusted
+        // (attacker- or bug-controlled) wire data; a declared count near
+        // UInt32.max would request a multi-hundred-GB allocation and trap.
+        // Each loop iteration already bounds-checks against the actual
+        // frame length via `readSSHString`, so a bogus count simply throws
+        // `.protocolError` on the first read past the real payload.
         var identities: [AgentIdentity] = []
-        identities.reserveCapacity(Int(count))
         for _ in 0..<count {
             let blobBytes = try readSSHString(bytes, at: &offset)
             let commentBytes = try readSSHString(bytes, at: &offset)

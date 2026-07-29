@@ -128,6 +128,24 @@ Login-Vorgangs mit mehreren Angeboten. Die Anzahl ist bewusst begrenzt
 damit ein Agent mit vielen Identitäten keinen Login-Spam gegen den Server
 erzeugt.
 
+**I-2-Nachtrag: der Cap von 6 ist KEINE echte MaxAuthTries-Parität, und das
+hat eine fail2ban-Konsequenz.** `MaxAuthTries` zählt Auth-ANGEBOTE
+innerhalb EINER einzigen Verbindung (ein TCP/SSH-Handshake, mehrere
+Schlüssel nacheinander angeboten). Der Pro-Identität-Reconnect oben
+produziert dagegen bis zu 6 SEPARATE, jeweils fehlgeschlagene Logins —
+jeder mit eigenem TCP-Connect/SSH-Handshake/Auth-Versuch, sichtbar als 6
+einzelne `Failed publickey`-Einträge statt eines Vorgangs mit 6 Angeboten
+(bei zusätzlichen TOFU-Retries entsprechend mehr). Der Stock-Jail von
+fail2ban für `sshd` hat standardmäßig `maxretry = 5`. Ein Nutzer mit ≥5
+Agent-Identitäten, die der Zielserver alle ablehnt (z. B. beim ersten
+Verbindungsversuch zu einem neuen Host, oder wenn keiner der angebotenen
+Schlüssel dort autorisiert ist), kann seine eigene IP auf einem
+fail2ban-geschützten Host sperren — ausgelöst durch EIN
+Verbindungsversuch in macSCP, nicht durch wiederholte manuelle Versuche.
+Der Cap bleibt bei 6 (Maintainer-Entscheidung steht noch aus); diese
+Konsequenz ist hiermit bewusst dokumentiert, nicht durch Gegenmaßnahmen
+entschärft.
+
 **Bekannte RSA-Grenze (verifiziert, nicht hypothetisch):** Eine
 `ssh-rsa`-Identität wird über den Agent mit dem Blob-Tag `rsa-sha2-512`
 angeboten (swift-nio-ssh koppelt Algorithmusname und Blob-Tag für

@@ -452,11 +452,19 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 do {
                     return try await connectOnce(.custom(delegate))
                 } catch {
-                    lastError = error
                     if box.result != nil { throw error }
-                    if case SSHClientError.allAuthenticationOptionsFailed = error {
-                        authRejectionError = error
+                    // I-1: retry another identity ONLY when the server
+                    // actually rejected the one we offered
+                    // (allAuthenticationOptionsFailed). Any other error --
+                    // connect timeout, DNS failure, a transport hiccup -- is
+                    // not an auth rejection and would just be repeated up to
+                    // `attempts` times (times the outer TOFU loop) for
+                    // nothing; rethrow it immediately instead.
+                    guard case SSHClientError.allAuthenticationOptionsFailed = error else {
+                        throw error
                     }
+                    lastError = error
+                    authRejectionError = error
                 }
             }
             throw authRejectionError ?? lastError

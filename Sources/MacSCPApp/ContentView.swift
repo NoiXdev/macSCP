@@ -1375,7 +1375,10 @@ struct ContentView: View {
                     form.username = stored.username
                     form.authChoice = ConnectionViewModel.authChoice(for: stored.authKind)
                     form.keyPath = stored.keyPath ?? ""
-                    form.password = sessionListViewModel.password(for: stored) ?? ""
+                    // M-6: an agent login reads no keychain at all -- avoid
+                    // the residual lookup on this path too.
+                    form.password = stored.authKind != .agent
+                        ? (sessionListViewModel.password(for: stored) ?? "") : ""
                 }
                 form.loginMode = stored.loginSetID != nil ? .set : .manual
                 form.selectedLoginSetID = stored.loginSetID

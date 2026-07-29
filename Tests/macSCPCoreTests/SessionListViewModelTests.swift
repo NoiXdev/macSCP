@@ -817,6 +817,71 @@ struct SessionListViewModelTests {
         #expect(resolved == ResolvedLogin(username: "deploy", authKind: .agent, keyPath: nil, secret: nil))
     }
 
+    // MARK: - C-1 regression: editing a set to .agent must not keep/transfer a stale secret
+
+    @Test func saveLoginSetEditedToAgentClearsStaleSecret() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        var set = LoginSet(name: "Root", username: "root")
+        vm.saveLoginSet(set, secret: "s3cr3t")
+        #expect(try secrets.password(for: set.id) == "s3cr3t")
+
+        // Edit the same set (same id) to agent mode -- must scrub the
+        // leftover keychain slot from before the switch, mirroring the
+        // session-level hygiene in `save`/`updateSession`.
+        set.authKind = .agent
+        vm.saveLoginSet(set, secret: nil)
+
+        #expect(try secrets.password(for: set.id) == nil)
+    }
+
+    @Test func deleteLoginSetEditedToAgentDoesNotTransferStaleSecret() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        var set = LoginSet(name: "Root", username: "root")
+        vm.saveLoginSet(set, secret: "s3cr3t")
+        let stored = vm.save(name: "web", host: "h", port: 22, username: "ignored",
+                             password: "", loginSetID: set.id)!
+
+        set.authKind = .agent
+        vm.saveLoginSet(set, secret: nil)
+
+        let result = vm.deleteLoginSet(set)
+
+        #expect(result == SessionListViewModel.LoginSetDeleteResult(restored: 1, secretFailures: 0))
+        let restored = vm.sessions.first { $0.id == stored.id }!
+        #expect(restored.loginSetID == nil)
+        #expect(restored.authKind == .agent)
+        // The stale password-era secret must never have been transferred
+        // into the session's own slot, nor left behind on the set's slot.
+        #expect(try secrets.password(for: stored.id) == nil)
+        #expect(try secrets.password(for: set.id) == nil)
+    }
+
+    @Test func deleteLoginSetEditedToAgentDoesNotTransferStaleSecretToJump() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        var set = LoginSet(name: "Bastion", username: "jumper")
+        vm.saveLoginSet(set, secret: "s3cr3t")
+        let jump = StoredSession.JumpSpec(
+            host: "bastion.example.com", username: "unused", loginSetID: set.id)
+        let stored = vm.save(name: "web", host: "target.example.com", port: 22, username: "u",
+                             password: "pw", jump: jump)!
+
+        set.authKind = .agent
+        vm.saveLoginSet(set, secret: nil)
+
+        let result = vm.deleteLoginSet(set)
+
+        #expect(result == SessionListViewModel.LoginSetDeleteResult(restored: 1, secretFailures: 0))
+        let restored = vm.sessions.first { $0.id == stored.id }!
+        #expect(restored.jump?.loginSetID == nil)
+        #expect(restored.jump?.authKind == .agent)
+        // Jump's own slot must stay empty -- no stale secret transferred.
+        #expect(try secrets.password(for: restored.jump!.secretID) == nil)
+        #expect(try secrets.password(for: set.id) == nil)
+    }
+
     @Test func applyMergeCreatesAgentSetWithoutSecretRead() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }

@@ -93,6 +93,29 @@ struct SSHAgentCodecTests {
         #expect(identities.isEmpty)
     }
 
+    /// M-1: a declared identity count that vastly exceeds the actual payload
+    /// (an attacker- or bug-controlled agent response) must throw a plain
+    /// `.protocolError` from the first out-of-bounds string read, never trap
+    /// on an oversized `reserveCapacity` allocation.
+    @Test func parseIdentitiesHugeDeclaredCountThrowsProtocolErrorInsteadOfTrapping() {
+        let payload = Self.uint32BE(0xFFFF_FFFF) // no identity bytes follow
+        let frame = Self.frame(type: 12, payload: payload)
+        #expect(throws: AgentError.self) {
+            _ = try SSHAgentCodec.parseIdentitiesAnswer(frame)
+        }
+        do {
+            _ = try SSHAgentCodec.parseIdentitiesAnswer(frame)
+            Issue.record("expected parseIdentitiesAnswer to throw for a huge declared count")
+        } catch let error as AgentError {
+            guard case .protocolError = error else {
+                Issue.record("expected .protocolError, got \(error)")
+                return
+            }
+        } catch {
+            Issue.record("expected AgentError, got \(error)")
+        }
+    }
+
     // MARK: - parseSignResponse
 
     @Test func parseSignResponseReturnsRawSignatureString() throws {
