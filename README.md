@@ -44,6 +44,16 @@ and move files between them with drag and drop, buttons, or the Finder.
   in `~/Library/Application Support/macSCP/audit/`, one file per saved
   connection. Deleting a saved connection deletes its log.
 
+## Update checks
+
+macSCP compares its own version against the latest entry on the releases
+page. It asks `api.github.com` at most once a day, reads nothing but the
+release tag and its link, and sends no information about you or your
+connections. Nothing is downloaded or installed automatically — a newer
+version only produces a note with a link. Turn it off under
+**Settings → General**, or check by hand any time via
+**macSCP → Check for Updates…**.
+
 ## Install
 
 1. Download the latest DMG from the [releases page](https://github.com/NoiXdev/macSCP/releases).

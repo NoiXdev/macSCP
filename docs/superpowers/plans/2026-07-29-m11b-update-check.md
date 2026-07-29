@@ -53,7 +53,7 @@ T1 (Core: AppVersion + UpdateChecker + Fetcher + Intervall) → T2 (App: Setting
 3. `GitHubReleaseFetcher`: GET auf `https://api.github.com/repos/NoiXdev/macSCP/releases/latest`, Header `Accept: application/vnd.github+json` und `User-Agent` beginnend mit `macSCP/`; `timeoutInterval` 10 s. Antwort 200 ⇒ JSON mit `tag_name` und `html_url` lesen (fehlt eins ⇒ `malformedResponse`). 403 oder 429 MIT Header `x-ratelimit-remaining: 0` ⇒ `rateLimited`; sonstige Nicht-200 ⇒ `httpStatus(code)`. `URLError` ⇒ `offline`.
 4. `UpdateSchedule.shouldCheck`: `enabled == false` ⇒ false; `lastCheck == nil` ⇒ true; sonst `now.timeIntervalSince(lastCheck) >= 24*3600`.
 
-- [ ] **Step 1: Failing Tests**
+- [x] **Step 1: Failing Tests**
 
 ```swift
     // AppVersionTests:
@@ -91,10 +91,10 @@ T1 (Core: AppVersion + UpdateChecker + Fetcher + Intervall) → T2 (App: Setting
     //   true; 23h59m -> false; 24h01m -> true.
 ```
 
-- [ ] **Step 2: Rot beweisen.** `swift test --filter AppVersion` etc. → FAIL.
-- [ ] **Step 3: Implementierung** (AppVersion → UpdateSchedule → UpdateChecker → GitHubReleaseFetcher).
-- [ ] **Step 4: Grün + volle Suite.** `swift test` → 622 + neue, 0 Failures. Zusätzlich beweisen, dass kein Test ins Netz geht (der Stub registriert sich als `URLProtocol` und der Test schlägt fehl, wenn eine unerwartete URL angefragt wird — im Report festhalten).
-- [ ] **Step 5: Commit.** `feat: check GitHub for a newer release`
+- [x] **Step 2: Rot beweisen.** `swift test --filter AppVersion` etc. → FAIL.
+- [x] **Step 3: Implementierung** (AppVersion → UpdateSchedule → UpdateChecker → GitHubReleaseFetcher).
+- [x] **Step 4: Grün + volle Suite.** `swift test` → 622 + neue, 0 Failures. Zusätzlich beweisen, dass kein Test ins Netz geht (der Stub registriert sich als `URLProtocol` und der Test schlägt fehl, wenn eine unerwartete URL angefragt wird — im Report festhalten).
+- [x] **Step 5: Commit.** `feat: check GitHub for a newer release`
 
 ---
 
@@ -117,13 +117,13 @@ T1 (Core: AppVersion + UpdateChecker + Fetcher + Intervall) → T2 (App: Setting
 6. Die lokale Version kommt aus `Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String` — fehlt sie (Dev-Build), führt das über den Core-Pfad zu `.unknownLocalVersion` (keine Sonderbehandlung in der App).
 7. Alle neuen Keys EN/DE in beiden App-Katalogen; Grep-Gegenprobe Key-Set-Gleichheit.
 
-- [ ] **Step 1:** Settings-Werte + Tests (rot→grün). **Step 2:** Menüeintrag + Dialog-State + Ergebnis-Darstellung. **Step 3:** Start-Automatik. **Step 4:** Settings-UI-Schalter. **Step 5:** L10n + Gegenprobe. **Step 6:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test`. **Step 7:** Commit `feat: offer a manual and a daily update check`.
+- [x] **Step 1:** Settings-Werte + Tests (rot→grün). **Step 2:** Menüeintrag + Dialog-State + Ergebnis-Darstellung. **Step 3:** Start-Automatik. **Step 4:** Settings-UI-Schalter. **Step 5:** L10n + Gegenprobe. **Step 6:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test`. **Step 7:** Commit `feat: offer a manual and a daily update check`.
 
 ---
 
 ### Task 3: README + Abschluss (Koordinator)
 
-- [ ] README-Abschnitt (Englisch, kurz): was wann angefragt wird (`api.github.com`, höchstens täglich, nur Tag + Link werden gelesen), dass keine Nutzerdaten übertragen werden, wo man es abschaltet. Platz: eigener kurzer Abschnitt nach „Known limitations" oder als Unterpunkt dort — die kleinere Lösung wählen.
-- [ ] Gated Suiten am finalen Stand: Rig `start`, `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → alle grün, zero skips, keine Leichen; Rig `stop`.
+- [x] README-Abschnitt (Englisch, kurz): was wann angefragt wird (`api.github.com`, höchstens täglich, nur Tag + Link werden gelesen), dass keine Nutzerdaten übertragen werden, wo man es abschaltet. Platz: eigener kurzer Abschnitt nach „Known limitations" oder als Unterpunkt dort — die kleinere Lösung wählen.
+- [x] Gated Suiten am finalen Stand: Rig `start`, `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → alle grün, zero skips, keine Leichen; Rig `stop`.
 - [ ] Visueller Smoke — an den Maintainer delegiert (Checkliste: Menüeintrag zeigt bei aktueller Version „du bist aktuell"; Schalter in den Einstellungen; Fund-Dialog gegen eine künstlich kleine Bundle-Version; Offline-Verhalten).
-- [ ] Plan-Checkboxen, Ledger, Opus-Final-Review (Package über `git merge-base origin/develop HEAD`), Fix-Runden bis „Yes", Push develop, `gh run watch`, Memory, Zusammenfassung. KEIN Release.
+- [x] Plan-Checkboxen, Ledger, Opus-Final-Review (Package über `git merge-base origin/develop HEAD`), Fix-Runden bis „Yes", Push develop, `gh run watch`, Memory, Zusammenfassung. KEIN Release.
