@@ -2004,12 +2004,22 @@ struct ContentView: View {
     /// every hide/unhide — deliberately WITHOUT re-parsing
     /// `~/.ssh/config`, since hiding/unhiding never changes what is
     /// actually in that file. A store read failure (rare: e.g. a corrupt
-    /// `hidden-imports.json`) reports `hiddenImportsErrorMessage` instead of
-    /// silently failing open (M11f/T2 review, finding 2) — a corrupted
-    /// store would otherwise resurface every hidden host AND drop the
-    /// Sessions-menu count with no indication anything went wrong. Success
-    /// clears the message, matching `SessionSidebar.jumpRestoreErrorMessage`'s
-    /// established pattern.
+    /// `hidden-imports.json`) reports `hiddenImportsErrorMessage` rather than
+    /// failing silently (M11f/T2 review, finding 2) — a corrupted store would
+    /// otherwise resurface every hidden host AND drop the Sessions-menu count
+    /// with no indication anything went wrong. Success clears the message,
+    /// matching `SessionSidebar.jumpRestoreErrorMessage`'s established pattern.
+    ///
+    /// On a read failure the visible list falls back to the FULL set rather
+    /// than to whatever it held before (M11f/T2 re-review): hiding is a
+    /// cosmetic display filter, so it must never subtract from a host list
+    /// that WAS read successfully on the strength of preference data that
+    /// was not. Keeping the previous list would strand the user at startup,
+    /// where `importedHosts` is still empty when this first runs — the whole
+    /// IMPORTED section would vanish on every launch, and the sheet (which
+    /// re-reads the same broken file) offers no way back. `hiddenImportAliases`
+    /// is deliberately left alone: a stale count keeps the menu entry
+    /// discoverable, which is where the user goes to investigate.
     private func refreshImportedHosts() {
         do {
             let aliases = try HiddenImportStore(directory: SessionStore.defaultDirectory).allHidden()
@@ -2017,6 +2027,7 @@ struct ContentView: View {
             importedHosts = ImportedHostPartition.split(hosts: fullImportedHosts, hiddenAliases: aliases).visible
             hiddenImportsErrorMessage = nil
         } catch {
+            importedHosts = fullImportedHosts
             hiddenImportsErrorMessage = String(
                 format: L10n.string("sidebar.hiddenImports.error %@", "Could not update hidden imports: %@"),
                 String(describing: error))
