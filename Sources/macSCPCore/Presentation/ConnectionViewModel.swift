@@ -720,6 +720,8 @@ public final class ConnectionViewModel {
             return .failed(
                 message: String(format: CoreL10n.string("core.connect.invalidPort %@"), String(port)),
                 field: .port)
+        case SSHConnectionConfig.ConfigError.emptyKeyPath:
+            return .failed(message: CoreL10n.string("core.connect.keyPathEmpty"), field: .keyPath)
         // Jump ConfigErrors (M10c/T3): defense-in-depth mirrors of
         // `validateJump()` above -- a UI submission never reaches these
         // (the form already validated), but `SSHConnectionConfig`'s own init
@@ -733,6 +735,17 @@ public final class ConnectionViewModel {
             return .failed(
                 message: String(format: CoreL10n.string("core.connect.invalidJumpPort %@"), String(port)),
                 field: .jumpPort)
+        case SSHConnectionConfig.ConfigError.emptyJumpKeyPath:
+            return .failed(message: CoreL10n.string("core.connect.jumpKeyPathEmpty"), field: .jumpKeyPath)
+        // Comma-in-jump-value ConfigErrors (M11d fix round 1): `ssh -J`
+        // splits its destination-spec value on `,` itself, so a jump
+        // host/username containing a comma would insert an extra,
+        // unapproved hop that ssh contacts first. Rejected at the one
+        // source of Jump validation, same as every other jump field above.
+        case SSHConnectionConfig.ConfigError.invalidJumpHost:
+            return .failed(message: CoreL10n.string("core.connect.jumpHostInvalid"), field: .jumpHost)
+        case SSHConnectionConfig.ConfigError.invalidJumpUsername:
+            return .failed(message: CoreL10n.string("core.connect.jumpUsernameInvalid"), field: .jumpUsername)
         // Jump auth failure (M10c/T1 review hand-off): highlights the JUMP
         // password field instead of the target's -- `.authenticationFailed`
         // above stays the target-only case.

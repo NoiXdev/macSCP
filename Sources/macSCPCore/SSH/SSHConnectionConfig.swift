@@ -39,6 +39,20 @@ public struct SSHConnectionConfig: Equatable, Sendable {
         case emptyJumpHost
         case emptyJumpUsername
         case invalidJumpPort(Int)
+        /// The private key path is empty, which would make
+        /// `SSHCommandBuilder` emit a bare `-i ''` to ssh.
+        case emptyKeyPath
+        /// The jump host's private key path is empty (mirrors `emptyKeyPath`
+        /// for the target).
+        case emptyJumpKeyPath
+        /// `ssh -J` splits its destination-spec value on `,` to chain
+        /// multiple jump hosts. A jump host containing a comma would insert
+        /// an extra, unapproved hop that ssh contacts *first* — this is
+        /// rejected outright rather than passed through.
+        case invalidJumpHost
+        /// Mirrors `invalidJumpHost`: the jump username also sits inside the
+        /// comma-split `-J` destination spec.
+        case invalidJumpUsername
     }
 
     public let host: String
@@ -51,13 +65,25 @@ public struct SSHConnectionConfig: Equatable, Sendable {
         guard !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ConfigError.emptyHost }
         guard (1...65535).contains(port) else { throw ConfigError.invalidPort(port) }
         guard !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ConfigError.emptyUsername }
+        if case .privateKey(let keyPath, _) = auth {
+            guard !keyPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ConfigError.emptyKeyPath
+            }
+        }
         if let jump {
             guard !jump.host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw ConfigError.emptyJumpHost
             }
+            guard !jump.host.contains(",") else { throw ConfigError.invalidJumpHost }
             guard (1...65535).contains(jump.port) else { throw ConfigError.invalidJumpPort(jump.port) }
             guard !jump.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw ConfigError.emptyJumpUsername
+            }
+            guard !jump.username.contains(",") else { throw ConfigError.invalidJumpUsername }
+            if case .privateKey(let jumpKeyPath, _) = jump.auth {
+                guard !jumpKeyPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw ConfigError.emptyJumpKeyPath
+                }
             }
         }
         self.host = host

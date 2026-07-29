@@ -48,6 +48,10 @@
 "core.connect.jumpAuthFailed" = "Jump host authentication failed — check username or password.";
 "core.connect.jumpTunnelRejected" = "The jump host refused to open the tunnel to the target (TCP forwarding may be disabled).";
 
+/* ConnectionViewModel.failedState(for:) — jump comma rejection (M11d fix round 1) */
+"core.connect.jumpHostInvalid" = "Jump host must not contain a comma.";
+"core.connect.jumpUsernameInvalid" = "Jump host username must not contain a comma.";
+
 /* ConnectionViewModel — jump source switcher, session mode (M11a/T3) */
 "core.connect.jumpSessionRequired" = "Choose a connection for the jump host.";
 
