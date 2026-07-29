@@ -180,6 +180,13 @@ struct ContentView: View {
     /// call. Its count drives the Sessions-menu/background-menu "Hidden
     /// Imports…" title (see `tabCommands.hiddenImportsCount` below).
     @State private var hiddenImportAliases: [String] = []
+    /// Red inline message after `HiddenImportStore.hide`/`allHidden` throws
+    /// (M11f/T2 review, findings 1+2) — same pattern as
+    /// `SessionSidebar.jumpRestoreErrorMessage`. Both `hideImported` and
+    /// `refreshImportedHosts` write here so a store failure is reported
+    /// instead of silently leaving the row in place (hide) or failing open
+    /// (refresh); cleared on the next successful `refreshImportedHosts`.
+    @State private var hiddenImportsErrorMessage: String?
     /// Handed over by `WindowAccessor` — basis for the active resize calls
     /// on state transitions (M5c/T0).
     @State private var window: NSWindow?
@@ -432,7 +439,8 @@ struct ContentView: View {
                 onShowLogins: { showLoginSetsSheet = true },
                 onHideImported: { host in hideImported(host) },
                 onShowHiddenImports: { showHiddenImportsSheet = true },
-                hiddenImportsCount: hiddenImportAliases.count
+                hiddenImportsCount: hiddenImportAliases.count,
+                hiddenImportsErrorMessage: hiddenImportsErrorMessage
             )
             .frame(minWidth: 170, idealWidth: 190, maxWidth: 260)
 
@@ -1996,23 +2004,48 @@ struct ContentView: View {
     /// every hide/unhide — deliberately WITHOUT re-parsing
     /// `~/.ssh/config`, since hiding/unhiding never changes what is
     /// actually in that file. A store read failure (rare: e.g. a corrupt
-    /// `hidden-imports.json`) falls back to "nothing hidden" rather than
-    /// hiding the whole IMPORTED section — the sidebar's own error surface
-    /// is `viewModel.errorMessage`, unrelated to this store.
+    /// `hidden-imports.json`) reports `hiddenImportsErrorMessage` instead of
+    /// silently failing open (M11f/T2 review, finding 2) — a corrupted
+    /// store would otherwise resurface every hidden host AND drop the
+    /// Sessions-menu count with no indication anything went wrong. Success
+    /// clears the message, matching `SessionSidebar.jumpRestoreErrorMessage`'s
+    /// established pattern.
     private func refreshImportedHosts() {
-        let aliases = (try? HiddenImportStore(directory: SessionStore.defaultDirectory).allHidden()) ?? []
-        hiddenImportAliases = aliases
-        importedHosts = ImportedHostPartition.split(hosts: fullImportedHosts, hiddenAliases: aliases).visible
+        do {
+            let aliases = try HiddenImportStore(directory: SessionStore.defaultDirectory).allHidden()
+            hiddenImportAliases = aliases
+            importedHosts = ImportedHostPartition.split(hosts: fullImportedHosts, hiddenAliases: aliases).visible
+            hiddenImportsErrorMessage = nil
+        } catch {
+            hiddenImportsErrorMessage = String(
+                format: L10n.string("sidebar.hiddenImports.error %@", "Could not update hidden imports: %@"),
+                String(describing: error))
+        }
     }
 
     /// Sidebar imported-row context menu "Hide" (M11f/T2, spec: no
-    /// confirmation dialog). Best-effort: a rare disk-write failure just
-    /// leaves the row visible for another try — there is no dedicated error
-    /// surface for this quiet, one-click action (unlike the hidden-imports
-    /// sheet's own `unhide`, which does show store errors).
+    /// confirmation dialog — this reports FAILURE only, never a success
+    /// confirmation). A rare disk-write failure previously just left the
+    /// row visible for another try with zero feedback (M11f/T2 review,
+    /// finding 1); now it is captured separately, `refreshImportedHosts()`
+    /// still runs unconditionally (the read usually still works even when
+    /// the write just failed), and the write error is re-applied AFTER —
+    /// same "capture separately, reload, reapply after" pattern as
+    /// `HiddenImportsSheet.unhide`, so a successful `refreshImportedHosts()`
+    /// read can't silently swallow this call's own write failure.
     private func hideImported(_ host: SSHConfigHost) {
-        try? HiddenImportStore(directory: SessionStore.defaultDirectory).hide(host.alias)
+        var hideError: String?
+        do {
+            try HiddenImportStore(directory: SessionStore.defaultDirectory).hide(host.alias)
+        } catch {
+            hideError = String(
+                format: L10n.string("sidebar.hiddenImports.error %@", "Could not update hidden imports: %@"),
+                String(describing: error))
+        }
         refreshImportedHosts()
+        if let hideError {
+            hiddenImportsErrorMessage = hideError
+        }
     }
 
     /// Sidebar "New connection": blank the active tab's form when it is

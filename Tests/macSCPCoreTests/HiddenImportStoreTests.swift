@@ -157,15 +157,54 @@ struct ImportedHostPartitionTests {
         #expect(result.orphaned == ["alpha", "mike", "zulu"])
     }
 
-    /// Pins the tie-breaker in `sortAliasesForDisplay` (M11f/T1 review): two
-    /// aliases that differ only by case compare as `.orderedSame` under
-    /// `localizedCaseInsensitiveCompare`, and `Array.sorted` is not
-    /// guaranteed stable, so without the plain `<` tie-breaker this pair's
-    /// order flips between runs (reviewer measured 5 of 6 process runs one
-    /// way, 1 the other). "Prod" < "prod" lexicographically (uppercase
-    /// sorts first in ASCII), so this must always come out in that order.
+    /// Pins the tie-breaker in `sortAliasesForDisplay` (M11f/T1 review, M11f/T2
+    /// review finding 3): two aliases that differ only by case compare as
+    /// `.orderedSame` under `localizedCaseInsensitiveCompare`, and
+    /// `Array.sorted` is not guaranteed stable, so without the plain `<`
+    /// tie-breaker such a pair's relative order flips between runs.
+    ///
+    /// A single pair is a near coin flip (the reviewer measured 5-of-6
+    /// process runs one way, 1-of-6 the other — a naive CI run would let a
+    /// removed tie-breaker through about 80% of the time). This test instead
+    /// asserts on ten independent, alphabetically-unrelated case-only-
+    /// differing pairs in one `split` call: for the whole assertion to pass
+    /// BY LUCK with no tie-breaker, all ten pairs would have to happen to
+    /// land in the expected order simultaneously, which is roughly
+    /// (1/2)^10 ≈ 2⁻¹⁰ (~0.1%) — proven empirically below.
+    ///
+    /// Proof (finding 3): with the tie-breaker (`return lhs < rhs`) removed
+    /// from `sortAliasesForDisplay` in `HiddenImportStore.swift`, running
+    /// this exact test 10 times in a row failed all 10 times. With the
+    /// tie-breaker restored, all 10 runs passed. See task-2-report.md for
+    /// the raw counts.
     @Test func orphanedOrderIsDeterministicForCaseOnlyDifferingAliases() {
-        let result = ImportedHostPartition.split(hosts: [], hiddenAliases: ["Prod", "prod"])
-        #expect(result.orphaned == ["Prod", "prod"])
+        let aliases = [
+            "Alpha", "alpha",
+            "Bravo", "bravo",
+            "Charlie", "charlie",
+            "Delta", "delta",
+            "Echo", "echo",
+            "Foxtrot", "foxtrot",
+            "Golf", "golf",
+            "Hotel", "hotel",
+            "India", "india",
+            "Juliet", "juliet",
+        ]
+        let result = ImportedHostPartition.split(hosts: [], hiddenAliases: aliases)
+        // "Prod" < "prod" lexicographically (uppercase sorts first in
+        // ASCII), so every pair here must come out uppercase-first, in the
+        // same alphabetical-group order as the phonetic alphabet above.
+        #expect(result.orphaned == [
+            "Alpha", "alpha",
+            "Bravo", "bravo",
+            "Charlie", "charlie",
+            "Delta", "delta",
+            "Echo", "echo",
+            "Foxtrot", "foxtrot",
+            "Golf", "golf",
+            "Hotel", "hotel",
+            "India", "india",
+            "Juliet", "juliet",
+        ])
     }
 }

@@ -41,6 +41,12 @@ struct SessionSidebar: View {
     /// Drives the "Hidden Imports…" entry's count suffix (M11f/T2) — see
     /// `hiddenImportsMenuTitle(count:)`.
     let hiddenImportsCount: Int
+    /// Red inline message after `HiddenImportStore.hide`/`allHidden` throws
+    /// (M11f/T2 review, findings 1+2) — rendered the same way as
+    /// `jumpRestoreErrorMessage` below. Owned by `ContentView`, since both
+    /// the "Hide" context-menu action and the startup/refresh read can set
+    /// it, not just this view's own state.
+    let hiddenImportsErrorMessage: String?
 
     /// Not persisted — resets to "all expanded" on relaunch.
     @State private var collapsedGroups: Set<UUID> = []
@@ -126,6 +132,14 @@ struct SessionSidebar: View {
 
             if let jumpRestoreErrorMessage {
                 Text(jumpRestoreErrorMessage)
+                    .foregroundStyle(.red)
+                    .font(.caption)
+                    .lineLimit(2)
+                    .padding(8)
+            }
+
+            if let hiddenImportsErrorMessage {
+                Text(hiddenImportsErrorMessage)
                     .foregroundStyle(.red)
                     .font(.caption)
                     .lineLimit(2)

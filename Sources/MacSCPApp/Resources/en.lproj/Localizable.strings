@@ -81,6 +81,7 @@
 "sidebar.importedHeader" = "IMPORTED";
 "sidebar.importedHelp" = "From ~/.ssh/config — fills the form (secrets are not imported)";
 "sidebar.imported.hide" = "Hide";
+"sidebar.hiddenImports.error %@" = "Could not update hidden imports: %@";
 
 /* Transfer conflict sheet */
 "conflict.title" = "File already exists";

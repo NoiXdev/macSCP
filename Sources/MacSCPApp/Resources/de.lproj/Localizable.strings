@@ -81,6 +81,7 @@
 "sidebar.importedHeader" = "IMPORTIERT";
 "sidebar.importedHelp" = "Aus ~/.ssh/config — füllt das Formular (Geheimnisse werden nicht importiert)";
 "sidebar.imported.hide" = "Ausblenden";
+"sidebar.hiddenImports.error %@" = "Ausgeblendete Importe konnten nicht aktualisiert werden: %@";
 
 /* Konflikt-Sheet */
 "conflict.title" = "Datei existiert bereits";

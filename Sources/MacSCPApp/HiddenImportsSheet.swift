@@ -20,7 +20,11 @@ func hiddenImportsMenuTitle(count: Int) -> String {
 /// an orphaned alias whose host entry disappeared from `~/.ssh/config`
 /// (renamed or removed) after it was hidden. `alias` alone is a stable id —
 /// `ImportedHostPartition.split` guarantees no alias appears in both
-/// `hidden` and `orphaned` at once.
+/// `hidden` and `orphaned` at once, but `split` alone would happily return
+/// duplicate `hidden` entries for a `Host` block repeated in the config
+/// file; no-duplicates-within-`hidden` is actually guaranteed upstream by
+/// `SSHConfigImporter.load`'s dedupe (`SSHConfigParser.swift`'s "first block
+/// wins" filter), which the `hosts` passed in here always went through.
 private struct HiddenImportRow: Identifiable {
     let alias: String
     let isOrphaned: Bool
@@ -80,11 +84,17 @@ struct HiddenImportsSheet: View {
             }
 
             HStack {
-                Text(String(
-                    format: L10n.string("hiddenImports.count %lld", "%lld hidden"),
-                    rows.count))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                // Same rule as the empty-state check above: after a load
+                // error, `rows` is `[]` but that is NOT "0 hidden" — it's
+                // "we don't know" — so the count is suppressed right next to
+                // the red error text instead of contradicting it.
+                if errorMessage == nil {
+                    Text(String(
+                        format: L10n.string("hiddenImports.count %lld", "%lld hidden"),
+                        rows.count))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 Button(L10n.string("common.close", "Close")) { dismiss() }
                     .buttonStyle(.polishedProminent)
