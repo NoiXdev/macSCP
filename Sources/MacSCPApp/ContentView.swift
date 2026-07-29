@@ -873,10 +873,13 @@ struct ContentView: View {
     /// cross-session-transfer detail — a target tab that's already gone
     /// resolves to `nil`, which `AuditRecorder.recordTransfer` renders as
     /// "unknown session".
-    private func attachAuditRecorder(to tab: SessionTab, sessionID: UUID, host: String, username: String) {
+    private func attachAuditRecorder(
+        to tab: SessionTab, sessionID: UUID, host: String, username: String,
+        viaJumpHost: String? = nil
+    ) {
         let recorder = AuditRecorder(sessionID: sessionID, store: auditStore)
         tab.auditRecorder = recorder
-        recorder.recordConnected(host: host, username: username)
+        recorder.recordConnected(host: host, username: username, viaJumpHost: viaJumpHost)
         // `[weak tabsModel]` (M9b/T4 review, finding 5): `TabsViewModel` is a
         // class, and this sink is retained by `tab.transferQueue` for the
         // tab's whole lifetime — a plain (implicit `self`) capture would
@@ -1342,7 +1345,8 @@ struct ContentView: View {
             // recorder here, mirroring `connect(in:stored:)` below.
             if let stored {
                 attachAuditRecorder(
-                    to: tab, sessionID: stored.id, host: stored.host, username: stored.username)
+                    to: tab, sessionID: stored.id, host: stored.host, username: stored.username,
+                    viaJumpHost: stored.jump?.host)
             }
         }
 
@@ -1484,7 +1488,8 @@ struct ContentView: View {
                 // path — attach right after `activeStoredSessionID`, once
                 // `tab.session` (set inside `startSession`) exists.
                 attachAuditRecorder(
-                    to: tab, sessionID: stored.id, host: stored.host, username: stored.username)
+                    to: tab, sessionID: stored.id, host: stored.host, username: stored.username,
+                    viaJumpHost: stored.jump?.host)
             }
         }
     }

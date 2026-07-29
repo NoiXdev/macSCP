@@ -224,17 +224,23 @@ struct AgentAuthTests {
 
     // MARK: - Connect-path error mapping (typed, not stringified)
 
+    /// `AgentEnvLock` (M11e/T2, see its doc comment) serializes this against
+    /// the gated agent tests in `CitadelFileSystemIntegrationTests`, which
+    /// mutate the same process-global `SSH_AUTH_SOCK` — `.serialized` above
+    /// only protects against interleaving WITHIN this suite.
     private func withTemporarySSHAuthSock(_ value: String, _ body: () async throws -> Void) async rethrows {
-        let original = ProcessInfo.processInfo.environment["SSH_AUTH_SOCK"]
-        setenv("SSH_AUTH_SOCK", value, 1)
-        defer {
-            if let original {
-                setenv("SSH_AUTH_SOCK", original, 1)
-            } else {
-                unsetenv("SSH_AUTH_SOCK")
+        try await AgentEnvLock.shared.run {
+            let original = ProcessInfo.processInfo.environment["SSH_AUTH_SOCK"]
+            setenv("SSH_AUTH_SOCK", value, 1)
+            defer {
+                if let original {
+                    setenv("SSH_AUTH_SOCK", original, 1)
+                } else {
+                    unsetenv("SSH_AUTH_SOCK")
+                }
             }
+            try await body()
         }
-        try await body()
     }
 
     private func agentConfig() throws -> SSHConnectionConfig {

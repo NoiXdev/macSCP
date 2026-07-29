@@ -97,22 +97,33 @@ struct SSHAgentClientTests {
     /// protocol-level problem for an already-established connection, NOT a
     /// "no agent" condition — it maps to `.protocolError`, distinct from the
     /// `.socketUnavailable` that only `connect(socketPath:)` produces.
+    /// M11e/T2: a SINGLE queued transport failure must map to
+    /// `AgentError.protocolError` — the ORIGINAL version of this test called
+    /// `listIdentities()` twice against a one-element queue, so the second
+    /// call actually hit the mock's OWN "queue exhausted" fallback
+    /// (`MockAgentTransport.roundTrip`'s `guard !responses.isEmpty else`
+    /// branch) rather than the real transport-error mapping in
+    /// `SSHAgentClient.performRoundTrip` — both happen to produce a
+    /// `.protocolError` case, so the assertion passed without ever
+    /// exercising the mapping it claimed to test. One do/catch, one queued
+    /// failure, and asserting the `reason` carries the underlying error's
+    /// own description closes that gap.
     @Test func transportErrorMapsToProtocolErrorDuringOperation() async {
-        struct SomeTransportFailure: Error {}
+        struct SomeTransportFailure: Error, CustomStringConvertible {
+            var description: String { "boom-from-transport" }
+        }
         let transport = MockAgentTransport(throwing: SomeTransportFailure())
         let client = SSHAgentClient(transport: transport)
 
-        await #expect(throws: AgentError.self) {
-            _ = try await client.listIdentities()
-        }
         do {
             _ = try await client.listIdentities()
             Issue.record("expected listIdentities to throw")
         } catch let error as AgentError {
-            guard case .protocolError = error else {
+            guard case .protocolError(let reason) = error else {
                 Issue.record("expected .protocolError, got \(error)")
                 return
             }
+            #expect(reason.contains("boom-from-transport"))
         } catch {
             Issue.record("expected AgentError, got \(error)")
         }

@@ -32,8 +32,14 @@ struct CitadelFileSystemIntegrationTests {
             username: "testuser",
             auth: .password("testpass")
         )
-        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("macscp-kh-\(UUID().uuidString)"))
+        // The store is only consulted during the handshake (never retained by
+        // the returned `CitadelFileSystem`), so its temp directory can be
+        // removed right after `connect` returns — every caller of this
+        // shared helper gets known-hosts cleanup for free.
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = KnownHostsStore(directory: dir)
         return try await connectWithRetry {
             try await CitadelFileSystem.connect(
                 config: config, knownHosts: store, onUnknownHostKey: { _ in true })
@@ -77,8 +83,10 @@ struct CitadelFileSystemIntegrationTests {
             username: "testuser",
             auth: .password("WRONG")
         )
-        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("macscp-kh-\(UUID().uuidString)"))
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = KnownHostsStore(directory: dir)
         await #expect(throws: RemoteFSError.authenticationFailed) {
             _ = try await CitadelFileSystem.connect(
                 config: config, knownHosts: store, onUnknownHostKey: { _ in true })
@@ -428,8 +436,10 @@ struct CitadelFileSystemIntegrationTests {
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: 2222, username: "testuser",
             auth: .privateKey(keyPath: keyPath, passphrase: nil))
-        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("macscp-kh-\(UUID().uuidString)"))
+        let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: khDir) }
+        let store = KnownHostsStore(directory: khDir)
         let fs = try await connectWithRetry {
             try await CitadelFileSystem.connect(
                 config: config, knownHosts: store, onUnknownHostKey: { _ in true })
@@ -1137,8 +1147,10 @@ struct CitadelFileSystemIntegrationTests {
     /// with the SAME store must not ask the decider again — both keys are
     /// now remembered.
     @Test func jumpConnectListsOverHop() async throws {
-        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("macscp-kh-jump-\(UUID().uuidString)"))
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-jump-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = KnownHostsStore(directory: dir)
         let config = try SSHConnectionConfig(
             host: "sshd2", port: 2222, username: "testuser", auth: .password("testpass"),
             jump: .init(host: "127.0.0.1", port: 2222, username: "testuser", auth: .password("testpass")))
@@ -1169,8 +1181,10 @@ struct CitadelFileSystemIntegrationTests {
     /// — NOT `.authenticationFailed` (that case is reserved for the target hop) —
     /// so the connect form can highlight the jump credentials specifically.
     @Test func jumpWrongPasswordSurfacesJumpAuthFailed() async throws {
-        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("macscp-kh-jump-\(UUID().uuidString)"))
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-jump-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = KnownHostsStore(directory: dir)
         let config = try SSHConnectionConfig(
             host: "sshd2", port: 2222, username: "testuser", auth: .password("testpass"),
             jump: .init(host: "127.0.0.1", port: 2222, username: "testuser", auth: .password("WRONG")))
@@ -1186,8 +1200,10 @@ struct CitadelFileSystemIntegrationTests {
     /// Here the JUMP hop's remembered key is tampered with; the target hop
     /// must never even be reached, so nothing about it is learned.
     @Test func jumpHopMismatchIsHardStop() async throws {
-        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("macscp-kh-jump-\(UUID().uuidString)"))
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-jump-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = KnownHostsStore(directory: dir)
         try store.upsert(KnownHostKey(
             host: "127.0.0.1", port: 2222,
             keyType: "ssh-ed25519", publicKeyBase64: "QUJDREVG"))   // deliberately wrong
@@ -1217,8 +1233,10 @@ struct CitadelFileSystemIntegrationTests {
     /// with. The mismatch must still hard-stop even though the jump hop
     /// itself verified cleanly.
     @Test func targetHopMismatchIsHardStop() async throws {
-        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("macscp-kh-jump-\(UUID().uuidString)"))
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-jump-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = KnownHostsStore(directory: dir)
         let config = try SSHConnectionConfig(
             host: "sshd2", port: 2222, username: "testuser", auth: .password("testpass"),
             jump: .init(host: "127.0.0.1", port: 2222, username: "testuser", auth: .password("testpass")))
@@ -1320,20 +1338,27 @@ struct CitadelFileSystemIntegrationTests {
     /// once per `connect()` (see `CitadelFileSystem.AgentAuthContext`), so
     /// this is how the gated tests make macSCP talk to their own spawned
     /// agent instead of the maintainer's.
+    ///
+    /// `AgentEnvLock` (M11e/T2, see its doc comment) serializes this against
+    /// `AgentAuthTests`, which mutates the same process-global
+    /// `SSH_AUTH_SOCK` from a DIFFERENT suite — this suite's own
+    /// `.serialized` only protects against interleaving within itself.
     @discardableResult
     private func withAgentEnv<T>(
         _ agent: SpawnedAgent, _ body: () async throws -> T
     ) async rethrows -> T {
-        let original = ProcessInfo.processInfo.environment["SSH_AUTH_SOCK"]
-        setenv("SSH_AUTH_SOCK", agent.socketPath, 1)
-        defer {
-            if let original {
-                setenv("SSH_AUTH_SOCK", original, 1)
-            } else {
-                unsetenv("SSH_AUTH_SOCK")
+        try await AgentEnvLock.shared.run {
+            let original = ProcessInfo.processInfo.environment["SSH_AUTH_SOCK"]
+            setenv("SSH_AUTH_SOCK", agent.socketPath, 1)
+            defer {
+                if let original {
+                    setenv("SSH_AUTH_SOCK", original, 1)
+                } else {
+                    unsetenv("SSH_AUTH_SOCK")
+                }
             }
+            return try await body()
         }
-        return try await body()
     }
 
     /// `.agent` connects with an ed25519 identity: the agent holds the ONE
@@ -1349,8 +1374,10 @@ struct CitadelFileSystemIntegrationTests {
 
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
-        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("macscp-kh-agent-ed25519-\(UUID().uuidString)"))
+        let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-agent-ed25519-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: khDir) }
+        let store = KnownHostsStore(directory: khDir)
         let fs = try await withAgentEnv(agent) {
             try await connectWithRetry {
                 try await CitadelFileSystem.connect(
@@ -1376,8 +1403,10 @@ struct CitadelFileSystemIntegrationTests {
 
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
-        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("macscp-kh-agent-rsa-\(UUID().uuidString)"))
+        let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-agent-rsa-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: khDir) }
+        let store = KnownHostsStore(directory: khDir)
         let fs = try await withAgentEnv(agent) {
             try await connectWithRetry {
                 try await CitadelFileSystem.connect(
@@ -1413,8 +1442,10 @@ struct CitadelFileSystemIntegrationTests {
 
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
-        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("macscp-kh-agent-wrong-\(UUID().uuidString)"))
+        let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-agent-wrong-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: khDir) }
+        let store = KnownHostsStore(directory: khDir)
         await withAgentEnv(agent) {
             await #expect(throws: RemoteFSError.authenticationFailed) {
                 _ = try await CitadelFileSystem.connect(
@@ -1458,8 +1489,10 @@ struct CitadelFileSystemIntegrationTests {
 
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
-        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("macscp-kh-agent-second-\(UUID().uuidString)"))
+        let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-agent-second-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: khDir) }
+        let store = KnownHostsStore(directory: khDir)
         let fs = try await withAgentEnv(agent) {
             try await connectWithRetry {
                 try await CitadelFileSystem.connect(
@@ -1489,8 +1522,10 @@ struct CitadelFileSystemIntegrationTests {
         let config = try SSHConnectionConfig(
             host: "sshd2", port: 2222, username: "testuser", auth: .password("testpass"),
             jump: .init(host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent))
-        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("macscp-kh-agent-jump-\(UUID().uuidString)"))
+        let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-agent-jump-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: khDir) }
+        let store = KnownHostsStore(directory: khDir)
         let fs = try await withAgentEnv(agent) {
             try await connectWithRetry {
                 try await CitadelFileSystem.connect(
@@ -1533,8 +1568,10 @@ struct CitadelFileSystemIntegrationTests {
         let config = try SSHConnectionConfig(
             host: "sshd2", port: 2222, username: "testuser", auth: .password("testpass"),
             jump: .init(host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent))
-        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("macscp-kh-agent-jump-wrong-\(UUID().uuidString)"))
+        let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-agent-jump-wrong-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: khDir) }
+        let store = KnownHostsStore(directory: khDir)
         await withAgentEnv(agent) {
             await #expect(throws: RemoteFSError.jumpAuthenticationFailed) {
                 _ = try await CitadelFileSystem.connect(
@@ -1556,8 +1593,10 @@ struct CitadelFileSystemIntegrationTests {
 
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
-        let store = KnownHostsStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("macscp-kh-agent-ecdsa-\(UUID().uuidString)"))
+        let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-agent-ecdsa-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: khDir) }
+        let store = KnownHostsStore(directory: khDir)
         let fs = try await withAgentEnv(agent) {
             try await connectWithRetry {
                 try await CitadelFileSystem.connect(

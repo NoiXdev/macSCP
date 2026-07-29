@@ -167,6 +167,41 @@ struct AuditRecorderTests {
         #expect(events[0].detail.contains("alice"))
     }
 
+    /// Regression guard (M11e/T2): the no-jump detail must stay byte-identical
+    /// to the pre-jump-context format — no trailing "via" clause appears when
+    /// `viaJumpHost` is left at its default `nil`.
+    @Test func connectedWithoutJumpKeepsDetail() {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sessionID = UUID()
+        let recorder = AuditRecorder(sessionID: sessionID, store: store)
+
+        recorder.recordConnected(host: "h", username: "u")
+
+        let events = store.events(for: sessionID)
+        #expect(events.count == 1)
+        #expect(events[0].detail == "connected to h as u")
+    }
+
+    /// M11e/T2 spec §3/§4: a jump-hop connect names the bastion HOST only —
+    /// no bastion username, no secret, no forced port. `contains("via")`
+    /// plus the negative "no ' as ' after 'via'" check together pin both the
+    /// exact suffix shape and the security property in one test.
+    @Test func connectedWithJumpNamesTheHop() {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sessionID = UUID()
+        let recorder = AuditRecorder(sessionID: sessionID, store: store)
+
+        recorder.recordConnected(host: "h", username: "u", viaJumpHost: "bastion")
+
+        let events = store.events(for: sessionID)
+        #expect(events.count == 1)
+        #expect(events[0].detail == "connected to h as u via bastion")
+        let afterVia = events[0].detail.components(separatedBy: "via bastion").last ?? ""
+        #expect(!afterVia.contains(" as "))
+    }
+
     @Test func recordDisconnectedRecordsDisconnectedKind() {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }

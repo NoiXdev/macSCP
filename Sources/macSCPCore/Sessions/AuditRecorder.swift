@@ -16,10 +16,20 @@ public struct AuditRecorder: Sendable {
 
     /// Logs a successful connect. The App layer calls this once a stored
     /// session's connection succeeds.
-    public func recordConnected(host: String, username: String) {
-        store.append(
-            AuditEvent(kind: .connected, detail: "connected to \(host) as \(username)"),
-            for: sessionID)
+    ///
+    /// `viaJumpHost` (M11e/T2) names a jump ("ProxyJump") hop this connect
+    /// went through — pass `stored.jump?.host` (or the form's jump-block
+    /// host, when a jump is actually enabled). Defaulted to `nil` so
+    /// existing callers keep compiling and the no-jump detail stays
+    /// byte-identical to before. SECURITY: only the jump HOST ever appears
+    /// here — never the bastion's username, secret, or a forced port; a
+    /// port is present only if it was already baked into the host string.
+    public func recordConnected(host: String, username: String, viaJumpHost: String? = nil) {
+        var detail = "connected to \(host) as \(username)"
+        if let viaJumpHost {
+            detail += " via \(viaJumpHost)"
+        }
+        store.append(AuditEvent(kind: .connected, detail: detail), for: sessionID)
     }
 
     /// Logs a teardown/disconnect. The App layer calls this from the tab's
