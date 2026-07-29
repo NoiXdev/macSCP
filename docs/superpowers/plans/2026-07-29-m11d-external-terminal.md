@@ -49,7 +49,7 @@ T1 (Core: Argumentbau + Quoting + Skript-Inhalt) → T2 (App: Settings, Start, M
 4. `scriptContents`: erste Zeile `#!/bin/sh`, dann eine Zeile, die das Skript selbst entfernt (`rm -f -- "$0"`), dann `exec ` + `shellCommand`. Genau EIN `exec ssh` im Text.
 5. Reine Funktionen — kein Dateisystem, kein Prozess, keine Umgebung.
 
-- [ ] **Step 1: Failing Tests**
+- [x] **Step 1: Failing Tests**
 
 ```swift
     // SSHCommandBuilderTests:
@@ -75,10 +75,10 @@ T1 (Core: Argumentbau + Quoting + Skript-Inhalt) → T2 (App: Settings, Start, M
     //   und kein Passwort/keine Passphrase.
 ```
 
-- [ ] **Step 2: Rot beweisen.** `swift test --filter SSHCommandBuilder` → FAIL.
-- [ ] **Step 3: Implementierung.**
-- [ ] **Step 4: Grün + volle Suite.** `swift test` → 670 + neue.
-- [ ] **Step 5: Commit.** `feat: build an ssh command line for external terminals`
+- [x] **Step 2: Rot beweisen.** `swift test --filter SSHCommandBuilder` → FAIL.
+- [x] **Step 3: Implementierung.**
+- [x] **Step 4: Grün + volle Suite.** `swift test` → 670 + neue.
+- [x] **Step 5: Commit.** `feat: build an ssh command line for external terminals`
 
 ---
 
@@ -103,12 +103,12 @@ T1 (Core: Argumentbau + Quoting + Skript-Inhalt) → T2 (App: Settings, Start, M
 7. Fehler aus (2)/(3) erscheinen als Alert mit der konkreten Meldung.
 8. Alle neuen Keys EN/DE in beiden App-Katalogen; Grep-Gegenprobe.
 
-- [ ] **Step 1:** Settings-Werte + Tests (rot→grün). **Step 2:** Launcher + Sweep. **Step 3:** ⌘T/Toolbar + Menüeinträge. **Step 4:** Passwort-Hinweis + Fehler-Alerts. **Step 5:** Settings-UI (Auswahl + App-Picker). **Step 6:** L10n + Gegenprobe. **Step 7:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test`. **Step 8:** Commit `feat: open the session in an external terminal`.
+- [x] **Step 1:** Settings-Werte + Tests (rot→grün). **Step 2:** Launcher + Sweep. **Step 3:** ⌘T/Toolbar + Menüeinträge. **Step 4:** Passwort-Hinweis + Fehler-Alerts. **Step 5:** Settings-UI (Auswahl + App-Picker). **Step 6:** L10n + Gegenprobe. **Step 7:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test`. **Step 8:** Commit `feat: open the session in an external terminal`.
 
 ---
 
 ### Task 3: Abschluss-Verifikation (Koordinator)
 
-- [ ] Gated Suiten am finalen Stand: Rig `start`, `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → alle grün, zero skips, keine Leichen; Rig `stop`.
-- [ ] Visueller Smoke — an den Maintainer delegiert (Checkliste: Auswahl in den Einstellungen inkl. „Eigene App"; ⌘T folgt der Einstellung; beide Menüeinträge funktionieren; Öffnen mit Key-Verbindung verbindet ohne Nachfrage; Passwort-Verbindung zeigt den Hinweis und `ssh` fragt im Terminal; deinstallierte/ungültige App zeigt die konkrete Meldung; nach dem Start liegt kein Skript mehr in `<temp>/macscp-terminal`).
-- [ ] Plan-Checkboxen, Ledger, Opus-Final-Review (Package über `git merge-base origin/develop HEAD`), Fix-Runden bis „Yes", Push develop, `gh run watch`, Memory, Zusammenfassung. KEIN Release.
+- [x] Gated Suiten am finalen Stand: Rig `start`, `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → alle grün, zero skips, keine Leichen; Rig `stop`.
+- [x] Visueller Smoke — an den Maintainer delegiert (Checkliste: Auswahl in den Einstellungen inkl. „Eigene App"; ⌘T folgt der Einstellung; beide Menüeinträge funktionieren; Öffnen mit Key-Verbindung verbindet ohne Nachfrage; Passwort-Verbindung zeigt den Hinweis und `ssh` fragt im Terminal; deinstallierte/ungültige App zeigt die konkrete Meldung; nach dem Start liegt kein Skript mehr in `<temp>/macscp-terminal`).
+- [x] Plan-Checkboxen, Ledger, Opus-Final-Review (Package über `git merge-base origin/develop HEAD`), Fix-Runden bis „Yes", Push develop, `gh run watch`, Memory, Zusammenfassung. KEIN Release.
