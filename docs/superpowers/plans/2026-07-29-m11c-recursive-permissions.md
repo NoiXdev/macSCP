@@ -51,7 +51,7 @@ T1 (Core: Ableitung + Walk) → T2 (VM: Aktion, Audit, Fortschritt) → T3 (App:
 6. `Task.checkCancellation()` vor jedem Eintrag; bei Abbruch sofort zurück mit `cancelled: true` und den Teilzahlen (kein Throw).
 7. `progress` wird nach jeder Zählungsänderung mit dem aktuellen Zwischenstand gerufen (auch bei übersprungenen und fehlgeschlagenen Einträgen).
 
-- [ ] **Step 1: Failing Tests**
+- [x] **Step 1: Failing Tests**
 
 ```swift
     // PosixPermissionsTests (Ergänzung):
@@ -87,10 +87,10 @@ T1 (Core: Ableitung + Walk) → T2 (VM: Aktion, Audit, Fortschritt) → T3 (App:
     //   verarbeiteten Einträge (inkl. übersprungener/fehlgeschlagener).
 ```
 
-- [ ] **Step 2: Rot beweisen.** `swift test --filter PermissionsTree` und `--filter PosixPermissions` → FAIL.
-- [ ] **Step 3: Implementierung** (Ableitung zuerst, dann der Walk).
-- [ ] **Step 4: Grün + volle Suite.** `swift test` → 652 + neue, 0 Failures.
-- [ ] **Step 5: Commit.** `feat: apply permissions across a directory tree`
+- [x] **Step 2: Rot beweisen.** `swift test --filter PermissionsTree` und `--filter PosixPermissions` → FAIL.
+- [x] **Step 3: Implementierung** (Ableitung zuerst, dann der Walk).
+- [x] **Step 4: Grün + volle Suite.** `swift test` → 652 + neue, 0 Failures.
+- [x] **Step 5: Commit.** `feat: apply permissions across a directory tree`
 
 ---
 
@@ -111,7 +111,7 @@ T1 (Core: Ableitung + Walk) → T2 (VM: Aktion, Audit, Fortschritt) → T3 (App:
 3. Gibt das Ergebnis unverändert zurück (die UI formuliert die Anzeige).
 4. Bestehendes `applyPermissions` (Einzelobjekt) bleibt unverändert.
 
-- [ ] **Step 1: Failing Tests**
+- [x] **Step 1: Failing Tests**
 
 ```swift
     // recursiveApplyWritesOneAuditEventWithCounts: Mock-FS mit kleinem Baum
@@ -124,7 +124,7 @@ T1 (Core: Ableitung + Walk) → T2 (VM: Aktion, Audit, Fortschritt) → T3 (App:
     // recursiveApplyForwardsProgress: Callback-Aufrufe kommen an.
 ```
 
-- [ ] **Step 2: Rot.** **Step 3: Implementierung.** **Step 4: Grün + volle Suite.** **Step 5: Commit** `feat: expose a recursive permissions action with audit and progress`.
+- [x] **Step 2: Rot.** **Step 3: Implementierung.** **Step 4: Grün + volle Suite.** **Step 5: Commit** `feat: expose a recursive permissions action with audit and progress`.
 
 ---
 
@@ -145,13 +145,13 @@ T1 (Core: Ableitung + Walk) → T2 (VM: Aktion, Audit, Fortschritt) → T3 (App:
 5. Der Einzelobjekt-Pfad (Schalter aus) bleibt exakt wie heute.
 6. Alle neuen Keys EN/DE in beiden App-Katalogen; Grep-Gegenprobe.
 
-- [ ] **Step 1:** Schalter + Segmente + zweites Raster. **Step 2:** Rückfrage + Aufruf + Fortschritt/Abbruch. **Step 3:** Ergebniszeile. **Step 4:** L10n + Gegenprobe. **Step 5:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test`. **Step 6:** Commit `feat: apply permissions recursively from the info sheet`.
+- [x] **Step 1:** Schalter + Segmente + zweites Raster. **Step 2:** Rückfrage + Aufruf + Fortschritt/Abbruch. **Step 3:** Ergebniszeile. **Step 4:** L10n + Gegenprobe. **Step 5:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test`. **Step 6:** Commit `feat: apply permissions recursively from the info sheet`.
 
 ---
 
 ### Task 4: Abschluss-Verifikation (Koordinator)
 
-- [ ] Gated Rig-Test ergänzen: Baum auf dem Server anlegen (Verzeichnis, Datei, Unterverzeichnis mit Datei, Symlink auf eine Datei AUSSERHALB des Baums), rekursiv 644/755 anwenden, danach per `docker exec stat` prüfen: Rechte im Baum korrekt, **Symlink-Ziel außerhalb UNVERÄNDERT**, `skippedSymlinks == 1`.
-- [ ] Rig `start`, `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → alle grün, zero skips, keine Leichen; Rig `stop`.
+- [x] Gated Rig-Test ergänzen: Baum auf dem Server anlegen (Verzeichnis, Datei, Unterverzeichnis mit Datei, Symlink auf eine Datei AUSSERHALB des Baums), rekursiv 644/755 anwenden, danach per `docker exec stat` prüfen: Rechte im Baum korrekt, **Symlink-Ziel außerhalb UNVERÄNDERT**, `skippedSymlinks == 1`.
+- [x] Rig `start`, `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → alle grün, zero skips, keine Leichen; Rig `stop`.
 - [ ] Visueller Smoke — an den Maintainer delegiert (Checkliste: Schalter nur bei Ordnern, beide Modi, Vorbelegung 644⇒755, Rückfrage, Fortschritt + Abbrechen, Ergebniszeile, lokale Seite).
-- [ ] Plan-Checkboxen, Ledger, Opus-Final-Review (Package über `git merge-base origin/develop HEAD`), Fix-Runden bis „Yes", Push develop, `gh run watch`, Memory, Zusammenfassung. KEIN Release.
+- [x] Plan-Checkboxen, Ledger, Opus-Final-Review (Package über `git merge-base origin/develop HEAD`), Fix-Runden bis „Yes", Push develop, `gh run watch`, Memory, Zusammenfassung. KEIN Release.

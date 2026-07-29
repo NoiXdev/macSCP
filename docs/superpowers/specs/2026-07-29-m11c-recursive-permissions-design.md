@@ -84,8 +84,16 @@ das Sheet mitzählen kann.
   „Abbrechen"; danach die Ergebniszeile (geändert / übersprungen /
   fehlgeschlagen, bei Fehlern die erste Meldung). Kein Eintrag in die
   Transfer-Warteschlange — das ist keine Übertragung.
-- Gilt auf BEIDEN Panes (der Dialog steht schon auf beiden; der Walk ist
-  protokollbasiert).
+- **Korrektur (Final-Review 2026-07-29):** Der Walk ist protokollbasiert
+  und funktioniert nachweislich auch gegen `LocalFileSystem` (Symlink-
+  Erkennung dort korrekt, inkl. Symlink-auf-Verzeichnis und toter
+  Symlinks). ERREICHBAR ist er heute aber NUR auf der Remote-Seite:
+  `LocalFileSystem.item(for:)` liefert `permissions: nil`, weshalb das
+  Sheet lokal den ganzen Rechte-Block durch „Rechte sind für diesen
+  Eintrag nicht verfügbar" ersetzt (Verhalten seit M7b, keine Regression).
+  Die ursprüngliche Formulierung „gilt auf beiden Panes" war falsch.
+  Lokale Rechte freizuschalten (POSIX-Attribute in `item(for:)` füllen)
+  ist Backlog — der rekursive Lauf wäre dann ohne weitere Arbeit dabei.
 
 ## 5. Tests
 
