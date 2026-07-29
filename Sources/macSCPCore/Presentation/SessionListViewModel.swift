@@ -139,7 +139,86 @@ public final class SessionListViewModel {
         try? secrets.deletePassword(for: previous.secretID)
     }
 
-    public func delete(_ session: StoredSession) {
+    /// The outcome of `delete(_:)`'s jump-restoration pass (M11a Task 2).
+    public struct JumpRestoreResult: Equatable {
+        public var restored: Int
+        public var secretFailures: Int
+
+        public init(restored: Int, secretFailures: Int) {
+            self.restored = restored
+            self.secretFailures = secretFailures
+        }
+    }
+
+    /// Deletes a session. Spec §5 "delete = restoration" for a session used
+    /// as someone else's jump host (M11a): every session whose `jump.
+    /// sessionID` points at the one being deleted gets the deleted session's
+    /// EFFECTIVE login (its own data, or its login set's, exactly like
+    /// `resolvedLogin` would report it) copied into concrete `JumpSpec`
+    /// fields, its resolved secret copied into the jump's OWN `secretID`
+    /// slot, and both `sessionID` and `loginSetID` nilled -- the restored
+    /// jump carries no reference of any kind, only values. A keychain
+    /// failure while copying one session's secret is counted, never fatal;
+    /// the session is still restored (values + nil reference), only its
+    /// secret slot stays empty (M10b/B2 pattern: nothing is deleted here,
+    /// only copied, so there is no risk of losing a secret to a failed
+    /// write).
+    ///
+    /// Ordering is deliberate: every restoration is persisted BEFORE the
+    /// session itself is deleted, so a failure in the deletion step can
+    /// never leave a half-restored world -- referencing sessions are always
+    /// either fully restored or (if nothing referenced this session)
+    /// untouched, regardless of what happens to the deletion itself.
+    @discardableResult
+    public func delete(_ session: StoredSession) -> JumpRestoreResult {
+        let affected = sessionsUsingAsJump(session.id)
+        // The deleted session's effective login, resolved exactly like
+        // `resolvedLogin(for:)` would: nil for a manual session (use its own
+        // fields + own keychain secret below), a set's values otherwise. An
+        // agent session/set reads no keychain at all (M10d rule).
+        let resolvedBastionLogin = (try? LoginResolver.resolve(
+            session: session, sets: loginSets, secrets: secrets)) ?? nil
+        let bastionUsername = resolvedBastionLogin?.username ?? session.username
+        let bastionAuthKind = resolvedBastionLogin?.authKind ?? session.authKind
+        let bastionKeyPath = resolvedBastionLogin?.keyPath ?? session.keyPath
+        var bastionSecret: String?
+        if let resolvedBastionLogin {
+            bastionSecret = resolvedBastionLogin.secret
+        } else if session.authKind != .agent {
+            bastionSecret = (try? secrets.password(for: session.id)) ?? nil
+        }
+
+        var secretFailures = 0
+        for referencing in affected {
+            guard var jump = referencing.jump else { continue }
+            jump.host = session.host
+            jump.port = session.port
+            jump.username = bastionUsername
+            jump.authKind = bastionAuthKind
+            jump.keyPath = bastionKeyPath
+            jump.loginSetID = nil
+            jump.sessionID = nil
+
+            var hadSecretFailure = false
+            if let bastionSecret {
+                do {
+                    try secrets.savePassword(bastionSecret, for: jump.secretID)
+                } catch {
+                    hadSecretFailure = true
+                }
+            }
+
+            var updated = referencing
+            updated.jump = jump
+            // Throw-free by design (M10b pattern): a store-write failure for
+            // one referencing session must not abort restoring the others,
+            // nor the deletion that follows.
+            try? store.upsert(updated)
+            if hadSecretFailure {
+                secretFailures += 1
+            }
+        }
+
         do {
             try store.delete(id: session.id)
             try secrets.deletePassword(for: session.id)
@@ -157,6 +236,8 @@ public final class SessionListViewModel {
             errorMessage = String(
                 format: CoreL10n.string("core.session.deleteFailed %@"), String(describing: error))
         }
+
+        return JumpRestoreResult(restored: affected.count, secretFailures: secretFailures)
     }
 
     public func password(for session: StoredSession) -> String? {
@@ -272,6 +353,13 @@ public final class SessionListViewModel {
     /// How many sessions currently reference the given set.
     public func usageCount(of setID: UUID) -> Int {
         sessionsUsing(setID: setID).count
+    }
+
+    /// Sessions whose jump host references the given session (M11a) --
+    /// used for the "N sessions use this as their jump host" delete
+    /// confirmation.
+    public func sessionsUsingAsJump(_ id: UUID) -> [StoredSession] {
+        sessions.filter { $0.jump?.sessionID == id }
     }
 
     /// Saves a set; a non-nil, non-empty secret overwrites the keychain
@@ -501,6 +589,20 @@ public final class SessionListViewModel {
         return try LoginResolver.resolveJump(spec: jump, sets: loginSets, secrets: secrets)
     }
 
+    /// Resolves a session's jump host fully (M11a), including host/port:
+    /// `nil` when the session has no jump. Unlike `resolvedJumpLogin`, this
+    /// also covers "session" mode (`jump.sessionID` non-nil) -- the
+    /// referenced session's own host/port and login. Throws the same
+    /// typed errors as `LoginResolver.resolveJump(...sessions:
+    /// referencingSessionID:)`: `.missingJumpSession` for a dangling
+    /// reference, `.jumpChainNotSupported` for a chain or self-reference.
+    public func resolvedJump(for session: StoredSession) throws -> ResolvedJump? {
+        guard let jump = session.jump else { return nil }
+        return try LoginResolver.resolveJump(
+            spec: jump, sets: loginSets, secrets: secrets, sessions: sessions,
+            referencingSessionID: session.id)
+    }
+
     /// What subset of the sidebar an export covers.
     public enum ExportScope {
         case single(StoredSession)
@@ -548,9 +650,13 @@ public final class SessionListViewModel {
                 }
             }
 
-            // Jump fields (M10c): always the RESOLVED values -- a set
-            // reference becomes the set's own values; a dangling set falls
-            // back to the spec's own values (export never aborts).
+            // Jump fields (M10c, extended M11a): always the RESOLVED values
+            // -- a set reference becomes the set's own values, a session
+            // reference becomes the REFERENCED session's host/port/login; a
+            // dangling set or session reference falls back to the spec's
+            // own values (export never aborts). The reference itself
+            // (loginSetID / sessionID) never travels with the export --
+            // only resolved values do.
             var jumpHost: String?
             var jumpPort: Int?
             var jumpUsername: String?
@@ -559,14 +665,15 @@ public final class SessionListViewModel {
             var jumpPassword: String?
             if let jump = session.jump {
                 let resolvedJump = try? LoginResolver.resolveJump(
-                    spec: jump, sets: loginSets, secrets: secrets)
-                jumpHost = jump.host
-                jumpPort = jump.port
-                jumpUsername = resolvedJump?.username ?? jump.username
-                jumpAuthKind = resolvedJump?.authKind ?? jump.authKind
-                jumpKeyPath = resolvedJump?.keyPath ?? jump.keyPath
+                    spec: jump, sets: loginSets, secrets: secrets, sessions: sessions,
+                    referencingSessionID: session.id)
+                jumpHost = resolvedJump?.host ?? jump.host
+                jumpPort = resolvedJump?.port ?? jump.port
+                jumpUsername = resolvedJump?.login.username ?? jump.username
+                jumpAuthKind = resolvedJump?.login.authKind ?? jump.authKind
+                jumpKeyPath = resolvedJump?.login.keyPath ?? jump.keyPath
                 if includePasswords, jumpAuthKind != .agent {
-                    jumpPassword = resolvedJump?.secret
+                    jumpPassword = resolvedJump?.login.secret
                     if jumpPassword == nil {
                         missingPasswordCount += 1
                     }

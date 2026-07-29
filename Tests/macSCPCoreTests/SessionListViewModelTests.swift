@@ -916,6 +916,138 @@ struct SessionListViewModelTests {
             _ = try vm.resolvedJumpLogin(for: withJump)
         }
     }
+
+    // MARK: - Jump-from-saved-session restoration + export (M11a Task 2)
+
+    @Test func sessionsUsingAsJumpFindsReferences() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let bastion = vm.save(name: "bastion", host: "b", port: 22, username: "u", password: "p")!
+        let other = vm.save(name: "other", host: "o", port: 22, username: "u", password: "p")!
+        let jumpToBastion = StoredSession.JumpSpec(
+            host: "ignored", username: "ignored", sessionID: bastion.id)
+        let a = vm.save(name: "a", host: "ta", port: 22, username: "u", password: "pw",
+                        jump: jumpToBastion)!
+        let jumpToOther = StoredSession.JumpSpec(
+            host: "ignored", username: "ignored", sessionID: other.id)
+        let b = vm.save(name: "b", host: "tb", port: 22, username: "u", password: "pw", jump: jumpToOther)!
+        _ = vm.save(name: "plain", host: "tp", port: 22, username: "u", password: "pw")!
+
+        #expect(Set(vm.sessionsUsingAsJump(bastion.id).map(\.id)) == Set([a.id]))
+        #expect(vm.sessionsUsingAsJump(other.id).map(\.id) == [b.id])
+    }
+
+    @Test func deleteRestoresJumpReferences() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let bastion = vm.save(name: "bastion", host: "b.example.com", port: 2022,
+                              username: "deploy", password: "s")!
+        let jumpA = StoredSession.JumpSpec(
+            host: "ignored", username: "ignored", sessionID: bastion.id)
+        let a = vm.save(name: "a", host: "ta", port: 22, username: "u", password: "pw", jump: jumpA)!
+        let jumpB = StoredSession.JumpSpec(
+            host: "ignored2", username: "ignored2", sessionID: bastion.id)
+        let b = vm.save(name: "b", host: "tb", port: 22, username: "u", password: "pw", jump: jumpB)!
+
+        let result = vm.delete(bastion)
+
+        #expect(result == SessionListViewModel.JumpRestoreResult(restored: 2, secretFailures: 0))
+        #expect(vm.sessions.map(\.name).sorted() == ["a", "b"])
+        for id in [a.id, b.id] {
+            let restored = vm.sessions.first { $0.id == id }!
+            #expect(restored.jump?.sessionID == nil)
+            #expect(restored.jump?.loginSetID == nil)
+            #expect(restored.jump?.host == "b.example.com")
+            #expect(restored.jump?.port == 2022)
+            #expect(restored.jump?.username == "deploy")
+            #expect(restored.jump?.authKind == .password)
+            #expect(try secrets.password(for: restored.jump!.secretID) == "s")
+        }
+    }
+
+    @Test func deleteRestoresFromAgentBastionWithoutSecret() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = NoReadAllowedSecretStore()
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: secrets,
+            loginSetStore: LoginSetStore(directory: dir))
+
+        let bastion = vm.save(name: "bastion", host: "b.example.com", port: 2022,
+                              username: "deploy", password: "", authKind: .agent)!
+        let jump = StoredSession.JumpSpec(
+            host: "ignored", username: "ignored", sessionID: bastion.id)
+        let a = vm.save(name: "a", host: "ta", port: 22, username: "u", password: "pw", jump: jump)!
+
+        let result = vm.delete(bastion)
+
+        #expect(result == SessionListViewModel.JumpRestoreResult(restored: 1, secretFailures: 0))
+        let restored = vm.sessions.first { $0.id == a.id }!
+        #expect(restored.jump?.authKind == .agent)
+        #expect(restored.jump?.username == "deploy")
+        #expect(restored.jump?.sessionID == nil)
+    }
+
+    @Test func deleteCountsSecretFailure() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = SelectiveFailingSecretStore()
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: secrets,
+            loginSetStore: LoginSetStore(directory: dir))
+
+        let bastion = vm.save(name: "bastion", host: "b.example.com", port: 2022,
+                              username: "deploy", password: "s")!
+        let jump = StoredSession.JumpSpec(
+            host: "ignored", username: "ignored", sessionID: bastion.id)
+        let a = vm.save(name: "a", host: "ta", port: 22, username: "u", password: "pw", jump: jump)!
+        secrets.failingSessionID = jump.secretID
+
+        let result = vm.delete(bastion)
+
+        #expect(result == SessionListViewModel.JumpRestoreResult(restored: 1, secretFailures: 1))
+        let restored = vm.sessions.first { $0.id == a.id }!
+        #expect(restored.jump?.host == "b.example.com")
+        #expect(restored.jump?.username == "deploy")
+        #expect(restored.jump?.sessionID == nil)
+        #expect(try secrets.password(for: jump.secretID) == nil)
+    }
+
+    @Test func exportResolvesSessionJump() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let bastion = vm.save(name: "bastion", host: "b.example.com", port: 2022,
+                              username: "deploy", password: "s")!
+        let jump = StoredSession.JumpSpec(
+            host: "ignored", username: "ignored", sessionID: bastion.id)
+        let target = vm.save(name: "web", host: "target.example.com", port: 22, username: "u",
+                             password: "pw", jump: jump)!
+
+        let exported = vm.exportPayload(for: .single(target), includeGroups: false, includePasswords: true)
+        let payload = exported.payload.sessions.first!
+        #expect(payload.jumpHost == "b.example.com")
+        #expect(payload.jumpPort == 2022)
+        #expect(payload.jumpUsername == "deploy")
+        #expect(payload.jumpAuthKind == .password)
+        #expect(payload.jumpPassword == "s")
+        #expect(exported.missingPasswordCount == 0)
+
+        // A dangling session reference (points at a UUID that never existed,
+        // e.g. an externally edited store) falls back to the jump's own
+        // values and never aborts the export.
+        let danglingJump = StoredSession.JumpSpec(
+            host: "own-host", port: 2121, username: "own-user", sessionID: UUID())
+        let target2 = vm.save(name: "web2", host: "target2.example.com", port: 22, username: "u",
+                              password: "pw", jump: danglingJump)!
+        let exported2 = vm.exportPayload(
+            for: .single(target2), includeGroups: false, includePasswords: true)
+        let payload2 = exported2.payload.sessions.first!
+        #expect(payload2.jumpHost == "own-host")
+        #expect(payload2.jumpPort == 2121)
+        #expect(payload2.jumpUsername == "own-user")
+    }
 }
 
 private final class FailingSecretStore: SecretStore, @unchecked Sendable {
@@ -979,6 +1111,31 @@ private final class NewIDFailingSecretStore: SecretStore, @unchecked Sendable {
     func password(for sessionID: UUID) throws -> String? {
         lock.lock(); defer { lock.unlock() }
         return storage[sessionID]
+    }
+
+    func deletePassword(for sessionID: UUID) throws {
+        lock.lock(); defer { lock.unlock() }
+        storage[sessionID] = nil
+    }
+}
+
+/// Test double proving the agent-bastion restore path (M11a Task 2) never
+/// reads the keychain for the deleted session's own secret: `password(for:)`
+/// fails the test if called at all. `savePassword`/`deletePassword` behave
+/// like `InMemorySecretStore` so unrelated calls (e.g. writing another
+/// session's own, non-agent secret) still work normally.
+private final class NoReadAllowedSecretStore: SecretStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [UUID: String] = [:]
+
+    func savePassword(_ password: String, for sessionID: UUID) throws {
+        lock.lock(); defer { lock.unlock() }
+        storage[sessionID] = password
+    }
+
+    func password(for sessionID: UUID) throws -> String? {
+        Issue.record("agent bastion restore must not read the keychain")
+        return nil
     }
 
     func deletePassword(for sessionID: UUID) throws {
