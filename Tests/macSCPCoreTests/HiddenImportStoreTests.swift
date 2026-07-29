@@ -42,8 +42,22 @@ struct HiddenImportStoreTests {
 
         // Unhiding an alias that was never hidden must not throw and must
         // not change anything.
-        try store.unhide("nichtda")
+        try store.unhide("missing")
         #expect(try store.allHidden() == [])
+    }
+
+    @Test func unhideRemovesAllOccurrencesOfADuplicateAlias() throws {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let fileURL = dir.appendingPathComponent("hidden-imports.json")
+        try Data("""
+        {"aliases":["a","a"]}
+        """.utf8).write(to: fileURL)
+
+        try store.unhide("a")
+        #expect(try store.allHidden() == [])
+        #expect(try store.isHidden("a") == false)
     }
 
     @Test func allHiddenIsSortedCaseInsensitively() throws {
@@ -124,9 +138,22 @@ struct ImportedHostPartitionTests {
     }
 
     @Test func renamedAliasEndsUpVisibleAndOldNameOrphaned() {
-        let neu = host("neu")
-        let result = ImportedHostPartition.split(hosts: [neu], hiddenAliases: ["alt"])
-        #expect(result.visible == [neu])
-        #expect(result.orphaned == ["alt"])
+        let new = host("new")
+        let result = ImportedHostPartition.split(hosts: [new], hiddenAliases: ["old"])
+        #expect(result.visible == [new])
+        #expect(result.orphaned == ["old"])
+    }
+
+    @Test func splitComparesAliasesExactly() {
+        let prod = host("Prod")
+        let result = ImportedHostPartition.split(hosts: [prod], hiddenAliases: ["prod"])
+        #expect(result.visible == [prod])
+        #expect(result.hidden == [])
+        #expect(result.orphaned == ["prod"])
+    }
+
+    @Test func orphanedIsSortedAlphabeticallyWithMultipleEntries() {
+        let result = ImportedHostPartition.split(hosts: [], hiddenAliases: ["zulu", "alpha", "mike"])
+        #expect(result.orphaned == ["alpha", "mike", "zulu"])
     }
 }

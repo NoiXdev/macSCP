@@ -1,5 +1,22 @@
 import Foundation
 
+/// Sorts aliases for stable, predictable display: primarily
+/// case-insensitively (so "alpha" and "Alpha" sit together), with a plain
+/// lexicographic tie-breaker. `localizedCaseInsensitiveCompare` returns
+/// `.orderedSame` for aliases that differ only by case (e.g. "Prod" vs
+/// "prod"), and `Array.sorted` is not guaranteed stable, so without a
+/// tie-breaker such pairs could come out in a different order on every
+/// call.
+private func sortAliasesForDisplay(_ aliases: [String]) -> [String] {
+    aliases.sorted { lhs, rhs in
+        let caseInsensitive = lhs.localizedCaseInsensitiveCompare(rhs)
+        if caseInsensitive != .orderedSame {
+            return caseInsensitive == .orderedAscending
+        }
+        return lhs < rhs
+    }
+}
+
 /// JSON persistence for aliases the user chose to hide from the imported
 /// `~/.ssh/config` list (M11f). Only the alias string is stored — never a
 /// copy of the imported host's other fields — so this store can never
@@ -44,9 +61,7 @@ public struct HiddenImportStore: Sendable {
 
     /// All hidden aliases, sorted case-insensitively for stable display.
     public func allHidden() throws -> [String] {
-        try load().aliases.sorted {
-            $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
-        }
+        sortAliasesForDisplay(try load().aliases)
     }
 
     /// Hides an alias. Idempotent: hiding an already-hidden alias is a no-op.
@@ -58,11 +73,16 @@ public struct HiddenImportStore: Sendable {
     }
 
     /// Unhides an alias. Unhiding an alias that was never hidden does not
-    /// throw and leaves the store unchanged.
+    /// throw and leaves the store unchanged. Removes every occurrence, not
+    /// just the first, in case the file ever ends up with a duplicate
+    /// (e.g. a hand edit or a file-sync tool merging two copies) — a
+    /// duplicate must not leave `isHidden` reporting `true` after `unhide`
+    /// claims success.
     public func unhide(_ alias: String) throws {
         var file = try load()
-        guard let index = file.aliases.firstIndex(of: alias) else { return }
-        file.aliases.remove(at: index)
+        let countBefore = file.aliases.count
+        file.aliases.removeAll { $0 == alias }
+        guard file.aliases.count != countBefore else { return }
         try persist(file)
     }
 
@@ -106,9 +126,7 @@ public enum ImportedHostPartition {
             }
         }
 
-        let orphaned = hiddenSet.subtracting(matchedAliases).sorted {
-            $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
-        }
+        let orphaned = sortAliasesForDisplay(Array(hiddenSet.subtracting(matchedAliases)))
 
         return Result(visible: visible, hidden: hidden, orphaned: orphaned)
     }
