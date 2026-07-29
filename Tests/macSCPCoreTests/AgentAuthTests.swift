@@ -52,6 +52,20 @@ struct AgentAuthTests {
         frame(type: 12, payload: uint32BE(0))
     }
 
+    /// An IDENTITIES_ANSWER reporting one identity per `keyTypes`, each with
+    /// distinguishable dummy material/comment. Used by
+    /// `allUnsupportedIdentitiesThrowNoUsableIdentities` to simulate an
+    /// agent that answered with identities, none of which
+    /// `AgentPrivateKeyFactory.supports` recognizes.
+    private static func identitiesAnswerFrame(keyTypes: [String]) -> Data {
+        var payload = uint32BE(UInt32(keyTypes.count))
+        for (index, keyType) in keyTypes.enumerated() {
+            let blob = sshBytes(keyType) + sshBytes([UInt8(index)])
+            payload += sshBytes(blob) + sshBytes("identity-\(index)")
+        }
+        return frame(type: 12, payload: payload)
+    }
+
     /// Drives `AgentAuthDelegate.nextAuthenticationType` through a real
     /// `EventLoopPromise` (the actual protocol method, not a test-only seam).
     private func nextOffer(
@@ -175,6 +189,39 @@ struct AgentAuthTests {
             publicKeyBlob: edIdentity.publicKeyBlob, data: Data("payload".utf8), flags: 0))
     }
 
+    /// M11e/T1 point 2: the semaphore wait in `signature(for:)` has its own
+    /// wall-clock ceiling, independent of `NIOUnixSocketAgentTransport`'s own
+    /// 10s response deadline — that transport-level deadline only fires
+    /// while its round-trip `Task` is actually running; this covers the
+    /// (rarer, but real) case where the `Task`'s promise is never fulfilled
+    /// at all. The mock transport below suspends forever and never resumes
+    /// its continuation — a stand-in for exactly that scenario — so only the
+    /// injected (short) `signTimeout` can ever end the wait; this is why the
+    /// timeout needed to become an injectable parameter (default 15s) rather
+    /// than a hardcoded constant.
+    @Test func signTimesOutWithProtocolError() {
+        final class NeverRespondingTransport: SSHAgentTransport, @unchecked Sendable {
+            func roundTrip(_ request: Data) async throws -> Data {
+                // An hour comfortably outlasts the test's own process; this
+                // is a well-behaved suspension (unlike an unresumed
+                // `checkedContinuation`, which the runtime flags as a leak)
+                // that simply never completes before `signTimeout` below does.
+                try await Task.sleep(for: .seconds(3600))
+                return Data()
+            }
+            func close() async {}
+        }
+        let identity = Self.makeIdentity(
+            keyType: "ssh-ed25519", material: Self.sshBytes([0x01]), comment: "never-responds")
+        let client = SSHAgentClient(transport: NeverRespondingTransport())
+        let key = AgentBackedPrivateKey<AgentAlgorithm.Ed25519>(
+            identity: identity, client: client, signTimeout: 0.05)
+
+        #expect(throws: AgentError.protocolError(reason: "agent sign timed out")) {
+            _ = try key.signature(for: Data("payload".utf8))
+        }
+    }
+
     // MARK: - Connect-path error mapping (typed, not stringified)
 
     private func withTemporarySSHAuthSock(_ value: String, _ body: () async throws -> Void) async rethrows {
@@ -211,6 +258,30 @@ struct AgentAuthTests {
             await #expect(throws: AgentError.noIdentities) {
                 try await CitadelFileSystem.AgentClientFactory.$override.withValue({ _ in
                     SSHAgentClient(transport: MockAgentTransport(response: Self.emptyIdentitiesAnswerFrame()))
+                }) {
+                    _ = try await CitadelFileSystem.connect(
+                        config: config, knownHosts: store, onUnknownHostKey: { _ in true })
+                }
+            }
+        }
+    }
+
+    /// M11e/T1 point 3: the agent DID answer with identities, but NONE of
+    /// their key types survive `AgentPrivateKeyFactory.supports` (both
+    /// report the unsupported `ssh-dss` here) — the connect throws the
+    /// distinct, typed `AgentError.noUsableIdentities`, NOT `.noIdentities`
+    /// (which stays reserved for an agent reporting zero identities at all,
+    /// see `emptyAgentThrowsNoIdentities` above). Like that test, this never
+    /// touches the network: the guard in `CitadelFileSystem.connectHop`
+    /// fires before the first `connectOnce`/`SSHClient.connect` call.
+    @Test func allUnsupportedIdentitiesThrowNoUsableIdentities() async throws {
+        try await withTemporarySSHAuthSock("/tmp/macscp-agent-unsupported-\(UUID().uuidString).sock") {
+            let config = try agentConfig()
+            let store = freshKnownHostsStore()
+            await #expect(throws: AgentError.noUsableIdentities) {
+                try await CitadelFileSystem.AgentClientFactory.$override.withValue({ _ in
+                    SSHAgentClient(transport: MockAgentTransport(
+                        response: Self.identitiesAnswerFrame(keyTypes: ["ssh-dss", "ssh-dss"])))
                 }) {
                     _ = try await CitadelFileSystem.connect(
                         config: config, knownHosts: store, onUnknownHostKey: { _ in true })

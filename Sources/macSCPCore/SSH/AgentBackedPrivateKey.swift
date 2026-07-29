@@ -219,10 +219,21 @@ final class AgentBackedPrivateKey<Algorithm: AgentSigningAlgorithm>: NIOSSHPriva
 
     private let identity: AgentIdentity
     private let client: SSHAgentClient
+    /// Wall-clock ceiling on the semaphore wait in `signature(for:)` below —
+    /// the second line of defense behind `NIOUnixSocketAgentTransport`'s own
+    /// 10s response deadline. That transport-level deadline only fires while
+    /// its round-trip `Task` is actually running; it does nothing for the
+    /// (rarer, but real) case where the `Task` spawned below never gets to
+    /// complete at all — e.g. its event loop was torn down mid-flight — in
+    /// which case `box.result` would stay `nil` forever and the semaphore
+    /// would never signal. Defaults to 15s; tests inject a short value so a
+    /// timeout test runs in milliseconds, not 15 seconds.
+    private let signTimeout: TimeInterval
 
-    init(identity: AgentIdentity, client: SSHAgentClient) {
+    init(identity: AgentIdentity, client: SSHAgentClient, signTimeout: TimeInterval = 15) {
         self.identity = identity
         self.client = client
+        self.signTimeout = signTimeout
     }
 
     var publicKey: NIOSSHPublicKeyProtocol {
@@ -250,7 +261,9 @@ final class AgentBackedPrivateKey<Algorithm: AgentSigningAlgorithm>: NIOSSHPriva
             }
             semaphore.signal()
         }
-        semaphore.wait()
+        guard semaphore.wait(timeout: .now() + signTimeout) == .success else {
+            throw AgentError.protocolError(reason: "agent sign timed out")
+        }
         guard let result = box.result else {
             throw AgentError.protocolError(reason: "agent signature task did not complete")
         }

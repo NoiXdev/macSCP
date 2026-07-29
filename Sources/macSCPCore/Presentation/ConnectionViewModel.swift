@@ -675,6 +675,10 @@ public final class ConnectionViewModel {
             return .failed(
                 message: CoreL10n.string("core.connect.agentNoIdentities"),
                 field: (jumpEnabled && jumpAuthChoice == .agent) ? .jumpUsername : nil)
+        case AgentError.noUsableIdentities:
+            return .failed(
+                message: CoreL10n.string("core.connect.agentNoUsableIdentities"),
+                field: (jumpEnabled && jumpAuthChoice == .agent) ? .jumpUsername : nil)
         // `.refused` (agent said no to every offered identity) and
         // `.protocolError` (transport/parsing misbehaved) aren't honest
         // "fix your setup" conditions the way the two cases above are --

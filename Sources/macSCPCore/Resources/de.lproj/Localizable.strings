@@ -41,6 +41,7 @@
 /* ConnectionViewModel.failedState(for:) — SSH-Agent (M10d/T4) */
 "core.connect.agentSocketUnavailable" = "Kein SSH-Agent erreichbar (SSH_AUTH_SOCK).";
 "core.connect.agentNoIdentities" = "Der SSH-Agent hat keine Identitäten geladen.";
+"core.connect.agentNoUsableIdentities" = "Der SSH-Agent hat keine nutzbaren Identitäten (nicht unterstützte Schlüsseltypen).";
 
 /* ConnectionViewModel.failedState(for:) — Jump-Host (M10c/T3) */
 "core.connect.invalidJumpPort %@" = "Ungültiger Jump-Port: %@.";

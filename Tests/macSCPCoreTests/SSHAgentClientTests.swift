@@ -1,4 +1,6 @@
 import Foundation
+import NIOCore
+import NIOEmbedded
 import Testing
 @testable import macSCPCore
 
@@ -127,5 +129,86 @@ struct SSHAgentClientTests {
         let client = SSHAgentClient(transport: transport)
         await client.close()
         #expect(transport.closeCallCount == 1)
+    }
+
+    // MARK: - M11e/T1 point 1: frame length cap
+
+    /// The accumulator rejects a declared frame length beyond
+    /// `FrameAccumulatingHandler.maxFrameLength` the MOMENT the 4-byte
+    /// length prefix itself is readable -- before buffering any of the
+    /// (possibly-never-arriving) rest of the claimed frame, and without
+    /// waiting for the transport's response deadline. Driven directly
+    /// through an `EmbeddedChannel` (not `MockAgentTransport`, which
+    /// bypasses framing entirely) since production framing lives in this
+    /// handler, not in `SSHAgentClient` itself.
+    ///
+    /// Deliberately never calls `advanceTime`/`run` past "now": on
+    /// `EmbeddedEventLoop` a scheduled deadline task only ever fires once
+    /// the virtual clock is explicitly advanced past it, so this test
+    /// passing at all is itself proof the rejection did not wait for the
+    /// deadline -- a wrong implementation that only checks size after a
+    /// full frame is buffered would leave the promise pending forever here,
+    /// not eventually time out.
+    @Test func oversizedFrameThrowsProtocolError() throws {
+        let channel = EmbeddedChannel()
+        let handler = FrameAccumulatingHandler()
+        try channel.pipeline.addHandler(handler).wait()
+
+        let future = handler.send(Data([0xAA]), over: channel, deadline: .seconds(30))
+        channel.embeddedEventLoop.run()  // flush the `execute` block that arms the promise / writes the request
+
+        let oversizedLength = FrameAccumulatingHandler.maxFrameLength + 1
+        var lengthPrefix = channel.allocator.buffer(capacity: 4)
+        lengthPrefix.writeInteger(oversizedLength)
+        try channel.writeInbound(lengthPrefix)
+
+        do {
+            _ = try future.wait()
+            Issue.record("expected the oversized declared length to throw")
+        } catch let error as AgentError {
+            guard case .protocolError(let reason) = error else {
+                Issue.record("expected .protocolError, got \(error)")
+                return
+            }
+            #expect(reason.contains("\(oversizedLength)"))
+        } catch {
+            Issue.record("expected AgentError, got \(error)")
+        }
+    }
+
+    /// The boundary is INCLUSIVE (spec §2 point 1): a declared length of
+    /// EXACTLY `maxFrameLength`, carrying a genuinely valid
+    /// IDENTITIES_ANSWER payload padded to that exact size, still parses
+    /// normally end to end -- both the accumulator's own cap and
+    /// `SSHAgentCodec`'s parsing.
+    @Test func maxAllowedFrameStillParses() throws {
+        let channel = EmbeddedChannel()
+        let handler = FrameAccumulatingHandler()
+        try channel.pipeline.addHandler(handler).wait()
+
+        let maxLength = Int(FrameAccumulatingHandler.maxFrameLength)
+        let blob = Self.sshString("ssh-ed25519") + Self.sshString([0x01])
+        // type(1) + count(4) + outer-string(blob) + outer-string(comment)
+        let fixedOverhead = 1 + 4 + (4 + blob.count) + 4
+        let commentLength = maxLength - fixedOverhead
+        #expect(commentLength > 0)
+        let comment = String(repeating: "a", count: commentLength)
+        var body: [UInt8] = [12] + Self.uint32BE(1)
+        body += Self.sshString(blob) + Self.sshString(comment)
+        #expect(body.count == maxLength)
+        let frameData = Data(Self.uint32BE(UInt32(maxLength)) + body)
+
+        let future = handler.send(Data([0xAA]), over: channel, deadline: .seconds(30))
+        channel.embeddedEventLoop.run()
+
+        var frameBuffer = channel.allocator.buffer(capacity: frameData.count)
+        frameBuffer.writeBytes(frameData)
+        try channel.writeInbound(frameBuffer)
+
+        let response = try future.wait()
+        let identities = try SSHAgentCodec.parseIdentitiesAnswer(response)
+        #expect(identities.count == 1)
+        #expect(identities[0].keyType == "ssh-ed25519")
+        #expect(identities[0].comment == comment)
     }
 }

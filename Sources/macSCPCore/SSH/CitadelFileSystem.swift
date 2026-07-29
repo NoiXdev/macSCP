@@ -432,6 +432,14 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             let offerableIdentities = agent.identities.filter {
                 AgentPrivateKeyFactory.supports(keyType: $0.keyType)
             }
+            // M11e/T1 point 3: the agent DID answer with identities (an empty
+            // agent already threw `.noIdentities` back in
+            // `AgentAuthContext.connect()`), but none of them survived the
+            // `supports` filter above -- a distinct, typed condition from "no
+            // identities at all" so the two can be localized differently.
+            guard !offerableIdentities.isEmpty else {
+                throw AgentError.noUsableIdentities
+            }
             let delegate = AgentAuthDelegate(
                 username: username, identities: offerableIdentities, client: agent.client)
             // M-3: bound the number of per-identity reconnects at
@@ -440,14 +448,22 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             // reconnects against the server (each one its own visible failed
             // login, see the M10d design spec §4a).
             let attempts = min(offerableIdentities.count, 6)
-            var lastError: Error = AgentError.noIdentities
             // M-2: an outright auth rejection (the server tried the offered
             // identity and said no) must never be masked by a LATER, unrelated
             // failure from trying yet another identity (e.g. a transient
             // transport hiccup). The assignment below runs unconditionally on
-            // EVERY rejection seen, so it holds the LAST one, not the first —
-            // still preferred over whatever `lastError` ends up being.
-            var authRejectionError: Error?
+            // EVERY rejection seen, so it holds the LAST one, not the first.
+            // M11e/T1 point 4: `attempts` is now always >= 1 (the guard
+            // above rules out the empty-after-filtering case), and every
+            // loop iteration below either returns on success or rethrows
+            // immediately for any error that isn't
+            // `allAuthenticationOptionsFailed` (I-1) -- so the only way to
+            // reach the `throw` after the loop is for EVERY iteration to
+            // have gone through this assignment. `lastError` is therefore
+            // unconditionally the last auth rejection seen; a second
+            // "authRejectionError" tracking the identical value was
+            // redundant and has been removed.
+            var lastError: Error = AgentError.noIdentities
             for _ in 0..<attempts {
                 do {
                     return try await connectOnce(.custom(delegate))
@@ -464,10 +480,9 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                         throw error
                     }
                     lastError = error
-                    authRejectionError = error
                 }
             }
-            throw authRejectionError ?? lastError
+            throw lastError
         }
     }
 

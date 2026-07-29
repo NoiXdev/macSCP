@@ -121,9 +121,27 @@ final class NIOUnixSocketAgentTransport: SSHAgentTransport, @unchecked Sendable 
 /// state is only ever touched on the channel's event loop (either directly,
 /// as NIO guarantees for channel callbacks, or via `eventLoop.execute` from
 /// `send`), so the `@unchecked Sendable` below is safe.
-private final class FrameAccumulatingHandler: ChannelInboundHandler, @unchecked Sendable {
+///
+/// Not `private`: `Tests/macSCPCoreTests/SSHAgentClientTests.swift` drives
+/// this handler directly through an `EmbeddedChannel` to prove the frame
+/// length cap (below) rejects an oversized declared length immediately,
+/// without buffering the (attacker- or bug-controlled) rest of the claimed
+/// frame and without waiting for `responseDeadline` — something a mock
+/// `SSHAgentTransport` can't exercise, since production framing lives here,
+/// not in `SSHAgentClient` itself. Still internal, not public: no part of
+/// this type is meant to be used outside the module.
+final class FrameAccumulatingHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = ByteBuffer
     typealias OutboundOut = ByteBuffer
+
+    /// The largest declared frame length this client will accept, matching
+    /// OpenSSH's own agent client bound (`authfd.c`'s `AGENT_MAX_LEN`,
+    /// 256 KiB) on a single request/response message. A declared length
+    /// beyond this cannot be a legitimate IDENTITIES_ANSWER or SIGN_RESPONSE
+    /// — it is either a misbehaving agent or a corrupted stream — so it is
+    /// rejected the moment the length prefix itself is readable, before any
+    /// further bytes are buffered.
+    static let maxFrameLength: UInt32 = 256 * 1024
 
     private var buffer: ByteBuffer = ByteBufferAllocator().buffer(capacity: 0)
     private var promise: EventLoopPromise<Data>?
@@ -169,6 +187,14 @@ private final class FrameAccumulatingHandler: ChannelInboundHandler, @unchecked 
     private func tryCompletePendingRequest() {
         guard promise != nil else { return }
         guard let length: UInt32 = buffer.getInteger(at: buffer.readerIndex, as: UInt32.self) else {
+            return
+        }
+        guard length <= Self.maxFrameLength else {
+            // Fail immediately: do not keep accumulating toward a frame this
+            // large (the rest of it may never even arrive), and do not wait
+            // for `responseDeadline` to eventually time it out.
+            completePending(with: .failure(AgentError.protocolError(
+                reason: "declared frame length \(length) exceeds the \(Self.maxFrameLength)-byte maximum")))
             return
         }
         let total = 4 + Int(length)

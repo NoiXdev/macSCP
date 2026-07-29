@@ -29,6 +29,11 @@ public enum AgentError: Error, Equatable, Sendable {
     /// The agent is reachable but reports no identities. Defined here for
     /// T1's interface completeness; T2 is responsible for throwing it.
     case noIdentities
+    /// The agent reported identities, but every one of them is a key type
+    /// `AgentPrivateKeyFactory` doesn't offer through the client (M11e/T1
+    /// point 3) — distinct from `.noIdentities` (an agent with nothing
+    /// loaded at all) so the two conditions can be localized separately.
+    case noUsableIdentities
     /// The agent answered with FAILURE (SSH_AGENT_FAILURE).
     case refused
     /// The response could not be parsed, or the transport misbehaved.

@@ -759,8 +759,13 @@ struct ContentView: View {
                     groups: sessionListViewModel.groups,
                     sessionList: sessionListViewModel,
                     resolveLoginSetForSubmit: {
-                        resolveSelectedLoginSet(in: tab)
-                        return resolveSelectedJumpLoginSet(in: tab)
+                        // Both resolutions always run (never short-circuited)
+                        // so a dangling target set AND a dangling jump set
+                        // each surface their own `showFailure` — only the
+                        // combined AND decides whether the caller may proceed.
+                        let targetResolved = resolveSelectedLoginSet(in: tab)
+                        let jumpResolved = resolveSelectedJumpLoginSet(in: tab)
+                        return targetResolved && jumpResolved
                     },
                     onSaveEdited: { stored, secret in
                         var stored = stored
@@ -1101,16 +1106,31 @@ struct ContentView: View {
         form.password = sessionListViewModel.password(for: synthetic) ?? ""
     }
 
-    /// `ConnectionFormView.resolveLoginSetForSubmit` implementation: a no-op
-    /// outside Set mode or while nothing is selected (the button is disabled
-    /// in that case anyway — this is the defensive belt-and-suspenders half).
-    private func resolveSelectedLoginSet(in tab: SessionTab) {
+    /// `ConnectionFormView.resolveLoginSetForSubmit` implementation:
+    /// mirrors `resolveSelectedJumpLoginSet` for the target (M11e/T1 point
+    /// 5 — the two used to be asymmetric, this one silently no-op'd on a
+    /// dangling set). Returns `true` outside Set mode, while nothing is
+    /// selected (the button is disabled in that case anyway — the
+    /// defensive belt-and-suspenders half), or on a successful fill.
+    /// Returns `false` when the selection is DANGLING — the set was
+    /// removed, e.g. via "Manage logins…" while this form stayed open —
+    /// after surfacing that through `showFailure` with the same M10b
+    /// `loginSets.missingSet` key the jump half uses. `field: nil` here
+    /// (unlike the jump half's `.jumpHost`): there is no matching
+    /// target-side field to highlight.
+    private func resolveSelectedLoginSet(in tab: SessionTab) -> Bool {
         let form = tab.connectionViewModel
-        guard form.loginMode == .set,
-            let id = form.selectedLoginSetID,
-            let set = sessionListViewModel.loginSets.first(where: { $0.id == id })
-        else { return }
+        guard form.loginMode == .set, let id = form.selectedLoginSetID else { return true }
+        guard let set = sessionListViewModel.loginSets.first(where: { $0.id == id }) else {
+            form.showFailure(
+                message: L10n.string(
+                    "loginSets.missingSet",
+                    "The stored login for this connection was not found. Choose a login or enter credentials."),
+                field: nil)
+            return false
+        }
         fillForm(form, from: set)
+        return true
     }
 
     /// Same as `fillForm(_:from:)` but for the jump block's own login
