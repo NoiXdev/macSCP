@@ -1269,6 +1269,54 @@ struct CitadelFileSystemIntegrationTests {
         }
     }
 
+    // MARK: - M11a/T4: jump host referencing a saved session
+
+    /// The M11a happy path proven at the rig level: a bastion session is
+    /// SAVED (`SessionStore` + `SecretStore`, mirroring how the app persists
+    /// it — see `SessionListViewModelTests.makeVM`), then referenced by
+    /// `sessionID` from a `JumpSpec`. Feeding `LoginResolver.resolveJump`'s
+    /// result into `SSHConnectionConfig.Jump` and actually connecting proves
+    /// the resolution drives a real two-hop connect end to end — not just
+    /// that it returns the right data in isolation (already covered by
+    /// `LoginResolverTests.resolveJumpFromSessionUsesItsHostAndLogin`).
+    @Test func jumpFromSavedSessionConnects() async throws {
+        let sessionsDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-sessions-jump-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: sessionsDir) }
+        let sessions = SessionStore(directory: sessionsDir)
+        let secrets = InMemorySecretStore()
+
+        let bastion = StoredSession(
+            name: "Bastion", host: "127.0.0.1", port: 2222, username: "testuser", authKind: .password)
+        try secrets.savePassword("testpass", for: bastion.id)
+        try sessions.upsert(bastion)
+
+        let jumpSpec = StoredSession.JumpSpec(host: "unused", username: "unused", sessionID: bastion.id)
+        let resolvedJump = try LoginResolver.resolveJump(
+            spec: jumpSpec, sets: [], secrets: secrets,
+            sessions: try sessions.all(), referencingSessionID: nil)
+
+        let config = try SSHConnectionConfig(
+            host: "sshd2", port: 2222, username: "testuser", auth: .password("testpass"),
+            jump: .init(
+                host: resolvedJump.host, port: resolvedJump.port,
+                username: resolvedJump.login.username,
+                auth: .password(resolvedJump.login.secret ?? "")))
+
+        let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-session-jump-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: khDir) }
+        let store = KnownHostsStore(directory: khDir)
+
+        let fs = try await connectWithRetry {
+            try await CitadelFileSystem.connect(
+                config: config, knownHosts: store, onUnknownHostKey: { _ in true })
+        }
+        let items = try await fs.list(path: "/")
+        #expect(!items.isEmpty)
+        await fs.disconnect()
+    }
+
     // MARK: - M10d/T2: ssh-agent authentication (RISK)
 
     private struct SpawnedAgent {
@@ -1607,6 +1655,45 @@ struct CitadelFileSystemIntegrationTests {
 
         let items = try await fs.list(path: "/data/seed")
         #expect(items.contains { $0.name == "hello.txt" })
+    }
+}
+
+/// M11a/T4 continued: the chain guard on a session-referenced jump must
+/// fire from data alone (`resolveJump` never dials anything before it
+/// throws — see `LoginResolver.resolveJump`). This deliberately lives
+/// OUTSIDE `CitadelFileSystemIntegrationTests` rather than as a `@Test`
+/// inside it: a suite-level `.enabled(if:)` trait disables every contained
+/// test regardless of that test's own traits, so nesting it in the gated
+/// suite above would silently skip it whenever MACSCP_ITEST != 1 — which
+/// would misrepresent a guard that in fact needs no rig, no network, and no
+/// Docker container at all.
+@Suite("Jump-from-session chain guard (no rig required)")
+struct JumpFromSavedSessionChainGuardTests {
+    /// A bastion session that itself has a jump, referenced as a
+    /// session-jump: `resolveJump` must refuse the chain (one hop only)
+    /// before any connection is attempted — proven here by never calling
+    /// `CitadelFileSystem.connect` at all.
+    @Test func jumpFromSavedSessionRefusesChain() throws {
+        let sessionsDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-sessions-jump-chain-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: sessionsDir) }
+        let sessions = SessionStore(directory: sessionsDir)
+        let secrets = InMemorySecretStore()
+
+        let innerJump = StoredSession.JumpSpec(host: "inner", username: "inner")
+        let bastion = StoredSession(
+            name: "Bastion", host: "127.0.0.1", port: 2222, username: "testuser",
+            authKind: .password, jump: innerJump)
+        try secrets.savePassword("testpass", for: bastion.id)
+        try sessions.upsert(bastion)
+
+        let jumpSpec = StoredSession.JumpSpec(host: "unused", username: "unused", sessionID: bastion.id)
+
+        #expect(throws: LoginResolveError.jumpChainNotSupported) {
+            _ = try LoginResolver.resolveJump(
+                spec: jumpSpec, sets: [], secrets: secrets,
+                sessions: try sessions.all(), referencingSessionID: nil)
+        }
     }
 }
 
