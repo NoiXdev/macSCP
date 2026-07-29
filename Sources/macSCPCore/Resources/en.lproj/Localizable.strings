@@ -48,10 +48,6 @@
 "core.connect.jumpAuthFailed" = "Jump host authentication failed — check username or password.";
 "core.connect.jumpTunnelRejected" = "The jump host refused to open the tunnel to the target (TCP forwarding may be disabled).";
 
-/* LoginResolver — jump host referencing a saved session (M11a/T1) */
-"core.connect.jumpSessionMissing" = "The connection used as jump host no longer exists.";
-"core.connect.jumpChainNotSupported" = "The selected jump host connects through another jump host; chains are not supported.";
-
 /* ConnectionViewModel — jump source switcher, session mode (M11a/T3) */
 "core.connect.jumpSessionRequired" = "Choose a connection for the jump host.";
 

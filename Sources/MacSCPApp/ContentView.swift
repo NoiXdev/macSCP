@@ -1187,9 +1187,17 @@ struct ContentView: View {
     /// surfacing that through `showFailure` with the M10b `loginSets.
     /// missingSet` key; the caller must not proceed to connect/validate in
     /// that case.
+    ///
+    /// `jumpSourceMode != .session` (F-1 fix, final review): a leftover
+    /// dangling `jumpSelectedLoginSetID` from a Manual+Set pick made before
+    /// switching Source to "Saved connection" must not block submit with an
+    /// error on a field session mode doesn't even render -- session mode has
+    /// its own resolution path (`resolveSelectedJumpSession` below).
     private func resolveSelectedJumpLoginSet(in tab: SessionTab) -> Bool {
         let form = tab.connectionViewModel
-        guard form.jumpEnabled, form.jumpLoginMode == .set, let id = form.jumpSelectedLoginSetID else {
+        guard form.jumpEnabled, form.jumpSourceMode != .session,
+              form.jumpLoginMode == .set, let id = form.jumpSelectedLoginSetID
+        else {
             return true
         }
         guard let set = sessionListViewModel.loginSets.first(where: { $0.id == id }) else {
@@ -1426,10 +1434,20 @@ struct ContentView: View {
             // Audit recorder (M9b/T3): this "Save & connect" path just
             // turned an ad-hoc connect into a stored session — attach the
             // recorder here, mirroring `connect(in:stored:)` below.
+            //
+            // `form.jumpHost` (M-1 fix, final review), not `stored.jump?.
+            // host`: for a session-mode jump `form.jumpHost` already holds
+            // the freshly resolved host (`resolveSelectedJumpSession` filled
+            // it before `connect()` ran, a few lines above `buildJumpSpec()`
+            // reads the very same field) -- using `stored.jump?.host`
+            // instead happened to read the identical value here (it's the
+            // trimmed copy of this same field), but only by accident, not by
+            // construction; `form.jumpHost` is the one field guaranteed to
+            // be current in both connect paths.
             if let stored {
                 attachAuditRecorder(
                     to: tab, sessionID: stored.id, host: stored.host, username: stored.username,
-                    viaJumpHost: stored.jump?.host)
+                    viaJumpHost: form.jumpEnabled ? form.jumpHost : nil)
             }
         }
 
@@ -1632,9 +1650,19 @@ struct ContentView: View {
                 // Audit recorder (M9b/T3): this IS the stored-session connect
                 // path — attach right after `activeStoredSessionID`, once
                 // `tab.session` (set inside `startSession`) exists.
+                //
+                // `form.jumpHost` (M-1 fix, final review), not
+                // `stored.jump?.host`: for a session-mode jump the latter is
+                // the snapshot taken at SAVE time, not the host actually
+                // dialed just now -- if the bastion session moved since, the
+                // audit entry would record a stale carrier host, defeating
+                // reference semantics. `form.jumpHost` was just resolved
+                // fresh above (`resolvedJump(for:)`/the manual fallback) and
+                // is correct by construction; `jumpEnabled` gates it to `nil`
+                // when there is no jump at all.
                 attachAuditRecorder(
                     to: tab, sessionID: stored.id, host: stored.host, username: stored.username,
-                    viaJumpHost: stored.jump?.host)
+                    viaJumpHost: form.jumpEnabled ? form.jumpHost : nil)
             }
         }
     }
@@ -1643,9 +1671,21 @@ struct ContentView: View {
     /// resolution), or clears it entirely when the session has no jump. Used by
     /// BOTH early-return failure paths so a stale jump block from a previous form
     /// state can never survive into a different session's connect.
+    ///
+    /// `jumpSourceMode`/`jumpSessionID` are also reset here (F-2 fix, final
+    /// review): the `if let jump` branch below fills only the manual-looking
+    /// fields, so without this a stale `jumpSourceMode == .session` +
+    /// `jumpSessionID` from a DIFFERENT, still-open form (e.g. an unconnected
+    /// tab left in session mode with bastion X preselected) would survive
+    /// into THIS session's (B's) connect: the picker would show X preselected
+    /// while the manual fields hold B's raw jump values, and a subsequent
+    /// Connect would silently route through X instead of B's own jump host.
+    /// The `else` branch already resets both via `clearJumpFields()`.
     private func applyRawJumpFallback(_ form: ConnectionViewModel, from stored: StoredSession) {
         if let jump = stored.jump {
             form.jumpEnabled = true
+            form.jumpSourceMode = .manual
+            form.jumpSessionID = nil
             form.jumpHost = jump.host
             form.jumpPort = String(jump.port)
             form.jumpUsername = jump.username

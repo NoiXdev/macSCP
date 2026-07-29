@@ -362,8 +362,15 @@ public final class SessionListViewModel {
     /// Sessions currently referencing the given set, either as their target
     /// login or their jump's login (M10c) — a session referencing the set on
     /// both counts once, since this filters sessions, not references.
+    /// `jump?.sessionID == nil` (F-1 fix, final review): a session-mode jump
+    /// (spec §1) never actually uses its `loginSetID` -- it's left over as an
+    /// inert data carrier once `sessionID` is non-nil (see
+    /// `ConnectionViewModel.buildJumpSpec`'s doc comment) -- so a stale
+    /// leftover value there must not inflate this usage count.
     public func sessionsUsing(setID: UUID) -> [StoredSession] {
-        sessions.filter { $0.loginSetID == setID || $0.jump?.loginSetID == setID }
+        sessions.filter {
+            $0.loginSetID == setID || ($0.jump?.loginSetID == setID && $0.jump?.sessionID == nil)
+        }
     }
 
     /// How many sessions currently reference the given set.
@@ -457,7 +464,12 @@ public final class SessionListViewModel {
                 }
             }
 
-            if var jump = restored.jump, jump.loginSetID == set.id {
+            // `jump.sessionID == nil` (F-1 fix, final review): a session-mode
+            // jump's `loginSetID` is an inert leftover, never the set this
+            // jump actually uses (spec §1) -- without this guard a dangling
+            // `loginSetID` would write the set's secret into a session-mode
+            // jump's otherwise-unused `secretID` slot.
+            if var jump = restored.jump, jump.loginSetID == set.id, jump.sessionID == nil {
                 jump.username = set.username
                 jump.authKind = set.authKind
                 jump.keyPath = set.keyPath

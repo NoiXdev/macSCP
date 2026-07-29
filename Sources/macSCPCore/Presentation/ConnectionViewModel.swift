@@ -326,6 +326,28 @@ public final class ConnectionViewModel {
         jumpPassword = ""
     }
 
+    /// User-initiated switch of the jump's source picker (M-5 fix, final
+    /// review): mirrors `selectAuthChoice`/`selectJumpAuthChoice` above --
+    /// switching AWAY from `.session` clears `jumpPassword`/`jumpKeyPath`.
+    /// `resolveSelectedJumpSession` (App layer) fills both with the
+    /// REFERENCED session's own resolved secret/key path right before a
+    /// connect attempt; if that connect then fails and the user flips Source
+    /// to Manual, the bastion's secret would otherwise sit pre-filled in the
+    /// manual SecureField -- ready to be persisted into THIS session's own
+    /// jump slot on the next save, a secret the user never typed and doesn't
+    /// own. Programmatic restore (`beginEditing`) sets `jumpSourceMode`
+    /// directly without going through here, same pattern as
+    /// `selectAuthChoice`'s own doc comment.
+    public func selectJumpSourceMode(_ mode: JumpSourceMode) {
+        guard mode != jumpSourceMode else { return }
+        let wasSession = jumpSourceMode == .session
+        jumpSourceMode = mode
+        if wasSession {
+            jumpPassword = ""
+            jumpKeyPath = ""
+        }
+    }
+
     /// Fills the form from a stored session for in-place editing. The secret
     /// is deliberately NEVER loaded from the keychain — `password` stays
     /// empty; an empty password at save time means "leave unchanged" (see
@@ -644,7 +666,12 @@ public final class ConnectionViewModel {
     /// `LoginResolver.resolveJump(...sessions:...)`), so they're left exactly
     /// as computed, unchanged, purely as an inert data carrier (spec §1);
     /// which branch fires doesn't matter for correctness, only which fields
-    /// end up along for the ride.
+    /// end up along for the ride -- EXCEPT `loginSetID`, which the `.set`
+    /// branch below forces to `nil` whenever `sessionID` is non-nil (F-1 fix,
+    /// final review): a stale login-set selection surviving a switch to
+    /// session mode must never coexist with `sessionID`, or
+    /// `sessionsUsing(setID:)` and `deleteLoginSet` would both mistake this
+    /// jump for a login-set reference.
     public func buildJumpSpec(existingSecretID: UUID? = nil) -> StoredSession.JumpSpec? {
         guard jumpEnabled else { return nil }
         let trimmedHost = jumpHost.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -653,13 +680,21 @@ public final class ConnectionViewModel {
         let trimmedUsername = jumpUsername.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedKeyPath = jumpKeyPath.trimmingCharacters(in: .whitespacesAndNewlines)
         let referencedSessionID = jumpSourceMode == .session ? jumpSessionID : nil
+        // Session mode (F-1 fix, final review): `loginSetID` must be nil
+        // whenever `sessionID` is non-nil -- carrying a stale login-set
+        // selection alongside a session reference would inflate
+        // `sessionsUsing(setID:)`'s usage count and let `deleteLoginSet`
+        // write a secret into this jump's otherwise-unused `secretID` slot
+        // (see both call sites' own hardening below). Mirrors the
+        // restoration path (`beginEditing`, spec §4), which never lets the
+        // two coexist either.
         switch jumpLoginMode {
         case .set:
             return StoredSession.JumpSpec(
                 host: trimmedHost, port: portNumber, username: trimmedUsername,
                 authKind: authKind,
                 keyPath: jumpAuthChoice == .privateKey ? trimmedKeyPath : nil,
-                loginSetID: jumpSelectedLoginSetID,
+                loginSetID: referencedSessionID == nil ? jumpSelectedLoginSetID : nil,
                 sessionID: referencedSessionID)
         case .manual:
             return StoredSession.JumpSpec(

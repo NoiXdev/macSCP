@@ -88,9 +88,15 @@ struct ConnectionFormView: View {
 
     /// Same as `loginSetModeIncomplete`, for the jump's own login switcher
     /// (M10c/T3) — the jump's Set mode with nothing picked yet also keeps
-    /// Connect/Save disabled, not just the target's.
+    /// Connect/Save disabled, not just the target's. `jumpSourceMode !=
+    /// .session` guards against a dangling `jumpSelectedLoginSetID` left over
+    /// from a Manual+Set pick before the user switched Source to "Saved
+    /// connection" (F-1 fix, final review): the Set picker isn't even
+    /// rendered in session mode, so it must not be able to disable
+    /// Connect/Save with no visible cause.
     private var jumpLoginSetModeIncomplete: Bool {
-        viewModel.jumpEnabled && viewModel.jumpLoginMode == .set && viewModel.jumpSelectedLoginSetID == nil
+        viewModel.jumpEnabled && viewModel.jumpSourceMode != .session
+            && viewModel.jumpLoginMode == .set && viewModel.jumpSelectedLoginSetID == nil
     }
 
     /// Same idea, for the jump's source switcher (M11a/T3) — session mode
@@ -433,7 +439,10 @@ struct ConnectionFormView: View {
                     // full manual block unchanged from before this feature.
                     let jumpSourceLabel = L10n.string("form.jump.source.label", "Source")
                     FormRow(label: jumpSourceLabel) {
-                        Picker(jumpSourceLabel, selection: $viewModel.jumpSourceMode) {
+                        Picker(jumpSourceLabel, selection: Binding(
+                            get: { viewModel.jumpSourceMode },
+                            set: { viewModel.selectJumpSourceMode($0) }
+                        )) {
                             Text(L10n.string("form.jump.source.session", "Saved connection"))
                                 .tag(ConnectionViewModel.JumpSourceMode.session)
                             Text(L10n.string("form.loginMode.manual", "Manual"))

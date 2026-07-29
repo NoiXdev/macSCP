@@ -557,6 +557,65 @@ struct ConnectionViewModelTests {
         #expect(vm.jumpSessionID == nil)
     }
 
+    /// F-1 fix (final review): `buildJumpSpec` must never emit BOTH a
+    /// `sessionID` and a `loginSetID` -- a stale login-set pick left over
+    /// from Manual+Set mode, made before the user flipped Source to "Saved
+    /// connection", must not survive into the built spec. Without the fix
+    /// this would inflate `sessionsUsing(setID:)`'s usage count and let
+    /// `deleteLoginSet` write the set's secret into this session-mode jump's
+    /// otherwise-unused `secretID` slot.
+    @Test @MainActor func buildJumpSpecInSessionModeIgnoresDanglingLoginSetSelection() {
+        let vm = makeVM()
+        vm.jumpEnabled = true
+        vm.jumpLoginMode = .set
+        vm.jumpSelectedLoginSetID = UUID()
+        vm.jumpSourceMode = .session
+        vm.jumpSessionID = UUID()
+
+        let spec = vm.buildJumpSpec()
+
+        #expect(spec?.sessionID == vm.jumpSessionID)
+        #expect(spec?.loginSetID == nil)
+    }
+
+    /// M-5 fix (final review): switching the jump's source picker AWAY from
+    /// `.session` must clear `jumpPassword`/`jumpKeyPath` --
+    /// `resolveSelectedJumpSession` (App layer) fills both with the
+    /// REFERENCED session's own resolved secret/key path right before a
+    /// connect attempt; if that connect then fails and the user flips Source
+    /// to Manual, the bastion's secret would otherwise sit pre-filled in the
+    /// manual SecureField, ready to be persisted into THIS session's own
+    /// jump slot on the next save -- a secret the user never typed.
+    @Test @MainActor func selectJumpSourceModeClearsSecretWhenLeavingSessionMode() {
+        let vm = makeVM()
+        vm.jumpEnabled = true
+        vm.jumpSourceMode = .session
+        vm.jumpSessionID = UUID()
+        vm.jumpPassword = "bastion-secret"
+        vm.jumpKeyPath = "/resolved/key"
+
+        vm.selectJumpSourceMode(.manual)
+
+        #expect(vm.jumpSourceMode == .manual)
+        #expect(vm.jumpPassword.isEmpty)
+        #expect(vm.jumpKeyPath.isEmpty)
+    }
+
+    /// Same call with the SAME mode is a no-op (mirrors `selectAuthChoice`'s
+    /// own early-return guard) -- must not clobber fields the user is
+    /// actively editing just because the picker re-fired with an unchanged
+    /// selection.
+    @Test @MainActor func selectJumpSourceModeIsNoOpWhenUnchanged() {
+        let vm = makeVM()
+        vm.jumpEnabled = true
+        vm.jumpSourceMode = .manual
+        vm.jumpPassword = "still-typing"
+
+        vm.selectJumpSourceMode(.manual)
+
+        #expect(vm.jumpPassword == "still-typing")
+    }
+
     // MARK: - Agent auth (M10d/T3)
 
     @Test func agentAuthSkipsPasswordAndKeyPathValidationAndBuildsAgentAuth() async {

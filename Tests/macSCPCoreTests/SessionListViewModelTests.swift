@@ -611,6 +611,44 @@ struct SessionListViewModelTests {
         #expect(try secrets.password(for: restored.jump!.secretID) == "s3cr3t")
     }
 
+    /// F-1 fix (final review): a session-mode jump (`jump.sessionID` non-nil)
+    /// must never be treated as a login-set reference, even if a stale
+    /// `loginSetID` happens to sit alongside it -- an inert leftover from a
+    /// switch to session mode (`ConnectionViewModel.buildJumpSpec` now nils
+    /// it when building a fresh spec, but this proves the Core-side
+    /// belt-and-suspenders guards independently, for a JumpSpec constructed
+    /// with both fields set directly). Without the guards this session would
+    /// inflate `sessionsUsing(setID:)`'s usage count and `deleteLoginSet`
+    /// would write the set's secret into the jump's otherwise-unused
+    /// `secretID` slot.
+    @Test func deleteLoginSetIgnoresDanglingLoginSetIDOnSessionModeJump() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "Bastion", username: "jumper")
+        vm.saveLoginSet(set, secret: "pp")
+        let bastion = vm.save(name: "bastion", host: "bastion.example.com", port: 22,
+                              username: "jumper", password: "pp")!
+
+        let jump = StoredSession.JumpSpec(
+            host: "unused", username: "unused", loginSetID: set.id, sessionID: bastion.id)
+        let stored = vm.save(name: "web", host: "target.example.com", port: 22, username: "u",
+                             password: "pw", jump: jump)!
+
+        #expect(vm.sessionsUsing(setID: set.id).map(\.id) == [])
+        #expect(vm.usageCount(of: set.id) == 0)
+
+        let result = vm.deleteLoginSet(set)
+
+        #expect(result == SessionListViewModel.LoginSetDeleteResult(restored: 0, secretFailures: 0))
+        let restored = vm.sessions.first { $0.id == stored.id }!
+        // Untouched: still session mode, still carrying the (never acted
+        // upon) stale loginSetID -- nothing was "restored" because this jump
+        // was never actually using the set.
+        #expect(restored.jump?.sessionID == bastion.id)
+        #expect(restored.jump?.loginSetID == set.id)
+        #expect(try secrets.password(for: restored.jump!.secretID) == nil)
+    }
+
     @Test func exportResolvesJump() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
