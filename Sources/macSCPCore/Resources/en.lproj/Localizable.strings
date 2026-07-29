@@ -30,8 +30,8 @@
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "Host must not be empty.";
 "core.connect.emptyUsername" = "Username must not be empty.";
-"core.connect.hostInvalid" = "Host may only contain letters, digits, and . - _ : % (no leading -).";
-"core.connect.usernameInvalid" = "Username may only contain letters, digits, and . - _ (no leading -).";
+"core.connect.hostInvalid" = "Host must not contain spaces, quotes, or shell characters such as $ ; & | ` ( ), and must not start with -.";
+"core.connect.usernameInvalid" = "Username must not contain spaces, quotes, or shell characters such as $ ; & | ` ( ), and must not start with -.";
 "core.connect.invalidPort %@" = "Invalid port: %@.";
 "core.connect.authFailed" = "Authentication failed — check username or password.";
 "core.connect.connectionFailed %@" = "Connection failed: %@";

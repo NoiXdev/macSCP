@@ -30,8 +30,8 @@
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "Host darf nicht leer sein.";
 "core.connect.emptyUsername" = "Benutzername darf nicht leer sein.";
-"core.connect.hostInvalid" = "Host darf nur Buchstaben, Ziffern sowie . - _ : % enthalten (kein führendes -).";
-"core.connect.usernameInvalid" = "Benutzername darf nur Buchstaben, Ziffern sowie . - _ enthalten (kein führendes -).";
+"core.connect.hostInvalid" = "Host darf keine Leerzeichen, Anführungszeichen oder Shell-Zeichen wie $ ; & | ` ( ) enthalten und nicht mit - beginnen.";
+"core.connect.usernameInvalid" = "Benutzername darf keine Leerzeichen, Anführungszeichen oder Shell-Zeichen wie $ ; & | ` ( ) enthalten und nicht mit - beginnen.";
 "core.connect.invalidPort %@" = "Ungültiger Port: %@.";
 "core.connect.authFailed" = "Anmeldung fehlgeschlagen — Benutzername oder Passwort prüfen.";
 "core.connect.connectionFailed %@" = "Verbindung fehlgeschlagen: %@";

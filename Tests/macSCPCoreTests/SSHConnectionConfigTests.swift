@@ -140,10 +140,11 @@ struct SSHConnectionConfigTests {
         // the earlier asymmetry justified NOT restricting the target,
         // because ssh's positional destination argument is never
         // comma-split the way `-J`'s destination spec is. C-1's whitelist
-        // is applied uniformly for defense in depth, so a comma is
-        // rejected here too now — this fixture is the exact "existing test
-        // uses a value outside the whitelist" case the review asked to be
-        // reported rather than have the rule weakened for.
+        // was applied uniformly for defense in depth, so a comma was
+        // rejected here too. M11d fix3 (I-3) later replaced the TARGET
+        // whitelist with a ban list (see `isValidTargetHost`/
+        // `isValidTargetUsername`), but `,` is still on that ban list, so
+        // this assertion still holds under the new rule too.
         #expect(throws: SSHConnectionConfig.ConfigError.invalidHost) {
             _ = try SSHConnectionConfig(host: "a,b.example.com", username: "tim", auth: .password("x"))
         }
@@ -219,9 +220,18 @@ struct SSHConnectionConfigTests {
 
     @Test(arguments: [
         " ", "\t", "\"", "'", "$", "`", ";", "&", "<", ">", "|", "(", ")",
-        "{", "}", "\\", ",", "/", ":", "%",
+        "{", "}", ",", "/",
     ])
     func metacharacterInTargetUsernameThrows(char: String) {
+        // M11d fix3 (I-3): ":" and "%" moved out of this list — the new
+        // target ban list (`isValidTargetUsername`) does not forbid them,
+        // only the jump whitelist still does (see
+        // `metacharacterInJumpUsernameThrows` above). "\\" moved out too:
+        // `DOMAIN\user` is a legitimate target username, see
+        // `targetUsernameAcceptsRealWorldFormats` below — it stays
+        // rejected for the target HOST and for the jump username, see
+        // `targetHostRejectsAtSignAndBackslashButUsernameAcceptsThem` and
+        // `metacharacterInJumpUsernameThrows`.
         #expect(throws: SSHConnectionConfig.ConfigError.invalidUsername) {
             _ = try SSHConnectionConfig(host: "example.com", username: "user\(char)name", auth: .password("x"))
         }
@@ -269,6 +279,103 @@ struct SSHConnectionConfigTests {
             host: "example.com", username: "tim", auth: .password("x"),
             jump: .init(host: "b", username: username, auth: .password("x")))
         #expect(withJump.jump?.username == username)
+    }
+
+    // MARK: - M11d fix3, re-review finding I-3: the whitelist above (C-1)
+    // was too strict for the TARGET host/username, where no shell is ever
+    // involved — the target host is positional behind `--` and the target
+    // username is an `-l` argv, neither ever enters ssh's ProxyCommand
+    // string. The target fields now use a BAN list
+    // (`isValidTargetHost`/`isValidTargetUsername`) that still blocks every
+    // shell-dangerous character but allows real-world values the old
+    // whitelist rejected. The JUMP fields (`isValidJumpHost`/
+    // `isValidJumpUsername`, tested above) are UNCHANGED — the jump
+    // destination is the one ssh executes via `/bin/sh -c` as an implicit
+    // ProxyCommand, so it keeps the strict whitelist.
+
+    @Test(arguments: ["user@install", "DOMAIN\\user", "user+tag", "bjørn"])
+    func targetUsernameAcceptsRealWorldFormats(username: String) throws {
+        // A WP Engine-style SFTP username, an AD "DOMAIN\user" account on a
+        // Windows SSH server, a "+"-tagged username, and a non-ASCII
+        // username — all legitimate values the old whitelist rejected.
+        // None of these ever enter ssh's ProxyCommand string: the target
+        // username is passed as a literal `-l` argv.
+        let config = try SSHConnectionConfig(host: "example.com", username: username, auth: .password("x"))
+        #expect(config.username == username)
+    }
+
+    @Test(arguments: ["münchen.de", "example.com", "10.0.0.5", "2001:db8::1", "fe80::1%en0", "host_name"])
+    func targetHostAcceptsIDNAndOrdinaryValues(host: String) throws {
+        // An IDN host (German umlaut) plus the values already accepted
+        // before this fix — the target host is positional behind `--`, so
+        // it never enters ssh's ProxyCommand string either.
+        let config = try SSHConnectionConfig(host: host, username: "tim", auth: .password("x"))
+        #expect(config.host == host)
+    }
+
+    @Test(arguments: [
+        " ", "\t", "\n", "\u{0}", "$(whoami)", "`id`", ";", "|", "&", "<", ">", "../x", "a,b",
+    ])
+    func targetHostStillRejectsShellDangerousValues(payload: String) {
+        #expect(throws: SSHConnectionConfig.ConfigError.invalidHost) {
+            _ = try SSHConnectionConfig(host: "host\(payload)name", username: "tim", auth: .password("x"))
+        }
+    }
+
+    @Test(arguments: [
+        " ", "\t", "\n", "\u{0}", "$(whoami)", "`id`", ";", "|", "&", "<", ">", "../x", "a,b",
+    ])
+    func targetUsernameStillRejectsShellDangerousValues(payload: String) {
+        #expect(throws: SSHConnectionConfig.ConfigError.invalidUsername) {
+            _ = try SSHConnectionConfig(host: "example.com", username: "user\(payload)name", auth: .password("x"))
+        }
+    }
+
+    @Test func targetHostAndUsernameStillRejectLeadingDash() {
+        // Already covered by `leadingDashRejectedInAllFourFields` above;
+        // this documents the exact reviewer payload for the target fields.
+        #expect(throws: SSHConnectionConfig.ConfigError.invalidHost) {
+            _ = try SSHConnectionConfig(host: "-oProxyCommand=id", username: "tim", auth: .password("x"))
+        }
+        #expect(throws: SSHConnectionConfig.ConfigError.invalidUsername) {
+            _ = try SSHConnectionConfig(host: "example.com", username: "-oProxyCommand=id", auth: .password("x"))
+        }
+    }
+
+    @Test func targetHostRejectsAtSignAndBackslashButUsernameAcceptsThem() {
+        // The one asymmetry within the TARGET pair itself: "@" and "\"
+        // can't appear in a hostname (no legitimate host needs them) but
+        // are real characters in "user@install" / "DOMAIN\user" usernames
+        // (see `targetUsernameAcceptsRealWorldFormats` above).
+        #expect(throws: SSHConnectionConfig.ConfigError.invalidHost) {
+            _ = try SSHConnectionConfig(host: "host@name", username: "tim", auth: .password("x"))
+        }
+        #expect(throws: SSHConnectionConfig.ConfigError.invalidHost) {
+            _ = try SSHConnectionConfig(host: "host\\name", username: "tim", auth: .password("x"))
+        }
+    }
+
+    @Test func jumpUsernameStillRejectsAtSignDespiteTargetAcceptingIt() {
+        // Intentional asymmetry: `user@install` is a legitimate TARGET
+        // username (see `targetUsernameAcceptsRealWorldFormats`), but it
+        // must stay rejected as a JUMP username — the jump destination is
+        // the one that reaches `/bin/sh` via ssh's implicit ProxyCommand.
+        #expect(throws: SSHConnectionConfig.ConfigError.invalidJumpUsername) {
+            _ = try SSHConnectionConfig(
+                host: "example.com", username: "tim", auth: .password("x"),
+                jump: .init(host: "b", username: "user@install", auth: .password("x")))
+        }
+    }
+
+    @Test func jumpHostStillRejectsIDNDespiteTargetAcceptingIt() {
+        // Same intentional asymmetry as above, for the host side:
+        // "münchen.de" is a legitimate TARGET host but stays rejected as a
+        // JUMP host.
+        #expect(throws: SSHConnectionConfig.ConfigError.invalidJumpHost) {
+            _ = try SSHConnectionConfig(
+                host: "example.com", username: "tim", auth: .password("x"),
+                jump: .init(host: "münchen.de", username: "j", auth: .password("x")))
+        }
     }
 
     // MARK: - M11d fix round 1, Finding 3: an empty private-key path would

@@ -84,10 +84,19 @@ public enum SSHCommandBuilder {
     }
 
     private static func jumpTarget(for jump: SSHConnectionConfig.Jump) -> String {
+        // An IPv6 jump host must be bracketed (`[...]`), or real ssh fails
+        // to parse the `-J` destination spec at all (verified: `-J
+        // 'ju@2001:db8::1'` and `-J 'ju@2001:db8::1:2022'` both →
+        // "Invalid -J argument", while `deploy@[2001:db8::1]:2022` parses
+        // fine) — ssh cannot otherwise tell the host's own colons apart
+        // from the `:<port>` suffix. A host containing `:` (including a
+        // zone id like `fe80::1%en0`) is the IPv6-literal case; hostnames
+        // and IPv4 addresses never contain `:` and stay unbracketed.
+        let host = jump.host.contains(":") ? "[\(jump.host)]" : jump.host
         if jump.port != 22 {
-            return "\(jump.username)@\(jump.host):\(jump.port)"
+            return "\(jump.username)@\(host):\(jump.port)"
         }
-        return "\(jump.username)@\(jump.host)"
+        return "\(jump.username)@\(host)"
     }
 
     /// Wraps `value` in single quotes for a POSIX shell, escaping any

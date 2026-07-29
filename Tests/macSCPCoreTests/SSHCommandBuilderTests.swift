@@ -48,6 +48,62 @@ struct SSHCommandBuilderTests {
                 == ["-l", "tim", "-J", "j@b:2022", "--", "example.com"])
     }
 
+    // MARK: - M11d fix3, finding M-6: `ssh -J` rejects an unbracketed IPv6
+    // jump host (verified against real ssh: `-J 'ju@2001:db8::1'` and
+    // `-J 'ju@2001:db8::1:2022'` both fail with "Invalid -J argument",
+    // while `deploy@[2001:db8::1]:2022` parses fine). A jump host
+    // containing ":" must be wrapped in `[...]`.
+
+    @Test func jumpAddsBracketsAroundIPv6Host() throws {
+        let config = try SSHConnectionConfig(
+            host: "example.com", username: "tim", auth: .password("x"),
+            jump: .init(host: "2001:db8::1", username: "deploy", auth: .password("x")))
+        #expect(
+            SSHCommandBuilder.arguments(for: config)
+                == ["-l", "tim", "-J", "deploy@[2001:db8::1]", "--", "example.com"])
+    }
+
+    @Test func jumpAddsBracketsAroundIPv6HostWithNonDefaultPort() throws {
+        let config = try SSHConnectionConfig(
+            host: "example.com", username: "tim", auth: .password("x"),
+            jump: .init(host: "2001:db8::1", port: 2022, username: "deploy", auth: .password("x")))
+        #expect(
+            SSHCommandBuilder.arguments(for: config)
+                == ["-l", "tim", "-J", "deploy@[2001:db8::1]:2022", "--", "example.com"])
+    }
+
+    @Test func jumpAddsBracketsAroundIPv6HostWithZoneID() throws {
+        let config = try SSHConnectionConfig(
+            host: "example.com", username: "tim", auth: .password("x"),
+            jump: .init(host: "fe80::1%en0", username: "deploy", auth: .password("x")))
+        #expect(
+            SSHCommandBuilder.arguments(for: config)
+                == ["-l", "tim", "-J", "deploy@[fe80::1%en0]", "--", "example.com"])
+    }
+
+    @Test func jumpHostnameStaysUnbracketed() throws {
+        // Byte-identical to before this fix: a jump host with no ":" is
+        // never wrapped in brackets (see also `jumpAddsDashJ` above).
+        let config = try SSHConnectionConfig(
+            host: "example.com", username: "tim", auth: .password("x"),
+            jump: .init(host: "b", username: "j", auth: .password("x")))
+        #expect(SSHCommandBuilder.arguments(for: config) == ["-l", "tim", "-J", "j@b", "--", "example.com"])
+    }
+
+    // MARK: - M11d fix3, finding I-3: a target username containing "@"
+    // (e.g. "user@install") is a legitimate value now that
+    // `SSHConnectionConfig` uses a ban list for the target fields — it must
+    // survive into the `-l` argv unmangled and be safely single-quoted.
+
+    @Test func targetUsernameWithAtSignSurvivesIntoLoginArgumentUnmangled() throws {
+        let config = try SSHConnectionConfig(host: "example.com", username: "user@install", auth: .password("x"))
+        let args = SSHCommandBuilder.arguments(for: config)
+        #expect(args == ["-l", "user@install", "--", "example.com"])
+
+        let shell = SSHCommandBuilder.shellCommand(for: config)
+        #expect(shell.contains("'-l' 'user@install'"))
+    }
+
     @Test func jumpAndKeyTogether() throws {
         let config = try SSHConnectionConfig(
             host: "example.com", username: "tim",

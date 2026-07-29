@@ -60,24 +60,42 @@ public struct SSHConnectionConfig: Equatable, Sendable {
         /// unvalidated `-J` destination spec, so it gets the same strict
         /// whitelist (ASCII letters/digits, `.`, `-`, `_`; no leading `-`).
         case invalidJumpUsername
-        /// Defense in depth (M11d final review, C-1): the same host
-        /// whitelist as `invalidJumpHost`, applied to the TARGET host too,
-        /// so macSCP does not depend on the local `ssh` build's own
-        /// argument handling to keep a hostile host from being
-        /// misinterpreted.
+        /// The target host contains a character on the ban list (M11d fix3,
+        /// re-review finding I-3). Unlike the jump host, the target host
+        /// never enters ssh's `ProxyCommand` string — it is positional
+        /// behind the `--` `SSHCommandBuilder` emits, so ssh itself is the
+        /// one that parses it as a hostname. A whitelist as strict as the
+        /// jump one bought little safety here but rejected real IDN hosts
+        /// (e.g. `münchen.de`), so this only bans characters that are
+        /// actually shell-dangerous or could be misread by `ssh`/getopt: a
+        /// leading `-`, whitespace/control characters, and shell
+        /// metacharacters — everything else, including non-ASCII, is
+        /// allowed. See `isValidTargetHost` for the exact ban list.
         case invalidHost
-        /// Defense in depth: the same username whitelist as
-        /// `invalidJumpUsername`, applied to the TARGET username.
+        /// The target username contains a character on the ban list (M11d
+        /// fix3, re-review finding I-3). Like the target host, the target
+        /// username never enters ssh's `ProxyCommand` string — it is passed
+        /// as a literal `-l` argv, so the strict jump whitelist bought
+        /// little there and cost a capability that existed since M1: a
+        /// user whose SFTP username is `user@install` (a documented WP
+        /// Engine-style format) or `DOMAIN\user` (an AD account on a
+        /// Windows SSH server) could no longer connect at all. This ban
+        /// list therefore permits `@` and `\` in addition to everything
+        /// `isValidTargetHost` allows. See `isValidTargetUsername` for the
+        /// exact ban list.
         case invalidUsername
     }
 
-    /// Strict whitelist for `host`/`jump.host`: ASCII letters, digits, `.`,
-    /// `-`, `_`, `:` (IPv6 literals), `%` (IPv6 zone id) — no leading `-`
-    /// (which `ssh`/getopt could otherwise mistake for an option). Every
-    /// other character (whitespace, control characters, quotes, `$`,
-    /// backtick, `;`, `&`, `<`, `>`, `|`, `(`, `)`, `{`, `}`, `\`, `,`, `/`)
-    /// is rejected. This is the ONE place either host whitelist is defined.
-    private static func isValidHost(_ value: String) -> Bool {
+    /// Strict whitelist for `jump.host`: ASCII letters, digits, `.`, `-`,
+    /// `_`, `:` (IPv6 literals), `%` (IPv6 zone id) — no leading `-` (which
+    /// `ssh`/getopt could otherwise mistake for an option). Every other
+    /// character (whitespace, control characters, quotes, `$`, backtick,
+    /// `;`, `&`, `<`, `>`, `|`, `(`, `)`, `{`, `}`, `\`, `,`, `/`) is
+    /// rejected. This is the ONE place the jump host whitelist is defined.
+    /// Unlike the target host (`isValidTargetHost`), the jump host DOES
+    /// enter ssh's implicit `ProxyCommand` string, so it keeps this strict
+    /// whitelist rather than the target's more permissive ban list.
+    private static func isValidJumpHost(_ value: String) -> Bool {
         guard let first = value.first, first != "-" else { return false }
         return value.allSatisfy { char in
             (char.isASCII && (char.isLetter || char.isNumber))
@@ -85,13 +103,64 @@ public struct SSHConnectionConfig: Equatable, Sendable {
         }
     }
 
-    /// Strict whitelist for `username`/`jump.username`: ASCII letters,
-    /// digits, `.`, `-`, `_` — no leading `-`.
-    private static func isValidUsername(_ value: String) -> Bool {
+    /// Strict whitelist for `jump.username`: ASCII letters, digits, `.`,
+    /// `-`, `_` — no leading `-`. Unlike the target username
+    /// (`isValidTargetUsername`), the jump username DOES enter ssh's
+    /// implicit `ProxyCommand` string, so it keeps this strict whitelist.
+    private static func isValidJumpUsername(_ value: String) -> Bool {
         guard let first = value.first, first != "-" else { return false }
         return value.allSatisfy { char in
             (char.isASCII && (char.isLetter || char.isNumber)) || char == "." || char == "-" || char == "_"
         }
+    }
+
+    /// Characters rejected outright anywhere in a control character check:
+    /// whitespace, newlines, and ASCII control characters (including NUL
+    /// and DEL) — shared by both target predicates below.
+    private static func hasWhitespaceOrControlCharacter(_ value: String) -> Bool {
+        value.contains { char in
+            char.isWhitespace || char.isNewline || (char.asciiValue.map { $0 < 0x20 || $0 == 0x7F } ?? false)
+        }
+    }
+
+    /// Ban list for the target `host` (M11d fix3, finding I-3): rejects an
+    /// empty string, a leading `-` (which `ssh`/getopt could otherwise
+    /// mistake for an option — the `--` in `SSHCommandBuilder` is a second
+    /// layer, not the only one), any whitespace/newline/control character,
+    /// and any of `' " \` $ & ; | < > ( ) { } [ ] \ , * ? ! # ~ ^ = @ /`.
+    /// Everything else is allowed — notably non-ASCII (IDN hosts like
+    /// `münchen.de`), `.`, `-`, `_`, `:` (IPv6), `%` (IPv6 zone id), `+`.
+    /// The target host is positional behind `--` and never enters ssh's
+    /// `ProxyCommand` string (unlike the jump host, see `isValidJumpHost`),
+    /// so a ban list closes the real shell-injection risks without
+    /// rejecting legitimate values the way the old whitelist did.
+    private static func isValidTargetHost(_ value: String) -> Bool {
+        guard let first = value.first, first != "-" else { return false }
+        guard !hasWhitespaceOrControlCharacter(value) else { return false }
+        let bannedCharacters: Set<Character> = [
+            "'", "\"", "`", "$", "&", ";", "|", "<", ">", "(", ")", "{", "}", "[", "]",
+            "\\", ",", "*", "?", "!", "#", "~", "^", "=", "@", "/",
+        ]
+        return !value.contains { bannedCharacters.contains($0) }
+    }
+
+    /// Ban list for the target `username` (M11d fix3, finding I-3): the
+    /// same shape as `isValidTargetHost` (leading `-`, whitespace/newline/
+    /// control characters, and a metacharacter ban list), but the ban set
+    /// OMITS `@` and `\` because `user@install` (a documented WP
+    /// Engine-style SFTP username) and `DOMAIN\user` (an AD account on a
+    /// Windows SSH server) are real usernames, and neither character can do
+    /// harm in an `-l` argv (the target username never enters ssh's
+    /// `ProxyCommand` string, unlike the jump username — see
+    /// `isValidJumpUsername`).
+    private static func isValidTargetUsername(_ value: String) -> Bool {
+        guard let first = value.first, first != "-" else { return false }
+        guard !hasWhitespaceOrControlCharacter(value) else { return false }
+        let bannedCharacters: Set<Character> = [
+            "'", "\"", "`", "$", "&", ";", "|", "<", ">", "(", ")", "{", "}", "[", "]",
+            ",", "*", "?", "!", "#", "~", "^", "/",
+        ]
+        return !value.contains { bannedCharacters.contains($0) }
     }
 
     public let host: String
@@ -102,10 +171,10 @@ public struct SSHConnectionConfig: Equatable, Sendable {
 
     public init(host: String, port: Int = 22, username: String, auth: AuthMethod, jump: Jump? = nil) throws {
         guard !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ConfigError.emptyHost }
-        guard Self.isValidHost(host) else { throw ConfigError.invalidHost }
+        guard Self.isValidTargetHost(host) else { throw ConfigError.invalidHost }
         guard (1...65535).contains(port) else { throw ConfigError.invalidPort(port) }
         guard !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ConfigError.emptyUsername }
-        guard Self.isValidUsername(username) else { throw ConfigError.invalidUsername }
+        guard Self.isValidTargetUsername(username) else { throw ConfigError.invalidUsername }
         if case .privateKey(let keyPath, _) = auth {
             guard !keyPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw ConfigError.emptyKeyPath
@@ -115,12 +184,12 @@ public struct SSHConnectionConfig: Equatable, Sendable {
             guard !jump.host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw ConfigError.emptyJumpHost
             }
-            guard Self.isValidHost(jump.host) else { throw ConfigError.invalidJumpHost }
+            guard Self.isValidJumpHost(jump.host) else { throw ConfigError.invalidJumpHost }
             guard (1...65535).contains(jump.port) else { throw ConfigError.invalidJumpPort(jump.port) }
             guard !jump.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw ConfigError.emptyJumpUsername
             }
-            guard Self.isValidUsername(jump.username) else { throw ConfigError.invalidJumpUsername }
+            guard Self.isValidJumpUsername(jump.username) else { throw ConfigError.invalidJumpUsername }
             if case .privateKey(let jumpKeyPath, _) = jump.auth {
                 guard !jumpKeyPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     throw ConfigError.emptyJumpKeyPath
