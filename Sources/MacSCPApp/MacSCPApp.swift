@@ -43,6 +43,10 @@ struct MacSCPApp: App {
     @State private var auditStore = AuditLogStore(directory: AuditLogStore.defaultDirectory)
     /// Tab menu command bridge (M8a/T4) — see `TabCommands`.
     @State private var tabCommands = TabCommands()
+    /// App-global update-check state (M11b/T2) — see `UpdateCheckModel`'s
+    /// doc comment for why this lives here rather than in `ContentView`'s
+    /// per-tab machinery.
+    @State private var updateModel = UpdateCheckModel()
 
     init() {
         // Sweep any orphaned edit temp directories left behind by a
@@ -63,9 +67,25 @@ struct MacSCPApp: App {
         WindowGroup("macSCP") {
             ContentView(
                 settingsStore: settingsStore, bandwidthLimiter: bandwidthLimiter,
-                auditStore: auditStore, tabCommands: tabCommands)
+                auditStore: auditStore, tabCommands: tabCommands, updateModel: updateModel)
         }
         .commands {
+            // "Check for Updates…" (M11b/T2), directly under "About macSCP"
+            // (spec §4). App-global, not routed through the `tabCommands`
+            // key-window bridge like the tab/session commands below — the
+            // check itself doesn't depend on which window is focused, it
+            // just compares the running bundle against the latest GitHub
+            // release. Disabled while a check is already running (spec §4
+            // multi-click guard); a manual click always presents a result,
+            // shown via `updateModel.presentedResult` in `ContentView`'s
+            // alert (the app's one window, where app-global result dialogs
+            // already live — see the import/export alerts there).
+            CommandGroup(after: .appInfo) {
+                Button(L10n.string("menu.checkForUpdates", "Check for Updates…")) {
+                    Task { await updateModel.check(manual: true, settingsStore: settingsStore) }
+                }
+                .disabled(updateModel.isChecking)
+            }
             // Replaces the default "New Window" (⌘N) — this is a single-window,
             // multi-tab app (M8a/T4): ⌘N opens a new TAB instead. "Close Tab"
             // (⌘W) lives in the same group; it shadows the system "Close"

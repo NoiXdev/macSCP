@@ -11,15 +11,23 @@ public struct GitHubReleaseFetcher: ReleaseFetcher {
 
     private let session: URLSession
 
-    public init(session: URLSession = .shared) {
+    /// The version substituted into the `User-Agent` header (`macSCP/<version>`,
+    /// spec §2). Defaulted so existing call sites and tests that don't care
+    /// about the header's exact value keep compiling; the App layer passes
+    /// the actual bundle version (`CFBundleShortVersionString`) — Core stays
+    /// bundle-free itself.
+    private let userAgentVersion: String
+
+    public init(session: URLSession = .shared, userAgentVersion: String = "update-check") {
         self.session = session
+        self.userAgentVersion = userAgentVersion
     }
 
     public func latestRelease() async throws -> ReleaseInfo {
         var request = URLRequest(url: Self.releaseURL)
         request.httpMethod = "GET"
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.setValue("macSCP/update-check", forHTTPHeaderField: "User-Agent")
+        request.setValue("macSCP/\(userAgentVersion)", forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 10
 
         let data: Data

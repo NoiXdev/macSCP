@@ -86,6 +86,28 @@ struct GitHubReleaseFetcherTests {
         #expect(request.timeoutInterval == 10)
     }
 
+    /// The App layer passes the running bundle's `CFBundleShortVersionString`
+    /// through `userAgentVersion` (Core stays bundle-free) — proves it
+    /// actually reaches the `User-Agent` header instead of the default
+    /// placeholder (T1 hand-off requirement).
+    @Test func userAgentIncludesProvidedVersion() async throws {
+        StubURLProtocol.reset(expecting: Self.expectedURL)
+        var capturedRequest: URLRequest?
+        StubURLProtocol.handler = { request in
+            capturedRequest = request
+            let json = #"{"tag_name":"v1.0.0","html_url":"https://example.com/v1.0.0"}"#
+            return (200, [:], Data(json.utf8))
+        }
+
+        let fetcher = GitHubReleaseFetcher(
+            session: StubURLProtocol.makeSession(), userAgentVersion: "9.9.9")
+        _ = try await fetcher.latestRelease()
+
+        #expect(!StubURLProtocol.unexpectedRequestSeen)
+        let request = try #require(capturedRequest)
+        #expect(request.value(forHTTPHeaderField: "User-Agent") == "macSCP/9.9.9")
+    }
+
     @Test func parsesTagAndURL() async throws {
         StubURLProtocol.reset(expecting: Self.expectedURL)
         StubURLProtocol.handler = { _ in

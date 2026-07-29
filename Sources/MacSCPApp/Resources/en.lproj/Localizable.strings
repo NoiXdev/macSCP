@@ -4,6 +4,8 @@
 "settings.general.showHiddenHint" = "Applies to both panes. Shortcut: ⌘⇧.";
 "settings.general.autoRefresh" = "Auto-refresh remote view";
 "settings.general.autoRefreshInterval %lld" = "Every %lld seconds";
+"settings.general.updateCheck" = "Automatically check for updates";
+"settings.general.updateCheckHint" = "Asks GitHub for the latest version at most once a day. No data about you is transmitted.";
 
 /* Settings — Transfers tab */
 "settings.tab.transfers" = "Transfers";
@@ -383,3 +385,19 @@
 /* Sidebar delete confirmation — referenced as a jump host (M11a/T3) */
 "sidebar.delete.jumpUsage %lld" = "%lld connections use this connection as their jump host and will keep its data directly.";
 "sidebar.delete.jumpRestoreError %lld" = "Could not restore the stored password for %lld connections.";
+
+/* Update check — menu item + result dialog (M11b/T2) */
+"menu.checkForUpdates" = "Check for Updates…";
+"update.available.title" = "Update Available";
+"update.available.message %@ %@" = "Version %@ is available (installed: %@)";
+"update.openReleasePage" = "Open Release Page";
+"update.later" = "Later";
+"update.upToDate.title" = "No Update Available";
+"update.upToDate.message %@" = "macSCP %@ is the latest version.";
+"update.unknownVersion.title" = "Version Unknown";
+"update.unknownVersion.message" = "This build's version could not be determined, so no update check could be performed.";
+"update.error.title" = "Update Check Failed";
+"update.error.offline" = "Could not reach GitHub. Check your internet connection and try again.";
+"update.error.httpStatus %lld" = "GitHub returned an unexpected error (HTTP %lld).";
+"update.error.rateLimited" = "Too many requests to GitHub right now. Try again later.";
+"update.error.malformedResponse" = "The response from GitHub could not be understood.";

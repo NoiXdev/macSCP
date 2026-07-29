@@ -454,4 +454,72 @@ struct SettingsStoreTests {
         #expect(store.terminalCursorStyle == .block)
         #expect(store.terminalCursorBlink == true)
     }
+
+    // MARK: - Update check (M11b Task 2)
+
+    @Test func updateCheckDefaultsToEnabledWithNoLastCheck() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.updateCheckEnabled == true)
+        #expect(store.lastUpdateCheck == nil)
+    }
+
+    @Test func updateCheckSettingsPersistenceRoundtrips() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+        store.updateCheckEnabled = false
+        store.lastUpdateCheck = timestamp
+
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.updateCheckEnabled == false)
+        #expect(reloaded.lastUpdateCheck == timestamp)
+    }
+
+    @Test func lastUpdateCheckCanBeClearedBackToNil() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.lastUpdateCheck = Date()
+        store.lastUpdateCheck = nil
+        #expect(store.lastUpdateCheck == nil)
+    }
+
+    @Test func loadingOldSettingsFileWithoutUpdateCheckKeysUsesDefaults() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"maxConcurrentTransfers": 4, "uploadLimitKBs": 10, "downloadLimitKBs": 20}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        #expect(store.updateCheckEnabled == true)
+        #expect(store.lastUpdateCheck == nil)
+    }
+
+    @Test func updateCheckSurvivesAlongsideUnknownKeys() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"maxConcurrentTransfers": 4, "futureFeatureEnabled": true, "futureLabel": "keep-me"}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        store.updateCheckEnabled = false
+        let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+        store.lastUpdateCheck = timestamp
+
+        let data = try Data(contentsOf: fileURL(dir))
+        let raw = try JSONDecoder().decode([String: JSONValue].self, from: data)
+        #expect(raw["futureFeatureEnabled"] == .bool(true))
+        #expect(raw["futureLabel"] == .string("keep-me"))
+        #expect(raw["updateCheckEnabled"] == .bool(false))
+        #expect(raw["lastUpdateCheck"] == .number(timestamp.timeIntervalSince1970))
+    }
 }

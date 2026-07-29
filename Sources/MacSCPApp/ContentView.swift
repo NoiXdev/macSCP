@@ -153,6 +153,12 @@ struct ContentView: View {
     /// `ContentView`, so the menu's Cmd-N/Cmd-W/Cmd-1…9 items call into the
     /// closures this view assigns in `.task` below.
     let tabCommands: TabCommands
+    /// App-global update-check state (M11b/T2), created once in
+    /// `MacSCPApp` (no singleton, same pattern as the stores above). Its
+    /// result alert lives here because this is the app's one window — the
+    /// same place the app-global import/export result alerts already live,
+    /// despite those also being triggered from the app-wide Sessions menu.
+    let updateModel: UpdateCheckModel
     /// Assigned in `init` (not a bare default value) so it can pass
     /// `auditStore` through — mirrors `_tabsModel` below.
     @State private var sessionListViewModel: SessionListViewModel
@@ -235,12 +241,13 @@ struct ContentView: View {
 
     init(
         settingsStore: SettingsStore, bandwidthLimiter: BandwidthLimiter, auditStore: AuditLogStore,
-        tabCommands: TabCommands
+        tabCommands: TabCommands, updateModel: UpdateCheckModel
     ) {
         self.settingsStore = settingsStore
         self.bandwidthLimiter = bandwidthLimiter
         self.auditStore = auditStore
         self.tabCommands = tabCommands
+        self.updateModel = updateModel
         _tabsModel = State(initialValue: TabsViewModel(
             initial: Self.makeTab(settingsStore: settingsStore, limiter: bandwidthLimiter)))
         _sessionListViewModel = State(initialValue: SessionListViewModel(
@@ -342,6 +349,14 @@ struct ContentView: View {
             // `.onChange` observers below keep it in sync afterwards. KBs → bytes/s.
             bandwidthLimiter.uploadLimitBytesPerSec = settingsStore.uploadLimitKBs * 1024
             bandwidthLimiter.downloadLimitBytesPerSec = settingsStore.downloadLimitKBs * 1024
+            // Startup automatic update check (M11b/T2, spec §3): fires at
+            // most once a day and only if due — `checkAutomaticallyIfDue`
+            // no-ops instantly when disabled or not yet due, and otherwise
+            // starts its own detached `Task`, so this never blocks the
+            // window from appearing. `isChecking`'s synchronous guard (see
+            // `UpdateCheckModel`) keeps this safe even if a second window
+            // somehow ran this same `.task` concurrently.
+            updateModel.checkAutomaticallyIfDue(settingsStore: settingsStore)
             // Command bridge wiring (M8a/T4): `MacSCPApp` has no reference to
             // this view, so the menu items call back through these closures.
             //
@@ -522,6 +537,27 @@ struct ContentView: View {
             Button(L10n.string("common.ok", "OK"), role: .cancel) {}
         } message: {
             Text(importResultMessage)
+        }
+        // Update-check result (M11b/T2, spec §4): a manual "Check for
+        // Updates…" always shows one of these four outcomes; the startup
+        // automatic only ever reaches this alert for `.updateAvailable`
+        // (see `UpdateCheckModel.check`, which stays silent otherwise).
+        .alert(
+            updateAlertTitle,
+            isPresented: Binding(
+                get: { updateModel.presentedResult != nil },
+                set: { isPresented in if !isPresented { updateModel.presentedResult = nil } })
+        ) {
+            if case .updateAvailable(_, _, let url) = updateModel.presentedResult {
+                Button(L10n.string("update.openReleasePage", "Open Release Page")) {
+                    NSWorkspace.shared.open(url)
+                }
+                Button(L10n.string("update.later", "Later"), role: .cancel) {}
+            } else {
+                Button(L10n.string("common.ok", "OK"), role: .cancel) {}
+            }
+        } message: {
+            Text(updateAlertMessage)
         }
         // Session actions live in the window's native toolbar (M5f/T5) —
         // attached at the outer container so it belongs to the window, not
@@ -1010,6 +1046,68 @@ struct ContentView: View {
                 "Other tabs are streaming to this session; closing cancels those transfers."))
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// Title for the update-check result alert (M11b/T2, spec §4) — one per
+    /// `UpdateCheckResult` case, `""` while no dialog is showing (`nil`).
+    /// `SwiftUI` evaluates this even during dismissal, so it must not force-
+    /// unwrap `presentedResult`.
+    private var updateAlertTitle: String {
+        switch updateModel.presentedResult {
+        case .updateAvailable:
+            return L10n.string("update.available.title", "Update Available")
+        case .upToDate:
+            return L10n.string("update.upToDate.title", "No Update Available")
+        case .unknownLocalVersion:
+            return L10n.string("update.unknownVersion.title", "Version Unknown")
+        case .failed:
+            return L10n.string("update.error.title", "Update Check Failed")
+        case nil:
+            return ""
+        }
+    }
+
+    /// Message body matching `updateAlertTitle` above. The `.updateAvailable`
+    /// wording is spec-mandated verbatim (spec §4): "Version %@ is available
+    /// (installed: %@)". `.unknownLocalVersion` gets its own honest message
+    /// and no link (spec §4) — never an update claim built on a version that
+    /// couldn't be read. Each `UpdateCheckError` case gets its own message.
+    private var updateAlertMessage: String {
+        switch updateModel.presentedResult {
+        case .updateAvailable(let latest, let current, _):
+            return String(
+                format: L10n.string(
+                    "update.available.message %@ %@", "Version %@ is available (installed: %@)"),
+                latest.description, current.description)
+        case .upToDate(let current):
+            return String(
+                format: L10n.string("update.upToDate.message %@", "macSCP %@ is the latest version."),
+                current.description)
+        case .unknownLocalVersion:
+            return L10n.string(
+                "update.unknownVersion.message",
+                "This build's version could not be determined, so no update check could be performed.")
+        case .failed(let error):
+            switch error {
+            case .offline:
+                return L10n.string(
+                    "update.error.offline",
+                    "Could not reach GitHub. Check your internet connection and try again.")
+            case .httpStatus(let code):
+                return String(
+                    format: L10n.string(
+                        "update.error.httpStatus %lld", "GitHub returned an unexpected error (HTTP %lld)."),
+                    code)
+            case .rateLimited:
+                return L10n.string(
+                    "update.error.rateLimited", "Too many requests to GitHub right now. Try again later.")
+            case .malformedResponse:
+                return L10n.string(
+                    "update.error.malformedResponse", "The response from GitHub could not be understood.")
+            }
+        case nil:
+            return ""
+        }
     }
 
     /// True while any OTHER tab's queue holds a non-terminal item that

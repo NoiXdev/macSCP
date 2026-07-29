@@ -4,6 +4,8 @@
 "settings.general.showHiddenHint" = "Gilt für beide Seiten. Kürzel: ⌘⇧.";
 "settings.general.autoRefresh" = "Remote-Ansicht automatisch aktualisieren";
 "settings.general.autoRefreshInterval %lld" = "Alle %lld Sekunden";
+"settings.general.updateCheck" = "Automatisch nach Updates suchen";
+"settings.general.updateCheckHint" = "Fragt höchstens einmal täglich bei GitHub nach der neuesten Version. Es werden keine Daten über dich übertragen.";
 
 /* Settings — Übertragungen-Tab */
 "settings.tab.transfers" = "Übertragungen";
@@ -383,3 +385,19 @@
 /* Sidebar-Lösch-Rückfrage — als Zwischenhost referenziert (M11a/T3) */
 "sidebar.delete.jumpUsage %lld" = "%lld Verbindungen nutzen diese Verbindung als Zwischenhost und behalten deren Daten direkt hinterlegt.";
 "sidebar.delete.jumpRestoreError %lld" = "Das gespeicherte Passwort für %lld Verbindungen konnte nicht wiederhergestellt werden.";
+
+/* Update-Prüfung — Menüeintrag + Ergebnis-Dialog (M11b/T2) */
+"menu.checkForUpdates" = "Nach Updates suchen…";
+"update.available.title" = "Update verfügbar";
+"update.available.message %@ %@" = "Version %@ ist verfügbar (installiert: %@)";
+"update.openReleasePage" = "Release-Seite öffnen";
+"update.later" = "Später";
+"update.upToDate.title" = "Kein Update verfügbar";
+"update.upToDate.message %@" = "macSCP %@ ist die neueste Version.";
+"update.unknownVersion.title" = "Version unbekannt";
+"update.unknownVersion.message" = "Die Version dieses Builds konnte nicht ermittelt werden, daher konnte keine Update-Prüfung durchgeführt werden.";
+"update.error.title" = "Update-Prüfung fehlgeschlagen";
+"update.error.offline" = "GitHub konnte nicht erreicht werden. Prüfe deine Internetverbindung und versuche es erneut.";
+"update.error.httpStatus %lld" = "GitHub hat einen unerwarteten Fehler zurückgegeben (HTTP %lld).";
+"update.error.rateLimited" = "Zu viele Anfragen an GitHub gerade jetzt. Versuche es später erneut.";
+"update.error.malformedResponse" = "Die Antwort von GitHub konnte nicht verarbeitet werden.";

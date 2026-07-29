@@ -67,6 +67,8 @@ public final class SettingsStore {
         static let terminalFontSize = "terminalFontSize"
         static let terminalCursorStyle = "terminalCursorStyle"
         static let terminalCursorBlink = "terminalCursorBlink"
+        static let updateCheckEnabled = "updateCheckEnabled"
+        static let lastUpdateCheck = "lastUpdateCheck"
     }
 
     private enum Defaults {
@@ -79,6 +81,7 @@ public final class SettingsStore {
         static let terminalFontSize = 13
         static let terminalCursorStyle = TerminalCursorStyle.block
         static let terminalCursorBlink = true
+        static let updateCheckEnabled = true
     }
 
     /// Identical to `SessionStore.defaultDirectory` — both stores share the
@@ -246,6 +249,32 @@ public final class SettingsStore {
     public var terminalCursorBlink: Bool {
         get { boolValue(for: Keys.terminalCursorBlink, default: Defaults.terminalCursorBlink) }
         set { setBool(newValue, for: Keys.terminalCursorBlink) }
+    }
+
+    /// Automatic once-a-day update check at startup (M11b). Default ON;
+    /// the toggle in the General settings tab flips this off.
+    public var updateCheckEnabled: Bool {
+        get { boolValue(for: Keys.updateCheckEnabled, default: Defaults.updateCheckEnabled) }
+        set { setBool(newValue, for: Keys.updateCheckEnabled) }
+    }
+
+    /// Timestamp of the last update-check ATTEMPT — successful or not — or
+    /// `nil` if the app has never checked. Written after EVERY attempt (see
+    /// `UpdateSchedule`) so a dead network doesn't retry on every launch
+    /// within the 24h window.
+    public var lastUpdateCheck: Date? {
+        get {
+            guard case .number(let value)? = raw[Keys.lastUpdateCheck] else { return nil }
+            return Date(timeIntervalSince1970: value)
+        }
+        set {
+            if let newValue {
+                raw[Keys.lastUpdateCheck] = .number(newValue.timeIntervalSince1970)
+            } else {
+                raw[Keys.lastUpdateCheck] = nil
+            }
+            persist()
+        }
     }
 
     /// Convenience: association lookup with the SAME normalization applied.

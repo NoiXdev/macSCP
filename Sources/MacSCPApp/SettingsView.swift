@@ -90,6 +90,17 @@ private struct GeneralSettingsTab: View {
                 }
                 .disabled(!store.autoRefreshEnabled)
             }
+
+            Section {
+                Toggle(
+                    L10n.string("settings.general.updateCheck", "Automatically check for updates"),
+                    isOn: $store.updateCheckEnabled)
+            } footer: {
+                Text(L10n.string(
+                    "settings.general.updateCheckHint",
+                    "Asks GitHub for the latest version at most once a day. No data about you is transmitted."))
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .padding()
