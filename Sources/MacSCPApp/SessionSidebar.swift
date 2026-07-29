@@ -11,7 +11,10 @@ struct SessionSidebar: View {
     let activeSessionID: UUID?
     let interactionsDisabled: Bool
     let onSelect: (StoredSession) -> Void
-    let onDelete: (StoredSession) -> Void
+    /// Performs the actual deletion and returns the jump-restoration outcome
+    /// (M11a/T3) — the sidebar surfaces `secretFailures` as its own red
+    /// inline message, same pattern as `LoginSetsSheet.deleteSelected()`.
+    let onDelete: (StoredSession) -> SessionListViewModel.JumpRestoreResult
     let onNew: () -> Void
     let onSelectImported: (SSHConfigHost) -> Void
     let onEdit: (StoredSession) -> Void
@@ -46,6 +49,10 @@ struct SessionSidebar: View {
     @State private var sessionPendingGroupMove: StoredSession?
 
     @State private var sessionPendingDelete: StoredSession?
+    /// Red inline message after a delete whose jump-restoration pass
+    /// (M11a/T3) hit a keychain failure — same pattern as
+    /// `LoginSetsSheet.deleteErrorMessage`.
+    @State private var jumpRestoreErrorMessage: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -106,6 +113,14 @@ struct SessionSidebar: View {
                     .font(.caption)
                     .padding(8)
             }
+
+            if let jumpRestoreErrorMessage {
+                Text(jumpRestoreErrorMessage)
+                    .foregroundStyle(.red)
+                    .font(.caption)
+                    .lineLimit(2)
+                    .padding(8)
+            }
         }
         .disabled(interactionsDisabled)
         .padding(.top, 12)
@@ -142,14 +157,42 @@ struct SessionSidebar: View {
         ) {
             Button(L10n.string("sidebar.delete", "Delete"), role: .destructive) {
                 if let session = sessionPendingDelete {
-                    onDelete(session)
+                    let result = onDelete(session)
+                    // Partial keychain-restore failure (M11a/T3): surfaced
+                    // as a red inline message, never silently dropped — same
+                    // pattern as `LoginSetsSheet.deleteSelected()`.
+                    jumpRestoreErrorMessage = result.secretFailures > 0
+                        ? String(
+                            format: L10n.string(
+                                "sidebar.delete.jumpRestoreError %lld",
+                                "Could not restore the stored password for %lld connections."),
+                            result.secretFailures)
+                        : nil
                 }
                 sessionPendingDelete = nil
             }
         } message: {
-            Text(L10n.string(
-                "sidebar.delete.confirmMessage", "The saved credentials are removed as well."))
+            Text(deleteConfirmMessage)
         }
+    }
+
+    /// The confirmation dialog's message: the existing "credentials removed"
+    /// notice, plus (M11a/T3, spec §4d) a count of sessions that reference
+    /// this one as their jump host, when any do — they keep working after
+    /// the delete because `SessionListViewModel.delete(_:)` restores their
+    /// jump to concrete values first (spec §4 "delete = restoration").
+    private var deleteConfirmMessage: String {
+        let base = L10n.string(
+            "sidebar.delete.confirmMessage", "The saved credentials are removed as well.")
+        guard let session = sessionPendingDelete else { return base }
+        let count = viewModel.sessionsUsingAsJump(session.id).count
+        guard count > 0 else { return base }
+        let jumpNote = String(
+            format: L10n.string(
+                "sidebar.delete.jumpUsage %lld",
+                "%lld connections use this connection as their jump host and will keep its data directly."),
+            count)
+        return base + "\n\n" + jumpNote
     }
 
     // MARK: - Row builders

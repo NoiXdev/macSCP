@@ -372,3 +372,14 @@
 "form.jump.label" = "Jump host";
 "form.jump.toggle" = "Connect through an intermediate host (ProxyJump)";
 "form.jump.host.placeholder" = "bastion.example.com";
+
+/* Connection form — jump source switcher: saved connection (M11a/T3) */
+"form.jump.source.label" = "Source";
+"form.jump.source.session" = "Saved connection";
+"form.jump.session.select" = "Select a connection";
+"form.jump.session.missing" = "The connection used as jump host no longer exists.";
+"form.jump.session.chainNotSupported" = "The selected jump host connects through another jump host; chains are not supported.";
+
+/* Sidebar delete confirmation — referenced as a jump host (M11a/T3) */
+"sidebar.delete.jumpUsage %lld" = "%lld connections use this connection as their jump host and will keep its data directly.";
+"sidebar.delete.jumpRestoreError %lld" = "Could not restore the stored password for %lld connections.";

@@ -506,6 +506,57 @@ struct ConnectionViewModelTests {
         #expect(vm.jumpLoginMode == .manual)
         #expect(vm.jumpSelectedLoginSetID == nil)
     }
+
+    // MARK: - Jump source: saved connection (M11a/T3)
+
+    @Test func jumpSessionModeRequiresSelection() async {
+        let vm = makeVM()
+        vm.jumpEnabled = true
+        vm.jumpSourceMode = .session
+        vm.jumpSessionID = nil
+        let fs = await vm.connect()
+        #expect(fs == nil)
+        #expect(vm.state == .failed(
+            message: CoreL10n.string("core.connect.jumpSessionRequired"), field: .jumpSession))
+    }
+
+    /// Proves the manual checks (host/port/login) don't just happen to pass
+    /// because the fields are filled — they never run at all in session
+    /// mode. `jumpPassword` is left empty, which manual `.password` mode
+    /// would reject outright (`core.connect.jumpPasswordEmpty`); `jumpHost`/
+    /// `jumpUsername` are set non-empty only to satisfy `SSHConnectionConfig`
+    /// init's OWN unconditional emptiness check further down the pipe (spec
+    /// §4a: the App fills these from the resolved reference before
+    /// `connect()`, this test stands in for that fill) — this test is about
+    /// `validateJump` skipping its manual branch, not about that separate,
+    /// lower-level check.
+    @Test func jumpSessionModeSkipsManualChecks() async {
+        let vm = makeVM()
+        vm.jumpEnabled = true
+        vm.jumpSourceMode = .session
+        vm.jumpSessionID = UUID()
+        vm.jumpHost = "bastion.example.com"
+        vm.jumpUsername = "bastion-user"
+        vm.jumpPassword = ""
+        let fs = await vm.connect()
+        #expect(fs != nil)
+        #expect(vm.state == .idle)
+    }
+
+    @Test @MainActor func jumpSourceFieldsResetOnExitEditMode() {
+        let vm = makeVM()
+        let jump = StoredSession.JumpSpec(host: "", username: "", sessionID: UUID())
+        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u", jump: jump))
+        // Sanity: beginEditing actually picked up the reference.
+        #expect(vm.jumpSourceMode == .session)
+        #expect(vm.jumpSessionID != nil)
+
+        vm.exitEditMode()
+
+        #expect(vm.jumpSourceMode == .manual)
+        #expect(vm.jumpSessionID == nil)
+    }
+
     // MARK: - Agent auth (M10d/T3)
 
     @Test func agentAuthSkipsPasswordAndKeyPathValidationAndBuildsAgentAuth() async {

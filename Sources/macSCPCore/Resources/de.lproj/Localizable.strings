@@ -52,6 +52,9 @@
 "core.connect.jumpSessionMissing" = "Die als Zwischenhost genutzte Verbindung existiert nicht mehr.";
 "core.connect.jumpChainNotSupported" = "Die gewählte Verbindung nutzt selbst einen Zwischenhost; Ketten werden nicht unterstützt.";
 
+/* ConnectionViewModel — Jump-Quellen-Umschalter, Session-Modus (M11a/T3) */
+"core.connect.jumpSessionRequired" = "Verbindung für den Jump-Host auswählen.";
+
 /* Host-Key-TOFU-Prompts — volle Schärfe in jeder Sprache. */
 "core.hostkey.mismatch %@ %@ %@" = "ACHTUNG: Der Host-Key von %1$@ hat sich geändert! Erwartet %2$@, präsentiert %3$@. Möglicher Man-in-the-Middle — Verbindung abgebrochen.";
 "core.hostkey.rejected" = "Verbindung abgebrochen — Host-Key nicht bestätigt.";

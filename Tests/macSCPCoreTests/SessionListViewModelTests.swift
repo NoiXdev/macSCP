@@ -715,6 +715,35 @@ struct SessionListViewModelTests {
         #expect(vm.sessions.first?.jump?.authKind == .agent)
     }
 
+    /// M11a hand-off (T2 review): switching a jump from manual to SESSION
+    /// mode must clean the now-orphaned `secretID` slot exactly like the
+    /// manual->agent switch above -- even though `buildJumpSpec` happens to
+    /// carry the SAME `secretID` forward as a data carrier (spec §1), the
+    /// slot is no longer read once `sessionID` is set (the referenced
+    /// session's own login is used instead), so the stale manual secret must
+    /// not survive the switch.
+    @Test func saveJumpSwitchingManualToSessionDeletesJumpSecretSlot() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let bastion = vm.save(name: "bastion", host: "b.example.com", port: 22,
+                              username: "root", password: "bp")!
+
+        let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
+        _ = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw",
+                   jump: jump, jumpSecret: "jp")!
+        #expect(try secrets.password(for: jump.secretID) == "jp")
+
+        // Same secretID (carried forward as an inert data carrier), but the
+        // jump now references the bastion session instead.
+        let sessionJump = StoredSession.JumpSpec(
+            host: "bastion.example.com", username: "jumper",
+            secretID: jump.secretID, sessionID: bastion.id)
+        _ = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw", jump: sessionJump)
+
+        #expect(try secrets.password(for: jump.secretID) == nil)
+        #expect(vm.sessions.first(where: { $0.name == "web" })?.jump?.sessionID == bastion.id)
+    }
+
     @Test func updateSessionJumpSwitchingManualToAgentDeletesJumpSecretSlot() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }

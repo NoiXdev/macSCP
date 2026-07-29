@@ -372,3 +372,14 @@
 "form.jump.label" = "Jump-Host";
 "form.jump.toggle" = "Über einen Zwischenhost verbinden (ProxyJump)";
 "form.jump.host.placeholder" = "bastion.example.com";
+
+/* Verbindungsformular — Jump-Quellen-Umschalter: gespeicherte Verbindung (M11a/T3) */
+"form.jump.source.label" = "Quelle";
+"form.jump.source.session" = "Gespeicherte Verbindung";
+"form.jump.session.select" = "Verbindung auswählen";
+"form.jump.session.missing" = "Die als Zwischenhost genutzte Verbindung existiert nicht mehr.";
+"form.jump.session.chainNotSupported" = "Die gewählte Verbindung nutzt selbst einen Zwischenhost; Ketten werden nicht unterstützt.";
+
+/* Sidebar-Lösch-Rückfrage — als Zwischenhost referenziert (M11a/T3) */
+"sidebar.delete.jumpUsage %lld" = "%lld Verbindungen nutzen diese Verbindung als Zwischenhost und behalten deren Daten direkt hinterlegt.";
+"sidebar.delete.jumpRestoreError %lld" = "Das gespeicherte Passwort für %lld Verbindungen konnte nicht wiederhergestellt werden.";

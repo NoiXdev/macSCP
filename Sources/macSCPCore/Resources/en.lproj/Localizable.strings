@@ -52,6 +52,9 @@
 "core.connect.jumpSessionMissing" = "The connection used as jump host no longer exists.";
 "core.connect.jumpChainNotSupported" = "The selected jump host connects through another jump host; chains are not supported.";
 
+/* ConnectionViewModel — jump source switcher, session mode (M11a/T3) */
+"core.connect.jumpSessionRequired" = "Choose a connection for the jump host.";
+
 /* Host-key TOFU prompts — keep full severity in every language. */
 "core.hostkey.mismatch %@ %@ %@" = "WARNING: The host key for %1$@ has changed! Expected %2$@, presented %3$@. Possible man-in-the-middle attack — connection aborted.";
 "core.hostkey.rejected" = "Connection aborted — host key not confirmed.";

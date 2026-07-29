@@ -22,6 +22,9 @@ public final class ConnectionViewModel {
         case jumpUsername
         case jumpPassword
         case jumpKeyPath
+        /// The jump-source session picker (M11a/T3) — highlighted when the
+        /// jump is enabled, in "session" mode, and nothing is selected yet.
+        case jumpSession
     }
 
     public enum State: Equatable {
@@ -45,6 +48,17 @@ public final class ConnectionViewModel {
     /// form starts exactly as it always has.
     public enum LoginMode: String, CaseIterable, Sendable {
         case set
+        case manual
+    }
+
+    /// The jump block's own source switcher (M11a/T3): `.session` points the
+    /// jump at a SAVED connection by reference (`jumpSessionID`) instead of
+    /// its own manual/set credentials; `.manual` is today's behavior (the
+    /// jump's own host/port + three-way login). Default `.manual` — an
+    /// existing manual/set jump, or a brand-new one, behaves exactly as
+    /// before this feature existed.
+    public enum JumpSourceMode: String, CaseIterable, Sendable {
+        case session
         case manual
     }
 
@@ -114,6 +128,14 @@ public final class ConnectionViewModel {
     /// target, the jump offers no "save as new login set" -- YAGNI (spec §3).
     public var jumpLoginMode: LoginMode = .manual
     public var jumpSelectedLoginSetID: UUID?
+    /// Jump-source switcher state (M11a/T3): `.session` picks a saved
+    /// connection as the jump host by reference instead of typing its
+    /// host/port/login again; `.manual` is the block above, unchanged.
+    /// Default `.manual` — see `JumpSourceMode`'s own doc comment.
+    public var jumpSourceMode: JumpSourceMode = .manual
+    /// The saved connection referenced in `.session` mode, `nil` while none
+    /// is selected yet (M11a/T3).
+    public var jumpSessionID: UUID?
 
     /// The jump's existing MANUAL keychain slot when editing a session that
     /// already had one (M10c/T3), remembered by `beginEditing` so
@@ -342,6 +364,15 @@ public final class ConnectionViewModel {
             jumpLoginMode = jump.loginSetID != nil ? .set : .manual
             jumpSelectedLoginSetID = jump.loginSetID
             existingJumpSecretID = jump.loginSetID == nil ? jump.secretID : nil
+            // Session-mode prefill (M11a/T3): a referenced connection puts
+            // the source switcher straight into `.session` with that
+            // connection preselected, mirroring the target's own
+            // `loginSetID` handling above -- takes priority over the
+            // manual/set fields just prefilled, which stay as an inert data
+            // carrier while `sessionID` is non-nil (see `JumpSpec.sessionID`'s
+            // doc comment).
+            jumpSourceMode = jump.sessionID != nil ? .session : .manual
+            jumpSessionID = jump.sessionID
         } else {
             clearJumpFields()
         }
@@ -390,12 +421,19 @@ public final class ConnectionViewModel {
     }
 
     /// Resets every jump-related field to its blank "no jump" state: the
-    /// jump toggle, its host/port/login fields, and the internal
-    /// existing-secret bookkeeping. The single source of truth for "no jump
-    /// block survives here" — used by `exitEditMode()`, `beginEditing()`'s
-    /// no-jump branch, and (via `ContentView`'s `applyRawJumpFallback`) both
-    /// of `connect(in:stored:)`'s early-return failure paths, so a jump
-    /// block typed for one session's form can never leak into another's.
+    /// jump toggle, its host/port/login fields, the source switcher, and the
+    /// internal existing-secret bookkeeping. The single source of truth for
+    /// "no jump block survives here" — used by `exitEditMode()`,
+    /// `beginEditing()`'s no-jump branch, and (via `ContentView`'s
+    /// `applyRawJumpFallback`) both of `connect(in:stored:)`'s early-return
+    /// failure paths, so a jump block typed for one session's form can never
+    /// leak into another's.
+    ///
+    /// `jumpSourceMode`/`jumpSessionID` reset here too (M11a/T3, the same
+    /// sticky-toggle lesson M10b learned for `loginMode`/
+    /// `selectedLoginSetID`): the source switcher is itself a MODE switch, so
+    /// a stale `.session` from a previous edit must not survive into
+    /// whatever the caller fills in next.
     public func clearJumpFields() {
         jumpEnabled = false
         jumpHost = ""
@@ -407,6 +445,8 @@ public final class ConnectionViewModel {
         jumpLoginMode = .manual
         jumpSelectedLoginSetID = nil
         existingJumpSecretID = nil
+        jumpSourceMode = .manual
+        jumpSessionID = nil
     }
 
     /// Validates the form for saving an edited session (password may be
@@ -496,8 +536,24 @@ public final class ConnectionViewModel {
     /// impossible to save without retyping the jump secret. Mirrors the
     /// asymmetry `connect()`/`validateForEditSave()` already have for the
     /// TARGET's own password (the latter never checks `password` at all).
+    ///
+    /// Session mode (M11a/T3, spec §3) branches FIRST and returns early: the
+    /// only requirement is a selection (`jumpSessionID != nil`); every
+    /// manual check below (host/port/login) is skipped entirely, since the
+    /// jump's own host/port/login fields are inert data carriers in this
+    /// mode — the App layer resolves the reference and fills them from the
+    /// referenced session right before `connect()`/save (spec §4a/§4c), and
+    /// the eligibility/chain rules are enforced by the resolver at that
+    /// point, not here.
     private func validateJump(requireSecret: Bool) -> State? {
         guard jumpEnabled else { return nil }
+        if jumpSourceMode == .session {
+            guard jumpSessionID != nil else {
+                return .failed(
+                    message: CoreL10n.string("core.connect.jumpSessionRequired"), field: .jumpSession)
+            }
+            return nil
+        }
         guard !jumpHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return .failed(message: CoreL10n.string("core.connect.jumpHostEmpty"), field: .jumpHost)
         }
@@ -581,6 +637,14 @@ public final class ConnectionViewModel {
     /// passes its own remembered `existingJumpSecretID`; a brand-new
     /// session's save path passes `nil` (there is no previous secret to
     /// preserve).
+    ///
+    /// Session mode (M11a/T3, spec §3): `sessionID` is stamped onto whichever
+    /// shape the switch below produces -- the manual/set fields it also
+    /// carries are ignored by the resolver once `sessionID` is non-nil (see
+    /// `LoginResolver.resolveJump(...sessions:...)`), so they're left exactly
+    /// as computed, unchanged, purely as an inert data carrier (spec §1);
+    /// which branch fires doesn't matter for correctness, only which fields
+    /// end up along for the ride.
     public func buildJumpSpec(existingSecretID: UUID? = nil) -> StoredSession.JumpSpec? {
         guard jumpEnabled else { return nil }
         let trimmedHost = jumpHost.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -588,20 +652,23 @@ public final class ConnectionViewModel {
         let authKind = Self.storedAuthKind(for: jumpAuthChoice)
         let trimmedUsername = jumpUsername.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedKeyPath = jumpKeyPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let referencedSessionID = jumpSourceMode == .session ? jumpSessionID : nil
         switch jumpLoginMode {
         case .set:
             return StoredSession.JumpSpec(
                 host: trimmedHost, port: portNumber, username: trimmedUsername,
                 authKind: authKind,
                 keyPath: jumpAuthChoice == .privateKey ? trimmedKeyPath : nil,
-                loginSetID: jumpSelectedLoginSetID)
+                loginSetID: jumpSelectedLoginSetID,
+                sessionID: referencedSessionID)
         case .manual:
             return StoredSession.JumpSpec(
                 host: trimmedHost, port: portNumber, username: trimmedUsername,
                 authKind: authKind,
                 keyPath: jumpAuthChoice == .privateKey ? trimmedKeyPath : nil,
                 loginSetID: nil,
-                secretID: existingSecretID ?? UUID())
+                secretID: existingSecretID ?? UUID(),
+                sessionID: referencedSessionID)
         }
     }
 

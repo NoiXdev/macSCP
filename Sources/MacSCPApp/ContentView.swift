@@ -275,7 +275,11 @@ struct ContentView: View {
                     || activeTab.connectionViewModel.state == .connecting,
                 onSelect: { stored in connectFromSidebar(stored) },
                 onDelete: { stored in
-                    sessionListViewModel.delete(stored)
+                    // Return value (M11a/T3): the sidebar surfaces
+                    // `secretFailures` as its own red inline message, the
+                    // same way `LoginSetsSheet.deleteSelected()` does for
+                    // `deleteLoginSet`.
+                    let result = sessionListViewModel.delete(stored)
                     for tab in tabsModel.tabs where tab.activeStoredSessionID == stored.id {
                         tab.activeStoredSessionID = nil
                         // Same release as `teardown`'s audit recorder block
@@ -291,6 +295,7 @@ struct ContentView: View {
                         tab.transferQueue.auditSink = nil
                         tab.session?.remote.auditSink = nil
                     }
+                    return result
                 },
                 onNew: { newConnection() },
                 onSelectImported: { fillFromImported($0) },
@@ -759,13 +764,16 @@ struct ContentView: View {
                     groups: sessionListViewModel.groups,
                     sessionList: sessionListViewModel,
                     resolveLoginSetForSubmit: {
-                        // Both resolutions always run (never short-circuited)
-                        // so a dangling target set AND a dangling jump set
-                        // each surface their own `showFailure` — only the
-                        // combined AND decides whether the caller may proceed.
+                        // All three resolutions always run (never
+                        // short-circuited) so a dangling target set, a
+                        // dangling jump set, AND an unresolvable jump-session
+                        // reference each surface their own `showFailure` —
+                        // only the combined AND decides whether the caller
+                        // may proceed (M11a/T3 added the third).
                         let targetResolved = resolveSelectedLoginSet(in: tab)
                         let jumpResolved = resolveSelectedJumpLoginSet(in: tab)
-                        return targetResolved && jumpResolved
+                        let jumpSessionResolved = resolveSelectedJumpSession(in: tab)
+                        return targetResolved && jumpResolved && jumpSessionResolved
                     },
                     onSaveEdited: { stored, secret in
                         var stored = stored
@@ -788,10 +796,20 @@ struct ContentView: View {
                         // fields + the EXISTING `secretID` it remembered) --
                         // `updateSession` itself gates on `jump.loginSetID
                         // == nil` before writing this, so passing it
-                        // unconditionally is safe.
+                        // unconditionally is safe in Set/Manual mode.
+                        //
+                        // Session mode (M11a/T3): `jumpPassword` was just
+                        // filled with the REFERENCED session's own resolved
+                        // secret (`resolveSelectedJumpSession`, spec §4a) --
+                        // passing that through here would copy it into the
+                        // jump's supposedly UNUSED `secretID` slot (spec §1:
+                        // "ungenutzt") on every save, not just the
+                        // manual→session switch `cleanOrphanedJumpSlot`
+                        // guards against. `nil` keeps that slot untouched.
                         sessionListViewModel.updateSession(
                             stored, newSecret: effectiveSecret,
-                            jumpSecret: tab.connectionViewModel.jumpPassword)
+                            jumpSecret: tab.connectionViewModel.jumpSourceMode == .session
+                                ? nil : tab.connectionViewModel.jumpPassword)
                         tab.connectionViewModel.endEditing()
                     },
                     onCancelEdit: { tab.connectionViewModel.endEditing() },
@@ -1186,6 +1204,64 @@ struct ContentView: View {
         return true
     }
 
+    /// `ConnectionFormView.resolveLoginSetForSubmit`'s jump-SESSION half
+    /// (M11a/T3, spec §4a): when the jump is enabled and in session mode,
+    /// resolves the referenced connection and fills the jump's
+    /// manual-looking fields (host/port/login) from that resolution —
+    /// mirrors `resolveSelectedJumpLoginSet`'s fill-before-submit pattern,
+    /// just sourced from a saved session instead of a login set. Returns
+    /// `true` (no-op) when the jump is off, in Manual mode, or nothing is
+    /// selected yet (Connect/Save are already disabled for that last case
+    /// via `ConnectionFormView.jumpSessionModeIncomplete`, the
+    /// belt-and-suspenders half). Returns `false` on
+    /// `.missingJumpSession`/`.jumpChainNotSupported`/a dangling login set
+    /// on the referenced session — surfaced through `showFailure` with
+    /// `field: .jumpSession` — after which the caller must NOT proceed to
+    /// connect/validate.
+    private func resolveSelectedJumpSession(in tab: SessionTab) -> Bool {
+        let form = tab.connectionViewModel
+        guard form.jumpEnabled, form.jumpSourceMode == .session, let sessionID = form.jumpSessionID else {
+            return true
+        }
+        let referencingID: UUID
+        if case .edit(let id) = form.mode { referencingID = id } else { referencingID = UUID() }
+        let spec = StoredSession.JumpSpec(host: "", username: "", sessionID: sessionID)
+        let synthetic = StoredSession(id: referencingID, name: "", host: "", username: "", jump: spec)
+        do {
+            guard let resolved = try sessionListViewModel.resolvedJump(for: synthetic) else { return true }
+            form.jumpHost = resolved.host
+            form.jumpPort = String(resolved.port)
+            form.jumpUsername = resolved.login.username
+            form.jumpAuthChoice = ConnectionViewModel.authChoice(for: resolved.login.authKind)
+            form.jumpKeyPath = resolved.login.keyPath ?? ""
+            form.jumpPassword = resolved.login.secret ?? ""
+            return true
+        } catch LoginResolveError.missingJumpSession {
+            form.showFailure(
+                message: L10n.string(
+                    "form.jump.session.missing", "The connection used as jump host no longer exists."),
+                field: .jumpSession)
+            return false
+        } catch LoginResolveError.jumpChainNotSupported {
+            form.showFailure(
+                message: L10n.string(
+                    "form.jump.session.chainNotSupported",
+                    "The selected jump host connects through another jump host; chains are not supported."),
+                field: .jumpSession)
+            return false
+        } catch {
+            // Dangling login set on the REFERENCED session (`.missingSet`),
+            // or any other unclassified failure — same fallback wording the
+            // form's own read-only summary uses for this condition.
+            form.showFailure(
+                message: L10n.string(
+                    "loginSets.missingSet",
+                    "The stored login for this connection was not found. Choose a login or enter credentials."),
+                field: .jumpSession)
+            return false
+        }
+    }
+
     /// Manual mode + "Save as new login set": creates the set from the
     /// form's current fields and returns its id, or `nil` when the toggle
     /// isn't active (or the form is in Set mode, where there's nothing new
@@ -1334,8 +1410,15 @@ struct ContentView: View {
                 // to preserve (unlike `validateForEditSave()`'s own
                 // internal `buildJumpSpec` call, which reuses
                 // `existingJumpSecretID`).
+                //
+                // Session mode (M11a/T3) passes `nil` instead of
+                // `form.jumpPassword`, same reasoning as the edit-save path
+                // above: that field holds the REFERENCED session's own
+                // resolved secret at this point, and the jump's `secretID`
+                // slot is supposed to stay unused/empty while `sessionID` is
+                // set (spec §1), not a copy of a secret it never reads.
                 jump: form.buildJumpSpec(),
-                jumpSecret: form.jumpPassword
+                jumpSecret: form.jumpSourceMode == .session ? nil : form.jumpPassword
             )
             tab.activeStoredSessionID = stored?.id
             form.shouldSaveSession = false
@@ -1435,45 +1518,107 @@ struct ContentView: View {
                 return
             }
 
-            // Jump (M10c/T3): same resolution as above, for the jump's OWN
-            // login — `resolvedJumpLogin` is `nil` only when the session has
-            // no jump at all; a resolved jump fills the manual-looking
-            // fields regardless of whether it came from a set or the jump's
-            // own manual secret, exactly like the target's resolution above.
-            // In its OWN do/catch (final review M-1, see comment above): a
-            // jump-only `.missingSet` must fall back on the JUMP side only,
-            // leaving the target fields resolved above untouched.
-            do {
-                if let jump = stored.jump {
-                    form.jumpEnabled = true
+            // Jump (M10c/T3, extended M11a/T3): same resolution as above,
+            // for the jump's OWN login — `resolvedJumpLogin` is `nil` only
+            // when the session has no jump at all; a resolved jump fills
+            // the manual-looking fields regardless of whether it came from
+            // a set or the jump's own manual secret, exactly like the
+            // target's resolution above. In its OWN do/catch (final review
+            // M-1, see comment above): a jump-only failure must fall back on
+            // the JUMP side only, leaving the target fields resolved above
+            // untouched.
+            //
+            // Session mode (`jump.sessionID` non-nil, spec §4b) branches
+            // FIRST: host/port and the login all come from the REFERENCED
+            // session via `resolvedJump(for:)`, unlike the manual/set branch
+            // below which only ever resolves the jump's OWN fields via
+            // `resolvedJumpLogin`. Each branch keeps its OWN nested do/catch
+            // (rather than one shared catch for both) so a session-mode
+            // failure highlights `.jumpSession` — the only field the
+            // session-mode UI actually renders — while a manual/set failure
+            // keeps highlighting `.jumpHost` exactly as before this feature.
+            if let jump = stored.jump {
+                form.jumpEnabled = true
+                if let sessionID = jump.sessionID {
+                    // Set BEFORE the throwing call below: on a failure the
+                    // form stays in session mode with this selection intact,
+                    // so the picker and the `.jumpSession` highlight the
+                    // failure attaches to are both visible — switching back
+                    // to manual with raw fallback values would hide the very
+                    // field the error is about.
+                    form.jumpSourceMode = .session
+                    form.jumpSessionID = sessionID
+                    do {
+                        if let resolved = try sessionListViewModel.resolvedJump(for: stored) {
+                            form.jumpHost = resolved.host
+                            form.jumpPort = String(resolved.port)
+                            form.jumpUsername = resolved.login.username
+                            form.jumpAuthChoice = ConnectionViewModel.authChoice(for: resolved.login.authKind)
+                            form.jumpKeyPath = resolved.login.keyPath ?? ""
+                            form.jumpPassword = resolved.login.secret ?? ""
+                        }
+                    } catch LoginResolveError.missingJumpSession {
+                        form.showFailure(
+                            message: L10n.string(
+                                "form.jump.session.missing",
+                                "The connection used as jump host no longer exists."),
+                            field: .jumpSession)
+                        return
+                    } catch LoginResolveError.jumpChainNotSupported {
+                        form.showFailure(
+                            message: L10n.string(
+                                "form.jump.session.chainNotSupported",
+                                "The selected jump host connects through another jump host; "
+                                    + "chains are not supported."),
+                            field: .jumpSession)
+                        return
+                    } catch is LoginResolveError {
+                        // The REFERENCED session's own login set is dangling
+                        // (`.missingSet`) -- same wording the login-set
+                        // dangling-reference paths already use elsewhere.
+                        form.showFailure(
+                            message: L10n.string(
+                                "loginSets.missingSet",
+                                "The stored login for this connection was not found. "
+                                    + "Choose a login or enter credentials."),
+                            field: .jumpSession)
+                        return
+                    }
+                } else {
+                    form.jumpSourceMode = .manual
+                    form.jumpSessionID = nil
                     form.jumpHost = jump.host
                     form.jumpPort = String(jump.port)
                     form.jumpLoginMode = jump.loginSetID != nil ? .set : .manual
                     form.jumpSelectedLoginSetID = jump.loginSetID
-                    if let resolvedJump = try sessionListViewModel.resolvedJumpLogin(for: stored) {
-                        form.jumpUsername = resolvedJump.username
-                        form.jumpAuthChoice = ConnectionViewModel.authChoice(for: resolvedJump.authKind)
-                        form.jumpKeyPath = resolvedJump.keyPath ?? ""
-                        form.jumpPassword = resolvedJump.secret ?? ""
+                    do {
+                        if let resolvedJump = try sessionListViewModel.resolvedJumpLogin(for: stored) {
+                            form.jumpUsername = resolvedJump.username
+                            form.jumpAuthChoice = ConnectionViewModel.authChoice(for: resolvedJump.authKind)
+                            form.jumpKeyPath = resolvedJump.keyPath ?? ""
+                            form.jumpPassword = resolvedJump.secret ?? ""
+                        }
+                    } catch is LoginResolveError {
+                        // Missing set (jump only): the target fields resolved
+                        // above stay untouched — only the jump falls back to
+                        // its raw manual-looking values, and `field:
+                        // .jumpHost` (not the target's `.host`) highlights
+                        // the right row. Shares the fallback with the target
+                        // catch above (F-1 fix) so both early-return paths
+                        // leave the jump block in the identical,
+                        // fully-reset-or-fully-raw state.
+                        applyRawJumpFallback(form, from: stored)
+                        form.showFailure(
+                            message: L10n.string(
+                                "loginSets.missingSet",
+                                "The stored login for this connection was not found. "
+                                    + "Choose a login or enter credentials."),
+                            field: .jumpHost)
+                        return
                     }
-                } else {
-                    form.clearJumpFields()
                 }
-            } catch is LoginResolveError {
-                // Missing set (jump only): the target fields resolved above
-                // stay untouched — only the jump falls back to its raw
-                // manual-looking values, and `field: .jumpHost` (not the
-                // target's `.host`) highlights the right row. Shares the
-                // fallback with the target catch above (F-1 fix) so both
-                // early-return paths leave the jump block in the identical,
-                // fully-reset-or-fully-raw state.
-                applyRawJumpFallback(form, from: stored)
-                form.showFailure(
-                    message: L10n.string(
-                        "loginSets.missingSet",
-                        "The stored login for this connection was not found. Choose a login or enter credentials."),
-                    field: .jumpHost)
-                return
+            } else {
+                form.clearJumpFields()
             }
 
             if let fs = await form.connect() {

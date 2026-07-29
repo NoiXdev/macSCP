@@ -121,19 +121,28 @@ public final class SessionListViewModel {
         }
     }
 
-    /// Slot hygiene (M10c, extended M10d): an old MANUAL jump (`secretID`
-    /// slot, `loginSetID == nil`) becomes orphaned when the new state no
-    /// longer references that exact slot — the jump was removed, switched
-    /// to set mode, replaced with a freshly generated `JumpSpec`, or (M10d)
-    /// switched to agent mode, which needs no secret even when `secretID`
-    /// itself didn't change. Throw-free by design (M9b/M10b pattern): a
-    /// stray keychain entry is a harmless residual, never a reason to fail
-    /// the save/update itself.
+    /// Slot hygiene (M10c, extended M10d, extended M11a): an old MANUAL jump
+    /// (`secretID` slot, `loginSetID == nil`) becomes orphaned when the new
+    /// state no longer references that exact slot — the jump was removed,
+    /// switched to set mode, replaced with a freshly generated `JumpSpec`,
+    /// switched to agent mode (M10d, no secret needed even when `secretID`
+    /// itself didn't change), or switched to session mode (M11a, `sessionID`
+    /// non-nil — the referenced session's own login is used instead, same
+    /// "no secret needed here" reasoning as agent mode). The session-mode
+    /// case matters even though `buildJumpSpec` happens to carry the SAME
+    /// `secretID` forward when switching from an existing manual jump
+    /// (`existingJumpSecretID` reused as a data carrier, spec §1) — without
+    /// the `new.sessionID == nil` check below, that unchanged id would look
+    /// "still referenced" and the stale manual secret would survive
+    /// alongside a jump that no longer reads it. Throw-free by design
+    /// (M9b/M10b pattern): a stray keychain entry is a harmless residual,
+    /// never a reason to fail the save/update itself.
     private func cleanOrphanedJumpSlot(
         previous: StoredSession.JumpSpec?, new: StoredSession.JumpSpec?
     ) {
         guard let previous, previous.loginSetID == nil else { return }
-        if let new, new.loginSetID == nil, new.authKind != .agent, new.secretID == previous.secretID {
+        if let new, new.loginSetID == nil, new.authKind != .agent, new.sessionID == nil,
+           new.secretID == previous.secretID {
             return // Still referenced by the new manual jump -- keep it.
         }
         try? secrets.deletePassword(for: previous.secretID)
