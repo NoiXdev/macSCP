@@ -4,7 +4,13 @@ import Foundation
 /// from the public GitHub REST API (spec §3).
 ///
 /// No token, no authenticated request, no user data — the request carries
-/// only the URL plus `Accept` and `User-Agent` headers (Global Constraints).
+/// only the URL plus `Accept`, `User-Agent` and a fixed `Accept-Language`
+/// header (Global Constraints). `Accept-Language` is pinned to `"en"` so the
+/// system locale — otherwise sent by default by `URLSession` and a weak
+/// fingerprinting signal — never travels with the request (M11b final
+/// review, Finding I1). The session defaults to an ephemeral configuration
+/// (Finding M4) so the request never touches the process-wide cookie store
+/// or URL cache either.
 public struct GitHubReleaseFetcher: ReleaseFetcher {
     private static let releaseURL = URL(
         string: "https://api.github.com/repos/NoiXdev/macSCP/releases/latest")!
@@ -18,7 +24,10 @@ public struct GitHubReleaseFetcher: ReleaseFetcher {
     /// bundle-free itself.
     private let userAgentVersion: String
 
-    public init(session: URLSession = .shared, userAgentVersion: String = "update-check") {
+    public init(
+        session: URLSession = URLSession(configuration: .ephemeral),
+        userAgentVersion: String = "update-check"
+    ) {
         self.session = session
         self.userAgentVersion = userAgentVersion
     }
@@ -28,6 +37,8 @@ public struct GitHubReleaseFetcher: ReleaseFetcher {
         request.httpMethod = "GET"
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("macSCP/\(userAgentVersion)", forHTTPHeaderField: "User-Agent")
+        // Fixed, never the system locale (Finding I1) — see the type doc above.
+        request.setValue("en", forHTTPHeaderField: "Accept-Language")
         request.timeoutInterval = 10
 
         let data: Data
@@ -57,7 +68,17 @@ public struct GitHubReleaseFetcher: ReleaseFetcher {
         guard let payload = try? JSONDecoder().decode(ReleasePayload.self, from: data) else {
             throw UpdateCheckError.malformedResponse
         }
-        guard let url = URL(string: payload.htmlURL) else {
+        // The URL comes from the API response, not a fixed constant — never
+        // hand an unvalidated URL to `NSWorkspace.shared.open` downstream
+        // (M11b final review, Finding M1). Restricted to `https://github.com`
+        // (and `www.github.com`); anything else — `file://`, a different
+        // host, a scheme-less string — is treated the same as any other
+        // malformed payload.
+        guard let url = URL(string: payload.htmlURL),
+            url.scheme == "https",
+            let host = url.host,
+            host == "github.com" || host == "www.github.com"
+        else {
             throw UpdateCheckError.malformedResponse
         }
         return ReleaseInfo(tag: payload.tagName, url: url)

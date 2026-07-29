@@ -35,6 +35,14 @@ public struct AppVersion: Comparable, Equatable, Sendable, CustomStringConvertib
         if let dashIndex = remainder.firstIndex(of: "-") {
             let candidate = String(remainder[remainder.index(after: dashIndex)...])
             guard !candidate.isEmpty else { return nil }
+            // The pre-release identifier comes straight from a GitHub tag —
+            // unbounded free text there could otherwise render attacker-
+            // controlled content inside the "Version %@ is available"
+            // dialog (M11b final review, Finding M3). Restricted at parse
+            // time to `[0-9A-Za-z.-]`, max 32 characters; anything else
+            // fails to parse just like any other malformed tag.
+            guard candidate.count <= 32, candidate.allSatisfy(Self.isAllowedPreReleaseCharacter)
+            else { return nil }
             preRelease = candidate
             remainder = remainder[remainder.startIndex..<dashIndex]
         }
@@ -96,5 +104,11 @@ public struct AppVersion: Comparable, Equatable, Sendable, CustomStringConvertib
             return left < right
         }
         return lhsFields.count < rhsFields.count
+    }
+
+    /// Whether `character` is one of `[0-9A-Za-z.-]` — the allowed alphabet
+    /// for a pre-release identifier (Finding M3 above).
+    private static func isAllowedPreReleaseCharacter(_ character: Character) -> Bool {
+        character.isASCII && (character.isNumber || character.isLetter || character == "." || character == "-")
     }
 }

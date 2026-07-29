@@ -69,7 +69,7 @@ struct GitHubReleaseFetcherTests {
         var capturedRequest: URLRequest?
         StubURLProtocol.handler = { request in
             capturedRequest = request
-            let json = #"{"tag_name":"v1.0.0","html_url":"https://example.com/v1.0.0"}"#
+            let json = #"{"tag_name":"v1.0.0","html_url":"https://github.com/NoiXdev/macSCP/releases/tag/v1.0.0"}"#
             return (200, [:], Data(json.utf8))
         }
 
@@ -86,6 +86,27 @@ struct GitHubReleaseFetcherTests {
         #expect(request.timeoutInterval == 10)
     }
 
+    /// `URLSession` fills in `Accept-Language` from the system locale by
+    /// default — a weak fingerprinting signal that has no business leaving
+    /// with this request (M11b final review, Finding I1). Pinned to a fixed
+    /// `"en"` instead, regardless of the test runner's own locale.
+    @Test func acceptLanguageIsFixedToEnglish() async throws {
+        StubURLProtocol.reset(expecting: Self.expectedURL)
+        var capturedRequest: URLRequest?
+        StubURLProtocol.handler = { request in
+            capturedRequest = request
+            let json = #"{"tag_name":"v1.0.0","html_url":"https://github.com/NoiXdev/macSCP/releases/tag/v1.0.0"}"#
+            return (200, [:], Data(json.utf8))
+        }
+
+        let fetcher = GitHubReleaseFetcher(session: StubURLProtocol.makeSession())
+        _ = try await fetcher.latestRelease()
+
+        #expect(!StubURLProtocol.unexpectedRequestSeen)
+        let request = try #require(capturedRequest)
+        #expect(request.value(forHTTPHeaderField: "Accept-Language") == "en")
+    }
+
     /// The App layer passes the running bundle's `CFBundleShortVersionString`
     /// through `userAgentVersion` (Core stays bundle-free) — proves it
     /// actually reaches the `User-Agent` header instead of the default
@@ -95,7 +116,7 @@ struct GitHubReleaseFetcherTests {
         var capturedRequest: URLRequest?
         StubURLProtocol.handler = { request in
             capturedRequest = request
-            let json = #"{"tag_name":"v1.0.0","html_url":"https://example.com/v1.0.0"}"#
+            let json = #"{"tag_name":"v1.0.0","html_url":"https://github.com/NoiXdev/macSCP/releases/tag/v1.0.0"}"#
             return (200, [:], Data(json.utf8))
         }
 
@@ -111,7 +132,7 @@ struct GitHubReleaseFetcherTests {
     @Test func parsesTagAndURL() async throws {
         StubURLProtocol.reset(expecting: Self.expectedURL)
         StubURLProtocol.handler = { _ in
-            let json = #"{"tag_name":"v1.2.3","html_url":"https://example.com/releases/v1.2.3"}"#
+            let json = #"{"tag_name":"v1.2.3","html_url":"https://github.com/NoiXdev/macSCP/releases/tag/v1.2.3"}"#
             return (200, [:], Data(json.utf8))
         }
 
@@ -120,7 +141,7 @@ struct GitHubReleaseFetcherTests {
 
         #expect(!StubURLProtocol.unexpectedRequestSeen)
         #expect(release.tag == "v1.2.3")
-        #expect(release.url == URL(string: "https://example.com/releases/v1.2.3"))
+        #expect(release.url == URL(string: "https://github.com/NoiXdev/macSCP/releases/tag/v1.2.3"))
     }
 
     @Test func missingFieldsThrowMalformed() async throws {
@@ -166,6 +187,40 @@ struct GitHubReleaseFetcherTests {
 
         let fetcher = GitHubReleaseFetcher(session: StubURLProtocol.makeSession())
         await #expect(throws: UpdateCheckError.httpStatus(500)) {
+            try await fetcher.latestRelease()
+        }
+        #expect(!StubURLProtocol.unexpectedRequestSeen)
+    }
+
+    /// The release URL comes straight from the API response; a `file://`
+    /// link would otherwise reach `NSWorkspace.shared.open` unvalidated
+    /// (M11b final review, Finding M1) — rejected as malformed instead of
+    /// parsed through.
+    @Test func fileURLIsRejectedAsMalformed() async throws {
+        StubURLProtocol.reset(expecting: Self.expectedURL)
+        StubURLProtocol.handler = { _ in
+            let json = #"{"tag_name":"v1.0.0","html_url":"file:///etc/passwd"}"#
+            return (200, [:], Data(json.utf8))
+        }
+
+        let fetcher = GitHubReleaseFetcher(session: StubURLProtocol.makeSession())
+        await #expect(throws: UpdateCheckError.malformedResponse) {
+            try await fetcher.latestRelease()
+        }
+        #expect(!StubURLProtocol.unexpectedRequestSeen)
+    }
+
+    /// Same guard, a different escape hatch: an `https` URL on a host other
+    /// than `github.com` (Finding M1).
+    @Test func offHostURLIsRejectedAsMalformed() async throws {
+        StubURLProtocol.reset(expecting: Self.expectedURL)
+        StubURLProtocol.handler = { _ in
+            let json = #"{"tag_name":"v1.0.0","html_url":"https://evil.example/v1.0.0"}"#
+            return (200, [:], Data(json.utf8))
+        }
+
+        let fetcher = GitHubReleaseFetcher(session: StubURLProtocol.makeSession())
+        await #expect(throws: UpdateCheckError.malformedResponse) {
             try await fetcher.latestRelease()
         }
         #expect(!StubURLProtocol.unexpectedRequestSeen)

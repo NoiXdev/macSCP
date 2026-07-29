@@ -559,6 +559,20 @@ struct ContentView: View {
         } message: {
             Text(updateAlertMessage)
         }
+        // Marks this `ContentView` as the (only) presenter of
+        // `updateModel.presentedResult` while it's actually in the view
+        // hierarchy (M11b final review, Finding I2): a manual check that
+        // finds nobody mounted falls back to a plain `NSAlert` instead (see
+        // `UpdateCheckModel.check`/`presentFallbackAlert`). On disappear —
+        // this window closing — any leftover `presentedResult` is cleared
+        // too, so a check that completed just as the window went away can
+        // never resurface as a stale, unrequested dialog the next time a
+        // fresh window opens.
+        .onAppear { updateModel.hasPresentationTarget = true }
+        .onDisappear {
+            updateModel.hasPresentationTarget = false
+            updateModel.presentedResult = nil
+        }
         // Session actions live in the window's native toolbar (M5f/T5) —
         // attached at the outer container so it belongs to the window, not
         // the detail pane. Empty (no items) while the active tab is
@@ -1051,63 +1065,17 @@ struct ContentView: View {
     /// Title for the update-check result alert (M11b/T2, spec §4) — one per
     /// `UpdateCheckResult` case, `""` while no dialog is showing (`nil`).
     /// `SwiftUI` evaluates this even during dismissal, so it must not force-
-    /// unwrap `presentedResult`.
+    /// unwrap `presentedResult`. Delegates to `UpdateAlertContent` (M11b
+    /// final review, Finding I2) so this copy can never drift from
+    /// `UpdateCheckModel`'s `NSAlert` fallback.
     private var updateAlertTitle: String {
-        switch updateModel.presentedResult {
-        case .updateAvailable:
-            return L10n.string("update.available.title", "Update Available")
-        case .upToDate:
-            return L10n.string("update.upToDate.title", "No Update Available")
-        case .unknownLocalVersion:
-            return L10n.string("update.unknownVersion.title", "Version Unknown")
-        case .failed:
-            return L10n.string("update.error.title", "Update Check Failed")
-        case nil:
-            return ""
-        }
+        UpdateAlertContent.title(for: updateModel.presentedResult)
     }
 
-    /// Message body matching `updateAlertTitle` above. The `.updateAvailable`
-    /// wording is spec-mandated verbatim (spec §4): "Version %@ is available
-    /// (installed: %@)". `.unknownLocalVersion` gets its own honest message
-    /// and no link (spec §4) — never an update claim built on a version that
-    /// couldn't be read. Each `UpdateCheckError` case gets its own message.
+    /// Message body matching `updateAlertTitle` above — see
+    /// `UpdateAlertContent.message` for the wording of each case.
     private var updateAlertMessage: String {
-        switch updateModel.presentedResult {
-        case .updateAvailable(let latest, let current, _):
-            return String(
-                format: L10n.string(
-                    "update.available.message %@ %@", "Version %@ is available (installed: %@)"),
-                latest.description, current.description)
-        case .upToDate(let current):
-            return String(
-                format: L10n.string("update.upToDate.message %@", "macSCP %@ is the latest version."),
-                current.description)
-        case .unknownLocalVersion:
-            return L10n.string(
-                "update.unknownVersion.message",
-                "This build's version could not be determined, so no update check could be performed.")
-        case .failed(let error):
-            switch error {
-            case .offline:
-                return L10n.string(
-                    "update.error.offline",
-                    "Could not reach GitHub. Check your internet connection and try again.")
-            case .httpStatus(let code):
-                return String(
-                    format: L10n.string(
-                        "update.error.httpStatus %lld", "GitHub returned an unexpected error (HTTP %lld)."),
-                    code)
-            case .rateLimited:
-                return L10n.string(
-                    "update.error.rateLimited", "Too many requests to GitHub right now. Try again later.")
-            case .malformedResponse:
-                return L10n.string(
-                    "update.error.malformedResponse", "The response from GitHub could not be understood.")
-            }
-        case nil:
-            return ""
-        }
+        UpdateAlertContent.message(for: updateModel.presentedResult)
     }
 
     /// True while any OTHER tab's queue holds a non-terminal item that

@@ -47,12 +47,14 @@ and move files between them with drag and drop, buttons, or the Finder.
 ## Update checks
 
 macSCP compares its own version against the latest entry on the releases
-page. It asks `api.github.com` at most once a day, reads nothing but the
-release tag and its link, and sends no information about you or your
-connections. Nothing is downloaded or installed automatically — a newer
-version only produces a note with a link. Turn it off under
-**Settings → General**, or check by hand any time via
-**macSCP → Check for Updates…**.
+page. The automatic check asks `api.github.com` at most once a day; the
+**macSCP → Check for Updates…** menu item asks whenever you use it instead.
+Either way, the request identifies the app and its version — GitHub needs
+that to answer — but nothing else about you or your connections is sent,
+and the response is read for nothing but the release tag and its link.
+Nothing is downloaded or installed automatically — a newer version only
+produces a note with a link. Turn the automatic check off under
+**Settings → General**.
 
 ## Install
 

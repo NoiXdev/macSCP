@@ -72,6 +72,10 @@ jobs:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           body_path: RELEASE_NOTES.md
           draft: true
+          # `v*.*.*` also matches a pre-release tag like `v1.1.0-beta.1`
+          # (M11b final review, Finding M2) — flag it so `/latest` never
+          # offers a pre-release to stable users.
+          prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
 
   build:
     name: Build, sign & notarize (macOS)
@@ -122,3 +126,7 @@ jobs:
           fail_on_unmatched_files: true
           files: dist/*.dmg
           draft: false
+          # Same pre-release flag as the changelog job's release step above
+          # (Finding M2) — this step is what actually flips the release out
+          # of draft, so it must carry it too.
+          prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}

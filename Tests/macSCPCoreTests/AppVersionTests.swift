@@ -42,6 +42,23 @@ struct AppVersionTests {
         #expect(preRelease < release)
     }
 
+    /// A GitHub tag is attacker-influenced input from the checker's point of
+    /// view; an unbounded or symbol-laden pre-release string could render
+    /// unexpected content inside the "Version %@ is available" dialog
+    /// (M11b final review, Finding M3) — both fail to parse instead.
+    @Test func rejectsTooLongPreRelease() throws {
+        let tooLong = "a" + String(repeating: "b", count: 32)
+        #expect(AppVersion("1.2.0-\(tooLong)") == nil)
+
+        let atLimit = String(repeating: "c", count: 32)
+        #expect(AppVersion("1.2.0-\(atLimit)") != nil)
+    }
+
+    @Test(arguments: ["beta!", "beta_1", "beta 1", "beta/1", "bêta"])
+    func rejectsIllegalCharactersInPreRelease(_ preRelease: String) throws {
+        #expect(AppVersion("1.2.0-\(preRelease)") == nil)
+    }
+
     @Test func preReleaseFieldsCompare() throws {
         let alpha = try #require(AppVersion("1.2.0-alpha"))
         let beta = try #require(AppVersion("1.2.0-beta"))

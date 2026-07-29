@@ -5,7 +5,7 @@
 "settings.general.autoRefresh" = "Remote-Ansicht automatisch aktualisieren";
 "settings.general.autoRefreshInterval %lld" = "Alle %lld Sekunden";
 "settings.general.updateCheck" = "Automatisch nach Updates suchen";
-"settings.general.updateCheckHint" = "Fragt höchstens einmal täglich bei GitHub nach der neuesten Version. Es werden keine Daten über dich übertragen.";
+"settings.general.updateCheckHint" = "Fragt höchstens einmal täglich bei GitHub nach der neuesten Version. Die Anfrage nennt die App und ihre Version; sonst werden keine Daten über dich übertragen.";
 
 /* Settings — Übertragungen-Tab */
 "settings.tab.transfers" = "Übertragungen";
