@@ -39,4 +39,24 @@ public struct PosixPermissions: Equatable, Sendable {
             else { rawValue &= ~Self.mask(c, r) }
         }
     }
+
+    /// Derives directory-appropriate bits from a file's raw permissions
+    /// (M11c/T1): in each of the three rwx triads, sets execute WHENEVER
+    /// read is already set there (needed to traverse/list the directory),
+    /// leaves read/write untouched, and carries the special bits
+    /// (setuid/setgid/sticky, the top four bits of the low 12) through
+    /// unchanged. E.g. 0o644 -> 0o755, 0o600 -> 0o700, 0o640 -> 0o750,
+    /// 0o2644 -> 0o2755 (setgid preserved), 0o000 -> 0o000 (no read anywhere,
+    /// nothing added). Used by the permissions sheet (T3) to prefill the
+    /// directory grid when the recursive "separate" mode is picked. Static
+    /// rather than an instance property/method (the plan assumes static;
+    /// nothing here needs `self`'s stored `rawValue` beyond the `raw`
+    /// parameter, so a pure function reads clearer at the call site).
+    public static func directoryDefault(from raw: UInt32) -> UInt32 {
+        var result = raw & 0o7777
+        for c in Class.allCases where result & mask(c, .read) != 0 {
+            result |= mask(c, .execute)
+        }
+        return result
+    }
 }

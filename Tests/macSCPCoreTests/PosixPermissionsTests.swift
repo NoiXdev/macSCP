@@ -25,4 +25,12 @@ struct PosixPermissionsTests {
         p[.other, .read] = true
         #expect(p.rawValue == 0o644)
     }
+
+    @Test func directoryDefaultAddsExecuteWhereReadable() {
+        #expect(PosixPermissions.directoryDefault(from: 0o644) == 0o755)
+        #expect(PosixPermissions.directoryDefault(from: 0o600) == 0o700)
+        #expect(PosixPermissions.directoryDefault(from: 0o640) == 0o750)
+        #expect(PosixPermissions.directoryDefault(from: 0o2644) == 0o2755)
+        #expect(PosixPermissions.directoryDefault(from: 0o000) == 0o000)
+    }
 }
