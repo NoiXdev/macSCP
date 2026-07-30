@@ -1746,6 +1746,48 @@ struct CitadelFileSystemIntegrationTests {
         let items = try await fs.list(path: "/data/seed")
         #expect(items.contains { $0.name == "hello.txt" })
     }
+
+    // MARK: - M11g/T1: navigate(to:) + PathCompletion (real rig)
+
+    /// `RemoteBrowserViewModel.navigate(to:)` against the real rig: jump
+    /// into a nested seeded directory and back to `/` — proves the
+    /// stat-based directory/file/not-found branching and the
+    /// currentPath/load() wiring actually work against a REAL SFTP server,
+    /// not just `MockRemoteFileSystem`.
+    @MainActor
+    @Test func navigateJumpsIntoNestedDirectoryAndBackToRoot() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+
+        let downError = await vm.navigate(to: "/data/seed/sub")
+        #expect(downError == nil)
+        #expect(vm.currentPath == "/data/seed/sub")
+
+        let upError = await vm.navigate(to: "/")
+        #expect(upError == nil)
+        #expect(vm.currentPath == "/")
+    }
+
+    /// `PathCompletion.directoryToList` + a REAL `list()` + `PathCompletion.
+    /// complete` must chain correctly end to end — the pure unit tests fake
+    /// a listing, but only this proves the three pieces actually agree on
+    /// directory shape against a real SFTP `list()` response.
+    @Test func completionAgainstRealListingFindsSeededSubdirectory() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        let input = "/data/seed/su"
+        let directory = PathCompletion.directoryToList(for: input)
+        #expect(directory == "/data/seed")
+
+        let entries = try await fs.list(path: directory)
+        let result = PathCompletion.complete(input: input, entries: entries, caseSensitive: true)
+
+        #expect(result.completedInput == "/data/seed/sub/")
+        #expect(result.candidates == ["sub"])
+    }
 }
 
 /// M11a/T4 continued: the chain guard on a session-referenced jump must

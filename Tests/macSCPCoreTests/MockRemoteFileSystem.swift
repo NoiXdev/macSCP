@@ -44,6 +44,11 @@ actor MockRemoteFileSystem: RemoteFileSystem {
     /// set, `homeDirectoryPath` throws this error instead of returning
     /// `homePath`. `nil` (the default) is normal operation.
     private var homeDirectoryFailure: Error?
+    /// Test-only per-path failure injection for `stat` (M11g/T1): lets a
+    /// `navigate(to:)` test simulate an FS-level error (e.g. permission
+    /// denied) on a `stat` call without a bespoke double, mirroring
+    /// `permissionsFailures` above.
+    private var statFailures: [String: Error] = [:]
 
     init(tree: [String: [RemoteFileItem]] = [:], files: [String: Data] = [:]) {
         self.tree = tree
@@ -94,12 +99,20 @@ actor MockRemoteFileSystem: RemoteFileSystem {
     }
 
     func stat(path: String) async throws -> RemoteFileItem {
+        if let failure = statFailures[path] {
+            throw failure
+        }
         let parent = RemotePath.parent(of: path)
         guard let siblings = tree[parent],
               let item = siblings.first(where: { $0.path == path }) else {
             throw RemoteFSError.notFound(path: path)
         }
         return item
+    }
+
+    /// Test-only failure injection toggle (M11g/T1). See `statFailures`.
+    func setStatFailure(_ error: Error?, at path: String) {
+        statFailures[path] = error
     }
 
     func readStream(

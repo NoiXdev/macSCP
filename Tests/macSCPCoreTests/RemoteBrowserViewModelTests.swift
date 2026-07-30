@@ -739,6 +739,111 @@ struct RemoteBrowserViewModelTests {
         #expect(vm.items.isEmpty)
     }
 
+    // MARK: - navigate(to:) (M11g/T1)
+
+    @Test func navigateToExistingDirectorySetsPathLoadsAndClearsSelection() async {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "var", path: "/var", kind: .directory)],
+            "/var": [RemoteFileItem(name: "www", path: "/var/www", kind: .directory)],
+            "/var/www": [RemoteFileItem(name: "html", path: "/var/www/html", kind: .directory)],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        vm.selectedItems = [vm.items[0]]
+
+        let error = await vm.navigate(to: "/var/www")
+
+        #expect(error == nil)
+        #expect(vm.currentPath == "/var/www")
+        #expect(vm.items.map(\.name) == ["html"])
+        #expect(vm.selectedItems.isEmpty)
+    }
+
+    /// The file-target message must be its OWN message, not the "not
+    /// found" one — the FS found something, it's just the wrong kind.
+    @Test func navigateToFileReturnsDistinctMessageAndDoesNotMove() async {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "readme.txt", path: "/readme.txt", kind: .file, size: 1)],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+
+        let error = await vm.navigate(to: "/readme.txt")
+
+        #expect(error != nil)
+        #expect(error != String(format: CoreL10n.string("core.browse.notFound %@"), "/readme.txt"))
+        #expect(vm.currentPath == "/")
+    }
+
+    @Test func navigateToMissingPathReturnsNotFoundMessageAndDoesNotMove() async {
+        let fs = MockRemoteFileSystem(tree: ["/": []])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+
+        let error = await vm.navigate(to: "/nope")
+
+        #expect(error == String(format: CoreL10n.string("core.browse.notFound %@"), "/nope"))
+        #expect(vm.currentPath == "/")
+    }
+
+    /// An FS-level error (e.g. permission denied) is passed through
+    /// unchanged — not remapped into the file/not-found messages above.
+    @Test func navigatePermissionErrorPassesThroughFSMessage() async {
+        let fs = MockRemoteFileSystem(tree: ["/": []])
+        await fs.setStatFailure(RemoteFSError.permissionDenied(path: "/locked"), at: "/locked")
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+
+        let error = await vm.navigate(to: "/locked")
+
+        #expect(error == String(format: CoreL10n.string("core.error.permissionDenied %@"), "/locked"))
+        #expect(vm.currentPath == "/")
+    }
+
+    @Test func navigateCollapsesRepeatedAndTrailingSlashes() async {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "var", path: "/var", kind: .directory)],
+            "/var": [RemoteFileItem(name: "www", path: "/var/www", kind: .directory)],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+
+        let error = await vm.navigate(to: "/var//www///")
+
+        #expect(error == nil)
+        #expect(vm.currentPath == "/var/www")
+    }
+
+    /// A single strip of ONE trailing slash is not enough (M7a lesson) —
+    /// a DOUBLE trailing slash exercises that specifically.
+    @Test func navigateCollapsesDoubleTrailingSlash() async {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "var", path: "/var", kind: .directory)],
+            "/var": [RemoteFileItem(name: "www", path: "/var/www", kind: .directory)],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+
+        let error = await vm.navigate(to: "/var/www//")
+
+        #expect(error == nil)
+        #expect(vm.currentPath == "/var/www")
+    }
+
+    @Test func navigateWithEmptyOrWhitespaceInputReturnsMessageWithoutMoving() async {
+        let fs = MockRemoteFileSystem(tree: ["/": []])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+
+        let emptyError = await vm.navigate(to: "")
+        #expect(emptyError != nil)
+        #expect(vm.currentPath == "/")
+
+        let whitespaceError = await vm.navigate(to: "   ")
+        #expect(whitespaceError != nil)
+        #expect(vm.currentPath == "/")
+    }
+
     @Test func nilAuditSinkFiresNothing() async throws {
         let fs = MockRemoteFileSystem(tree: [
             "/": [RemoteFileItem(name: "old.txt", path: "/old.txt", kind: .file, size: 1)],

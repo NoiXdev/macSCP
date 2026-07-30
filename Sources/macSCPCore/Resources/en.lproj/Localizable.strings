@@ -13,6 +13,10 @@
 "core.browse.protocolError %@" = "Protocol error: %@";
 "core.error.unexpected %@" = "Unexpected error: %@";
 
+/* RemoteBrowserViewModel.navigate(to:) (M11g/T1) */
+"core.browse.emptyPath" = "Enter a path to navigate to.";
+"core.browse.notADirectory %@" = "Not a directory: %@";
+
 /* ConnectionViewModel form validation */
 "core.connect.portNumeric" = "Port must be a number.";
 "core.connect.passwordEmpty" = "Password must not be empty.";
