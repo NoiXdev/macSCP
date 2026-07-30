@@ -86,6 +86,23 @@ struct PathBar: View {
     /// restarted it — so hammering Tab on a slow connection never showed
     /// candidates, the exact case the flag exists for.
     @State private var justCompletedWithTab = false
+    /// `nil` while not cycling; otherwise the index of the highlighted
+    /// candidate in `lastCandidates` (M11i). Set by `handleTab`/`handleBacktab`
+    /// once the candidates list is showing, and reset to `nil` — never left
+    /// pointing at a list that may no longer apply — in `beginEditing()`, at
+    /// the start of every fresh Tab-completion listing, and by
+    /// `resetTabTracking()` (any keystroke that isn't itself a Tab leaves
+    /// cycling mode, same as it already resets `justCompletedWithTab`). That
+    /// last reset is not just hygiene: `cancel()`'s first-Esc-stage below
+    /// only restores `cycleBaseDraft` while `cycleIndex != nil`, so leaving a
+    /// stale index set after the user has typed something new would make
+    /// Esc discard text they just typed instead of the one-step-back the
+    /// design calls for.
+    @State private var cycleIndex: Int?
+    /// The field text as it stood right before the first cycle step
+    /// (`cycleIndex == nil` becoming non-`nil`) — what the first Esc while
+    /// cycling restores `draft` to. Only meaningful while `cycleIndex != nil`.
+    @State private var cycleBaseDraft = ""
     @State private var completionTask: Task<Void, Never>?
     @State private var copyConfirmationTask: Task<Void, Never>?
     @State private var showCopyConfirmation = false
@@ -114,8 +131,10 @@ struct PathBar: View {
                     onNavigate: commit,
                     onCancel: cancel,
                     onTab: handleTab,
+                    onBacktab: handleBacktab,
                     onOtherInput: resetTabTracking,
-                    onBlur: { if isEditing { cancel() } }
+                    onBlur: { if isEditing { cancel() } },
+                    isCandidatesListOpen: isCandidatesListOpen
                 )
             } else {
                 Text(showCopyConfirmation
@@ -169,11 +188,19 @@ struct PathBar: View {
         }
     }
 
+    /// Whether Shift+Tab should cycle backward instead of falling through to
+    /// AppKit's default focus traversal (M11i) — `PathTextField` cannot tell
+    /// this on its own (per that type's doc comment), so it asks the view.
+    private var isCandidatesListOpen: Bool {
+        if case .candidates = overlayContent { return true }
+        return false
+    }
+
     @ViewBuilder
     private var overlayBody: some View {
         switch overlayContent {
         case .candidates(let names):
-            CandidatesList(names: names, onSelect: selectCandidate)
+            CandidatesList(names: names, selectedIndex: cycleIndex, onSelect: selectCandidate)
                 .overlayCardStyle()
         case .error(let message):
             Text(message)
@@ -211,6 +238,8 @@ struct PathBar: View {
         lastCandidatesDirectory = ""
         lastCandidatesDraft = ""
         candidatesRequestedWhileInFlight = false
+        cycleIndex = nil
+        cycleBaseDraft = ""
         editSessionID = UUID()
         draft = viewModel.currentPath
         isEditing = true
@@ -250,6 +279,22 @@ struct PathBar: View {
     }
 
     private func cancel() {
+        // Esc's first stage (M11i): while cycling through candidates, one
+        // Esc steps back to the text that stood in the field before cycling
+        // started, closes the list, and leaves the field open — it does NOT
+        // yet discard the whole edit. Only a SECOND Esc (`cycleIndex` is
+        // `nil` again by then) falls through to the unconditional close
+        // below, exactly as Esc always behaved before cycling existed. Both
+        // callers of `cancel()` that mean "the user pressed Esc" — the
+        // AppKit `cancelOperation` override and this function's own
+        // `onCancel` closure wiring — share this one function, so there is
+        // only one rule to keep in sync, not two.
+        if cycleIndex != nil {
+            draft = cycleBaseDraft
+            cycleIndex = nil
+            overlayContent = nil
+            return
+        }
         completionTask?.cancel()
         overlayContent = nil
         isEditing = false
@@ -263,6 +308,12 @@ struct PathBar: View {
     private func resetTabTracking() {
         justCompletedWithTab = false
         overlayContent = nil
+        // Any keystroke that isn't itself a Tab leaves cycling mode (M11i
+        // design, "Ein anderer Tastendruck ... verlässt den Blätter-Modus"):
+        // the text stays exactly as the field now shows it, and the next Tab
+        // starts a fresh completion round instead of resuming a cycle bound
+        // to candidates the user has since typed past.
+        cycleIndex = nil
     }
 
     private func handleTab() {
@@ -270,13 +321,19 @@ struct PathBar: View {
             // The cached list may belong to an OLDER, superseded completion:
             // if a listing is still in flight for the current draft (see
             // below), `lastCandidatesDraft` hasn't been updated to match it
-            // yet. Only show the cache when it demonstrably belongs to the
-            // draft on screen right now; otherwise remember that candidates
-            // were asked for so the in-flight task can show them itself once
-            // it resolves, instead of silently keeping the stale list (or
-            // nothing) on screen until yet another Tab press.
-            if !lastCandidates.isEmpty, lastCandidatesDraft == draft {
-                overlayContent = .candidates(lastCandidates)
+            // yet. The list counts as available once it demonstrably belongs
+            // to the draft on screen right now (fresh from `handleTab`'s own
+            // first-Tab branch, below) — OR we are already mid-cycle, where
+            // `draft` no longer equals `lastCandidatesDraft` because cycling
+            // itself keeps overwriting `draft` with each candidate (M11i).
+            // Either way, this Tab advances the cycle by one. Otherwise
+            // remember that candidates were asked for so the in-flight task
+            // can show them itself once it resolves, instead of silently
+            // keeping the stale list (or nothing) on screen until yet
+            // another Tab press.
+            let candidatesAvailable = !lastCandidates.isEmpty && lastCandidatesDraft == draft
+            if candidatesAvailable || cycleIndex != nil {
+                cycleThroughCandidates(using: CandidateCycle.next)
             } else {
                 candidatesRequestedWhileInFlight = true
             }
@@ -286,6 +343,13 @@ struct PathBar: View {
         completionTask?.cancel()
         justCompletedWithTab = true
         candidatesRequestedWhileInFlight = false
+        // A fresh Tab-completion round starts here: any cycle bound to the
+        // OLD `lastCandidates` must not survive into whatever this new
+        // listing turns up (M11i, same late-listing carefulness as findings
+        // I2/I6) — otherwise a slow listing could resolve into a candidate
+        // list where a stale `cycleIndex` points at the wrong entry, or past
+        // its end.
+        cycleIndex = nil
         let input = draft
         let session = editSessionID
         completionTask = Task {
@@ -345,6 +409,34 @@ struct PathBar: View {
         }
     }
 
+    /// Shift+Tab (M11i) — `PathTextField` only calls this while
+    /// `isCandidatesListOpen` is `true` (its own doc comment explains why
+    /// that check lives there, not here), so the candidates list is always
+    /// available whenever this runs; cycling backward is otherwise exactly
+    /// like a Tab press with `CandidateCycle.previous` instead of `.next`.
+    private func handleBacktab() {
+        cycleThroughCandidates(using: CandidateCycle.previous)
+    }
+
+    /// Shared by `handleTab`'s cycling branch and `handleBacktab`: advances
+    /// `cycleIndex` via `step` (`CandidateCycle.next` or `.previous`),
+    /// remembers the pre-cycle text in `cycleBaseDraft` on the very first
+    /// step (`cycleIndex == nil` becoming non-`nil` — that is what Esc's
+    /// first stage restores `draft` to), and puts the newly selected
+    /// candidate into the field using the exact same construction
+    /// `selectCandidate` uses — `RemotePath.join(lastCandidatesDirectory,
+    /// name) + "/"` — never re-derived from `draft`, for the same reason
+    /// documented on `lastCandidatesDirectory` above.
+    private func cycleThroughCandidates(using step: (Int?, Int) -> Int?) {
+        if cycleIndex == nil {
+            cycleBaseDraft = draft
+        }
+        cycleIndex = step(cycleIndex, lastCandidates.count)
+        guard let index = cycleIndex else { return }
+        draft = RemotePath.join(lastCandidatesDirectory, lastCandidates[index]) + "/"
+        overlayContent = .candidates(lastCandidates)
+    }
+
     private func selectCandidate(_ name: String) {
         // Finding I1: use the directory the candidates were actually listed
         // against, not `PathCompletion.directoryToList(for: draft)` —
@@ -354,6 +446,10 @@ struct PathBar: View {
         draft = RemotePath.join(lastCandidatesDirectory, name) + "/"
         overlayContent = nil
         justCompletedWithTab = false
+        // A click adopts one candidate outright — it is not a cycling step,
+        // so nothing about it should look like mid-cycle to `cancel()`'s
+        // first-Esc-stage check afterward (M11i).
+        cycleIndex = nil
     }
 }
 
@@ -399,8 +495,19 @@ private struct PathTextField: NSViewRepresentable {
     let onNavigate: () -> Void
     let onCancel: () -> Void
     let onTab: () -> Void
+    /// Shift+Tab, called only while `isCandidatesListOpen` is `true` (M11i)
+    /// — see that property's doc comment for why the Coordinator asks the
+    /// view instead of guessing.
+    let onBacktab: () -> Void
     let onOtherInput: () -> Void
     let onBlur: () -> Void
+    /// Whether the candidates overlay is currently showing. `PathTextField`
+    /// has no notion of "candidates" itself — the overlay, `lastCandidates`,
+    /// and cycling all live in `PathBar`'s `@State` — so this is computed
+    /// there (`PathBar.isCandidatesListOpen`) and simply handed down here,
+    /// per the M11i brief's instruction not to have this view guess at state
+    /// it cannot see.
+    let isCandidatesListOpen: Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -498,12 +605,22 @@ private struct PathTextField: NSViewRepresentable {
                 parent.onTab()
                 return true
             case #selector(NSResponder.insertBacktab(_:)):
-                // Finding M7: Shift+Tab must NOT complete. Returning `false`
-                // lets AppKit's default backtab (focus traversal backward)
-                // proceed untouched — which then blurs the field, discarding
-                // the draft via the normal blur rule, same as any other way
-                // of leaving the field.
-                return false
+                // M11i: while the candidates list is open, Shift+Tab cycles
+                // BACKWARD through it instead of traversing focus — this is
+                // the one case finding M7 (below) deliberately carves an
+                // exception for, since here there IS something for Shift+Tab
+                // to do besides discard the field.
+                guard parent.isCandidatesListOpen else {
+                    // Finding M7: outside the candidates list, Shift+Tab must
+                    // still NOT complete. Returning `false` lets AppKit's
+                    // default backtab (focus traversal backward) proceed
+                    // untouched — which then blurs the field, discarding the
+                    // draft via the normal blur rule, same as any other way
+                    // of leaving the field.
+                    return false
+                }
+                parent.onBacktab()
+                return true
             default:
                 parent.onOtherInput()
                 return false
@@ -525,6 +642,10 @@ private struct PathTextField: NSViewRepresentable {
 /// hundreds of completions instead of silently truncating.
 private struct CandidatesList: View {
     let names: [String]
+    /// The Tab-cycling highlight (M11i) — `nil` in the plain "list just
+    /// showed, nothing chosen yet" state, matching the pre-M11i look exactly
+    /// (see `PathBar.cycleIndex`'s doc comment for when this is non-`nil`).
+    let selectedIndex: Int?
     let onSelect: (String) -> Void
 
     /// `CandidateRow`'s rendered height (11.5pt monospaced text plus 4pt of
@@ -553,14 +674,31 @@ private struct CandidatesList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(names, id: \.self) { name in
-                        CandidateRow(name: name, onSelect: { onSelect(name) })
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(names.enumerated()), id: \.offset) { index, name in
+                            CandidateRow(
+                                name: name,
+                                isSelected: index == selectedIndex,
+                                onSelect: { onSelect(name) }
+                            )
+                            .id(index)
+                        }
+                    }
+                }
+                .frame(height: listHeight)
+                .onChange(of: selectedIndex) { _, newIndex in
+                    // Keeps the highlighted candidate visible while cycling
+                    // through a list capped at `maxListHeight` (M11i) — a
+                    // long directory listing can hold far more entries than
+                    // fit on screen at once.
+                    guard let newIndex else { return }
+                    withAnimation {
+                        proxy.scrollTo(newIndex, anchor: .center)
                     }
                 }
             }
-            .frame(height: listHeight)
 
             if isTruncated {
                 Divider()
@@ -584,9 +722,19 @@ private struct CandidatesList: View {
 
 private struct CandidateRow: View {
     let name: String
+    /// Highlighted as the Tab-cycling selection (M11i) — the same
+    /// `remoteSoft` fill the M5g table selection uses, so the two selection
+    /// affordances in the app read as one system rather than two different
+    /// looks for "this is the selected thing".
+    let isSelected: Bool
     let onSelect: () -> Void
 
     @State private var isHovering = false
+
+    private var background: Color {
+        if isSelected { return DesignTokens.remoteSoft }
+        return isHovering ? Color.secondary.opacity(0.12) : Color.clear
+    }
 
     var body: some View {
         Text(name)
@@ -594,7 +742,7 @@ private struct CandidateRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
-            .background(isHovering ? Color.secondary.opacity(0.12) : Color.clear)
+            .background(background)
             .contentShape(Rectangle())
             .onTapGesture(perform: onSelect)
             .onHover { isHovering = $0 }
