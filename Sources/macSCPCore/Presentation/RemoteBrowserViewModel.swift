@@ -319,24 +319,32 @@ public final class RemoteBrowserViewModel {
     ) -> [RemoteFileItem] {
         items.sorted { a, b in
             if a.isDirectory != b.isDirectory { return a.isDirectory }
-            let order = keyOrder(a, b, key: key)
-            return ascending ? order == .orderedAscending : order == .orderedDescending
+            // The PRIMARY key follows `ascending`; the name tiebreaker does
+            // NOT (M11l/T1 review): equal-size or equal-date rows always read
+            // A→Z, even in a descending sort, matching the Finder. Applying
+            // the direction flip to the whole comparison (tiebreaker included)
+            // would sort those Z→A, which reads as inconsistent.
+            let primary = primaryOrder(a, b, key: key)
+            if primary != .orderedSame {
+                return ascending ? primary == .orderedAscending : primary == .orderedDescending
+            }
+            return nameOrder(a, b) == .orderedAscending
         }
     }
 
-    /// `ComparisonResult` for `a` vs. `b` under `key`, already including the
-    /// name tiebreaker for `.size`/`.modified` — see `sortedForDisplay`'s doc
-    /// comment for the missing-value rule.
-    private static func keyOrder(_ a: RemoteFileItem, _ b: RemoteFileItem, key: FileSortKey) -> ComparisonResult {
+    /// `ComparisonResult` for `a` vs. `b` under `key`, WITHOUT the name
+    /// tiebreaker (which `sortedForDisplay` applies separately, always
+    /// ascending). For `.name` the key IS the name, so there is nothing left
+    /// to break ties with. See `sortedForDisplay`'s doc comment for the
+    /// missing-value rule.
+    private static func primaryOrder(_ a: RemoteFileItem, _ b: RemoteFileItem, key: FileSortKey) -> ComparisonResult {
         switch key {
         case .name:
             return nameOrder(a, b)
         case .size:
-            let order = compareOptional(a.size, b.size)
-            return order == .orderedSame ? nameOrder(a, b) : order
+            return compareOptional(a.size, b.size)
         case .modified:
-            let order = compareOptional(a.modifiedAt, b.modifiedAt)
-            return order == .orderedSame ? nameOrder(a, b) : order
+            return compareOptional(a.modifiedAt, b.modifiedAt)
         }
     }
 

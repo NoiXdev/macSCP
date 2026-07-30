@@ -111,6 +111,15 @@ struct FileSortTests {
         #expect(sorted.map(\.name) == ["alpha.txt", "zebra.txt"])
     }
 
+    /// The name tiebreaker stays ascending even in a DESCENDING sort (M11l/T1
+    /// review): equal-size (or equal-date) rows always read A→Z, matching the
+    /// Finder, rather than flipping to Z→A with the primary direction.
+    @Test func equalSizeTiebreakerStaysAscendingWhenDescending() {
+        let items = [file("zebra.txt", size: 5), file("alpha.txt", size: 5), file("mid.txt", size: 5)]
+        let sorted = RemoteBrowserViewModel.sortedForDisplay(items, key: .size, ascending: false)
+        #expect(sorted.map(\.name) == ["alpha.txt", "mid.txt", "zebra.txt"])
+    }
+
     // MARK: - Missing size/date: deterministic position (documented: sorts as smallest/oldest)
 
     @Test func missingSizeSortsAsSmallestAscending() {
