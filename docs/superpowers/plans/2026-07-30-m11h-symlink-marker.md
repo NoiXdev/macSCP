@@ -41,7 +41,7 @@
 - Consumes: `RemoteFileItem.kind` (`.file`/`.directory`/`.symlink`/`.other`), `RemoteBrowserViewModel.navigate(to:) async -> String?` (M11g), `DesignTokens.inkTertiaryNS`, das bestehende `onOpen`/`onOpenFile`-Muster.
 - Produces: nichts für spätere Tasks.
 
-- [ ] **Step 1: Failing test — kein `/` für Symlinks.**
+- [x] **Step 1: Failing test — kein `/` für Symlinks.**
   In `FileListFormatterTests` (oder wo `displayName` heute getestet wird):
   ein Eintrag mit `kind == .symlink` und Namen `current` muss als `current`
   formatiert werden, NICHT als `current/`. Dazu zwei Regressionsfälle:
@@ -52,13 +52,13 @@
   dann sage das im Report und lasse ihn als Regressionswächter stehen** —
   keine Änderung an `FileListFormatter` erfinden, nur um etwas zu ändern.
 
-- [ ] **Step 2: Kontextmenü-Verhalten pinnen.**
+- [x] **Step 2: Kontextmenü-Verhalten pinnen.**
   In `BrowserContextMenuTests` sicherstellen, dass für einen Symlink
   weiterhin KEIN Übertragen-, Editor- und Rechte-Eintrag erscheint (M7b-
   Regel). Falls es diesen Test schon gibt, nichts doppeln — nur prüfen und
   im Report festhalten.
 
-- [ ] **Step 3: Symbol in der Namensspalte.**
+- [x] **Step 3: Symbol in der Namensspalte.**
   In `tableView(_:viewFor:row:)` erhält der `"name"`-Zellaufbau neben dem
   bestehenden `NSTextField` ein `NSImageView` mit
   `NSImage(systemSymbolName: "arrow.up.forward", accessibilityDescription:)`,
@@ -79,13 +79,13 @@
   setzt `stringValue` und Font/Color unbedingt bei jeder Wiederverwendung —
   folge genau diesem Muster.
 
-- [ ] **Step 4: Tooltip.**
+- [x] **Step 4: Tooltip.**
   Die Namens-Zelle einer Symlink-Zeile bekommt einen `toolTip` mit einem
   lokalisierten Text („Symbolic link" / „Symbolischer Link"), der
   gleichzeitig die Accessibility-Beschreibung des Symbols ist. Andere
   Zeilen bekommen `toolTip = nil` (Recycling!).
 
-- [ ] **Step 5: Doppelklick.**
+- [x] **Step 5: Doppelklick.**
   `doubleClicked(_:)` bekommt einen dritten Zweig: bei `kind == .symlink`
   wird der Pfad des Eintrags an einen neuen Closure-Parameter gegeben
   (Muster wie `onOpenFile`), den `BrowserPane`/`ContentView` an
@@ -97,18 +97,18 @@
   die Stelle, an der das Pane schon Fehler zeigt, statt eine neue zu
   erfinden. `.other` bleibt No-op.
 
-- [ ] **Step 6: EN/DE.**
+- [x] **Step 6: EN/DE.**
   Neue Keys in BEIDE App-Kataloge, Englisch zuerst. `plutil -lint` auf
   alle vier Kataloge OK, `LocalizableStringsTests` grün.
 
-- [ ] **Step 7: Verifikation.**
+- [x] **Step 7: Verifikation.**
   `swift build` aus einem SAUBEREN Build-Verzeichnis (ein inkrementeller
   Lauf zeigt keine Warnungen, weil nichts neu übersetzt wird — nur der
   saubere Lauf ist eine ehrliche Aussage): keine NEUEN Warnungen; die vier
   vorbestehenden sind erwartet (`BrowserPane` redundantes `_`,
   `TransferEngine:137`, zwei Citadel-Sendable). Volle `swift test`.
 
-- [ ] **Step 8: Commit.** `feat: mark symlinks in the file list and follow them on double-click`
+- [x] **Step 8: Commit.** `feat: mark symlinks in the file list and follow them on double-click`
 
 ---
 
@@ -127,13 +127,13 @@ Einstellungen fehlt, ist der sofortige Weg samt Zustandsanzeige.
 **Interfaces:**
 - Consumes: `UpdateCheckModel` (M11b, treibt schon die manuelle Prüfung aus dem Menü), `SettingsStore.updateCheckEnabled` und den dort bereits gespeicherten Zeitstempel der letzten Prüfung, `AppVersion`.
 
-- [ ] **Step 1: Bestand lesen, nicht neu bauen.** `UpdateCheckModel` und
+- [x] **Step 1: Bestand lesen, nicht neu bauen.** `UpdateCheckModel` und
   der Menüeintrag machen die Arbeit bereits. Finde heraus, wie der
   Menüeintrag die Prüfung auslöst und wie das Ergebnis dargestellt wird,
   und benutze exakt denselben Weg — kein zweiter Prüfpfad, keine zweite
   Ergebnisdarstellung. Halte im Report fest, welchen Weg du gefunden hast.
 
-- [ ] **Step 2: Der Abschnitt.** Unter dem bestehenden Schalter im Tab
+- [x] **Step 2: Der Abschnitt.** Unter dem bestehenden Schalter im Tab
   „Allgemein":
   - die laufende Version (aus dem Bundle, wie „Über macSCP" sie liest),
   - der Zeitpunkt der letzten Prüfung, oder ein Satz, dass noch nie geprüft
@@ -144,23 +144,23 @@ Einstellungen fehlt, ist der sofortige Weg samt Zustandsanzeige.
   über „höchstens einmal täglich, keine Daten über dich" ist eine Zusage,
   die dieser Task nicht aufweichen darf.
 
-- [ ] **Step 3: Ergebnis ehrlich.** Erfolg ohne Fund, Erfolg mit Fund
+- [x] **Step 3: Ergebnis ehrlich.** Erfolg ohne Fund, Erfolg mit Fund
   (Version + Link, wie das Menü es zeigt) und Fehlschlag (kein Netz,
   Rate-Limit) sind drei unterschiedliche Zustände mit je eigenem Text.
   Kein stilles Nichts nach einem Klick.
 
-- [ ] **Step 4: EN/DE + Verifikation.** Neue Keys in BEIDE Kataloge,
+- [x] **Step 4: EN/DE + Verifikation.** Neue Keys in BEIDE Kataloge,
   `plutil -lint` OK, `LocalizableStringsTests` grün, `swift build` aus
   einem sauberen Build-Verzeichnis ohne neue Warnungen, volle `swift test`.
   **Kein Test darf das Netz benutzen** — M11b erzwingt das bereits mit
   einem lauten Stub-Fehlschlag; wenn du Tests ergänzt, halte dich daran.
 
-- [ ] **Step 5: Commit.** `feat: check for updates from the settings window`
+- [x] **Step 5: Commit.** `feat: check for updates from the settings window`
 
 ---
 
 ### Task 3: Abschluss-Verifikation (Koordinator)
 
-- [ ] Gated Suiten am finalen Stand: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → alle grün, zero skips. Dazu ein gated Rig-Test: ein Symlink auf ein Verzeichnis und einer auf eine Datei, über `navigate(to:)` — der erste gelingt, der zweite liefert die Meldung.
-- [ ] Visueller Smoke — an den Maintainer delegiert (Checkliste: das Symbol erscheint NUR bei Symlinks; Zeilenhöhe und Textkante sehen aus wie vorher; beim Scrollen durch eine lange Liste wandert kein Symbol auf eine falsche Zeile; Tooltip erscheint; Doppelklick auf einen Ordner-Symlink öffnet ihn und die Pfadzeile zeigt den Symlink-Pfad; Doppelklick auf einen Datei-Symlink zeigt eine Meldung statt nichts zu tun; hell und dunkel).
-- [ ] Plan-Checkboxen, Ledger, Opus-Final-Review, Fix-Runden bis „Yes", Push develop, `gh run watch`, Memory. KEIN Release.
+- [x] Gated Suiten am finalen Stand: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → alle grün, zero skips. Dazu ein gated Rig-Test: ein Symlink auf ein Verzeichnis und einer auf eine Datei, über `navigate(to:)` — der erste gelingt, der zweite liefert die Meldung.
+- [x] Visueller Smoke — an den Maintainer delegiert (Checkliste: das Symbol erscheint NUR bei Symlinks; Zeilenhöhe und Textkante sehen aus wie vorher; beim Scrollen durch eine lange Liste wandert kein Symbol auf eine falsche Zeile; Tooltip erscheint; Doppelklick auf einen Ordner-Symlink öffnet ihn und die Pfadzeile zeigt den Symlink-Pfad; Doppelklick auf einen Datei-Symlink zeigt eine Meldung statt nichts zu tun; hell und dunkel).
+- [x] Plan-Checkboxen, Ledger, Opus-Final-Review, Fix-Runden bis „Yes", Push develop, `gh run watch`, Memory. KEIN Release.
