@@ -14,6 +14,13 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// going through `onOpen` (cd); symlinks/other are unchanged (no-op).
     /// Optional because the local pane doesn't wire it (M5e/T4).
     var onOpenFile: ((RemoteFileItem) -> Void)? = nil
+    /// Double-click on a SYMLINK row (kind == .symlink; M11h/T1) — the item's
+    /// own path (not a resolved target Core never computes) is handed back
+    /// so the caller can attempt `navigate(to:)`, the same route the path
+    /// field's Enter key already uses. `.other` stays a no-op; unlike
+    /// `onOpenFile` this is wired for BOTH panes, since `navigate(to:)` is a
+    /// plain `RemoteBrowserViewModel` operation with no local/remote split.
+    var onOpenSymlink: ((RemoteFileItem) -> Void)? = nil
     var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)? = nil
     /// Which pane this table belongs to (M7b) — drives the context menu's
     /// entries (the editor entry is remote-only). Explicit rather than
@@ -32,6 +39,7 @@ struct RemoteFileTableView: NSViewRepresentable {
     func makeCoordinator() -> Coordinator {
         let coordinator = Coordinator(onOpen: onOpen, onSelect: onSelect, side: side)
         coordinator.onOpenFile = onOpenFile
+        coordinator.onOpenSymlink = onOpenSymlink
         coordinator.pasteboardWriter = pasteboardWriter
         coordinator.onMenuAction = onMenuAction
         coordinator.crossSessionTargets = crossSessionTargets
@@ -97,6 +105,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.onOpen = onOpen
         context.coordinator.onSelect = onSelect
         context.coordinator.onOpenFile = onOpenFile
+        context.coordinator.onOpenSymlink = onOpenSymlink
         context.coordinator.pasteboardWriter = pasteboardWriter
         context.coordinator.onMenuAction = onMenuAction
         context.coordinator.crossSessionTargets = crossSessionTargets
@@ -131,6 +140,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         var onOpen: (RemoteFileItem) -> Void
         var onSelect: ([RemoteFileItem]) -> Void
         var onOpenFile: ((RemoteFileItem) -> Void)?
+        var onOpenSymlink: ((RemoteFileItem) -> Void)?
         var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)?
         var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)?
         var crossSessionTargets: (() -> [CrossSessionTarget])?
@@ -196,6 +206,28 @@ struct RemoteFileTableView: NSViewRepresentable {
                     field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -12),
                     field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
                 ])
+                // Symlink marker (M11h/T1): only the "name" column ever needs
+                // it, built once per fresh cell and toggled with `isHidden`
+                // on every reuse below — never re-added, never repositioned.
+                // It lives IN the existing 12pt left inset rather than
+                // pushing `field` further right, so the resting layout (row
+                // height, text baseline, 12pt text indent) is byte-for-byte
+                // what M5g froze: `field`'s own leading constraint above is
+                // untouched.
+                if columnID == "name" {
+                    let marker = NSImageView()
+                    marker.translatesAutoresizingMaskIntoConstraints = false
+                    marker.contentTintColor = DesignTokens.inkTertiaryNS
+                    marker.symbolConfiguration = NSImage.SymbolConfiguration(
+                        pointSize: 11, weight: .regular)
+                    marker.isHidden = true
+                    cell.addSubview(marker)
+                    cell.imageView = marker
+                    NSLayoutConstraint.activate([
+                        marker.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 1),
+                        marker.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                    ])
+                }
             }
             cell.textField?.stringValue = text
             switch columnID {
@@ -203,6 +235,23 @@ struct RemoteFileTableView: NSViewRepresentable {
                 cell.textField?.font = .systemFont(ofSize: 12.5)
                 cell.textField?.textColor = DesignTokens.inkNS
                 cell.textField?.alignment = .natural
+                // Recycling hygiene (M11h/T1, critical): both `isHidden` and
+                // `toolTip` are set UNCONDITIONALLY on every reuse, the same
+                // way `stringValue`/font/color above already are — a row
+                // that scrolls from a symlink to a plain file must not keep
+                // showing either, since `makeView(withIdentifier:)` hands
+                // back the exact same `NSTableCellView` instance.
+                let isSymlink = item.kind == .symlink
+                cell.imageView?.isHidden = !isSymlink
+                if isSymlink {
+                    let description = L10n.string("filetable.symlinkTooltip", "Symbolic link")
+                    cell.imageView?.image = NSImage(
+                        systemSymbolName: "arrow.up.forward",
+                        accessibilityDescription: description)
+                    cell.toolTip = description
+                } else {
+                    cell.toolTip = nil
+                }
             case "size":
                 cell.textField?.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .regular)
                 cell.textField?.textColor = DesignTokens.inkSecondaryNS
@@ -222,8 +271,10 @@ struct RemoteFileTableView: NSViewRepresentable {
                 onOpen(item)
             } else if item.kind == .file {
                 onOpenFile?(item)
+            } else if item.kind == .symlink {
+                onOpenSymlink?(item)
             }
-            // Symlinks/other: unchanged (no-op).
+            // `.other`: unchanged (no-op).
         }
 
         func tableViewSelectionDidChange(_ notification: Notification) {

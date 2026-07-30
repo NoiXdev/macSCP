@@ -10,6 +10,7 @@ struct FileListFormatterTests {
         size: 1536, modifiedAt: Date(timeIntervalSince1970: 0)
     )
     private let bare = RemoteFileItem(name: "b", path: "/b", kind: .file)
+    private let symlink = RemoteFileItem(name: "current", path: "/current", kind: .symlink, size: nil)
 
     @Test func directoriesShowDashInsteadOfInodeSize() {
         #expect(FileListFormatter.sizeString(for: dir) == "-")
@@ -38,5 +39,15 @@ struct FileListFormatterTests {
     @Test func directoryDisplayNameGetsSlash() {
         #expect(FileListFormatter.displayName(for: dir) == "docs/")
         #expect(FileListFormatter.displayName(for: file) == "a.txt")
+    }
+
+    /// M11h/T1: a symlink gets NO trailing slash, even when its name could
+    /// be mistaken for a directory — without a per-entry `stat`, whether it
+    /// resolves to a directory isn't knowable here (same restraint as the
+    /// M11g/T2 completion, which also never offers symlinks as directories).
+    /// Regression guard alongside the two cases above: directories keep
+    /// their `/`, plain files stay without one.
+    @Test func symlinkDisplayNameGetsNoSlash() {
+        #expect(FileListFormatter.displayName(for: symlink) == "current")
     }
 }

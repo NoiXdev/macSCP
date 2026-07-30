@@ -120,6 +120,10 @@
 "filetable.column.size" = "Size";
 "filetable.column.modified" = "Modified";
 
+/* Symlink marker (M11h/T1): tooltip on a symlink row's name cell, also
+   used as the marker symbol's accessibility description. */
+"filetable.symlinkTooltip" = "Symbolic link";
+
 /* Transfer queue bar */
 "transfers.title" = "Transfers";
 "transfers.pending" = "Transfers — %lld pending";

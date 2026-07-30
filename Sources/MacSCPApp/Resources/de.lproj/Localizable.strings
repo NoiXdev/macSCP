@@ -120,6 +120,11 @@
 "filetable.column.size" = "Größe";
 "filetable.column.modified" = "Geändert";
 
+/* Symlink-Markierung (M11h/T1): Tooltip auf der Namens-Zelle einer
+   Symlink-Zeile, dient zugleich als Accessibility-Beschreibung des
+   Symbols. */
+"filetable.symlinkTooltip" = "Symbolischer Link";
+
 /* Transfer-Warteschlangen-Leiste */
 "transfers.title" = "Übertragungen";
 "transfers.pending" = "Übertragungen — %lld ausstehend";

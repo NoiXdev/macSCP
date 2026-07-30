@@ -40,6 +40,11 @@ struct BrowserPane: View {
     @State private var deleteRequest: [RemoteFileItem]?
     @State private var showNewFolderSheet = false
     @State private var deleteErrorMessage: String?
+    /// Set by a symlink double-click in the file list (M11h/T1) to the
+    /// symlink's OWN path (never a resolved target); forwarded to `PathBar`,
+    /// which reuses its existing `navigate(to:)`-failure overlay to show the
+    /// result instead of a second, bespoke error surface.
+    @State private var pendingSymlinkNavigation: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -55,7 +60,8 @@ struct BrowserPane: View {
                 PathBar(
                     viewModel: viewModel,
                     caseSensitive: side == .remote,
-                    fileSystem: fileSystem)
+                    fileSystem: fileSystem,
+                    externalNavigationRequest: $pendingSymlinkNavigation)
 
                 Button {
                     Task { await viewModel.goUp() }
@@ -95,6 +101,7 @@ struct BrowserPane: View {
                     onOpen: { item in Task { await viewModel.open(item) } },
                     onSelect: { viewModel.selectedItems = $0 },
                     onOpenFile: onOpenFile,
+                    onOpenSymlink: { item in pendingSymlinkNavigation = item.path },
                     pasteboardWriter: pasteboardWriter,
                     side: side,
                     onMenuAction: { entry, selection in
