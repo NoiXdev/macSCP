@@ -514,14 +514,53 @@ private struct PathTextField: NSViewRepresentable {
 
 /// The clickable candidates overlay body (M11g/T2 step 4) — a plain
 /// vertical list, one row per name, click adopts it into the field.
+///
+/// (M11g final review, Important): a directory like `/System/Library/
+/// Frameworks` has hundreds of entries, and a plain `VStack` with no height
+/// limit used to lay out a card thousands of points tall — clipped by the
+/// window, with everything past the edge permanently unreachable. Rows now
+/// scroll inside a capped `maxHeight`, and a footer names the total count
+/// whenever that cap actually hides some of them, the way a shell asks
+/// before dumping hundreds of completions instead of silently truncating.
 private struct CandidatesList: View {
     let names: [String]
     let onSelect: (String) -> Void
 
+    /// Approximates `CandidateRow`'s rendered height (11.5pt monospaced text
+    /// plus 4pt of vertical padding on each side) closely enough to decide
+    /// whether `names` overflows `maxListHeight` — exact to the pixel isn't
+    /// needed, only "does the list need the footer".
+    private static let rowHeight: CGFloat = 24
+    private static let maxListHeight: CGFloat = 240
+
+    private var isTruncated: Bool {
+        CGFloat(names.count) * Self.rowHeight > Self.maxListHeight
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(names, id: \.self) { name in
-                CandidateRow(name: name, onSelect: { onSelect(name) })
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(names, id: \.self) { name in
+                        CandidateRow(name: name, onSelect: { onSelect(name) })
+                    }
+                }
+            }
+            .frame(maxHeight: Self.maxListHeight)
+
+            if isTruncated {
+                Divider()
+                Text(
+                    String(
+                        format: L10n.string(
+                            "browser.pathBar.candidateCount %lld", "%lld matches"),
+                        names.count)
+                )
+                .font(.system(size: 10))
+                .foregroundStyle(DesignTokens.inkTertiary)
+                .padding(.horizontal, 10)
+                .padding(.top, 4)
+                .padding(.bottom, 4)
             }
         }
         .padding(.vertical, 4)

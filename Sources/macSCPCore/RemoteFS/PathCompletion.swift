@@ -102,16 +102,28 @@ public enum PathCompletion {
         }
 
         // Multiple candidates: only extend the input if the shared prefix
-        // differs from what's already typed. Every match satisfies
-        // `hasPrefix(typed)` (case-insensitively when `caseSensitive` is
-        // false), so `commonPrefix.count >= typed.count` always holds —
-        // a pure length check could never fire on its own. What DOES need
-        // catching is a same-length spelling mismatch: with `caseSensitive:
-        // false`, several entries can share a prefix that is the SAME
-        // LENGTH as `typed` but differently cased (real "Do..." vs typed
-        // "do") — that's still a completion the user needs, so the real
-        // spelling must win even when the count doesn't grow.
-        guard commonPrefix != typed else {
+        // both is at least as long as what's typed AND differs from it.
+        //
+        // The length check is NOT redundant, despite `caseSensitive: true`
+        // making it look that way: there, every match satisfies
+        // `hasPrefix(typed)`, so `commonPrefix.count >= typed.count` always
+        // holds and a pure length check could never fire on its own — a
+        // prior pass over this code dropped the length half of the guard on
+        // exactly that reasoning. But with `caseSensitive: false`, matches
+        // only satisfy `hasPrefix(typed)` case-INsensitively; their real
+        // spellings can disagree with each other in case (e.g. "Desktop"
+        // and "dev" both match typed "d"), so the longest common PREFIX OF
+        // THE REAL NAMES can be shorter than `typed` — even empty. Without
+        // the length check, `commonPrefix != typed` alone is true for that
+        // short prefix too, and the code below would replace the user's
+        // typed text with something shorter, deleting characters they just
+        // typed. The length check catches that case; what's left for the
+        // equality check is the same-length spelling mismatch: several
+        // entries can share a prefix that is the SAME LENGTH as `typed` but
+        // differently cased (real "Do..." vs typed "do") — that's still a
+        // completion the user needs, so the real spelling must win even
+        // when the count doesn't grow.
+        guard commonPrefix.count >= typed.count, commonPrefix != typed else {
             return Result(completedInput: input, candidates: candidateNames)
         }
         return Result(

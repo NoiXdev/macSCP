@@ -121,6 +121,28 @@ struct LocalFileSystemTests {
         #expect(child?.path.contains("/real/") == false)
     }
 
+    /// Pins a behavior change (M11g final review, Minor): the old URL-based
+    /// `contentsOfDirectory(at:includingPropertiesForKeys:)` silently
+    /// standardized away repeated slashes; the string-path API this now uses
+    /// (see the doc comment on `LocalFileSystem.list`) does not — a repeated
+    /// slash in `path` survives into every child's `path`. Not a claim that
+    /// this is desirable, only that it's a known quantity: nothing upstream
+    /// should quietly start relying on `list` normalizing hostile input.
+    @Test func listOnPathWithRepeatedSlashYieldsChildPathsContainingIt() async throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("x".utf8).write(to: root.appendingPathComponent("innen.txt"))
+        let parent = root.deletingLastPathComponent().path(percentEncoded: false)
+        let name = root.lastPathComponent
+        let pathWithRepeatedSlash = parent + "//" + name
+
+        let fs = LocalFileSystem()
+        let items = try await fs.list(path: pathWithRepeatedSlash)
+
+        let child = items.first { $0.name == "innen.txt" }
+        #expect(child?.path.contains("//") == true)
+    }
+
     @Test func createDirectoryCreatesNewDirectory() async throws {
         let root = try makeTempTree()
         defer { try? FileManager.default.removeItem(at: root) }

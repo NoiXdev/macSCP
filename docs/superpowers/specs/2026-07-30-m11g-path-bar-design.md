@@ -92,6 +92,22 @@ Pfad ohne Hinweis.
 - Keine `~`-Auflösung auf der Gegenseite: das bräuchte eine Extra-Abfrage
   beim Server, und ein halb funktionierendes `~` ist schlechter als keines.
 - Kein Audit-Eintrag (Navigation ist keine Änderung).
+- **Vervollständigung bietet keine Symlinks an, auch wenn ihr Ziel ein
+  Verzeichnis ist** (Nachtrag, Abschluss-Review M11g): Getipptes Navigieren
+  folgt einem symlink-Verzeichnis seit T1 (`RemoteBrowserViewModel.
+  navigate(to:)` prüft `list()` auf das Ziel, wenn `stat` `.symlink`
+  liefert). `PathCompletion.complete` filtert Symlinks dagegen weiterhin
+  komplett heraus (siehe dessen eigener Doc-Kommentar) — bewusst, nicht aus
+  Versehen: ob ein Symlink auf ein Verzeichnis zeigt, ist ohne einen `stat`
+  pro Eintrag nicht feststellbar, und genau das würde `PathCompletion`s
+  I/O-freien Vertrag brechen (die Funktion bekommt nur die fertige Liste,
+  nie die Erlaubnis, selbst nachzufragen). Die Folge ist eine sichtbare
+  Asymmetrie: Auf jedem Mac ist `/tmp`, `/var` und `/etc` ein Symlink, Tab
+  bei `/t` bietet dort nichts an, während `/tmp` als fertig getippter Pfad
+  klaglos funktioniert. Ein Doppelklick auf einen Symlink-Eintrag in der
+  Dateiliste ist aus demselben Grund wirkungslos (kein Navigations-Handler
+  dafür). Beides bleibt in M11g unverändert; die Ungleichheit ist erkannt
+  und akzeptiert, kein offener Fehler.
 
 ## 6. Tests
 

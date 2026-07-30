@@ -158,4 +158,38 @@ struct PathCompletionTests {
         #expect(result.completedInput == "/var/www/h")
         #expect(result.candidates == [])
     }
+
+    /// Regression (M11g final review, Critical): with `caseSensitive: false`
+    /// the real entry names can disagree in case, so their longest common
+    /// prefix can be SHORTER than what the user typed (or empty), not just
+    /// differently cased at equal length. A guard that only compares
+    /// `commonPrefix != typed` then replaces the typed text with that
+    /// shorter (or empty) prefix, deleting what the user just typed. "d"
+    /// against real "Desktop"/"dev" shares no case-sensitive prefix at all.
+    @Test func caseInsensitiveMultiMatchWithDisagreeingCaseLeavesInputUnchanged() {
+        let entries = [folder("Desktop", in: "/home"), folder("dev", in: "/home")]
+        let result = PathCompletion.complete(input: "/home/d", entries: entries, caseSensitive: false)
+        #expect(result.completedInput == "/home/d")
+        #expect(result.candidates == ["Desktop", "dev"])
+    }
+
+    /// Same bug, longer typed prefix: "de" also shares no case-sensitive
+    /// common prefix with "Desktop"/"dev".
+    @Test func caseInsensitiveMultiMatchWithDisagreeingCaseLeavesLongerInputUnchanged() {
+        let entries = [folder("Desktop", in: "/home"), folder("dev", in: "/home")]
+        let result = PathCompletion.complete(input: "/home/de", entries: entries, caseSensitive: false)
+        #expect(result.completedInput == "/home/de")
+        #expect(result.candidates == ["Desktop", "dev"])
+    }
+
+    /// The equal-length case-correction (T1 review I-2) must keep working
+    /// alongside the length check above: "doc" against real "Docs"/
+    /// "Documents" shares the real, differently-cased prefix "Doc" — same
+    /// length as typed, so the completion must still happen.
+    @Test func caseInsensitiveMultiMatchStillAdoptsRealCasingAtEqualLength() {
+        let entries = [folder("Docs", in: "/home"), folder("Documents", in: "/home")]
+        let result = PathCompletion.complete(input: "/home/doc", entries: entries, caseSensitive: false)
+        #expect(result.completedInput == "/home/Doc")
+        #expect(result.candidates == ["Docs", "Documents"])
+    }
 }

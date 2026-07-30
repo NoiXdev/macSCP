@@ -47,6 +47,9 @@ struct RemotePathTests {
         let fs = MockRemoteFileSystem(tree: [
             "/": [RemoteFileItem(name: "var", path: "/var", kind: .directory)],
             "/var": [RemoteFileItem(name: "www", path: "/var/www", kind: .directory)],
+            // See the regression note on the equivalent fixture in
+            // RemoteBrowserViewModelTests (M11g final review, Important).
+            "/var/www": [],
         ])
         let vm = RemoteBrowserViewModel(fs: fs)
         await vm.load()

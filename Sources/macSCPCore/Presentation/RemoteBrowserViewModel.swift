@@ -312,6 +312,20 @@ public final class RemoteBrowserViewModel {
     ///
     /// `currentPath` is left untouched on every failure path; on success it
     /// is set before `load()`, which also empties the selection.
+    ///
+    /// A `stat` success is not the same thing as a navigable directory
+    /// (M11g final review, Important): a directory with no read permission
+    /// `stat`s fine (its metadata is visible) but fails `load()`'s own
+    /// `list` — the common case of a non-root SFTP user typing `/root`.
+    /// `load()` cannot fail loudly by design (it's also the silent
+    /// auto-refresh path), so its failure is read back from `state`
+    /// afterwards instead: if `load()` left the view model in `.failed`,
+    /// that's not a successful navigation, and everything — `currentPath`,
+    /// `items`, `selectedItems` — is rolled back to its pre-navigate
+    /// snapshot, exactly as every OTHER failure path here already leaves it,
+    /// so the field can stay open with the message instead of the pane
+    /// falling back to its red failure screen for a directory whose old
+    /// listing was fine all along.
     public func navigate(to path: String) async -> String? {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -333,8 +347,19 @@ public final class RemoteBrowserViewModel {
                 return String(format: CoreL10n.string("core.browse.notADirectory %@"), normalized)
             }
         }
+        let previousPath = currentPath
+        let previousItems = items
+        let previousState = state
+        let previousSelection = selectedItems
         currentPath = normalized
         await load()
+        if case .failed(let message) = state {
+            currentPath = previousPath
+            items = previousItems
+            state = previousState
+            selectedItems = previousSelection
+            return message
+        }
         return nil
     }
 

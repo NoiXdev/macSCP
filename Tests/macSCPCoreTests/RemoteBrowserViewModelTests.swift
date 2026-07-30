@@ -800,10 +800,45 @@ struct RemoteBrowserViewModelTests {
         #expect(vm.currentPath == "/")
     }
 
+    /// Regression (M11g final review, Important): `navigate` used to decide
+    /// success from `stat` alone. A directory with no read permission
+    /// `stat`s fine but fails to `list` — the COMMON permission case on a
+    /// real server (a non-root SFTP user typing `/root`). Before this fix,
+    /// that moved `currentPath` and returned `nil` ("success"), so the field
+    /// closed and the pane fell back to its red failure screen instead of
+    /// the spec's promised "field stays open with the message". Everything
+    /// (`currentPath`, `items`, `selectedItems`) must come back exactly as
+    /// it was before the attempt — the same as every other failure path in
+    /// this function, which never mutates state to begin with.
+    @Test func navigateToUnlistableDirectoryLeavesEverythingUnchangedAndReturnsMessage() async {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "locked", path: "/locked", kind: .directory)],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        vm.selectedItems = [vm.items[0]]
+        await fs.setListFailure(RemoteFSError.permissionDenied(path: "/locked"))
+
+        let error = await vm.navigate(to: "/locked")
+
+        #expect(error == String(format: CoreL10n.string("core.error.permissionDenied %@"), "/locked"))
+        #expect(vm.currentPath == "/")
+        #expect(vm.items.map(\.name) == ["locked"])
+        #expect(vm.selectedItems.count == 1)
+    }
+
     @Test func navigateCollapsesRepeatedAndTrailingSlashes() async {
         let fs = MockRemoteFileSystem(tree: [
             "/": [RemoteFileItem(name: "var", path: "/var", kind: .directory)],
             "/var": [RemoteFileItem(name: "www", path: "/var/www", kind: .directory)],
+            // Regression note (M11g final review, Important): this key was
+            // missing before that fix. `navigate` used to ignore `load()`'s
+            // outcome entirely, so an unseeded `/var/www` silently `list`-
+            // failed with `notFound` and the test still passed — it was only
+            // ever proving `currentPath` moved, not that navigation actually
+            // succeeded. Now that `navigate` rolls back on a `load()`
+            // failure, the fixture has to be real.
+            "/var/www": [],
         ])
         let vm = RemoteBrowserViewModel(fs: fs)
         await vm.load()
@@ -820,6 +855,8 @@ struct RemoteBrowserViewModelTests {
         let fs = MockRemoteFileSystem(tree: [
             "/": [RemoteFileItem(name: "var", path: "/var", kind: .directory)],
             "/var": [RemoteFileItem(name: "www", path: "/var/www", kind: .directory)],
+            // See the matching note in navigateCollapsesRepeatedAndTrailingSlashes above.
+            "/var/www": [],
         ])
         let vm = RemoteBrowserViewModel(fs: fs)
         await vm.load()
