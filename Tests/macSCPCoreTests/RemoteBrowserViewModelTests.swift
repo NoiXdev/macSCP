@@ -940,4 +940,153 @@ struct RemoteBrowserViewModelTests {
 
         #expect(error == nil)   // no crash, behaves exactly as before M9b
     }
+
+    // MARK: - Search (M11k/T1)
+
+    private func makeSearchFS() -> MockRemoteFileSystem {
+        MockRemoteFileSystem(tree: [
+            "/": [
+                RemoteFileItem(name: "Access.log", path: "/Access.log", kind: .file, size: 1),
+                RemoteFileItem(name: "readme.md", path: "/readme.md", kind: .file, size: 2),
+                RemoteFileItem(name: "error.log", path: "/error.log", kind: .file, size: 3),
+            ],
+        ])
+    }
+
+    @Test func filterModeReducesItemsAndReportsCounts() async {
+        let vm = RemoteBrowserViewModel(fs: makeSearchFS())
+        await vm.load()
+        #expect(vm.items.count == 3)
+
+        vm.searchMode = .filter
+        vm.searchQuery = "log"
+
+        #expect(vm.items.map(\.name) == ["Access.log", "error.log"])
+        #expect(vm.searchMatchCount == 2)
+        #expect(vm.searchTotalCount == 3)
+
+        vm.searchQuery = ""
+
+        #expect(vm.items.map(\.name) == ["Access.log", "error.log", "readme.md"])
+        #expect(vm.searchMatchCount == 3)
+        #expect(vm.searchTotalCount == 3)
+    }
+
+    @Test func jumpModeKeepsFullListingAndFocusNextWrapsForward() async {
+        let vm = RemoteBrowserViewModel(fs: makeSearchFS())
+        await vm.load()
+
+        vm.searchMode = .jump
+        vm.searchQuery = "log"
+
+        // Full listing stays, sorted: Access.log, error.log, readme.md.
+        #expect(vm.items.map(\.name) == ["Access.log", "error.log", "readme.md"])
+
+        vm.focusNextMatch()
+        #expect(vm.selectedItems.map(\.name) == ["Access.log"])
+
+        vm.focusNextMatch()
+        #expect(vm.selectedItems.map(\.name) == ["error.log"])
+
+        // Wraps past the last match back to the first.
+        vm.focusNextMatch()
+        #expect(vm.selectedItems.map(\.name) == ["Access.log"])
+    }
+
+    @Test func focusPreviousMatchWrapsBackward() async {
+        let vm = RemoteBrowserViewModel(fs: makeSearchFS())
+        await vm.load()
+
+        vm.searchMode = .jump
+        vm.searchQuery = "log"
+
+        // From no selection, "previous" lands on the last match.
+        vm.focusPreviousMatch()
+        #expect(vm.selectedItems.map(\.name) == ["error.log"])
+
+        vm.focusPreviousMatch()
+        #expect(vm.selectedItems.map(\.name) == ["Access.log"])
+
+        // Wraps past the first match back to the last.
+        vm.focusPreviousMatch()
+        #expect(vm.selectedItems.map(\.name) == ["error.log"])
+    }
+
+    @Test func invalidRegexSetsErrorAndLeavesItemsUnchanged() async {
+        let vm = RemoteBrowserViewModel(fs: makeSearchFS())
+        await vm.load()
+        let before = vm.items
+
+        vm.searchIsRegex = true
+        vm.searchQuery = "["
+
+        #expect(vm.searchError == .invalidRegex)
+        #expect(vm.items == before)   // NOT cleared — no faked "0 matches"
+    }
+
+    @Test func loadOnNewDirectoryResetsSearch() async {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "dir", path: "/dir", kind: .directory)],
+            "/dir": [
+                RemoteFileItem(name: "a.log", path: "/dir/a.log", kind: .file, size: 1),
+                RemoteFileItem(name: "b.txt", path: "/dir/b.txt", kind: .file, size: 2),
+            ],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        vm.searchMode = .filter
+        vm.searchQuery = "dir"
+        #expect(vm.items.map(\.name) == ["dir"])   // filtered down before navigating away
+
+        // Navigate to a new directory — a filter from "/" must not silently
+        // hide entries in "/dir" too.
+        let error = await vm.navigate(to: "/dir")
+
+        #expect(error == nil)
+        #expect(vm.searchQuery.isEmpty)
+        #expect(vm.searchError == nil)
+        #expect(vm.items.map(\.name) == ["a.log", "b.txt"])
+    }
+
+    @Test func refreshQuietlyReappliesActiveFilterToFreshListing() async {
+        let fs = makeSearchFS()
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        vm.searchMode = .filter
+        vm.searchQuery = "log"
+        #expect(vm.items.map(\.name) == ["Access.log", "error.log"])
+        vm.selectedItems = [vm.items[0]]
+
+        await fs.addItem(
+            RemoteFileItem(name: "new.log", path: "/new.log", kind: .file, size: 4), to: "/")
+
+        await vm.refreshQuietly()
+
+        #expect(vm.items.map(\.name) == ["Access.log", "error.log", "new.log"])
+        #expect(vm.searchMatchCount == 3)
+        #expect(vm.searchTotalCount == 4)
+        #expect(vm.selectedItems.map(\.name) == ["Access.log"])   // selection preserved
+    }
+
+    /// A bare `load()` — the same-directory refresh that `rename`,
+    /// `createFolder`, `applyPermissions`, and `deleteItems` all trigger —
+    /// must KEEP an active filter and re-apply it to the fresh listing
+    /// (M11k/T1 fix: the search reset lives on the navigation entry points
+    /// `open`/`goUp`/`navigate`, NOT in `load()`, so renaming a file inside
+    /// a filtered view doesn't silently drop the filter and flash the whole
+    /// directory back).
+    @Test func loadKeepsActiveFilterOnSameDirectoryRefresh() async {
+        let fs = makeSearchFS()
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        vm.searchMode = .filter
+        vm.searchQuery = "log"
+        #expect(vm.items.map(\.name) == ["Access.log", "error.log"])
+
+        await vm.load()   // e.g. the reload rename/delete perform, same path
+
+        #expect(vm.searchQuery == "log")
+        #expect(vm.items.map(\.name) == ["Access.log", "error.log"])
+        #expect(vm.searchMatchCount == 2)
+    }
 }

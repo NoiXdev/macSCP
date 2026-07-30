@@ -47,15 +47,137 @@ public final class RemoteBrowserViewModel {
 
     public var canGoUp: Bool { currentPath != "/" }
 
+    // MARK: - Search (M11k/T1)
+
+    /// The full displayed listing BEFORE search is applied: hidden-files
+    /// filter + sort (`displayItems(from:)`), exactly what `items` used to
+    /// be before search existed. `load()`/`refreshQuietly()` are the normal
+    /// writers (`navigate(to:)` additionally restores a saved snapshot of
+    /// this on a rolled-back failed navigation — see that method); the
+    /// search derivation reads from this, never from a raw FS listing, so
+    /// it stays bounded to what's already on screen (no recursion, no extra
+    /// server round-trips — see the M11k design doc).
+    private var displayedAll: [RemoteFileItem] = []
+
+    /// Match paths from the last successful derivation, in listing order.
+    /// Used by `focusNextMatch()`/`focusPreviousMatch()` to find the
+    /// selection's position among matches; not exposed publicly since T2
+    /// only needs the counts and the jump navigation, not the raw list.
+    private var searchMatchPaths: [String] = []
+
+    /// Search query for the current directory listing (name-only, bounded
+    /// to `displayedAll` — see the M11k design doc's "Grenze" section).
+    /// Any change re-derives `items` immediately.
+    public var searchQuery: String = "" {
+        didSet { applySearch() }
+    }
+
+    /// Interprets `searchQuery` as a regular expression instead of a plain
+    /// substring when `true`.
+    public var searchIsRegex: Bool = false {
+        didSet { applySearch() }
+    }
+
+    /// `.filter` shows only matches; `.jump` keeps the full listing and
+    /// moves the selection between matches instead.
+    public var searchMode: FileSearchMode = .filter {
+        didSet { applySearch() }
+    }
+
+    /// Set when `searchQuery`/`searchIsRegex` describe an invalid regular
+    /// expression. Deliberately does NOT clear `items` when set — the
+    /// maintainer rejected a faked "0 matches" for this case (M11k design);
+    /// the last valid listing stays on screen while the UI shows the error.
+    public private(set) var searchError: FileSearchError?
+
+    /// "N of M" readout for the search field (T2). Both reflect the last
+    /// SUCCESSFUL derivation — they hold their previous values across an
+    /// invalid-regex edit, consistent with `items` staying put too.
+    public private(set) var searchMatchCount = 0
+    public private(set) var searchTotalCount = 0
+
+    /// Re-derives `items` (and the search-facing state) from `displayedAll`
+    /// via the pure `FileSearch.derive`. On success, `items`/counts/error
+    /// are all updated together. On an invalid regex, ONLY `searchError` is
+    /// set — `items`, the counts, and `searchMatchPaths` are left exactly
+    /// as they were, per the "invalid regex is never a faked zero-match
+    /// result" rule.
+    private func applySearch() {
+        switch FileSearch.derive(
+            all: displayedAll, query: searchQuery, isRegex: searchIsRegex, mode: searchMode
+        ) {
+        case .success(let derivation):
+            searchError = nil
+            items = derivation.visible
+            searchMatchPaths = derivation.matchPaths
+            searchMatchCount = derivation.matchCount
+            searchTotalCount = derivation.totalCount
+        case .failure(let error):
+            searchError = error
+        }
+    }
+
+    /// Resets the search to "no filter" (empty query). Called by `load()`
+    /// on every listing so a filter left over from a previous directory
+    /// never silently hides the new one; also the operation the App layer's
+    /// Esc handling (T2) uses to close the search field.
+    public func clearSearch() {
+        searchQuery = ""
+    }
+
+    /// Moves `selectedItems` to the next search match, in listing order,
+    /// wrapping past the last match back to the first. No-op if there are
+    /// no matches. If the current selection isn't itself a match (or
+    /// nothing is selected), lands on the first match.
+    public func focusNextMatch() {
+        guard !searchMatchPaths.isEmpty else { return }
+        let currentIndex = selectedItems.first.flatMap { searchMatchPaths.firstIndex(of: $0.path) }
+        let nextIndex = currentIndex.map { ($0 + 1) % searchMatchPaths.count } ?? 0
+        focusMatch(at: nextIndex)
+    }
+
+    /// Moves `selectedItems` to the previous search match, wrapping past
+    /// the first match back to the last. Mirrors `focusNextMatch()`.
+    public func focusPreviousMatch() {
+        guard !searchMatchPaths.isEmpty else { return }
+        let currentIndex = selectedItems.first.flatMap { searchMatchPaths.firstIndex(of: $0.path) }
+        let previousIndex = currentIndex.map { ($0 - 1 + searchMatchPaths.count) % searchMatchPaths.count }
+            ?? searchMatchPaths.count - 1
+        focusMatch(at: previousIndex)
+    }
+
+    private func focusMatch(at index: Int) {
+        let path = searchMatchPaths[index]
+        // In `.jump` mode `items` is the full listing, so the match is
+        // always present; in `.filter` mode it's present too (matches are
+        // exactly what's visible). Either way, look it up in `items` rather
+        // than `displayedAll` so the selection is built from the same rows
+        // the table is showing.
+        guard let match = items.first(where: { $0.path == path }) else { return }
+        selectedItems = [match]
+    }
+
+    /// Re-lists `currentPath` and re-derives `items` (M11k: WITH the
+    /// currently active search, unchanged). `load()` is also the
+    /// same-directory refresh path used after `rename`/`createFolder`/
+    /// `applyPermissions`/`applyPermissionsRecursively`/`deleteItems` — none
+    /// of those change `currentPath`, so a filter active while renaming or
+    /// deleting an entry must survive the refresh and keep applying to the
+    /// fresh listing (M11k design/T1 fix). Resetting search on an actual
+    /// directory CHANGE is the job of the three navigation entry points
+    /// (`open(_:)`, `goUp()`, `navigate(to:)`), each of which calls
+    /// `clearSearch()` itself before/around calling into this method.
     public func load() async {
         state = .loading
         selectedItems = []
         do {
             let listed = try await fs.list(path: currentPath)
-            items = displayItems(from: listed)
+            displayedAll = displayItems(from: listed)
+            applySearch()
             state = .loaded
         } catch {
-            items = []
+            displayedAll = []
+            applySearch()
             state = .failed(message: Self.message(for: error, path: currentPath))
         }
     }
@@ -88,19 +210,30 @@ public final class RemoteBrowserViewModel {
         // same, but the surviving entries carry current size/date/permission
         // values and stay in table order.
         let selectedPaths = Set(selectedItems.map(\.path))
-        items = displayItems(from: listed)
+        displayedAll = displayItems(from: listed)
+        // Unlike `load()`, the directory is the SAME one — an active
+        // search stays active and is re-applied to the fresh listing
+        // (M11k design).
+        applySearch()
         selectedItems = items.filter { selectedPaths.contains($0.path) }
     }
 
     public func open(_ item: RemoteFileItem) async {
         guard item.isDirectory else { return }
         currentPath = item.path
+        // A directory change: a filter from the OLD directory must not
+        // silently hide the new one (M11k design). Unlike `navigate(to:)`,
+        // `open`/`goUp` have no rollback-on-failure path, so there is no
+        // "stranded search" risk here to guard against.
+        clearSearch()
         await load()
     }
 
     public func goUp() async {
         guard canGoUp else { return }
         currentPath = RemotePath.parent(of: currentPath)
+        // See the comment in `open(_:)` — same rationale.
+        clearSearch()
         await load()
     }
 
@@ -326,6 +459,20 @@ public final class RemoteBrowserViewModel {
     /// so the field can stay open with the message instead of the pane
     /// falling back to its red failure screen for a directory whose old
     /// listing was fine all along.
+    ///
+    /// Search (M11k/T1 fix): the active search is cleared ONLY after
+    /// `load()` has actually succeeded AND the target directory differs
+    /// from `currentPath` — navigating to the SAME directory (e.g.
+    /// re-submitting the path bar unchanged) keeps the filter, exactly like
+    /// a same-directory `load()` triggered by `rename`/`deleteItems`/etc.
+    /// `searchQuery`/`searchIsRegex`/`searchMode` are never touched before
+    /// that point, so a FAILED navigation can't strand the user with a
+    /// cleared search on top of the failure message: the search-derived
+    /// state that `load()` mutates while probing the new (bad) path —
+    /// `displayedAll`, `items`, `searchError`, `searchMatchCount`,
+    /// `searchTotalCount` — is captured up front alongside the existing
+    /// snapshot and restored byte-for-byte on rollback, same as `state`/
+    /// `selectedItems` already were.
     public func navigate(to path: String) async -> String? {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -349,16 +496,28 @@ public final class RemoteBrowserViewModel {
         }
         let previousPath = currentPath
         let previousItems = items
+        let previousDisplayedAll = displayedAll
         let previousState = state
         let previousSelection = selectedItems
+        let previousSearchError = searchError
+        let previousMatchCount = searchMatchCount
+        let previousTotalCount = searchTotalCount
+        let directoryChanging = normalized != currentPath
         currentPath = normalized
         await load()
         if case .failed(let message) = state {
             currentPath = previousPath
             items = previousItems
+            displayedAll = previousDisplayedAll
             state = previousState
             selectedItems = previousSelection
+            searchError = previousSearchError
+            searchMatchCount = previousMatchCount
+            searchTotalCount = previousTotalCount
             return message
+        }
+        if directoryChanging {
+            clearSearch()
         }
         return nil
     }
