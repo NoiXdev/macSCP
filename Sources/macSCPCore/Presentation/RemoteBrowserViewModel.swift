@@ -1,6 +1,15 @@
 import Foundation
 import Observation
 
+/// Column a directory listing can be sorted by (M11l). Directories always
+/// group first regardless of the chosen key — see
+/// `RemoteBrowserViewModel.sortedForDisplay`'s doc comment.
+public enum FileSortKey: Sendable, Equatable {
+    case name
+    case size
+    case modified
+}
+
 /// State of the remote browser: current path, sorted entries,
 /// loading/error state. Works exclusively against the protocol.
 @Observable
@@ -82,6 +91,36 @@ public final class RemoteBrowserViewModel {
     /// moves the selection between matches instead.
     public var searchMode: FileSearchMode = .filter {
         didSet { applySearch() }
+    }
+
+    // MARK: - Sort (M11l/T1)
+
+    /// Sort key for the current listing (per-pane display preference).
+    /// Setting this re-sorts `displayedAll` in place — no server round-trip
+    /// — and re-derives `items` through the same `applySearch()` pipeline
+    /// the search state uses, so sort and an active filter compose
+    /// consistently. Unlike `searchQuery`, this is NEVER reset by
+    /// `load()`/`open`/`goUp`/`navigate(to:)`: it is a display preference of
+    /// the pane, not an attribute of the directory (M11l design).
+    public var sortKey: FileSortKey = .name {
+        didSet { resortDisplayedAll() }
+    }
+
+    /// Sort direction for `sortKey`. See `sortKey`'s doc comment for the
+    /// same survives-navigation rule.
+    public var sortAscending: Bool = true {
+        didSet { resortDisplayedAll() }
+    }
+
+    /// Re-sorts the already hidden-filtered `displayedAll` with the current
+    /// `sortKey`/`sortAscending` and re-derives `items` via `applySearch()`.
+    /// Re-sorting the already-sorted list (rather than re-listing from the
+    /// server) is safe because `sortedForDisplay` is a full, deterministic
+    /// re-order driven entirely by its comparator — the PREVIOUS order of
+    /// its input never affects the result.
+    private func resortDisplayedAll() {
+        displayedAll = Self.sortedForDisplay(displayedAll, key: sortKey, ascending: sortAscending)
+        applySearch()
     }
 
     /// Set when `searchQuery`/`searchIsRegex` describe an invalid regular
@@ -190,7 +229,7 @@ public final class RemoteBrowserViewModel {
         let visible = showHiddenFiles
             ? listed
             : listed.filter { !$0.name.hasPrefix(".") }
-        return Self.sortedForDisplay(visible)
+        return Self.sortedForDisplay(visible, key: sortKey, ascending: sortAscending)
     }
 
     /// Silent background refresh (M9c): re-lists the current directory and
@@ -247,12 +286,76 @@ public final class RemoteBrowserViewModel {
         await fs.disconnect()
     }
 
-    /// Directories first, then name case-insensitively —
-    /// no backend sorts; this is the sole sorting authority.
-    static func sortedForDisplay(_ items: [RemoteFileItem]) -> [RemoteFileItem] {
+    /// Directories always group first, no matter which `key`/`ascending` is
+    /// requested (M11l/T1): this is a DELIBERATE grouping, not a bug — a
+    /// directory carries no comparable size, and mixing it into a size/date
+    /// ordering with files would be both meaningless and a silent behavior
+    /// change from the folders-first browsing this app has always had.
+    /// Within each group (directories, then non-directories), entries are
+    /// ordered by `key`:
+    /// - `.name`: `localizedCaseInsensitiveCompare` (today's only key,
+    ///   unchanged).
+    /// - `.size`: NUMERIC comparison of the `UInt64` byte count — never
+    ///   lexicographic (9 < 10 < 100, not "10" < "100" < "9"). An item with
+    ///   no `size` (e.g. a directory compared within its own group, or an FS
+    ///   that never reports one) sorts as if it had the SMALLEST possible
+    ///   size, i.e. first among ascending results.
+    /// - `.modified`: `Date` comparison. An item with no `modifiedAt` sorts
+    ///   as if it were the OLDEST possible date, i.e. first among ascending
+    ///   results.
+    /// Every comparison ends with a `name.localizedCaseInsensitiveCompare`
+    /// tiebreaker, so two entries with equal size/date always land in the
+    /// same deterministic order (stable, regardless of input order).
+    /// `ascending == false` reverses the ordering WITHIN each group only —
+    /// it does not touch the "smallest"/"oldest" identity of a missing
+    /// value, so a missing size/date still sorts to the same end of its
+    /// group's own ordering (last, once descending flips "smallest first"
+    /// into "smallest last") — and it never touches the directories-first
+    /// grouping itself (folders stay on top even sorting "descending").
+    /// The pre-M11l call site (`sortedForDisplay(_:)`, no `key`/`ascending`)
+    /// keeps working unchanged via the defaults below.
+    static func sortedForDisplay(
+        _ items: [RemoteFileItem], key: FileSortKey = .name, ascending: Bool = true
+    ) -> [RemoteFileItem] {
         items.sorted { a, b in
             if a.isDirectory != b.isDirectory { return a.isDirectory }
-            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+            let order = keyOrder(a, b, key: key)
+            return ascending ? order == .orderedAscending : order == .orderedDescending
+        }
+    }
+
+    /// `ComparisonResult` for `a` vs. `b` under `key`, already including the
+    /// name tiebreaker for `.size`/`.modified` — see `sortedForDisplay`'s doc
+    /// comment for the missing-value rule.
+    private static func keyOrder(_ a: RemoteFileItem, _ b: RemoteFileItem, key: FileSortKey) -> ComparisonResult {
+        switch key {
+        case .name:
+            return nameOrder(a, b)
+        case .size:
+            let order = compareOptional(a.size, b.size)
+            return order == .orderedSame ? nameOrder(a, b) : order
+        case .modified:
+            let order = compareOptional(a.modifiedAt, b.modifiedAt)
+            return order == .orderedSame ? nameOrder(a, b) : order
+        }
+    }
+
+    private static func nameOrder(_ a: RemoteFileItem, _ b: RemoteFileItem) -> ComparisonResult {
+        a.name.localizedCaseInsensitiveCompare(b.name)
+    }
+
+    /// A missing value (`nil`) is ordered as the SMALLEST/OLDEST possible
+    /// value — first among ascending results. Both call sites above
+    /// (`.size`, `.modified`) rely on this exact rule.
+    private static func compareOptional<T: Comparable>(_ a: T?, _ b: T?) -> ComparisonResult {
+        switch (a, b) {
+        case (nil, nil): return .orderedSame
+        case (nil, _): return .orderedAscending
+        case (_, nil): return .orderedDescending
+        case (let x?, let y?):
+            if x < y { return .orderedAscending }
+            if x > y { return .orderedDescending }
+            return .orderedSame
         }
     }
 

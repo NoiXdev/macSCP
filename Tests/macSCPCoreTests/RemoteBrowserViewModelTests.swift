@@ -1116,4 +1116,96 @@ struct RemoteBrowserViewModelTests {
         vm.focusNextMatch()
         #expect(vm.selectedItems.map(\.name) == ["error.log"])
     }
+
+    // MARK: - Sort (M11l/T1)
+
+    private func makeSortFS() -> MockRemoteFileSystem {
+        MockRemoteFileSystem(tree: [
+            "/": [
+                RemoteFileItem(name: "big.txt", path: "/big.txt", kind: .file, size: 100),
+                RemoteFileItem(name: "small.txt", path: "/small.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "mid.txt", path: "/mid.txt", kind: .file, size: 10),
+                // `navigate(to:)` resolves via `stat`, which the mock only
+                // finds through the parent directory's own listing (see the
+                // mock's invariant comment) — "other" must be an entry here.
+                RemoteFileItem(name: "other", path: "/other", kind: .directory),
+            ],
+            "/other": [
+                RemoteFileItem(name: "z.txt", path: "/other/z.txt", kind: .file, size: 3),
+                RemoteFileItem(name: "a.txt", path: "/other/a.txt", kind: .file, size: 7),
+            ],
+        ])
+    }
+
+    @Test func settingSortKeyReordersItems() async {
+        let vm = RemoteBrowserViewModel(fs: makeSortFS())
+        await vm.load()
+        // Default: .name ascending; "other" (a directory) leads regardless.
+        #expect(vm.items.map(\.name) == ["other", "big.txt", "mid.txt", "small.txt"])
+
+        vm.sortKey = .size
+
+        #expect(vm.items.map(\.name) == ["other", "small.txt", "mid.txt", "big.txt"])
+    }
+
+    @Test func settingSortAscendingReordersItems() async {
+        let vm = RemoteBrowserViewModel(fs: makeSortFS())
+        await vm.load()
+        vm.sortKey = .size
+        #expect(vm.items.map(\.name) == ["other", "small.txt", "mid.txt", "big.txt"])
+
+        vm.sortAscending = false
+
+        // The folder still leads even descending — only the files reverse.
+        #expect(vm.items.map(\.name) == ["other", "big.txt", "mid.txt", "small.txt"])
+    }
+
+    @Test func sortSurvivesRefreshQuietly() async {
+        let fs = makeSortFS()
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        vm.sortKey = .size
+        #expect(vm.items.map(\.name) == ["other", "small.txt", "mid.txt", "big.txt"])
+
+        await fs.addItem(RemoteFileItem(name: "tiny.txt", path: "/tiny.txt", kind: .file, size: 0), to: "/")
+        await vm.refreshQuietly()
+
+        #expect(vm.items.map(\.name) == ["other", "tiny.txt", "small.txt", "mid.txt", "big.txt"])
+    }
+
+    /// Unlike the M11k search (reset by the navigation entry points), the
+    /// sort preference is a per-pane display setting and must NOT reset when
+    /// the directory changes.
+    @Test func sortSurvivesLoadOnNewDirectory() async {
+        let vm = RemoteBrowserViewModel(fs: makeSortFS())
+        await vm.load()
+        vm.sortKey = .size
+        vm.sortAscending = false
+
+        let error = await vm.navigate(to: "/other")
+
+        #expect(error == nil)
+        #expect(vm.sortKey == .size)
+        #expect(vm.sortAscending == false)
+        #expect(vm.items.map(\.name) == ["a.txt", "z.txt"])   // sizes 7, 3 descending
+    }
+
+    @Test func sortComposesWithActiveSearchFilter() async {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [
+                RemoteFileItem(name: "log-big.txt", path: "/log-big.txt", kind: .file, size: 100),
+                RemoteFileItem(name: "log-small.txt", path: "/log-small.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "readme.md", path: "/readme.md", kind: .file, size: 50),
+            ],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        vm.sortKey = .size
+        vm.searchMode = .filter
+        vm.searchQuery = "log"
+
+        #expect(vm.items.map(\.name) == ["log-small.txt", "log-big.txt"])
+        #expect(vm.searchMatchCount == 2)
+        #expect(vm.searchTotalCount == 3)
+    }
 }
