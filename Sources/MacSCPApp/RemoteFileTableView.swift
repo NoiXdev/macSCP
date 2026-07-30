@@ -28,6 +28,11 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// at every call site instead of an implicit side effect of the wiring.
     let side: BrowserPaneSide
     var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)? = nil
+    /// "Go up one directory" (M11j/T2) — driven by the ⌘↑ keyboard shortcut,
+    /// wired to the SAME `viewModel.goUp()` call the toolbar's up-arrow
+    /// button already makes (`BrowserPane`). `nil` by default like the other
+    /// optional closures above, though every call site wires it.
+    var onGoUp: (() -> Void)? = nil
     /// Cross-session transfer targets (M8b/T4) — evaluated fresh on EVERY
     /// `menuNeedsUpdate` call, not cached here, so a menu opened later in the
     /// session always shows the current set of other tabs and their current
@@ -42,12 +47,14 @@ struct RemoteFileTableView: NSViewRepresentable {
         coordinator.onOpenSymlink = onOpenSymlink
         coordinator.pasteboardWriter = pasteboardWriter
         coordinator.onMenuAction = onMenuAction
+        coordinator.onGoUp = onGoUp
         coordinator.crossSessionTargets = crossSessionTargets
         return coordinator
     }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let table = NSTableView()
+        let table = KeyboardDrivenTableView()
+        table.commandCoordinator = context.coordinator
         table.style = .plain
         table.usesAlternatingRowBackgroundColors = false
         table.allowsMultipleSelection = true
@@ -108,6 +115,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.onOpenSymlink = onOpenSymlink
         context.coordinator.pasteboardWriter = pasteboardWriter
         context.coordinator.onMenuAction = onMenuAction
+        context.coordinator.onGoUp = onGoUp
         context.coordinator.crossSessionTargets = crossSessionTargets
         guard let table = nsView.documentView as? NSTableView else { return }
         if itemsChanged {
@@ -135,6 +143,84 @@ struct RemoteFileTableView: NSViewRepresentable {
         }
     }
 
+    /// `NSTableView` subclass driving Finder-style keyboard shortcuts
+    /// (M11j/T2) — see `docs/superpowers/specs/2026-07-30-m11j-browser-keyboard-design.md`.
+    /// Split across two overrides because AppKit routes Command-modified key
+    /// presses through `performKeyEquivalent(with:)`, NOT `keyDown(with:)` —
+    /// the classic trap this design works around.
+    private final class KeyboardDrivenTableView: NSTableView {
+        weak var commandCoordinator: Coordinator?
+
+        /// The ⌘-combined keys: ⌘↓/⌘O (open), ⌘↑ (go up), ⌘⌫ (delete), ⌘I
+        /// (info). Requires Command and NO Shift/Option/Control, so ⌘⇧…
+        /// combos (app-menu shortcuts) are never swallowed here. Returns
+        /// `true` only when an action was actually produced and dispatched;
+        /// otherwise falls through to `super` so menu shortcuts and default
+        /// focus handling keep working.
+        override func performKeyEquivalent(with event: NSEvent) -> Bool {
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard modifiers.contains(.command),
+                !modifiers.contains(.shift),
+                !modifiers.contains(.option),
+                !modifiers.contains(.control),
+                let coordinator = commandCoordinator
+            else {
+                return super.performKeyEquivalent(with: event)
+            }
+
+            let key: BrowserKey?
+            switch event.keyCode {
+            case 125: key = .commandDown
+            case 126: key = .commandUp
+            case 51: key = .commandDelete
+            default:
+                switch event.charactersIgnoringModifiers?.lowercased() {
+                case "o": key = .commandO
+                case "i": key = .commandI
+                default: key = nil
+                }
+            }
+
+            guard let key, let selection = coordinator.currentSelection(),
+                coordinator.dispatch(key: key, selection: selection)
+            else {
+                return super.performKeyEquivalent(with: event)
+            }
+            return true
+        }
+
+        /// The modifier-less keys: Return (rename), Space (transfer), Esc
+        /// (clear selection). Plain Delete/Backspace is intentionally NOT
+        /// handled here — only ⌘⌫ deletes, so an unmodified delete key falls
+        /// straight through to `super` and does nothing, matching Finder.
+        /// Any other unhandled key also falls through so native arrow-key
+        /// selection and type-select keep working.
+        override func keyDown(with event: NSEvent) {
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard modifiers.isDisjoint(with: [.command, .option, .control]),
+                let coordinator = commandCoordinator
+            else {
+                super.keyDown(with: event)
+                return
+            }
+
+            let key: BrowserKey?
+            switch event.keyCode {
+            case 36, 76: key = .returnKey // Return, numpad Enter
+            case 49: key = .space
+            case 53: key = .escape
+            default: key = nil
+            }
+
+            guard let key, let selection = coordinator.currentSelection(),
+                coordinator.dispatch(key: key, selection: selection)
+            else {
+                super.keyDown(with: event)
+                return
+            }
+        }
+    }
+
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
         var items: [RemoteFileItem] = []
         var onOpen: (RemoteFileItem) -> Void
@@ -143,6 +229,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         var onOpenSymlink: ((RemoteFileItem) -> Void)?
         var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)?
         var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)?
+        var onGoUp: (() -> Void)?
         var crossSessionTargets: (() -> [CrossSessionTarget])?
         let side: BrowserPaneSide
         weak var table: NSTableView?
@@ -266,7 +353,13 @@ struct RemoteFileTableView: NSViewRepresentable {
 
         @objc func doubleClicked(_ sender: Any?) {
             guard let row = table?.clickedRow, row >= 0, row < items.count else { return }
-            let item = items[row]
+            open(items[row])
+        }
+
+        /// Kind-based routing for "open" — shared by the double-click handler
+        /// above and the ⌘↓/⌘O keyboard action below (M11j/T2) so the
+        /// directory/file/symlink branch exists in exactly one place.
+        func open(_ item: RemoteFileItem) {
             if item.isDirectory {
                 onOpen(item)
             } else if item.kind == .file {
@@ -275,6 +368,56 @@ struct RemoteFileTableView: NSViewRepresentable {
                 onOpenSymlink?(item)
             }
             // `.other`: unchanged (no-op).
+        }
+
+        // MARK: - Keyboard commands (M11j/T2)
+
+        /// The current selection, read BY VALUE at the moment of the call
+        /// (never captured earlier) — the same anti-staleness discipline
+        /// `menuNeedsUpdate`/`MenuActionBox` already use for the context
+        /// menu. `nil` only when the table itself is gone.
+        func currentSelection() -> [RemoteFileItem]? {
+            guard let table else { return nil }
+            return table.selectedRowIndexes.compactMap { $0 < items.count ? items[$0] : nil }
+        }
+
+        /// Resolves `key` against the CURRENT selection (read fresh by the
+        /// caller, by value — same discipline as `MenuActionBox` at menu-build
+        /// time, against a stale index) and dispatches the resulting action.
+        /// Returns whether an action was produced and performed, so the
+        /// `NSTableView` subclass knows whether to swallow the event or fall
+        /// through to `super` (native type-select / focus handling).
+        func dispatch(key: BrowserKey, selection: [RemoteFileItem]) -> Bool {
+            guard let action = BrowserKeyCommand.resolve(key: key, selection: selection, side: side)
+            else {
+                return false
+            }
+            perform(action)
+            return true
+        }
+
+        /// Routes a resolved `BrowserKeyAction` to exactly the same closures
+        /// the double-click handler and context menu already use — the
+        /// keyboard is a third caller of the same one model, never a second
+        /// implementation of any action.
+        func perform(_ action: BrowserKeyAction) {
+            switch action {
+            case .open(let item):
+                open(item)
+            case .goUp:
+                onGoUp?()
+            case .rename(let item):
+                onMenuAction?(.rename, [item])
+            case .info(let item):
+                onMenuAction?(.infoAndPermissions, [item])
+            case .delete(let selection):
+                onMenuAction?(.delete, selection)
+            case .transfer(let selection):
+                onMenuAction?(.transferToOtherPane, selection)
+            case .clearSelection:
+                table?.deselectAll(nil)
+                onSelect([])
+            }
         }
 
         func tableViewSelectionDidChange(_ notification: Notification) {

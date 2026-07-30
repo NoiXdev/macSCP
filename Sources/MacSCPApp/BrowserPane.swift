@@ -131,6 +131,7 @@ struct BrowserPane: View {
                         default: onMenuAction?(entry, selection)
                         }
                     },
+                    onGoUp: { Task { await viewModel.goUp() } },
                     crossSessionTargets: crossSessionTargets
                 )
                 .allowsHitTesting(viewModel.state == .loaded)
