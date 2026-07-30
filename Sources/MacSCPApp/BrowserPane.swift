@@ -19,6 +19,11 @@ struct BrowserPane: View {
     /// (M5e/T4); the local pane leaves this `nil` and keeps its existing
     /// no-op-on-file behavior.
     var onOpenFile: ((RemoteFileItem) -> Void)? = nil
+    /// Lists an arbitrary absolute directory for the path bar's Tab
+    /// completion (M11g/T2) — forwarded verbatim to `PathBar`; see its doc
+    /// comment for why this is injected rather than reached through
+    /// `viewModel`.
+    let listDirectory: (String) async throws -> [RemoteFileItem]
     var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)? = nil
     var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)? = nil
     /// Cross-session transfer targets for the context menu (M8b/T4) —
@@ -46,12 +51,10 @@ struct BrowserPane: View {
                     .background(softTint, in: RoundedRectangle(cornerRadius: 5))
                     .foregroundStyle(tint)
 
-                Text(viewModel.currentPath)
-                    .font(.system(size: 11.5, design: .monospaced))
-                    .foregroundStyle(DesignTokens.inkTertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                PathBar(
+                    viewModel: viewModel,
+                    caseSensitive: side == .remote,
+                    listDirectory: listDirectory)
 
                 Button {
                     Task { await viewModel.goUp() }

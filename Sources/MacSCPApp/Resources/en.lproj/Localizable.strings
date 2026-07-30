@@ -107,6 +107,7 @@
 "browser.pane.goUpHelp" = "Parent directory";
 "browser.pane.refreshHelp" = "Refresh";
 "browser.pane.retry" = "Try again";
+"browser.pathBar.copied" = "Copied!";
 
 /* Terminal panel */
 "terminal.ended" = "Shell ended.";

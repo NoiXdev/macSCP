@@ -107,6 +107,7 @@
 "browser.pane.goUpHelp" = "Übergeordnetes Verzeichnis";
 "browser.pane.refreshHelp" = "Aktualisieren";
 "browser.pane.retry" = "Erneut versuchen";
+"browser.pathBar.copied" = "Kopiert!";
 
 /* Terminal-Panel */
 "terminal.ended" = "Shell beendet.";
