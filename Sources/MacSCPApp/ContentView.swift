@@ -2029,8 +2029,11 @@ struct ContentView: View {
         } catch {
             importedHosts = fullImportedHosts
             hiddenImportsErrorMessage = String(
-                format: L10n.string("sidebar.hiddenImports.error %@", "Could not update hidden imports: %@"),
-                String(describing: error))
+                format: L10n.string(
+                    "sidebar.hiddenImports.error %1$@ %2$@",
+                    "Could not update hidden imports: %1$@ — you can delete %2$@ to reset the list."),
+                String(describing: error),
+                HiddenImportStore(directory: SessionStore.defaultDirectory).fileURL.path(percentEncoded: false))
         }
     }
 
@@ -2050,8 +2053,11 @@ struct ContentView: View {
             try HiddenImportStore(directory: SessionStore.defaultDirectory).hide(host.alias)
         } catch {
             hideError = String(
-                format: L10n.string("sidebar.hiddenImports.error %@", "Could not update hidden imports: %@"),
-                String(describing: error))
+                format: L10n.string(
+                    "sidebar.hiddenImports.error %1$@ %2$@",
+                    "Could not update hidden imports: %1$@ — you can delete %2$@ to reset the list."),
+                String(describing: error),
+                HiddenImportStore(directory: SessionStore.defaultDirectory).fileURL.path(percentEncoded: false))
         }
         refreshImportedHosts()
         if let hideError {

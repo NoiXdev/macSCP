@@ -81,7 +81,7 @@
 "sidebar.importedHeader" = "IMPORTIERT";
 "sidebar.importedHelp" = "Aus ~/.ssh/config — füllt das Formular (Geheimnisse werden nicht importiert)";
 "sidebar.imported.hide" = "Ausblenden";
-"sidebar.hiddenImports.error %@" = "Ausgeblendete Importe konnten nicht aktualisiert werden: %@";
+"sidebar.hiddenImports.error %1$@ %2$@" = "Ausgeblendete Importe konnten nicht aktualisiert werden: %1$@ — die Liste lässt sich zurücksetzen, indem %2$@ gelöscht wird.";
 
 /* Konflikt-Sheet */
 "conflict.title" = "Datei existiert bereits";
@@ -363,7 +363,7 @@
 "hiddenImports.unhide" = "Wieder einblenden";
 "hiddenImports.removeFromList" = "Aus der Liste entfernen";
 "hiddenImports.count %lld" = "%lld ausgeblendet";
-"hiddenImports.loadError %@" = "Ausgeblendete Importe konnten nicht geladen werden: %@";
+"hiddenImports.loadError %1$@ %2$@" = "Ausgeblendete Importe konnten nicht geladen werden: %1$@ — die Liste lässt sich zurücksetzen, indem %2$@ gelöscht wird.";
 "hiddenImports.unhideError %@" = "Der Import konnte nicht wiederhergestellt werden: %@";
 
 /* TOFU-Prompt-Fußnote (M10a/T2) */

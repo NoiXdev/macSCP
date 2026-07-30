@@ -43,7 +43,13 @@ public struct HiddenImportStore: Sendable {
 
     private let directory: URL
     public init(directory: URL) { self.directory = directory }
-    private var fileURL: URL { directory.appendingPathComponent("hidden-imports.json") }
+    /// Public so a failure message can name the file. Every operation on
+    /// this store throws once the JSON is unreadable (a truncated write
+    /// after a hard power loss, say), and unlike the session or login
+    /// stores this one holds nothing but display preferences — deleting it
+    /// costs the user only their hide list. Naming the path is therefore
+    /// the difference between a dead end and a fix the user can perform.
+    public var fileURL: URL { directory.appendingPathComponent("hidden-imports.json") }
 
     private func load() throws -> StoreFile {
         guard FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) else {

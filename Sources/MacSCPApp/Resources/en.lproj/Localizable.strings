@@ -81,7 +81,7 @@
 "sidebar.importedHeader" = "IMPORTED";
 "sidebar.importedHelp" = "From ~/.ssh/config — fills the form (secrets are not imported)";
 "sidebar.imported.hide" = "Hide";
-"sidebar.hiddenImports.error %@" = "Could not update hidden imports: %@";
+"sidebar.hiddenImports.error %1$@ %2$@" = "Could not update hidden imports: %1$@ — you can delete %2$@ to reset the list.";
 
 /* Transfer conflict sheet */
 "conflict.title" = "File already exists";
@@ -363,7 +363,7 @@
 "hiddenImports.unhide" = "Show Again";
 "hiddenImports.removeFromList" = "Remove from List";
 "hiddenImports.count %lld" = "%lld hidden";
-"hiddenImports.loadError %@" = "Could not load hidden imports: %@";
+"hiddenImports.loadError %1$@ %2$@" = "Could not load hidden imports: %1$@ — you can delete %2$@ to reset the list.";
 "hiddenImports.unhideError %@" = "Could not restore the import: %@";
 
 /* TOFU prompt footnote (M10a/T2) */

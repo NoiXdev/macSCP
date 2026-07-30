@@ -140,8 +140,11 @@ struct HiddenImportsSheet: View {
         } catch {
             rows = []
             errorMessage = String(
-                format: L10n.string("hiddenImports.loadError %@", "Could not load hidden imports: %@"),
-                String(describing: error))
+                format: L10n.string(
+                    "hiddenImports.loadError %1$@ %2$@",
+                    "Could not load hidden imports: %1$@ — you can delete %2$@ to reset the list."),
+                String(describing: error),
+                store.fileURL.path(percentEncoded: false))
         }
     }
 
