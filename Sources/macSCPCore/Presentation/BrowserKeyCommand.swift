@@ -48,7 +48,12 @@ public enum BrowserKeyCommand {
         case .escape:
             return .clearSelection
         case .returnKey:
-            guard let only = selection.first, selection.count == 1 else { return nil }
+            // The "single selection only" half of rename eligibility is NOT
+            // re-encoded here (M11j/T1 review): `entries` only yields `.rename`
+            // for a single selection, so consulting it is the whole check —
+            // if the menu ever allowed multi-rename, the keyboard would follow
+            // automatically instead of being frozen by a hardcoded count guard.
+            guard let only = selection.first else { return nil }
             let entries = BrowserContextMenu.entries(for: selection, side: side)
             guard entries.contains(.rename) else { return nil }
             return .rename(only)
@@ -61,7 +66,10 @@ public enum BrowserKeyCommand {
             guard entries.contains(.delete) else { return nil }
             return .delete(selection)
         case .commandI:
-            guard let only = selection.first, selection.count == 1 else { return nil }
+            // Same as `.returnKey`: `entries` gates both the single-selection
+            // and the never-for-symlink rule, so it is the whole check — no
+            // hardcoded cardinality guard to drift out of sync with the menu.
+            guard let only = selection.first else { return nil }
             let entries = BrowserContextMenu.entries(for: selection, side: side)
             guard entries.contains(.infoAndPermissions) else { return nil }
             return .info(only)
