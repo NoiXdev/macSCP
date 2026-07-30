@@ -19,11 +19,12 @@ struct BrowserPane: View {
     /// (M5e/T4); the local pane leaves this `nil` and keeps its existing
     /// no-op-on-file behavior.
     var onOpenFile: ((RemoteFileItem) -> Void)? = nil
-    /// Lists an arbitrary absolute directory for the path bar's Tab
-    /// completion (M11g/T2) — forwarded verbatim to `PathBar`; see its doc
-    /// comment for why this is injected rather than reached through
-    /// `viewModel`.
-    let listDirectory: (String) async throws -> [RemoteFileItem]
+    /// The pane's own file system, forwarded verbatim to `PathBar` for its
+    /// Tab-completion listing (M11g/T2) — see its doc comment for why this
+    /// is injected rather than reached through `viewModel`. Passed as the
+    /// value itself (not a bespoke closure) so `side` stays the single
+    /// source of truth for which pane this is (M11g/T2 review, finding M6).
+    let fileSystem: any RemoteFileSystem
     var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)? = nil
     var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)? = nil
     /// Cross-session transfer targets for the context menu (M8b/T4) —
@@ -54,7 +55,7 @@ struct BrowserPane: View {
                 PathBar(
                     viewModel: viewModel,
                     caseSensitive: side == .remote,
-                    listDirectory: listDirectory)
+                    fileSystem: fileSystem)
 
                 Button {
                     Task { await viewModel.goUp() }
@@ -74,6 +75,14 @@ struct BrowserPane: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
+            // Raises the whole header row above the LATER siblings in this
+            // `VStack` (the hairline, then the file table `ZStack`) so the
+            // path bar's inline candidates/error overlay paints over them
+            // instead of being painted over (M11g/T2 review, finding C1) —
+            // the counterpart to `PathBar`'s own `.zIndex(1)`, which handles
+            // the same problem one level down against the up/refresh
+            // buttons inside this HStack.
+            .zIndex(1)
 
             Rectangle()
                 .fill(DesignTokens.hairline)

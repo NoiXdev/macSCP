@@ -844,7 +844,7 @@ struct ContentView: View {
                                 softTint: DesignTokens.localSoft,
                                 viewModel: session.local,
                                 side: .local,
-                                listDirectory: { path in try await session.localFS.list(path: path) },
+                                fileSystem: session.localFS,
                                 pasteboardWriter: { item in
                                     item.kind == .file
                                         ? NSURL(fileURLWithPath: item.path)
@@ -883,7 +883,7 @@ struct ContentView: View {
                                 onOpenFile: { item in
                                     openInEditor(item, in: tab, session: session)
                                 },
-                                listDirectory: { path in try await session.remoteFS.list(path: path) },
+                                fileSystem: session.remoteFS,
                                 pasteboardWriter: { item in
                                     item.kind == .file
                                         ? remotePromiseProvider(for: item, in: tab, session: session)
