@@ -158,6 +158,19 @@ struct RemoteFileTableView: NSViewRepresentable {
         /// otherwise falls through to `super` so menu shortcuts and default
         /// focus handling keep working.
         override func performKeyEquivalent(with event: NSEvent) -> Bool {
+            // `performKeyEquivalent(with:)` is broadcast by NSWindow
+            // depth-first through the ENTIRE content-view tree, not routed
+            // to the first responder like `keyDown` is. With two panes open
+            // in one window, both tables would otherwise see the same
+            // event; whichever sits first in subview order would act on ITS
+            // OWN selection regardless of which pane the user is actually
+            // in. Deferring to `super` here when this table isn't first
+            // responder lets the event continue down the tree to the table
+            // that IS focused. `keyDown` below needs no such guard because
+            // it already only ever fires on the first responder.
+            guard window?.firstResponder === self else {
+                return super.performKeyEquivalent(with: event)
+            }
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             guard modifiers.contains(.command),
                 !modifiers.contains(.shift),
@@ -197,7 +210,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         /// selection and type-select keep working.
         override func keyDown(with event: NSEvent) {
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            guard modifiers.isDisjoint(with: [.command, .option, .control]),
+            guard modifiers.isDisjoint(with: [.command, .option, .control, .shift]),
                 let coordinator = commandCoordinator
             else {
                 super.keyDown(with: event)
@@ -415,8 +428,11 @@ struct RemoteFileTableView: NSViewRepresentable {
             case .transfer(let selection):
                 onMenuAction?(.transferToOtherPane, selection)
             case .clearSelection:
+                // `deselectAll(nil)` already fires
+                // `tableViewSelectionDidChange` -> `onSelect([])` when the
+                // selection was non-empty, so no explicit call is needed
+                // here.
                 table?.deselectAll(nil)
-                onSelect([])
             }
         }
 
