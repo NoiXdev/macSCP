@@ -526,12 +526,25 @@ private struct CandidatesList: View {
     let names: [String]
     let onSelect: (String) -> Void
 
-    /// Approximates `CandidateRow`'s rendered height (11.5pt monospaced text
-    /// plus 4pt of vertical padding on each side) closely enough to decide
-    /// whether `names` overflows `maxListHeight` — exact to the pixel isn't
-    /// needed, only "does the list need the footer".
-    private static let rowHeight: CGFloat = 24
+    /// `CandidateRow`'s rendered height (11.5pt monospaced text plus 4pt of
+    /// vertical padding on each side), MEASURED at 22pt rather than
+    /// estimated: this constant drives the scroller's layout, not just the
+    /// footer decision, so an approximation would leave slack per row and
+    /// misjudge where the cap bites.
+    private static let rowHeight: CGFloat = 22
     private static let maxListHeight: CGFloat = 240
+
+    /// A DEFINITE height, never `maxHeight` (M11g final review, C1): a
+    /// `ScrollView` is vertically flexible and accepts whatever height it is
+    /// proposed, and `.overlay` proposes the PARENT's size — here the 14pt
+    /// path line. `maxHeight` only clamps from above, so the scroller
+    /// collapsed to a ~14pt sliver showing a fraction of one row, scrollable
+    /// inside a viewport shorter than a single row. The plain `VStack` this
+    /// replaced only worked because it was inflexible and returned its own
+    /// ideal height (which is what let it grow to thousands of points).
+    private var listHeight: CGFloat {
+        min(CGFloat(names.count) * Self.rowHeight, Self.maxListHeight)
+    }
 
     private var isTruncated: Bool {
         CGFloat(names.count) * Self.rowHeight > Self.maxListHeight
@@ -546,7 +559,7 @@ private struct CandidatesList: View {
                     }
                 }
             }
-            .frame(maxHeight: Self.maxListHeight)
+            .frame(height: listHeight)
 
             if isTruncated {
                 Divider()
