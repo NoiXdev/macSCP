@@ -171,7 +171,13 @@ struct BrowserPane: View {
                         isSearchActive = true
                     },
                     focusRequestToken: tableFocusToken,
-                    crossSessionTargets: crossSessionTargets
+                    crossSessionTargets: crossSessionTargets,
+                    sortKey: viewModel.sortKey,
+                    sortAscending: viewModel.sortAscending,
+                    onSortChange: { key, ascending in
+                        viewModel.sortKey = key
+                        viewModel.sortAscending = ascending
+                    }
                 )
                 .allowsHitTesting(viewModel.state == .loaded)
 

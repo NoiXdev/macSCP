@@ -55,6 +55,22 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// at that moment — Spec §5.3). `nil` (the local pane's default before
     /// `ContentView` wires it) yields the pre-M8b flat "Transfer" entry.
     var crossSessionTargets: (() -> [CrossSessionTarget])? = nil
+    /// This pane's current sort column/direction (M11l/T2) — mirrors
+    /// `RemoteBrowserViewModel.sortKey`/`sortAscending`. Threaded in from the
+    /// VM rather than read off `NSTableView.sortDescriptors` because Core
+    /// (`sortedForDisplay`) is the sole sort authority; the table's own
+    /// `sortDescriptors` exist only to detect header clicks and drive the
+    /// header indicator, never to reorder rows (see `onSortChange` below).
+    /// Defaults match the VM's own defaults (`.name` ascending).
+    var sortKey: FileSortKey = .name
+    var sortAscending: Bool = true
+    /// Fired when a header click changes the active column or flips its
+    /// direction (M11l/T2). The caller is expected to set
+    /// `viewModel.sortKey`/`sortAscending` here, exactly like `onSelect`
+    /// sets `viewModel.selectedItems` — the reordered `items` then comes
+    /// back through the existing reload/reconcile path in `updateNSView`,
+    /// never sorted by AppKit itself.
+    var onSortChange: ((FileSortKey, Bool) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         let coordinator = Coordinator(onOpen: onOpen, onSelect: onSelect, side: side)
@@ -65,6 +81,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         coordinator.onGoUp = onGoUp
         coordinator.onOpenSearch = onOpenSearch
         coordinator.crossSessionTargets = crossSessionTargets
+        coordinator.onSortChange = onSortChange
         return coordinator
     }
 
@@ -82,15 +99,25 @@ struct RemoteFileTableView: NSViewRepresentable {
         table.headerView = NSTableHeaderView(
             frame: NSRect(x: 0, y: 0, width: 0, height: 22))
 
-        for (identifier, title, width) in [
-            ("name", L10n.string("filetable.column.name", "Name"), 260.0),
-            ("size", L10n.string("filetable.column.size", "Size"), 90.0),
-            ("modified", L10n.string("filetable.column.modified", "Modified"), 160.0),
+        // Default click direction per column (M11l/T2) when it becomes the
+        // NEWLY active sort column — matches the design's expectation that
+        // switching to Size defaults to largest-first, while Name/Modified
+        // default to ascending. AppKit applies a column's
+        // `sortDescriptorPrototype` verbatim (unflipped) the first time it's
+        // clicked, and only flips it (via `reversedSortDescriptor`) on a
+        // SUBSEQUENT click of the already-active column — so this default is
+        // exactly what a fresh click on a different column produces.
+        for (identifier, title, width, defaultAscending) in [
+            ("name", L10n.string("filetable.column.name", "Name"), 260.0, true),
+            ("size", L10n.string("filetable.column.size", "Size"), 90.0, false),
+            ("modified", L10n.string("filetable.column.modified", "Modified"), 160.0, true),
         ] {
             let column = NSTableColumn(identifier: .init(identifier))
             let header = PolishedHeaderCell(textCell: title)
             column.headerCell = header
             column.width = width
+            column.sortDescriptorPrototype = NSSortDescriptor(
+                key: identifier, ascending: defaultAscending)
             table.addTableColumn(column)
         }
 
@@ -103,11 +130,23 @@ struct RemoteFileTableView: NSViewRepresentable {
         // Context menu (M7b): built lazily per click in menuNeedsUpdate.
         table.menu = NSMenu()
         table.menu?.delegate = context.coordinator
+        context.coordinator.table = table
+
+        // Initial sort state (M11l/T2): mirrors the VM default (`.name`
+        // ascending) so the header indicator starts on the Name column,
+        // truthfully reflecting the order `items` is already in. This ALSO
+        // seeds `lastSyncedSort*` so the very first `updateNSView` call
+        // (which SwiftUI always makes right after `makeNSView`, with the
+        // same `sortKey`/`sortAscending`) is a no-op rather than redundantly
+        // re-touching `table.sortDescriptors`.
+        table.sortDescriptors = [NSSortDescriptor(key: sortKey.columnIdentifier, ascending: sortAscending)]
+        context.coordinator.updateSortIndicators(activeKey: sortKey, ascending: sortAscending)
+        context.coordinator.lastSyncedSortKey = sortKey
+        context.coordinator.lastSyncedSortAscending = sortAscending
 
         let scroll = NSScrollView()
         scroll.documentView = table
         scroll.hasVerticalScroller = true
-        context.coordinator.table = table
         return scroll
     }
 
@@ -134,7 +173,26 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.onGoUp = onGoUp
         context.coordinator.onOpenSearch = onOpenSearch
         context.coordinator.crossSessionTargets = crossSessionTargets
+        context.coordinator.onSortChange = onSortChange
         guard let table = nsView.documentView as? NSTableView else { return }
+        // Sort state reconciliation (M11l/T2): diffed against the last value
+        // the COORDINATOR itself pushed (not against a locally-cached SwiftUI
+        // value), the same discipline `itemsChanged`/`focusRequestToken`
+        // already use — a plain re-render with an unchanged sort state must
+        // never re-touch `table.sortDescriptors` (that would needlessly
+        // re-fire `sortDescriptorsDidChange`). A change here can only come
+        // from an EXTERNAL source (not a header click, since a header click
+        // already updates `lastSyncedSort*` itself in the delegate method
+        // before this ever runs) — e.g. a future reset-to-default action.
+        if context.coordinator.lastSyncedSortKey != sortKey
+            || context.coordinator.lastSyncedSortAscending != sortAscending {
+            context.coordinator.lastSyncedSortKey = sortKey
+            context.coordinator.lastSyncedSortAscending = sortAscending
+            table.sortDescriptors = [
+                NSSortDescriptor(key: sortKey.columnIdentifier, ascending: sortAscending)
+            ]
+            context.coordinator.updateSortIndicators(activeKey: sortKey, ascending: sortAscending)
+        }
         if itemsChanged {
             // reloadData() clears the selection without a delegate call —
             // the reconciliation below restores it right after.
@@ -294,12 +352,19 @@ struct RemoteFileTableView: NSViewRepresentable {
         var onGoUp: (() -> Void)?
         var onOpenSearch: (() -> Void)?
         var crossSessionTargets: (() -> [CrossSessionTarget])?
+        var onSortChange: ((FileSortKey, Bool) -> Void)?
         let side: BrowserPaneSide
         weak var table: NSTableView?
         var suppressSelectionCallback = false
         /// Last `focusRequestToken` value `updateNSView` acted on (M11k/T2)
         /// — see that property's doc comment on `RemoteFileTableView`.
         var lastFocusRequestToken = 0
+        /// Last sort key/direction THIS coordinator itself pushed into
+        /// `table.sortDescriptors` and the header indicators (M11l/T2) — see
+        /// the diffing comment at its `updateNSView` call site. `nil` only
+        /// before `makeNSView` runs its initial sync.
+        var lastSyncedSortKey: FileSortKey?
+        var lastSyncedSortAscending: Bool?
 
         init(
             onOpen: @escaping (RemoteFileItem) -> Void, onSelect: @escaping ([RemoteFileItem]) -> Void,
@@ -496,6 +561,49 @@ struct RemoteFileTableView: NSViewRepresentable {
             onSelect(rows.compactMap { $0 < items.count ? items[$0] : nil })
         }
 
+        // MARK: - Sort (M11l/T2)
+
+        /// AppKit's native click-to-sort machinery (driven by each column's
+        /// `sortDescriptorPrototype`, set in `makeNSView`) still works even
+        /// though `PolishedHeaderCell` fully suppresses default header
+        /// painting: header-click hit-testing and `sortDescriptors` toggling
+        /// happen in `NSTableHeaderView` itself, entirely independent of the
+        /// header cell's `draw(withFrame:in:)` override. So this delegate
+        /// method fires exactly like it would with a stock header cell — the
+        /// custom cell only affects what gets PAINTED (title + our own
+        /// indicator triangle, added below), never what gets CLICKED.
+        ///
+        /// Only `tableView.sortDescriptors.first` is consulted: AppKit always
+        /// makes the just-toggled column's descriptor the first element
+        /// (prepending it), so the primary key/direction is always there
+        /// regardless of how many older descriptors trail behind it — this
+        /// view model only ever tracks a single sort key, so anything past
+        /// `.first` is irrelevant here.
+        func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
+            guard let descriptor = tableView.sortDescriptors.first,
+                let key = FileSortKey(columnIdentifier: descriptor.key ?? "")
+            else { return }
+            lastSyncedSortKey = key
+            lastSyncedSortAscending = descriptor.ascending
+            updateSortIndicators(activeKey: key, ascending: descriptor.ascending)
+            onSortChange?(key, descriptor.ascending)
+        }
+
+        /// Updates every column's header cell to show (or hide) the ▲/▼
+        /// indicator (M11l/T2) — `PolishedHeaderCell` draws it itself (see
+        /// that type's doc comment) since it suppresses AppKit's own
+        /// `indicatorImage` painting along with everything else AppKit would
+        /// normally paint by default.
+        func updateSortIndicators(activeKey: FileSortKey, ascending: Bool) {
+            guard let table else { return }
+            for column in table.tableColumns {
+                guard let cell = column.headerCell as? PolishedHeaderCell else { continue }
+                let isActive = FileSortKey(columnIdentifier: column.identifier.rawValue) == activeKey
+                cell.sortIndicatorAscending = isActive ? ascending : nil
+            }
+            table.headerView?.needsDisplay = true
+        }
+
         func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
             let reuseID = NSUserInterfaceItemIdentifier("polished-row")
             if let reused = tableView.makeView(withIdentifier: reuseID, owner: nil)
@@ -645,6 +753,17 @@ private final class MenuActionBox {
 /// Mockup-style column header: versal 10.5pt semibold with tracking in
 /// inkTertiary, 12pt leading inset, hairline bottom border (spec M5g).
 private final class PolishedHeaderCell: NSTableHeaderCell {
+    /// Sort indicator state for THIS column's header (M11l/T2): `nil` when
+    /// this column is not the active sort column (no triangle drawn);
+    /// otherwise the direction (`true` = ascending ▲, `false` = descending
+    /// ▼). Written by `Coordinator.updateSortIndicators` whenever the sort
+    /// state changes. Because `draw(withFrame:in:)` below never calls
+    /// `super` (the whole point of this subclass — see its header-body
+    /// comment), AppKit's own `indicatorImage`/`setIndicatorImage(_:in:)`
+    /// machinery never paints anything either; this property and the
+    /// drawing it drives are a full replacement for it, not a supplement.
+    var sortIndicatorAscending: Bool?
+
     override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
         // Flat background matching the table body, so header and content
         // read as one surface (mockup: seamless card).
@@ -666,14 +785,75 @@ private final class PolishedHeaderCell: NSTableHeaderCell {
             height: size.height)
         text.draw(in: textRect)
 
+        // Sort indicator (M11l/T2): drawn AFTER the title so it never
+        // affects the title's own metrics above (font/kern/inset all
+        // untouched) — it lives entirely in the free space between the
+        // (short, uppercased) title and the header's trailing edge, mirrored
+        // off the same 12pt inset the title's leading edge uses.
+        if let ascending = sortIndicatorAscending {
+            drawSortIndicator(ascending: ascending, in: cellFrame)
+        }
+
         DesignTokens.hairlineNS.setFill()
         NSRect(x: cellFrame.minX, y: cellFrame.maxY - 1,
                width: cellFrame.width, height: 1).fill()
     }
 
+    /// Small filled triangle at the trailing edge: ▲ for ascending, ▼ for
+    /// descending, in `inkTertiary` (M11l/T2). `NSTableHeaderView` is
+    /// flipped (y grows downward) — the same assumption the hairline above
+    /// already makes by drawing its "bottom" border at `cellFrame.maxY`.
+    private func drawSortIndicator(ascending: Bool, in cellFrame: NSRect) {
+        let width: CGFloat = 7
+        let height: CGFloat = 5
+        let x = cellFrame.maxX - 12 - width
+        let topY = cellFrame.midY - height / 2
+        let bottomY = cellFrame.midY + height / 2
+
+        let path = NSBezierPath()
+        if ascending {
+            // ▲: point at the top (visually up, i.e. the smaller y in this
+            // flipped view).
+            path.move(to: NSPoint(x: x, y: bottomY))
+            path.line(to: NSPoint(x: x + width, y: bottomY))
+            path.line(to: NSPoint(x: x + width / 2, y: topY))
+        } else {
+            // ▼: point at the bottom.
+            path.move(to: NSPoint(x: x, y: topY))
+            path.line(to: NSPoint(x: x + width, y: topY))
+            path.line(to: NSPoint(x: x + width / 2, y: bottomY))
+        }
+        path.close()
+        DesignTokens.inkTertiaryNS.setFill()
+        path.fill()
+    }
+
     override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
         // Everything happens in draw(withFrame:in:) — keep AppKit from
         // painting the default title on top.
+    }
+}
+
+/// Maps `FileSortKey` to/from the fixed column identifiers used both as
+/// `NSUserInterfaceItemIdentifier.rawValue` (see the column setup in
+/// `makeNSView`) and `NSSortDescriptor.key` (M11l/T2) — kept in one place so
+/// the three-way name/size/modified switch exists exactly once in this file.
+extension FileSortKey {
+    fileprivate var columnIdentifier: String {
+        switch self {
+        case .name: return "name"
+        case .size: return "size"
+        case .modified: return "modified"
+        }
+    }
+
+    fileprivate init?(columnIdentifier: String) {
+        switch columnIdentifier {
+        case "name": self = .name
+        case "size": self = .size
+        case "modified": self = .modified
+        default: return nil
+        }
     }
 }
 
