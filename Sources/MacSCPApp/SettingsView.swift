@@ -11,10 +11,16 @@ import macSCPCore
 /// slot in the same way.
 struct SettingsView: View {
     var store: SettingsStore
+    /// App-global update-check state (M11h/T2) — same `UpdateCheckModel`
+    /// instance the app menu's "Check for Updates…" item drives, threaded
+    /// through from `MacSCPApp` like `store` above, so the General tab's
+    /// "Check Now" button reuses the one existing check path instead of
+    /// starting a second one.
+    var updateModel: UpdateCheckModel
 
     var body: some View {
         TabView {
-            GeneralSettingsTab(store: store)
+            GeneralSettingsTab(store: store, updateModel: updateModel)
                 .tabItem {
                     Label(
                         L10n.string("settings.tab.general", "General"),
@@ -55,9 +61,41 @@ struct SettingsView: View {
 }
 
 /// General app options (M7a): the hidden-files toggle, plus (M9c) the
-/// auto-refresh toggle and its interval.
+/// auto-refresh toggle and its interval, and (M11h/T2) the manual
+/// "Check Now" update section below the automatic-check toggle.
 private struct GeneralSettingsTab: View {
     @Bindable var store: SettingsStore
+    /// Read-only here: the toggle two lines below already binds
+    /// `store.updateCheckEnabled` directly; this is only consulted for
+    /// `isChecking` (button disabled state / spinner) and passed through to
+    /// `check(manual:settingsStore:)` — the exact same call the app-menu
+    /// item makes (see `MacSCPApp.body`'s `CommandGroup(after: .appInfo)`).
+    var updateModel: UpdateCheckModel
+
+    /// The running build's short version string, read the same way
+    /// `UpdateCheckModel.check` and the system "About macSCP" panel do
+    /// (`CFBundleShortVersionString` off `Bundle.main`) — App layer only,
+    /// Core stays bundle-free.
+    private var currentVersionText: String {
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String)
+            ?? L10n.string("settings.general.currentVersion.unknown", "Unknown")
+    }
+
+    /// The persisted `lastUpdateCheck` timestamp, formatted for the user's
+    /// locale (`Date.formatted(date:time:)`, not a fixed pattern — unlike
+    /// e.g. `KnownHostsSheet`'s pinned `dd.MM.yyyy`, there's no cross-user
+    /// display like a table column here, so the locale-native form reads
+    /// better), or an honest "never checked" sentence when nil. `store` is
+    /// `@Bindable`/`@Observable`, so this recomputes live right after a
+    /// check completes and writes the new timestamp.
+    private var lastCheckedText: String {
+        guard let lastCheck = store.lastUpdateCheck else {
+            return L10n.string("settings.general.lastChecked.never", "Never checked for updates yet.")
+        }
+        return String(
+            format: L10n.string("settings.general.lastChecked %@", "Last checked: %@"),
+            lastCheck.formatted(date: .abbreviated, time: .shortened))
+    }
 
     var body: some View {
         Form {
@@ -95,6 +133,42 @@ private struct GeneralSettingsTab: View {
                 Toggle(
                     L10n.string("settings.general.updateCheck", "Automatically check for updates"),
                     isOn: $store.updateCheckEnabled)
+
+                LabeledContent(L10n.string("settings.general.currentVersion", "Current version")) {
+                    Text(currentVersionText)
+                        .foregroundStyle(.secondary)
+                }
+
+                // "Check Now" (M11h/T2): calls the SAME `check(manual:
+                // settingsStore:)` the app-menu item calls, with the same
+                // `isChecking` guard/disabled condition — no second check
+                // path. The pass/fail/no-update RESULT is presented by the
+                // existing machinery inside `check` itself (the in-window
+                // `.alert` in `ContentView` while a window is mounted, or
+                // its `NSAlert` fallback when every window is closed and
+                // only Settings is open) — nothing new is added here for
+                // that; this row only surfaces the persistent facts (version,
+                // last-checked) and the trigger.
+                HStack {
+                    Text(lastCheckedText)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        Task { await updateModel.check(manual: true, settingsStore: store) }
+                    } label: {
+                        if updateModel.isChecking {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text(L10n.string("settings.general.checkingNow", "Checking…"))
+                            }
+                        } else {
+                            Text(L10n.string("settings.general.checkNow", "Check Now"))
+                        }
+                    }
+                    .buttonStyle(.polished)
+                    .disabled(updateModel.isChecking)
+                }
             } footer: {
                 Text(L10n.string(
                     "settings.general.updateCheckHint",

@@ -450,6 +450,14 @@
 "update.error.rateLimited" = "Too many requests to GitHub right now. Try again later.";
 "update.error.malformedResponse" = "The response from GitHub could not be understood.";
 
+/* Settings — General tab, manual "Check Now" section (M11h/T2) */
+"settings.general.currentVersion" = "Current version";
+"settings.general.currentVersion.unknown" = "Unknown";
+"settings.general.lastChecked %@" = "Last checked: %@";
+"settings.general.lastChecked.never" = "Never checked for updates yet.";
+"settings.general.checkNow" = "Check Now";
+"settings.general.checkingNow" = "Checking…";
+
 /* External terminal — password hint + launch errors (M11d/T2) */
 "externalTerminal.passwordHint.title" = "Password Login";
 "externalTerminal.passwordHint.message" = "macSCP can't hand a saved password to an external terminal — ssh will ask you for it there.";

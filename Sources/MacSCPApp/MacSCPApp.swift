@@ -196,8 +196,12 @@ struct MacSCPApp: App {
         }
 
         // Opened via Cmd-, or the app menu's "Settings…" item (M5c/T3).
+        // `updateModel` passed through (M11h/T2) so the General tab's "Check
+        // Now" button can drive the SAME `UpdateCheckModel` instance as the
+        // app-menu item above — one shared `isChecking`/`presentedResult`,
+        // not a second check path.
         Settings {
-            SettingsView(store: settingsStore)
+            SettingsView(store: settingsStore, updateModel: updateModel)
                 .tint(DesignTokens.remoteBlue)
         }
     }
