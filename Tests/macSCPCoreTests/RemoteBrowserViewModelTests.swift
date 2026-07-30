@@ -1089,4 +1089,31 @@ struct RemoteBrowserViewModelTests {
         #expect(vm.items.map(\.name) == ["Access.log", "error.log"])
         #expect(vm.searchMatchCount == 2)
     }
+
+    /// A failed `navigate` (stat succeeds, list throws) must leave the ACTIVE
+    /// jump search fully consistent (M11k/T1 review): the rolled-back `load()`
+    /// re-derives against the restored directory, so `searchMatchPaths` is
+    /// restored too and `focusNextMatch()` still finds the matches — not left
+    /// empty while the query and counts still claim there are some.
+    @Test func failedNavigateKeepsJumpSearchConsistent() async {
+        let fs = makeSearchFS()
+        await fs.addItem(
+            RemoteFileItem(name: "locked", path: "/locked", kind: .directory), to: "/")
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        vm.searchMode = .jump
+        vm.searchQuery = "log"
+        await fs.setListFailure(RemoteFSError.permissionDenied(path: "/locked"))
+
+        let error = await vm.navigate(to: "/locked")
+
+        #expect(error != nil)                               // navigation failed
+        #expect(vm.currentPath == "/")                      // rolled back
+        #expect(vm.searchQuery == "log")                    // query intact
+        // The match paths survived the rollback, so jump navigation works.
+        vm.focusNextMatch()
+        #expect(vm.selectedItems.map(\.name) == ["Access.log"])
+        vm.focusNextMatch()
+        #expect(vm.selectedItems.map(\.name) == ["error.log"])
+    }
 }

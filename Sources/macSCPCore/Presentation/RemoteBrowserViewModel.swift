@@ -117,10 +117,12 @@ public final class RemoteBrowserViewModel {
         }
     }
 
-    /// Resets the search to "no filter" (empty query). Called by `load()`
-    /// on every listing so a filter left over from a previous directory
-    /// never silently hides the new one; also the operation the App layer's
-    /// Esc handling (T2) uses to close the search field.
+    /// Resets the search to "no filter" (empty query). Called by the
+    /// navigation entry points (`open`/`goUp`/`navigate`-on-success) so a
+    /// filter left over from a previous directory never silently hides the
+    /// new one — NOT by `load()`, which keeps the active search so a
+    /// same-directory refresh (rename/delete/chmod) re-applies it. Also the
+    /// operation the App layer's Esc handling (T2) uses to close the field.
     public func clearSearch() {
         searchQuery = ""
     }
@@ -495,25 +497,27 @@ public final class RemoteBrowserViewModel {
             }
         }
         let previousPath = currentPath
-        let previousItems = items
         let previousDisplayedAll = displayedAll
         let previousState = state
         let previousSelection = selectedItems
-        let previousSearchError = searchError
-        let previousMatchCount = searchMatchCount
-        let previousTotalCount = searchTotalCount
         let directoryChanging = normalized != currentPath
         currentPath = normalized
         await load()
         if case .failed(let message) = state {
+            // Roll back the base and re-derive ALL search-facing state from
+            // it in one place (M11k/T1 review): the failed `load()` above ran
+            // `applySearch()` against an empty `displayedAll`, which zeroed
+            // `searchMatchPaths`/counts/`items`. Restoring only some of those
+            // fields by hand left `searchMatchPaths` stale (empty) while the
+            // query and counts still claimed matches — jump navigation would
+            // then find nothing. Restoring the base and calling `applySearch`
+            // reproduces the exact pre-navigate derived state (same inputs)
+            // and can't drift as fields are added.
             currentPath = previousPath
-            items = previousItems
             displayedAll = previousDisplayedAll
             state = previousState
             selectedItems = previousSelection
-            searchError = previousSearchError
-            searchMatchCount = previousMatchCount
-            searchTotalCount = previousTotalCount
+            applySearch()
             return message
         }
         if directoryChanging {
