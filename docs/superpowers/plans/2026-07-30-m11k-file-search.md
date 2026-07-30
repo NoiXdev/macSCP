@@ -47,7 +47,7 @@
     - `public static func derive(all: [RemoteFileItem], query: String, isRegex: Bool, mode: FileSearchMode) -> Result<Derivation, FileSearchError>`
   - Auf `RemoteBrowserViewModel`: `searchQuery`, `searchIsRegex`, `searchMode`, `searchError: FileSearchError?`, `searchMatchCount`, `searchTotalCount`, sowie Sprung-Navigation `focusNextMatch()`/`focusPreviousMatch()` (setzen `selectedItems` auf den nächsten/vorherigen Treffer, Umbruch) und `clearSearch()`.
 
-- [ ] **Step 1: Failing tests für `FileSearch`** (`FileSearchTests`):
+- [x] **Step 1: Failing tests für `FileSearch`** (`FileSearchTests`):
   - `compile("", isRegex: false)` ⇒ Predicate mit `isEmpty == true`, `matches` liefert für alles `true`.
   - Teiltext case-insensitiv: `compile("log", false)` matcht `Access.LOG`, nicht `readme`.
   - Regex gültig: `compile("\\.log$", true)` matcht `a.log`, nicht `a.log.1`; Anker `^var` etc.
@@ -57,16 +57,16 @@
   - `derive` mit ungültigem Regex ⇒ `.failure(.invalidRegex)` (der Aufrufer lässt dann `items` stehen).
   - Unicode/Umlaut: `compile("müller", false)` matcht `Müller.txt` (case-insensitiv, diakritik wie NSString-Vergleich — dokumentieren, was gilt).
 
-- [ ] **Step 2: Rot beweisen.** `swift test --filter FileSearch` → FAIL.
+- [x] **Step 2: Rot beweisen.** `swift test --filter FileSearch` → FAIL.
 
-- [ ] **Step 3: `FileSearch` implementieren** (rein). Regex einmal
+- [x] **Step 3: `FileSearch` implementieren** (rein). Regex einmal
   kompilieren (`NSRegularExpression`, `.caseInsensitive`), Teiltext über
   `localizedCaseInsensitiveContains`. `derive` baut aus dem kompilierten
   Prädikat die vier Felder je Modus.
 
-- [ ] **Step 4: Grün.** `swift test --filter FileSearch` → PASS.
+- [x] **Step 4: Grün.** `swift test --filter FileSearch` → PASS.
 
-- [ ] **Step 5: Failing tests für den VM-Suchzustand**
+- [x] **Step 5: Failing tests für den VM-Suchzustand**
   (`RemoteBrowserViewModelTests`, Mock-FS):
   - Filter-Modus: `searchQuery` setzen reduziert `items`, `searchMatchCount`/
     `searchTotalCount` stimmen; leeren ⇒ wieder alles.
@@ -80,16 +80,16 @@
   - `refreshQuietly()` mit aktivem Filter: wendet ihn auf die frische Liste
     an (Treffer bleiben gefiltert), Auswahl-Semantik unverändert.
 
-- [ ] **Step 6: Rot beweisen, dann implementieren.** `displayedAll` als
+- [x] **Step 6: Rot beweisen, dann implementieren.** `displayedAll` als
   gespeicherte Basis einführen (von `load`/`refreshQuietly` gesetzt);
   `items` aus `FileSearch.derive` ableiten; die Suche-Setter lösen die
   Neuableitung aus. `load()` ruft `clearSearch()` VOR dem Ableiten. Die
   bestehenden `items`-Konsumenten (M7b-Aktionen, Auswahl) bleiben korrekt,
   weil `items` weiterhin die angezeigte Liste ist.
 
-- [ ] **Step 7: Grün + volle Suite.** `swift test` → 806 + neue.
+- [x] **Step 7: Grün + volle Suite.** `swift test` → 806 + neue.
 
-- [ ] **Step 8: Commit.** `feat: search the current directory listing`
+- [x] **Step 8: Commit.** `feat: search the current directory listing`
 
 ---
 
@@ -103,53 +103,53 @@
 - Consumes: die VM-Suche aus T1; der fokus-gescopte `performKeyEquivalent`
   aus M11j.
 
-- [ ] **Step 1: `FileSearchBar`** — ein Suchfeld (SwiftUI), das an die
+- [x] **Step 1: `FileSearchBar`** — ein Suchfeld (SwiftUI), das an die
   VM-Suchfelder bindet: Textfeld, Modus-Umschalter (Filtern/Springen),
   Regex-Schalter, rechts die Trefferzahl („%1$lld von %2$lld" bzw.
   „Treffer k/N" im Sprung-Modus) ODER bei `searchError == .invalidRegex`
   eine rote, konkrete Meldung. Optik dezent, an den bestehenden Panehead-
   Maßen orientiert (M5g nicht verschieben).
 
-- [ ] **Step 2: Einblenden in `BrowserPane`.** Das Suchfeld erscheint über
+- [x] **Step 2: Einblenden in `BrowserPane`.** Das Suchfeld erscheint über
   der Dateiliste, wenn die Suche für dieses Pane aktiv ist (ein
   `@State`/gebundener Bool). Ist es aus, ändert sich am Ruhezustand des
   Panes nichts.
 
-- [ ] **Step 3: ⌘F.** Im `performKeyEquivalent` der
+- [x] **Step 3: ⌘F.** Im `performKeyEquivalent` der
   `KeyboardDrivenTableView` (fokus-gescopt aus M11j) ⌘+"f" abfangen: die
   Suche dieses Panes einblenden und den Fokus ins Feld setzen. Nur die
   fokussierte Tabelle reagiert (der Guard ist schon da). Kollisions-Check:
   ⌘F ist unbelegt.
 
-- [ ] **Step 4: Enter/⇧Enter im Sprung-Modus.** Im Feld: Enter ⇒
+- [x] **Step 4: Enter/⇧Enter im Sprung-Modus.** Im Feld: Enter ⇒
   `focusNextMatch()`, ⇧Enter ⇒ `focusPreviousMatch()`; die Tabelle scrollt
   den Treffer in den sichtbaren Bereich (die Auswahl setzt die VM, das
   Table-View folgt der `selectedItems`-Reconciliation — prüfen, dass der
   Treffer sichtbar wird, ggf. `scrollRowToVisible`).
 
-- [ ] **Step 5: Esc.** Schließt das Feld, ruft `clearSearch()` (alles wird
+- [x] **Step 5: Esc.** Schließt das Feld, ruft `clearSearch()` (alles wird
   wieder gezeigt), Fokus zurück auf die Tabelle.
 
-- [ ] **Step 6: EN/DE.** Neue Keys in BEIDE Kataloge (Trefferzahl-Formate,
+- [x] **Step 6: EN/DE.** Neue Keys in BEIDE Kataloge (Trefferzahl-Formate,
   Modus-/Regex-Beschriftungen, die Regex-Fehlermeldung), Englisch zuerst.
   `plutil -lint` OK, `LocalizableStringsTests` grün.
 
-- [ ] **Step 7: Verifikation.** `swift build` aus sauberem Verzeichnis
+- [x] **Step 7: Verifikation.** `swift build` aus sauberem Verzeichnis
   (keine neuen Warnungen), volle `swift test`.
 
-- [ ] **Step 8: Commit.** `feat: add the file-list search bar`
+- [x] **Step 8: Commit.** `feat: add the file-list search bar`
 
 ---
 
 ### Task 3: Abschluss-Verifikation (Koordinator)
 
-- [ ] Gated Suiten: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → grün, zero skips.
-- [ ] Visueller Smoke — Maintainer (Checkliste: ⌘F öffnet das Feld im
+- [x] Gated Suiten: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → grün, zero skips.
+- [x] Visueller Smoke — Maintainer (Checkliste: ⌘F öffnet das Feld im
   fokussierten Pane; Filtern reduziert live mit „N von M"; Springen lässt
   die Liste voll und Enter/⇧Enter wandert durch die Treffer mit Umbruch;
   Regex-Schalter an, `\.log$` filtert; ungültiger Ausdruck zeigt die rote
   Meldung statt „0 Treffer", die Liste bleibt stehen; Esc schließt und zeigt
   alles; Verzeichniswechsel setzt die Suche zurück; beide Panes unabhängig;
   Type-Select der Tabelle unberührt).
-- [ ] Plan-Checkboxen, Ledger, Opus-Final-Review, Fix-Runden bis „Yes",
+- [x] Plan-Checkboxen, Ledger, Opus-Final-Review, Fix-Runden bis „Yes",
   Push develop, `gh run watch`, Memory. KEIN Release.
