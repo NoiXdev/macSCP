@@ -30,14 +30,23 @@ public enum PathCompletion {
     /// EXISTING path", and its trailing-slash handling means something
     /// different there (`"/var/www/"` would parent to `"/var"`, not stay at
     /// `"/var/www"` — the directory a trailing slash on typed input actually
-    /// names). Normalizes independently so repeated/trailing slashes in
-    /// hand-typed input can't produce a bogus directory; the root always
-    /// normalizes to `"/"`.
+    /// names). Uses `RemotePath.normalizedAbsolute` instead — the one
+    /// `RemotePath` function explicitly safe on hostile input — so
+    /// repeated/trailing slashes in hand-typed input can't produce a bogus
+    /// directory; the root always normalizes to `"/"`.
+    ///
+    /// `input` is required to be absolute. A bare relative fragment with no
+    /// slash at all (e.g. `"ho"`) still returns `"/"` here — there is no
+    /// notion of "the current directory" to fall back to relative to. The
+    /// path bar never hits this in practice because the field is always
+    /// pre-filled with the current absolute directory, but a caller that
+    /// passed a genuinely relative string would silently get root rather
+    /// than a relative completion.
     public static func directoryToList(for input: String) -> String {
         guard let lastSlash = input.lastIndex(of: "/") else {
             return "/"
         }
-        return normalize(String(input[..<lastSlash]))
+        return RemotePath.normalizedAbsolute(String(input[..<lastSlash]))
     }
 
     /// Completes `input` against `entries` — the listing of
@@ -92,10 +101,15 @@ public enum PathCompletion {
                 candidates: candidateNames)
         }
 
-        // Multiple candidates: only extend the input if their shared prefix
-        // reaches further than what's already typed (e.g. "html"/"hosts"
+        // Multiple candidates: only extend the input if the shared prefix
+        // adds something over what's already typed (e.g. "html"/"hosts"
         // share only "h", which is already typed — nothing to add yet).
-        guard commonPrefix.count > typed.count else {
+        // Comparing lengths alone is not enough: with `caseSensitive:
+        // false`, several entries can share a prefix that is the SAME
+        // LENGTH as `typed` but differently cased (real "Do..." vs typed
+        // "do") — that's still a completion the user needs, so the real
+        // spelling must win even when the count doesn't grow.
+        guard commonPrefix.count > typed.count || commonPrefix != typed else {
             return Result(completedInput: input, candidates: candidateNames)
         }
         return Result(
@@ -114,12 +128,5 @@ public enum PathCompletion {
             }
         }
         return prefix
-    }
-
-    /// Collapses any run of consecutive slashes and drops every trailing
-    /// slash; the empty string and the root both normalize to `"/"`.
-    private static func normalize(_ path: String) -> String {
-        let components = path.split(separator: "/", omittingEmptySubsequences: true)
-        return components.isEmpty ? "/" : "/" + components.joined(separator: "/")
     }
 }

@@ -56,4 +56,18 @@ public enum RemotePath {
         let parent = String(trimmed[..<idx])
         return parent.isEmpty ? "/" : parent
     }
+
+    /// Collapses any run of consecutive slashes and drops every trailing
+    /// slash; the empty string and the root both normalize to `"/"`. Unlike
+    /// every other function in this type, `normalizedAbsolute` is
+    /// deliberately the ONE `RemotePath` function that IS safe on hostile,
+    /// hand-typed input (repeated slashes, a trailing slash, the empty
+    /// string) — the "behavior on other input is unspecified" caveat in this
+    /// type's doc comment does not apply here. The path bar's completion
+    /// (`PathCompletion.directoryToList`) and its `navigate(to:)` both route
+    /// through this single normalizer instead of each carrying its own copy.
+    public static func normalizedAbsolute(_ path: String) -> String {
+        let components = path.split(separator: "/", omittingEmptySubsequences: true)
+        return components.isEmpty ? "/" : "/" + components.joined(separator: "/")
+    }
 }

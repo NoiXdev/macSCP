@@ -287,16 +287,29 @@ public final class RemoteBrowserViewModel {
 
     // MARK: - navigate(to:) (M11g/T1)
 
-    /// Navigates to a user-typed absolute path (editable path field): does
-    /// its OWN slash normalization rather than leaning on `RemotePath` — see
-    /// that type's doc comment, which explicitly disclaims relative paths
-    /// and repeated slashes, exactly the kind of thing hand-typed input can
-    /// contain. Distinguishes three outcomes with three different messages:
-    /// empty/whitespace-only input, a target that `stat`s successfully but
-    /// is not a directory (its own message — distinct from "not found",
-    /// since the FS DID find something), and any error the file system
-    /// itself throws (passed through via the shared `message(for:path:)`
-    /// mapper unchanged — this is how a permission-denied `stat` surfaces).
+    /// Navigates to a user-typed absolute path (editable path field): uses
+    /// `RemotePath.normalizedAbsolute` to collapse repeated/trailing slashes
+    /// — the one `RemotePath` function explicitly safe on hostile,
+    /// hand-typed input (see that type's doc comment). Distinguishes three
+    /// outcomes with three different messages: empty/whitespace-only input,
+    /// a target that `stat`s successfully but is not a directory (its own
+    /// message — distinct from "not found", since the FS DID find
+    /// something), and any error the file system itself throws (passed
+    /// through via the shared `message(for:path:)` mapper unchanged — this
+    /// is how a permission-denied `stat` surfaces).
+    ///
+    /// Symlinks (correction 2026-07-30, T1 review): `LocalFileSystem.stat`
+    /// deliberately reports `kind == .symlink` for a symlink even when it
+    /// resolves to a directory, while Citadel's `stat` follows links and
+    /// returns `.directory` directly — so a plain `isDirectory` check would
+    /// reject `/tmp`, `/var`, and `/etc` in the LOCAL pane (all symlinks on
+    /// every Mac) with the factually wrong "not a directory" message. When
+    /// `stat` reports `.symlink`, a `list()` of the same path is attempted:
+    /// if it succeeds, the target is walkable and navigation proceeds. This
+    /// keeps Core symlink-agnostic (no `lstat`, no resolution logic here)
+    /// and leaves the remote side untouched, since its `stat` already
+    /// resolves links before this code ever sees the result.
+    ///
     /// `currentPath` is left untouched on every failure path; on success it
     /// is set before `load()`, which also empties the selection.
     public func navigate(to path: String) async -> String? {
@@ -304,28 +317,25 @@ public final class RemoteBrowserViewModel {
         guard !trimmed.isEmpty else {
             return CoreL10n.string("core.browse.emptyPath")
         }
-        let normalized = Self.normalizedNavigationTarget(trimmed)
+        let normalized = RemotePath.normalizedAbsolute(trimmed)
         let target: RemoteFileItem
         do {
             target = try await fs.stat(path: normalized)
         } catch {
             return Self.message(for: error, path: normalized)
         }
-        guard target.isDirectory else {
-            return String(format: CoreL10n.string("core.browse.notADirectory %@"), normalized)
+        if !target.isDirectory {
+            var isWalkableSymlink = false
+            if target.kind == .symlink {
+                isWalkableSymlink = (try? await fs.list(path: normalized)) != nil
+            }
+            guard isWalkableSymlink else {
+                return String(format: CoreL10n.string("core.browse.notADirectory %@"), normalized)
+            }
         }
         currentPath = normalized
         await load()
         return nil
-    }
-
-    /// Collapses any run of consecutive slashes and drops every trailing
-    /// slash — a single strip is NOT enough (M7a lesson: `"/var/www//"`
-    /// needs the runs collapsed, not one `dropLast()`). The empty string and
-    /// the root both normalize to `"/"`.
-    private static func normalizedNavigationTarget(_ input: String) -> String {
-        let components = input.split(separator: "/", omittingEmptySubsequences: true)
-        return components.isEmpty ? "/" : "/" + components.joined(separator: "/")
     }
 
     static func message(for error: Error, path: String) -> String {

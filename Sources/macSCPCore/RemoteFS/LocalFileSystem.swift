@@ -12,14 +12,24 @@ public struct LocalFileSystem: RemoteFileSystem {
 
     public func list(path: String) async throws -> [RemoteFileItem] {
         let url = URL(fileURLWithPath: path)
-        let contents: [URL]
+        // Uses the STRING-path API (`contentsOfDirectory(atPath:)`), not the
+        // URL-based one: `contentsOfDirectory(at:includingPropertiesForKeys:)`
+        // refuses a plain symlink pointing at a directory with ENOTDIR — it
+        // only happens to work for macOS's `/tmp`, `/var`, `/etc` because
+        // those are APFS firmlinks, not classic symlinks (T1/M11g review
+        // I-1 follow-up: this is exactly what `navigate(to:)`'s "try
+        // list()" symlink check depends on to be correct for an ordinary
+        // symlinked directory, not just the three firmlinked ones). Each
+        // child URL below is a normal path, so `item(for:)`'s per-entry
+        // `resourceValues` lookups are unaffected by how the parent was
+        // reached.
+        let names: [String]
         do {
-            contents = try FileManager.default.contentsOfDirectory(
-                at: url, includingPropertiesForKeys: Self.resourceKeys)
+            names = try FileManager.default.contentsOfDirectory(atPath: path)
         } catch {
             throw Self.map(error, path: path)
         }
-        return contents.map(Self.item(for:))
+        return names.map { url.appendingPathComponent($0) }.map(Self.item(for:))
     }
 
     public func stat(path: String) async throws -> RemoteFileItem {

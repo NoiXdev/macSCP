@@ -844,6 +844,53 @@ struct RemoteBrowserViewModelTests {
         #expect(vm.currentPath == "/")
     }
 
+    // MARK: - navigate(to:) symlinks against a REAL LocalFileSystem (T1 review I-1)
+    //
+    // `MockRemoteFileSystem.stat` cannot reproduce this bug: the finding is
+    // specifically about what the REAL `LocalFileSystem` reports for a
+    // symlink (`kind == .symlink` even when the target is a directory), so
+    // only a real temporary directory plus a real symlink proves the fix.
+
+    @Test func navigateFollowsSymlinkToRealDirectory() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-navigate-symlink-dir-\(UUID().uuidString)")
+        let target = root.appendingPathComponent("target")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        let link = root.appendingPathComponent("link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let linkPath = link.path(percentEncoded: false)
+
+        let vm = RemoteBrowserViewModel(fs: LocalFileSystem())
+
+        let error = await vm.navigate(to: linkPath)
+
+        #expect(error == nil)
+        #expect(vm.currentPath == linkPath)
+    }
+
+    /// A symlink to a FILE must still be rejected with the "not a
+    /// directory" message — only a symlink whose `list()` actually succeeds
+    /// counts as walkable.
+    @Test func navigateRejectsSymlinkToFile() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-navigate-symlink-file-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("file.txt")
+        try Data("hi".utf8).write(to: file)
+        let link = root.appendingPathComponent("link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: file)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let linkPath = link.path(percentEncoded: false)
+
+        let vm = RemoteBrowserViewModel(fs: LocalFileSystem())
+
+        let error = await vm.navigate(to: linkPath)
+
+        #expect(error == String(format: CoreL10n.string("core.browse.notADirectory %@"), linkPath))
+        #expect(vm.currentPath == "/")
+    }
+
     @Test func nilAuditSinkFiresNothing() async throws {
         let fs = MockRemoteFileSystem(tree: [
             "/": [RemoteFileItem(name: "old.txt", path: "/old.txt", kind: .file, size: 1)],

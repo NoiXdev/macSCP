@@ -49,6 +49,15 @@ lokalisierte Meldung), nach dem Muster der M7b-Aktionen:
 - prüft per `stat`, dass das Ziel existiert und ein **Verzeichnis** ist —
   eine Datei bekommt eine eigene Meldung, nicht dieselbe wie „existiert
   nicht",
+- **Symlinks (Korrektur 2026-07-30, T1-Review):** `LocalFileSystem.stat`
+  meldet für einen Symlink bewusst `kind == .symlink`, auch wenn er auf ein
+  Verzeichnis zeigt, während Citadels `stat` Links auflöst. Ein reiner
+  `isDirectory`-Test hätte im lokalen Pane also `/tmp`, `/var` und `/etc`
+  abgelehnt — Symlinks auf jedem Mac — und zwar mit der sachlich falschen
+  Meldung „kein Verzeichnis". Bei `kind == .symlink` wird deshalb ein
+  `list()` versucht: gelingt es, ist das Ziel begehbar. Core bleibt damit
+  symlink-agnostisch (kein `lstat`, keine Auflösungslogik), und die
+  Gegenseite ist unberührt, weil ihr `stat` bereits auflöst.
 - fehlende Rechte bekommen die Meldung des Dateisystems,
 - bei Erfolg wird geladen wie bei `open`, inklusive Auswahl-Reset.
 
