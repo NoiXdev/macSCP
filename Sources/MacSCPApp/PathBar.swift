@@ -94,7 +94,8 @@ struct PathBar: View {
     /// `resetTabTracking()` (any keystroke that isn't itself a Tab leaves
     /// cycling mode, same as it already resets `justCompletedWithTab`). That
     /// last reset is not just hygiene: `cancel()`'s first-Esc-stage below
-    /// only restores `cycleBaseDraft` while `cycleIndex != nil`, so leaving a
+    /// only restores `cycleBaseDraft` while `cycleIndex != nil` AND the
+    /// candidates list is still open (`isCandidatesListOpen`), so leaving a
     /// stale index set after the user has typed something new would make
     /// Esc discard text they just typed instead of the one-step-back the
     /// design calls for.
@@ -133,7 +134,15 @@ struct PathBar: View {
                     onTab: handleTab,
                     onBacktab: handleBacktab,
                     onOtherInput: resetTabTracking,
-                    onBlur: { if isEditing { cancel() } },
+                    // Deliberately calls `closeField()`, not `cancel()`: by
+                    // the time blur fires, first responder is already gone,
+                    // so this must always fully close, even mid-cycle, when
+                    // `cancel()` itself would still take its first stage
+                    // (`isCandidatesListOpen` is still `true` here — nothing
+                    // clears the overlay before `onBlur` runs) — see
+                    // `closeField()`'s doc comment for why the two share one
+                    // function instead of a second, divergent close path.
+                    onBlur: { if isEditing { closeField() } },
                     isCandidatesListOpen: isCandidatesListOpen
                 )
             } else {
@@ -191,6 +200,10 @@ struct PathBar: View {
     /// Whether Shift+Tab should cycle backward instead of falling through to
     /// AppKit's default focus traversal (M11i) — `PathTextField` cannot tell
     /// this on its own (per that type's doc comment), so it asks the view.
+    /// Also used by `cancel()`'s first-Esc-stage gate below (M11i review):
+    /// the candidates list being visibly open, not just `cycleIndex != nil`,
+    /// is what distinguishes a genuine mid-cycle Esc from cycling being
+    /// effectively over already (a completed or failed `commit()`).
     private var isCandidatesListOpen: Bool {
         if case .candidates = overlayContent { return true }
         return false
@@ -260,6 +273,15 @@ struct PathBar: View {
         // `true`, and the next Tab reuses stale cached candidates instead
         // of completing against the (possibly now-corrected) typed path.
         justCompletedWithTab = false
+        // Same reasoning for `cycleIndex` (M11i review, belt and suspenders):
+        // the gating fix in `cancel()` below already stops a FAILED commit's
+        // Esc from misfiring, since the overlay by then is `.error`, not
+        // `.candidates`, so `isCandidatesListOpen` is `false` regardless of
+        // this reset — but leaving a stale index around once cycling is over
+        // is exactly the kind of dangling state that misled an earlier
+        // milestone, so it is cleared here too, same as `resetTabTracking`
+        // already clears it for any non-Tab keystroke.
+        cycleIndex = nil
         let target = draft
         let session = editSessionID
         Task {
@@ -279,23 +301,52 @@ struct PathBar: View {
     }
 
     private func cancel() {
-        // Esc's first stage (M11i): while cycling through candidates, one
-        // Esc steps back to the text that stood in the field before cycling
-        // started, closes the list, and leaves the field open — it does NOT
-        // yet discard the whole edit. Only a SECOND Esc (`cycleIndex` is
-        // `nil` again by then) falls through to the unconditional close
-        // below, exactly as Esc always behaved before cycling existed. Both
-        // callers of `cancel()` that mean "the user pressed Esc" — the
-        // AppKit `cancelOperation` override and this function's own
-        // `onCancel` closure wiring — share this one function, so there is
-        // only one rule to keep in sync, not two.
-        if cycleIndex != nil {
+        // Esc's first stage (M11i): while the candidates list is visibly
+        // open AND cycling (`cycleIndex != nil` AND `isCandidatesListOpen`),
+        // one Esc steps back to the text that stood in the field before
+        // cycling started, closes the list, and leaves the field open — it
+        // does NOT yet discard the whole edit. Only a SECOND Esc (the list
+        // is closed by then, so `isCandidatesListOpen` is `false`) falls
+        // through to the unconditional close below, exactly as Esc always
+        // behaved before cycling existed. Both callers of `cancel()` that
+        // mean "the user pressed Esc" — the AppKit `cancelOperation`
+        // override and this function's own `onCancel` closure wiring —
+        // share this one function, so there is only one rule to keep in
+        // sync, not two.
+        //
+        // Gating on `isCandidatesListOpen` in addition to `cycleIndex !=
+        // nil` (M11i review, fix for two misfires) matters because
+        // `cycleIndex` alone can stay non-`nil` after cycling is effectively
+        // over: a FAILED `commit()` leaves the field open with the error
+        // overlay shown instead of the candidates list, so an Esc there must
+        // plain-close rather than replay a cycling step against a list that
+        // is no longer on screen. (`commit()` also resets `cycleIndex`
+        // itself now, belt and suspenders — see its own comment — but this
+        // gate is what actually stops the misfire.)
+        if cycleIndex != nil && isCandidatesListOpen {
             draft = cycleBaseDraft
             cycleIndex = nil
             overlayContent = nil
             return
         }
+        closeField()
+    }
+
+    /// The unconditional close: cancels any in-flight completion, drops the
+    /// overlay and cycle state, and ends the edit outright — everything
+    /// `cancel()`'s first-Esc-stage above deliberately does NOT yet do.
+    /// Shared by `cancel()`'s own second stage and by `onBlur` below (M11i
+    /// review) rather than duplicated: `onBlur` cannot route through
+    /// `cancel()` itself, because by the time blur fires, first responder
+    /// has already moved elsewhere, so taking the first stage there would
+    /// restore the pre-cycle text and leave the field open-but-unfocused —
+    /// contradicting the M11g blur-discard invariant that every way of
+    /// leaving the field closes it. `onBlur` calling this same function
+    /// directly, instead of introducing its own separate close logic, keeps
+    /// there being exactly one definition of "fully close the field".
+    private func closeField() {
         completionTask?.cancel()
+        cycleIndex = nil
         overlayContent = nil
         isEditing = false
     }
