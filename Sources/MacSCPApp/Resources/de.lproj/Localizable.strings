@@ -108,6 +108,7 @@
 "browser.pane.refreshHelp" = "Aktualisieren";
 "browser.pane.retry" = "Erneut versuchen";
 "browser.pathBar.copied" = "Kopiert!";
+"browser.pathBar.listingFailed %@" = "Das Verzeichnis konnte nicht aufgelistet werden: %@";
 
 /* Terminal-Panel */
 "terminal.ended" = "Shell beendet.";

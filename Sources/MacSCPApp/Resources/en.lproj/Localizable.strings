@@ -108,6 +108,7 @@
 "browser.pane.refreshHelp" = "Refresh";
 "browser.pane.retry" = "Try again";
 "browser.pathBar.copied" = "Copied!";
+"browser.pathBar.listingFailed %@" = "Couldn't list the directory: %@";
 
 /* Terminal panel */
 "terminal.ended" = "Shell ended.";

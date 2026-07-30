@@ -59,6 +59,19 @@ struct PathBar: View {
     /// real path segment instead of reproducing the directory that was
     /// actually listed.
     @State private var lastCandidatesDirectory = ""
+    /// The draft `lastCandidates` was computed for — set to
+    /// `result.completedInput` when a completion applies, since that is
+    /// what `draft` reads as immediately afterward. A second Tab may only
+    /// redisplay `lastCandidates` when this still equals the current
+    /// `draft`; otherwise the candidates belong to an earlier, superseded
+    /// completion and must not be shown as if they were current.
+    @State private var lastCandidatesDraft = ""
+    /// `true` when a second Tab arrived while `completionTask` was still
+    /// in flight (so `lastCandidatesDraft` didn't yet match `draft` and
+    /// nothing could be shown). The completion task's success path checks
+    /// this once it finishes and, if set, opens the candidates overlay
+    /// then instead of leaving the request silently dropped.
+    @State private var candidatesRequestedWhileInFlight = false
     /// `true` right after a Tab keypress is accepted; any other input
     /// (typed character, arrow key, delete, ...) resets it. A Tab that
     /// lands while this is still `true` is the "second, immediately
@@ -196,6 +209,8 @@ struct PathBar: View {
         justCompletedWithTab = false
         lastCandidates = []
         lastCandidatesDirectory = ""
+        lastCandidatesDraft = ""
+        candidatesRequestedWhileInFlight = false
         editSessionID = UUID()
         draft = viewModel.currentPath
         isEditing = true
@@ -209,6 +224,13 @@ struct PathBar: View {
         guard isEditing else { return }
         completionTask?.cancel()
         overlayContent = nil
+        // Enter is not itself a Tab, so it must reset the "second
+        // consecutive Tab" tracking the same as any other keystroke would
+        // (`resetTabTracking`/`onOtherInput`) — otherwise a failed
+        // `navigate(to:)` below leaves the field open with the flag still
+        // `true`, and the next Tab reuses stale cached candidates instead
+        // of completing against the (possibly now-corrected) typed path.
+        justCompletedWithTab = false
         let target = draft
         let session = editSessionID
         Task {
@@ -245,14 +267,25 @@ struct PathBar: View {
 
     private func handleTab() {
         if justCompletedWithTab {
-            if !lastCandidates.isEmpty {
+            // The cached list may belong to an OLDER, superseded completion:
+            // if a listing is still in flight for the current draft (see
+            // below), `lastCandidatesDraft` hasn't been updated to match it
+            // yet. Only show the cache when it demonstrably belongs to the
+            // draft on screen right now; otherwise remember that candidates
+            // were asked for so the in-flight task can show them itself once
+            // it resolves, instead of silently keeping the stale list (or
+            // nothing) on screen until yet another Tab press.
+            if !lastCandidates.isEmpty, lastCandidatesDraft == draft {
                 overlayContent = .candidates(lastCandidates)
+            } else {
+                candidatesRequestedWhileInFlight = true
             }
             return
         }
         overlayContent = nil
         completionTask?.cancel()
         justCompletedWithTab = true
+        candidatesRequestedWhileInFlight = false
         let input = draft
         let session = editSessionID
         completionTask = Task {
@@ -262,15 +295,24 @@ struct PathBar: View {
                 entries = try await fileSystem.list(path: directory)
             } catch {
                 // Finding I5: a failed listing must not be silently
-                // indistinguishable from an empty directory — map it
-                // through the same public error-message mapping the App
-                // layer already reuses for editor-open failures (Core's own
-                // `RemoteBrowserViewModel.message(for:path:)` isn't public).
+                // indistinguishable from an empty directory. The underlying
+                // reason still goes through the same public error-message
+                // mapping the App layer already reuses for editor-open
+                // failures (Core's own `RemoteBrowserViewModel.message(for:
+                // path:)` isn't public) — but the wrapping text is now a
+                // dedicated "directory could not be listed" string instead
+                // of the generic transfer-failure wording, since listing a
+                // directory for Tab completion is not a transfer.
                 guard !Task.isCancelled, isEditing, session == editSessionID,
                     draft == input
                 else { return }
                 lastCandidates = []
-                overlayContent = .error(TransferQueueViewModel.message(for: error))
+                overlayContent = .error(
+                    String(
+                        format: L10n.string(
+                            "browser.pathBar.listingFailed %@",
+                            "Couldn't list the directory: %@"),
+                        TransferQueueViewModel.message(for: error)))
                 return
             }
             // Finding I2: a late listing must not overwrite text typed in
@@ -286,6 +328,20 @@ struct PathBar: View {
             draft = result.completedInput
             lastCandidates = result.candidates
             lastCandidatesDirectory = directory
+            // The draft these candidates belong to, for the second-Tab
+            // staleness check above — `result.completedInput` is exactly
+            // what `draft` now reads as.
+            lastCandidatesDraft = result.completedInput
+            // A second Tab arrived while this listing was still in flight
+            // and found nothing safe to show (see above); honor it now that
+            // the result — for the SAME draft it was requested against — is
+            // finally in.
+            if candidatesRequestedWhileInFlight {
+                candidatesRequestedWhileInFlight = false
+                if !lastCandidates.isEmpty {
+                    overlayContent = .candidates(lastCandidates)
+                }
+            }
         }
     }
 
@@ -366,12 +422,30 @@ private struct PathTextField: NSViewRepresentable {
         // replaces, what runs afterward reaches `field` directly instead of
         // groping through `NSApp.keyWindow`, so there's no question of
         // WHICH text view this is.
+        Self.becomeFirstResponderAndPlaceCaretAtEnd(field, retriesLeft: 1)
+        return field
+    }
+
+    /// Tries to make `field` first responder and place the caret at the end
+    /// of its text; if the window still isn't installed one tick after
+    /// `makeNSView`, retries exactly once on the following tick. If it still
+    /// fails after that, this deliberately gives up rather than looping or
+    /// logging: the field is still visible and usable, just not yet
+    /// focused, and the user can click into it to gain focus. This is a
+    /// floor, not an oversight.
+    private static func becomeFirstResponderAndPlaceCaretAtEnd(
+        _ field: NSTextField, retriesLeft: Int
+    ) {
         DispatchQueue.main.async {
-            guard field.window?.makeFirstResponder(field) == true else { return }
+            guard field.window?.makeFirstResponder(field) == true else {
+                if retriesLeft > 0 {
+                    becomeFirstResponderAndPlaceCaretAtEnd(field, retriesLeft: retriesLeft - 1)
+                }
+                return
+            }
             let end = (field.stringValue as NSString).length
             field.currentEditor()?.selectedRange = NSRange(location: end, length: 0)
         }
-        return field
     }
 
     func updateNSView(_ nsView: NSTextField, context: Context) {
