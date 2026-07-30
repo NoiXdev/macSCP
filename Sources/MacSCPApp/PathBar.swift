@@ -21,6 +21,17 @@ import macSCPCore
 /// fact about which side a pane is that could silently disagree with
 /// `side`; passing the file system value itself removes the closure
 /// indirection). Wired at the `BrowserPane` call site in `ContentView`.
+
+/// A symlink double-click that failed to navigate (M11h/T1 review fix): the
+/// symlink's own path that was attempted, and the message `navigate(to:)`
+/// returned. A successful follow never produces one of these — see
+/// `BrowserPane.onOpenSymlink`, which navigates directly and only reports
+/// back here on failure.
+struct SymlinkNavigationFailure: Equatable {
+    let path: String
+    let message: String
+}
+
 struct PathBar: View {
     let viewModel: RemoteBrowserViewModel
     /// `true` for the remote pane, `false` for local. A fixed value would
@@ -31,18 +42,23 @@ struct PathBar: View {
     /// type's doc comment above for why this is injected rather than pulled
     /// off `viewModel`.
     let fileSystem: any RemoteFileSystem
-    /// External trigger for a `navigate(to:)` attempt that did NOT originate
-    /// from this field (M11h/T1): a symlink double-click in the file list
-    /// follows the same route the field's Enter key uses, and on failure
-    /// reuses this exact inline overlay to show the message rather than
-    /// inventing a second error surface. `BrowserPane` sets `wrappedValue` to
-    /// the symlink's own path (never a resolved target); this view opens
-    /// itself in the edit state to run it and consumes the value (resets it
-    /// to `nil`) as soon as it's seen, so a repeat double-click on the same
-    /// path still re-triggers. Defaults to a no-op binding, so the existing
-    /// call site (both panes go through the same `PathBar`) keeps compiling
-    /// unchanged unless `BrowserPane` explicitly wires it.
-    var externalNavigationRequest: Binding<String?> = .constant(nil)
+    /// Reports a FAILED symlink follow that happened elsewhere (M11h/T1
+    /// review fix): a symlink double-click in the file list now navigates
+    /// DIRECTLY (`BrowserPane.onOpenSymlink`), bypassing this field entirely
+    /// on success — nothing here ever runs for the success case, so the
+    /// field never steals focus for a round-trip it had no part in. Only a
+    /// non-nil `navigate(to:)` result reaches this binding, and only after
+    /// the call has already failed; this view then shows that failure the
+    /// exact same way a typed-path failure shows it — opening in the edit
+    /// state with the draft set to the offending symlink path (never a
+    /// resolved target) and the message already in the error overlay — but
+    /// it does not re-run `navigate(to:)` itself. The value is consumed
+    /// (reset to `nil`) as soon as it's seen, so a repeat double-click on the
+    /// same still-failing symlink still re-triggers. Defaults to a no-op
+    /// binding, so the existing call site (both panes go through the same
+    /// `PathBar`) keeps compiling unchanged unless `BrowserPane` explicitly
+    /// wires it.
+    var externalNavigationFailure: Binding<SymlinkNavigationFailure?> = .constant(nil)
 
     /// What is shown in the inline overlay anchored under the field:
     /// nothing, the Tab-completion candidates (second consecutive Tab), or
@@ -207,20 +223,24 @@ struct PathBar: View {
             completionTask?.cancel()
             copyConfirmationTask?.cancel()
         }
-        .onChange(of: externalNavigationRequest.wrappedValue) { _, newValue in
-            guard let target = newValue else { return }
+        .onChange(of: externalNavigationFailure.wrappedValue) { _, newValue in
+            guard let failure = newValue else { return }
             // Consume immediately (M11h/T1): a second double-click on the
             // same still-failing symlink must re-trigger even though the
             // binding's value wouldn't otherwise change.
-            externalNavigationRequest.wrappedValue = nil
+            externalNavigationFailure.wrappedValue = nil
+            // `navigate(to:)` already ran, and already failed, in
+            // `BrowserPane` — this only DISPLAYS that result, it does not
+            // call `navigate(to:)` again. Otherwise the same as opening the
+            // field on a typed path that just failed: edit state, the
+            // attempted path as the draft, message in the error overlay.
             completionTask?.cancel()
-            overlayContent = nil
             justCompletedWithTab = false
             cycleIndex = nil
-            draft = target
+            draft = failure.path
             editSessionID = UUID()
             isEditing = true
-            runNavigation(to: target)
+            overlayContent = .error(failure.message)
         }
     }
 
@@ -312,12 +332,14 @@ struct PathBar: View {
         runNavigation(to: draft)
     }
 
-    /// Shared by `commit()` (the field's own Enter key) and
-    /// `externalNavigationRequest`'s handler (M11h/T1, a symlink
-    /// double-click elsewhere in the pane): calls `navigate(to:)` and, on
-    /// failure, leaves the field open showing the message inline — the one
-    /// error surface, used both ways instead of a second one for the
-    /// double-click path. On success it simply closes the field.
+    /// Used by `commit()` (the field's own Enter key): calls `navigate(to:)`
+    /// and, on failure, leaves the field open showing the message inline. On
+    /// success it simply closes the field. A symlink double-click elsewhere
+    /// in the pane no longer goes through here (M11h/T1 review fix) —
+    /// `BrowserPane.onOpenSymlink` calls `navigate(to:)` directly, and this
+    /// view only gets involved at all (via `externalNavigationFailure`) if
+    /// that call already failed — so this function never runs for a
+    /// successful symlink follow.
     private func runNavigation(to target: String) {
         let session = editSessionID
         Task {

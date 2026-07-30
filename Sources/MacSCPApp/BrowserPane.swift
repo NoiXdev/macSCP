@@ -40,11 +40,13 @@ struct BrowserPane: View {
     @State private var deleteRequest: [RemoteFileItem]?
     @State private var showNewFolderSheet = false
     @State private var deleteErrorMessage: String?
-    /// Set by a symlink double-click in the file list (M11h/T1) to the
-    /// symlink's OWN path (never a resolved target); forwarded to `PathBar`,
-    /// which reuses its existing `navigate(to:)`-failure overlay to show the
-    /// result instead of a second, bespoke error surface.
-    @State private var pendingSymlinkNavigation: String?
+    /// Set only when a symlink double-click's `navigate(to:)` call FAILS
+    /// (M11h/T1 review fix — see `onOpenSymlink` below): forwarded to
+    /// `PathBar`, which reuses its existing failure overlay to show the
+    /// result instead of a second, bespoke error surface. Stays `nil` on
+    /// success, so `PathBar` is never touched, never enters its edit state,
+    /// and never steals focus for the (usual, successful) round-trip.
+    @State private var symlinkNavigationFailure: SymlinkNavigationFailure?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -61,7 +63,7 @@ struct BrowserPane: View {
                     viewModel: viewModel,
                     caseSensitive: side == .remote,
                     fileSystem: fileSystem,
-                    externalNavigationRequest: $pendingSymlinkNavigation)
+                    externalNavigationFailure: $symlinkNavigationFailure)
 
                 Button {
                     Task { await viewModel.goUp() }
@@ -101,7 +103,23 @@ struct BrowserPane: View {
                     onOpen: { item in Task { await viewModel.open(item) } },
                     onSelect: { viewModel.selectedItems = $0 },
                     onOpenFile: onOpenFile,
-                    onOpenSymlink: { item in pendingSymlinkNavigation = item.path },
+                    onOpenSymlink: { item in
+                        Task {
+                            // Navigates DIRECTLY (M11h/T1 review fix),
+                            // mirroring `onOpen` two lines above: the success
+                            // path never touches `PathBar`, so it never
+                            // enters its edit state and never steals focus
+                            // for this round-trip — the bug the review
+                            // caught. Only a non-nil (failure) result is
+                            // handed to `PathBar`, which then shows it
+                            // exactly like a failed typed path.
+                            let message = await viewModel.navigate(to: item.path)
+                            if let message {
+                                symlinkNavigationFailure = SymlinkNavigationFailure(
+                                    path: item.path, message: message)
+                            }
+                        }
+                    },
                     pasteboardWriter: pasteboardWriter,
                     side: side,
                     onMenuAction: { entry, selection in
