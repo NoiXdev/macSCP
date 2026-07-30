@@ -43,7 +43,7 @@
     - `public struct Result: Equatable, Sendable { public let visible: [SSHConfigHost]; public let hidden: [SSHConfigHost]; public let orphaned: [String] }`
     - `public static func split(hosts: [SSHConfigHost], hiddenAliases: [String]) -> Result`
 
-- [ ] **Step 1: Failing tests schreiben** (`Tests/macSCPCoreTests/HiddenImportStoreTests.swift`)
+- [x] **Step 1: Failing tests schreiben** (`Tests/macSCPCoreTests/HiddenImportStoreTests.swift`)
 
 Struktur wie `LoginSetStoreTests`: je Test ein frisches temporäres Verzeichnis, am Ende aufgeräumt.
 
@@ -66,9 +66,9 @@ Partition-Fälle (rein, ohne Dateizugriff — Hosts via
 - Reihenfolge: `visible` behält die Eingabereihenfolge (Importer sortiert bereits)
 - Umbenennungs-Fall: Hosts `["neu"]`, hidden `["alt"]` ⇒ `visible == ["neu"]`, `orphaned == ["alt"]`
 
-- [ ] **Step 2: Rot beweisen.** `swift test --filter HiddenImportStore` → FAIL (Typ existiert nicht).
+- [x] **Step 2: Rot beweisen.** `swift test --filter HiddenImportStore` → FAIL (Typ existiert nicht).
 
-- [ ] **Step 3: Implementierung** (`HiddenImportStore.swift`)
+- [x] **Step 3: Implementierung** (`HiddenImportStore.swift`)
 
 Muster wörtlich von `LoginSetStore`: privates `StoreFile: Codable` mit
 `var aliases: [String] = []`, `load()` liefert bei fehlender Datei ein
@@ -87,9 +87,9 @@ werden); der Vergleich ist exakt, weil ssh `Host`-Aliase als exakte
 Zeichenketten behandelt und eine großzügigere Regel Einträge ausblenden
 würde, die niemand gemeint hat.
 
-- [ ] **Step 4: Grün.** `swift test --filter HiddenImportStore` → PASS, danach volle `swift test` → 720 + neue Tests.
+- [x] **Step 4: Grün.** `swift test --filter HiddenImportStore` → PASS, danach volle `swift test` → 720 + neue Tests.
 
-- [ ] **Step 5: Commit.** `feat: remember which imported hosts are hidden`
+- [x] **Step 5: Commit.** `feat: remember which imported hosts are hidden`
 
 ---
 
@@ -103,7 +103,7 @@ würde, die niemand gemeint hat.
 - Consumes: alles aus Task 1 (`HiddenImportStore`, `ImportedHostPartition`), `SessionStore.defaultDirectory`, das bestehende `tabCommands`-Muster (siehe `showKnownHosts`).
 - Produces: nichts für spätere Tasks.
 
-- [ ] **Step 1: ContentView — Bestand und Filterung.**
+- [x] **Step 1: ContentView — Bestand und Filterung.**
   `@State private var importedHosts` hält weiterhin die SICHTBAREN Hosts
   (die Sidebar bleibt unverändert verdrahtet). Zusätzlich ein State für den
   vollen geladenen Bestand und die ausgeblendeten Aliase. Eine private
@@ -113,14 +113,14 @@ würde, die niemand gemeint hat.
   Einblenden wird sie erneut gerufen — **ohne** die config-Datei neu zu
   lesen (der volle Bestand liegt im State).
 
-- [ ] **Step 2: Sidebar-Kontextmenü.**
+- [x] **Step 2: Sidebar-Kontextmenü.**
   In `importedSection` bekommt jede Zeile ein `.contextMenu` mit genau
   einem Eintrag „Ausblenden" (`sidebar.imported.hide`), der einen neuen
   Closure-Parameter `onHideImported: (SSHConfigHost) -> Void` aufruft.
   Kein Bestätigungsdialog. Der bestehende `onTapGesture` und der `.help`
   bleiben unverändert.
 
-- [ ] **Step 3: Sheet** (`HiddenImportsSheet.swift`).
+- [x] **Step 3: Sheet** (`HiddenImportsSheet.swift`).
   Aufbau und Maße wie `KnownHostsSheet` (dort abschauen, nicht neu
   erfinden): Titel, Liste, Schließen-Knopf mit `.keyboardShortcut(.defaultAction)`,
   `PolishedButtonStyle`. Je Zeile der Alias und „Wieder einblenden".
@@ -130,7 +130,7 @@ würde, die niemand gemeint hat.
   kommen (Rechtsklick in der Seitenleiste → Ausblenden).
   Fehler aus dem Store werden angezeigt, nicht verschluckt.
 
-- [ ] **Step 4: Menüeintrag.**
+- [x] **Step 4: Menüeintrag.**
   Im `CommandMenu("Sessions")` nach „Logins…" ein Eintrag „Ausgeblendete
   Importe…" mit `.keyboardShortcut("i", modifiers: [.command, .shift])`,
   verdrahtet über `tabCommands.showHiddenImports` nach dem Muster von
@@ -141,22 +141,22 @@ würde, die niemand gemeint hat.
   Denselben Eintrag zusätzlich im `backgroundMenu` der Sidebar (dort
   stehen Known Hosts und Logins bereits).
 
-- [ ] **Step 5: EN/DE-Kataloge.**
+- [x] **Step 5: EN/DE-Kataloge.**
   Alle neuen Keys in BEIDE App-Kataloge, Englisch zuerst, Deutsch mit
   typografischen Anführungszeichen („…“) — ein ASCII-`"` macht die ganze
   deutsche Datei ungültig (M11d-Blocker). `plutil -lint` auf alle vier
   Kataloge muss OK sein und `LocalizableStringsTests` grün bleiben.
 
-- [ ] **Step 6: Verifikation.**
+- [x] **Step 6: Verifikation.**
   `swift build` (0 Fehler, keine neuen Warnungen), volle `swift test`,
   `plutil -lint` auf alle vier Kataloge.
 
-- [ ] **Step 7: Commit.** `feat: hide imported hosts and manage them in a sheet`
+- [x] **Step 7: Commit.** `feat: hide imported hosts and manage them in a sheet`
 
 ---
 
 ### Task 3: Abschluss-Verifikation (Koordinator)
 
-- [ ] Gated Suiten am finalen Stand: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → alle grün, zero skips.
-- [ ] Visueller Smoke — an den Maintainer delegiert (Checkliste: Ausblenden per Rechtsklick wirkt sofort; Menüeintrag trägt die Anzahl; Sheet blendet wieder ein; ein in `~/.ssh/config` umbenannter Alias erscheint als verwaist und lässt sich entfernen; `~/.ssh/config` ist nach allem byte-identisch — vorher/nachher per `md5`).
-- [ ] Plan-Checkboxen, Ledger, Opus-Final-Review (Package über `git merge-base origin/develop HEAD`), Fix-Runden bis „Yes", Push develop, `gh run watch`, Memory. KEIN Release.
+- [x] Gated Suiten am finalen Stand: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → alle grün, zero skips.
+- [x] Visueller Smoke — an den Maintainer delegiert (Checkliste: Ausblenden per Rechtsklick wirkt sofort; Menüeintrag trägt die Anzahl; Sheet blendet wieder ein; ein in `~/.ssh/config` umbenannter Alias erscheint als verwaist und lässt sich entfernen; `~/.ssh/config` ist nach allem byte-identisch — vorher/nachher per `md5`).
+- [x] Plan-Checkboxen, Ledger, Opus-Final-Review (Package über `git merge-base origin/develop HEAD`), Fix-Runden bis „Yes", Push develop, `gh run watch`, Memory. KEIN Release.
