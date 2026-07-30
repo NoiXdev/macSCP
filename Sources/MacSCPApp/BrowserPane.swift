@@ -32,6 +32,21 @@ struct BrowserPane: View {
     var crossSessionTargets: (() -> [CrossSessionTarget])? = nil
 
     @State private var isDropTargeted = false
+    /// Whether this pane's search bar is showing (M11k/T2) — per-PANE, not
+    /// shared: each `BrowserPane` instance owns its own `RemoteBrowserViewModel`
+    /// (the search state lives there too), so this `@State` bool being local
+    /// to the view is what makes two open panes search independently, by
+    /// construction, with no extra plumbing needed.
+    @State private var isSearchActive = false
+    /// Bumped every time ⌘F fires (`RemoteFileTableView.onOpenSearch`),
+    /// including while the bar is ALREADY open — see `FileSearchBar.focusToken`'s
+    /// doc comment for why the bar needs this instead of relying solely on
+    /// its own `.onAppear`.
+    @State private var searchFocusToken = 0
+    /// Bumped when the search bar closes, so the table reclaims first
+    /// responder (M11k/T2 step 5) — forwarded to `RemoteFileTableView` as
+    /// `focusRequestToken`; see that property's doc comment.
+    @State private var tableFocusToken = 0
     // Sheet/alert state for the four dialogs the pane handles internally
     // (M7b/T3) — rename/info/new-folder/delete never reach the external
     // `onMenuAction` callback, see the wrapper below.
@@ -96,6 +111,25 @@ struct BrowserPane: View {
                 .fill(DesignTokens.hairline)
                 .frame(height: 1)
 
+            // The search bar (M11k/T2): only present while `isSearchActive`
+            // is `true` for THIS pane, so the resting look of an inactive
+            // pane is byte-for-byte unchanged (design requirement, and the
+            // reason `isSearchActive` defaults to `false`).
+            if isSearchActive {
+                FileSearchBar(
+                    viewModel: viewModel,
+                    focusToken: searchFocusToken,
+                    onClose: {
+                        viewModel.clearSearch()
+                        isSearchActive = false
+                        tableFocusToken += 1
+                    }
+                )
+                Rectangle()
+                    .fill(DesignTokens.hairline)
+                    .frame(height: 1)
+            }
+
             ZStack {
                 RemoteFileTableView(
                     items: viewModel.items,
@@ -132,6 +166,11 @@ struct BrowserPane: View {
                         }
                     },
                     onGoUp: { Task { await viewModel.goUp() } },
+                    onOpenSearch: {
+                        searchFocusToken += 1
+                        isSearchActive = true
+                    },
+                    focusRequestToken: tableFocusToken,
                     crossSessionTargets: crossSessionTargets
                 )
                 .allowsHitTesting(viewModel.state == .loaded)

@@ -469,3 +469,13 @@
 "externalTerminal.error.noCustomAppChosen" = "Es wurde noch keine App ausgewählt.";
 "externalTerminal.error.scriptWriteFailed %@" = "Das Start-Skript konnte nicht geschrieben werden: %@";
 "externalTerminal.error.launchFailed %@" = "Die App konnte nicht gestartet werden: %@";
+
+/* Datei-Suchleiste (M11k/T2) */
+"search.placeholder" = "Suchen";
+"search.mode.filter" = "Filtern";
+"search.mode.jump" = "Springen";
+"search.regexHelp" = "Regulärer Ausdruck";
+"search.close" = "Suche schließen";
+"search.count.filter %1$lld %2$lld" = "%1$lld von %2$lld";
+"search.count.jump %lld" = "%lld Treffer";
+"search.error.invalidRegex" = "Ungültiger regulärer Ausdruck";

@@ -468,3 +468,13 @@
 "externalTerminal.error.noCustomAppChosen" = "No app has been chosen yet.";
 "externalTerminal.error.scriptWriteFailed %@" = "Couldn't write the launch script: %@";
 "externalTerminal.error.launchFailed %@" = "Couldn't launch the app: %@";
+
+/* File search bar (M11k/T2) */
+"search.placeholder" = "Search";
+"search.mode.filter" = "Filter";
+"search.mode.jump" = "Jump";
+"search.regexHelp" = "Regular expression";
+"search.close" = "Close search";
+"search.count.filter %1$lld %2$lld" = "%1$lld of %2$lld";
+"search.count.jump %lld" = "%lld matches";
+"search.error.invalidRegex" = "Invalid regular expression";

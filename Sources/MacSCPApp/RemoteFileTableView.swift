@@ -33,6 +33,21 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// button already makes (`BrowserPane`). `nil` by default like the other
     /// optional closures above, though every call site wires it.
     var onGoUp: (() -> Void)? = nil
+    /// ⌘F (M11k/T2) — opens THIS pane's own search bar and moves focus into
+    /// its field. A pure UI signal with no dependency on the current
+    /// selection (unlike every other keyboard command below), so it is
+    /// threaded exactly like `onGoUp`/`onOpenSymlink` rather than going
+    /// through `BrowserKeyCommand.resolve`/`dispatch(key:selection:)` — see
+    /// `KeyboardDrivenTableView.performKeyEquivalent`'s dedicated branch.
+    var onOpenSearch: (() -> Void)? = nil
+    /// Bumped by `BrowserPane` whenever the table should reclaim first
+    /// responder (M11k/T2) — e.g. right after Esc closes the search bar and
+    /// focus must return to the file list. A plain counter rather than a
+    /// `Binding<Bool>`: `updateNSView` diffs it against the coordinator's
+    /// last-seen value (see `Coordinator.lastFocusRequestToken`), the same
+    /// discipline `needsReload` already uses for `items`, so an unrelated
+    /// SwiftUI re-render never steals focus away from an open search field.
+    var focusRequestToken: Int = 0
     /// Cross-session transfer targets (M8b/T4) — evaluated fresh on EVERY
     /// `menuNeedsUpdate` call, not cached here, so a menu opened later in the
     /// session always shows the current set of other tabs and their current
@@ -48,6 +63,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         coordinator.pasteboardWriter = pasteboardWriter
         coordinator.onMenuAction = onMenuAction
         coordinator.onGoUp = onGoUp
+        coordinator.onOpenSearch = onOpenSearch
         coordinator.crossSessionTargets = crossSessionTargets
         return coordinator
     }
@@ -116,6 +132,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.pasteboardWriter = pasteboardWriter
         context.coordinator.onMenuAction = onMenuAction
         context.coordinator.onGoUp = onGoUp
+        context.coordinator.onOpenSearch = onOpenSearch
         context.coordinator.crossSessionTargets = crossSessionTargets
         guard let table = nsView.documentView as? NSTableView else { return }
         if itemsChanged {
@@ -138,8 +155,22 @@ struct RemoteFileTableView: NSViewRepresentable {
                 table.deselectAll(nil)
             } else {
                 table.selectRowIndexes(desired, byExtendingSelection: false)
+                // Scrolls the new selection into view (M11k/T2): plain
+                // `selectRowIndexes` does not auto-scroll, so a jump-mode
+                // match outside the currently visible rows would otherwise
+                // become selected without the user ever seeing it move.
+                if let firstDesired = desired.first {
+                    table.scrollRowToVisible(firstDesired)
+                }
             }
             context.coordinator.suppressSelectionCallback = false
+        }
+        // Reclaims first responder for the table (M11k/T2) — see
+        // `focusRequestToken`'s doc comment for why this is diffed rather
+        // than acted on unconditionally.
+        if context.coordinator.lastFocusRequestToken != focusRequestToken {
+            context.coordinator.lastFocusRequestToken = focusRequestToken
+            table.window?.makeFirstResponder(table)
         }
     }
 
@@ -179,6 +210,24 @@ struct RemoteFileTableView: NSViewRepresentable {
                 let coordinator = commandCoordinator
             else {
                 return super.performKeyEquivalent(with: event)
+            }
+
+            // ⌘F opens THIS pane's own search bar (M11k/T2) — a pure UI
+            // action with no dependency on the current selection, unlike
+            // every key below, so it bypasses `BrowserKeyCommand.resolve`/
+            // `dispatch(key:selection:)` entirely and calls straight into
+            // the coordinator's `onOpenSearch` closure, mirroring how
+            // `onGoUp`/`onOpenSymlink` are wired elsewhere in this type.
+            // Collision check (M11k/T2): ⌘F has no `keyboardShortcut`
+            // anywhere else in the app (confirmed via a full-source search)
+            // and SwiftUI adds no default "Find" menu item, so it was fully
+            // unbound before this.
+            if event.charactersIgnoringModifiers?.lowercased() == "f" {
+                guard let onOpenSearch = coordinator.onOpenSearch else {
+                    return super.performKeyEquivalent(with: event)
+                }
+                onOpenSearch()
+                return true
             }
 
             let key: BrowserKey?
@@ -243,10 +292,14 @@ struct RemoteFileTableView: NSViewRepresentable {
         var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)?
         var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)?
         var onGoUp: (() -> Void)?
+        var onOpenSearch: (() -> Void)?
         var crossSessionTargets: (() -> [CrossSessionTarget])?
         let side: BrowserPaneSide
         weak var table: NSTableView?
         var suppressSelectionCallback = false
+        /// Last `focusRequestToken` value `updateNSView` acted on (M11k/T2)
+        /// — see that property's doc comment on `RemoteFileTableView`.
+        var lastFocusRequestToken = 0
 
         init(
             onOpen: @escaping (RemoteFileItem) -> Void, onSelect: @escaping ([RemoteFileItem]) -> Void,
