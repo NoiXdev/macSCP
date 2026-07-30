@@ -519,9 +519,10 @@ private struct PathTextField: NSViewRepresentable {
 /// Frameworks` has hundreds of entries, and a plain `VStack` with no height
 /// limit used to lay out a card thousands of points tall — clipped by the
 /// window, with everything past the edge permanently unreachable. Rows now
-/// scroll inside a capped `maxHeight`, and a footer names the total count
-/// whenever that cap actually hides some of them, the way a shell asks
-/// before dumping hundreds of completions instead of silently truncating.
+/// scroll inside a region of DEFINITE height (see `listHeight` for why a
+/// maximum is not enough), and a footer names the total count whenever that
+/// region actually hides some of them, the way a shell asks before dumping
+/// hundreds of completions instead of silently truncating.
 private struct CandidatesList: View {
     let names: [String]
     let onSelect: (String) -> Void
