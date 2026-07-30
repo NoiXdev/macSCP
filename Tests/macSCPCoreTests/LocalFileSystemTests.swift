@@ -97,6 +97,30 @@ struct LocalFileSystemTests {
         #expect(dir?.path.hasSuffix("unterordner") == true)
     }
 
+    /// T1/M11g review follow-up: `list` must be able to list THROUGH a
+    /// symlink pointing at a real directory, and the child paths it returns
+    /// must stay under the symlink path — not silently resolved to the
+    /// real destination. The old URL-based `contentsOfDirectory(at:
+    /// includingPropertiesForKeys:)` call did exactly that resolving; this
+    /// locks in the string-path API's un-resolved behavior instead.
+    @Test func listFollowsSymlinkToDirectory() async throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let real = root.appendingPathComponent("real", isDirectory: true)
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: real.appendingPathComponent("innen.txt"))
+        let link = root.appendingPathComponent("link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+
+        let fs = LocalFileSystem()
+        let items = try await fs.list(path: link.path(percentEncoded: false))
+
+        let child = items.first { $0.name == "innen.txt" }
+        #expect(child != nil)
+        #expect(child?.path.hasPrefix(link.path(percentEncoded: false)) == true)
+        #expect(child?.path.contains("/real/") == false)
+    }
+
     @Test func createDirectoryCreatesNewDirectory() async throws {
         let root = try makeTempTree()
         defer { try? FileManager.default.removeItem(at: root) }

@@ -14,15 +14,31 @@ public struct LocalFileSystem: RemoteFileSystem {
         let url = URL(fileURLWithPath: path)
         // Uses the STRING-path API (`contentsOfDirectory(atPath:)`), not the
         // URL-based one: `contentsOfDirectory(at:includingPropertiesForKeys:)`
-        // refuses a plain symlink pointing at a directory with ENOTDIR — it
-        // only happens to work for macOS's `/tmp`, `/var`, `/etc` because
-        // those are APFS firmlinks, not classic symlinks (T1/M11g review
+        // rejects a symlinked directory outright with ENOTDIR (POSIX code
+        // 20) — confirmed live against `/usr/X11` (`lrwxr-xr-x /usr/X11 ->
+        // ../private/var/select/X11`, an ordinary symlink), which throws
+        // through the URL API. It only *appears* to work for macOS's
+        // `/tmp`, `/var`, `/etc` — those are plain symlinks too (`/tmp ->
+        // private/tmp`), not some special case — because Foundation
+        // hardcodes a `/private` prefix rewrite for exactly those three
+        // paths and resolves the real, non-symlinked location before
+        // opening it; that's also why the URL API's returned children come
+        // back as `/private/etc/...` rather than `/etc/...` (T1/M11g review
         // I-1 follow-up: this is exactly what `navigate(to:)`'s "try
         // list()" symlink check depends on to be correct for an ordinary
-        // symlinked directory, not just the three firmlinked ones). Each
-        // child URL below is a normal path, so `item(for:)`'s per-entry
-        // `resourceValues` lookups are unaffected by how the parent was
-        // reached.
+        // symlinked directory, not just the three Foundation-mapped ones).
+        // Each child URL below is a normal path, so `item(for:)`'s
+        // per-entry `resourceValues` lookups are unaffected by how the
+        // parent was reached.
+        //
+        // Cost: dropping `includingPropertiesForKeys:` also drops
+        // Foundation's metadata prefetch, which the M11g review measured at
+        // roughly 3x slower per-entry metadata lookups (31.5 ms → 93.8 ms
+        // for a 5000-entry directory, ~12-14 µs/entry). The coordinator
+        // accepted this deliberately: correctness over a saving that's
+        // immaterial below tens of thousands of entries. If it ever does
+        // matter, a try-URL-first-then-fall-back-to-`atPath` variant is
+        // possible — not implemented here.
         let names: [String]
         do {
             names = try FileManager.default.contentsOfDirectory(atPath: path)

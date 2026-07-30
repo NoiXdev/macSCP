@@ -102,14 +102,16 @@ public enum PathCompletion {
         }
 
         // Multiple candidates: only extend the input if the shared prefix
-        // adds something over what's already typed (e.g. "html"/"hosts"
-        // share only "h", which is already typed — nothing to add yet).
-        // Comparing lengths alone is not enough: with `caseSensitive:
+        // differs from what's already typed. Every match satisfies
+        // `hasPrefix(typed)` (case-insensitively when `caseSensitive` is
+        // false), so `commonPrefix.count >= typed.count` always holds —
+        // a pure length check could never fire on its own. What DOES need
+        // catching is a same-length spelling mismatch: with `caseSensitive:
         // false`, several entries can share a prefix that is the SAME
         // LENGTH as `typed` but differently cased (real "Do..." vs typed
         // "do") — that's still a completion the user needs, so the real
         // spelling must win even when the count doesn't grow.
-        guard commonPrefix.count > typed.count || commonPrefix != typed else {
+        guard commonPrefix != typed else {
             return Result(completedInput: input, candidates: candidateNames)
         }
         return Result(
