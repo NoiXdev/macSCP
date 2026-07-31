@@ -160,7 +160,10 @@ struct RemoteFileTableView: NSViewRepresentable {
         .name: (260, true),
         .size: (90, false),
         .modified: (160, true),
-        .permissions: (90, false),
+        // 105, not 90 (M11m/T2 review): a full "rwxrwxrwx" at 12.5pt
+        // monospaced plus the 2x12pt cell insets needs ~91pt, so 90 would
+        // middle-truncate the last bit. Column stays user-resizable.
+        .permissions: (105, false),
         .owner: (110, true),
         .group: (110, true),
         .type: (90, true),
