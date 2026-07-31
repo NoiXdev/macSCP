@@ -46,31 +46,31 @@
   - `FileSortKey` erweitert um `.permissions/.owner/.group/.type`
   - `SettingsStore.visibleColumns: [FileColumn]` (oder Set), persistiert, vorwärtskompatibel
 
-- [ ] **Step 1: Failing tests für `LongnameParser`.** Standard-`ls -l`-Zeile
+- [x] **Step 1: Failing tests für `LongnameParser`.** Standard-`ls -l`-Zeile
   `-rw-r--r-- 1 www-data staff 2454 Jul 30 14:22 config.php` ⇒
   `(owner: "www-data", group: "staff")`; Mehrfach-Whitespace; Besitzer mit
   Sonderzeichen; zu kurze/kaputte Zeile ⇒ `nil`; Ordner-Zeile `drwxr-xr-x`.
-- [ ] **Step 2: Rot, dann Parser implementieren** (defensiv: nach den ersten
+- [x] **Step 2: Rot, dann Parser implementieren** (defensiv: nach den ersten
   beiden Feldern — Perms, Linkzahl — kommen Besitzer und Gruppe; tolerant
   gegen Whitespace; unsicher ⇒ `nil`).
-- [ ] **Step 3: Modell + Mapper.** `owner`/`group` auf `RemoteFileItem`;
+- [x] **Step 3: Modell + Mapper.** `owner`/`group` auf `RemoteFileItem`;
   `SFTPAttributeMapper.item` bekommt `longname`/`uidgid` und setzt
   owner/group nach der Rangfolge (longname-Name → numerisch → nil). Tests:
   longname gewinnt; ohne longname numerisch; ohne beides nil.
-- [ ] **Step 4: Citadel + Local durchreichen.** readdir-Pfad reicht
+- [x] **Step 4: Citadel + Local durchreichen.** readdir-Pfad reicht
   `component.longname` und `component.attributes.uidgid` an den Mapper; der
   Einzel-`stat`-Pfad nur `uidgid` (kein longname). `LocalFileSystem` füllt
   owner/group aus `stat` (getpwuid/getgrgid), numerischer Rückfall.
-- [ ] **Step 5: `FileColumn` + Formatierer + `FileSortKey`-Fälle** mit Tests
+- [x] **Step 5: `FileColumn` + Formatierer + `FileSortKey`-Fälle** mit Tests
   (Rechte rwx, Typ je kind, Besitzer/Gruppe/nil; Sortier-Fälle inkl.
   Name-Tiebreaker und nil-Position; die M11l-Regel „Tiebreaker bleibt
   aufsteigend" gilt weiter).
-- [ ] **Step 6: `SettingsStore.visibleColumns`** persistiert +
+- [x] **Step 6: `SettingsStore.visibleColumns`** persistiert +
   vorwärtskompatibel (altes JSON ⇒ name/size/modified). Roundtrip-Test.
-- [ ] **Step 7: Gated Rig-Test.** Ein Listing gegen den Docker-Server
+- [x] **Step 7: Gated Rig-Test.** Ein Listing gegen den Docker-Server
   liefert owner/group (bekannte Rig-Werte). `MACSCP_ITEST=1`.
-- [ ] **Step 8: Grün + volle Suite.** `swift test` → 847 + neue.
-- [ ] **Step 9: Commit.** `feat: carry owner/group and model selectable columns`
+- [x] **Step 8: Grün + volle Suite.** `swift test` → 847 + neue.
+- [x] **Step 9: Commit.** `feat: carry owner/group and model selectable columns`
 
 ---
 
@@ -82,35 +82,35 @@
 **Interfaces:**
 - Consumes: `FileColumn`, die Formatierer, `SettingsStore.visibleColumns`, `FileSortKey` (T1); das M11l-Sortier-/Indikator-Muster.
 
-- [ ] **Step 1: Dynamische Spalten.** `makeNSView` baut die Spalten aus
+- [x] **Step 1: Dynamische Spalten.** `makeNSView` baut die Spalten aus
   `visibleColumns` in fester Reihenfolge (Name, Größe, Geändert, Rechte,
   Besitzer, Gruppe, Typ — nur die sichtbaren); jede mit `PolishedHeaderCell`,
   lokalisiertem Titel und `sortDescriptorPrototype`. Ändert sich die
   Einstellung, werden die Spalten neu aufgebaut (in `updateNSView`,
   idempotent — nur bei echter Änderung, kein Flackern).
-- [ ] **Step 2: Zellen.** `tableView(_:viewFor:row:)` bekommt die neuen
+- [x] **Step 2: Zellen.** `tableView(_:viewFor:row:)` bekommt die neuen
   Spalten-IDs: Rechte (rwx, monospaced), Besitzer/Gruppe (Text), Typ
   (lokalisiert). Recycling-Hygiene: Inhalt UNBEDINGT je Wiederverwendung
   setzen; Werte über die Core-Formatierer + App-L10n.
-- [ ] **Step 3: Sortier-Indikator** je Spalte weiter wie M11l (selbst
+- [x] **Step 3: Sortier-Indikator** je Spalte weiter wie M11l (selbst
   gezeichnetes ▲/▼).
-- [ ] **Step 4: Einstellungen.** Kontrollkästchen je zuschaltbarer Spalte
+- [x] **Step 4: Einstellungen.** Kontrollkästchen je zuschaltbarer Spalte
   (Name fix, nicht abschaltbar). Bindet an `SettingsStore.visibleColumns`.
-- [ ] **Step 5: EN/DE.** Spaltentitel + Typ-Strings + Platzhalter „—" in
+- [x] **Step 5: EN/DE.** Spaltentitel + Typ-Strings + Platzhalter „—" in
   BEIDE Kataloge. `plutil -lint` OK, `LocalizableStringsTests` grün.
-- [ ] **Step 6: Verifikation.** `swift build` sauber (keine neuen
+- [x] **Step 6: Verifikation.** `swift build` sauber (keine neuen
   Warnungen), volle `swift test`.
-- [ ] **Step 7: Commit.** `feat: show selectable file-list columns`
+- [x] **Step 7: Commit.** `feat: show selectable file-list columns`
 
 ---
 
 ### Task 3: Abschluss-Verifikation (Koordinator)
 
-- [ ] Gated Suiten: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → grün, zero skips.
+- [x] Gated Suiten: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → grün, zero skips.
 - [ ] Visueller Smoke — Maintainer (Checkliste: Kontrollkästchen schalten
   Spalten zu/ab; Besitzer/Gruppe zeigen echte Namen gegen den Rig, „—" wo
   unbekannt; Rechte als rwx; Typ lokalisiert; neue Spalten sortierbar mit
   Dreieck; Recycling ohne Schmieren beim Scrollen; M5g-Optik der Alt-Spalten
   unverschoben; hell/dunkel; beide Panes).
-- [ ] Plan-Checkboxen, Ledger, Opus-Final-Review, Fix-Runden bis „Yes",
+- [x] Plan-Checkboxen, Ledger, Opus-Final-Review, Fix-Runden bis „Yes",
   Push develop, `gh run watch`, Memory. KEIN Release.
