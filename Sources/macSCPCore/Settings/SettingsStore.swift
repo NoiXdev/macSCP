@@ -74,6 +74,7 @@ public final class SettingsStore {
         static let externalTerminalPasswordHintShown = "externalTerminalPasswordHintShown"
         static let visibleColumns = "visibleColumns"
         static let menuBarEnabled = "menuBarEnabled"
+        static let appLanguage = "appLanguage"
     }
 
     private enum Defaults {
@@ -314,6 +315,22 @@ public final class SettingsStore {
     public var customTerminalAppPath: String? {
         get { stringValue(for: Keys.customTerminalAppPath) }
         set { setString(newValue, for: Keys.customTerminalAppPath) }
+    }
+
+    /// The UI language chosen in Settings (M11p). `.system` (default) means
+    /// no `AppleLanguages` override — follow the OS. Applied at launch in
+    /// `MacSCPApp.init`; a change needs an app relaunch to take effect.
+    public var selectedLanguage: AppLanguage {
+        get {
+            guard case .string(let value)? = raw[Keys.appLanguage] else {
+                return .system
+            }
+            return AppLanguage(rawValue: value) ?? .system
+        }
+        set {
+            raw[Keys.appLanguage] = .string(newValue.rawValue)
+            persist()
+        }
     }
 
     /// Whether the "external terminals can't receive a saved password" hint

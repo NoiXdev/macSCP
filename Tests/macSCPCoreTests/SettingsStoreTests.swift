@@ -710,4 +710,36 @@ struct SettingsStoreTests {
         #expect(raw["futureLabel"] == .string("keep-me"))
         #expect(raw["visibleColumns"] == .array([.string("name"), .string("type")]))
     }
+
+    @Test func selectedLanguageDefaultsToSystem() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.selectedLanguage == .system)
+        #expect(AppLanguage.system.localeCode == nil)
+        #expect(AppLanguage.fr.localeCode == "fr")
+    }
+
+    @Test func selectedLanguageRoundtrips() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.selectedLanguage = .pl
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.selectedLanguage == .pl)
+    }
+
+    @Test func selectedLanguageFallsBackOnGarbage() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.selectedLanguage = .de
+        // Corrupt the on-disk value, then a fresh load must fall back.
+        let fileURL = dir.appendingPathComponent("settings.json")
+        var raw = try! JSONSerialization.jsonObject(with: Data(contentsOf: fileURL)) as! [String: Any]
+        raw["appLanguage"] = "klingon"
+        try! JSONSerialization.data(withJSONObject: raw).write(to: fileURL)
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.selectedLanguage == .system)
+    }
 }
