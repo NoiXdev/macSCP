@@ -11,14 +11,63 @@ struct BrowserPane: View {
     let tint: Color
     let softTint: Color
     let viewModel: RemoteBrowserViewModel
+    /// Which pane this is (M7b) — passed through to the context menu model
+    /// (the editor entry only ever shows on the remote side).
+    let side: BrowserPaneSide
     var onDropURLs: (([URL]) -> Void)? = nil
     /// Double-click on a remote FILE row — wired only for the remote pane
     /// (M5e/T4); the local pane leaves this `nil` and keeps its existing
     /// no-op-on-file behavior.
     var onOpenFile: ((RemoteFileItem) -> Void)? = nil
+    /// The pane's own file system, forwarded verbatim to `PathBar` for its
+    /// Tab-completion listing (M11g/T2) — see its doc comment for why this
+    /// is injected rather than reached through `viewModel`. Passed as the
+    /// value itself (not a bespoke closure) so `side` stays the single
+    /// source of truth for which pane this is (M11g/T2 review, finding M6).
+    let fileSystem: any RemoteFileSystem
     var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)? = nil
+    var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)? = nil
+    /// Cross-session transfer targets for the context menu (M8b/T4) —
+    /// forwarded verbatim to `RemoteFileTableView`; see its doc comment.
+    var crossSessionTargets: (() -> [CrossSessionTarget])? = nil
+    /// Which columns the file list shows (M11m/T2) — mirrors
+    /// `SettingsStore.visibleColumns`, app-global like the other display
+    /// settings (`showHiddenFiles` etc.), so both panes always show the
+    /// same set. Forwarded verbatim to `RemoteFileTableView`; its own
+    /// default keeps this optional at every call site that predates M11m.
+    var visibleColumns: Set<FileColumn> = Set(FileColumn.allCases.filter(\.defaultVisible))
 
     @State private var isDropTargeted = false
+    /// Whether this pane's search bar is showing (M11k/T2) — per-PANE, not
+    /// shared: each `BrowserPane` instance owns its own `RemoteBrowserViewModel`
+    /// (the search state lives there too), so this `@State` bool being local
+    /// to the view is what makes two open panes search independently, by
+    /// construction, with no extra plumbing needed.
+    @State private var isSearchActive = false
+    /// Bumped every time ⌘F fires (`RemoteFileTableView.onOpenSearch`),
+    /// including while the bar is ALREADY open — see `FileSearchBar.focusToken`'s
+    /// doc comment for why the bar needs this instead of relying solely on
+    /// its own `.onAppear`.
+    @State private var searchFocusToken = 0
+    /// Bumped when the search bar closes, so the table reclaims first
+    /// responder (M11k/T2 step 5) — forwarded to `RemoteFileTableView` as
+    /// `focusRequestToken`; see that property's doc comment.
+    @State private var tableFocusToken = 0
+    // Sheet/alert state for the four dialogs the pane handles internally
+    // (M7b/T3) — rename/info/new-folder/delete never reach the external
+    // `onMenuAction` callback, see the wrapper below.
+    @State private var renameTarget: RemoteFileItem?
+    @State private var infoTarget: RemoteFileItem?
+    @State private var deleteRequest: [RemoteFileItem]?
+    @State private var showNewFolderSheet = false
+    @State private var deleteErrorMessage: String?
+    /// Set only when a symlink double-click's `navigate(to:)` call FAILS
+    /// (M11h/T1 review fix — see `onOpenSymlink` below): forwarded to
+    /// `PathBar`, which reuses its existing failure overlay to show the
+    /// result instead of a second, bespoke error surface. Stays `nil` on
+    /// success, so `PathBar` is never touched, never enters its edit state,
+    /// and never steals focus for the (usual, successful) round-trip.
+    @State private var symlinkNavigationFailure: SymlinkNavigationFailure?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,12 +80,11 @@ struct BrowserPane: View {
                     .background(softTint, in: RoundedRectangle(cornerRadius: 5))
                     .foregroundStyle(tint)
 
-                Text(viewModel.currentPath)
-                    .font(.system(size: 11.5, design: .monospaced))
-                    .foregroundStyle(DesignTokens.inkTertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                PathBar(
+                    viewModel: viewModel,
+                    caseSensitive: side == .remote,
+                    fileSystem: fileSystem,
+                    externalNavigationFailure: $symlinkNavigationFailure)
 
                 Button {
                     Task { await viewModel.goUp() }
@@ -56,19 +104,87 @@ struct BrowserPane: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
+            // Raises the whole header row above the LATER siblings in this
+            // `VStack` (the hairline, then the file table `ZStack`) so the
+            // path bar's inline candidates/error overlay paints over them
+            // instead of being painted over (M11g/T2 review, finding C1) —
+            // the counterpart to `PathBar`'s own `.zIndex(1)`, which handles
+            // the same problem one level down against the up/refresh
+            // buttons inside this HStack.
+            .zIndex(1)
 
             Rectangle()
                 .fill(DesignTokens.hairline)
                 .frame(height: 1)
 
+            // The search bar (M11k/T2): only present while `isSearchActive`
+            // is `true` for THIS pane, so the resting look of an inactive
+            // pane is byte-for-byte unchanged (design requirement, and the
+            // reason `isSearchActive` defaults to `false`).
+            if isSearchActive {
+                FileSearchBar(
+                    viewModel: viewModel,
+                    focusToken: searchFocusToken,
+                    onClose: {
+                        viewModel.clearSearch()
+                        isSearchActive = false
+                        tableFocusToken += 1
+                    }
+                )
+                Rectangle()
+                    .fill(DesignTokens.hairline)
+                    .frame(height: 1)
+            }
+
             ZStack {
                 RemoteFileTableView(
                     items: viewModel.items,
-                    selectedPath: viewModel.selectedItem?.path,
+                    selectedPaths: Set(viewModel.selectedItems.map(\.path)),
                     onOpen: { item in Task { await viewModel.open(item) } },
-                    onSelect: { item in viewModel.selectedItem = item },
+                    onSelect: { viewModel.selectedItems = $0 },
                     onOpenFile: onOpenFile,
-                    pasteboardWriter: pasteboardWriter
+                    onOpenSymlink: { item in
+                        Task {
+                            // Navigates DIRECTLY (M11h/T1 review fix),
+                            // mirroring `onOpen` two lines above: the success
+                            // path never touches `PathBar`, so it never
+                            // enters its edit state and never steals focus
+                            // for this round-trip — the bug the review
+                            // caught. Only a non-nil (failure) result is
+                            // handed to `PathBar`, which then shows it
+                            // exactly like a failed typed path.
+                            let message = await viewModel.navigate(to: item.path)
+                            if let message {
+                                symlinkNavigationFailure = SymlinkNavigationFailure(
+                                    path: item.path, message: message)
+                            }
+                        }
+                    },
+                    pasteboardWriter: pasteboardWriter,
+                    side: side,
+                    onMenuAction: { entry, selection in
+                        switch entry {
+                        case .rename: renameTarget = selection.first
+                        case .infoAndPermissions: infoTarget = selection.first
+                        case .newFolder: showNewFolderSheet = true
+                        case .delete: deleteRequest = selection
+                        default: onMenuAction?(entry, selection)
+                        }
+                    },
+                    onGoUp: { Task { await viewModel.goUp() } },
+                    onOpenSearch: {
+                        searchFocusToken += 1
+                        isSearchActive = true
+                    },
+                    focusRequestToken: tableFocusToken,
+                    crossSessionTargets: crossSessionTargets,
+                    visibleColumns: visibleColumns,
+                    sortKey: viewModel.sortKey,
+                    sortAscending: viewModel.sortAscending,
+                    onSortChange: { key, ascending in
+                        viewModel.sortKey = key
+                        viewModel.sortAscending = ascending
+                    }
                 )
                 .allowsHitTesting(viewModel.state == .loaded)
 
@@ -108,6 +224,76 @@ struct BrowserPane: View {
             }
         }
         .task { await viewModel.load() }
+        .sheet(item: $renameTarget) { target in
+            NameEntrySheet(
+                title: L10n.string("sheet.rename.title", "Rename"),
+                confirmLabel: L10n.string("sheet.rename.confirm", "Rename"),
+                initialName: target.name,
+                onConfirm: { newName in await viewModel.rename(target, to: newName) })
+        }
+        .sheet(isPresented: $showNewFolderSheet) {
+            NameEntrySheet(
+                title: L10n.string("sheet.newFolder.title", "New Folder"),
+                confirmLabel: L10n.string("sheet.newFolder.confirm", "Create"),
+                initialName: L10n.string("sheet.newFolder.defaultName", "untitled folder"),
+                onConfirm: { name in await viewModel.createFolder(named: name) })
+        }
+        .sheet(item: $infoTarget) { target in
+            InfoPermissionsSheet(
+                item: target,
+                onApply: { perms in await viewModel.applyPermissions(perms, to: target) },
+                onApplyRecursively: { filePerms, dirPerms, progress in
+                    await viewModel.applyPermissionsRecursively(
+                        filePermissions: filePerms, directoryPermissions: dirPerms,
+                        to: target, progress: progress)
+                })
+        }
+        .alert(
+            L10n.string("delete.title", "Delete?"),
+            isPresented: Binding(
+                get: { deleteRequest != nil },
+                set: { if !$0 { deleteRequest = nil } }
+            ),
+            presenting: deleteRequest
+        ) { doomed in
+            Button(L10n.string("common.cancel", "Cancel"), role: .cancel) {}
+            Button(L10n.string("delete.confirm", "Delete"), role: .destructive) {
+                let items = doomed
+                Task { @MainActor in
+                    deleteErrorMessage = await viewModel.deleteItems(items)
+                }
+            }
+        } message: { doomed in
+            Text(deleteMessage(for: doomed))
+        }
+        .alert(
+            L10n.string("delete.failedTitle", "Delete failed"),
+            isPresented: Binding(
+                get: { deleteErrorMessage != nil },
+                set: { if !$0 { deleteErrorMessage = nil } }
+            )
+        ) {
+            Button(L10n.string("common.ok", "OK"), role: .cancel) {}
+        } message: {
+            Text(deleteErrorMessage ?? "")
+        }
+    }
+
+    private func deleteMessage(for doomed: [RemoteFileItem]) -> String {
+        let base: String
+        if doomed.count == 1, let only = doomed.first {
+            base = String(format: L10n.string(
+                "delete.message.single", "“%@” will be deleted."), only.name)
+        } else {
+            base = String(format: L10n.string(
+                "delete.message.many", "%lld items will be deleted."), Int64(doomed.count))
+        }
+        let folderHint = doomed.contains { $0.kind == .directory }
+            ? " " + L10n.string(
+                "delete.message.recursive", "Folders are deleted with their entire contents.")
+            : ""
+        return base + folderHint + " " + L10n.string(
+            "delete.message.permanent", "This action cannot be undone.")
     }
 }
 

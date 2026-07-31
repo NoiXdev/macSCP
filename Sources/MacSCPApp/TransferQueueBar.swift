@@ -12,7 +12,19 @@ struct TransferQueueBar: View {
 
     var body: some View {
         if viewModel.items.isEmpty {
-            EmptyView()
+            VStack(spacing: 0) {
+                Rectangle()
+                    .fill(DesignTokens.hairline)
+                    .frame(height: 1)
+                HStack {
+                    Text(L10n.string("transfers.empty", "No transfers"))
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(DesignTokens.inkSecondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+            }
         } else {
             VStack(spacing: 0) {
                 Rectangle()

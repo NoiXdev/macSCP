@@ -199,4 +199,119 @@ struct MockRemoteFileSystemTests {
             try await fs.delete(path: "/docs")
         }
     }
+
+    // MARK: - M7a/T2: deleteTree
+
+    @Test func deleteTreeRemovesNestedDirectoryRecursively() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [
+                RemoteFileItem(name: "readme.txt", path: "/readme.txt", kind: .file, size: 12),
+                RemoteFileItem(name: "tree", path: "/tree", kind: .directory),
+            ],
+            "/tree": [
+                RemoteFileItem(name: "sub", path: "/tree/sub", kind: .directory),
+                RemoteFileItem(name: "a.txt", path: "/tree/a.txt", kind: .file, size: 1),
+            ],
+            "/tree/sub": [
+                RemoteFileItem(name: "b.txt", path: "/tree/sub/b.txt", kind: .file, size: 1),
+            ],
+        ], files: [
+            "/tree/a.txt": Data("a".utf8),
+            "/tree/sub/b.txt": Data("b".utf8),
+        ])
+
+        try await fs.deleteTree(at: "/tree")
+
+        let parentListing = try await fs.list(path: "/")
+        #expect(!parentListing.contains { $0.path == "/tree" })
+        #expect(parentListing.contains { $0.path == "/readme.txt" })
+        await #expect(throws: RemoteFSError.notFound(path: "/tree")) {
+            _ = try await fs.stat(path: "/tree")
+        }
+    }
+
+    /// Review IMPORTANT-3: a `.symlink` listing entry carries no seeded
+    /// `files` content — delegating to `delete(path:)` for it would throw
+    /// `notFound` and abort the recursion, diverging from both real
+    /// backends. `deleteTree` must remove the symlink entry directly and
+    /// still walk past it to the rest of the tree.
+    @Test func deleteTreeRemovesTreeContainingASymlinkEntry() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [
+                RemoteFileItem(name: "tree", path: "/tree", kind: .directory),
+            ],
+            "/tree": [
+                RemoteFileItem(name: "link", path: "/tree/link", kind: .symlink),
+                RemoteFileItem(name: "a.txt", path: "/tree/a.txt", kind: .file, size: 1),
+            ],
+        ], files: [
+            "/tree/a.txt": Data("a".utf8),
+        ])
+
+        try await fs.deleteTree(at: "/tree")
+
+        let parentListing = try await fs.list(path: "/")
+        #expect(!parentListing.contains { $0.path == "/tree" })
+        await #expect(throws: RemoteFSError.notFound(path: "/tree")) {
+            _ = try await fs.stat(path: "/tree")
+        }
+        let deletedPaths = await fs.deletedPaths
+        #expect(deletedPaths.contains("/tree/link"))
+        #expect(deletedPaths.contains("/tree/a.txt"))
+    }
+
+    @Test func deleteTreeOnPlainFileBehavesLikeDelete() async throws {
+        let fs = makeMockWithFile(content: Data("bye".utf8))
+
+        try await fs.deleteTree(at: "/datei.bin")
+
+        await #expect(throws: RemoteFSError.notFound(path: "/datei.bin")) {
+            _ = try await fs.readStream(path: "/datei.bin", fromOffset: 0)
+        }
+        let deletedPaths = await fs.deletedPaths
+        #expect(deletedPaths == ["/datei.bin"])
+    }
+
+    @Test func deleteTreeMissingPathThrowsNotFound() async {
+        let fs = makeMock()
+        await #expect(throws: RemoteFSError.notFound(path: "/gibt-es-nicht")) {
+            try await fs.deleteTree(at: "/gibt-es-nicht")
+        }
+    }
+
+    // MARK: - M7b/T1: dir rename re-keys descendants
+
+    @Test func renameDirectoryRekeysDescendants() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "dir", path: "/dir", kind: .directory)],
+            "/dir": [RemoteFileItem(name: "a.txt", path: "/dir/a.txt", kind: .file, size: 1)],
+        ])
+        try await fs.rename(from: "/dir", to: "/renamed")
+        let root = try await fs.list(path: "/")
+        #expect(root.map(\.name) == ["renamed"])
+        let children = try await fs.list(path: "/renamed")
+        #expect(children.map(\.name) == ["a.txt"])
+        await #expect(throws: RemoteFSError.self) { _ = try await fs.list(path: "/dir") }
+    }
+
+    // MARK: - homeDirectoryPath (M9d Task 1)
+
+    @Test func homeDirectoryPathDefaultsToRoot() async throws {
+        let fs = makeMock()
+        #expect(try await fs.homeDirectoryPath() == "/")
+    }
+
+    @Test func homeDirectoryPathReturnsConfiguredHome() async throws {
+        let fs = makeMock()
+        await fs.setHomePath("/home/testuser")
+        #expect(try await fs.homeDirectoryPath() == "/home/testuser")
+    }
+
+    @Test func homeDirectoryPathThrowsWhenFailureModeEnabled() async throws {
+        let fs = makeMock()
+        await fs.setHomeDirectoryFailure(RemoteFSError.protocolError(reason: "no home"))
+        await #expect(throws: RemoteFSError.protocolError(reason: "no home")) {
+            _ = try await fs.homeDirectoryPath()
+        }
+    }
 }

@@ -1,0 +1,85 @@
+/* AI-generated French translation (M11p) — review by a native speaker before release. */
+
+/* Core-layer user-facing messages — French (translation). */
+
+/* TransferQueueViewModel.message(for:) */
+"core.transfer.notFound %@" = "Fichier introuvable : %@";
+"core.error.permissionDenied %@" = "Autorisation refusée pour : %@";
+"core.error.connectionLost %@" = "Connexion perdue : %@";
+"core.transfer.failed %@" = "Transfert échoué : %@";
+"core.transfer.noFreeName" = "Aucun nom de fichier disponible n'a été trouvé.";
+"core.transfer.interrupted" = "Connexion perdue — transfert interrompu.";
+
+/* RemoteBrowserViewModel.message(for:path:) */
+"core.browse.notFound %@" = "Chemin introuvable : %@";
+"core.browse.protocolError %@" = "Erreur de protocole : %@";
+"core.error.unexpected %@" = "Erreur inattendue : %@";
+
+/* RemoteBrowserViewModel.navigate(to:) (M11g/T1) */
+"core.browse.emptyPath" = "Saisissez un chemin vers lequel naviguer.";
+"core.browse.notADirectory %@" = "N'est pas un répertoire : %@";
+
+/* ConnectionViewModel form validation */
+"core.connect.portNumeric" = "Le port doit être un nombre.";
+"core.connect.passwordEmpty" = "Le mot de passe ne doit pas être vide.";
+"core.connect.keyPathEmpty" = "Saisissez le chemin de la clé SSH.";
+"core.connect.saveNameEmpty" = "Saisissez un nom pour la session enregistrée.";
+
+/* ConnectionViewModel jump-host form validation (M10c/T3) */
+"core.connect.jumpHostEmpty" = "L'hôte relais ne doit pas être vide.";
+"core.connect.jumpPortNumeric" = "Le port de l'hôte relais doit être un nombre.";
+"core.connect.jumpSetRequired" = "Choisissez un login pour l'hôte relais.";
+"core.connect.jumpUsernameEmpty" = "Le nom d'utilisateur de l'hôte relais ne doit pas être vide.";
+"core.connect.jumpPasswordEmpty" = "Le mot de passe de l'hôte relais ne doit pas être vide.";
+"core.connect.jumpKeyPathEmpty" = "Saisissez le chemin de la clé SSH de l'hôte relais.";
+
+/* ConnectionViewModel.failedState(for:) */
+"core.connect.emptyHost" = "L'hôte ne doit pas être vide.";
+"core.connect.emptyUsername" = "Le nom d'utilisateur ne doit pas être vide.";
+"core.connect.hostInvalid" = "L'hôte ne doit contenir ni espaces, ni guillemets, ni caractères shell tels que $ ; & | ` ( ), et ne doit pas commencer par -.";
+"core.connect.usernameInvalid" = "Le nom d'utilisateur ne doit contenir ni espaces, ni guillemets, ni caractères shell tels que $ ; & | ` ( ), et ne doit pas commencer par -.";
+"core.connect.invalidPort %@" = "Port invalide : %@.";
+"core.connect.authFailed" = "Échec de l'authentification — vérifiez le nom d'utilisateur ou le mot de passe.";
+"core.connect.connectionFailed %@" = "Connexion échouée : %@";
+"core.connect.keyNotFound %@" = "Clé SSH introuvable : %@";
+"core.connect.keyPassphraseRequired" = "La clé SSH est chiffrée — saisissez une phrase secrète.";
+"core.connect.keyWrongPassphrase" = "La phrase secrète est incorrecte.";
+"core.connect.keyUnsupportedFormat" = "Le format de la clé SSH n'est pas pris en charge (actuellement : OpenSSH ed25519).";
+
+/* ConnectionViewModel.failedState(for:) — ssh-agent (M10d/T4) */
+"core.connect.agentSocketUnavailable" = "Aucun agent SSH accessible (SSH_AUTH_SOCK).";
+"core.connect.agentNoIdentities" = "L'agent SSH n'a aucune identité chargée.";
+"core.connect.agentNoUsableIdentities" = "L'agent SSH n'a aucune identité utilisable (types de clé non pris en charge).";
+
+/* ConnectionViewModel.failedState(for:) — jump host (M10c/T3) */
+"core.connect.invalidJumpPort %@" = "Port de l'hôte relais invalide : %@.";
+"core.connect.jumpAuthFailed" = "Échec de l'authentification sur l'hôte relais — vérifiez le nom d'utilisateur ou le mot de passe.";
+"core.connect.jumpTunnelRejected" = "L'hôte relais a refusé d'ouvrir le tunnel vers la cible (le transfert TCP est peut-être désactivé).";
+
+/* ConnectionViewModel.failedState(for:) — jump host/username whitelist (M11d final review, C-1) */
+"core.connect.jumpHostInvalid" = "L'hôte relais ne peut contenir que des lettres, des chiffres et . - _ : % (pas de - en début).";
+"core.connect.jumpUsernameInvalid" = "Le nom d'utilisateur de l'hôte relais ne peut contenir que des lettres, des chiffres et . - _ (pas de - en début).";
+
+/* ConnectionViewModel — jump source switcher, session mode (M11a/T3) */
+"core.connect.jumpSessionRequired" = "Choisissez une connexion pour l'hôte relais.";
+
+/* Host-key TOFU prompts — keep full severity in every language. */
+"core.hostkey.mismatch %@ %@ %@" = "ATTENTION : la clé d'hôte de %1$@ a changé ! Attendue %2$@, présentée %3$@. Attaque de l'homme du milieu possible — connexion abandonnée.";
+"core.hostkey.rejected" = "Connexion abandonnée — clé d'hôte non confirmée.";
+
+/* TerminalPanelViewModel */
+"core.terminal.shellEnded %@" = "Shell terminé : %@";
+"core.terminal.openFailed %@" = "Échec de l'ouverture du shell : %@";
+
+/* SessionListViewModel */
+"core.session.loadFailed %@" = "Échec du chargement des sessions : %@";
+"core.session.saveFailed %@" = "Échec de l'enregistrement de la session : %@";
+"core.session.deleteFailed %@" = "Échec de la suppression de la session : %@";
+
+/* Session groups (M5f/T2) */
+"core.session.groupSaveFailed %@" = "Impossible d'enregistrer le groupe : %@";
+
+/* Login sets (M10b/T2) */
+"core.login.saveFailed %@" = "Échec de l'enregistrement du login : %@";
+"core.login.deleteFailed %@" = "Échec de la suppression du login : %@";
+"core.login.mergeFailed %@" = "Échec de la fusion des logins : %@";

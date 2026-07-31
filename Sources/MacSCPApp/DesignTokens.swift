@@ -17,6 +17,17 @@ enum DesignTokens {
             : NSColor(srgbRed: 45 / 255, green: 113 / 255, blue: 184 / 255, alpha: 1) // #2D71B8
     })
 
+    /// Third badge tint (M10d/T4): the login-sets editor's AGENT badge needs
+    /// its own color, distinct from KEY's `remoteBlue` and PASS's
+    /// `localAmber` — a muted sea green, echoing `statusPhosphor`'s
+    /// "connected"/terminal association without reusing that fixed
+    /// (non-dynamic) color verbatim on a light background.
+    static let agentGreen = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(srgbRed: 123 / 255, green: 216 / 255, blue: 143 / 255, alpha: 1) // #7BD88F
+            : NSColor(srgbRed: 46 / 255, green: 139 / 255, blue: 87 / 255, alpha: 1) // #2E8B57
+    })
+
     /// Phosphor from docs/design/ci.md: connected status, terminal green.
     static let statusPhosphor = Color(nsColor: NSColor(
         srgbRed: 123 / 255, green: 216 / 255, blue: 143 / 255, alpha: 1)) // #7BD88F
@@ -63,6 +74,10 @@ enum DesignTokens {
     static let remoteSoftNS = dynamicNS(light: 0xE3EEF9, dark: 0x142C42)
     static let remoteSoft = Color(nsColor: remoteSoftNS)
     static let localSoft = Color(nsColor: dynamicNS(light: 0xFBF1DF, dark: 0x2C2415))
+    /// Soft background for the AGENT badge (M10d/T4) — same light/dark
+    /// pairing shape as `remoteSoft`/`localSoft` above, tinted for
+    /// `agentGreen`.
+    static let agentSoft = Color(nsColor: dynamicNS(light: 0xE1F3E5, dark: 0x16301F))
 
     // Surface hierarchy (mockup: card content surface on the window ground).
     // `paper` (the mockup's page ground) had no consumer after the polish

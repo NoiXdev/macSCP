@@ -12,6 +12,25 @@ services:
       - USER_PASSWORD=testpass
     volumes:
       - ./seed:/data/seed:ro
-      # Das Image aktiviert bei vorhandenem /config/sshd/sshd_config.d
-      # automatisch ein Include dafuer (siehe init-openssh-server-config).
+      # The image auto-enables an include for /config/sshd/sshd_config.d
+      # when present (see init-openssh-server-config).
+      - ./sshd_config.d:/config/sshd/sshd_config.d:ro
+
+  # Second, independent server (M8b/T3) for remote-to-remote streaming
+  # tests. Same image pin and config as `sshd`, own empty seed directory,
+  # own port and container name so it can run side by side with `sshd`
+  # without disturbing its host keys (TOFU pinning in the gated suite).
+  sshd2:
+    image: lscr.io/linuxserver/openssh-server:10.3_p1-r0-ls230
+    container_name: macscp-test-sshd-2
+    ports:
+      - "2223:2222"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - PASSWORD_ACCESS=true
+      - USER_NAME=testuser
+      - USER_PASSWORD=testpass
+    volumes:
+      - ./seed2:/data/seed:ro
       - ./sshd_config.d:/config/sshd/sshd_config.d:ro

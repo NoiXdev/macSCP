@@ -82,6 +82,22 @@ public final class TransferQueueViewModel {
         public internal(set) var fileName: String   // `.rename` updates the displayed name
         public let direction: TransferDirection
         public internal(set) var status: Status
+        /// Opaque reference to the tab this item writes INTO (M8b) — `nil` for
+        /// same-session transfers. Used only by `hasActiveItems`, so a later
+        /// task can warn before closing a tab that other tabs are still
+        /// streaming to; never shown in this item's own display.
+        public let destinationTabID: UUID?
+        /// True only for editor write-backs enqueued via `enqueueEditUpload`
+        /// (M9b) — the audit recorder maps a finished item with this flag to
+        /// the `.editUpload` kind instead of the plain `.transferFinished`
+        /// kind. `false` on every other path.
+        public let isEditUpload: Bool
+        /// The destination directory this item writes INTO (M9b/T4 review,
+        /// finding 3) — the audit log spec requires "Richtung, Name, Ziel"
+        /// (direction, name, destination); mirrors `Job.destinationDirectory`
+        /// exactly, threaded through every construction site the same way
+        /// `isEditUpload` is.
+        public let destinationDirectory: String
     }
 
     public private(set) var items: [Item] = []
@@ -102,6 +118,13 @@ public final class TransferQueueViewModel {
     /// "Resume interrupted" banner (M5d/T4) and gates `retryInterrupted`.
     public var hasInterrupted: Bool {
         items.contains { $0.status == .interrupted }
+    }
+
+    /// True while any non-terminal item targets the given tab (M8b) — the
+    /// app asks every OTHER tab's queue before closing a tab, so a close
+    /// can warn when it would sever incoming cross-session streams.
+    public func hasActiveItems(destinationTabID: UUID) -> Bool {
+        items.contains { $0.destinationTabID == destinationTabID && !$0.status.isTerminal }
     }
 
     /// UI decider for destination conflicts. `nil` (default) ⇒ silent overwrite
@@ -127,49 +150,109 @@ public final class TransferQueueViewModel {
         }
     }
 
-    /// Bandwidth ceilings in bytes/second, direction-dependent; `0` (default)
-    /// = unlimited. Backed by ONE shared `BandwidthBucket` per direction
-    /// (M6a): all concurrent transfers of a direction share the limit in
-    /// aggregate. CHANGING a non-zero limit re-rates the existing bucket, so
-    /// it applies live even to running transfers; ENABLING/DISABLING (0 ↔ n)
-    /// swaps the bucket reference and therefore only applies to transfers
-    /// starting afterwards (running ones keep the reference they resolved).
-    public var uploadLimitBytesPerSec: Int = 0 {
-        didSet {
-            uploadRateGeneration += 1
-            uploadBucket = Self.updatedBucket(
-                uploadBucket, bytesPerSecond: uploadLimitBytesPerSec,
-                generation: uploadRateGeneration)
-        }
-    }
-    public var downloadLimitBytesPerSec: Int = 0 {
-        didSet {
-            downloadRateGeneration += 1
-            downloadBucket = Self.updatedBucket(
-                downloadBucket, bytesPerSecond: downloadLimitBytesPerSec,
-                generation: downloadRateGeneration)
-        }
-    }
-    private var uploadRateGeneration = 0
-    private var downloadRateGeneration = 0
+    /// App-global limiter injected by the app layer (M8a). nil = unthrottled
+    /// (tests, CLI). All queues of a window share one instance, so limits
+    /// apply in aggregate across tabs.
+    public var limiter: BandwidthLimiter?
 
-    /// The per-direction shared buckets handed to `TransferEngine.copyFile`.
-    /// Internal for test visibility.
-    private(set) var uploadBucket: BandwidthBucket?
-    private(set) var downloadBucket: BandwidthBucket?
+    /// Direction of the most recently STARTED job — drives the tab activity
+    /// indicator's color (M8a; spec 2: on simultaneous both-direction
+    /// activity the last started one wins).
+    public private(set) var lastStartedDirection: TransferDirection?
 
-    private static func updatedBucket(
-        _ bucket: BandwidthBucket?, bytesPerSecond: Int, generation: Int
-    ) -> BandwidthBucket? {
-        guard bytesPerSecond > 0 else { return nil }
-        guard let bucket else { return BandwidthBucket(bytesPerSecond: bytesPerSecond) }
-        // Keep the instance (running transfers hold it) and re-rate it. The
-        // hop is fire-and-forget by design: pacing catches up on the next
-        // consume, there is nothing to await for correctness — the
-        // generation makes the unordered hops last-write-wins.
-        Task { await bucket.setRate(bytesPerSecond: bytesPerSecond, generation: generation) }
-        return bucket
+    /// Direction to display in the tab activity indicator (M8a T5 review,
+    /// finding 4). `lastStartedDirection` alone is nil on a fresh queue and
+    /// STALE between a finished transfer and the next one starting — a
+    /// freshly queued item would then briefly show the previous (or no)
+    /// direction/color instead of its own. This falls back to the first
+    /// still-queued item's direction whenever nothing is currently running;
+    /// as soon as a transfer actually starts, `lastStartedDirection` (which
+    /// spec 2 says should win on simultaneous both-direction activity) takes
+    /// over again.
+    public var displayDirection: TransferDirection? {
+        if items.contains(where: { $0.status.isRunning }) {
+            return lastStartedDirection
+        }
+        return items.first(where: { $0.status == .queued })?.direction
     }
+
+    /// A compact roll-up of this queue's activity for the menu-bar panel
+    /// (M11n). `nil` when the queue is idle. The fold lives in a pure static
+    /// helper so it is unit-testable without driving the queue.
+    public var activitySummary: TransferActivitySummary? {
+        Self.activitySummary(for: items, direction: displayDirection)
+    }
+
+    /// Pure fold of a queue's items into a `TransferActivitySummary`. `nil`
+    /// when nothing is queued or running. `fraction` is byte-weighted over
+    /// running items with a known total; `bytesPerSecond` sums the running
+    /// items that report a rate. Internal so tests (`@testable`) can call it
+    /// with hand-built items.
+    static func activitySummary(
+        for items: [Item], direction: TransferDirection?
+    ) -> TransferActivitySummary? {
+        var runningCount = 0
+        var pendingCount = 0
+        var sumTransferred: UInt64 = 0
+        var sumTotal: UInt64 = 0
+        var anyKnownTotal = false
+        var sumRate = 0.0
+        var anyRate = false
+
+        for item in items {
+            switch item.status {
+            case .queued:
+                pendingCount += 1
+            case let .running(progress):
+                runningCount += 1
+                if let total = progress.totalBytes, total > 0 {
+                    sumTransferred += progress.bytesTransferred
+                    sumTotal += total
+                    anyKnownTotal = true
+                }
+                if let rate = progress.bytesPerSecond {
+                    sumRate += rate
+                    anyRate = true
+                }
+            case .finished, .failed, .cancelled, .skipped, .interrupted:
+                continue
+            }
+        }
+
+        guard runningCount > 0 || pendingCount > 0 else { return nil }
+
+        let fraction = anyKnownTotal ? Double(sumTransferred) / Double(sumTotal) : nil
+        let bytesPerSecond = anyRate ? sumRate : nil
+        return TransferActivitySummary(
+            runningCount: runningCount,
+            pendingCount: pendingCount,
+            fraction: fraction,
+            bytesPerSecond: bytesPerSecond,
+            direction: direction
+        )
+    }
+
+    /// Monotonically increasing count of items that have transitioned into
+    /// `.failed`, EVER — replaces the old item-based `failedCount` (M8a T5
+    /// review, finding 2). `failedCount` could only ever compare against the
+    /// CURRENT number of `.failed` items, which `clearCompleted()` removes:
+    /// visit a tab (seen = failedCount), clean up completed items
+    /// (failedCount drops back to 0), then a single new failure would still
+    /// fail to exceed the stale watermark and the attention indicator would
+    /// never re-light. This counter only ever grows, so the tab's
+    /// `seenFailureCount` watermark (`SessionTab.seenFailureCount`) always
+    /// detects a genuinely new failure. Incremented exactly once per
+    /// non-terminal → `.failed` transition in `setStatus` — never on a
+    /// repeated `setStatus` call for an already-terminal item.
+    public private(set) var totalFailureCount = 0
+
+    /// Optional audit-log sink (M9b/T2), default nil (no logging — matches
+    /// ad-hoc/unstored sessions). Called EXACTLY once per item, at the same
+    /// `wasTerminal` choke point in `setStatus` where `totalFailureCount`
+    /// increments — never on a progress update (`.running` → `.running`)
+    /// and never again once an item is already terminal. The App layer wires
+    /// this to an `AuditRecorder.recordTransfer` closure for stored sessions.
+    public var auditSink: ((Item) -> Void)?
 
     // MARK: - Private state
 
@@ -197,13 +280,30 @@ public final class TransferQueueViewModel {
         /// no prompt is shown. Unlike `resume`, the engine still overwrites (no
         /// offset continuation). Default `false` on every other path.
         let bypassConflictCheck: Bool
+        /// Opaque reference to the tab this job writes INTO (M8b) — carried
+        /// through to the `Item` so `hasActiveItems` can find it; the job
+        /// itself never dereferences it.
+        let destinationTabID: UUID?
+        /// True for a remote→remote transfer routed through this app (M8b): the
+        /// stream is simultaneously a download from the source and an upload
+        /// to the destination on this machine's link, so BOTH app-global
+        /// buckets must pace it. Direction stays `.upload` regardless (the
+        /// target-write side is what the tab indicator reflects).
+        let crossRemote: Bool
+        /// True only for editor write-back jobs (M9b) — carried through to
+        /// the `Item` exactly like `destinationTabID`/`crossRemote` above, so
+        /// every reconstruction site (retry, interrupt-retain) threads it
+        /// instead of silently resetting to the default.
+        let isEditUpload: Bool
 
         init(
             id: UUID, source: any RemoteFileSystem, sourcePath: String,
             destination: any RemoteFileSystem, destinationDirectory: String,
             fileName: String, direction: TransferDirection,
             onCompleted: (@MainActor () async -> Void)?, resume: Bool = false,
-            bypassConflictCheck: Bool = false
+            bypassConflictCheck: Bool = false,
+            destinationTabID: UUID? = nil, crossRemote: Bool = false,
+            isEditUpload: Bool = false
         ) {
             self.id = id
             self.source = source
@@ -215,6 +315,9 @@ public final class TransferQueueViewModel {
             self.onCompleted = onCompleted
             self.resume = resume
             self.bypassConflictCheck = bypassConflictCheck
+            self.destinationTabID = destinationTabID
+            self.crossRemote = crossRemote
+            self.isEditUpload = isEditUpload
         }
     }
 
@@ -294,20 +397,35 @@ public final class TransferQueueViewModel {
 
     /// Enqueues and starts the worker if it's sleeping. ALWAYS enqueues —
     /// no more `isRunning`-based dropping.
+    ///
+    /// - Parameters:
+    ///   - destinationTabID: Opaque reference to the tab this transfer writes
+    ///     INTO (M8b) — `nil` (default) for a same-session transfer. Only
+    ///     consumed by `hasActiveItems`.
+    ///   - crossRemote: `true` for a remote→remote transfer routed through
+    ///     this app (M8b) — the stream pays BOTH app-global bandwidth buckets
+    ///     (real download from the source, real upload to the destination on
+    ///     this machine's link). `false` (default) keeps the pre-M8b
+    ///     single-bucket resolution.
     @discardableResult
     public func enqueue(
         fileName: String, direction: TransferDirection,
         source: any RemoteFileSystem, sourcePath: String,
         destination: any RemoteFileSystem, destinationDirectory: String,
-        onCompleted: (@MainActor () async -> Void)?
+        onCompleted: (@MainActor () async -> Void)?,
+        destinationTabID: UUID? = nil, crossRemote: Bool = false
     ) -> UUID {
         let id = UUID()
         jobs[id] = Job(
             id: id, source: source, sourcePath: sourcePath,
             destination: destination, destinationDirectory: destinationDirectory,
-            fileName: fileName, direction: direction, onCompleted: onCompleted)
+            fileName: fileName, direction: direction, onCompleted: onCompleted,
+            destinationTabID: destinationTabID, crossRemote: crossRemote)
         order.append(id)
-        items.append(Item(id: id, fileName: fileName, direction: direction, status: .queued))
+        items.append(Item(
+            id: id, fileName: fileName, direction: direction, status: .queued,
+            destinationTabID: destinationTabID, isEditUpload: false,
+            destinationDirectory: destinationDirectory))
         kickWorker()
         return id
     }
@@ -329,9 +447,12 @@ public final class TransferQueueViewModel {
             id: id, source: source, sourcePath: localURL.path(percentEncoded: false),
             destination: destination, destinationDirectory: remoteDirectory,
             fileName: fileName, direction: .upload, onCompleted: nil,
-            resume: false, bypassConflictCheck: true)
+            resume: false, bypassConflictCheck: true, isEditUpload: true)
         order.append(id)
-        items.append(Item(id: id, fileName: fileName, direction: .upload, status: .queued))
+        items.append(Item(
+            id: id, fileName: fileName, direction: .upload, status: .queued,
+            destinationTabID: nil, isEditUpload: true,
+            destinationDirectory: remoteDirectory))
         kickWorker()
         return id
     }
@@ -395,11 +516,18 @@ public final class TransferQueueViewModel {
     /// rather than ending regularly), onCompleted does NOT fire — a refresh after
     /// a full cancellation would be pointless. But as soon as at least one item
     /// finished OR the expansion completed regularly, it fires.
+    /// - Parameters:
+    ///   - destinationTabID: Opaque reference to the tab this tree writes INTO
+    ///     (M8b) — forwarded to EVERY expanded file item, so `hasActiveItems`
+    ///     sees the whole tree, not just individual files.
+    ///   - crossRemote: See `enqueue(...)` — forwarded to every expanded file
+    ///     item so each pays both app-global buckets.
     public func enqueueTree(
         directoryName: String, direction: TransferDirection,
         source: any RemoteFileSystem, sourceDirectory: String,
         destination: any RemoteFileSystem, destinationDirectory: String,
-        onCompleted: (@MainActor () async -> Void)?
+        onCompleted: (@MainActor () async -> Void)?,
+        destinationTabID: UUID? = nil, crossRemote: Bool = false
     ) {
         let groupID = UUID()
         groups[groupID] = TreeGroup(onCompleted: onCompleted)
@@ -410,7 +538,7 @@ public final class TransferQueueViewModel {
                     directoryName: directoryName, direction: direction,
                     source: source, sourceDirectory: sourceDirectory,
                     destination: destination, destinationDirectory: destinationDirectory,
-                    group: groupID)
+                    group: groupID, destinationTabID: destinationTabID, crossRemote: crossRemote)
                 self.finishExpansion(groupID, succeeded: true)
             } catch {
                 // Only cancellation propagates up to here — branch-local errors
@@ -454,7 +582,9 @@ public final class TransferQueueViewModel {
                 id: id, source: transferSource, sourcePath: retained.sourcePath,
                 destination: transferDestination, destinationDirectory: retained.destinationDirectory,
                 fileName: retained.fileName, direction: retained.direction,
-                onCompleted: nil, resume: true)
+                onCompleted: nil, resume: true,
+                destinationTabID: retained.destinationTabID, crossRemote: retained.crossRemote,
+                isEditUpload: retained.isEditUpload)
             order.append(id)
             setStatus(id, .queued)   // terminal → non-terminal: no group accounting
         }
@@ -657,6 +787,7 @@ public final class TransferQueueViewModel {
         }
 
         setStatus(jobID, .running(TransferProgress(bytesTransferred: 0, totalBytes: nil)))
+        lastStartedDirection = job.direction
 
         // Ordered delivery: AsyncStream buffers in order, ONE consumer updates
         // the status — no task-per-chunk, no race with .finished.
@@ -694,7 +825,18 @@ public final class TransferQueueViewModel {
         // Direction-dependent shared bucket (M6a): resolved HERE, at the
         // moment the transfer actually starts — a Settings change rebuilds
         // the bucket and therefore only applies to items starting next.
-        let throttle = job.direction == .upload ? uploadBucket : downloadBucket
+        let throttle: BandwidthBucket?
+        let secondaryThrottle: BandwidthBucket?
+        if job.crossRemote {
+            // Cross-remote (M8b): the stream is upload to the target AND
+            // download from the source — both app-global buckets pay.
+            throttle = limiter?.uploadBucket
+            secondaryThrottle = limiter?.downloadBucket
+        } else {
+            throttle = job.direction == .upload
+                ? limiter?.uploadBucket : limiter?.downloadBucket
+            secondaryThrottle = nil
+        }
         // Resume flag (M5d/T3): only a retry job sets it — the engine then
         // continues from the destination offset instead of overwriting.
         let resume = job.resume
@@ -704,6 +846,7 @@ public final class TransferQueueViewModel {
                 to: destination, destinationDirectory: destinationDirectory, fileName: fileName,
                 resume: resume,
                 throttle: throttle,
+                secondaryThrottle: secondaryThrottle,
                 onProgress: { progressContinuation.yield($0) }
             )
         }
@@ -737,6 +880,21 @@ public final class TransferQueueViewModel {
                 jobs[jobID] = nil
                 runningTransferTasks[jobID] = nil
                 resumeWaiter(jobID, with: .failure(error))
+            } else if job.destinationTabID != nil {
+                // Cross-session transfer (M8b review, finding 1): NOT
+                // resumable. `retryInterrupted` always rebuilds an
+                // `.interrupted` job against the CURRENT tab's own
+                // source/destination file systems — for a job whose
+                // destination is really ANOTHER tab's remote (frozen path,
+                // possibly a now-gone session), that would silently retarget
+                // the resumed stream at this tab's own remote, at the other
+                // tab's path (and `resume: true` could even `.append` onto an
+                // unrelated same-named file there). Surface it as a plain
+                // failure instead, exactly like the edit-upload case above.
+                setStatus(jobID, .failed(CoreL10n.string("core.transfer.interrupted")))
+                jobs[jobID] = nil
+                runningTransferTasks[jobID] = nil
+                resumeWaiter(jobID, with: .failure(error))
             } else {
                 // Connection lost mid-transfer (M5d/T3): mark `.interrupted`
                 // (NOT `.failed`) and RETAIN the job — under its EFFECTIVE
@@ -749,7 +907,14 @@ public final class TransferQueueViewModel {
                     id: jobID, source: source, sourcePath: sourcePath,
                     destination: destination, destinationDirectory: destinationDirectory,
                     fileName: effectiveFileName, direction: job.direction,
-                    onCompleted: nil, resume: false)
+                    onCompleted: nil, resume: false,
+                    destinationTabID: job.destinationTabID, crossRemote: job.crossRemote,
+                    // Defensive symmetry: edit uploads classify connection
+                    // loss as .failed above (bypassConflictCheck), so a
+                    // retained job can never carry isEditUpload == true
+                    // today — forwarded anyway so a future reclassification
+                    // cannot silently drop the flag (M9b/T2 review).
+                    isEditUpload: job.isEditUpload)
                 runningTransferTasks[jobID] = nil
                 resumeWaiter(jobID, with: .failure(error))
             }
@@ -871,7 +1036,7 @@ public final class TransferQueueViewModel {
         directoryName: String, direction: TransferDirection,
         source: any RemoteFileSystem, sourceDirectory: String,
         destination: any RemoteFileSystem, destinationDirectory: String,
-        group groupID: UUID
+        group groupID: UUID, destinationTabID: UUID? = nil, crossRemote: Bool = false
     ) async throws {
         try Task.checkCancellation()
         let destDir = RemotePath.join(destinationDirectory, directoryName)
@@ -881,9 +1046,13 @@ public final class TransferQueueViewModel {
             try await destination.createDirectory(at: destDir)
         } catch {
             try Task.checkCancellation()   // if it was cancellation, propagate it
+            // The directory item itself lives IN the parent (`destinationDirectory`,
+            // this call's own parameter) — `destDir` is the (failed-to-create)
+            // directory, not its destination.
             addTerminalItem(
                 group: groupID, name: directoryName + "/",
-                direction: direction, status: .failed(Self.message(for: error)))
+                direction: direction, status: .failed(Self.message(for: error)),
+                destinationTabID: destinationTabID, destinationDirectory: destinationDirectory)
             return
         }
 
@@ -895,7 +1064,8 @@ public final class TransferQueueViewModel {
             try Task.checkCancellation()
             addTerminalItem(
                 group: groupID, name: directoryName + "/",
-                direction: direction, status: .failed(Self.message(for: error)))
+                direction: direction, status: .failed(Self.message(for: error)),
+                destinationTabID: destinationTabID, destinationDirectory: destinationDirectory)
             return
         }
 
@@ -908,19 +1078,22 @@ public final class TransferQueueViewModel {
                     fileName: entry.name, direction: direction,
                     source: source, sourcePath: entry.path,
                     destination: destination, destinationDirectory: destDir,
-                    onCompleted: nil)
+                    onCompleted: nil, destinationTabID: destinationTabID, crossRemote: crossRemote)
                 registerGroupItem(id, group: groupID)
             case .directory:
                 try await expandTree(
                     directoryName: entry.name, direction: direction,
                     source: source, sourceDirectory: entry.path,
                     destination: destination, destinationDirectory: destDir,
-                    group: groupID)
+                    group: groupID, destinationTabID: destinationTabID, crossRemote: crossRemote)
             case .symlink, .other:
                 // Don't follow: terminal `.skipped` item with a " →" suffix.
+                // Lives IN this level's directory, exactly like the file
+                // items enqueued above.
                 addTerminalItem(
                     group: groupID, name: entry.name + " →",
-                    direction: direction, status: .skipped)
+                    direction: direction, status: .skipped, destinationTabID: destinationTabID,
+                    destinationDirectory: destDir)
             }
         }
     }
@@ -940,10 +1113,14 @@ public final class TransferQueueViewModel {
     /// error) and routes it through the same choke point as every other item.
     private func addTerminalItem(
         group groupID: UUID, name: String,
-        direction: TransferDirection, status: Item.Status
+        direction: TransferDirection, status: Item.Status, destinationTabID: UUID? = nil,
+        destinationDirectory: String
     ) {
         let id = UUID()
-        items.append(Item(id: id, fileName: name, direction: direction, status: .queued))
+        items.append(Item(
+            id: id, fileName: name, direction: direction, status: .queued,
+            destinationTabID: destinationTabID, isEditUpload: false,
+            destinationDirectory: destinationDirectory))
         registerGroupItem(id, group: groupID)
         setStatus(id, status)   // triggers groupItemBecameTerminal
     }
@@ -995,7 +1172,14 @@ public final class TransferQueueViewModel {
         // the non-terminal → terminal transition (M5b/T3). Scattered
         // decrements would miss cases.
         if status.isTerminal && !wasTerminal {
+            // `totalFailureCount` (M8a T5 review, finding 2) increments here,
+            // at the same non-terminal → terminal choke point, so a job that
+            // is already terminal (`wasTerminal == true`) can never
+            // double-count even if `setStatus` were ever called again with
+            // the same `.failed` status.
+            if case .failed = status { totalFailureCount += 1 }
             groupItemBecameTerminal(id, status: status)
+            auditSink?(items[index])
         }
     }
 

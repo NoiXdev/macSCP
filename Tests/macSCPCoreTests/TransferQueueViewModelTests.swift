@@ -223,6 +223,20 @@ struct TransferQueueViewModelTests {
             createdDirectories.append(path)
         }
 
+        func rename(from: String, to: String) async throws {
+            throw RemoteFSError.protocolError(reason: "unsupported in this test double")
+        }
+
+        func setPermissions(path: String, permissions: UInt32) async throws {
+            throw RemoteFSError.protocolError(reason: "unsupported in this test double")
+        }
+
+        func deleteTree(at path: String) async throws {
+            throw RemoteFSError.protocolError(reason: "unsupported in this test double")
+        }
+
+        func homeDirectoryPath() async throws -> String { "/" }
+
         func disconnect() async {}
 
         private static func chunked(_ data: Data) -> [Data] {
@@ -244,6 +258,14 @@ struct TransferQueueViewModelTests {
     @MainActor final class Counter {
         private(set) var value = 0
         func increment() { value += 1 }
+    }
+
+    /// Captures every `Item` snapshot handed to `auditSink` (M9b/T2), in call
+    /// order — lets a test assert exactly how many times it fired and what
+    /// each captured item looked like.
+    @MainActor final class ItemCapture {
+        private(set) var items: [TransferQueueViewModel.Item] = []
+        func record(_ item: TransferQueueViewModel.Item) { items.append(item) }
     }
 
     /// Tracks the number of concurrently-active writes and the peak reached.
@@ -1347,9 +1369,25 @@ struct TransferQueueViewModelTests {
         try await started.wait()
         await waitUntil { vm.items[0].status.isRunning }
 
-        // Timeout race: with cooperative cancellation, cancelAll returns
-        // promptly; without it, the transfer would hang/run until its natural end.
-        let returnedInTime = await completesWithin(.seconds(2)) { await vm.cancelAll() }
+        // Hang guard, not a performance race: the source double's
+        // `spinUntilCancelledAt` loop only ever exits via `Task.isCancelled`
+        // (see its doc comment), so a REGRESSED `cancelAll` that forgets to
+        // cancel the running transfer task would hang this test forever
+        // instead of failing loudly — `completesWithin` turns that into a
+        // fast, readable failure. The bound is intentionally generous: a
+        // correct `cancelAll` returns in low tens of milliseconds even under
+        // load, but CI's full-suite run schedules ~50 Swift Testing suites
+        // concurrently against a small (3-core) cooperative thread-pool, and
+        // `cancelAll` here unwinds through several MainActor hops (task
+        // cancel → engine `checkCancellation` → consumer drain → status
+        // update) that all compete for turns on that pool. Reproduced locally
+        // under heavy artificial contention (many busy-loop processes
+        // alongside the full 652-test suite): these hops measured up to ~3.7s
+        // wall-clock, still far short of the actual (unbounded) hang this
+        // guards against. 30s keeps an order-of-magnitude margin above that
+        // measured contention while still failing well within a CI run
+        // instead of requiring the job-level timeout to trip.
+        let returnedInTime = await completesWithin(.seconds(30)) { await vm.cancelAll() }
         #expect(returnedInTime)
         #expect(vm.items[0].status == .cancelled)   // NOT .finished
         #expect(vm.isActive == false)
@@ -1499,7 +1537,15 @@ struct TransferQueueViewModelTests {
             && vm.items[2].status == .queued
         }
 
-        let returnedInTime = await completesWithin(.seconds(2)) { await vm.cancelAll() }
+        // Hang guard, not a performance race — see the identical reasoning on
+        // `cancelAllStopsRunningTransferCooperatively` above: `gate0`/`gate1`
+        // are never fired, so a REGRESSED `cancelAll` that fails to cancel
+        // these waiters would hang this test forever. 30s (instead of the
+        // original 2s) gives an order-of-magnitude margin over the low
+        // seconds of MainActor-hop delay measured under heavy full-suite
+        // contention locally, while still failing fast for a genuine
+        // (unbounded) deadlock.
+        let returnedInTime = await completesWithin(.seconds(30)) { await vm.cancelAll() }
         #expect(returnedInTime)
         #expect(vm.items[0].status == .cancelled)
         #expect(vm.items[1].status == .cancelled)
@@ -1596,6 +1642,16 @@ struct TransferQueueViewModelTests {
         func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {}
         func delete(path: String) async throws { throw RemoteFSError.notFound(path: path) }
         func createDirectory(at path: String) async throws {}
+        func rename(from: String, to: String) async throws {
+            throw RemoteFSError.protocolError(reason: "unsupported in this test double")
+        }
+        func setPermissions(path: String, permissions: UInt32) async throws {
+            throw RemoteFSError.protocolError(reason: "unsupported in this test double")
+        }
+        func deleteTree(at path: String) async throws {
+            throw RemoteFSError.protocolError(reason: "unsupported in this test double")
+        }
+        func homeDirectoryPath() async throws -> String { "/" }
         func disconnect() async {}
     }
 
@@ -1914,24 +1970,25 @@ struct TransferQueueViewModelTests {
         #expect(await remote2.writtenData(at: "/ziel/a.txt") == nil)
     }
 
-    // MARK: - Shared bandwidth buckets (M6a/T2)
+    // MARK: - Shared bandwidth buckets (M6a/T2, migrated to BandwidthLimiter M8a/T2)
 
     @Test("direction limits build one shared bucket per direction")
     @MainActor
     func directionLimitsBuildBuckets() {
         let queue = TransferQueueViewModel()
-        #expect(queue.uploadBucket == nil && queue.downloadBucket == nil)
-        queue.uploadLimitBytesPerSec = 1024
-        #expect(queue.uploadBucket != nil && queue.downloadBucket == nil)
-        queue.downloadLimitBytesPerSec = 2048
-        #expect(queue.downloadBucket != nil)
+        queue.limiter = BandwidthLimiter()
+        #expect(queue.limiter?.uploadBucket == nil && queue.limiter?.downloadBucket == nil)
+        queue.limiter?.uploadLimitBytesPerSec = 1024
+        #expect(queue.limiter?.uploadBucket != nil && queue.limiter?.downloadBucket == nil)
+        queue.limiter?.downloadLimitBytesPerSec = 2048
+        #expect(queue.limiter?.downloadBucket != nil)
         // Changing a non-zero limit keeps the SAME bucket instance (running
         // transfers hold it — the change must reach them live).
-        let bucketBefore = queue.uploadBucket
-        queue.uploadLimitBytesPerSec = 4096
-        #expect(queue.uploadBucket === bucketBefore)
-        queue.uploadLimitBytesPerSec = 0
-        #expect(queue.uploadBucket == nil)
+        let bucketBefore = queue.limiter?.uploadBucket
+        queue.limiter?.uploadLimitBytesPerSec = 4096
+        #expect(queue.limiter?.uploadBucket === bucketBefore)
+        queue.limiter?.uploadLimitBytesPerSec = 0
+        #expect(queue.limiter?.uploadBucket == nil)
     }
 
     // MARK: - Group-cancel + conflict-gate hygiene (M6a/T3)
@@ -2621,6 +2678,450 @@ struct TransferQueueViewModelTests {
         await waitUntil { vm.items.count >= 2 && vm.items.allSatisfy { $0.status.isTerminal } }
         #expect(await flags.value("solo.txt") == false)
         #expect(await flags.value("tree.txt") == true)
+    }
+
+    // MARK: - 44 (M8a T5 review, finding 2)
+
+    /// `totalFailureCount` increments on a failure and, unlike the old
+    /// item-based `failedCount`, does NOT decrease when `clearCompleted()`
+    /// sweeps the now-`.failed` item out of `items` — it is a monotonic
+    /// counter, not a live tally.
+    @Test func totalFailureCountIncrementsAndSurvivesClearCompleted() async throws {
+        // "/missing.txt" is not registered on either side → stat throws
+        // notFound → the item becomes `.failed` (same pattern as test 4,
+        // `failedItemDoesNotBlockQueue`).
+        let source = QueueTestFS(reads: [:])
+        let destination = QueueTestFS(reads: [:])
+        let vm = TransferQueueViewModel()
+
+        #expect(vm.totalFailureCount == 0)
+
+        _ = try? await vm.enqueueAndWait(
+            fileName: "missing.txt", direction: .download,
+            source: source, sourcePath: "/missing.txt",
+            destination: destination, destinationDirectory: "/ziel")
+
+        if case .failed = vm.items[0].status {} else {
+            Issue.record("setup: item should be .failed, was \(vm.items[0].status)")
+        }
+        #expect(vm.totalFailureCount == 1)
+
+        vm.clearCompleted()
+
+        #expect(vm.items.isEmpty)              // the failed item WAS swept…
+        #expect(vm.totalFailureCount == 1)     // …but the monotonic count survives
+    }
+
+    // MARK: - 45 (M8a T5 review, finding 2)
+
+    /// A SECOND failure, occurring after `clearCompleted()` already swept the
+    /// first one out of `items`, still increments the counter — proving the
+    /// tab attention watermark (`totalFailureCount > seenFailureCount`) can
+    /// never get stuck: visit (seen = 1) → clean up (items empty, count
+    /// still 1) → new failure (count = 2) → `2 > 1` fires again.
+    @Test func totalFailureCountIncrementsAgainAfterClearCompleted() async throws {
+        let source = QueueTestFS(reads: [:])
+        let destination = QueueTestFS(reads: [:])
+        let vm = TransferQueueViewModel()
+
+        _ = try? await vm.enqueueAndWait(
+            fileName: "missing1.txt", direction: .download,
+            source: source, sourcePath: "/missing1.txt",
+            destination: destination, destinationDirectory: "/ziel")
+        #expect(vm.totalFailureCount == 1)
+
+        vm.clearCompleted()
+        #expect(vm.items.isEmpty)
+
+        _ = try? await vm.enqueueAndWait(
+            fileName: "missing2.txt", direction: .download,
+            source: source, sourcePath: "/missing2.txt",
+            destination: destination, destinationDirectory: "/ziel")
+
+        #expect(vm.totalFailureCount == 2)
+    }
+
+    // MARK: - 46 (M8a T5 review, finding 4 coverage)
+
+    /// `lastStartedDirection` reflects the direction of the most recently
+    /// STARTED job, not the most recently enqueued one — it flips to
+    /// `.download` as soon as item 2 starts, even though item 1 (still
+    /// running behind it in a single-slot queue) was an `.upload`.
+    @Test func lastStartedDirectionReflectsMostRecentlyStartedJob() async throws {
+        let content = Data("x".utf8)
+        let started1 = TestSignal(); let gate1 = TestSignal()
+        let started2 = TestSignal(); let gate2 = TestSignal()
+        let source = QueueTestFS(reads: [
+            "/1.txt": .init(content: content, started: started1, gate: gate1),
+            "/2.txt": .init(content: content, started: started2, gate: gate2),
+        ])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1   // determinism: item 2 must not start before item 1 finishes
+
+        #expect(vm.lastStartedDirection == nil)
+
+        vm.enqueue(
+            fileName: "1.txt", direction: .upload,
+            source: source, sourcePath: "/1.txt",
+            destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
+        try await started1.wait()
+        #expect(vm.lastStartedDirection == .upload)
+
+        vm.enqueue(
+            fileName: "2.txt", direction: .download,
+            source: source, sourcePath: "/2.txt",
+            destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
+        await gate1.fire()
+        try await started2.wait()
+        #expect(vm.lastStartedDirection == .download)
+
+        await gate2.fire()
+        await waitUntil { vm.isActive == false }
+    }
+
+    // MARK: - Cross-remote double-bucket + destination-tab tracking (M8b/T1)
+
+    /// `crossRemote: true` resolves the throttle wiring to BOTH app-global
+    /// buckets (proven at the engine level in `TransferEngineTests`); here we
+    /// only need the job to complete normally through the queue and land with
+    /// `.upload` direction — the tab indicator's amber color depends on that.
+    @Test func crossRemoteJobResolvesBothBuckets() async throws {
+        let content = Data("cross-remote".utf8)
+        let source = QueueTestFS(reads: ["/quelle.bin": .init(content: content)])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.limiter = BandwidthLimiter()
+        vm.limiter?.uploadLimitBytesPerSec = 1_000_000
+        vm.limiter?.downloadLimitBytesPerSec = 1_000_000
+
+        let done = TestSignal()
+        vm.enqueue(
+            fileName: "quelle.bin", direction: .upload,
+            source: source, sourcePath: "/quelle.bin",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { await done.fire() }, destinationTabID: nil, crossRemote: true)
+        try await done.wait()
+
+        #expect(vm.items.first?.direction == .upload)
+        #expect(vm.items.first?.status == .finished)
+    }
+
+    /// `hasActiveItems(destinationTabID:)` is true exactly while a
+    /// non-terminal item carries the given tab id — false for an unrelated
+    /// id, and false again once the job completes.
+    @Test func hasActiveItemsTracksDestinationTab() async throws {
+        let tabID = UUID()
+        let content = Data("x".utf8)
+        let started = TestSignal(); let gate = TestSignal()
+        let source = QueueTestFS(reads: ["/quelle.bin": .init(content: content, started: started, gate: gate)])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.enqueue(
+            fileName: "quelle.bin", direction: .upload,
+            source: source, sourcePath: "/quelle.bin",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: nil, destinationTabID: tabID)
+
+        try await started.wait()
+        #expect(vm.hasActiveItems(destinationTabID: tabID) == true)
+        #expect(vm.hasActiveItems(destinationTabID: UUID()) == false)
+
+        await gate.fire()
+        await waitUntil { vm.isActive == false }
+        #expect(vm.hasActiveItems(destinationTabID: tabID) == false)
+    }
+
+    /// `enqueueTree` forwards `destinationTabID` to every expanded file item —
+    /// `hasActiveItems` sees the tab as active while any of them is still
+    /// running, and stops seeing it once the whole tree finishes.
+    @Test func enqueueTreeForwardsDestinationTabID() async throws {
+        let tabID = UUID()
+        let startedA = TestSignal(); let gateA = TestSignal()
+        let startedB = TestSignal(); let gateB = TestSignal()
+        let source = QueueTestFS(
+            reads: [
+                "/dir/a.txt": .init(content: Data("aaa".utf8), started: startedA, gate: gateA),
+                "/dir/sub/b.txt": .init(content: Data("bbb".utf8), started: startedB, gate: gateB),
+            ],
+            listings: treeListings())
+        let destination = QueueTestFS(reads: [:])
+        let done = TestSignal()
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 2
+        vm.enqueueTree(
+            directoryName: "dir", direction: .download,
+            source: source, sourceDirectory: "/dir",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { await done.fire() }, destinationTabID: tabID)
+
+        try await startedA.wait()
+        try await startedB.wait()
+        #expect(vm.hasActiveItems(destinationTabID: tabID) == true)
+
+        await gateA.fire(); await gateB.fire()
+        try await done.wait()
+        #expect(vm.hasActiveItems(destinationTabID: tabID) == false)
+    }
+
+    // MARK: - 44 (M8b review, finding 1)
+
+    /// A cross-session job (`destinationTabID != nil`) is NOT resumable
+    /// (M8b review, finding 1): `retryInterrupted` rebuilds an `.interrupted`
+    /// job against the CURRENT tab's own source/destination file systems —
+    /// for a job whose real destination is ANOTHER tab's remote, that would
+    /// silently retarget the resumed stream at this tab's own remote, at the
+    /// other tab's frozen path (`resume: true` could even `.append` onto an
+    /// unrelated same-named file there). A connection loss mid-transfer must
+    /// therefore mark it `.failed`, never `.interrupted` — mirrors the
+    /// existing edit-upload counter-probe
+    /// (`editUploadConnectionFailureIsFailedNotInterrupted`). Proven red
+    /// first: before the fix this asserted `.interrupted`/`hasInterrupted ==
+    /// true`.
+    @Test func crossSessionConnectionLossFailsNotInterrupted() async throws {
+        let tabID = UUID()
+        let content = Data(repeating: 0x99, count: TransferChunk.size)
+        let started = TestSignal(); let gate = TestSignal()
+        let source = QueueTestFS(reads: [
+            "/a.bin": .init(content: content, started: started, gate: gate,
+                            failWith: RemoteFSError.connectionFailed(reason: "socket closed")),
+        ])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.enqueue(
+            fileName: "a.bin", direction: .upload,
+            source: source, sourcePath: "/a.bin",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: nil, destinationTabID: tabID, crossRemote: true)
+
+        try await started.wait()
+        await gate.fire()
+        await waitUntil {
+            if case .failed = vm.items[0].status { return true }; return false
+        }
+        guard case .failed(let message) = vm.items[0].status else {
+            Issue.record("cross-session job should be .failed, was \(String(describing: vm.items[0].status))")
+            return
+        }
+        #expect(message == CoreL10n.string("core.transfer.interrupted"))
+        #expect(vm.items[0].status != .interrupted)
+        #expect(vm.hasInterrupted == false)
+    }
+
+    // MARK: - 45 (M8b review, finding 2)
+
+    /// The interrupt-retain path (`process`'s `connectionFailed` branch) must
+    /// forward `crossRemote` into the retained job — the pre-fix construction
+    /// used the `Job` init's defaults (`destinationTabID: nil, crossRemote:
+    /// false`), which would silently downgrade a resumed cross-remote
+    /// transfer to single-bucket pacing. `crossRemote` isn't observable on
+    /// `Item`, so this proves the round-trip through the queue's ACTUAL
+    /// throttle behavior across an interrupt + `retryInterrupted` cycle:
+    /// upload paces fast, download (secondary) paces much tighter — the
+    /// RESUMED transfer must still pay both, exactly like a fresh crossRemote
+    /// enqueue (`crossRemoteJobResolvesBothBuckets` above). Note: a job with
+    /// `destinationTabID != nil` can no longer reach `.interrupted` at all
+    /// (finding 1), so `crossRemote` is the only M8b field that can still be
+    /// exercised through this path — this test targets exactly that case.
+    @Test func interruptedCrossRemoteJobKeepsBothThrottlesAfterRetry() async throws {
+        let chunk = TransferChunk.size
+        let content = Data(repeating: 0x77, count: chunk * 2)
+        let started = TestSignal(); let gate = TestSignal()
+        let local1 = QueueTestFS(reads: [
+            "/a.bin": .init(content: content, started: started, gate: gate,
+                            failWith: RemoteFSError.connectionFailed(reason: "lost")),
+        ])
+        let remote1 = QueueTestFS(reads: [:])
+
+        let time = VirtualTime()
+        let limiter = BandwidthLimiter(now: time.now, sleep: time.sleep)
+        limiter.uploadLimitBytesPerSec = chunk          // primary: fast
+        limiter.downloadLimitBytesPerSec = chunk / 4    // secondary: much tighter
+
+        let vm = TransferQueueViewModel()
+        vm.limiter = limiter
+        vm.enqueue(
+            fileName: "a.bin", direction: .upload,
+            source: local1, sourcePath: "/a.bin",
+            destination: remote1, destinationDirectory: "/ziel",
+            onCompleted: nil, destinationTabID: nil, crossRemote: true)
+
+        try await started.wait()
+        await gate.fire()
+        await waitUntil { vm.items[0].status == .interrupted }
+
+        // Reconnect: retry against fresh file systems, same limiter.
+        let local2 = QueueTestFS(reads: ["/a.bin": .init(content: content)])
+        let remote2 = QueueTestFS(reads: [:])
+        vm.retryInterrupted(source: local2, destination: remote2)
+        await waitUntil { vm.items[0].status == .finished }
+
+        #expect(await remote2.writtenData(at: "/ziel/a.bin") == content)
+        // Same math as `TransferEngineTests.copyFileConsumesBothThrottles`:
+        // ~1.0s primary + ~3.0s secondary == ~4.0s total. If the retain path
+        // had dropped `crossRemote`, only the primary would pace (~1.0s).
+        let slept = time.totalSlept.secondsAsDouble
+        #expect(slept > 3.8 && slept < 4.2)
+    }
+
+    // MARK: - 46 (M8b review, finding 3)
+
+    /// Queue-level proof of the `crossRemote` double-bucket wiring
+    /// (`process`'s `if job.crossRemote` throttle resolution). The engine
+    /// itself is proven in `TransferEngineTests.copyFileConsumesBothThrottles`,
+    /// but nothing at the QUEUE level previously exercised the wiring that
+    /// resolves `throttle`/`secondaryThrottle` from `limiter?.uploadBucket`/
+    /// `downloadBucket` — setting `secondaryThrottle = nil` there would have
+    /// stayed green. `BandwidthLimiter`'s test-only clock/sleep init (added
+    /// for this finding, analogous to `BandwidthBucket`'s own test init)
+    /// makes both buckets share one deterministic virtual timeline.
+    @Test func crossRemoteQueueJobPacesToTighterDownloadLimit() async throws {
+        let chunk = TransferChunk.size
+        let content = Data(repeating: 0x33, count: chunk * 2)
+        let source = QueueTestFS(reads: ["/a.bin": .init(content: content)])
+        let destination = QueueTestFS(reads: [:])
+        let done = TestSignal()
+
+        let time = VirtualTime()
+        let limiter = BandwidthLimiter(now: time.now, sleep: time.sleep)
+        limiter.uploadLimitBytesPerSec = chunk          // fast upload limit
+        limiter.downloadLimitBytesPerSec = chunk / 4    // tighter download limit
+
+        let vm = TransferQueueViewModel()
+        vm.limiter = limiter
+        vm.enqueue(
+            fileName: "a.bin", direction: .upload,
+            source: source, sourcePath: "/a.bin",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { await done.fire() }, destinationTabID: nil, crossRemote: true)
+        try await done.wait()
+
+        #expect(await destination.writtenData(at: "/ziel/a.bin") == content)
+        // Same math as `TransferEngineTests.copyFileConsumesBothThrottles`:
+        // ~1.0s primary (upload) + ~3.0s secondary (download, tighter) ≈ 4.0s
+        // total. A crossRemote job resolving only the upload bucket (the
+        // pre-M8b single-bucket behavior, or a regression dropping
+        // `secondaryThrottle`) would settle at ≈1.0s instead.
+        let slept = time.totalSlept.secondsAsDouble
+        #expect(slept > 3.8 && slept < 4.2)
+    }
+
+    // MARK: - auditSink (M9b/T2)
+
+    /// `auditSink` fires EXACTLY once for a finished item, at the single
+    /// `wasTerminal` choke point in `setStatus` — the same gate
+    /// `totalFailureCount` uses.
+    @Test func auditSinkFiresExactlyOnceOnTerminalTransition() async throws {
+        let content = Data("hello".utf8)
+        let source = QueueTestFS(reads: ["/a.txt": .init(content: content)])
+        let destination = QueueTestFS(reads: [:])
+        let vm = TransferQueueViewModel()
+        let capture = ItemCapture()
+        vm.auditSink = { capture.record($0) }
+
+        try await vm.enqueueAndWait(
+            fileName: "a.txt", direction: .upload,
+            source: source, sourcePath: "/a.txt",
+            destination: destination, destinationDirectory: "/ziel")
+
+        #expect(capture.items.count == 1)
+        #expect(capture.items[0].status == .finished)
+        #expect(capture.items[0].fileName == "a.txt")
+    }
+
+    /// Analogous to `totalFailureCountIncrementsAndSurvivesClearCompleted`:
+    /// once an item has transitioned to terminal and fired `auditSink`,
+    /// removing it from `items` via `clearCompleted()` must NOT cause a
+    /// second (phantom) call — the sink only ever fires from the
+    /// `wasTerminal` gate in `setStatus`, never from list bookkeeping.
+    @Test func auditSinkDoesNotRefireAfterClearCompleted() async throws {
+        let source = QueueTestFS(reads: [:])
+        let destination = QueueTestFS(reads: [:])
+        let vm = TransferQueueViewModel()
+        let capture = ItemCapture()
+        vm.auditSink = { capture.record($0) }
+
+        _ = try? await vm.enqueueAndWait(
+            fileName: "missing.txt", direction: .download,
+            source: source, sourcePath: "/missing.txt",
+            destination: destination, destinationDirectory: "/ziel")
+
+        #expect(capture.items.count == 1)
+
+        vm.clearCompleted()
+
+        #expect(vm.items.isEmpty)
+        #expect(capture.items.count == 1)   // no re-fire from the list mutation
+    }
+
+    /// Progress updates (running → running) never fire `auditSink` — only
+    /// the eventual terminal transition does, regardless of how many
+    /// intermediate progress chunks were reported.
+    @Test func auditSinkNeverFiresForRunningProgressUpdates() async throws {
+        let content = Data(repeating: 0x42, count: TransferChunk.size * 3)
+        let source = QueueTestFS(reads: ["/big.bin": .init(content: content)])
+        let destination = QueueTestFS(reads: [:])
+        let vm = TransferQueueViewModel()
+        let capture = ItemCapture()
+        vm.auditSink = { capture.record($0) }
+
+        try await vm.enqueueAndWait(
+            fileName: "big.bin", direction: .upload,
+            source: source, sourcePath: "/big.bin",
+            destination: destination, destinationDirectory: "/ziel")
+
+        // Multiple `.running` progress updates happened along the way (3
+        // chunks), but only the final `.finished` transition is captured.
+        #expect(capture.items.count == 1)
+        #expect(capture.items[0].status == .finished)
+    }
+
+    /// `enqueueEditUpload`'s item carries `isEditUpload == true`; a normal
+    /// `enqueue`'d item carries `false`.
+    @Test func enqueueEditUploadItemCarriesIsEditUploadTrueNormalItemsFalse() async throws {
+        let content = Data("edited".utf8)
+        let localURL = URL(fileURLWithPath: "/private/tmp/macscp-audit-test/edit.txt")
+        let editSource = QueueTestFS(reads: [
+            localURL.path(percentEncoded: false): .init(content: content),
+        ])
+        let editDestination = QueueTestFS(reads: [:])
+        let vm = TransferQueueViewModel()
+
+        let editID = vm.enqueueEditUpload(
+            fileName: "edit.txt", localURL: localURL,
+            source: editSource, destination: editDestination, remoteDirectory: "/remote")
+        #expect(vm.items.first(where: { $0.id == editID })?.isEditUpload == true)
+
+        let plainSource = QueueTestFS(reads: ["/plain.txt": .init(content: Data("plain".utf8))])
+        let plainDestination = QueueTestFS(reads: [:])
+        let plainID = vm.enqueue(
+            fileName: "plain.txt", direction: .upload,
+            source: plainSource, sourcePath: "/plain.txt",
+            destination: plainDestination, destinationDirectory: "/ziel", onCompleted: nil)
+        #expect(vm.items.first(where: { $0.id == plainID })?.isEditUpload == false)
+
+        await waitUntil { vm.isActive == false }
+    }
+
+    /// A `nil` `auditSink` (the default) has no effect — a transfer
+    /// completes exactly as without M9b instrumentation at all.
+    @Test func nilAuditSinkHasNoEffect() async throws {
+        let source = QueueTestFS(reads: ["/a.txt": .init(content: Data("x".utf8))])
+        let destination = QueueTestFS(reads: [:])
+        let vm = TransferQueueViewModel()
+        // vm.auditSink intentionally left nil.
+
+        try await vm.enqueueAndWait(
+            fileName: "a.txt", direction: .upload,
+            source: source, sourcePath: "/a.txt",
+            destination: destination, destinationDirectory: "/ziel")
+
+        #expect(vm.items.first?.status == .finished)
     }
 }
 

@@ -8,19 +8,33 @@ cd "$(dirname "$0")/.."
 
 # MACSCP_VERSION overrides (the release workflow derives it from the tag).
 VERSION="${MACSCP_VERSION:-1.0.0}"
-BUILD="1"
+BUILD="${MACSCP_BUILD:-1}"
 
-swift build -c release
+# Universal binary (M6b final-review fix: an arm64-only build shipped in
+# v1.0.0 while the README promises plain "macOS 15+"). Built as two
+# single-arch slices + lipo instead of `--arch arm64 --arch x86_64`:
+# the dual-arch path routes through XCBuild, which insists on compiling
+# SwiftTerm's bundled Shaders.metal and therefore needs the ~700 MB
+# Metal toolchain component (absent on CI runners and flaky locally).
+# The native single-arch pipeline ships the shader as a plain resource —
+# no Metal toolchain needed anywhere.
+swift build -c release --triple arm64-apple-macosx
+swift build -c release --triple x86_64-apple-macosx
+ARM_BIN="$(swift build -c release --triple arm64-apple-macosx --show-bin-path)"
+X86_BIN="$(swift build -c release --triple x86_64-apple-macosx --show-bin-path)"
 
 APP="dist/macSCP.app"
 rm -rf dist
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-cp .build/release/macSCP "$APP/Contents/MacOS/macSCP"
+lipo -create "$ARM_BIN/macSCP" "$X86_BIN/macSCP" \
+    -output "$APP/Contents/MacOS/macSCP"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
-cp -R .build/release/macSCP_MacSCPApp.bundle "$APP/Contents/Resources/"
-cp -R .build/release/macSCP_macSCPCore.bundle "$APP/Contents/Resources/"
-mkdir "$APP/Contents/Resources/en.lproj" "$APP/Contents/Resources/de.lproj"
+# Resource bundles are architecture-independent — take the arm64 build's.
+cp -R "$ARM_BIN/macSCP_MacSCPApp.bundle" "$APP/Contents/Resources/"
+cp -R "$ARM_BIN/macSCP_macSCPCore.bundle" "$APP/Contents/Resources/"
+mkdir "$APP/Contents/Resources/en.lproj" "$APP/Contents/Resources/de.lproj" \
+      "$APP/Contents/Resources/fr.lproj" "$APP/Contents/Resources/pl.lproj"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -28,6 +42,13 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>en</string>
+        <string>de</string>
+        <string>fr</string>
+        <string>pl</string>
+    </array>
     <key>CFBundleDisplayName</key><string>macSCP</string>
     <key>CFBundleExecutable</key><string>macSCP</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
@@ -38,15 +59,37 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleShortVersionString</key><string>${VERSION}</string>
     <key>CFBundleVersion</key><string>${BUILD}</string>
     <key>LSMinimumSystemVersion</key><string>15.0</string>
-    <key>NSHumanReadableCopyright</key><string>© 2026 Tim Rösner</string>
+    <key>NSHumanReadableCopyright</key><string>© 2026 noix</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key><string>dev.noix.macscp.sessions</string>
+            <key>UTTypeDescription</key><string>macSCP Sessions</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.json</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>macscpsessions</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
 </dict>
 </plist>
 PLIST
 
 plutil -lint "$APP/Contents/Info.plist"
 test -x "$APP/Contents/MacOS/macSCP"
+# Both architectures must be present (Intel Macs run macOS 15 too).
+lipo -archs "$APP/Contents/MacOS/macSCP" | grep -q x86_64
+lipo -archs "$APP/Contents/MacOS/macSCP" | grep -q arm64
 test -d "$APP/Contents/Resources/macSCP_MacSCPApp.bundle"
 test -d "$APP/Contents/Resources/macSCP_macSCPCore.bundle"
-test -d "$APP/Contents/Resources/en.lproj" -a -d "$APP/Contents/Resources/de.lproj"
+test -d "$APP/Contents/Resources/en.lproj" -a -d "$APP/Contents/Resources/de.lproj" \
+     -a -d "$APP/Contents/Resources/fr.lproj" -a -d "$APP/Contents/Resources/pl.lproj"
 echo "wrote $APP (v${VERSION}, build ${BUILD})"

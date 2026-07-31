@@ -15,6 +15,14 @@ public struct RemoteFileItem: Equatable, Sendable {
     public let modifiedAt: Date?
     /// POSIX permission bits without the file-type bits, e.g. 0o644
     public let permissions: UInt32?
+    /// Owner NAME where one could be resolved (remote: parsed from the
+    /// listing's `longname`; local: `FileManager.attributesOfItem(atPath:)`'s
+    /// `.ownerAccountName`), otherwise the numeric uid as a string, otherwise
+    /// `nil` (M11m). See `LongnameParser` and `SFTPAttributeMapper` for the
+    /// exact precedence.
+    public let owner: String?
+    /// Group NAME/numeric gid/`nil`, same precedence as `owner` (M11m).
+    public let group: String?
 
     public init(
         name: String,
@@ -22,7 +30,9 @@ public struct RemoteFileItem: Equatable, Sendable {
         kind: RemoteFileKind,
         size: UInt64? = nil,
         modifiedAt: Date? = nil,
-        permissions: UInt32? = nil
+        permissions: UInt32? = nil,
+        owner: String? = nil,
+        group: String? = nil
     ) {
         self.name = name
         self.path = path
@@ -30,9 +40,18 @@ public struct RemoteFileItem: Equatable, Sendable {
         self.size = size
         self.modifiedAt = modifiedAt
         self.permissions = permissions
+        self.owner = owner
+        self.group = group
     }
 
     public var isDirectory: Bool { kind == .directory }
+}
+
+/// `Identifiable` conformance for sheet presentation (M7b): `.sheet(item:)`
+/// needs a stable identity, and the path already is one (unique within a
+/// directory listing).
+extension RemoteFileItem: Identifiable {
+    public var id: String { path }
 }
 
 /// Expects absolute, single-slash-normalized paths (e.g. "/home/user/docs").
@@ -48,5 +67,19 @@ public enum RemotePath {
         guard let idx = trimmed.lastIndex(of: "/") else { return "/" }
         let parent = String(trimmed[..<idx])
         return parent.isEmpty ? "/" : parent
+    }
+
+    /// Collapses any run of consecutive slashes and drops every trailing
+    /// slash; the empty string and the root both normalize to `"/"`. Unlike
+    /// every other function in this type, `normalizedAbsolute` is
+    /// deliberately the ONE `RemotePath` function that IS safe on hostile,
+    /// hand-typed input (repeated slashes, a trailing slash, the empty
+    /// string) — the "behavior on other input is unspecified" caveat in this
+    /// type's doc comment does not apply here. The path bar's completion
+    /// (`PathCompletion.directoryToList`) and its `navigate(to:)` both route
+    /// through this single normalizer instead of each carrying its own copy.
+    public static func normalizedAbsolute(_ path: String) -> String {
+        let components = path.split(separator: "/", omittingEmptySubsequences: true)
+        return components.isEmpty ? "/" : "/" + components.joined(separator: "/")
     }
 }

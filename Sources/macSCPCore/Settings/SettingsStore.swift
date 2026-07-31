@@ -60,12 +60,35 @@ public final class SettingsStore {
         static let downloadLimitKBs = "downloadLimitKBs"
         static let defaultEditorPath = "defaultEditorPath"
         static let fileAssociations = "fileAssociations"
+        static let showHiddenFiles = "showHiddenFiles"
+        static let autoRefreshEnabled = "autoRefreshEnabled"
+        static let autoRefreshIntervalSeconds = "autoRefreshIntervalSeconds"
+        static let terminalFontName = "terminalFontName"
+        static let terminalFontSize = "terminalFontSize"
+        static let terminalCursorStyle = "terminalCursorStyle"
+        static let terminalCursorBlink = "terminalCursorBlink"
+        static let updateCheckEnabled = "updateCheckEnabled"
+        static let lastUpdateCheck = "lastUpdateCheck"
+        static let terminalTarget = "terminalTarget"
+        static let customTerminalAppPath = "customTerminalAppPath"
+        static let externalTerminalPasswordHintShown = "externalTerminalPasswordHintShown"
+        static let visibleColumns = "visibleColumns"
+        static let menuBarEnabled = "menuBarEnabled"
+        static let appLanguage = "appLanguage"
     }
 
     private enum Defaults {
         static let maxConcurrentTransfers = 3
         static let uploadLimitKBs = 0
         static let downloadLimitKBs = 0
+        static let showHiddenFiles = false
+        static let autoRefreshEnabled = true
+        static let autoRefreshIntervalSeconds = 5
+        static let terminalFontSize = 13
+        static let terminalCursorStyle = TerminalCursorStyle.block
+        static let terminalCursorBlink = true
+        static let updateCheckEnabled = true
+        static let menuBarEnabled = true
     }
 
     /// Identical to `SessionStore.defaultDirectory` — both stores share the
@@ -170,6 +193,194 @@ public final class SettingsStore {
         }
     }
 
+    /// Show dotfiles in both panes (M7a). Default OFF — the Finder-like
+    /// default; ⌘⇧. and the General settings tab toggle it.
+    public var showHiddenFiles: Bool {
+        get { boolValue(for: Keys.showHiddenFiles, default: Defaults.showHiddenFiles) }
+        set { setBool(newValue, for: Keys.showHiddenFiles) }
+    }
+
+    /// Auto-refresh of the active tab's remote pane (M9c). Default ON.
+    public var autoRefreshEnabled: Bool {
+        get { boolValue(for: Keys.autoRefreshEnabled, default: Defaults.autoRefreshEnabled) }
+        set { setBool(newValue, for: Keys.autoRefreshEnabled) }
+    }
+
+    /// Interval in seconds, clamped to 2...300 on BOTH ends so a hand-edited
+    /// settings.json cannot produce SFTP spam or a dead timer.
+    public var autoRefreshIntervalSeconds: Int {
+        get {
+            clamp(
+                intValue(for: Keys.autoRefreshIntervalSeconds, default: Defaults.autoRefreshIntervalSeconds),
+                2, 300)
+        }
+        set { setInt(clamp(newValue, 2, 300), for: Keys.autoRefreshIntervalSeconds) }
+    }
+
+    /// Custom terminal font family name (M9d); nil/empty = use the system
+    /// monospaced default. Persisted like `defaultEditorPath`.
+    public var terminalFontName: String? {
+        get { stringValue(for: Keys.terminalFontName) }
+        set { setString(newValue, for: Keys.terminalFontName) }
+    }
+
+    /// Terminal font point size, clamped to 9...24 on BOTH ends (default 13)
+    /// — same forward-compat pattern as `autoRefreshIntervalSeconds`: a
+    /// hand-edited settings.json cannot produce an unreadable terminal.
+    public var terminalFontSize: Int {
+        get {
+            clamp(
+                intValue(for: Keys.terminalFontSize, default: Defaults.terminalFontSize),
+                9, 24)
+        }
+        set { setInt(clamp(newValue, 9, 24), for: Keys.terminalFontSize) }
+    }
+
+    /// Terminal cursor shape (M9d). An unrecognized raw value on disk
+    /// (future app version, or hand-edited garbage) reads as `.block`
+    /// instead of crashing or propagating `nil`.
+    public var terminalCursorStyle: TerminalCursorStyle {
+        get {
+            guard case .string(let value)? = raw[Keys.terminalCursorStyle] else {
+                return Defaults.terminalCursorStyle
+            }
+            return TerminalCursorStyle(rawValue: value) ?? .block
+        }
+        set {
+            raw[Keys.terminalCursorStyle] = .string(newValue.rawValue)
+            persist()
+        }
+    }
+
+    /// Whether the terminal cursor blinks (M9d). Default ON.
+    public var terminalCursorBlink: Bool {
+        get { boolValue(for: Keys.terminalCursorBlink, default: Defaults.terminalCursorBlink) }
+        set { setBool(newValue, for: Keys.terminalCursorBlink) }
+    }
+
+    /// Automatic once-a-day update check at startup (M11b). Default ON;
+    /// the toggle in the General settings tab flips this off.
+    public var updateCheckEnabled: Bool {
+        get { boolValue(for: Keys.updateCheckEnabled, default: Defaults.updateCheckEnabled) }
+        set { setBool(newValue, for: Keys.updateCheckEnabled) }
+    }
+
+    /// Whether the app shows its menu-bar status item (M11n). Default on.
+    public var menuBarEnabled: Bool {
+        get { boolValue(for: Keys.menuBarEnabled, default: Defaults.menuBarEnabled) }
+        set { setBool(newValue, for: Keys.menuBarEnabled) }
+    }
+
+    /// Timestamp of the last update-check ATTEMPT — successful or not — or
+    /// `nil` if the app has never checked. Written after EVERY attempt (see
+    /// `UpdateSchedule`) so a dead network doesn't retry on every launch
+    /// within the 24h window.
+    public var lastUpdateCheck: Date? {
+        get {
+            guard case .number(let value)? = raw[Keys.lastUpdateCheck] else { return nil }
+            return Date(timeIntervalSince1970: value)
+        }
+        set {
+            if let newValue {
+                raw[Keys.lastUpdateCheck] = .number(newValue.timeIntervalSince1970)
+            } else {
+                raw[Keys.lastUpdateCheck] = nil
+            }
+            persist()
+        }
+    }
+
+    /// Where a session's shell opens (M11d) — built-in panel, a well-known
+    /// external app, or a custom one. Default `.builtIn`, so an old
+    /// settings.json (predating this feature) keeps today's behavior
+    /// unchanged. An unrecognized raw value (future app version, or
+    /// hand-edited garbage) reads as `.builtIn` instead of crashing or
+    /// propagating `nil` — same pattern as `terminalCursorStyle`.
+    public var terminalTarget: TerminalTarget {
+        get {
+            guard case .string(let value)? = raw[Keys.terminalTarget] else {
+                return .builtIn
+            }
+            return TerminalTarget(rawValue: value) ?? .builtIn
+        }
+        set {
+            raw[Keys.terminalTarget] = .string(newValue.rawValue)
+            persist()
+        }
+    }
+
+    /// Absolute path to the .app bundle used when `terminalTarget == .custom`
+    /// (M11d); nil/empty when unset. Same nil/empty-collapsing accessor
+    /// pattern as `defaultEditorPath`/`terminalFontName`.
+    public var customTerminalAppPath: String? {
+        get { stringValue(for: Keys.customTerminalAppPath) }
+        set { setString(newValue, for: Keys.customTerminalAppPath) }
+    }
+
+    /// The UI language chosen in Settings (M11p). `.system` (default) means
+    /// no `AppleLanguages` override — follow the OS. Applied at launch in
+    /// `MacSCPApp.init`; a change needs an app relaunch to take effect.
+    public var selectedLanguage: AppLanguage {
+        get {
+            guard case .string(let value)? = raw[Keys.appLanguage] else {
+                return .system
+            }
+            return AppLanguage(rawValue: value) ?? .system
+        }
+        set {
+            raw[Keys.appLanguage] = .string(newValue.rawValue)
+            persist()
+        }
+    }
+
+    /// Whether the "external terminals can't receive a saved password" hint
+    /// (M11d) has already been dismissed with "Don't show again". Default
+    /// OFF (unshown) — the hint appears once, then never again once this
+    /// flips true.
+    public var externalTerminalPasswordHintShown: Bool {
+        get { boolValue(for: Keys.externalTerminalPasswordHintShown, default: false) }
+        set { setBool(newValue, for: Keys.externalTerminalPasswordHintShown) }
+    }
+
+    /// Which columns the file list displays (M11m). `name` is always
+    /// included in what this returns, regardless of what's stored — it can
+    /// never be toggled off (`FileColumn.isToggleable`). Forward-compatible:
+    /// a `settings.json` predating this feature (missing key entirely) falls
+    /// back to `FileColumn.defaultVisible`'s set, i.e. exactly the three
+    /// fixed columns the list always showed before this feature existed.
+    /// Unrecognized raw column names on disk (a future app version's
+    /// column, or hand-edited garbage) are dropped silently rather than
+    /// crashing or surfacing them as garbage. Written back out in
+    /// `FileColumn.allCases` order for a stable, readable settings.json —
+    /// the Set itself carries no ordering guarantee.
+    public var visibleColumns: Set<FileColumn> {
+        get {
+            guard case .array(let values)? = raw[Keys.visibleColumns] else {
+                return Self.defaultVisibleColumns
+            }
+            var result: Set<FileColumn> = []
+            for value in values {
+                guard case .string(let rawColumn) = value,
+                    let column = FileColumn(rawValue: rawColumn)
+                else { continue }
+                result.insert(column)
+            }
+            result.insert(.name)
+            return result
+        }
+        set {
+            var columns = newValue
+            columns.insert(.name)
+            raw[Keys.visibleColumns] = .array(
+                FileColumn.allCases.filter(columns.contains).map { .string($0.rawValue) })
+            persist()
+        }
+    }
+
+    private static var defaultVisibleColumns: Set<FileColumn> {
+        Set(FileColumn.allCases.filter(\.defaultVisible))
+    }
+
     /// Convenience: association lookup with the SAME normalization applied.
     public func associatedApp(forExtension ext: String) -> String? {
         let normalizedExtension = Self.normalizeExtension(ext)
@@ -203,6 +414,37 @@ public final class SettingsStore {
 
     private func clamp(_ value: Int, _ lower: Int, _ upper: Int) -> Int {
         min(max(value, lower), upper)
+    }
+
+    /// Generic string-optional backing (same nil/empty-collapsing rule as
+    /// `defaultEditorPath`'s hand-rolled getter/setter): empty and missing
+    /// both read as `nil`, and setting `nil` or "" clears the key.
+    private func stringValue(for key: String) -> String? {
+        guard case .string(let value)? = raw[key], !value.isEmpty else {
+            return nil
+        }
+        return value
+    }
+
+    private func setString(_ value: String?, for key: String) {
+        if let value, !value.isEmpty {
+            raw[key] = .string(value)
+        } else {
+            raw[key] = nil
+        }
+        persist()
+    }
+
+    private func boolValue(for key: String, default defaultValue: Bool) -> Bool {
+        guard case .bool(let value)? = raw[key] else {
+            return defaultValue
+        }
+        return value
+    }
+
+    private func setBool(_ value: Bool, for key: String) {
+        raw[key] = .bool(value)
+        persist()
     }
 
     /// Writes the entire raw backing (including unknown keys) back out

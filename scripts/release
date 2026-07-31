@@ -11,13 +11,16 @@
 #                --apple-id <apple-id> --team-id 5V8ZCK434F
 #
 # MACSCP_VERSION overrides the version (the release workflow derives it
-# from the tag); defaults to 1.0.0.
+# from the tag); locally it falls back to the latest git tag.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 IDENTITY="Developer ID Application: Tim Rösner (5V8ZCK434F)"
 PROFILE="macscp-notary"
-VERSION="${MACSCP_VERSION:-1.0.0}"
+# Version: from MACSCP_VERSION (CI derives it from the tag) or the latest
+# local tag — never a hardcoded default that silently mislabels a build.
+VERSION="${MACSCP_VERSION:-$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')}"
+[ -n "$VERSION" ] || { echo "error: no MACSCP_VERSION and no tag to derive it from" >&2; exit 1; }
 APP="dist/macSCP.app"
 DMG="dist/macSCP-${VERSION}.dmg"
 
@@ -58,7 +61,7 @@ ditto -c -k --keepParent "$APP" "$ZIP"
 # `|| true`: a rejected submission exits non-zero, which under pipefail
 # would abort HERE and skip the guidance below — the grep on the captured
 # JSON is the single source of truth for acceptance.
-xcrun notarytool submit "$ZIP" "${NOTARY_AUTH[@]}" --wait \
+xcrun notarytool submit "$ZIP" ${NOTARY_AUTH[@]+"${NOTARY_AUTH[@]}"} --wait \
     --output-format json | tee dist/notary-app.json || true
 grep -Eq '"status"[[:space:]]*:[[:space:]]*"Accepted"' dist/notary-app.json || {
     echo "error: app notarization not accepted — fetch the log with:" >&2
@@ -76,7 +79,7 @@ hdiutil create -volname "macSCP" -srcfolder "$STAGING" -ov -format UDZO "$DMG"
 rm -rf "$STAGING"
 codesign --force --timestamp --sign "$IDENTITY" "$DMG"
 
-xcrun notarytool submit "$DMG" "${NOTARY_AUTH[@]}" --wait \
+xcrun notarytool submit "$DMG" ${NOTARY_AUTH[@]+"${NOTARY_AUTH[@]}"} --wait \
     --output-format json | tee dist/notary-dmg.json || true
 grep -Eq '"status"[[:space:]]*:[[:space:]]*"Accepted"' dist/notary-dmg.json || {
     echo "error: DMG notarization not accepted — fetch the log with:" >&2
@@ -86,6 +89,7 @@ xcrun stapler staple "$DMG"
 
 # --- final proof -----------------------------------------------------------
 spctl --assess --type execute -v "$APP"
+spctl --assess --type open --context context:primary-signature -v "$DMG"
 xcrun stapler validate "$APP"
 xcrun stapler validate "$DMG"
 echo "RELEASE OK: $DMG"

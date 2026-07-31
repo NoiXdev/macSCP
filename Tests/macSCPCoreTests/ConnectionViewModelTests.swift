@@ -146,6 +146,23 @@ struct ConnectionViewModelTests {
         #expect(vm.password == "aus-dem-schluesselbund")
     }
 
+    /// Review finding (M11d fix round 1): `lastConnectedConfig` carries the
+    /// same raw secret as `password`/`keyPath` (it's built from them in
+    /// `connect()`), so the disconnect-time scrub must forget it too --
+    /// otherwise it survives in `SessionTab.connectionViewModel` across every
+    /// later disconnect/reconnect in that tab, defeating `clearPassword()`'s
+    /// own purpose for exactly this secret.
+    @Test func clearRetainedSecretsForgetsPasswordAndLastConnectedConfig() async {
+        let vm = makeVM()
+        _ = await vm.connect()
+        #expect(vm.lastConnectedConfig != nil)
+
+        vm.password = "still-here"
+        vm.clearRetainedSecrets()
+        #expect(vm.password.isEmpty)
+        #expect(vm.lastConnectedConfig == nil)
+    }
+
     @Test func secondConnectWhileConnectingIsRejected() async {
         let counter = CallCounter()
         let (stream, continuation) = AsyncStream<Void>.makeStream()
@@ -397,6 +414,289 @@ struct ConnectionViewModelTests {
                 "example.com", "SHA256:AAAA", "SHA256:BBBB"),
             field: nil))
         #expect(vm.hostKeyPrompt == nil)
+    }
+
+    // MARK: - Jump host (M10c/T3)
+
+    @Test func jumpValidationRequiresHost() async {
+        let vm = makeVM()
+        vm.jumpEnabled = true
+        vm.jumpHost = ""
+        vm.jumpUsername = "bastion-user"
+        vm.jumpPassword = "bastion-pass"
+        let fs = await vm.connect()
+        #expect(fs == nil)
+        #expect(vm.state == .failed(
+            message: CoreL10n.string("core.connect.jumpHostEmpty"), field: .jumpHost))
+    }
+
+    @Test @MainActor func jumpSetModeRequiresSelection() {
+        let vm = makeVM()
+        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u"))
+        vm.jumpEnabled = true
+        vm.jumpHost = "bastion.example.com"
+        vm.jumpLoginMode = .set
+        vm.jumpSelectedLoginSetID = nil
+        #expect(vm.validateForEditSave() == nil)
+        // field: nil (final review M-3) -- no Field case exists for the
+        // picker; `.jumpHost` would misleadingly outline the host field.
+        #expect(vm.state == .failed(
+            message: CoreL10n.string("core.connect.jumpSetRequired"), field: nil))
+    }
+
+    /// Final review I-1 (BLOCKER): edit mode deliberately leaves
+    /// `jumpPassword` empty ("unchanged", see `beginEditing`'s doc comment).
+    /// Before the fix, `validateForEditSave()` reused `connect()`'s
+    /// `validateJump()` unconditionally, which hard-required a non-empty
+    /// `jumpPassword` in manual/password mode — making a session with a
+    /// manual password jump impossible to save without retyping the jump
+    /// secret. This proves the save now succeeds and reuses the SAME
+    /// `secretID`, not a freshly generated one.
+    @Test @MainActor func editSaveKeepsJumpSecretIDWithEmptyPassword() {
+        let vm = makeVM()
+        let originalSecretID = UUID()
+        let jump = StoredSession.JumpSpec(
+            host: "bastion.example.com", port: 22, username: "bastion-user",
+            authKind: .password, secretID: originalSecretID)
+        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u", jump: jump))
+        #expect(vm.jumpEnabled) // sanity: beginEditing actually picked the jump up
+        #expect(vm.jumpPassword.isEmpty) // sanity: "leave unchanged" starting point
+
+        let saved = vm.validateForEditSave()
+
+        #expect(saved != nil)
+        #expect(saved?.jump?.secretID == originalSecretID)
+        #expect(saved?.jump?.loginSetID == nil)
+    }
+
+    @Test @MainActor func jumpFieldsResetOnExitEditMode() {
+        let vm = makeVM()
+        let jump = StoredSession.JumpSpec(
+            host: "bastion.example.com", port: 2200, username: "bastion-user",
+            authKind: .privateKey, keyPath: "/k")
+        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u", jump: jump))
+        #expect(vm.jumpEnabled) // sanity: beginEditing actually picked the jump up
+
+        vm.exitEditMode()
+
+        #expect(vm.jumpEnabled == false)
+        #expect(vm.jumpHost.isEmpty)
+        #expect(vm.jumpPort == "22")
+        #expect(vm.jumpUsername.isEmpty)
+        #expect(vm.jumpPassword.isEmpty)
+        #expect(vm.jumpKeyPath.isEmpty)
+        #expect(vm.jumpAuthChoice == .password)
+        #expect(vm.jumpLoginMode == .manual)
+        #expect(vm.jumpSelectedLoginSetID == nil)
+    }
+
+    /// Pins the public `clearJumpFields()` primitive directly (App-layer
+    /// re-review F-1): `ContentView`'s `connect(in:stored:)` calls this on
+    /// BOTH early-return failure paths (a dangling target login set, and a
+    /// jump-only missing set with no jump on the session) so a jump block
+    /// typed for a DIFFERENT session's form can never survive into the next
+    /// one. `exitEditMode()` already exercises this transitively via
+    /// `jumpFieldsResetOnExitEditMode` above; this test calls the method
+    /// directly, independent of edit mode, to prove it resets every jump
+    /// field on its own.
+    @Test @MainActor func clearJumpFieldsResetsEverything() {
+        let vm = makeVM()
+        vm.jumpEnabled = true
+        vm.jumpHost = "bastion.example.com"
+        vm.jumpPort = "2200"
+        vm.jumpUsername = "bastion-user"
+        vm.jumpAuthChoice = .privateKey
+        vm.jumpKeyPath = "/k"
+        vm.jumpPassword = "secret"
+        vm.jumpLoginMode = .set
+        vm.jumpSelectedLoginSetID = UUID()
+
+        vm.clearJumpFields()
+
+        #expect(vm.jumpEnabled == false)
+        #expect(vm.jumpHost.isEmpty)
+        #expect(vm.jumpPort == "22")
+        #expect(vm.jumpUsername.isEmpty)
+        #expect(vm.jumpPassword.isEmpty)
+        #expect(vm.jumpKeyPath.isEmpty)
+        #expect(vm.jumpAuthChoice == .password)
+        #expect(vm.jumpLoginMode == .manual)
+        #expect(vm.jumpSelectedLoginSetID == nil)
+    }
+
+    // MARK: - Jump source: saved connection (M11a/T3)
+
+    @Test func jumpSessionModeRequiresSelection() async {
+        let vm = makeVM()
+        vm.jumpEnabled = true
+        vm.jumpSourceMode = .session
+        vm.jumpSessionID = nil
+        let fs = await vm.connect()
+        #expect(fs == nil)
+        #expect(vm.state == .failed(
+            message: CoreL10n.string("core.connect.jumpSessionRequired"), field: .jumpSession))
+    }
+
+    /// Proves the manual checks (host/port/login) don't just happen to pass
+    /// because the fields are filled — they never run at all in session
+    /// mode. `jumpPassword` is left empty, which manual `.password` mode
+    /// would reject outright (`core.connect.jumpPasswordEmpty`); `jumpHost`/
+    /// `jumpUsername` are set non-empty only to satisfy `SSHConnectionConfig`
+    /// init's OWN unconditional emptiness check further down the pipe (spec
+    /// §4a: the App fills these from the resolved reference before
+    /// `connect()`, this test stands in for that fill) — this test is about
+    /// `validateJump` skipping its manual branch, not about that separate,
+    /// lower-level check.
+    @Test func jumpSessionModeSkipsManualChecks() async {
+        let vm = makeVM()
+        vm.jumpEnabled = true
+        vm.jumpSourceMode = .session
+        vm.jumpSessionID = UUID()
+        vm.jumpHost = "bastion.example.com"
+        vm.jumpUsername = "bastion-user"
+        vm.jumpPassword = ""
+        let fs = await vm.connect()
+        #expect(fs != nil)
+        #expect(vm.state == .idle)
+    }
+
+    @Test @MainActor func jumpSourceFieldsResetOnExitEditMode() {
+        let vm = makeVM()
+        let jump = StoredSession.JumpSpec(host: "", username: "", sessionID: UUID())
+        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u", jump: jump))
+        // Sanity: beginEditing actually picked up the reference.
+        #expect(vm.jumpSourceMode == .session)
+        #expect(vm.jumpSessionID != nil)
+
+        vm.exitEditMode()
+
+        #expect(vm.jumpSourceMode == .manual)
+        #expect(vm.jumpSessionID == nil)
+    }
+
+    /// F-1 fix (final review): `buildJumpSpec` must never emit BOTH a
+    /// `sessionID` and a `loginSetID` -- a stale login-set pick left over
+    /// from Manual+Set mode, made before the user flipped Source to "Saved
+    /// connection", must not survive into the built spec. Without the fix
+    /// this would inflate `sessionsUsing(setID:)`'s usage count and let
+    /// `deleteLoginSet` write the set's secret into this session-mode jump's
+    /// otherwise-unused `secretID` slot.
+    @Test @MainActor func buildJumpSpecInSessionModeIgnoresDanglingLoginSetSelection() {
+        let vm = makeVM()
+        vm.jumpEnabled = true
+        vm.jumpLoginMode = .set
+        vm.jumpSelectedLoginSetID = UUID()
+        vm.jumpSourceMode = .session
+        vm.jumpSessionID = UUID()
+
+        let spec = vm.buildJumpSpec()
+
+        #expect(spec?.sessionID == vm.jumpSessionID)
+        #expect(spec?.loginSetID == nil)
+    }
+
+    /// M-5 fix (final review): switching the jump's source picker AWAY from
+    /// `.session` must clear `jumpPassword`/`jumpKeyPath` --
+    /// `resolveSelectedJumpSession` (App layer) fills both with the
+    /// REFERENCED session's own resolved secret/key path right before a
+    /// connect attempt; if that connect then fails and the user flips Source
+    /// to Manual, the bastion's secret would otherwise sit pre-filled in the
+    /// manual SecureField, ready to be persisted into THIS session's own
+    /// jump slot on the next save -- a secret the user never typed.
+    @Test @MainActor func selectJumpSourceModeClearsSecretWhenLeavingSessionMode() {
+        let vm = makeVM()
+        vm.jumpEnabled = true
+        vm.jumpSourceMode = .session
+        vm.jumpSessionID = UUID()
+        vm.jumpPassword = "bastion-secret"
+        vm.jumpKeyPath = "/resolved/key"
+
+        vm.selectJumpSourceMode(.manual)
+
+        #expect(vm.jumpSourceMode == .manual)
+        #expect(vm.jumpPassword.isEmpty)
+        #expect(vm.jumpKeyPath.isEmpty)
+    }
+
+    /// Same call with the SAME mode is a no-op (mirrors `selectAuthChoice`'s
+    /// own early-return guard) -- must not clobber fields the user is
+    /// actively editing just because the picker re-fired with an unchanged
+    /// selection.
+    @Test @MainActor func selectJumpSourceModeIsNoOpWhenUnchanged() {
+        let vm = makeVM()
+        vm.jumpEnabled = true
+        vm.jumpSourceMode = .manual
+        vm.jumpPassword = "still-typing"
+
+        vm.selectJumpSourceMode(.manual)
+
+        #expect(vm.jumpPassword == "still-typing")
+    }
+
+    // MARK: - Agent auth (M10d/T3)
+
+    @Test func agentAuthSkipsPasswordAndKeyPathValidationAndBuildsAgentAuth() async {
+        let vm = makeVM(connector: { config, _ in
+            #expect(config.auth == .agent)
+            return MockRemoteFileSystem(tree: ["/": []])
+        })
+        vm.authChoice = .agent
+        vm.password = ""
+        vm.keyPath = ""
+        let fs = await vm.connect()
+        #expect(fs != nil)
+    }
+
+    @Test @MainActor func validateForEditSaveMapsAgentAuthChoice() {
+        let vm = makeVM()
+        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u"))
+        vm.authChoice = .agent
+        vm.password = ""
+        vm.keyPath = ""
+
+        let result = vm.validateForEditSave()
+
+        #expect(result?.authKind == .agent)
+        #expect(result?.keyPath == nil)
+    }
+
+    @Test @MainActor func beginEditingMapsAgentAuthKindToAgentChoice() {
+        let vm = makeVM()
+        let stored = StoredSession(name: "web", host: "h", username: "u", authKind: .agent)
+        vm.beginEditing(stored)
+        #expect(vm.authChoice == .agent)
+    }
+
+    @Test func jumpAgentModeRequiresNeitherSecretNorKeyPath() async {
+        let vm = makeVM(connector: { config, _ in
+            #expect(config.jump?.auth == .agent)
+            return MockRemoteFileSystem(tree: ["/": []])
+        })
+        vm.jumpEnabled = true
+        vm.jumpHost = "bastion.example.com"
+        vm.jumpUsername = "bastion-user"
+        vm.jumpAuthChoice = .agent
+        vm.jumpPassword = ""
+        vm.jumpKeyPath = ""
+        let fs = await vm.connect()
+        #expect(fs != nil)
+    }
+
+    /// `requireSecret` is irrelevant for agent (brief point 1): even
+    /// `connect()`'s `requireSecret: true` branch must not demand anything
+    /// for an agent-mode jump.
+    @Test @MainActor func jumpAgentModeSurvivesEditSaveWithoutSecretOrKeyPath() {
+        let vm = makeVM()
+        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u"))
+        vm.jumpEnabled = true
+        vm.jumpHost = "bastion.example.com"
+        vm.jumpUsername = "bastion-user"
+        vm.jumpAuthChoice = .agent
+
+        let result = vm.validateForEditSave()
+
+        #expect(result?.jump?.authKind == .agent)
+        #expect(result?.jump?.keyPath == nil)
     }
 }
 

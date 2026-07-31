@@ -1,3 +1,16 @@
+/* Settings — Allgemein-Tab (M7a/T4) */
+"settings.tab.general" = "Allgemein";
+"settings.general.showHidden" = "Versteckte Dateien anzeigen";
+"settings.general.showHiddenHint" = "Gilt für beide Seiten. Kürzel: ⌘⇧.";
+"settings.general.autoRefresh" = "Remote-Ansicht automatisch aktualisieren";
+"settings.general.autoRefreshInterval %lld" = "Alle %lld Sekunden";
+"settings.general.updateCheck" = "Automatisch nach Updates suchen";
+"settings.general.updateCheckHint" = "Fragt höchstens einmal täglich bei GitHub nach der neuesten Version. Die Anfrage nennt die App und ihre Version; sonst werden keine Daten über dich übertragen.";
+
+/* Einstellungen — Allgemein-Tab, Abschnitt Dateilisten-Spalten (M11m/T2) */
+"settings.general.columns.header" = "Dateilisten-Spalten";
+"settings.general.columns.footer" = "Gilt für beide Seiten. Name ist immer sichtbar.";
+
 /* Settings — Übertragungen-Tab */
 "settings.tab.transfers" = "Übertragungen";
 "settings.maxConcurrent.label" = "Maximale gleichzeitige Übertragungen";
@@ -6,6 +19,26 @@
 "settings.bandwidth.footer" = "0 = unbegrenzt";
 "settings.bandwidth.upload" = "Upload";
 "settings.bandwidth.download" = "Download";
+
+/* Settings — Tab „Terminal" (M9d) */
+"settings.tab.terminal" = "Terminal";
+"settings.terminal.font" = "Schrift";
+"settings.terminal.systemFont" = "System (SF Mono)";
+"settings.terminal.size %lld" = "Größe: %lld pt";
+"settings.terminal.cursor" = "Cursor";
+"settings.terminal.cursor.block" = "Block";
+"settings.terminal.cursor.bar" = "Balken";
+"settings.terminal.cursor.underline" = "Unterstrich";
+"settings.terminal.cursorBlink" = "Blinken";
+"settings.terminal.target.header" = "Externes Terminal";
+"settings.terminal.target" = "Sitzungen öffnen in";
+"settings.terminal.target.builtIn" = "Eingebautes Terminal";
+"settings.terminal.target.terminalApp" = "Terminal";
+"settings.terminal.target.iTerm" = "iTerm";
+"settings.terminal.target.custom" = "Eigene App…";
+"settings.terminal.target.footer" = "Beide Wege, eine Sitzung zu öffnen, bleiben unabhängig von dieser Einstellung über das Menü „Terminal“ erreichbar.";
+"settings.terminal.target.builtInFallback.footer" = "Ist „Eingebautes Terminal“ gewählt, öffnet dieser Menüpunkt deine eigene App, falls eine festgelegt ist, sonst Terminal.";
+"settings.terminal.target.noneChosen" = "Keine App gewählt";
 
 /* Settings — Tab „Öffnen mit" */
 "settings.tab.openWith" = "Öffnen mit";
@@ -29,6 +62,7 @@
 "connection.field.authMethod" = "Authentifizierung";
 "connection.auth.password" = "Passwort";
 "connection.auth.privateKey" = "SSH-Key";
+"connection.auth.agent" = "Agent";
 "connection.field.keyPath" = "Key-Pfad";
 "connection.field.keyPath.placeholder" = "~/.ssh/id_ed25519";
 "connection.field.keyPath.browseHelp" = "Key-Datei auswählen";
@@ -50,6 +84,8 @@
 "sidebar.delete" = "Löschen";
 "sidebar.importedHeader" = "IMPORTIERT";
 "sidebar.importedHelp" = "Aus ~/.ssh/config — füllt das Formular (Geheimnisse werden nicht importiert)";
+"sidebar.imported.hide" = "Ausblenden";
+"sidebar.hiddenImports.error %1$@ %2$@" = "Ausgeblendete Importe konnten nicht aktualisiert werden: %1$@ — die Liste lässt sich zurücksetzen, indem %2$@ gelöscht wird.";
 
 /* Konflikt-Sheet */
 "conflict.title" = "Datei existiert bereits";
@@ -64,6 +100,9 @@
 /* Browser-Toolbar & Panes */
 "browser.terminalToggle" = "Terminal";
 "browser.terminalToggleHelp" = "Terminal ein-/ausblenden (⌘T)";
+"browser.terminalOpenExternalHelp" = "Im externen Terminal öffnen (⌘T)";
+"browser.transfersToggle" = "Übertragungen";
+"browser.transfersToggleHelp" = "Übertragungen ein-/ausblenden (⌘⇧Y)";
 "browser.disconnect" = "Trennen";
 "browser.paneLocal" = "Lokal";
 "browser.paneRemote" = "Remote";
@@ -74,6 +113,9 @@
 "browser.pane.goUpHelp" = "Übergeordnetes Verzeichnis";
 "browser.pane.refreshHelp" = "Aktualisieren";
 "browser.pane.retry" = "Erneut versuchen";
+"browser.pathBar.copied" = "Kopiert!";
+"browser.pathBar.listingFailed %@" = "Das Verzeichnis konnte nicht aufgelistet werden: %@";
+"browser.pathBar.candidateCount %lld" = "%lld Treffer";
 
 /* Terminal-Panel */
 "terminal.ended" = "Shell beendet.";
@@ -83,9 +125,29 @@
 "filetable.column.name" = "Name";
 "filetable.column.size" = "Größe";
 "filetable.column.modified" = "Geändert";
+"filetable.column.permissions" = "Rechte";
+"filetable.column.owner" = "Besitzer";
+"filetable.column.group" = "Gruppe";
+"filetable.column.type" = "Typ";
+
+/* Symlink-Markierung (M11h/T1): Tooltip auf der Namens-Zelle einer
+   Symlink-Zeile, dient zugleich als Accessibility-Beschreibung des
+   Symbols. */
+"filetable.symlinkTooltip" = "Symbolischer Link";
+
+/* Datei-Typ-Wörter für die Spalte "Typ" (M11m/T2) */
+"filetable.type.folder" = "Ordner";
+"filetable.type.file" = "Datei";
+"filetable.type.symlink" = "Verknüpfung";
+"filetable.type.other" = "Sonstiges";
+
+/* Platzhalter für eine leere Zelle in den Spalten "Rechte"/"Besitzer"/
+   "Gruppe" (M11m/T2) — ein nil-Wert, nie eine geratene Anzeige. */
+"filetable.cell.placeholder" = "—";
 
 /* Transfer-Warteschlangen-Leiste */
 "transfers.title" = "Übertragungen";
+"transfers.empty" = "Keine Übertragungen";
 "transfers.pending" = "Übertragungen — %lld ausstehend";
 "transfers.clear" = "Aufräumen";
 "transfers.status.queued" = "wartet";
@@ -109,6 +171,7 @@
 "sidebar.connect" = "Verbinden";
 "sidebar.edit" = "Bearbeiten…";
 "sidebar.rename" = "Umbenennen";
+"sidebar.auditLog" = "Audit-Log…";
 "sidebar.moveTo" = "Verschieben nach";
 "sidebar.noGroup" = "Keine Gruppe";
 "sidebar.newGroup" = "Neue Gruppe…";
@@ -122,4 +185,369 @@
 "connection.field.password.unchanged" = "unverändert";
 "connection.field.group" = "Gruppe";
 "connection.saveAndConnect" = "Speichern & verbinden";
+
+/* Menü-Befehle (M7a/T4) */
+"menu.toggleHidden" = "Versteckte Dateien ein-/ausblenden";
+"menu.transfers.toggle" = "Übertragungen ein-/ausblenden";
 "common.save" = "Speichern";
+
+/* Browser-Kontextmenü (M7b/T2) */
+"menu.transfer" = "Übertragen";
+"menu.transfer.otherPane" = "Zum anderen Fenster";
+"menu.openEditor" = "Öffnen";
+"menu.rename" = "Umbenennen…";
+"menu.info" = "Informationen & Rechte…";
+"menu.newFolder" = "Neuer Ordner…";
+"menu.copyPath" = "Pfad kopieren";
+"menu.delete" = "Löschen…";
+
+/* Gemeinsam (M7b/T3) */
+"common.close" = "Schließen";
+"common.apply" = "Übernehmen";
+
+/* Umbenennen-/Neuer-Ordner-Sheet (M7b/T3) */
+"sheet.rename.title" = "Umbenennen";
+"sheet.rename.confirm" = "Umbenennen";
+"sheet.newFolder.title" = "Neuer Ordner";
+"sheet.newFolder.confirm" = "Erstellen";
+"sheet.newFolder.defaultName" = "unbenannter Ordner";
+
+/* Info-&-Rechte-Sheet (M7b/T3) */
+"info.path" = "Pfad";
+"info.kind" = "Art";
+"info.size" = "Größe";
+"info.modified" = "Geändert";
+"info.permissions" = "Rechte";
+"info.octal" = "Oktal";
+"info.octalInvalid" = "Ungültiger Oktalwert";
+"info.permissionsUnavailable" = "Für diesen Eintrag sind keine Rechte verfügbar.";
+"info.kind.directory" = "Ordner";
+"info.kind.file" = "Datei";
+"info.kind.symlink" = "Symbolischer Link";
+"info.kind.other" = "Sonstiges";
+"info.perm.read" = "Lesen";
+"info.perm.write" = "Schreiben";
+"info.perm.execute" = "Ausführen";
+"info.perm.owner" = "Besitzer";
+"info.perm.group" = "Gruppe";
+"info.perm.other" = "Andere";
+
+/* Recursive permissions (M11c/T3) */
+"info.recursive.toggle" = "Auf alle Unterobjekte anwenden";
+"info.recursive.same" = "Gleiche Rechte";
+"info.recursive.separate" = "Getrennt";
+"info.recursive.filesLabel" = "Dateien";
+"info.recursive.directoriesLabel" = "Ordner";
+"info.recursive.applyButton" = "Rekursiv anwenden";
+"info.recursive.confirmTitle" = "Rekursiv anwenden?";
+"info.recursive.confirmMessage" = "Rechte auf alle Objekte in %@ anwenden? Das lässt sich nicht rückgängig machen.";
+"info.recursive.progressPrefix" = "Wird angewendet…";
+"info.recursive.resultFormat" = "%lld geändert, %lld übersprungen, %lld fehlgeschlagen";
+"info.recursive.skippedHint" = "Übersprungene Objekte sind Symlinks, die unangetastet bleiben.";
+"info.recursive.cancelledHint" = "Abgebrochen — einige Objekte wurden möglicherweise nicht aktualisiert.";
+
+/* Löschen-Bestätigung (M7b/T3) */
+"delete.title" = "Löschen?";
+"delete.confirm" = "Löschen";
+"delete.failedTitle" = "Löschen fehlgeschlagen";
+"delete.message.single" = "„%@“ wird gelöscht.";
+"delete.message.many" = "%lld Objekte werden gelöscht.";
+"delete.message.recursive" = "Ordner werden mit ihrem gesamten Inhalt gelöscht.";
+"delete.message.permanent" = "Diese Aktion kann nicht widerrufen werden.";
+
+/* Tabs (M8a) */
+"tabs.newConnection" = "Neue Verbindung";
+
+/* Tableiste (M8a/T4) */
+"tabs.newTabHelp" = "Neuer Tab (⌘N)";
+"tabs.a11y.uploading" = "wird hochgeladen";
+"tabs.a11y.downloading" = "wird heruntergeladen";
+"tabs.a11y.attention" = "erfordert Aufmerksamkeit";
+"tabs.close.title" = "Tab schließen?";
+"tabs.close.activeTransfers" = "Laufende Übertragungen in diesem Tab werden abgebrochen.";
+"tabs.close.confirm" = "Schließen";
+
+/* Tab-Menübefehle (M8a/T4) */
+"menu.newTab" = "Neuer Tab";
+"menu.closeTab" = "Tab schließen";
+"menu.selectTab" = "Tab %lld";
+
+/* Sitzungsübergreifende Übertragung (M8b/T4) */
+"menu.transfer.toSession" = "Zu „%@“";
+
+/* Schließen-Warnung: eingehende sitzungsübergreifende Übertragungen (M8b/T4) */
+"tabs.close.incomingTransfers" = "Andere Tabs übertragen gerade zu dieser Session; Schließen bricht diese Übertragungen ab.";
+
+/* Sitzungs-Export/Import — Sidebar-Menüs (M9a/T3) */
+"export.menu.single" = "Exportieren…";
+"export.menu.group" = "Gruppe exportieren…";
+"export.menu.all" = "Alle exportieren…";
+"import.menu" = "Importieren…";
+
+/* Sitzungs-Export/Import — Export-Sheet */
+"export.sheet.title" = "Sitzungen exportieren";
+"export.summary %lld" = "%lld Verbindungen";
+"export.includeGroups" = "Gruppenzuordnung einschließen";
+"export.includePasswords" = "Passwörter einschließen";
+"export.encryptionLabel" = "Verschlüsselung";
+"export.encrypted" = "Verschlüsselt";
+"export.unencrypted" = "Unverschlüsselt";
+"export.password" = "Passwort";
+"export.passwordRepeat" = "Passwort wiederholen";
+"export.passwordHint" = "Ein langes Passwort erschwert das Knacken der Exportdatei, falls sie abgefangen wird.";
+"export.plaintextWarning" = "Passwörter werden in dieser Datei im Klartext gespeichert. Jeder, der sie erhält, kann sie lesen.";
+"export.confirmAnyway" = "Trotzdem exportieren…";
+"export.action" = "Exportieren…";
+
+/* Sitzungs-Export/Import — Export-Ergebnis/Fehler */
+"export.missingPasswords %lld" = "Ohne Passwort exportiert: %lld";
+"export.result.title" = "Export abgeschlossen";
+"export.error.title" = "Export fehlgeschlagen";
+"export.error.encodeFailed %@" = "Der Export konnte nicht vorbereitet werden: %@";
+"export.error.writeFailed %@" = "Die Exportdatei konnte nicht geschrieben werden: %@";
+
+/* Sitzungs-Export/Import — Import-Passwort-Sheet */
+"import.password.title" = "Passwort erforderlich";
+"import.password.wrong" = "Falsches Passwort oder die Datei ist beschädigt.";
+"import.password.unlock" = "Entsperren";
+
+/* Sitzungs-Export/Import — Import-Ergebnis/Fehler */
+"import.result.title" = "Import abgeschlossen";
+"import.result.body %lld %lld %lld" = "%lld importiert, %lld als Duplikate übersprungen, %lld Passwörter importiert";
+"import.result.passwordFailures %lld" = "Passwörter, die nicht gespeichert werden konnten: %lld";
+"import.result.storeFailures %lld" = "Wegen eines Fehlers nicht gespeichert: %lld";
+"import.result.plaintextNotice" = "Die Datei enthielt unverschlüsselte Passwörter.";
+"import.error.notExport" = "Keine macSCP-Sitzungsdatei.";
+"import.error.newerVersion" = "Diese Datei wurde mit einer neueren Version von macSCP erstellt.";
+"import.error.readFailed %@" = "Die Datei konnte nicht gelesen werden: %@";
+"import.error.title" = "Import fehlgeschlagen";
+
+/* Audit-Log-Sheet (M9b/T3) */
+"audit.filter.all" = "Alle";
+"audit.filter.transfers" = "Transfers";
+"audit.filter.fileOps" = "Datei-Ops";
+"audit.filter.connection" = "Verbindung";
+"audit.filter.errors" = "Fehler";
+"audit.search" = "Suchen";
+"audit.column.time" = "Zeit";
+"audit.column.kind" = "Ereignis";
+"audit.column.detail" = "Detail";
+"audit.empty" = "Noch keine Einträge.";
+"audit.count %lld" = "%lld Einträge";
+"audit.countFiltered %lld %lld" = "%lld von %lld";
+"audit.export" = "Als Text exportieren…";
+"audit.export.error %@" = "Die Exportdatei konnte nicht geschrieben werden: %@";
+"audit.clear" = "Log leeren…";
+"audit.clear.title" = "Audit-Log leeren?";
+"audit.clear.message" = "Dadurch werden alle Einträge dieses Sitzungsprotokolls entfernt. Dies kann nicht rückgängig gemacht werden.";
+"audit.clear.confirm" = "Leeren";
+
+/* Audit-Log — Ereignis-Label (M9b/T3) */
+"audit.kind.connected" = "Verbunden";
+"audit.kind.disconnected" = "Getrennt";
+"audit.kind.transferFinished" = "Übertragung abgeschlossen";
+"audit.kind.transferFailed" = "Übertragung fehlgeschlagen";
+"audit.kind.transferCancelled" = "Übertragung abgebrochen";
+"audit.kind.rename" = "Umbenannt";
+"audit.kind.delete" = "Gelöscht";
+"audit.kind.permissions" = "Rechte geändert";
+"audit.kind.newFolder" = "Neuer Ordner";
+"audit.kind.editUpload" = "Editor-Upload";
+
+/* Sessions-Menü (M10a/T2, M10b/T3) */
+"menu.sessions" = "Sessions";
+"menu.knownHosts" = "Bekannte Hosts…";
+"menu.logins" = "Logins…";
+"menu.hiddenImports" = "Ausgeblendete Importe…";
+"menu.hiddenImports %@" = "Ausgeblendete Importe (%@)…";
+"menu.exportAllSessions" = "Alle Sitzungen exportieren…";
+"menu.importSessions" = "Sitzungen importieren…";
+"menu.terminal" = "Terminal";
+"menu.terminal.toggle" = "Terminal ein-/ausblenden";
+"menu.terminal.openExternal" = "Im externen Terminal öffnen";
+
+/* Bekannte-Hosts-Sheet (M10a/T2) */
+"knownHosts.title" = "Bekannte Hosts";
+"knownHosts.search" = "Suchen (Host oder Fingerprint)";
+"knownHosts.column.host" = "Host";
+"knownHosts.column.port" = "Port";
+"knownHosts.column.keyType" = "Schlüsseltyp";
+"knownHosts.column.fingerprint" = "Fingerprint";
+"knownHosts.column.added" = "Hinzugefügt";
+"knownHosts.count %lld" = "%lld Hosts";
+"knownHosts.countFiltered %lld %lld" = "%lld von %lld";
+"knownHosts.copyFingerprint" = "Fingerprint kopieren";
+"knownHosts.remove" = "Entfernen…";
+"knownHosts.remove.title" = "Bekannten Host entfernen?";
+"knownHosts.remove.message" = "Beim nächsten Verbinden wird der Host wie ein unbekannter behandelt (neuer Vertrauens-Prompt).";
+"knownHosts.remove.messageMany %lld" = "%lld Hosts werden beim nächsten Verbinden wie unbekannte behandelt (neue Vertrauens-Prompts).";
+"knownHosts.remove.confirm" = "Entfernen";
+"knownHosts.empty" = "Noch keine bekannten Hosts.";
+"knownHosts.loadError %@" = "Bekannte Hosts konnten nicht geladen werden: %@";
+"knownHosts.removeError %@" = "Der Host-Schlüssel konnte nicht entfernt werden: %@";
+
+/* Sheet für ausgeblendete Importe (M11f/T2) */
+"hiddenImports.title" = "Ausgeblendete Importe";
+"hiddenImports.empty" = "Rechtsklick auf eine importierte Verbindung in der Seitenleiste und „Ausblenden“ wählen, damit sie hier erscheint.";
+"hiddenImports.orphaned" = "nicht mehr in ~/.ssh/config";
+"hiddenImports.unhide" = "Wieder einblenden";
+"hiddenImports.removeFromList" = "Aus der Liste entfernen";
+"hiddenImports.count %lld" = "%lld ausgeblendet";
+"hiddenImports.loadError %1$@ %2$@" = "Ausgeblendete Importe konnten nicht geladen werden: %1$@ — die Liste lässt sich zurücksetzen, indem %2$@ gelöscht wird.";
+"hiddenImports.unhideError %@" = "Der Import konnte nicht wiederhergestellt werden: %@";
+
+/* TOFU-Prompt-Fußnote (M10a/T2) */
+"tofu.manageKnownHosts" = "Bekannte Hosts verwalten…";
+
+/* Logins-Sheet (M10b/T3) */
+"loginSets.title" = "Logins";
+"loginSets.count %lld" = "%lld Logins";
+"loginSets.usage.one" = "1 Verbindung";
+"loginSets.usage.many %lld" = "%lld Verbindungen";
+"loginSets.new" = "Neu…";
+"loginSets.edit" = "Bearbeiten…";
+"loginSets.delete" = "Löschen…";
+"loginSets.delete.title" = "Diesen Login löschen?";
+"loginSets.delete.message %lld" = "%lld Verbindungen erhalten diese Zugangsdaten wieder direkt hinterlegt.";
+"loginSets.delete.confirm" = "Löschen";
+"loginSets.deleteError %lld" = "Das gespeicherte Passwort für %lld Verbindungen konnte nicht wiederhergestellt werden.";
+"loginSets.empty" = "Noch keine Logins.";
+"loginSets.subtitle.key %@ %@" = "%@ · SSH-Key (%@)";
+"loginSets.subtitle.password %@" = "%@ · Passwort";
+"loginSets.subtitle.agent %@" = "%@ · Agent";
+"loginSets.merge.banner %lld %@" = "%lld Verbindungen verwenden denselben Login „%@“.";
+"loginSets.merge.ignore" = "Ignorieren";
+"loginSets.merge.action" = "Zusammenfassen…";
+"loginSets.merge.confirmTitle" = "Diese Verbindungen zusammenfassen?";
+"loginSets.merge.confirm" = "Zusammenfassen";
+"loginSets.merge.confirmMessage %@ %@" = "%@ werden zum Login „%@“ zusammengefasst.";
+"loginSets.editor.titleNew" = "Neuer Login";
+"loginSets.editor.titleEdit" = "Login bearbeiten";
+"loginSets.editor.name" = "Name";
+"loginSets.editor.username" = "Benutzername";
+"loginSets.editor.keepSecret" = "leer lassen, um beizubehalten";
+"loginSets.missingSet" = "Das hinterlegte Login dieser Verbindung wurde nicht gefunden. Login wählen oder Zugangsdaten eingeben.";
+"loginSets.badge.key" = "KEY";
+"loginSets.badge.pass" = "PASS";
+"loginSets.badge.agent" = "AGENT";
+
+/* Verbindungsformular — Dreiweg-Login-Umschalter (M10b/T3) */
+"form.loginMode.label" = "Login";
+"form.loginMode.set" = "Login-Set";
+"form.loginMode.manual" = "Manuell";
+"form.selectLogin" = "Login auswählen";
+"form.manageLogins" = "Logins verwalten…";
+"form.saveAsSet" = "Als neues Login-Set speichern";
+"form.saveAsSet.name" = "Name des Login-Sets";
+"audit.kind.crossSessionTransfer" = "Sitzungsübergreifende Übertragung";
+
+/* Verbindungsformular — Jump-Host-Block (M10c/T3, Mockup Abschnitt 2) */
+"form.jump.label" = "Jump-Host";
+"form.jump.toggle" = "Über einen Zwischenhost verbinden (ProxyJump)";
+"form.jump.host.placeholder" = "bastion.example.com";
+
+/* Verbindungsformular — Jump-Quellen-Umschalter: gespeicherte Verbindung (M11a/T3) */
+"form.jump.source.label" = "Quelle";
+"form.jump.source.session" = "Gespeicherte Verbindung";
+"form.jump.session.select" = "Verbindung auswählen";
+"form.jump.session.missing" = "Die als Zwischenhost genutzte Verbindung existiert nicht mehr.";
+"form.jump.session.chainNotSupported" = "Die gewählte Verbindung nutzt selbst einen Zwischenhost; Ketten werden nicht unterstützt.";
+
+/* Sidebar-Lösch-Rückfrage — als Zwischenhost referenziert (M11a/T3) */
+"sidebar.delete.jumpUsage %lld" = "%lld Verbindungen nutzen diese Verbindung als Zwischenhost und behalten deren Daten direkt hinterlegt.";
+"sidebar.delete.jumpRestoreError %lld" = "Das gespeicherte Passwort für %lld Verbindungen konnte nicht wiederhergestellt werden.";
+
+/* Update-Prüfung — Menüeintrag + Ergebnis-Dialog (M11b/T2) */
+"menu.checkForUpdates" = "Nach Updates suchen…";
+"update.available.title" = "Update verfügbar";
+"update.available.message %@ %@" = "Version %@ ist verfügbar (installiert: %@)";
+"update.openReleasePage" = "Release-Seite öffnen";
+"update.later" = "Später";
+"update.upToDate.title" = "Kein Update verfügbar";
+"update.upToDate.message %@" = "macSCP %@ ist die neueste Version.";
+"update.unknownVersion.title" = "Version unbekannt";
+"update.unknownVersion.message" = "Die Version dieses Builds konnte nicht ermittelt werden, daher konnte keine Update-Prüfung durchgeführt werden.";
+"update.error.title" = "Update-Prüfung fehlgeschlagen";
+"update.error.offline" = "GitHub konnte nicht erreicht werden. Prüfe deine Internetverbindung und versuche es erneut.";
+"update.error.httpStatus %lld" = "GitHub hat einen unerwarteten Fehler zurückgegeben (HTTP %lld).";
+"update.error.rateLimited" = "Zu viele Anfragen an GitHub gerade jetzt. Versuche es später erneut.";
+"update.error.malformedResponse" = "Die Antwort von GitHub konnte nicht verarbeitet werden.";
+
+/* Einstellungen — Tab „Allgemein", Abschnitt „Jetzt prüfen" (M11h/T2) */
+"settings.general.currentVersion" = "Aktuelle Version";
+"settings.general.currentVersion.unknown" = "Unbekannt";
+"settings.general.lastChecked %@" = "Zuletzt geprüft: %@";
+"settings.general.lastChecked.never" = "Es wurde noch nie nach Updates gesucht.";
+"settings.general.checkNow" = "Jetzt prüfen";
+"settings.general.checkingNow" = "Wird geprüft…";
+
+/* Externes Terminal — Passwort-Hinweis + Start-Fehler (M11d/T2) */
+"externalTerminal.passwordHint.title" = "Passwort-Anmeldung";
+"externalTerminal.passwordHint.message" = "macSCP kann ein gespeichertes Passwort nicht an ein externes Terminal übergeben — ssh fragt dort danach.";
+"externalTerminal.passwordHint.dontShowAgain" = "Nicht mehr anzeigen";
+"externalTerminal.passwordHint.open" = "Öffnen";
+"externalTerminal.error.title" = "Externes Terminal konnte nicht geöffnet werden";
+"externalTerminal.error.applicationNotFound %@" = "„%@“ wurde nicht gefunden.";
+"externalTerminal.error.noCustomAppChosen" = "Es wurde noch keine App ausgewählt.";
+"externalTerminal.error.scriptWriteFailed %@" = "Das Start-Skript konnte nicht geschrieben werden: %@";
+"externalTerminal.error.launchFailed %@" = "Die App konnte nicht gestartet werden: %@";
+
+/* Datei-Suchleiste (M11k/T2) */
+"search.placeholder" = "Suchen";
+"search.mode.filter" = "Filtern";
+"search.mode.jump" = "Springen";
+"search.regexHelp" = "Regulärer Ausdruck";
+"search.close" = "Suche schließen";
+"search.count.filter %1$lld %2$lld" = "%1$lld von %2$lld";
+"search.count.jump %lld" = "%lld Treffer";
+"search.error.invalidRegex" = "Ungültiger regulärer Ausdruck";
+
+/* Menüleisten-Statuselement (M11n/T2) */
+"menubar.connections.count" = "%d Verbindungen";
+"menubar.empty" = "Keine aktiven Verbindungen";
+"menubar.show.window" = "macSCP anzeigen";
+"menubar.status.connected" = "Verbunden";
+"menubar.status.connecting" = "Verbindet…";
+"menubar.status.failed" = "Fehlgeschlagen";
+"menubar.status.ready" = "Bereit";
+"menubar.transfer.running" = "%d überträgt";
+"menubar.transfer.queued" = "%d in Warteschlange";
+"settings.general.menubar" = "Menüleisten-Symbol anzeigen";
+
+/* Sprachumschalter in der App (M11p/T4) */
+"settings.general.language.header" = "Sprache";
+"settings.general.language.system" = "System";
+"settings.general.language.footer" = "Wird nach einem Neustart angewandt.";
+"settings.general.language.relaunch" = "macSCP neu starten";
+
+/* Tastenkürzel-Übersicht (M11q) */
+"settings.tab.shortcuts" = "Tastenkürzel";
+"settings.shortcuts.group.tabs" = "Tabs & Fenster";
+"settings.shortcuts.group.view" = "Ansicht";
+"settings.shortcuts.group.sessions" = "Sitzungen";
+"settings.shortcuts.group.browser" = "Dateibrowser";
+"settings.shortcuts.group.pathbar" = "Pfadzeile";
+"settings.shortcuts.group.sheets" = "Dialoge";
+"settings.shortcuts.label.newTab" = "Neuer Tab";
+"settings.shortcuts.label.closeTab" = "Tab schließen";
+"settings.shortcuts.label.selectTab" = "Tab 1–9 wählen";
+"settings.shortcuts.label.settings" = "Einstellungen";
+"settings.shortcuts.label.hiddenFiles" = "Versteckte Dateien ein-/ausblenden";
+"settings.shortcuts.label.transfers" = "Übertragungen ein-/ausblenden";
+"settings.shortcuts.label.terminal" = "Terminal ein-/ausblenden";
+"settings.shortcuts.label.knownHosts" = "Known Hosts";
+"settings.shortcuts.label.logins" = "Logins";
+"settings.shortcuts.label.hiddenImports" = "Versteckte Importe";
+"settings.shortcuts.label.goUp" = "Zum übergeordneten Ordner";
+"settings.shortcuts.label.open" = "Öffnen";
+"settings.shortcuts.label.info" = "Infos & Rechte";
+"settings.shortcuts.label.delete" = "Löschen";
+"settings.shortcuts.label.transferItem" = "In das andere Pane übertragen";
+"settings.shortcuts.label.rename" = "Umbenennen";
+"settings.shortcuts.label.clearSelection" = "Auswahl aufheben";
+"settings.shortcuts.label.search" = "Suchen";
+"settings.shortcuts.label.complete" = "Pfad vervollständigen";
+"settings.shortcuts.label.cycleBack" = "Vorheriger Vorschlag";
+"settings.shortcuts.label.cancel" = "Abbrechen";
+"settings.shortcuts.label.navigate" = "Zum Pfad";
+"settings.shortcuts.label.confirm" = "Bestätigen";

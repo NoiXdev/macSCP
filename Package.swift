@@ -15,6 +15,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", revision: "d5ee56e1c74777120f3af688600d336de4201bd2"),
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.101.0"),
     ],
     targets: [
         .target(
@@ -22,10 +23,14 @@ let package = Package(
             dependencies: [
                 .product(name: "Citadel", package: "Citadel"),
                 .product(name: "Crypto", package: "swift-crypto"),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
             ],
             resources: [
                 .process("Resources/en.lproj"),
                 .process("Resources/de.lproj"),
+                .process("Resources/fr.lproj"),
+                .process("Resources/pl.lproj"),
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
@@ -48,7 +53,10 @@ let package = Package(
         ),
         .testTarget(
             name: "macSCPCoreTests",
-            dependencies: ["macSCPCore"],
+            dependencies: [
+                "macSCPCore",
+                .product(name: "Crypto", package: "swift-crypto"),
+            ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
     ]

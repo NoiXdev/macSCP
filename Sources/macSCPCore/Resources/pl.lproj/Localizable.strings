@@ -1,0 +1,85 @@
+/* AI-generated Polish translation (M11p) — review by a native speaker before release. */
+
+/* Core-layer user-facing messages — Polish (translation). */
+
+/* TransferQueueViewModel.message(for:) */
+"core.transfer.notFound %@" = "Nie znaleziono pliku: %@";
+"core.error.permissionDenied %@" = "Odmowa dostępu dla: %@";
+"core.error.connectionLost %@" = "Utracono połączenie: %@";
+"core.transfer.failed %@" = "Transfer nieudany: %@";
+"core.transfer.noFreeName" = "Nie znaleziono dostępnej nazwy pliku.";
+"core.transfer.interrupted" = "Utracono połączenie — transfer przerwany.";
+
+/* RemoteBrowserViewModel.message(for:path:) */
+"core.browse.notFound %@" = "Nie znaleziono ścieżki: %@";
+"core.browse.protocolError %@" = "Błąd protokołu: %@";
+"core.error.unexpected %@" = "Nieoczekiwany błąd: %@";
+
+/* RemoteBrowserViewModel.navigate(to:) (M11g/T1) */
+"core.browse.emptyPath" = "Wprowadź ścieżkę, do której chcesz przejść.";
+"core.browse.notADirectory %@" = "To nie jest katalog: %@";
+
+/* ConnectionViewModel form validation */
+"core.connect.portNumeric" = "Port musi być liczbą.";
+"core.connect.passwordEmpty" = "Hasło nie może być puste.";
+"core.connect.keyPathEmpty" = "Wprowadź ścieżkę do klucza SSH.";
+"core.connect.saveNameEmpty" = "Wprowadź nazwę zapisywanej sesji.";
+
+/* ConnectionViewModel jump-host form validation (M10c/T3) */
+"core.connect.jumpHostEmpty" = "Host pośredniczący nie może być pusty.";
+"core.connect.jumpPortNumeric" = "Port hosta pośredniczącego musi być liczbą.";
+"core.connect.jumpSetRequired" = "Wybierz login dla hosta pośredniczącego.";
+"core.connect.jumpUsernameEmpty" = "Nazwa użytkownika hosta pośredniczącego nie może być pusta.";
+"core.connect.jumpPasswordEmpty" = "Hasło hosta pośredniczącego nie może być puste.";
+"core.connect.jumpKeyPathEmpty" = "Wprowadź ścieżkę do klucza SSH hosta pośredniczącego.";
+
+/* ConnectionViewModel.failedState(for:) */
+"core.connect.emptyHost" = "Host nie może być pusty.";
+"core.connect.emptyUsername" = "Nazwa użytkownika nie może być pusta.";
+"core.connect.hostInvalid" = "Host nie może zawierać spacji, cudzysłowów ani znaków powłoki, takich jak $ ; & | ` ( ), i nie może zaczynać się od -.";
+"core.connect.usernameInvalid" = "Nazwa użytkownika nie może zawierać spacji, cudzysłowów ani znaków powłoki, takich jak $ ; & | ` ( ), i nie może zaczynać się od -.";
+"core.connect.invalidPort %@" = "Nieprawidłowy port: %@.";
+"core.connect.authFailed" = "Uwierzytelnianie nieudane — sprawdź nazwę użytkownika lub hasło.";
+"core.connect.connectionFailed %@" = "Połączenie nieudane: %@";
+"core.connect.keyNotFound %@" = "Nie znaleziono klucza SSH: %@";
+"core.connect.keyPassphraseRequired" = "Klucz SSH jest zaszyfrowany — wprowadź hasło klucza.";
+"core.connect.keyWrongPassphrase" = "Hasło klucza jest nieprawidłowe.";
+"core.connect.keyUnsupportedFormat" = "Format klucza SSH nie jest obsługiwany (obecnie: OpenSSH ed25519).";
+
+/* ConnectionViewModel.failedState(for:) — ssh-agent (M10d/T4) */
+"core.connect.agentSocketUnavailable" = "Brak dostępnego agenta SSH (SSH_AUTH_SOCK).";
+"core.connect.agentNoIdentities" = "Agent SSH nie ma wczytanych żadnych tożsamości.";
+"core.connect.agentNoUsableIdentities" = "Agent SSH nie ma żadnych użytecznych tożsamości (nieobsługiwane typy kluczy).";
+
+/* ConnectionViewModel.failedState(for:) — jump host (M10c/T3) */
+"core.connect.invalidJumpPort %@" = "Nieprawidłowy port hosta pośredniczącego: %@.";
+"core.connect.jumpAuthFailed" = "Uwierzytelnianie na hoście pośredniczącym nieudane — sprawdź nazwę użytkownika lub hasło.";
+"core.connect.jumpTunnelRejected" = "Host pośredniczący odmówił otwarcia tunelu do celu (przekazywanie TCP może być wyłączone).";
+
+/* ConnectionViewModel.failedState(for:) — jump host/username whitelist (M11d final review, C-1) */
+"core.connect.jumpHostInvalid" = "Host pośredniczący może zawierać tylko litery, cyfry oraz . - _ : % (bez - na początku).";
+"core.connect.jumpUsernameInvalid" = "Nazwa użytkownika hosta pośredniczącego może zawierać tylko litery, cyfry oraz . - _ (bez - na początku).";
+
+/* ConnectionViewModel — jump source switcher, session mode (M11a/T3) */
+"core.connect.jumpSessionRequired" = "Wybierz połączenie dla hosta pośredniczącego.";
+
+/* Host-key TOFU prompts — keep full severity in every language. */
+"core.hostkey.mismatch %@ %@ %@" = "OSTRZEŻENIE: Klucz hosta dla %1$@ uległ zmianie! Oczekiwano %2$@, otrzymano %3$@. Możliwy atak typu man-in-the-middle — połączenie przerwane.";
+"core.hostkey.rejected" = "Połączenie przerwane — klucz hosta nie został potwierdzony.";
+
+/* TerminalPanelViewModel */
+"core.terminal.shellEnded %@" = "Powłoka zakończona: %@";
+"core.terminal.openFailed %@" = "Nie udało się otworzyć powłoki: %@";
+
+/* SessionListViewModel */
+"core.session.loadFailed %@" = "Nie udało się wczytać sesji: %@";
+"core.session.saveFailed %@" = "Nie udało się zapisać sesji: %@";
+"core.session.deleteFailed %@" = "Nie udało się usunąć sesji: %@";
+
+/* Session groups (M5f/T2) */
+"core.session.groupSaveFailed %@" = "Nie udało się zapisać grupy: %@";
+
+/* Login sets (M10b/T2) */
+"core.login.saveFailed %@" = "Nie udało się zapisać loginu: %@";
+"core.login.deleteFailed %@" = "Nie udało się usunąć loginu: %@";
+"core.login.mergeFailed %@" = "Nie udało się scalić loginów: %@";

@@ -109,6 +109,22 @@ struct EditSessionManagerTests {
             try await inner.createDirectory(at: path)
         }
 
+        func rename(from: String, to: String) async throws {
+            try await inner.rename(from: from, to: to)
+        }
+
+        func setPermissions(path: String, permissions: UInt32) async throws {
+            try await inner.setPermissions(path: path, permissions: permissions)
+        }
+
+        func deleteTree(at path: String) async throws {
+            try await inner.deleteTree(at: path)
+        }
+
+        func homeDirectoryPath() async throws -> String {
+            try await inner.homeDirectoryPath()
+        }
+
         func disconnect() async {
             await inner.disconnect()
         }

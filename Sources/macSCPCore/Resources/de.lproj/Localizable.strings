@@ -13,15 +13,29 @@
 "core.browse.protocolError %@" = "Protokollfehler: %@";
 "core.error.unexpected %@" = "Unerwarteter Fehler: %@";
 
+/* RemoteBrowserViewModel.navigate(to:) (M11g/T1) */
+"core.browse.emptyPath" = "Pfad zum Wechseln eingeben.";
+"core.browse.notADirectory %@" = "Kein Verzeichnis: %@";
+
 /* ConnectionViewModel Formular-Validierung */
 "core.connect.portNumeric" = "Port muss eine Zahl sein.";
 "core.connect.passwordEmpty" = "Passwort darf nicht leer sein.";
 "core.connect.keyPathEmpty" = "Pfad zum SSH-Key angeben.";
 "core.connect.saveNameEmpty" = "Name für die gespeicherte Session angeben.";
 
+/* ConnectionViewModel Jump-Host-Formular-Validierung (M10c/T3) */
+"core.connect.jumpHostEmpty" = "Jump-Host darf nicht leer sein.";
+"core.connect.jumpPortNumeric" = "Jump-Port muss eine Zahl sein.";
+"core.connect.jumpSetRequired" = "Login für den Jump-Host auswählen.";
+"core.connect.jumpUsernameEmpty" = "Benutzername für den Jump-Host darf nicht leer sein.";
+"core.connect.jumpPasswordEmpty" = "Passwort für den Jump-Host darf nicht leer sein.";
+"core.connect.jumpKeyPathEmpty" = "Pfad zum SSH-Key des Jump-Hosts angeben.";
+
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "Host darf nicht leer sein.";
 "core.connect.emptyUsername" = "Benutzername darf nicht leer sein.";
+"core.connect.hostInvalid" = "Host darf keine Leerzeichen, Anführungszeichen oder Shell-Zeichen wie $ ; & | ` ( ) enthalten und nicht mit - beginnen.";
+"core.connect.usernameInvalid" = "Benutzername darf keine Leerzeichen, Anführungszeichen oder Shell-Zeichen wie $ ; & | ` ( ) enthalten und nicht mit - beginnen.";
 "core.connect.invalidPort %@" = "Ungültiger Port: %@.";
 "core.connect.authFailed" = "Anmeldung fehlgeschlagen — Benutzername oder Passwort prüfen.";
 "core.connect.connectionFailed %@" = "Verbindung fehlgeschlagen: %@";
@@ -29,6 +43,23 @@
 "core.connect.keyPassphraseRequired" = "Der SSH-Key ist verschlüsselt — Passphrase angeben.";
 "core.connect.keyWrongPassphrase" = "Passphrase ist falsch.";
 "core.connect.keyUnsupportedFormat" = "SSH-Key-Format wird nicht unterstützt (aktuell: OpenSSH ed25519).";
+
+/* ConnectionViewModel.failedState(for:) — SSH-Agent (M10d/T4) */
+"core.connect.agentSocketUnavailable" = "Kein SSH-Agent erreichbar (SSH_AUTH_SOCK).";
+"core.connect.agentNoIdentities" = "Der SSH-Agent hat keine Identitäten geladen.";
+"core.connect.agentNoUsableIdentities" = "Der SSH-Agent hat keine nutzbaren Identitäten (nicht unterstützte Schlüsseltypen).";
+
+/* ConnectionViewModel.failedState(for:) — Jump-Host (M10c/T3) */
+"core.connect.invalidJumpPort %@" = "Ungültiger Jump-Port: %@.";
+"core.connect.jumpAuthFailed" = "Anmeldung am Jump-Host fehlgeschlagen — Benutzername oder Passwort prüfen.";
+"core.connect.jumpTunnelRejected" = "Der Jump-Host hat den Tunnel zum Ziel verweigert (TCP-Weiterleitung ist dort möglicherweise deaktiviert).";
+
+/* ConnectionViewModel.failedState(for:) — Whitelist für Jump-Host/-Benutzername (M11d Abschluss-Review, C-1) */
+"core.connect.jumpHostInvalid" = "Jump-Host darf nur Buchstaben, Ziffern sowie . - _ : % enthalten (kein führendes -).";
+"core.connect.jumpUsernameInvalid" = "Benutzername für den Jump-Host darf nur Buchstaben, Ziffern sowie . - _ enthalten (kein führendes -).";
+
+/* ConnectionViewModel — Jump-Quellen-Umschalter, Session-Modus (M11a/T3) */
+"core.connect.jumpSessionRequired" = "Verbindung für den Jump-Host auswählen.";
 
 /* Host-Key-TOFU-Prompts — volle Schärfe in jeder Sprache. */
 "core.hostkey.mismatch %@ %@ %@" = "ACHTUNG: Der Host-Key von %1$@ hat sich geändert! Erwartet %2$@, präsentiert %3$@. Möglicher Man-in-the-Middle — Verbindung abgebrochen.";
@@ -45,3 +76,8 @@
 
 /* Session groups (M5f/T2) */
 "core.session.groupSaveFailed %@" = "Gruppe konnte nicht gespeichert werden: %@";
+
+/* Login sets (M10b/T2) */
+"core.login.saveFailed %@" = "Login konnte nicht gespeichert werden: %@";
+"core.login.deleteFailed %@" = "Login konnte nicht gelöscht werden: %@";
+"core.login.mergeFailed %@" = "Logins konnten nicht zusammengeführt werden: %@";

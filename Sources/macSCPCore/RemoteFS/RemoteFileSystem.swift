@@ -38,6 +38,26 @@ public protocol RemoteFileSystem: Sendable {
     /// creates them (withIntermediateDirectories); Citadel creates ONLY the
     /// last level — the recursion (T3) runs top-down, so parents always exist.
     func createDirectory(at path: String) async throws
+    /// Renames/moves the entry at `from` to the FULL destination path `to`.
+    /// An existing destination is an error (`RemoteFSError`) — this call
+    /// never silently overwrites. The UI builds same-directory paths for a
+    /// rename; the protocol stays generic (M7a).
+    func rename(from: String, to: String) async throws
+    /// Sets the POSIX permission bits of the entry at `path`. Only the low
+    /// 12 bits (rwx for owner/group/other + setuid/setgid/sticky) are
+    /// applied — file-type bits are never written (M7a).
+    /// NOTE: both implementations follow symlinks (chmod semantics) — the
+    /// UI must not offer the permission editor for `.symlink` entries (M7b).
+    func setPermissions(path: String, permissions: UInt32) async throws
+    /// Recursively deletes the entry at `path` (file, symlink, or directory
+    /// with its entire contents). Symlinks are deleted, NEVER followed — the
+    /// walk cannot escape the subtree. Cooperatively cancellable per entry;
+    /// a cancellation leaves a partially deleted tree in place (documented,
+    /// M7a). A plain file behaves exactly like `delete`.
+    func deleteTree(at path: String) async throws
+    /// Resolves the connection's home directory (login landing point). Used
+    /// once at session start; callers fall back to "/" on failure.
+    func homeDirectoryPath() async throws -> String
     func disconnect() async
 }
 
