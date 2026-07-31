@@ -82,6 +82,14 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
     /// Optional so legacy JSON without this field keeps decoding as `nil`
     /// (nil = direct connection, no jump).
     public var jump: JumpSpec?
+    /// The protocol this session speaks (M12). Legacy JSON without the key
+    /// decodes as `.ssh` — synthesized Codable does NOT apply property
+    /// defaults to missing keys, so decode is done explicitly below.
+    public var kind: ConnectionKind = .ssh
+    /// Persisted, SECRET-FREE S3 parameters when `kind == .s3` (M12). `nil`
+    /// for SSH sessions and on legacy JSON. The secret access key is NOT here
+    /// (Keychain only) — this is `StoredS3Config`, not the runtime config.
+    public var s3: StoredS3Config? = nil
 
     public init(
         id: UUID = UUID(),
@@ -93,7 +101,9 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         keyPath: String? = nil,
         groupID: UUID? = nil,
         loginSetID: UUID? = nil,
-        jump: JumpSpec? = nil
+        jump: JumpSpec? = nil,
+        kind: ConnectionKind = .ssh,
+        s3: StoredS3Config? = nil
     ) {
         self.id = id
         self.name = name
@@ -105,5 +115,28 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         self.groupID = groupID
         self.loginSetID = loginSetID
         self.jump = jump
+        self.kind = kind
+        self.s3 = s3
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, host, port, username, authKind, keyPath, groupID, loginSetID, jump, kind, s3
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        host = try c.decode(String.self, forKey: .host)
+        port = try c.decode(Int.self, forKey: .port)
+        username = try c.decode(String.self, forKey: .username)
+        authKind = try c.decode(AuthKind.self, forKey: .authKind)
+        keyPath = try c.decodeIfPresent(String.self, forKey: .keyPath)
+        groupID = try c.decodeIfPresent(UUID.self, forKey: .groupID)
+        loginSetID = try c.decodeIfPresent(UUID.self, forKey: .loginSetID)
+        jump = try c.decodeIfPresent(JumpSpec.self, forKey: .jump)
+        kind = try c.decodeIfPresent(ConnectionKind.self, forKey: .kind) ?? .ssh
+        s3 = try c.decodeIfPresent(StoredS3Config.self, forKey: .s3)
+    }
+
 }
