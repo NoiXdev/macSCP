@@ -512,3 +512,9 @@
 "menubar.transfer.running" = "%d transferring";
 "menubar.transfer.queued" = "%d queued";
 "settings.general.menubar" = "Show menu bar icon";
+
+/* In-app language switcher (M11p/T4) */
+"settings.general.language.header" = "Language";
+"settings.general.language.system" = "System";
+"settings.general.language.footer" = "Takes effect after a relaunch.";
+"settings.general.language.relaunch" = "Relaunch macSCP";

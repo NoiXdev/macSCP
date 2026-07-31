@@ -33,7 +33,8 @@ cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # Resource bundles are architecture-independent — take the arm64 build's.
 cp -R "$ARM_BIN/macSCP_MacSCPApp.bundle" "$APP/Contents/Resources/"
 cp -R "$ARM_BIN/macSCP_macSCPCore.bundle" "$APP/Contents/Resources/"
-mkdir "$APP/Contents/Resources/en.lproj" "$APP/Contents/Resources/de.lproj"
+mkdir "$APP/Contents/Resources/en.lproj" "$APP/Contents/Resources/de.lproj" \
+      "$APP/Contents/Resources/fr.lproj" "$APP/Contents/Resources/pl.lproj"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -41,6 +42,13 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>en</string>
+        <string>de</string>
+        <string>fr</string>
+        <string>pl</string>
+    </array>
     <key>CFBundleDisplayName</key><string>macSCP</string>
     <key>CFBundleExecutable</key><string>macSCP</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
@@ -82,5 +90,6 @@ lipo -archs "$APP/Contents/MacOS/macSCP" | grep -q x86_64
 lipo -archs "$APP/Contents/MacOS/macSCP" | grep -q arm64
 test -d "$APP/Contents/Resources/macSCP_MacSCPApp.bundle"
 test -d "$APP/Contents/Resources/macSCP_macSCPCore.bundle"
-test -d "$APP/Contents/Resources/en.lproj" -a -d "$APP/Contents/Resources/de.lproj"
+test -d "$APP/Contents/Resources/en.lproj" -a -d "$APP/Contents/Resources/de.lproj" \
+     -a -d "$APP/Contents/Resources/fr.lproj" -a -d "$APP/Contents/Resources/pl.lproj"
 echo "wrote $APP (v${VERSION}, build ${BUILD})"

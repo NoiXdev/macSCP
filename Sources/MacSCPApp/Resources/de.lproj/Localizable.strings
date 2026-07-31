@@ -513,3 +513,9 @@
 "menubar.transfer.running" = "%d überträgt";
 "menubar.transfer.queued" = "%d in Warteschlange";
 "settings.general.menubar" = "Menüleisten-Symbol anzeigen";
+
+/* Sprachumschalter in der App (M11p/T4) */
+"settings.general.language.header" = "Sprache";
+"settings.general.language.system" = "System";
+"settings.general.language.footer" = "Wird nach einem Neustart angewandt.";
+"settings.general.language.relaunch" = "macSCP neu starten";

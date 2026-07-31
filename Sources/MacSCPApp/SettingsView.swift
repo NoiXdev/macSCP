@@ -17,10 +17,15 @@ struct SettingsView: View {
     /// "Check Now" button reuses the one existing check path instead of
     /// starting a second one.
     var updateModel: UpdateCheckModel
+    /// The language in effect when this process launched (M11p) — threaded
+    /// through from `MacSCPApp.init` to `GeneralSettingsTab`, which compares
+    /// it against the live `store.selectedLanguage` to decide whether to
+    /// show the relaunch button.
+    var launchLanguage: AppLanguage
 
     var body: some View {
         TabView {
-            GeneralSettingsTab(store: store, updateModel: updateModel)
+            GeneralSettingsTab(store: store, updateModel: updateModel, launchLanguage: launchLanguage)
                 .tabItem {
                     Label(
                         L10n.string("settings.tab.general", "General"),
@@ -71,6 +76,11 @@ private struct GeneralSettingsTab: View {
     /// `check(manual:settingsStore:)` — the exact same call the app-menu
     /// item makes (see `MacSCPApp.body`'s `CommandGroup(after: .appInfo)`).
     var updateModel: UpdateCheckModel
+    /// The language in effect when this process launched (M11p) — compared
+    /// against the live `store.selectedLanguage` below to decide whether the
+    /// relaunch button is shown (a language change only takes effect on a
+    /// fresh launch).
+    var launchLanguage: AppLanguage
 
     /// The running build's short version string, read the same way
     /// `UpdateCheckModel.check` and the system "About macSCP" panel do
@@ -99,6 +109,35 @@ private struct GeneralSettingsTab: View {
 
     var body: some View {
         Form {
+            // Language switcher (M11p): overrides `AppleLanguages` on the
+            // NEXT launch (`MacSCPApp.init`) — the bundle's localized tables
+            // are cached after first use, so a relaunch button appears while
+            // the picker's live selection differs from what was actually
+            // applied at launch.
+            Section {
+                Picker(
+                    L10n.string("settings.general.language.header", "Language"),
+                    selection: $store.selectedLanguage
+                ) {
+                    Text(L10n.string("settings.general.language.system", "System"))
+                        .tag(AppLanguage.system)
+                    Text("English").tag(AppLanguage.en)
+                    Text("Deutsch").tag(AppLanguage.de)
+                    Text("Français").tag(AppLanguage.fr)
+                    Text("Polski").tag(AppLanguage.pl)
+                }
+                if store.selectedLanguage != launchLanguage {
+                    Button(L10n.string("settings.general.language.relaunch", "Relaunch macSCP")) {
+                        AppRelauncher.relaunch()
+                    }
+                }
+            } footer: {
+                Text(L10n.string(
+                    "settings.general.language.footer",
+                    "Takes effect after a relaunch."))
+                    .foregroundStyle(.secondary)
+            }
+
             Section {
                 Toggle(
                     L10n.string("settings.general.showHidden", "Show hidden files"),

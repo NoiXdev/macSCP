@@ -515,3 +515,9 @@
 "menubar.transfer.running" = "%d w trakcie przesyłania";
 "menubar.transfer.queued" = "%d w kolejce";
 "settings.general.menubar" = "Pokaż ikonę w pasku menu";
+
+/* Przełącznik języka w aplikacji (M11p/T4) */
+"settings.general.language.header" = "Język";
+"settings.general.language.system" = "System";
+"settings.general.language.footer" = "Zacznie obowiązywać po ponownym uruchomieniu.";
+"settings.general.language.relaunch" = "Uruchom ponownie macSCP";

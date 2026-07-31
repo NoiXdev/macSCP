@@ -85,6 +85,12 @@ struct MacSCPApp: App {
     /// `settingsStore.menuBarEnabled`. Replaces the SwiftUI `MenuBarExtra`,
     /// which loops SwiftUI layout on macOS 26 — see `MenuBarController`.
     private let menuBarController: MenuBarController
+    /// The language that was in effect when THIS process launched (M11p):
+    /// captured once in `init`, alongside the `AppleLanguages` override
+    /// applied below. `GeneralSettingsTab` compares this against the live
+    /// `store.selectedLanguage` to decide whether to show the relaunch
+    /// button — a change only takes effect on a fresh launch.
+    let launchLanguage: AppLanguage
 
     init() {
         // Sweep any orphaned edit temp directories left behind by a
@@ -104,6 +110,20 @@ struct MacSCPApp: App {
         // property initializers) so the AppKit `MenuBarController` can share
         // the very same instances the views observe.
         let store = SettingsStore(directory: SettingsStore.defaultDirectory)
+
+        // Apply the chosen UI language before any localized lookup (M11p).
+        // `L10n`/`CoreL10n` defer to Foundation's AppleLanguages resolution,
+        // so setting this here (before `body` builds any menu/view) is early
+        // enough for a fresh launch; a change made while running needs a
+        // relaunch (the bundle tables cache). `.system` clears the override.
+        let language = store.selectedLanguage
+        if let code = language.localeCode {
+            UserDefaults.standard.set([code], forKey: "AppleLanguages")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "AppleLanguages")
+        }
+        launchLanguage = language
+
         let model = MenuBarStatusModel()
         _settingsStore = State(initialValue: store)
         _menuBarModel = State(initialValue: model)
@@ -233,7 +253,8 @@ struct MacSCPApp: App {
         // app-menu item above — one shared `isChecking`/`presentedResult`,
         // not a second check path.
         Settings {
-            SettingsView(store: settingsStore, updateModel: updateModel)
+            SettingsView(store: settingsStore, updateModel: updateModel,
+                         launchLanguage: launchLanguage)
                 .tint(DesignTokens.remoteBlue)
         }
 
