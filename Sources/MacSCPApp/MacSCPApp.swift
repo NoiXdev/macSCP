@@ -52,7 +52,7 @@ struct MacSCPApp: App {
     /// Single instance for the whole app — passed to `ContentView` and the
     /// `Settings` scene below (M5c/T3: no singleton, per the v2 multi-window
     /// rule).
-    @State private var settingsStore = SettingsStore(directory: SettingsStore.defaultDirectory)
+    @State private var settingsStore: SettingsStore
     /// App-global bandwidth ceilings (M8a/T2): one shared instance for the
     /// whole app, passed to `ContentView` so every tab's queue (T3) resolves
     /// its throttle from the same buckets — limits apply in aggregate across
@@ -69,6 +69,17 @@ struct MacSCPApp: App {
     /// doc comment for why this lives here rather than in `ContentView`'s
     /// per-tab machinery.
     @State private var updateModel = UpdateCheckModel()
+    /// Menu-bar status bridge (M11n) — one instance for the whole app,
+    /// passed to `ContentView` (which mirrors its tabs into it) and to the
+    /// `MenuBarController` below, same no-singleton pattern as the other
+    /// app-global stores above.
+    @State private var menuBarModel: MenuBarStatusModel
+
+    /// AppKit menu-bar status item (M11n, re-landed). Retained for the app's
+    /// lifetime; reads `menuBarModel` and shows/hides itself from
+    /// `settingsStore.menuBarEnabled`. Replaces the SwiftUI `MenuBarExtra`,
+    /// which loops SwiftUI layout on macOS 26 — see `MenuBarController`.
+    private let menuBarController: MenuBarController
 
     init() {
         // Sweep any orphaned edit temp directories left behind by a
@@ -83,6 +94,15 @@ struct MacSCPApp: App {
         // Dock icon. A real `.app` bundle lands in M6.
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate(ignoringOtherApps: true)
+
+        // Build the settings store and the menu-bar bridge here (not as
+        // property initializers) so the AppKit `MenuBarController` can share
+        // the very same instances the views observe.
+        let store = SettingsStore(directory: SettingsStore.defaultDirectory)
+        let model = MenuBarStatusModel()
+        _settingsStore = State(initialValue: store)
+        _menuBarModel = State(initialValue: model)
+        menuBarController = MenuBarController(model: model, settingsStore: store)
     }
 
     var body: some Scene {
@@ -92,7 +112,8 @@ struct MacSCPApp: App {
         WindowGroup("macSCP") {
             ContentView(
                 settingsStore: settingsStore, bandwidthLimiter: bandwidthLimiter,
-                auditStore: auditStore, tabCommands: tabCommands, updateModel: updateModel)
+                auditStore: auditStore, tabCommands: tabCommands, updateModel: updateModel,
+                menuBarModel: menuBarModel)
         }
         .commands {
             // "Check for Updates…" (M11b/T2), directly under "About macSCP"
@@ -204,5 +225,10 @@ struct MacSCPApp: App {
             SettingsView(store: settingsStore, updateModel: updateModel)
                 .tint(DesignTokens.remoteBlue)
         }
+
+        // The menu-bar status item is an AppKit `NSStatusItem` driven by
+        // `menuBarController` (created in `init`), NOT a SwiftUI scene —
+        // `MenuBarExtra` loops SwiftUI layout on macOS 26. See
+        // `MenuBarController`.
     }
 }
