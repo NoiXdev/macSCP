@@ -176,6 +176,62 @@ public final class TransferQueueViewModel {
         return items.first(where: { $0.status == .queued })?.direction
     }
 
+    /// A compact roll-up of this queue's activity for the menu-bar panel
+    /// (M11n). `nil` when the queue is idle. The fold lives in a pure static
+    /// helper so it is unit-testable without driving the queue.
+    public var activitySummary: TransferActivitySummary? {
+        Self.activitySummary(for: items, direction: displayDirection)
+    }
+
+    /// Pure fold of a queue's items into a `TransferActivitySummary`. `nil`
+    /// when nothing is queued or running. `fraction` is byte-weighted over
+    /// running items with a known total; `bytesPerSecond` sums the running
+    /// items that report a rate. Internal so tests (`@testable`) can call it
+    /// with hand-built items.
+    static func activitySummary(
+        for items: [Item], direction: TransferDirection?
+    ) -> TransferActivitySummary? {
+        var runningCount = 0
+        var pendingCount = 0
+        var sumTransferred: UInt64 = 0
+        var sumTotal: UInt64 = 0
+        var anyKnownTotal = false
+        var sumRate = 0.0
+        var anyRate = false
+
+        for item in items {
+            switch item.status {
+            case .queued:
+                pendingCount += 1
+            case let .running(progress):
+                runningCount += 1
+                if let total = progress.totalBytes, total > 0 {
+                    sumTransferred += progress.bytesTransferred
+                    sumTotal += total
+                    anyKnownTotal = true
+                }
+                if let rate = progress.bytesPerSecond {
+                    sumRate += rate
+                    anyRate = true
+                }
+            case .finished, .failed, .cancelled, .skipped, .interrupted:
+                continue
+            }
+        }
+
+        guard runningCount > 0 || pendingCount > 0 else { return nil }
+
+        let fraction = anyKnownTotal ? Double(sumTransferred) / Double(sumTotal) : nil
+        let bytesPerSecond = anyRate ? sumRate : nil
+        return TransferActivitySummary(
+            runningCount: runningCount,
+            pendingCount: pendingCount,
+            fraction: fraction,
+            bytesPerSecond: bytesPerSecond,
+            direction: direction
+        )
+    }
+
     /// Monotonically increasing count of items that have transitioned into
     /// `.failed`, EVER — replaces the old item-based `failedCount` (M8a T5
     /// review, finding 2). `failedCount` could only ever compare against the

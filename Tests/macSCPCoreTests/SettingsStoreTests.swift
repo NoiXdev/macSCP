@@ -37,6 +37,22 @@ struct SettingsStoreTests {
         #expect(reloaded.downloadLimitKBs == 200)
     }
 
+    @Test func menuBarEnabledDefaultsTrue() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.menuBarEnabled == true)
+    }
+
+    @Test func menuBarEnabledRoundtrips() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.menuBarEnabled = false
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.menuBarEnabled == false)
+    }
+
     @Test func maxConcurrentTransfersClampsBelowRange() {
         let dir = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }

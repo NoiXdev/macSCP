@@ -73,6 +73,7 @@ public final class SettingsStore {
         static let customTerminalAppPath = "customTerminalAppPath"
         static let externalTerminalPasswordHintShown = "externalTerminalPasswordHintShown"
         static let visibleColumns = "visibleColumns"
+        static let menuBarEnabled = "menuBarEnabled"
     }
 
     private enum Defaults {
@@ -86,6 +87,7 @@ public final class SettingsStore {
         static let terminalCursorStyle = TerminalCursorStyle.block
         static let terminalCursorBlink = true
         static let updateCheckEnabled = true
+        static let menuBarEnabled = true
     }
 
     /// Identical to `SessionStore.defaultDirectory` — both stores share the
@@ -260,6 +262,12 @@ public final class SettingsStore {
     public var updateCheckEnabled: Bool {
         get { boolValue(for: Keys.updateCheckEnabled, default: Defaults.updateCheckEnabled) }
         set { setBool(newValue, for: Keys.updateCheckEnabled) }
+    }
+
+    /// Whether the app shows its menu-bar status item (M11n). Default on.
+    public var menuBarEnabled: Bool {
+        get { boolValue(for: Keys.menuBarEnabled, default: Defaults.menuBarEnabled) }
+        set { setBool(newValue, for: Keys.menuBarEnabled) }
     }
 
     /// Timestamp of the last update-check ATTEMPT — successful or not — or
