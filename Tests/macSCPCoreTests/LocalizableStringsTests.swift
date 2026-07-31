@@ -40,9 +40,9 @@ struct LocalizableStringsTests {
         return NSDictionary(contentsOfFile: path) as? [String: String]
     }
 
-    /// Non-English languages per layer. Task 3 appends "pl".
-    private static let appLangs = ["de", "fr"]
-    private static let coreLangs = ["de", "fr"]
+    /// Non-English languages per layer.
+    private static let appLangs = ["de", "fr", "pl"]
+    private static let coreLangs = ["de", "fr", "pl"]
 
     private static func appPath(_ lang: String) -> String {
         "Sources/MacSCPApp/Resources/\(lang).lproj/Localizable.strings"
