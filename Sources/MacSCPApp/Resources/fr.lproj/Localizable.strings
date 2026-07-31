@@ -522,3 +522,35 @@
 "settings.general.language.system" = "Système";
 "settings.general.language.footer" = "Prend effet après un redémarrage.";
 "settings.general.language.relaunch" = "Relancer macSCP";
+
+/* Aperçu des raccourcis clavier (M11q) */
+"settings.tab.shortcuts" = "Raccourcis";
+"settings.shortcuts.group.tabs" = "Onglets et fenêtres";
+"settings.shortcuts.group.view" = "Affichage";
+"settings.shortcuts.group.sessions" = "Sessions";
+"settings.shortcuts.group.browser" = "Explorateur de fichiers";
+"settings.shortcuts.group.pathbar" = "Barre de chemin";
+"settings.shortcuts.group.sheets" = "Boîtes de dialogue";
+"settings.shortcuts.label.newTab" = "Nouvel onglet";
+"settings.shortcuts.label.closeTab" = "Fermer l'onglet";
+"settings.shortcuts.label.selectTab" = "Sélectionner l'onglet 1–9";
+"settings.shortcuts.label.settings" = "Réglages";
+"settings.shortcuts.label.hiddenFiles" = "Afficher/masquer les fichiers cachés";
+"settings.shortcuts.label.transfers" = "Afficher/masquer les transferts";
+"settings.shortcuts.label.terminal" = "Afficher/masquer le terminal";
+"settings.shortcuts.label.knownHosts" = "Hôtes connus";
+"settings.shortcuts.label.logins" = "Identifiants";
+"settings.shortcuts.label.hiddenImports" = "Imports masqués";
+"settings.shortcuts.label.goUp" = "Aller au dossier parent";
+"settings.shortcuts.label.open" = "Ouvrir";
+"settings.shortcuts.label.info" = "Infos et autorisations";
+"settings.shortcuts.label.delete" = "Supprimer";
+"settings.shortcuts.label.transferItem" = "Transférer vers l'autre volet";
+"settings.shortcuts.label.rename" = "Renommer";
+"settings.shortcuts.label.clearSelection" = "Effacer la sélection";
+"settings.shortcuts.label.search" = "Rechercher";
+"settings.shortcuts.label.complete" = "Compléter le chemin";
+"settings.shortcuts.label.cycleBack" = "Proposition précédente";
+"settings.shortcuts.label.cancel" = "Annuler";
+"settings.shortcuts.label.navigate" = "Aller au chemin";
+"settings.shortcuts.label.confirm" = "Confirmer";

@@ -7,8 +7,8 @@ import macSCPCore
 /// "Settings…" item (the `Settings` scene is wired up in MacSCPApp.swift).
 ///
 /// Structured as a `TabView` with a "General" tab (M7a/T4), a "Transfers"
-/// tab, an "Open with" tab (M5e/T2), and a "Terminal" tab (M9d); future tabs
-/// slot in the same way.
+/// tab, an "Open with" tab (M5e/T2), a "Terminal" tab (M9d), and a
+/// read-only "Shortcuts" tab (M11q); future tabs slot in the same way.
 struct SettingsView: View {
     var store: SettingsStore
     /// App-global update-check state (M11h/T2) — same `UpdateCheckModel`
@@ -51,6 +51,13 @@ struct SettingsView: View {
                     Label(
                         L10n.string("settings.tab.terminal", "Terminal"),
                         systemImage: "terminal")
+                }
+
+            ShortcutsSettingsTab()
+                .tabItem {
+                    Label(
+                        L10n.string("settings.tab.shortcuts", "Shortcuts"),
+                        systemImage: "keyboard")
                 }
         }
         // Height bumped 420 -> 460 for this M9d polish pass: switching
@@ -703,5 +710,28 @@ private struct TerminalSettingsTab: View {
                 .padding(.horizontal)
         }
         .padding(.vertical)
+    }
+}
+
+/// Read-only keyboard-shortcuts overview (M11q) — renders
+/// `KeyboardShortcutsCatalog` as one grouped, non-interactive list.
+private struct ShortcutsSettingsTab: View {
+    var body: some View {
+        Form {
+            ForEach(KeyboardShortcutsCatalog.groups) { group in
+                Section(L10n.string(group.titleKey, group.titleDefault)) {
+                    ForEach(group.rows) { row in
+                        HStack {
+                            Text(L10n.string(row.labelKey, row.labelDefault))
+                            Spacer()
+                            Text(row.shortcut)
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
     }
 }

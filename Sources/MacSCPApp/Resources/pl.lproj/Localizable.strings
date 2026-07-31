@@ -521,3 +521,35 @@
 "settings.general.language.system" = "System";
 "settings.general.language.footer" = "Zacznie obowiązywać po ponownym uruchomieniu.";
 "settings.general.language.relaunch" = "Uruchom ponownie macSCP";
+
+/* Przegląd skrótów klawiszowych (M11q) */
+"settings.tab.shortcuts" = "Skróty klawiszowe";
+"settings.shortcuts.group.tabs" = "Karty i okna";
+"settings.shortcuts.group.view" = "Widok";
+"settings.shortcuts.group.sessions" = "Sesje";
+"settings.shortcuts.group.browser" = "Przeglądarka plików";
+"settings.shortcuts.group.pathbar" = "Pasek ścieżki";
+"settings.shortcuts.group.sheets" = "Okna dialogowe";
+"settings.shortcuts.label.newTab" = "Nowa karta";
+"settings.shortcuts.label.closeTab" = "Zamknij kartę";
+"settings.shortcuts.label.selectTab" = "Wybierz kartę 1–9";
+"settings.shortcuts.label.settings" = "Ustawienia";
+"settings.shortcuts.label.hiddenFiles" = "Pokaż/ukryj ukryte pliki";
+"settings.shortcuts.label.transfers" = "Pokaż/ukryj transfery";
+"settings.shortcuts.label.terminal" = "Pokaż/ukryj terminal";
+"settings.shortcuts.label.knownHosts" = "Znane hosty";
+"settings.shortcuts.label.logins" = "Dane logowania";
+"settings.shortcuts.label.hiddenImports" = "Ukryte importy";
+"settings.shortcuts.label.goUp" = "Przejdź do folderu nadrzędnego";
+"settings.shortcuts.label.open" = "Otwórz";
+"settings.shortcuts.label.info" = "Informacje i uprawnienia";
+"settings.shortcuts.label.delete" = "Usuń";
+"settings.shortcuts.label.transferItem" = "Prześlij do drugiego panelu";
+"settings.shortcuts.label.rename" = "Zmień nazwę";
+"settings.shortcuts.label.clearSelection" = "Wyczyść zaznaczenie";
+"settings.shortcuts.label.search" = "Szukaj";
+"settings.shortcuts.label.complete" = "Uzupełnij ścieżkę";
+"settings.shortcuts.label.cycleBack" = "Poprzednia propozycja";
+"settings.shortcuts.label.cancel" = "Anuluj";
+"settings.shortcuts.label.navigate" = "Przejdź do ścieżki";
+"settings.shortcuts.label.confirm" = "Potwierdź";

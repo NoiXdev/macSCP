@@ -518,3 +518,35 @@
 "settings.general.language.system" = "System";
 "settings.general.language.footer" = "Takes effect after a relaunch.";
 "settings.general.language.relaunch" = "Relaunch macSCP";
+
+/* Keyboard shortcuts overview (M11q) */
+"settings.tab.shortcuts" = "Shortcuts";
+"settings.shortcuts.group.tabs" = "Tabs & Windows";
+"settings.shortcuts.group.view" = "View";
+"settings.shortcuts.group.sessions" = "Sessions";
+"settings.shortcuts.group.browser" = "File browser";
+"settings.shortcuts.group.pathbar" = "Path bar";
+"settings.shortcuts.group.sheets" = "Dialogs";
+"settings.shortcuts.label.newTab" = "New Tab";
+"settings.shortcuts.label.closeTab" = "Close Tab";
+"settings.shortcuts.label.selectTab" = "Select Tab 1–9";
+"settings.shortcuts.label.settings" = "Settings";
+"settings.shortcuts.label.hiddenFiles" = "Show/Hide Hidden Files";
+"settings.shortcuts.label.transfers" = "Show/Hide Transfers";
+"settings.shortcuts.label.terminal" = "Show/Hide Terminal";
+"settings.shortcuts.label.knownHosts" = "Known Hosts";
+"settings.shortcuts.label.logins" = "Logins";
+"settings.shortcuts.label.hiddenImports" = "Hidden Imports";
+"settings.shortcuts.label.goUp" = "Go to parent folder";
+"settings.shortcuts.label.open" = "Open";
+"settings.shortcuts.label.info" = "Info & Permissions";
+"settings.shortcuts.label.delete" = "Delete";
+"settings.shortcuts.label.transferItem" = "Transfer to other pane";
+"settings.shortcuts.label.rename" = "Rename";
+"settings.shortcuts.label.clearSelection" = "Clear selection";
+"settings.shortcuts.label.search" = "Search";
+"settings.shortcuts.label.complete" = "Complete path";
+"settings.shortcuts.label.cycleBack" = "Previous candidate";
+"settings.shortcuts.label.cancel" = "Cancel";
+"settings.shortcuts.label.navigate" = "Go to path";
+"settings.shortcuts.label.confirm" = "Confirm";
