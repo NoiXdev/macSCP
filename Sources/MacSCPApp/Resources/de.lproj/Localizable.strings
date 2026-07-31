@@ -497,15 +497,3 @@
 "search.count.filter %1$lld %2$lld" = "%1$lld von %2$lld";
 "search.count.jump %lld" = "%lld Treffer";
 "search.error.invalidRegex" = "Ungültiger regulärer Ausdruck";
-
-/* Menüleisten-Statuselement (M11n/T2) */
-"menubar.connections.count" = "%d Verbindungen";
-"menubar.empty" = "Keine aktiven Verbindungen";
-"menubar.show.window" = "macSCP anzeigen";
-"menubar.status.connected" = "Verbunden";
-"menubar.status.connecting" = "Verbindet…";
-"menubar.status.failed" = "Fehlgeschlagen";
-"menubar.status.ready" = "Bereit";
-"menubar.transfer.running" = "%d überträgt";
-"menubar.transfer.queued" = "%d in Warteschlange";
-"settings.general.menubar" = "Menüleisten-Symbol anzeigen";

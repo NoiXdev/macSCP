@@ -496,15 +496,3 @@
 "search.count.filter %1$lld %2$lld" = "%1$lld of %2$lld";
 "search.count.jump %lld" = "%lld matches";
 "search.error.invalidRegex" = "Invalid regular expression";
-
-/* Menu-bar status item (M11n/T2) */
-"menubar.connections.count" = "%d connections";
-"menubar.empty" = "No active connections";
-"menubar.show.window" = "Show macSCP";
-"menubar.status.connected" = "Connected";
-"menubar.status.connecting" = "Connecting…";
-"menubar.status.failed" = "Failed";
-"menubar.status.ready" = "Ready";
-"menubar.transfer.running" = "%d transferring";
-"menubar.transfer.queued" = "%d queued";
-"settings.general.menubar" = "Show menu bar icon";
