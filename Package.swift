@@ -29,6 +29,7 @@ let package = Package(
             resources: [
                 .process("Resources/en.lproj"),
                 .process("Resources/de.lproj"),
+                .process("Resources/fr.lproj"),
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),

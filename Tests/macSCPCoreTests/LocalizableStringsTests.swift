@@ -10,9 +10,10 @@ import Testing
 /// back to English at runtime). A grep-based key-name scan cannot see this
 /// class of defect at all — it only ever inspects key names, never whether
 /// the file is valid property-list syntax to begin with. This suite loads
-/// all four catalogs directly off disk (via a `#filePath`-relative path, so
-/// it runs regardless of `swift test`'s working directory) and asserts each
-/// one parses, AND that the en/de key sets are identical per layer.
+/// every catalog directly off disk (via a `#filePath`-relative path, so it
+/// runs regardless of `swift test`'s working directory) and asserts each one
+/// parses, AND that every non-English language's key set is identical to
+/// English's, per layer.
 @Suite("Localizable.strings catalogs")
 struct LocalizableStringsTests {
     /// `#filePath` for this file is
@@ -28,9 +29,7 @@ struct LocalizableStringsTests {
     }()
 
     private static let appEnPath = "Sources/MacSCPApp/Resources/en.lproj/Localizable.strings"
-    private static let appDePath = "Sources/MacSCPApp/Resources/de.lproj/Localizable.strings"
     private static let coreEnPath = "Sources/macSCPCore/Resources/en.lproj/Localizable.strings"
-    private static let coreDePath = "Sources/macSCPCore/Resources/de.lproj/Localizable.strings"
 
     /// Loads a `.strings` file (old-style property list) as `[String:
     /// String]`, or `nil` if it fails to parse as a property list AT ALL --
@@ -41,7 +40,23 @@ struct LocalizableStringsTests {
         return NSDictionary(contentsOfFile: path) as? [String: String]
     }
 
-    @Test(arguments: [appEnPath, appDePath, coreEnPath, coreDePath])
+    /// Non-English languages per layer. Task 3 appends "pl".
+    private static let appLangs = ["de", "fr"]
+    private static let coreLangs = ["de", "fr"]
+
+    private static func appPath(_ lang: String) -> String {
+        "Sources/MacSCPApp/Resources/\(lang).lproj/Localizable.strings"
+    }
+    private static func corePath(_ lang: String) -> String {
+        "Sources/macSCPCore/Resources/\(lang).lproj/Localizable.strings"
+    }
+
+    private static var allPaths: [String] {
+        [appEnPath, coreEnPath]
+            + appLangs.map(appPath) + coreLangs.map(corePath)
+    }
+
+    @Test(arguments: LocalizableStringsTests.allPaths)
     func catalogParsesAsAPropertyList(relativePath: String) {
         #expect(
             Self.parse(relativePath) != nil,
@@ -49,26 +64,28 @@ struct LocalizableStringsTests {
         )
     }
 
-    @Test func appLayerHasIdenticalEnglishAndGermanKeys() {
-        assertIdenticalKeys(enPath: Self.appEnPath, dePath: Self.appDePath)
+    @Test func appLayerLanguagesMatchEnglishKeys() {
+        for lang in Self.appLangs {
+            assertIdenticalKeys(enPath: Self.appEnPath, otherPath: Self.appPath(lang))
+        }
     }
 
-    @Test func coreLayerHasIdenticalEnglishAndGermanKeys() {
-        assertIdenticalKeys(enPath: Self.coreEnPath, dePath: Self.coreDePath)
+    @Test func coreLayerLanguagesMatchEnglishKeys() {
+        for lang in Self.coreLangs {
+            assertIdenticalKeys(enPath: Self.coreEnPath, otherPath: Self.corePath(lang))
+        }
     }
 
-    private func assertIdenticalKeys(enPath: String, dePath: String) {
+    private func assertIdenticalKeys(enPath: String, otherPath: String) {
         guard let en = LocalizableStringsTests.parse(enPath) else {
-            Issue.record("\(enPath) failed to parse as a property list")
-            return
+            Issue.record("\(enPath) failed to parse as a property list"); return
         }
-        guard let de = LocalizableStringsTests.parse(dePath) else {
-            Issue.record("\(dePath) failed to parse as a property list")
-            return
+        guard let other = LocalizableStringsTests.parse(otherPath) else {
+            Issue.record("\(otherPath) failed to parse as a property list"); return
         }
-        let missingInDe = Set(en.keys).subtracting(de.keys)
-        let missingInEn = Set(de.keys).subtracting(en.keys)
-        #expect(missingInDe.isEmpty, "Keys present in \(enPath) but missing from \(dePath): \(missingInDe.sorted())")
-        #expect(missingInEn.isEmpty, "Keys present in \(dePath) but missing from \(enPath): \(missingInEn.sorted())")
+        let missing = Set(en.keys).subtracting(other.keys)
+        let extra = Set(other.keys).subtracting(en.keys)
+        #expect(missing.isEmpty, "Keys present in \(enPath) but missing from \(otherPath): \(missing.sorted())")
+        #expect(extra.isEmpty, "Keys present in \(otherPath) but missing from \(enPath): \(extra.sorted())")
     }
 }
