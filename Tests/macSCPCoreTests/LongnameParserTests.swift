@@ -65,4 +65,46 @@ struct LongnameParserTests {
         // mistaken for an entry.
         #expect(LongnameParser.ownerGroup(from: "total 8") == nil)
     }
+
+    // MARK: - Trailing permission-field markers (M11m/T1 fix round)
+
+    @Test func selinuxDotMarkerYieldsOwnerAndGroup() {
+        // SELinux security-context marker `.` — the default on
+        // RHEL/CentOS/Fedora/Rocky/AlmaLinux, present on every entry.
+        let longname = "-rw-r--r--. 1 www-data staff 2454 Jul 30 14:22 config.php"
+        let result = LongnameParser.ownerGroup(from: longname)
+        #expect(result?.owner == "www-data")
+        #expect(result?.group == "staff")
+    }
+
+    @Test func aclPlusMarkerYieldsOwnerAndGroup() {
+        // POSIX ACL marker `+` — files/dirs with extended ACLs (Samba, `setfacl`).
+        let longname = "-rw-r--r--+ 1 alice devs 10 Jan 1 00:00 f"
+        let result = LongnameParser.ownerGroup(from: longname)
+        #expect(result?.owner == "alice")
+        #expect(result?.group == "devs")
+    }
+
+    @Test func macOSAtMarkerYieldsOwnerAndGroup() {
+        // Extended-attribute marker `@` — nearly every file on a
+        // macOS-hosted SFTP server.
+        let longname = "-rw-r--r--@ 1 me wheel 5 Jan 1 00:00 g"
+        let result = LongnameParser.ownerGroup(from: longname)
+        #expect(result?.owner == "me")
+        #expect(result?.group == "wheel")
+    }
+
+    @Test func garbageEleventhCharacterYieldsNil() {
+        // The marker set is closed to `. + @`; any other 11th character
+        // still means "doesn't confidently look like an ls -l line".
+        let longname = "-rw-r--r--X 1 www-data staff 2454 Jul 30 14:22 config.php"
+        #expect(LongnameParser.ownerGroup(from: longname) == nil)
+    }
+
+    @Test func directoryWithSelinuxMarkerYieldsOwnerAndGroup() {
+        let longname = "drwxr-xr-x. 2 root root 4096 Jul 30 14:22 etc"
+        let result = LongnameParser.ownerGroup(from: longname)
+        #expect(result?.owner == "root")
+        #expect(result?.group == "root")
+    }
 }

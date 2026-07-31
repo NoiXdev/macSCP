@@ -16,9 +16,10 @@ public struct RemoteFileItem: Equatable, Sendable {
     /// POSIX permission bits without the file-type bits, e.g. 0o644
     public let permissions: UInt32?
     /// Owner NAME where one could be resolved (remote: parsed from the
-    /// listing's `longname`; local: `.fileOwnerAccountNameKey`), otherwise
-    /// the numeric uid as a string, otherwise `nil` (M11m). See
-    /// `LongnameParser` and `SFTPAttributeMapper` for the exact precedence.
+    /// listing's `longname`; local: `FileManager.attributesOfItem(atPath:)`'s
+    /// `.ownerAccountName`), otherwise the numeric uid as a string, otherwise
+    /// `nil` (M11m). See `LongnameParser` and `SFTPAttributeMapper` for the
+    /// exact precedence.
     public let owner: String?
     /// Group NAME/numeric gid/`nil`, same precedence as `owner` (M11m).
     public let group: String?

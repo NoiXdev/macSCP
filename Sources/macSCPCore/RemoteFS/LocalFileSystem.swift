@@ -39,6 +39,17 @@ public struct LocalFileSystem: RemoteFileSystem {
         // immaterial below tens of thousands of entries. If it ever does
         // matter, a try-URL-first-then-fall-back-to-`atPath` variant is
         // possible — not implemented here.
+        //
+        // M11m adds a second per-entry cost on top of the above: `item(for:)`
+        // calls `ownerGroup(for:)`, which does its own
+        // `FileManager.attributesOfItem(atPath:)` (an `lstat` plus
+        // `getpwuid`/`getgrgid` to resolve NAMEs, not just numeric ids —
+        // `getpwuid`/`getgrgid` can block on directory-service-bound Macs,
+        // e.g. AD/LDAP-joined machines) for every entry. This is unavoidable
+        // with the current approach: owner/group account NAMEs are not
+        // exposed via `URLResourceValues` at all (only the numeric
+        // `.ownerAccountID`/`.groupOwnerAccountID` are), so there is no way
+        // to fold this into the `resourceValues` call above.
         let names: [String]
         do {
             names = try FileManager.default.contentsOfDirectory(atPath: path)

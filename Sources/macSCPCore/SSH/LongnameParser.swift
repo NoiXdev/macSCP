@@ -19,6 +19,15 @@ public enum LongnameParser {
     /// `p` (FIFO), `s` (socket).
     private static let fileTypeCharacters = Set("-dlbcps")
 
+    /// Trailing markers `ls -l` appends after the 10-character mode string
+    /// on specific, well-documented occasions — never guessed at, only this
+    /// closed set: SELinux security context (`.`, the default on
+    /// RHEL/CentOS/Fedora/Rocky/AlmaLinux), POSIX ACL (`+`, Samba/`setfacl`),
+    /// and macOS extended attributes (`@`, effectively every file on a
+    /// macOS-hosted SFTP server). Any other 11th character still means "not
+    /// confidently an ls -l line" and falls through to `nil`.
+    private static let permissionFieldMarkers = Set(".+@")
+
     /// Extracts `(owner, group)` from a `longname` line such as
     /// `-rw-r--r-- 1 www-data staff 2454 Jul 30 14:22 config.php`, or `nil`
     /// if the line doesn't confidently look like that shape.
@@ -29,10 +38,13 @@ public enum LongnameParser {
         let fields = longname.split(whereSeparator: { $0 == " " || $0 == "\t" })
         guard fields.count >= 4 else { return nil }
 
-        // Field 0: the permission string — exactly 10 characters
-        // (type + 3×rwx), starting with a recognized file-type character.
+        // Field 0: the permission string — 10 characters (type + 3×rwx),
+        // optionally followed by exactly one trailing marker from the
+        // closed set above, starting with a recognized file-type character.
         let permissionField = fields[0]
-        guard permissionField.count == 10,
+        guard
+            permissionField.count == 10
+                || (permissionField.count == 11 && permissionFieldMarkers.contains(permissionField.last!)),
             let firstCharacter = permissionField.first,
             fileTypeCharacters.contains(firstCharacter)
         else { return nil }
