@@ -38,6 +38,11 @@ final class TabCommands {
     /// takes either capability away.
     var toggleTerminal: (() -> Void)?
     var openExternalTerminal: (() -> Void)?
+    /// Transfer-bar toggle (M11o): the "Show/Hide Transfers" menu entry and
+    /// ⌘⇧Y drive this; `ContentView.task` wires it against `window?.isKeyWindow`
+    /// and toggles the active tab's `transfersPanelVisible`. Enabled state
+    /// mirrors `isActiveTabConnected` (same as the Terminal entries).
+    var toggleTransfers: (() -> Void)?
     /// Mirrors `ContentView`'s active tab connection state (M11d/T2): this
     /// `TabCommands` instance is the only thing `MacSCPApp`'s `.commands`
     /// closure observes, and that closure builds a separate Scene that does
@@ -166,6 +171,12 @@ struct MacSCPApp: App {
                     settingsStore.showHiddenFiles.toggle()
                 }
                 .keyboardShortcut(".", modifiers: [.command, .shift])
+
+                Button(L10n.string("menu.transfers.toggle", "Show/Hide Transfers")) {
+                    tabCommands.toggleTransfers?()
+                }
+                .keyboardShortcut("y", modifiers: [.command, .shift])
+                .disabled(!tabCommands.isActiveTabConnected)
             }
             // "Sessions" menu (M10a/T2, mockup section 4): bundles the
             // management sheets and the sidebar's existing export/import

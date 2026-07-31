@@ -575,6 +575,12 @@ struct ContentView: View {
                 guard window?.isKeyWindow == true else { return }
                 activeTab.session?.terminal.toggle()
             }
+            // Transfer-bar menu bridge (M11o) — same key-window guard as
+            // the other tab commands; toggles the active tab's per-tab flag.
+            tabCommands.toggleTransfers = {
+                guard window?.isKeyWindow == true else { return }
+                activeTab.transfersPanelVisible.toggle()
+            }
             tabCommands.openExternalTerminal = {
                 guard window?.isKeyWindow == true else { return }
                 requestExternalTerminal(for: activeTab)
@@ -778,6 +784,14 @@ struct ContentView: View {
                     .help(settingsStore.terminalTarget == .builtIn
                         ? L10n.string("browser.terminalToggleHelp", "Show/hide terminal (⌘T)")
                         : L10n.string("browser.terminalOpenExternalHelp", "Open in external terminal (⌘T)"))
+                    Button {
+                        activeTab.transfersPanelVisible.toggle()
+                    } label: {
+                        Label(L10n.string("browser.transfersToggle", "Transfers"),
+                              systemImage: "tray.full")
+                    }
+                    .help(L10n.string("browser.transfersToggleHelp",
+                                      "Show/hide transfers (⌘⇧Y)"))
                     Button(L10n.string("browser.disconnect", "Disconnect")) {
                         disconnectToForm(activeTab)
                     }
@@ -998,7 +1012,18 @@ struct ContentView: View {
                         .padding(.vertical, 4)
                     }
 
-                    TransferQueueBar(viewModel: tab.transferQueue)
+                    if tab.transfersPanelVisible {
+                        TransferQueueBar(viewModel: tab.transferQueue)
+                    }
+                }
+                .onChange(of: tab.transferQueue.items.count) { oldCount, newCount in
+                    // A newly enqueued transfer reveals the bar (M11o) — the
+                    // pre-M11o auto-appear behavior, now gated by the per-tab
+                    // visibility flag. Only an INCREASE reveals; clearing or
+                    // finishing items never force-hides.
+                    if newCount > oldCount {
+                        tab.transfersPanelVisible = true
+                    }
                 }
                 .task(id: session.id) {
                     // Auto-refresh loop (M9c): lives inside the tab's `.id` identity,

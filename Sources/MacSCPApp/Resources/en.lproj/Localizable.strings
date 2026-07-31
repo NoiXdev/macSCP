@@ -101,6 +101,8 @@
 "browser.terminalToggle" = "Terminal";
 "browser.terminalToggleHelp" = "Show/hide terminal (⌘T)";
 "browser.terminalOpenExternalHelp" = "Open in external terminal (⌘T)";
+"browser.transfersToggle" = "Transfers";
+"browser.transfersToggleHelp" = "Show/hide transfers (⌘⇧Y)";
 "browser.disconnect" = "Disconnect";
 "browser.paneLocal" = "Local";
 "browser.paneRemote" = "Remote";
@@ -144,6 +146,7 @@
 
 /* Transfer queue bar */
 "transfers.title" = "Transfers";
+"transfers.empty" = "No transfers";
 "transfers.pending" = "Transfers — %lld pending";
 "transfers.clear" = "Clean up";
 "transfers.status.queued" = "queued";
@@ -184,6 +187,7 @@
 
 /* Menu commands (M7a/T4) */
 "menu.toggleHidden" = "Show/Hide Hidden Files";
+"menu.transfers.toggle" = "Show/Hide Transfers";
 "common.save" = "Save";
 
 /* Browser context menu (M7b/T2) */

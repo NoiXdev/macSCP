@@ -29,6 +29,11 @@ final class SessionTab: Identifiable {
     var session: BrowserSession?
     let transferQueue = TransferQueueViewModel()
     let conflictBridge = ConflictPromptBridge()
+    /// Whether the transfer bar is shown for this tab (M11o). Per-tab and
+    /// in-memory, mirroring `TerminalPanelViewModel.isVisible` — the toolbar
+    /// icon / menu / ⌘⇧Y toggle it, and a newly enqueued transfer auto-reveals
+    /// it (see `ContentView`). Not persisted.
+    var transfersPanelVisible = false
     /// Display name while connected (stored session name or "user@host") —
     /// drives the window title of the ACTIVE tab and the tab's own label.
     var titleName: String?

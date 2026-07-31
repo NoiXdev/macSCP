@@ -101,6 +101,8 @@
 "browser.terminalToggle" = "Terminal";
 "browser.terminalToggleHelp" = "Terminal ein-/ausblenden (⌘T)";
 "browser.terminalOpenExternalHelp" = "Im externen Terminal öffnen (⌘T)";
+"browser.transfersToggle" = "Übertragungen";
+"browser.transfersToggleHelp" = "Übertragungen ein-/ausblenden (⌘⇧Y)";
 "browser.disconnect" = "Trennen";
 "browser.paneLocal" = "Lokal";
 "browser.paneRemote" = "Remote";
@@ -145,6 +147,7 @@
 
 /* Transfer-Warteschlangen-Leiste */
 "transfers.title" = "Übertragungen";
+"transfers.empty" = "Keine Übertragungen";
 "transfers.pending" = "Übertragungen — %lld ausstehend";
 "transfers.clear" = "Aufräumen";
 "transfers.status.queued" = "wartet";
@@ -185,6 +188,7 @@
 
 /* Menü-Befehle (M7a/T4) */
 "menu.toggleHidden" = "Versteckte Dateien ein-/ausblenden";
+"menu.transfers.toggle" = "Übertragungen ein-/ausblenden";
 "common.save" = "Speichern";
 
 /* Browser-Kontextmenü (M7b/T2) */
