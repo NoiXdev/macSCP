@@ -1275,7 +1275,11 @@ struct ContentView: View {
         menuBarModel.focusTab = { id in
             NSApplication.shared.activate(ignoringOtherApps: true)
             NSApp.windows.first(where: { $0.canBecomeMain })?.makeKeyAndOrderFront(nil)
-            tabsModel.activate(id)
+            // Route through the `activate(_:)` wrapper, not `tabsModel.activate`
+            // directly (M11n final review): a menu-bar row tap is an activation
+            // call site and must clear the tab's attention indicator (reset
+            // `seenFailureCount`) just like a tab-strip click or ⌘1–9.
+            activate(id)
         }
         menuBarModel.showMainWindow = {
             NSApplication.shared.activate(ignoringOtherApps: true)
