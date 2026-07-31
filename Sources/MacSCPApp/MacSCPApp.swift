@@ -69,6 +69,11 @@ struct MacSCPApp: App {
     /// doc comment for why this lives here rather than in `ContentView`'s
     /// per-tab machinery.
     @State private var updateModel = UpdateCheckModel()
+    /// Menu-bar status bridge (M11n/T2) — one instance for the whole app,
+    /// passed to `ContentView` (which mirrors its tabs into it) and to the
+    /// `MenuBarExtra` scene below, same no-singleton pattern as the other
+    /// app-global stores above.
+    @State private var menuBarModel = MenuBarStatusModel()
 
     init() {
         // Sweep any orphaned edit temp directories left behind by a
@@ -92,7 +97,8 @@ struct MacSCPApp: App {
         WindowGroup("macSCP") {
             ContentView(
                 settingsStore: settingsStore, bandwidthLimiter: bandwidthLimiter,
-                auditStore: auditStore, tabCommands: tabCommands, updateModel: updateModel)
+                auditStore: auditStore, tabCommands: tabCommands, updateModel: updateModel,
+                menuBarModel: menuBarModel)
         }
         .commands {
             // "Check for Updates…" (M11b/T2), directly under "About macSCP"
@@ -204,5 +210,27 @@ struct MacSCPApp: App {
             SettingsView(store: settingsStore, updateModel: updateModel)
                 .tint(DesignTokens.remoteBlue)
         }
+
+        // Menu-bar status item (M11n/T2, `.window` style): shows active
+        // connections and grouped transfer activity. `isInserted` mirrors
+        // `settingsStore.menuBarEnabled` so the Settings toggle adds/removes
+        // it live. An explicit `Binding` (rather than `@Bindable` on the
+        // `@State`/`@Observable` `settingsStore` here) sidesteps `@Bindable`
+        // property-wrapper friction inside a `Scene`'s `body`.
+        MenuBarExtra(isInserted: menuBarInserted) {
+            MenuBarStatusPanel(model: menuBarModel)
+        } label: {
+            MenuBarStatusLabel(model: menuBarModel)
+        }
+        .menuBarExtraStyle(.window)
+    }
+
+    /// `MenuBarExtra`'s `isInserted:` binding, reading/writing
+    /// `settingsStore.menuBarEnabled` directly (see the scene's doc comment
+    /// above for why this is a plain `Binding` instead of `@Bindable`).
+    private var menuBarInserted: Binding<Bool> {
+        Binding(
+            get: { settingsStore.menuBarEnabled },
+            set: { settingsStore.menuBarEnabled = $0 })
     }
 }

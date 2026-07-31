@@ -110,6 +110,15 @@ private struct GeneralSettingsTab: View {
                     .foregroundStyle(.secondary)
             }
 
+            // Menu-bar status item toggle (M11n/T2): adds/removes the
+            // `MenuBarExtra` scene live via `MacSCPApp`'s `isInserted`
+            // binding to this same `store.menuBarEnabled`.
+            Section {
+                Toggle(
+                    L10n.string("settings.general.menubar", "Show menu bar icon"),
+                    isOn: $store.menuBarEnabled)
+            }
+
             // File-list columns (M11m/T2): one checkbox per toggleable
             // `FileColumn` — `name` is excluded (`FileColumn.isToggleable`
             // is `false` only for it), so it never gets a row here and stays

@@ -159,6 +159,12 @@ struct ContentView: View {
     /// same place the app-global import/export result alerts already live,
     /// despite those also being triggered from the app-wide Sessions menu.
     let updateModel: UpdateCheckModel
+    /// Menu-bar status bridge (M11n/T2), created once in `MacSCPApp` (no
+    /// singleton, same pattern as the stores above) and shared with the
+    /// `MenuBarExtra` scene there. This view mirrors `tabsModel.tabs` into it
+    /// and sets its window-raising closures in `.task`/`.onChange` below —
+    /// see `MenuBarStatusModel`'s doc comment.
+    let menuBarModel: MenuBarStatusModel
     /// Assigned in `init` (not a bare default value) so it can pass
     /// `auditStore` through — mirrors `_tabsModel` below.
     @State private var sessionListViewModel: SessionListViewModel
@@ -286,13 +292,14 @@ struct ContentView: View {
 
     init(
         settingsStore: SettingsStore, bandwidthLimiter: BandwidthLimiter, auditStore: AuditLogStore,
-        tabCommands: TabCommands, updateModel: UpdateCheckModel
+        tabCommands: TabCommands, updateModel: UpdateCheckModel, menuBarModel: MenuBarStatusModel
     ) {
         self.settingsStore = settingsStore
         self.bandwidthLimiter = bandwidthLimiter
         self.auditStore = auditStore
         self.tabCommands = tabCommands
         self.updateModel = updateModel
+        self.menuBarModel = menuBarModel
         _tabsModel = State(initialValue: TabsViewModel(
             initial: Self.makeTab(settingsStore: settingsStore, limiter: bandwidthLimiter)))
         _sessionListViewModel = State(initialValue: SessionListViewModel(
@@ -490,6 +497,12 @@ struct ContentView: View {
             // `UpdateCheckModel`) keeps this safe even if a second window
             // somehow ran this same `.task` concurrently.
             updateModel.checkAutomaticallyIfDue(settingsStore: settingsStore)
+            // Menu-bar status bridge wiring (M11n/T2) — extracted into its
+            // own method (like `refreshImportedHosts()` above) rather than
+            // inlined here: this `.task` closure is already large enough
+            // that the type checker times out on it (M11d/M11f review
+            // precedent for this exact failure mode).
+            wireMenuBarBridge()
             // Command bridge wiring (M8a/T4): `MacSCPApp` has no reference to
             // this view, so the menu items call back through these closures.
             //
@@ -801,6 +814,23 @@ struct ContentView: View {
                 }
             }
         }
+        // Keeps `menuBarModel.tabs` synced with the window's tab list
+        // (M11n/T2) — `SessionTab` is a class (`Identifiable`, not
+        // `Equatable`), so `[SessionTab]` itself can't drive `.onChange`
+        // directly; `tabIDs` (an `Equatable` proxy for "the tab set changed":
+        // add/close/reorder) drives it instead, and the handler re-reads the
+        // full array from `tabsModel.tabs`. Extracted as a typed computed
+        // property (not an inline `.map(\.id)`) — inlined here it pushed the
+        // surrounding modifier chain over the type checker's "reasonable
+        // time" budget (same failure class as `passwordHintPresented` below).
+        .onChange(of: tabIDs) { _, _ in
+            menuBarModel.tabs = tabsModel.tabs
+        }
+    }
+
+    /// See the `.onChange(of: tabIDs)` call above.
+    private var tabIDs: [UUID] {
+        tabsModel.tabs.map(\.id)
     }
 
     /// Extracted from the `.alert(isPresented:)` call above (M11d/T2 build
@@ -1229,6 +1259,28 @@ struct ContentView: View {
     private func selectTab(atIndex index: Int) {
         guard tabsModel.tabs.indices.contains(index) else { return }
         activate(tabsModel.tabs[index].id)
+    }
+
+    /// Menu-bar status bridge wiring (M11n/T2), called once from `.task`:
+    /// seeds `menuBarModel.tabs` and sets its window-raising closures.
+    /// `MacSCPApp` builds a separate `MenuBarExtra` Scene with no reference
+    /// to this view, so the panel's row taps and "Show macSCP" button call
+    /// back through these closures — same shape as the `tabCommands` bridge
+    /// below, minus the key-window guard (there is nothing to guard against:
+    /// raising/activating this one window is always the right action,
+    /// whichever window happened to be key when the menu-bar item was
+    /// clicked).
+    private func wireMenuBarBridge() {
+        menuBarModel.tabs = tabsModel.tabs
+        menuBarModel.focusTab = { id in
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            NSApp.windows.first(where: { $0.canBecomeMain })?.makeKeyAndOrderFront(nil)
+            tabsModel.activate(id)
+        }
+        menuBarModel.showMainWindow = {
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            NSApp.windows.first(where: { $0.canBecomeMain })?.makeKeyAndOrderFront(nil)
+        }
     }
 
     /// Tab close entry point (strip ✕, ⌘W): a tab with active transfers OF
