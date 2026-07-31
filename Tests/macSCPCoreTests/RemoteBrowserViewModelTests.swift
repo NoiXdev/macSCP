@@ -1208,4 +1208,102 @@ struct RemoteBrowserViewModelTests {
         #expect(vm.searchMatchCount == 2)
         #expect(vm.searchTotalCount == 3)
     }
+
+    // MARK: - Sort — extra columns (M11m/T1)
+
+    private func makeExtraColumnsSortFS() -> MockRemoteFileSystem {
+        MockRemoteFileSystem(tree: [
+            "/": [
+                RemoteFileItem(
+                    name: "a.txt", path: "/a.txt", kind: .file, permissions: 0o644,
+                    owner: "zoe", group: "staff"),
+                RemoteFileItem(
+                    name: "b.txt", path: "/b.txt", kind: .file, permissions: 0o600,
+                    owner: "amy", group: "staff"),
+                RemoteFileItem(
+                    name: "c.txt", path: "/c.txt", kind: .file, permissions: 0o755,
+                    owner: nil, group: nil),
+                RemoteFileItem(
+                    name: "link", path: "/link", kind: .symlink, permissions: 0o777,
+                    owner: "amy", group: "eng"),
+            ],
+        ])
+    }
+
+    @Test func sortByPermissionsOrdersNumericallyAscending() async {
+        let vm = RemoteBrowserViewModel(fs: makeExtraColumnsSortFS())
+        await vm.load()
+        vm.sortKey = .permissions
+
+        // 0o600 < 0o644 < 0o755 < 0o777 — no directories here to group first.
+        #expect(vm.items.map(\.name) == ["b.txt", "a.txt", "c.txt", "link"])
+    }
+
+    @Test func sortByPermissionsDescendingReverses() async {
+        let vm = RemoteBrowserViewModel(fs: makeExtraColumnsSortFS())
+        await vm.load()
+        vm.sortKey = .permissions
+        vm.sortAscending = false
+
+        #expect(vm.items.map(\.name) == ["link", "c.txt", "a.txt", "b.txt"])
+    }
+
+    /// `nil` owner sorts LAST regardless of direction — distinct from
+    /// `.size`/`.modified`'s "missing sorts first" rule (M11m design).
+    @Test func sortByOwnerIsCaseInsensitiveWithNilLast() async {
+        let vm = RemoteBrowserViewModel(fs: makeExtraColumnsSortFS())
+        await vm.load()
+        vm.sortKey = .owner
+
+        // amy, amy (tiebreak by name: b.txt < link), zoe, then nil last.
+        #expect(vm.items.map(\.name) == ["b.txt", "link", "a.txt", "c.txt"])
+    }
+
+    /// `nil`'s identity is "greatest" (never touched by `ascending`, exactly
+    /// like `.size`/`.modified`'s "missing == smallest" identity) — so
+    /// flipping to descending moves it from last to FIRST, the same
+    /// direction-flip behavior already established for those two keys.
+    @Test func sortByOwnerDescendingMovesNilToFront() async {
+        let vm = RemoteBrowserViewModel(fs: makeExtraColumnsSortFS())
+        await vm.load()
+        vm.sortKey = .owner
+        vm.sortAscending = false
+
+        #expect(vm.items.map(\.name) == ["c.txt", "a.txt", "b.txt", "link"])
+    }
+
+    @Test func sortByGroupOrdersCaseInsensitivelyWithNilLast() async {
+        let vm = RemoteBrowserViewModel(fs: makeExtraColumnsSortFS())
+        await vm.load()
+        vm.sortKey = .group
+
+        // eng < staff < staff (tiebreak a.txt < b.txt), nil last.
+        #expect(vm.items.map(\.name) == ["link", "a.txt", "b.txt", "c.txt"])
+    }
+
+    @Test func sortByTypeGroupsSymlinksApartFromFiles() async {
+        let vm = RemoteBrowserViewModel(fs: makeExtraColumnsSortFS())
+        await vm.load()
+        vm.sortKey = .type
+
+        // No directories here; files (rank 1) before the symlink (rank 2),
+        // name tiebreak among the files.
+        #expect(vm.items.map(\.name) == ["a.txt", "b.txt", "c.txt", "link"])
+    }
+
+    /// Directories still group first under every new key too (M11l rule
+    /// carried forward unchanged).
+    @Test func sortByOwnerStillGroupsDirectoriesFirst() async {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [
+                RemoteFileItem(name: "zdir", path: "/zdir", kind: .directory, owner: "amy"),
+                RemoteFileItem(name: "afile.txt", path: "/afile.txt", kind: .file, owner: "amy"),
+            ],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        vm.sortKey = .owner
+
+        #expect(vm.items.map(\.name) == ["zdir", "afile.txt"])
+    }
 }

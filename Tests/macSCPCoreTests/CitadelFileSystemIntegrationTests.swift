@@ -58,6 +58,23 @@ struct CitadelFileSystemIntegrationTests {
         #expect(items.first { $0.name == "hello.txt" }?.kind == .file)
     }
 
+    /// M11m/T1: the readdir path parses owner/group NAMES from each
+    /// entry's `longname` (falling back to the numeric uidgid, never
+    /// nothing) — verified live against the Docker rig rather than
+    /// asserting a specific username, since the seed directory's on-disk
+    /// ownership (and therefore what the container's `ls -l` reports) is
+    /// host-dependent, not a fixed rig value (see the M11m design doc's
+    /// "honest about longname fragility" section).
+    @Test func listsSeededDirectoryReportsOwnerAndGroup() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        let items = try await fs.list(path: "/data/seed")
+        let file = try #require(items.first { $0.name == "hello.txt" })
+        #expect(file.owner != nil)
+        #expect(file.group != nil)
+    }
+
     @Test func statReturnsFileDetails() async throws {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }

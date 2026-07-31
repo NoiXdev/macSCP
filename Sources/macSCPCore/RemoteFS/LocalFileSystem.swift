@@ -266,14 +266,38 @@ public struct LocalFileSystem: RemoteFileSystem {
         if normalizedPath.count > 1, normalizedPath.hasSuffix("/") {
             normalizedPath.removeLast()
         }
+        let (owner, group) = ownerGroup(for: url)
         return RemoteFileItem(
             name: url.lastPathComponent,
             path: normalizedPath,
             kind: kind,
             size: (values?.fileSize).map(UInt64.init),
             modifiedAt: values?.contentModificationDate,
-            permissions: nil
+            permissions: nil,
+            owner: owner,
+            group: group
         )
+    }
+
+    /// Owner/group NAMES via `FileManager.attributesOfItem` (there is no
+    /// `URLResourceKey` for owner/group account NAMES — only the numeric
+    /// `.ownerAccountID`/`.groupOwnerAccountID` `URLResourceValues` exist;
+    /// the NAME lookup lives on the `FileAttributeKey` dictionary instead).
+    /// Falls back to the numeric uid/gid as a string when no passwd/group
+    /// entry resolves a name (M11m design: name when resolvable, otherwise
+    /// the raw number, never a guess) — mirrors the remote precedence.
+    /// `attributesOfItem` reports the SYMLINK's own owner/group, not the
+    /// target's, matching this file's existing no-follow behavior for kind/size.
+    private static func ownerGroup(for url: URL) -> (owner: String?, group: String?) {
+        guard
+            let attributes = try? FileManager.default.attributesOfItem(
+                atPath: url.path(percentEncoded: false))
+        else { return (nil, nil) }
+        let owner = (attributes[.ownerAccountName] as? String)
+            ?? (attributes[.ownerAccountID] as? NSNumber)?.stringValue
+        let group = (attributes[.groupOwnerAccountName] as? String)
+            ?? (attributes[.groupOwnerAccountID] as? NSNumber)?.stringValue
+        return (owner, group)
     }
 
     private static func map(_ error: Error, path: String) -> Error {

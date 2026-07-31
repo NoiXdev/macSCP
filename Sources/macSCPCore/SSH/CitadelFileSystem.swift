@@ -569,7 +569,11 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                         directory: path,
                         size: component.attributes.size,
                         permissions: component.attributes.permissions,
-                        modifiedAt: component.attributes.accessModificationTime?.modificationTime
+                        modifiedAt: component.attributes.accessModificationTime?.modificationTime,
+                        longname: component.longname,
+                        uidgid: component.attributes.uidgid.map {
+                            (userId: $0.userId, groupId: $0.groupId)
+                        }
                     )
                 }
         } catch {
@@ -586,7 +590,11 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 directory: RemotePath.parent(of: path),
                 size: attributes.size,
                 permissions: attributes.permissions,
-                modifiedAt: attributes.accessModificationTime?.modificationTime
+                modifiedAt: attributes.accessModificationTime?.modificationTime,
+                // getAttributes (single stat) carries no longname — only the
+                // numeric uidgid fallback applies here (M11m design: the
+                // LIST view shows names, a single stat shows the number).
+                uidgid: attributes.uidgid.map { (userId: $0.userId, groupId: $0.groupId) }
             )
         } catch {
             throw Self.mapSFTPError(error, path: path)

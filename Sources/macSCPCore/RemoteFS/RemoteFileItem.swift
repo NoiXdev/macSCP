@@ -15,6 +15,13 @@ public struct RemoteFileItem: Equatable, Sendable {
     public let modifiedAt: Date?
     /// POSIX permission bits without the file-type bits, e.g. 0o644
     public let permissions: UInt32?
+    /// Owner NAME where one could be resolved (remote: parsed from the
+    /// listing's `longname`; local: `.fileOwnerAccountNameKey`), otherwise
+    /// the numeric uid as a string, otherwise `nil` (M11m). See
+    /// `LongnameParser` and `SFTPAttributeMapper` for the exact precedence.
+    public let owner: String?
+    /// Group NAME/numeric gid/`nil`, same precedence as `owner` (M11m).
+    public let group: String?
 
     public init(
         name: String,
@@ -22,7 +29,9 @@ public struct RemoteFileItem: Equatable, Sendable {
         kind: RemoteFileKind,
         size: UInt64? = nil,
         modifiedAt: Date? = nil,
-        permissions: UInt32? = nil
+        permissions: UInt32? = nil,
+        owner: String? = nil,
+        group: String? = nil
     ) {
         self.name = name
         self.path = path
@@ -30,6 +39,8 @@ public struct RemoteFileItem: Equatable, Sendable {
         self.size = size
         self.modifiedAt = modifiedAt
         self.permissions = permissions
+        self.owner = owner
+        self.group = group
     }
 
     public var isDirectory: Bool { kind == .directory }

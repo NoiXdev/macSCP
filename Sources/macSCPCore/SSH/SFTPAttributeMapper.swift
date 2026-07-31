@@ -18,20 +18,46 @@ enum SFTPAttributeMapper {
         }
     }
 
+    /// Builds a `RemoteFileItem`, resolving `owner`/`group` per the M11m
+    /// data-source rules: `longname`'s parsed NAMES win when available and
+    /// parsable; otherwise the numeric `uidgid` as a string; otherwise
+    /// `nil`. `longname` is only ever present on the readdir path (SFTP
+    /// `stat`/`getAttributes` carries no longname) — callers on that path
+    /// simply omit it, which falls straight through to the numeric case.
     static func item(
         name: String,
         directory: String,
         size: UInt64?,
         permissions: UInt32?,
-        modifiedAt: Date?
+        modifiedAt: Date?,
+        longname: String? = nil,
+        uidgid: (userId: UInt32, groupId: UInt32)? = nil
     ) -> RemoteFileItem {
-        RemoteFileItem(
+        let (owner, group) = ownerGroup(longname: longname, uidgid: uidgid)
+        return RemoteFileItem(
             name: name,
             path: RemotePath.join(directory, name),
             kind: kind(fromPermissions: permissions),
             size: size,
             modifiedAt: modifiedAt,
-            permissions: permissions.map { $0 & 0o7777 }
+            permissions: permissions.map { $0 & 0o7777 },
+            owner: owner,
+            group: group
         )
+    }
+
+    /// The precedence rule itself (M11m design): a successfully parsed
+    /// `longname` wins; a malformed/missing `longname` falls back to the
+    /// numeric `uidgid`; neither present yields `nil`. Never a guess.
+    private static func ownerGroup(
+        longname: String?, uidgid: (userId: UInt32, groupId: UInt32)?
+    ) -> (owner: String?, group: String?) {
+        if let longname, let parsed = LongnameParser.ownerGroup(from: longname) {
+            return (parsed.owner, parsed.group)
+        }
+        if let uidgid {
+            return (String(uidgid.userId), String(uidgid.groupId))
+        }
+        return (nil, nil)
     }
 }

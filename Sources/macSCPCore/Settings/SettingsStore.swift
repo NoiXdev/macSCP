@@ -72,6 +72,7 @@ public final class SettingsStore {
         static let terminalTarget = "terminalTarget"
         static let customTerminalAppPath = "customTerminalAppPath"
         static let externalTerminalPasswordHintShown = "externalTerminalPasswordHintShown"
+        static let visibleColumns = "visibleColumns"
     }
 
     private enum Defaults {
@@ -314,6 +315,45 @@ public final class SettingsStore {
     public var externalTerminalPasswordHintShown: Bool {
         get { boolValue(for: Keys.externalTerminalPasswordHintShown, default: false) }
         set { setBool(newValue, for: Keys.externalTerminalPasswordHintShown) }
+    }
+
+    /// Which columns the file list displays (M11m). `name` is always
+    /// included in what this returns, regardless of what's stored — it can
+    /// never be toggled off (`FileColumn.isToggleable`). Forward-compatible:
+    /// a `settings.json` predating this feature (missing key entirely) falls
+    /// back to `FileColumn.defaultVisible`'s set, i.e. exactly the three
+    /// fixed columns the list always showed before this feature existed.
+    /// Unrecognized raw column names on disk (a future app version's
+    /// column, or hand-edited garbage) are dropped silently rather than
+    /// crashing or surfacing them as garbage. Written back out in
+    /// `FileColumn.allCases` order for a stable, readable settings.json —
+    /// the Set itself carries no ordering guarantee.
+    public var visibleColumns: Set<FileColumn> {
+        get {
+            guard case .array(let values)? = raw[Keys.visibleColumns] else {
+                return Self.defaultVisibleColumns
+            }
+            var result: Set<FileColumn> = []
+            for value in values {
+                guard case .string(let rawColumn) = value,
+                    let column = FileColumn(rawValue: rawColumn)
+                else { continue }
+                result.insert(column)
+            }
+            result.insert(.name)
+            return result
+        }
+        set {
+            var columns = newValue
+            columns.insert(.name)
+            raw[Keys.visibleColumns] = .array(
+                FileColumn.allCases.filter(columns.contains).map { .string($0.rawValue) })
+            persist()
+        }
+    }
+
+    private static var defaultVisibleColumns: Set<FileColumn> {
+        Set(FileColumn.allCases.filter(\.defaultVisible))
     }
 
     /// Convenience: association lookup with the SAME normalization applied.

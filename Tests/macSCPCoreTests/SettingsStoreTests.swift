@@ -615,4 +615,83 @@ struct SettingsStoreTests {
         #expect(raw["terminalTarget"] == .string("custom"))
         #expect(raw["customTerminalAppPath"] == .string("/Applications/iTerm.app"))
     }
+
+    // MARK: - Visible file-list columns (M11m Task 1)
+
+    @Test func visibleColumnsDefaultsToTodaysThreeFixedColumns() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.visibleColumns == [.name, .size, .modified])
+    }
+
+    @Test func visibleColumnsRoundtrips() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.visibleColumns = [.name, .permissions, .owner]
+
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.visibleColumns == [.name, .permissions, .owner])
+    }
+
+    /// `name` can never be hidden — even a caller that omits it gets it
+    /// back from both the setter and the getter.
+    @Test func visibleColumnsAlwaysIncludesName() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.visibleColumns = [.owner, .group]
+        #expect(store.visibleColumns == [.name, .owner, .group])
+    }
+
+    /// Forward compatibility: a settings.json predating M11m (no
+    /// `visibleColumns` key at all) must show exactly what the list always
+    /// showed before this feature existed.
+    @Test func loadingOldSettingsFileWithoutVisibleColumnsKeyUsesDefaults() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"maxConcurrentTransfers": 4, "uploadLimitKBs": 10, "downloadLimitKBs": 20}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        #expect(store.visibleColumns == [.name, .size, .modified])
+    }
+
+    /// A future app version's column name (or hand-edited garbage) on disk
+    /// is dropped silently rather than crashing or surfacing garbage.
+    @Test func unrecognizedColumnNamesOnDiskAreDroppedSilently() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"visibleColumns": ["name", "owner", "futureColumn"]}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        #expect(store.visibleColumns == [.name, .owner])
+    }
+
+    @Test func visibleColumnsSurvivesAlongsideUnknownKeys() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"maxConcurrentTransfers": 4, "futureFeatureEnabled": true, "futureLabel": "keep-me"}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        store.visibleColumns = [.name, .type]
+
+        let data = try Data(contentsOf: fileURL(dir))
+        let raw = try JSONDecoder().decode([String: JSONValue].self, from: data)
+        #expect(raw["futureFeatureEnabled"] == .bool(true))
+        #expect(raw["futureLabel"] == .string("keep-me"))
+        #expect(raw["visibleColumns"] == .array([.string("name"), .string("type")]))
+    }
 }

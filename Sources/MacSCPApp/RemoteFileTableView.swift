@@ -837,13 +837,23 @@ private final class PolishedHeaderCell: NSTableHeaderCell {
 /// Maps `FileSortKey` to/from the fixed column identifiers used both as
 /// `NSUserInterfaceItemIdentifier.rawValue` (see the column setup in
 /// `makeNSView`) and `NSSortDescriptor.key` (M11l/T2) — kept in one place so
-/// the three-way name/size/modified switch exists exactly once in this file.
+/// the name/size/modified switch exists exactly once in this file.
+///
+/// M11m/T1 note: the four new keys (`.permissions`/`.owner`/`.group`/
+/// `.type`) are mapped here too, using the SAME raw strings as
+/// `FileColumn.rawValue`, so this stays exhaustive and self-consistent —
+/// but this view doesn't build columns for them yet (M11m/T2 wires the
+/// actual dynamic `NSTableColumn`s and their header cells).
 extension FileSortKey {
     fileprivate var columnIdentifier: String {
         switch self {
         case .name: return "name"
         case .size: return "size"
         case .modified: return "modified"
+        case .permissions: return "permissions"
+        case .owner: return "owner"
+        case .group: return "group"
+        case .type: return "type"
         }
     }
 
@@ -852,6 +862,10 @@ extension FileSortKey {
         case "name": self = .name
         case "size": self = .size
         case "modified": self = .modified
+        case "permissions": self = .permissions
+        case "owner": self = .owner
+        case "group": self = .group
+        case "type": self = .type
         default: return nil
         }
     }

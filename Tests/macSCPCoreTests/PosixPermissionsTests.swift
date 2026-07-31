@@ -33,4 +33,13 @@ struct PosixPermissionsTests {
         #expect(PosixPermissions.directoryDefault(from: 0o2644) == 0o2755)
         #expect(PosixPermissions.directoryDefault(from: 0o000) == 0o000)
     }
+
+    // MARK: - rwxString (M11m/T1)
+
+    @Test func rwxStringRendersEachTriad() {
+        #expect(PosixPermissions(rawValue: 0o644).rwxString == "rw-r--r--")
+        #expect(PosixPermissions(rawValue: 0o755).rwxString == "rwxr-xr-x")
+        #expect(PosixPermissions(rawValue: 0o000).rwxString == "---------")
+        #expect(PosixPermissions(rawValue: 0o777).rwxString == "rwxrwxrwx")
+    }
 }

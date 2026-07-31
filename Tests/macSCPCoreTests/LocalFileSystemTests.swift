@@ -521,4 +521,31 @@ struct LocalFileSystemTests {
         let values = try? URL(fileURLWithPath: link).resourceValues(forKeys: [.isSymbolicLinkKey])
         #expect(values?.isSymbolicLink != true)
     }
+
+    // MARK: - Owner/group (M11m/T1)
+
+    /// A file created by the current process is owned by the current user —
+    /// the resource-value NAME lookup must resolve it, not fall back to the
+    /// numeric uid (that fallback is for uids the local machine can't name).
+    @Test func listReportsOwnerAndGroupNamesForOwnFiles() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fs = LocalFileSystem()
+
+        let items = try await fs.list(path: root.path(percentEncoded: false))
+        let file = items.first { $0.name == "datei.txt" }
+        #expect(file?.owner == NSUserName())
+        #expect(file?.group != nil)
+    }
+
+    @Test func statReportsOwnerAndGroupNamesForOwnFiles() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fs = LocalFileSystem()
+
+        let path = root.appendingPathComponent("datei.txt").path(percentEncoded: false)
+        let item = try await fs.stat(path: path)
+        #expect(item.owner == NSUserName())
+        #expect(item.group != nil)
+    }
 }

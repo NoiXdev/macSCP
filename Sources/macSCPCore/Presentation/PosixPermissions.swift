@@ -59,4 +59,21 @@ public struct PosixPermissions: Equatable, Sendable {
         }
         return result
     }
+
+    /// Standard 9-character `rwx` rendering (e.g. "rwxr-xr--"), owner/group/
+    /// other in order, `-` for an unset bit — the same rendering the Info
+    /// sheet's rwx grid already presents visually, just flattened to text
+    /// (M11m: reused for the file list's optional Permissions column).
+    public var rwxString: String {
+        Class.allCases.map { fileClass in
+            Right.allCases.map { right in
+                guard self[fileClass, right] else { return "-" }
+                switch right {
+                case .read: return "r"
+                case .write: return "w"
+                case .execute: return "x"
+                }
+            }.joined()
+        }.joined()
+    }
 }

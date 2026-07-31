@@ -8,6 +8,20 @@ public enum FileSortKey: Sendable, Equatable {
     case name
     case size
     case modified
+    /// M11m: numeric ordering of the raw permission bits.
+    case permissions
+    /// M11m: `localizedCaseInsensitiveCompare` on the owner string; a
+    /// missing owner sorts as the "greatest" possible value (opposite
+    /// identity from `.size`/`.modified`'s "missing == smallest") — see
+    /// `sortedForDisplay`'s doc comment for the full rule.
+    case owner
+    /// M11m: same rule as `.owner`, for the group string.
+    case group
+    /// M11m: stable kind order (directory, file, symlink, other) — though
+    /// directories are already separated into their own group by the
+    /// directories-first rule below, so in practice this only orders
+    /// file/symlink/other against each other.
+    case type
 }
 
 /// State of the remote browser: current path, sorted entries,
@@ -345,6 +359,14 @@ public final class RemoteBrowserViewModel {
             return compareOptional(a.size, b.size)
         case .modified:
             return compareOptional(a.modifiedAt, b.modifiedAt)
+        case .permissions:
+            return compareOptional(a.permissions, b.permissions)
+        case .owner:
+            return compareOptionalLocalizedString(a.owner, b.owner)
+        case .group:
+            return compareOptionalLocalizedString(a.group, b.group)
+        case .type:
+            return compareTypeRank(a.kind, b.kind)
         }
     }
 
@@ -365,6 +387,48 @@ public final class RemoteBrowserViewModel {
             if x > y { return .orderedDescending }
             return .orderedSame
         }
+    }
+
+    /// Same idea as `compareOptional`, but for the M11m `.owner`/`.group`
+    /// keys: present values compare with `localizedCaseInsensitiveCompare`,
+    /// and a missing value (`nil`) is ordered as the GREATEST possible
+    /// value — the OPPOSITE identity from `compareOptional`'s "missing ==
+    /// smallest" rule for `.size`/`.modified`. That identity is what makes
+    /// `nil` sort LAST in the common ascending case; `sortedForDisplay`'s
+    /// direction flip then moves it to FIRST under a descending sort,
+    /// exactly the same mechanical reversal `.size`/`.modified` already get
+    /// (see that method's doc comment) — the identity itself never changes,
+    /// only which end of the ordering it lands on.
+    private static func compareOptionalLocalizedString(_ a: String?, _ b: String?) -> ComparisonResult {
+        switch (a, b) {
+        case (nil, nil): return .orderedSame
+        case (nil, _): return .orderedDescending
+        case (_, nil): return .orderedAscending
+        case (let x?, let y?):
+            return x.localizedCaseInsensitiveCompare(y)
+        }
+    }
+
+    /// Stable rank for `.type` sorting: directory, file, symlink, other, in
+    /// that order. Directories are already split into their own group by
+    /// `sortedForDisplay`'s directories-first rule, so this rank only ever
+    /// discriminates between non-directory kinds in practice — it's kept
+    /// complete (covering `.directory` too) so the function stands on its
+    /// own as a total, documented ordering.
+    private static func typeRank(_ kind: RemoteFileKind) -> Int {
+        switch kind {
+        case .directory: return 0
+        case .file: return 1
+        case .symlink: return 2
+        case .other: return 3
+        }
+    }
+
+    private static func compareTypeRank(_ a: RemoteFileKind, _ b: RemoteFileKind) -> ComparisonResult {
+        let (rankA, rankB) = (typeRank(a), typeRank(b))
+        if rankA < rankB { return .orderedAscending }
+        if rankA > rankB { return .orderedDescending }
+        return .orderedSame
     }
 
     // MARK: - Browser actions (M7b)
