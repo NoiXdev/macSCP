@@ -34,7 +34,7 @@
 - Consumes (bestehend, verifiziert): `SettingsView.body`s `TabView` (General/Transfers/Open with/Terminal, `.frame(width: 460, height: 460)`); Tab-Muster `SomeTab(...) .tabItem { Label(L10n.string("settings.tab.X", "…"), systemImage: "…") }`; `L10n.string`.
 - Produces: `KeyboardShortcutsCatalog.groups: [Group]` mit `Group{titleKey,titleDefault,rows:[Row{labelKey,labelDefault,shortcut}]}`.
 
-- [ ] **Step 1: Katalog-Datei.** Neue Datei `Sources/MacSCPApp/KeyboardShortcutsCatalog.swift`:
+- [x] **Step 1: Katalog-Datei.** Neue Datei `Sources/MacSCPApp/KeyboardShortcutsCatalog.swift`:
 
 ```swift
 import Foundation
@@ -110,7 +110,7 @@ enum KeyboardShortcutsCatalog {
 }
 ```
 
-- [ ] **Step 2: ShortcutsSettingsTab + Tab.** In `Sources/MacSCPApp/SettingsView.swift`:
+- [x] **Step 2: ShortcutsSettingsTab + Tab.** In `Sources/MacSCPApp/SettingsView.swift`:
   - Am Dateiende einen privaten Tab hinzufügen:
 
 ```swift
@@ -149,7 +149,7 @@ private struct ShortcutsSettingsTab: View {
                 }
 ```
 
-- [ ] **Step 3: Strings EN.** In `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` anfügen:
+- [x] **Step 3: Strings EN.** In `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` anfügen:
 
 ```
 "settings.tab.shortcuts" = "Shortcuts";
@@ -184,7 +184,7 @@ private struct ShortcutsSettingsTab: View {
 "settings.shortcuts.label.confirm" = "Confirm";
 ```
 
-- [ ] **Step 4: Strings DE.** In `de.lproj/Localizable.strings` anfügen (kein ASCII-`"` im Wert):
+- [x] **Step 4: Strings DE.** In `de.lproj/Localizable.strings` anfügen (kein ASCII-`"` im Wert):
 
 ```
 "settings.tab.shortcuts" = "Tastenkürzel";
@@ -219,7 +219,7 @@ private struct ShortcutsSettingsTab: View {
 "settings.shortcuts.label.confirm" = "Bestätigen";
 ```
 
-- [ ] **Step 5: Strings FR.** In `fr.lproj/Localizable.strings` anfügen (Guillemets/kein ASCII-`"`; Apostroph `'` ist erlaubt):
+- [x] **Step 5: Strings FR.** In `fr.lproj/Localizable.strings` anfügen (Guillemets/kein ASCII-`"`; Apostroph `'` ist erlaubt):
 
 ```
 "settings.tab.shortcuts" = "Raccourcis";
@@ -254,7 +254,7 @@ private struct ShortcutsSettingsTab: View {
 "settings.shortcuts.label.confirm" = "Confirmer";
 ```
 
-- [ ] **Step 6: Strings PL.** In `pl.lproj/Localizable.strings` anfügen (kein ASCII-`"`):
+- [x] **Step 6: Strings PL.** In `pl.lproj/Localizable.strings` anfügen (kein ASCII-`"`):
 
 ```
 "settings.tab.shortcuts" = "Skróty klawiszowe";
@@ -291,7 +291,7 @@ private struct ShortcutsSettingsTab: View {
 
   (Hinweis: `settings.shortcuts.label.cancel` wird von zwei Katalog-Zeilen genutzt — nur EINMAL je Sprache eintragen.)
 
-- [ ] **Step 7: Katalog-Lint + Parität.**
+- [x] **Step 7: Katalog-Lint + Parität.**
 
 ```bash
 for l in en de fr pl; do plutil -lint "Sources/MacSCPApp/Resources/$l.lproj/Localizable.strings"; done
@@ -299,7 +299,7 @@ swift test --filter Localizable
 ```
   Expected: alle „OK"; `Localizable`-Suite PASS (die 30 neuen Keys sind in allen vier Katalogen → Parität bleibt).
 
-- [ ] **Step 8: Build + Suite + Runtime-Rauchtest.**
+- [x] **Step 8: Build + Suite + Runtime-Rauchtest.**
 
 ```bash
 swift build
@@ -312,9 +312,9 @@ pkill -f 'dist/macSCP.app/Contents/MacOS/macSCP'
 ```
   Expected: `Build complete` (keine neuen Warnungen); `swift test` **903** grün (keine neue Core-Logik); App idle `%CPU` nahe 0, state `S`. Bei Spin (>50%) STOP + BLOCKED.
 
-- [ ] **Step 9: Trace-Verifikation.** Bestätigen: jede Katalog-Zeile hat einen `labelKey`, der in allen vier Katalogen existiert (durch Parität abgedeckt); jeder `shortcut` ist nicht leer; der Tab ist read-only (keine Bindings/Buttons); die Fensterhöhe reicht (das `Form` scrollt sonst — kein Abschneiden, nur ggf. Scrollen).
+- [x] **Step 9: Trace-Verifikation.** Bestätigen: jede Katalog-Zeile hat einen `labelKey`, der in allen vier Katalogen existiert (durch Parität abgedeckt); jeder `shortcut` ist nicht leer; der Tab ist read-only (keine Bindings/Buttons); die Fensterhöhe reicht (das `Form` scrollt sonst — kein Abschneiden, nur ggf. Scrollen).
 
-- [ ] **Step 10: Commit.**
+- [x] **Step 10: Commit.**
 
 ```bash
 git add Sources/MacSCPApp/KeyboardShortcutsCatalog.swift Sources/MacSCPApp/SettingsView.swift Sources/MacSCPApp/Resources
@@ -325,9 +325,9 @@ git commit -m "feat: add a read-only keyboard shortcuts overview in Settings"
 
 ### Task 2: Abschluss-Verifikation (Koordinator)
 
-- [ ] Gated Suiten: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → grün, zero skips.
-- [ ] `swift build` sauber; `plutil -lint` alle vier Kataloge OK; `LocalizableStringsTests` grün (Parität EN↔{DE,FR,PL}).
-- [ ] Runtime-Idle-CPU-Rauchtest bestanden; Einstellungen ▸ Tastenkürzel öffnet ohne Spin.
-- [ ] Whole-Task Opus-Review (kleiner App-Diff): Fokus auf (a) Katalog spiegelt die tatsächlichen Kürzel korrekt (Inventur-Abgleich: keine erfundenen/falschen Zuordnungen, ⌘⇧Y/⌘T/⌘↑ etc. stimmen); (b) alle 30 neuen Keys in allen vier Katalogen, kein ASCII-`"` in Nicht-EN; (c) Tab read-only, kein Interaktions-/Layout-Bruch; (d) `cancel`-Key nur einmal je Sprache. Fix-Runden bis „Ready to merge: Yes".
+- [x] Gated Suiten: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → grün, zero skips.
+- [x] `swift build` sauber; `plutil -lint` alle vier Kataloge OK; `LocalizableStringsTests` grün (Parität EN↔{DE,FR,PL}).
+- [x] Runtime-Idle-CPU-Rauchtest bestanden; Einstellungen ▸ Tastenkürzel öffnet ohne Spin.
+- [x] Whole-Task Opus-Review (kleiner App-Diff): Fokus auf (a) Katalog spiegelt die tatsächlichen Kürzel korrekt (Inventur-Abgleich: keine erfundenen/falschen Zuordnungen, ⌘⇧Y/⌘T/⌘↑ etc. stimmen); (b) alle 30 neuen Keys in allen vier Katalogen, kein ASCII-`"` in Nicht-EN; (c) Tab read-only, kein Interaktions-/Layout-Bruch; (d) `cancel`-Key nur einmal je Sprache. Fix-Runden bis „Ready to merge: Yes".
 - [ ] Visueller Smoke — Maintainer (Tab „Tastenkürzel" erscheint; Gruppen + Zeilen lesbar; Kürzel rechtsbündig monospaced; DE/FR/PL Labels korrekt; hell/dunkel; Fenster scrollt sauber).
-- [ ] Plan-Checkboxen, Ledger, Push develop, `gh run watch`, Dev-Build deployen, Memory. **KEIN Release** (FR/PL vor Release muttersprachlich prüfen). Roadmap: Umbelegung bleibt eigener späterer Meilenstein.
+- [x] Plan-Checkboxen, Ledger, Push develop, `gh run watch`, Dev-Build deployen, Memory. **KEIN Release** (FR/PL vor Release muttersprachlich prüfen). Roadmap: Umbelegung bleibt eigener späterer Meilenstein.
