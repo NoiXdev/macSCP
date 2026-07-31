@@ -7,6 +7,10 @@
 "settings.general.updateCheck" = "Automatisch nach Updates suchen";
 "settings.general.updateCheckHint" = "Fragt höchstens einmal täglich bei GitHub nach der neuesten Version. Die Anfrage nennt die App und ihre Version; sonst werden keine Daten über dich übertragen.";
 
+/* Einstellungen — Allgemein-Tab, Abschnitt Dateilisten-Spalten (M11m/T2) */
+"settings.general.columns.header" = "Dateilisten-Spalten";
+"settings.general.columns.footer" = "Gilt für beide Seiten. Name ist immer sichtbar.";
+
 /* Settings — Übertragungen-Tab */
 "settings.tab.transfers" = "Übertragungen";
 "settings.maxConcurrent.label" = "Maximale gleichzeitige Übertragungen";
@@ -119,11 +123,25 @@
 "filetable.column.name" = "Name";
 "filetable.column.size" = "Größe";
 "filetable.column.modified" = "Geändert";
+"filetable.column.permissions" = "Rechte";
+"filetable.column.owner" = "Besitzer";
+"filetable.column.group" = "Gruppe";
+"filetable.column.type" = "Typ";
 
 /* Symlink-Markierung (M11h/T1): Tooltip auf der Namens-Zelle einer
    Symlink-Zeile, dient zugleich als Accessibility-Beschreibung des
    Symbols. */
 "filetable.symlinkTooltip" = "Symbolischer Link";
+
+/* Datei-Typ-Wörter für die Spalte "Typ" (M11m/T2) */
+"filetable.type.folder" = "Ordner";
+"filetable.type.file" = "Datei";
+"filetable.type.symlink" = "Verknüpfung";
+"filetable.type.other" = "Sonstiges";
+
+/* Platzhalter für eine leere Zelle in den Spalten "Rechte"/"Besitzer"/
+   "Gruppe" (M11m/T2) — ein nil-Wert, nie eine geratene Anzeige. */
+"filetable.cell.placeholder" = "—";
 
 /* Transfer-Warteschlangen-Leiste */
 "transfers.title" = "Übertragungen";

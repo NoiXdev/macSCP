@@ -110,6 +110,39 @@ private struct GeneralSettingsTab: View {
                     .foregroundStyle(.secondary)
             }
 
+            // File-list columns (M11m/T2): one checkbox per toggleable
+            // `FileColumn` — `name` is excluded (`FileColumn.isToggleable`
+            // is `false` only for it), so it never gets a row here and stays
+            // permanently shown, matching `SettingsStore.visibleColumns`'s
+            // own always-includes-`name` guarantee. Titles are the SAME
+            // localized strings the table's own column headers use
+            // (`FileColumn.localizedTitle`, `RemoteFileTableView.swift`), so
+            // a box's label always matches what the user sees atop the
+            // table it controls.
+            Section {
+                ForEach(FileColumn.allCases.filter(\.isToggleable), id: \.self) { column in
+                    Toggle(column.localizedTitle, isOn: Binding(
+                        get: { store.visibleColumns.contains(column) },
+                        set: { isOn in
+                            var columns = store.visibleColumns
+                            if isOn {
+                                columns.insert(column)
+                            } else {
+                                columns.remove(column)
+                            }
+                            store.visibleColumns = columns
+                        }
+                    ))
+                }
+            } header: {
+                Text(L10n.string("settings.general.columns.header", "File List Columns"))
+            } footer: {
+                Text(L10n.string(
+                    "settings.general.columns.footer",
+                    "Applies to both panes. Name is always shown."))
+                    .foregroundStyle(.secondary)
+            }
+
             Section {
                 Toggle(
                     L10n.string("settings.general.autoRefresh", "Auto-refresh remote view"),

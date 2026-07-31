@@ -7,6 +7,10 @@
 "settings.general.updateCheck" = "Automatically check for updates";
 "settings.general.updateCheckHint" = "Asks GitHub for the latest version at most once a day. The request identifies the app and its version; nothing else about you is sent.";
 
+/* Settings — General tab, file-list columns section (M11m/T2) */
+"settings.general.columns.header" = "File List Columns";
+"settings.general.columns.footer" = "Applies to both panes. Name is always shown.";
+
 /* Settings — Transfers tab */
 "settings.tab.transfers" = "Transfers";
 "settings.maxConcurrent.label" = "Maximum concurrent transfers";
@@ -119,10 +123,24 @@
 "filetable.column.name" = "Name";
 "filetable.column.size" = "Size";
 "filetable.column.modified" = "Modified";
+"filetable.column.permissions" = "Permissions";
+"filetable.column.owner" = "Owner";
+"filetable.column.group" = "Group";
+"filetable.column.type" = "Type";
 
 /* Symlink marker (M11h/T1): tooltip on a symlink row's name cell, also
    used as the marker symbol's accessibility description. */
 "filetable.symlinkTooltip" = "Symbolic link";
+
+/* File type words for the "Type" column (M11m/T2) */
+"filetable.type.folder" = "Folder";
+"filetable.type.file" = "File";
+"filetable.type.symlink" = "Symbolic Link";
+"filetable.type.other" = "Other";
+
+/* Placeholder for an empty cell in the "Permissions"/"Owner"/"Group"
+   columns (M11m/T2) — a nil value, never a guessed one. */
+"filetable.cell.placeholder" = "—";
 
 /* Transfer queue bar */
 "transfers.title" = "Transfers";

@@ -55,6 +55,11 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// at that moment — Spec §5.3). `nil` (the local pane's default before
     /// `ContentView` wires it) yields the pre-M8b flat "Transfer" entry.
     var crossSessionTargets: (() -> [CrossSessionTarget])? = nil
+    /// Which columns to build, in `FileColumn.allCases` order (M11m/T2) —
+    /// mirrors `SettingsStore.visibleColumns`. Defaults to the pre-M11m
+    /// fixed three (`name`/`size`/`modified`) so any call site that doesn't
+    /// thread the setting through yet keeps today's exact layout.
+    var visibleColumns: Set<FileColumn> = Set(FileColumn.allCases.filter(\.defaultVisible))
     /// This pane's current sort column/direction (M11l/T2) — mirrors
     /// `RemoteBrowserViewModel.sortKey`/`sortAscending`. Threaded in from the
     /// VM rather than read off `NSTableView.sortDescriptors` because Core
@@ -99,27 +104,8 @@ struct RemoteFileTableView: NSViewRepresentable {
         table.headerView = NSTableHeaderView(
             frame: NSRect(x: 0, y: 0, width: 0, height: 22))
 
-        // Default click direction per column (M11l/T2) when it becomes the
-        // NEWLY active sort column — matches the design's expectation that
-        // switching to Size defaults to largest-first, while Name/Modified
-        // default to ascending. AppKit applies a column's
-        // `sortDescriptorPrototype` verbatim (unflipped) the first time it's
-        // clicked, and only flips it (via `reversedSortDescriptor`) on a
-        // SUBSEQUENT click of the already-active column — so this default is
-        // exactly what a fresh click on a different column produces.
-        for (identifier, title, width, defaultAscending) in [
-            ("name", L10n.string("filetable.column.name", "Name"), 260.0, true),
-            ("size", L10n.string("filetable.column.size", "Size"), 90.0, false),
-            ("modified", L10n.string("filetable.column.modified", "Modified"), 160.0, true),
-        ] {
-            let column = NSTableColumn(identifier: .init(identifier))
-            let header = PolishedHeaderCell(textCell: title)
-            column.headerCell = header
-            column.width = width
-            column.sortDescriptorPrototype = NSSortDescriptor(
-                key: identifier, ascending: defaultAscending)
-            table.addTableColumn(column)
-        }
+        Self.buildColumns(visible: visibleColumns, in: table)
+        context.coordinator.lastVisibleColumns = visibleColumns
 
         table.dataSource = context.coordinator
         table.delegate = context.coordinator
@@ -160,6 +146,52 @@ struct RemoteFileTableView: NSViewRepresentable {
         old != new
     }
 
+    /// Per-column width and default click-to-sort direction (M11m/T2),
+    /// keyed by `FileColumn` — display order itself always comes from
+    /// `FileColumn.allCases`, never from this dictionary's own iteration
+    /// order. `size` keeps its pre-M11m default (largest-first, i.e.
+    /// descending) from M11l. `permissions` is given the SAME
+    /// descending default rather than the ascending one `owner`/`group`/
+    /// `type`/`modified` use — the design doc left this one unspecified
+    /// ("a sensible default — pick and note it"): descending puts the
+    /// most-permissive files first, mirroring "biggest first" for size, a
+    /// more useful first click than "least permissive first" would be.
+    private static let columnSpecs: [FileColumn: (width: CGFloat, defaultAscending: Bool)] = [
+        .name: (260, true),
+        .size: (90, false),
+        .modified: (160, true),
+        .permissions: (90, false),
+        .owner: (110, true),
+        .group: (110, true),
+        .type: (90, true),
+    ]
+
+    /// Builds `table`'s columns from scratch, in `FileColumn.allCases` order
+    /// filtered to `visible` (M11m/T2) — `name` always included regardless
+    /// of `visible`, matching `SettingsStore.visibleColumns`'s own
+    /// always-includes-`name` guarantee, so this stays correct even if a
+    /// caller somehow passes a set missing it. Each column gets its
+    /// `PolishedHeaderCell` (localized title) and `sortDescriptorPrototype`
+    /// keyed by `FileColumn.rawValue` — the same raw string
+    /// `FileSortKey.columnIdentifier` below already produces, so
+    /// `sortDescriptorsDidChange` keeps working unmodified for every column,
+    /// old or new. Callers are responsible for anything ELSE a rebuild
+    /// implies (restoring the sort indicator, reloading data) — this
+    /// function only ever adds columns, it never touches selection, sort
+    /// state, or existing columns (callers must remove those first).
+    private static func buildColumns(visible: Set<FileColumn>, in table: NSTableView) {
+        for column in FileColumn.allCases where column == .name || visible.contains(column) {
+            guard let spec = columnSpecs[column] else { continue }
+            let tableColumn = NSTableColumn(identifier: .init(column.rawValue))
+            let header = PolishedHeaderCell(textCell: column.localizedTitle)
+            tableColumn.headerCell = header
+            tableColumn.width = spec.width
+            tableColumn.sortDescriptorPrototype = NSSortDescriptor(
+                key: column.rawValue, ascending: spec.defaultAscending)
+            table.addTableColumn(tableColumn)
+        }
+    }
+
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         let oldItems = context.coordinator.items
         let itemsChanged = Self.needsReload(old: oldItems, new: items)
@@ -175,6 +207,32 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.crossSessionTargets = crossSessionTargets
         context.coordinator.onSortChange = onSortChange
         guard let table = nsView.documentView as? NSTableView else { return }
+        // Column rebuild (M11m/T2): diffed against the last SET the
+        // COORDINATOR itself recorded (`lastVisibleColumns`) — the same
+        // discipline the sort-state/items/focus-token diffs below already
+        // use — so a plain SwiftUI re-render with an unchanged setting never
+        // tears down and rebuilds the columns (that would flash the header
+        // and briefly show empty cells for no reason). A real change (the
+        // user (un)checking a box in Settings) removes every existing
+        // column and calls the SAME `buildColumns` helper `makeNSView` uses,
+        // then restores the sort indicator (the fresh header cells start
+        // with none) and reloads the row data so the newly added/removed
+        // columns' cells populate immediately rather than waiting for the
+        // next scroll. `reloadData()` clears the AppKit selection like the
+        // `itemsChanged` branch below already accounts for — the same
+        // selection-reconciliation block further down restores it
+        // unconditionally, so no separate restore is needed here.
+        if context.coordinator.lastVisibleColumns != visibleColumns {
+            context.coordinator.lastVisibleColumns = visibleColumns
+            context.coordinator.suppressSelectionCallback = true
+            for column in table.tableColumns {
+                table.removeTableColumn(column)
+            }
+            Self.buildColumns(visible: visibleColumns, in: table)
+            context.coordinator.updateSortIndicators(activeKey: sortKey, ascending: sortAscending)
+            table.reloadData()
+            context.coordinator.suppressSelectionCallback = false
+        }
         // Sort state reconciliation (M11l/T2): diffed against the last value
         // the COORDINATOR itself pushed (not against a locally-cached SwiftUI
         // value), the same discipline `itemsChanged`/`focusRequestToken`
@@ -365,6 +423,11 @@ struct RemoteFileTableView: NSViewRepresentable {
         /// before `makeNSView` runs its initial sync.
         var lastSyncedSortKey: FileSortKey?
         var lastSyncedSortAscending: Bool?
+        /// Last `visibleColumns` set THIS coordinator itself built the
+        /// table's columns from (M11m/T2) — see the column-rebuild diffing
+        /// comment at its `updateNSView` call site. `nil` only before
+        /// `makeNSView` runs its initial build.
+        var lastVisibleColumns: Set<FileColumn>?
 
         init(
             onOpen: @escaping (RemoteFileItem) -> Void, onSelect: @escaping ([RemoteFileItem]) -> Void,
@@ -403,6 +466,18 @@ struct RemoteFileTableView: NSViewRepresentable {
             case "name": text = FileListFormatter.displayName(for: item)
             case "size": text = FileListFormatter.sizeString(for: item)
             case "modified": text = FileListFormatter.dateString(for: item)
+            // M11m/T2: `permissions`/`owner`/`group` reuse the Core
+            // formatters (T1) and substitute the localized "—" placeholder
+            // for `nil`; `type` has no Core formatter at all by design (Core
+            // stays free of hardcoded user-facing strings) so it's mapped
+            // straight from `item.kind` via `Self.typeText`.
+            case "permissions":
+                text = FileColumnFormatter.permissionsText(for: item) ?? Self.emptyCellPlaceholder
+            case "owner":
+                text = FileColumnFormatter.ownerText(for: item) ?? Self.emptyCellPlaceholder
+            case "group":
+                text = FileColumnFormatter.groupText(for: item) ?? Self.emptyCellPlaceholder
+            case "type": text = Self.typeText(for: item.kind)
             default: return nil
             }
 
@@ -474,12 +549,44 @@ struct RemoteFileTableView: NSViewRepresentable {
                 cell.textField?.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .regular)
                 cell.textField?.textColor = DesignTokens.inkSecondaryNS
                 cell.textField?.alignment = .right
-            default: // "modified"
+            case "modified":
                 cell.textField?.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .regular)
+                cell.textField?.textColor = DesignTokens.inkSecondaryNS
+                cell.textField?.alignment = .natural
+            case "permissions":
+                // Monospaced like "size" (M11m/T2 brief) so the fixed-width
+                // rwx string's columns of letters/dashes stay vertically
+                // aligned between rows, even though it's not digits.
+                cell.textField?.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .regular)
+                cell.textField?.textColor = DesignTokens.inkSecondaryNS
+                cell.textField?.alignment = .natural
+            default: // "owner", "group", "type"
+                cell.textField?.font = .systemFont(ofSize: 12.5)
                 cell.textField?.textColor = DesignTokens.inkSecondaryNS
                 cell.textField?.alignment = .natural
             }
             return cell
+        }
+
+        /// Localized word for the "Type" column (M11m/T2) — `Core` never
+        /// formats `kind` to text itself (see `FileColumnFormatter`'s doc
+        /// comment): this is the App-layer lookup its comment points to.
+        private static func typeText(for kind: RemoteFileKind) -> String {
+            switch kind {
+            case .directory: return L10n.string("filetable.type.folder", "Folder")
+            case .file: return L10n.string("filetable.type.file", "File")
+            case .symlink: return L10n.string("filetable.type.symlink", "Symbolic Link")
+            case .other: return L10n.string("filetable.type.other", "Other")
+            }
+        }
+
+        /// Localized placeholder for a `nil` permissions/owner/group value
+        /// (M11m/T2) — `RemoteFileItem.owner`/`.group` are legitimately
+        /// `nil` (per the M11m data-source rules: no `longname`, no numeric
+        /// fallback either), and a single-`stat` lookup never carries
+        /// `owner`/`group` at all (only a directory listing does).
+        private static var emptyCellPlaceholder: String {
+            L10n.string("filetable.cell.placeholder", "—")
         }
 
         @objc func doubleClicked(_ sender: Any?) {
@@ -834,16 +941,13 @@ private final class PolishedHeaderCell: NSTableHeaderCell {
     }
 }
 
-/// Maps `FileSortKey` to/from the fixed column identifiers used both as
-/// `NSUserInterfaceItemIdentifier.rawValue` (see the column setup in
-/// `makeNSView`) and `NSSortDescriptor.key` (M11l/T2) — kept in one place so
-/// the name/size/modified switch exists exactly once in this file.
-///
-/// M11m/T1 note: the four new keys (`.permissions`/`.owner`/`.group`/
-/// `.type`) are mapped here too, using the SAME raw strings as
-/// `FileColumn.rawValue`, so this stays exhaustive and self-consistent —
-/// but this view doesn't build columns for them yet (M11m/T2 wires the
-/// actual dynamic `NSTableColumn`s and their header cells).
+/// Maps `FileSortKey` to/from the column identifiers used both as
+/// `NSUserInterfaceItemIdentifier.rawValue` (see `RemoteFileTableView
+/// .buildColumns`) and `NSSortDescriptor.key` — kept in one place so the
+/// name/size/modified/permissions/owner/group/type switch exists exactly
+/// once in this file. The raw strings deliberately match `FileColumn
+/// .rawValue` (M11m/T2), so a column identifier round-trips through either
+/// type with the same string.
 extension FileSortKey {
     fileprivate var columnIdentifier: String {
         switch self {
@@ -868,6 +972,27 @@ extension FileSortKey {
         case "type": self = .type
         default: return nil
         }
+    }
+}
+
+/// Localized column header title (M11m/T2) — shared by `PolishedHeaderCell`
+/// (via `buildColumns`) and the Settings column-visibility checkboxes
+/// (`SettingsView.swift`), so the title/fallback pair for a given column
+/// lives in exactly one place. `Core` itself never carries this text (the
+/// project's language policy keeps user-facing strings out of Core).
+extension FileColumn {
+    var localizedTitle: String {
+        let fallback: String
+        switch self {
+        case .name: fallback = "Name"
+        case .size: fallback = "Size"
+        case .modified: fallback = "Modified"
+        case .permissions: fallback = "Permissions"
+        case .owner: fallback = "Owner"
+        case .group: fallback = "Group"
+        case .type: fallback = "Type"
+        }
+        return L10n.string("filetable.column.\(rawValue)", fallback)
     }
 }
 

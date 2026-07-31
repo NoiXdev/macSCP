@@ -30,6 +30,12 @@ struct BrowserPane: View {
     /// Cross-session transfer targets for the context menu (M8b/T4) —
     /// forwarded verbatim to `RemoteFileTableView`; see its doc comment.
     var crossSessionTargets: (() -> [CrossSessionTarget])? = nil
+    /// Which columns the file list shows (M11m/T2) — mirrors
+    /// `SettingsStore.visibleColumns`, app-global like the other display
+    /// settings (`showHiddenFiles` etc.), so both panes always show the
+    /// same set. Forwarded verbatim to `RemoteFileTableView`; its own
+    /// default keeps this optional at every call site that predates M11m.
+    var visibleColumns: Set<FileColumn> = Set(FileColumn.allCases.filter(\.defaultVisible))
 
     @State private var isDropTargeted = false
     /// Whether this pane's search bar is showing (M11k/T2) — per-PANE, not
@@ -172,6 +178,7 @@ struct BrowserPane: View {
                     },
                     focusRequestToken: tableFocusToken,
                     crossSessionTargets: crossSessionTargets,
+                    visibleColumns: visibleColumns,
                     sortKey: viewModel.sortKey,
                     sortAscending: viewModel.sortAscending,
                     onSortChange: { key, ascending in

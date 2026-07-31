@@ -867,7 +867,8 @@ struct ContentView: View {
                                         break   // handled inside BrowserPane, never forwarded
                                     }
                                 },
-                                crossSessionTargets: { crossSessionTargets(for: tab) }
+                                crossSessionTargets: { crossSessionTargets(for: tab) },
+                                visibleColumns: settingsStore.visibleColumns
                             )
                             .frame(minWidth: 280)
 
@@ -908,7 +909,8 @@ struct ContentView: View {
                                         break   // handled inside BrowserPane, never forwarded
                                     }
                                 },
-                                crossSessionTargets: { crossSessionTargets(for: tab) }
+                                crossSessionTargets: { crossSessionTargets(for: tab) },
+                                visibleColumns: settingsStore.visibleColumns
                             )
                             .frame(minWidth: 280)
                         }
