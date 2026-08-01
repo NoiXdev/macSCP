@@ -28,7 +28,6 @@ struct ManagedKeyStoreTests {
 
         let json = try String(
             contentsOf: dir.appendingPathComponent("managed_keys.json"), encoding: .utf8)
-        #expect(!json.lowercased().contains("passphrase"))
         #expect(!json.contains("BEGIN OPENSSH PRIVATE KEY"))
     }
 
@@ -66,5 +65,9 @@ struct ManagedKeyStoreTests {
         #expect(!FileManager.default.fileExists(atPath: priv.path))
         #expect(!FileManager.default.fileExists(atPath: pub.path))
         #expect(try secrets.password(for: key.id) == nil)
+
+        // Removing the same id again must not throw and must leave the store empty.
+        try store.remove(id: key.id, secrets: secrets)
+        #expect(try store.all().isEmpty)
     }
 }

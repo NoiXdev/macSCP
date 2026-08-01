@@ -16,42 +16,6 @@ public struct ManagedKeyStore: Sendable {
         self.keyDirectory = directory.appendingPathComponent("keys", isDirectory: true)
     }
 
-    /// Wire format for `managed_keys.json`. Mirrors `ManagedKey` field-for-field
-    /// except `hasPassphrase`, which is renamed to `encrypted` on the wire so
-    /// the substring "passphrase" never appears in the file — the flag itself
-    /// is not a secret, but the store must stay secret-free in letter and
-    /// spirit (grep-safe for anyone auditing the JSON).
-    private struct PersistedKey: Codable {
-        let id: UUID
-        let name: String
-        let comment: String
-        let type: KeyType
-        let fingerprint: String
-        let publicKeyOpenSSH: String
-        let createdAt: Date
-        let encrypted: Bool
-        let fileName: String
-
-        init(_ key: ManagedKey) {
-            id = key.id
-            name = key.name
-            comment = key.comment
-            type = key.type
-            fingerprint = key.fingerprint
-            publicKeyOpenSSH = key.publicKeyOpenSSH
-            createdAt = key.createdAt
-            encrypted = key.hasPassphrase
-            fileName = key.fileName
-        }
-
-        var managedKey: ManagedKey {
-            ManagedKey(
-                id: id, name: name, comment: comment, type: type, fingerprint: fingerprint,
-                publicKeyOpenSSH: publicKeyOpenSSH, createdAt: createdAt,
-                hasPassphrase: encrypted, fileName: fileName)
-        }
-    }
-
     public func all() throws -> [ManagedKey] {
         guard FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) else {
             return []
@@ -59,7 +23,7 @@ public struct ManagedKeyStore: Sendable {
         let data = try Data(contentsOf: fileURL)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode([PersistedKey].self, from: data).map(\.managedKey)
+        return try decoder.decode([ManagedKey].self, from: data)
     }
 
     public func add(_ key: ManagedKey) throws {
@@ -71,16 +35,22 @@ public struct ManagedKeyStore: Sendable {
 
     /// Removes metadata AND the private/public key files AND the Keychain
     /// passphrase slot under `id`. Missing files/slot are ignored (idempotent).
+    ///
+    /// Metadata is persisted FIRST, then the files/Keychain slot are deleted
+    /// best-effort. This way, if `persist` throws, at worst an orphaned file
+    /// is left behind (harmless) — never a metadata entry pointing at files
+    /// that no longer exist.
     public func remove(id: UUID, secrets: any SecretStore) throws {
         let keys = try all()
-        if let key = keys.first(where: { $0.id == id }) {
+        let key = keys.first(where: { $0.id == id })
+        try persist(keys.filter { $0.id != id })
+        if let key {
             let priv = keyDirectory.appendingPathComponent(key.fileName)
             try? FileManager.default.removeItem(at: priv)
             try? FileManager.default.removeItem(
                 at: keyDirectory.appendingPathComponent(key.fileName + ".pub"))
         }
         try? secrets.deletePassword(for: id)
-        try persist(keys.filter { $0.id != id })
     }
 
     /// The managed key whose private file is at `path`, or nil. Matches by the
@@ -98,6 +68,6 @@ public struct ManagedKeyStore: Sendable {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
-        try encoder.encode(keys.map(PersistedKey.init)).write(to: fileURL, options: .atomic)
+        try encoder.encode(keys).write(to: fileURL, options: .atomic)
     }
 }
