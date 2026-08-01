@@ -633,3 +633,5 @@
 "keys.delete.title" = "Supprimer cette clé ?";
 "keys.delete.confirm %lld" = "%lld connexions enregistrées font référence à cette clé.";
 "keys.delete.error" = "Impossible de supprimer la clé.";
+"keys.picker.managed" = "Clé gérée";
+"keys.picker.manage" = "Gérer les clés…";

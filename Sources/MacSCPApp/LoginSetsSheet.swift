@@ -402,6 +402,10 @@ private struct LoginSetEditorView: View {
                     }
                 } else if authChoice == .privateKey {
                     let keyPathLabel = L10n.string("connection.field.keyPath", "Key path")
+                    // Managed keys eligible to fill `keyPath` (M17/T5) — only
+                    // ed25519 (`KeyType.isConnectable`); RSA/ECDSA never show up
+                    // here since `SSHPrivateKeyLoader` can't load them anyway.
+                    let connectableKeys = Self.connectableManagedKeys()
                     EditorRow(label: keyPathLabel) {
                         HStack(spacing: 6) {
                             TextField(
@@ -411,7 +415,27 @@ private struct LoginSetEditorView: View {
                             Button("…") { showKeyImporter = true }
                                 .buttonStyle(.polished)
                                 .help(L10n.string("connection.field.keyPath.browseHelp", "Choose key file"))
+                            // Additive (M17/T5): only appears when at least one
+                            // managed key can be used to connect — no empty menu.
+                            if !connectableKeys.isEmpty {
+                                Menu(L10n.string("keys.picker.managed", "Managed key")) {
+                                    ForEach(connectableKeys) { key in
+                                        Button("\(key.name) — \(Self.shortFingerprint(key.fingerprint))") {
+                                            keyPath = Self.managedKeyPath(for: key)
+                                        }
+                                    }
+                                }
+                                .fixedSize()
+                            }
                         }
+                    }
+                    EditorRow(label: "") {
+                        SettingsLink {
+                            Text(L10n.string("keys.picker.manage", "Manage keys…"))
+                        }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+                        .foregroundStyle(DesignTokens.inkTertiary)
                     }
                     let passphraseLabel = L10n.string("connection.field.passphrase", "Passphrase (optional)")
                     EditorRow(label: passphraseLabel) {
@@ -483,6 +507,30 @@ private struct LoginSetEditorView: View {
                 keyPath = url.path(percentEncoded: false)
             }
         }
+    }
+}
+
+private extension LoginSetEditorView {
+    /// Managed ed25519 keys available to fill `keyPath` from (M17/T5).
+    /// Filters on `KeyType.isConnectable` — `SSHPrivateKeyLoader` can only
+    /// load ed25519, so rsa/ecdsa keys never appear in the picker menu.
+    static func connectableManagedKeys() -> [ManagedKey] {
+        (try? ManagedKeyStore(directory: SessionStore.defaultDirectory).all())?
+            .filter { $0.type.isConnectable } ?? []
+    }
+
+    /// The private-key file path a managed key resolves to, in the shape
+    /// `keyPath` expects (absolute, not percent-encoded).
+    static func managedKeyPath(for key: ManagedKey) -> String {
+        ManagedKeyStore(directory: SessionStore.defaultDirectory)
+            .keyDirectory.appendingPathComponent(key.fileName).path(percentEncoded: false)
+    }
+
+    /// The first ~12 characters after the `SHA256:` prefix, for a compact
+    /// menu row label (`ManagedKey.fingerprint` is the full base64 digest).
+    static func shortFingerprint(_ fingerprint: String) -> String {
+        guard let range = fingerprint.range(of: "SHA256:") else { return fingerprint }
+        return String(fingerprint[range.upperBound...].prefix(12))
     }
 }
 
