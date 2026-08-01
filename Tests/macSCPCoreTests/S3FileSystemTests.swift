@@ -444,6 +444,12 @@ struct S3FileSystemTests {
         let req = await transport.requests.last!
         #expect(req.value(forHTTPHeaderField: "Range") == "bytes=5-")
         #expect(req.httpMethod == "GET")
+        // Regression guard: Range must stay unsigned (M13 T3 review, Minor 2).
+        // `Authorization`'s `SignedHeaders=host;x-amz-...` names are all
+        // lowercase, so the literal substring "range" only shows up there if
+        // Range were mistakenly folded into the signed header set.
+        let auth = req.value(forHTTPHeaderField: "Authorization") ?? ""
+        #expect(!auth.contains("range"))
     }
 
     /// S3 answers a range request past EOF with HTTP 416; the protocol

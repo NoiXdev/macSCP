@@ -81,7 +81,15 @@ public final class S3FileSystem: RemoteFileSystem {
             method: "GET", key: key, query: [], payloadHash: SigV4Signer.emptyPayloadHash)
         request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
 
-        let (body, response) = try await transport.sendStreaming(request)
+        let body: AsyncThrowingStream<Data, Error>
+        let response: HTTPURLResponse
+        do {
+            (body, response) = try await transport.sendStreaming(request)
+        } catch let error as RemoteFSError {
+            throw error
+        } catch {
+            throw RemoteFSError.connectionFailed(reason: "S3 request failed: \(error.localizedDescription)")
+        }
         switch response.statusCode {
         case 200..<300:
             return body
@@ -257,7 +265,7 @@ public final class S3FileSystem: RemoteFileSystem {
             components.percentEncodedPath = SigV4Signer.canonicalURI(path: "/\(key)")
         }
 
-        components.percentEncodedQuery = SigV4Signer.canonicalQueryString(query: queryPairs)
+        components.percentEncodedQuery = queryPairs.isEmpty ? nil : SigV4Signer.canonicalQueryString(query: queryPairs)
 
         guard let url = components.url else {
             throw RemoteFSError.connectionFailed(reason: "Failed to build S3 request URL for endpoint: \(config.endpoint)")
