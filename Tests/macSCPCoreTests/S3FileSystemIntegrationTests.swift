@@ -331,6 +331,69 @@ struct S3FileSystemIntegrationTests {
         if let caught { throw caught }
     }
 
+    /// M14/T2: the signing proof for `presignedURL(.get)` — a presigned GET
+    /// URL is only meaningful if a plain, unauthenticated `URLSession`
+    /// request against it (no `Authorization` header at all — the signature
+    /// lives entirely in the query string) is independently accepted by a
+    /// REAL S3-compatible server. The fake-transport unit test
+    /// (`S3FileSystemTests.swift`) only proves the URL's SHAPE; it signs and
+    /// "sends" from the same data, so it can never catch a SigV4 signing bug
+    /// — only MinIO re-deriving the signature from the wire bytes can
+    /// (same rationale as the M13 write/rename/deleteTree gated tests).
+    @Test func presignedGetURLDownloadsTheObjectFromMinIO() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let key = "m14-presign-get-\(UUID().uuidString).txt"
+        let body = Data("hello presigned".utf8)
+
+        var caught: Error?
+        do {
+            let uploadStream = AsyncThrowingStream<Data, Error> { continuation in
+                continuation.yield(body)
+                continuation.finish()
+            }
+            try await fs.write(path: "/\(key)", mode: .overwrite, contents: uploadStream)
+
+            let url = try (fs as! any PresignedURLProvider).presignedURL(method: .get, key: key, expiresIn: 600)
+            let (data, response) = try await URLSession.shared.data(from: url)
+            #expect((response as? HTTPURLResponse)?.statusCode == 200)
+            #expect(data == body)
+        } catch {
+            caught = error
+        }
+        // Best-effort cleanup so re-runs stay reproducible, mirroring every
+        // other gated test's pattern.
+        try? await fs.delete(path: "/\(key)")
+        if let caught { throw caught }
+    }
+
+    /// M14/T2: the signing proof for `presignedURL(.put)` — a presigned PUT
+    /// URL uploads to the exact key it was signed for when driven by a
+    /// plain `URLSession.upload(for:from:)`, again against a REAL MinIO
+    /// server (see the GET test above for the fuller rationale).
+    @Test func presignedPutURLUploadsToTheKeyOnMinIO() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let key = "m14-presign-put-\(UUID().uuidString).bin"
+
+        var caught: Error?
+        do {
+            let url = try (fs as! any PresignedURLProvider).presignedURL(method: .put, key: key, expiresIn: 600)
+            var request = URLRequest(url: url)
+            request.httpMethod = "PUT"
+            let body = Data(repeating: 0x5A, count: 4096)
+            let (_, response) = try await URLSession.shared.upload(for: request, from: body)
+            #expect(((response as? HTTPURLResponse)?.statusCode ?? 0) / 100 == 2)
+
+            let stat = try await fs.stat(path: "/\(key)")
+            #expect(stat.size == 4096)
+        } catch {
+            caught = error
+        }
+        try? await fs.delete(path: "/\(key)")
+        if let caught { throw caught }
+    }
+
     private static func deleteMarkerObjectIgnoringErrors(key: String) async {
         let bucket = "macscp-seed"
         let rawPath = "/\(bucket)/\(key)"

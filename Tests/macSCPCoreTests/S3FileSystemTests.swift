@@ -688,6 +688,26 @@ struct S3FileSystemTests {
         #expect(!requests.contains { $0.httpMethod == "DELETE" })
     }
 
+    // MARK: - M14/T2: presignedURL
+
+    /// Pure-computation check (no fake-transport response is even consumed
+    /// beyond the `connect` probe): the presigned URL carries the expected
+    /// SigV4 query-parameter shape, the expiry is clamped to the SigV4
+    /// maximum of 7 days, and the secret access key never appears in the
+    /// URL itself (it only ever feeds the signature, an HMAC digest).
+    @Test func presignedGetURLCarriesSigV4QueryAndClampsExpiry() async throws {
+        let (fs, _) = try await connect(responses: [(Data(rootListingXML.utf8), httpResponse(status: 200))])
+        let url = try (fs as! any PresignedURLProvider).presignedURL(
+            method: .get, key: "dir/file.txt", expiresIn: 999_999_999) // clamp to 7d
+        let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        let q = Dictionary(uniqueKeysWithValues: (comps.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        #expect(q["X-Amz-Algorithm"] == "AWS4-HMAC-SHA256")
+        #expect(q["X-Amz-Expires"] == "604800") // clamped to SigV4 max
+        #expect(q["X-Amz-Signature"]?.isEmpty == false)
+        #expect(url.path.hasSuffix("/dir/file.txt"))
+        #expect(!url.absoluteString.contains(config.secretAccessKey)) // secret never in URL
+    }
+
     // MARK: - M13/T8: deleteTree
 
     /// A no-delimiter `ListObjectsV2` response listing exactly the given
