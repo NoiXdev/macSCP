@@ -59,6 +59,13 @@ public protocol RemoteFileSystem: Sendable {
     /// once at session start; callers fall back to "/" on failure.
     func homeDirectoryPath() async throws -> String
     func disconnect() async
+    /// Whether an interrupted transfer to THIS file system can resume by
+    /// appending to a partial destination (`WriteMode.append`). SSH/local
+    /// support it; object stores like S3 do not (no append, and a re-PUT
+    /// replaces the whole object) — the engine forces a full overwrite for
+    /// destinations that return `false`, so a size-mismatched existing object
+    /// is never corrupted by an append tail (M13).
+    var supportsAppendResume: Bool { get }
 }
 
 extension RemoteFileSystem {
@@ -73,4 +80,9 @@ extension RemoteFileSystem {
     public func write(path: String, contents: AsyncThrowingStream<Data, Error>) async throws {
         try await write(path: path, mode: .overwrite, contents: contents)
     }
+
+    /// Default: appendable (SSH/local). Kept so every existing conformer
+    /// (including test doubles) compiles unchanged; only backends that
+    /// cannot append (e.g. `S3FileSystem`) override to `false` (M13).
+    public var supportsAppendResume: Bool { true }
 }

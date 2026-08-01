@@ -351,6 +351,33 @@ struct TransferEngineTests {
         #expect(await destination.recordedMode == .append)
     }
 
+    // MARK: - Resume Safety Guard (M13/T1)
+
+    /// An S3-like destination cannot append (`supportsAppendResume == false`).
+    /// Its `stat` reports a smaller existing size — the classic resume
+    /// trigger — but `copyFile(resume: true)` must NOT take the append path:
+    /// appending a tail to a size-mismatched object would corrupt it. The
+    /// engine must force a full overwrite from offset 0 instead.
+    @Test func resumeIsSuppressedForNonAppendableDestination() async throws {
+        let content = Data(repeating: 0xAB, count: 100)
+        let source = makeSource(content: content)
+        // Reports 40 bytes already there AND supportsAppendResume == false.
+        // A naive resume would append the tail from offset 40 and corrupt
+        // the object.
+        let destination = RecordingFS(existingSize: 40, supportsAppendResume: false)
+
+        try await TransferEngine.copyFile(
+            from: source, sourcePath: "/quelle.bin",
+            to: destination, destinationDirectory: "/ziel", fileName: "quelle.bin",
+            resume: true,
+            onProgress: { _ in })
+
+        #expect(await destination.lastWriteMode == .overwrite)
+        // Full re-read from offset 0, not a resume from the reported 40
+        // bytes: the written payload is the WHOLE 100-byte source.
+        #expect(await destination.writtenData == content)
+    }
+
     /// Waits for the task's result, but returns `nil` after `timeout`
     /// (timeout) instead of blocking forever.
     private func awaitOutcome(
@@ -563,6 +590,59 @@ private actor ResumeSpinDestination: RemoteFileSystem {
                 while !Task.isCancelled { await Task.yield() }
             }
         }
+    }
+
+    func delete(path: String) async throws { throw RemoteFSError.notFound(path: path) }
+    func createDirectory(at path: String) async throws {}
+    func rename(from: String, to: String) async throws {
+        throw RemoteFSError.protocolError(reason: "unsupported in this test double")
+    }
+    func setPermissions(path: String, permissions: UInt32) async throws {
+        throw RemoteFSError.protocolError(reason: "unsupported in this test double")
+    }
+    func deleteTree(at path: String) async throws {
+        throw RemoteFSError.protocolError(reason: "unsupported in this test double")
+    }
+    func homeDirectoryPath() async throws -> String { "/" }
+    func disconnect() async {}
+}
+
+/// Minimal destination double for the resume-safety guard test (M13/T1):
+/// reports a configurable `existingSize` (smaller than the source — the
+/// classic resume trigger) and a configurable `supportsAppendResume`, and
+/// records the write mode and full payload it received, so the test can
+/// prove a non-appendable destination gets a full `.overwrite` rather than
+/// an `.append` continuing from the reported size.
+private actor RecordingFS: RemoteFileSystem {
+    private let existingSize: UInt64
+    let supportsAppendResume: Bool
+    private(set) var lastWriteMode: WriteMode?
+    private(set) var writtenData: Data?
+
+    init(existingSize: UInt64, supportsAppendResume: Bool) {
+        self.existingSize = existingSize
+        self.supportsAppendResume = supportsAppendResume
+    }
+
+    func list(path: String) async throws -> [RemoteFileItem] { [] }
+
+    func stat(path: String) async throws -> RemoteFileItem {
+        RemoteFileItem(name: "quelle.bin", path: path, kind: .file, size: existingSize)
+    }
+
+    func readStream(
+        path: String, fromOffset offset: UInt64
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+
+    func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {
+        lastWriteMode = mode
+        var collected = Data()
+        for try await chunk in contents {
+            collected.append(chunk)
+        }
+        writtenData = collected
     }
 
     func delete(path: String) async throws { throw RemoteFSError.notFound(path: path) }
