@@ -629,3 +629,5 @@
 "keys.delete.title" = "Delete this key?";
 "keys.delete.confirm %lld" = "%lld saved connections reference this key.";
 "keys.delete.error" = "Couldn't delete the key.";
+"keys.picker.managed" = "Managed key";
+"keys.picker.manage" = "Manage keys…";
