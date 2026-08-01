@@ -124,6 +124,61 @@ struct S3FileSystemIntegrationTests {
         if let caught { throw caught }
     }
 
+    /// M13/T6: a >8 MiB object write→read round-trip against a REAL MinIO
+    /// server — the one check that actually exercises the multipart
+    /// handshake end to end. Unit tests (`S3UploaderTests.swift`) exercise
+    /// `S3Uploader`'s part-cutting and abort-on-failure logic with a fake
+    /// builder that signs and sends from the SAME data, so they can never
+    /// catch a SigV4 signing bug in the Initiate/UploadPart/Complete
+    /// requests — only a live server that independently re-derives the
+    /// signature from the wire bytes can (mirrors the reasoning for the
+    /// small-object round-trip above, M13/T5).
+    @Test func writeThenReadStreamRoundTripsBitIdenticalContentAboveMultipartThreshold() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let key = "m13-multipart-roundtrip-\(UUID().uuidString).bin"
+        // 12 MiB of deterministic pseudo-random bytes (a simple LCG) — large
+        // enough to force >=2 multipart parts (partSize is 8 MiB) while
+        // staying fast to generate/verify.
+        let size = 12 * 1024 * 1024
+        var state: UInt64 = 0x1234_5678_9abc_def0
+        var body = Data(capacity: size)
+        for _ in 0..<size {
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            body.append(UInt8((state >> 33) & 0xFF))
+        }
+
+        var caught: Error?
+        do {
+            let uploadStream = AsyncThrowingStream<Data, Error> { continuation in
+                // Yield in chunks rather than one huge Data blob, so this
+                // exercises the same incremental-buffering path a real
+                // transfer would use.
+                let chunkSize = 256 * 1024
+                var offset = 0
+                while offset < body.count {
+                    let end = min(offset + chunkSize, body.count)
+                    continuation.yield(body.subdata(in: offset..<end))
+                    offset = end
+                }
+                continuation.finish()
+            }
+            try await fs.write(path: "/\(key)", mode: .overwrite, contents: uploadStream)
+
+            var received = Data()
+            for try await chunk in try await fs.readStream(path: "/\(key)", fromOffset: 0) {
+                received.append(chunk)
+            }
+            #expect(received == body)
+        } catch {
+            caught = error
+        }
+        // Best-effort cleanup so re-runs stay reproducible, mirroring the
+        // pattern above for the small-object round-trip.
+        try? await fs.delete(path: "/\(key)")
+        if let caught { throw caught }
+    }
+
     private static func deleteMarkerObjectIgnoringErrors(key: String) async {
         let bucket = "macscp-seed"
         let rawPath = "/\(bucket)/\(key)"
