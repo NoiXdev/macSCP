@@ -133,21 +133,13 @@ public final class S3FileSystem: RemoteFileSystem {
     }
 
     private func buildListRequest(prefix: String, continuationToken: String?) throws -> URLRequest {
-        let url = try Self.requestURL(config: config, prefix: prefix, continuationToken: continuationToken)
+        let queryPairs = Self.queryPairs(prefix: prefix, continuationToken: continuationToken)
+        let url = try Self.requestURL(config: config, queryPairs: queryPairs)
         guard let host = url.host else {
             throw RemoteFSError.connectionFailed(reason: "S3 endpoint has no host: \(config.endpoint)")
         }
         let hostHeader = url.port.map { "\(host):\($0)" } ?? host
         let canonicalPath = url.path.isEmpty ? "/" : url.path
-
-        var queryPairs: [(name: String, value: String)] = [
-            (name: "list-type", value: "2"),
-            (name: "prefix", value: prefix),
-            (name: "delimiter", value: "/"),
-        ]
-        if let continuationToken {
-            queryPairs.append((name: "continuation-token", value: continuationToken))
-        }
 
         let signer = SigV4Signer(
             accessKeyID: config.accessKeyID, secretAccessKey: config.secretAccessKey,
@@ -166,11 +158,39 @@ public final class S3FileSystem: RemoteFileSystem {
         return request
     }
 
+    /// The `list-type`/`prefix`/`delimiter`[/`continuation-token`] pairs for
+    /// one ListObjectsV2 call, as raw (unencoded) `(name, value)` tuples.
+    /// Built once and shared by both the signer (`authorizationHeader`,
+    /// via `buildListRequest`) and the wire URL (`requestURL`) so the two
+    /// can never see different query contents.
+    private static func queryPairs(prefix: String, continuationToken: String?) -> [(name: String, value: String)] {
+        var pairs: [(name: String, value: String)] = [
+            (name: "list-type", value: "2"),
+            (name: "prefix", value: prefix),
+            (name: "delimiter", value: "/"),
+        ]
+        if let continuationToken {
+            pairs.append((name: "continuation-token", value: continuationToken))
+        }
+        return pairs
+    }
+
     /// Builds the ListObjectsV2 request URL for either path-style
     /// (`{endpoint}/{bucket}?...`) or virtual-hosted
     /// (`{scheme}://{bucket}.{host}?...`) addressing.
+    ///
+    /// The wire query is encoded with `SigV4Signer.canonicalQueryString` —
+    /// the SAME RFC-3986 percent-encoding (and sort order) the signer uses
+    /// to canonicalize the query it signs — and assigned via
+    /// `percentEncodedQuery`, which Foundation stores verbatim. Using
+    /// `queryItems`/`query` instead would let `URLComponents` re-encode the
+    /// value with its own rules, which notably leave `+` un-escaped; a
+    /// `+` in a value (e.g. a base64 `continuation-token`) would then be
+    /// signed as `%2B` but sent as a literal `+`, decoded server-side as a
+    /// space, and rejected as a signature mismatch (HTTP 403). See M12
+    /// review finding I-1.
     private static func requestURL(
-        config: S3ConnectionConfig, prefix: String, continuationToken: String?
+        config: S3ConnectionConfig, queryPairs: [(name: String, value: String)]
     ) throws -> URL {
         guard var components = URLComponents(string: config.endpoint) else {
             throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint: \(config.endpoint)")
@@ -185,15 +205,7 @@ public final class S3FileSystem: RemoteFileSystem {
             components.path = ""
         }
 
-        var queryItems = [
-            URLQueryItem(name: "list-type", value: "2"),
-            URLQueryItem(name: "prefix", value: prefix),
-            URLQueryItem(name: "delimiter", value: "/"),
-        ]
-        if let continuationToken {
-            queryItems.append(URLQueryItem(name: "continuation-token", value: continuationToken))
-        }
-        components.queryItems = queryItems
+        components.percentEncodedQuery = SigV4Signer.canonicalQueryString(query: queryPairs)
 
         guard let url = components.url else {
             throw RemoteFSError.connectionFailed(reason: "Failed to build S3 request URL for endpoint: \(config.endpoint)")

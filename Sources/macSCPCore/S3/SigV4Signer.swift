@@ -142,7 +142,13 @@ public struct SigV4Signer: Sendable {
         return encoded.joined(separator: "/")
     }
 
-    private static func canonicalQueryString(query: [(name: String, value: String)]) -> String {
+    /// Widened to `internal` so `S3FileSystem` can build the WIRE query
+    /// with this exact same RFC-3986 encoding + sort order, keeping the
+    /// signed and sent queries byte-identical (see M12 review I-1: a
+    /// `URLComponents`-encoded wire query left `+` un-escaped, so it
+    /// diverged from what was signed here whenever a value — e.g. a
+    /// base64 `continuation-token` — contained one).
+    static func canonicalQueryString(query: [(name: String, value: String)]) -> String {
         guard !query.isEmpty else { return "" }
         let encodedPairs = query.map { (rfc3986Encode($0.name), rfc3986Encode($0.value)) }
         let sorted = encodedPairs.sorted { lhs, rhs in
