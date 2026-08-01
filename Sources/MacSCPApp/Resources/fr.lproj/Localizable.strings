@@ -440,6 +440,7 @@
 "loginSets.subtitle.key %@ %@" = "%@ · Clé SSH (%@)";
 "loginSets.subtitle.password %@" = "%@ · Mot de passe";
 "loginSets.subtitle.agent %@" = "%@ · Agent";
+"loginSets.subtitle.s3 %@" = "%@ · S3";
 "loginSets.merge.banner %lld %@" = "%lld connexions utilisent le même login « %@ ».";
 "loginSets.merge.ignore" = "Ignorer";
 "loginSets.merge.action" = "Fusionner…";
@@ -450,11 +451,17 @@
 "loginSets.editor.titleEdit" = "Modifier le login";
 "loginSets.editor.name" = "Nom";
 "loginSets.editor.username" = "Nom d'utilisateur";
+"loginSets.editor.kind" = "Type";
+"loginSets.kind.ssh" = "SSH";
+"loginSets.kind.s3" = "S3";
+"loginSets.editor.accessKeyID" = "Access Key ID";
+"loginSets.editor.secretAccessKey" = "Clé d’accès secrète";
 "loginSets.editor.keepSecret" = "laisser vide pour conserver";
 "loginSets.missingSet" = "Le login enregistré pour cette connexion est introuvable. Choisissez un login ou saisissez des identifiants.";
 "loginSets.badge.key" = "CLÉ";
 "loginSets.badge.pass" = "PASS";
 "loginSets.badge.agent" = "AGENT";
+"loginSets.badge.s3" = "S3";
 
 /* Formulaire de connexion — sélecteur de login à trois modes (M10b/T3) */
 "form.loginMode.label" = "Login";

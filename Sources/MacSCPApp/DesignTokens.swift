@@ -78,6 +78,14 @@ enum DesignTokens {
     /// pairing shape as `remoteSoft`/`localSoft` above, tinted for
     /// `agentGreen`.
     static let agentSoft = Color(nsColor: dynamicNS(light: 0xE1F3E5, dark: 0x16301F))
+    /// S3 login-set badge (M15): a muted violet, the 4th distinct badge hue
+    /// after KEY's `remoteBlue`, AGENT's `agentGreen`, PASS's `localAmber`.
+    static let s3Soft = Color(nsColor: dynamicNS(light: 0xEDE7F6, dark: 0x241B33))
+    static let s3Violet = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(srgbRed: 0xB3 / 255, green: 0x9D / 255, blue: 0xDB / 255, alpha: 1) // #B39DDB
+            : NSColor(srgbRed: 0x6A / 255, green: 0x4C / 255, blue: 0xA5 / 255, alpha: 1) // #6A4CA5
+    })
 
     // Surface hierarchy (mockup: card content surface on the window ground).
     // `paper` (the mockup's page ground) had no consumer after the polish

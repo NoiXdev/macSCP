@@ -436,6 +436,7 @@
 "loginSets.subtitle.key %@ %@" = "%@ · SSH key (%@)";
 "loginSets.subtitle.password %@" = "%@ · Password";
 "loginSets.subtitle.agent %@" = "%@ · Agent";
+"loginSets.subtitle.s3 %@" = "%@ · S3";
 "loginSets.merge.banner %lld %@" = "%lld connections use the same login “%@”.";
 "loginSets.merge.ignore" = "Ignore";
 "loginSets.merge.action" = "Merge…";
@@ -446,11 +447,17 @@
 "loginSets.editor.titleEdit" = "Edit login";
 "loginSets.editor.name" = "Name";
 "loginSets.editor.username" = "Username";
+"loginSets.editor.kind" = "Type";
+"loginSets.kind.ssh" = "SSH";
+"loginSets.kind.s3" = "S3";
+"loginSets.editor.accessKeyID" = "Access Key ID";
+"loginSets.editor.secretAccessKey" = "Secret Access Key";
 "loginSets.editor.keepSecret" = "leave empty to keep";
 "loginSets.missingSet" = "The stored login for this connection was not found. Choose a login or enter credentials.";
 "loginSets.badge.key" = "KEY";
 "loginSets.badge.pass" = "PASS";
 "loginSets.badge.agent" = "AGENT";
+"loginSets.badge.s3" = "S3";
 
 /* Connection form — three-way login switcher (M10b/T3) */
 "form.loginMode.label" = "Login";
