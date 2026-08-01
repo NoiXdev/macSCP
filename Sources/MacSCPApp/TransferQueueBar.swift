@@ -10,6 +10,15 @@ struct TransferQueueBar: View {
         direction == .upload ? DesignTokens.localAmber : DesignTokens.remoteBlue
     }
 
+    /// Backend badge label for a cross-backend destination (M16) — reads
+    /// the canonical M12 `BackendDescriptor` source, same as
+    /// `SessionSidebar.swift`/`TabStripView.swift`, so the label always
+    /// tracks the shared badge L10n keys instead of hardcoding a switch.
+    private func backendBadgeLabel(_ kind: ConnectionKind) -> String {
+        let descriptor = BackendDescriptor.descriptor(for: kind)
+        return L10n.string(descriptor.badgeLabelKey, descriptor.badgeLabelDefault)
+    }
+
     var body: some View {
         if viewModel.items.isEmpty {
             VStack(spacing: 0) {
@@ -73,6 +82,25 @@ struct TransferQueueBar: View {
                 .foregroundStyle(DesignTokens.ink)
                 .lineLimit(1)
                 .truncationMode(.middle)
+            if let target = item.crossBackendTarget {
+                Text(backendBadgeLabel(target.kind))
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(DesignTokens.remoteSoft, in: RoundedRectangle(cornerRadius: 4))
+                    .foregroundStyle(DesignTokens.inkSecondary)
+                Text("→ \(target.name)")
+                    .font(.caption)
+                    .foregroundStyle(DesignTokens.inkSecondary)
+                    .lineLimit(1).truncationMode(.middle)
+            }
+            if !item.destinationSupportsResume, item.status == .queued || item.status.isRunning {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .help(L10n.string(
+                        "transfers.noResume.hint",
+                        "If interrupted, this upload restarts from the beginning."))
+            }
             Spacer(minLength: 8)
             switch item.status {
             case .queued:

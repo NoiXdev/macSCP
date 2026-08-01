@@ -10,11 +10,15 @@ public struct CrossSessionTarget: Equatable, Sendable, Identifiable {
     public let id: UUID
     public let title: String
     public let remotePath: String
+    /// The target session's protocol kind (M16) — carried through to
+    /// `CrossBackendTarget` so the transfer row can show a backend badge.
+    public let kind: ConnectionKind
 
-    public init(id: UUID, title: String, remotePath: String) {
+    public init(id: UUID, title: String, remotePath: String, kind: ConnectionKind) {
         self.id = id
         self.title = title
         self.remotePath = remotePath
+        self.kind = kind
     }
 }
 

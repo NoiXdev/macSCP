@@ -2580,7 +2580,9 @@ struct ContentView: View {
         tabsModel.tabs.compactMap { other in
             guard other.id != tab.id, let session = other.session else { return nil }
             return CrossSessionTarget(
-                id: other.id, title: other.displayTitle, remotePath: session.remote.currentPath)
+                id: other.id, title: other.displayTitle,
+                remotePath: session.remote.currentPath,
+                kind: other.connectionViewModel.kind)
         }
     }
 
@@ -2610,7 +2612,8 @@ struct ContentView: View {
                     destination: targetSession.remoteFS,
                     destinationDirectory: target.remotePath,
                     onCompleted: { [weak remote = targetSession.remote] in await remote?.refresh() },
-                    destinationTabID: target.id)
+                    destinationTabID: target.id,
+                    crossBackendTarget: CrossBackendTarget(name: target.title, kind: target.kind))
             case (.local, _):
                 queue.enqueue(
                     fileName: item.name, direction: .upload,
@@ -2618,7 +2621,8 @@ struct ContentView: View {
                     destination: targetSession.remoteFS,
                     destinationDirectory: target.remotePath,
                     onCompleted: { [weak remote = targetSession.remote] in await remote?.refresh() },
-                    destinationTabID: target.id)
+                    destinationTabID: target.id,
+                    crossBackendTarget: CrossBackendTarget(name: target.title, kind: target.kind))
             case (.remote, .directory):
                 // Remote→remote (crossRemote): direction stays `.upload` —
                 // the destination is always a remote file system here, the
@@ -2629,7 +2633,8 @@ struct ContentView: View {
                     destination: targetSession.remoteFS,
                     destinationDirectory: target.remotePath,
                     onCompleted: { [weak remote = targetSession.remote] in await remote?.refresh() },
-                    destinationTabID: target.id, crossRemote: true)
+                    destinationTabID: target.id, crossRemote: true,
+                    crossBackendTarget: CrossBackendTarget(name: target.title, kind: target.kind))
             case (.remote, _):
                 queue.enqueue(
                     fileName: item.name, direction: .upload,
@@ -2637,7 +2642,8 @@ struct ContentView: View {
                     destination: targetSession.remoteFS,
                     destinationDirectory: target.remotePath,
                     onCompleted: { [weak remote = targetSession.remote] in await remote?.refresh() },
-                    destinationTabID: target.id, crossRemote: true)
+                    destinationTabID: target.id, crossRemote: true,
+                    crossBackendTarget: CrossBackendTarget(name: target.title, kind: target.kind))
             }
         }
     }

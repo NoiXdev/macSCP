@@ -183,6 +183,10 @@
 "transfers.interrupted.banner" = "Les transferts interrompus peuvent être repris.";
 "transfers.interrupted.resume" = "Reprendre";
 
+/* Cross-backend resume warning (M16) — shown while a queued/running item's
+   destination backend cannot resume an interrupted upload/download. */
+"transfers.noResume.hint" = "En cas d’interruption, ce téléversement redémarre du début.";
+
 /* Intégration de l'éditeur (M5e/T4) */
 "edit.openFailed" = "Impossible d'ouvrir le fichier pour modification : %@";
 

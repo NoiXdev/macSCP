@@ -179,6 +179,10 @@
 "transfers.interrupted.banner" = "Interrupted transfers can be resumed.";
 "transfers.interrupted.resume" = "Resume";
 
+/* Cross-backend resume warning (M16) — shown while a queued/running item's
+   destination backend cannot resume an interrupted upload/download. */
+"transfers.noResume.hint" = "If interrupted, this upload restarts from the beginning.";
+
 /* Editor integration (M5e/T4) */
 "edit.openFailed" = "Could not open file for editing: %@";
 
