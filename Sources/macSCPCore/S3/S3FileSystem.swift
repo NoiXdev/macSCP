@@ -265,7 +265,7 @@ public final class S3FileSystem: RemoteFileSystem {
             throw RemoteFSError.connectionFailed(reason: "S3 endpoint has no host: \(config.endpoint)")
         }
         let hostHeader = url.port.map { "\(host):\($0)" } ?? host
-        let canonicalPath = url.path.isEmpty ? "/" : url.path
+        let canonicalPath = Self.canonicalKeyPath(config: config, key: key)
 
         var headers = extraHeaders
         headers["host"] = hostHeader
@@ -305,13 +305,13 @@ public final class S3FileSystem: RemoteFileSystem {
             throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint: \(config.endpoint)")
         }
         if config.usePathStyle {
-            components.percentEncodedPath = SigV4Signer.canonicalURI(path: "/\(config.bucket)/\(key)")
+            components.percentEncodedPath = SigV4Signer.canonicalURI(path: canonicalKeyPath(config: config, key: key))
         } else {
             guard let host = components.host else {
                 throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint host: \(config.endpoint)")
             }
             components.host = "\(config.bucket).\(host)"
-            components.percentEncodedPath = SigV4Signer.canonicalURI(path: "/\(key)")
+            components.percentEncodedPath = SigV4Signer.canonicalURI(path: canonicalKeyPath(config: config, key: key))
         }
 
         components.percentEncodedQuery = queryPairs.isEmpty ? nil : SigV4Signer.canonicalQueryString(query: queryPairs)
@@ -320,6 +320,14 @@ public final class S3FileSystem: RemoteFileSystem {
             throw RemoteFSError.connectionFailed(reason: "Failed to build S3 request URL for endpoint: \(config.endpoint)")
         }
         return url
+    }
+
+    /// The raw (pre-encoding) request path for an object key — the exact
+    /// string `keyRequestURL` feeds into `canonicalURI` for the wire URL.
+    /// Signing MUST use THIS, not `URL.path` (which drops a trailing slash and
+    /// would produce a SignatureDoesNotMatch for folder-marker keys) (M13).
+    private static func canonicalKeyPath(config: S3ConnectionConfig, key: String) -> String {
+        config.usePathStyle ? "/\(config.bucket)/\(key)" : "/\(key)"
     }
 
     /// Maps an absolute browser path to the S3 object key used for a FILE
