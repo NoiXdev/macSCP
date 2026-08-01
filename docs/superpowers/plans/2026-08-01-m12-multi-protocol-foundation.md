@@ -726,3 +726,48 @@ git commit -m "feat: schema-driven connection form, type badge and capability ga
 - [ ] Whole-Milestone Opus-Review über `review-package <base> HEAD`: Fokus auf (a) Vorwärtskompat (Alt-sessions.json/Login-Sets/Export laden als `.ssh`, `decodeIfPresent`); (b) der generische Layer liest NUR Capabilities, kein `if kind ==` in Browser/Menü/Info; (c) SigV4 gegen die AWS-Vektoren korrekt, kein Secret in Logs/JSON; (d) S3-Secret nur in der Keychain, Export-Secret-Kanal wie `jumpPassword`; (e) SSH-Pfad byte-gleich hinter dem generalisierten Connector (Regression); (f) Gating korrekt + Kürzel-Fehler statt No-op; (g) MinIO-Rig aus dem Haupt-Checkout, Seed reproduzierbar. Fix-Runden bis „Ready to merge: Yes".
 - [ ] Visueller Smoke — Maintainer (Typ-Schalter SSH/S3, Provider-Presets füllen Felder, S3 verbinden + Bucket browsen gegen echtes MinIO/Hetzner, Badge in Sidebar/Tab, Terminal-Knopf bei S3 weg + Kürzel-Fehler, SSH unverändert; hell/dunkel; DE/FR/PL).
 - [ ] Plan-Checkboxen, Ledger, Push develop, `gh run watch`, Dev-Build deployen, Memory. **KEIN Release.** S3-Transfer/CRUD = M13, Presigned/Cross-Backend = M14, Diagnose-Tools + SSH-Key-Manager = spätere Meilensteine.
+
+---
+
+## Abschluss M12 (2026-08-01)
+
+**Alle 8 Tasks umgesetzt, jeweils Task-Review + Fix-Runden sauber.** Task 7
+wurde vom Koordinator in 7a (Core-VM: `kind` + S3-Felder + connect/save/
+beginEditing-Verzweigung, getestet) und 7b (App-UI: Formular/Badge/Gating/
+L10n) gesplittet, weil die VM-Logik testbarer Core-Code ist. Task 2 wurde nach
+einem Implementer-Stall vom Koordinator fertiggestellt (`BackendDescriptor.swift`).
+
+**Verifikation:**
+- Voller gated Lauf `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → grün; die
+  Suiten *CitadelFileSystem/-Shell against Docker SSH*, *S3FileSystem against
+  Docker MinIO* und *KeychainSecretStore* liefen und bestanden (zero echte
+  Skips). `swift build` sauber (52 Warnungen, unverändert), `plutil -lint`
+  alle vier App-Kataloge OK, `LocalizableStringsTests` grün.
+- Runtime-Idle-CPU-Rauchtest: universelles v1.2.0-dev gepackt, ad-hoc
+  signiert, gestartet → durchgehend 0,0 % CPU (kein Layout-Sturm durch den
+  neuen Typ-Schalter). Nebenbei einen verwaisten 99-%-CPU-Debug-`macSCP`
+  (der nie gekillte M11n-MenuBarExtra-Freeze-Prozess vom 31.07.) aufgeräumt.
+- **Whole-Milestone Opus-Review: „Ready to merge: Yes"** — (a)–(g) alle
+  bestanden (Vorwärtskompat `decodeIfPresent ?? .ssh` an allen drei Decode-
+  Grenzen; generischer Layer liest nur Capabilities; SigV4 gegen AWS-Vektor;
+  Secret nur Keychain + verschlüsselter Export wie `jumpPassword`; SSH-Pfad
+  byte-gleich; Gating korrekt + Kürzel-Fehler; MinIO-Rig reproduzierbar).
+- **Ein bestätigtes Important (I-1) sofort gefixt** (nicht nach M13 verschoben):
+  S3-`list` signierte die Query strikt (RFC 3986), sendete sie aber über
+  `URLComponents` (das `+`/`/` nicht kodiert) → Signatur-Mismatch (403) bei
+  Pagination (Continuation-Tokens sind base64, enthalten oft `+`) und bei
+  `+`-haltigen Prefixes. Fix: Wire-Query aus derselben `canonicalQueryString`
+  bauen wie der Signer (Single-Source, jetzt `internal`). Zwei neue Tests
+  (`+` in Token/Prefix → `%2B` auf der Leitung); gated MinIO danach weiter 4/4.
+
+**Offen (bewusst, kein Blocker):** Maintainer-Sichtprüfung steht aus
+(hell/dunkel, DE/FR/PL, echtes S3-Browsen) — Maintainer war offline. FR/PL
+weiterhin KI-generiert, Muttersprachler-Review vor einem Release. Kleinere
+Nachträge (Ledger): virtuelles-Host-S3-URL ungetestet, `minio-init`-Retry
+unbegrenzt, Provider-Preset-Picker zeigt beim erneuten Öffnen „Custom",
+Login-Set-S3-AccessKeyID-Auflösung beim Export erst M13, SigV4-Header-
+Whitespace-Kollaps nicht implementiert (von S3-Headern nicht ausgelöst).
+
+**Grenzen des Meilensteins:** S3-Transfer/CRUD = M13, Presigned/Cross-Backend
+= M14, Verbindungs-Diagnose + SSH-Key-Manager = spätere Meilensteine.
+**KEIN Release.**
