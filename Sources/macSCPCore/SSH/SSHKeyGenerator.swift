@@ -17,6 +17,7 @@ public enum SSHKeyGenerator {
         case keygenFailed(status: Int32)
         case publicKeyUnreadable
         case toolMissing
+        case fingerprintUnavailable
     }
 
     public static func generate(
@@ -25,6 +26,11 @@ public enum SSHKeyGenerator {
         try FileManager.default.createDirectory(
             at: dir, withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700])
+        // `createDirectory` only applies `attributes` when it creates the
+        // directory; if it already existed, permissions are left untouched.
+        // Harden explicitly so the 0700 invariant holds either way.
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700], ofItemAtPath: dir.path(percentEncoded: false))
 
         let fileURL = dir.appendingPathComponent(UUID().uuidString)
         let tool = "/usr/bin/ssh-keygen"
@@ -61,9 +67,9 @@ public enum SSHKeyGenerator {
             throw SSHKeyGenError.publicKeyUnreadable
         }
         let publicKeyOpenSSH = pubContents.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fingerprint = fingerprint(fromOpenSSHPublicKey: publicKeyOpenSSH)
-            ?? SSHKeyGenerator.fingerprintViaTool(pubURL: pubURL)
-            ?? ""
+        guard let fingerprint = fingerprint(fromOpenSSHPublicKey: publicKeyOpenSSH) else {
+            throw SSHKeyGenError.fingerprintUnavailable
+        }
 
         return GeneratedKey(
             privateKeyURL: fileURL, publicKeyOpenSSH: publicKeyOpenSSH, fingerprint: fingerprint)
@@ -82,20 +88,5 @@ public enum SSHKeyGenerator {
         let parts = line.split(separator: " ")
         guard parts.count >= 2 else { return nil }
         return HostKeyFingerprint.sha256(ofKeyBlobBase64: String(parts[1]))
-    }
-
-    /// Fallback: `ssh-keygen -lf <pub>` prints "<bits> SHA256:… comment (TYPE)".
-    private static func fingerprintViaTool(pubURL: URL) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
-        process.arguments = ["-lf", pubURL.path(percentEncoded: false)]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardInput = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return nil }
-        process.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard let out = String(data: data, encoding: .utf8) else { return nil }
-        return out.split(separator: " ").first { $0.hasPrefix("SHA256:") }.map(String.init)
     }
 }
