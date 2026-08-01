@@ -196,6 +196,76 @@ struct S3FileSystemTests {
         #expect(page2Query.contains(URLQueryItem(name: "continuation-token", value: "tok-1")))
     }
 
+    /// M12 review finding I-1: `NextContinuationToken` values are base64 and
+    /// routinely contain `+`. The signer canonicalizes the query with
+    /// strict RFC-3986 encoding (`+` → `%2B`), so the WIRE request must
+    /// carry that same encoding — if it instead went out through
+    /// `URLComponents`'s own (looser) re-encoding, the `+` would reach the
+    /// server literally, get decoded as a space, and the signature would no
+    /// longer match the query the server sees (HTTP 403 on every listing
+    /// whose second page's continuation token contains a `+`).
+    @Test func continuationTokenWithPlusIsPercentEncodedOnTheWire() async throws {
+        let tokenWithPlus = "1/AB+cd=="
+        let page1 = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+            <IsTruncated>true</IsTruncated>
+            <NextContinuationToken>\(tokenWithPlus)</NextContinuationToken>
+            <Contents>
+                <Key>a.txt</Key>
+                <Size>12</Size>
+            </Contents>
+        </ListBucketResult>
+        """
+        let page2 = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+            <IsTruncated>false</IsTruncated>
+            <Contents>
+                <Key>z.txt</Key>
+                <Size>3</Size>
+            </Contents>
+        </ListBucketResult>
+        """
+        let (fs, transport) = try await connect(responses: [
+            (Data(page1.utf8), httpResponse(status: 200)),
+            (Data(page2.utf8), httpResponse(status: 200)),
+        ])
+
+        let items = try await fs.list(path: "/")
+
+        // Both pages' items still concatenate correctly.
+        #expect(items.map(\.name).sorted() == ["a.txt", "z.txt"])
+
+        let requests = await transport.requests
+        #expect(requests.count == 3)
+        let page2URL = try #require(requests[2].url)
+        let sentQuery = try #require(page2URL.query)
+
+        // The `+` (and the `/` and `=` around it) must be percent-encoded
+        // exactly as the signer encodes them — never sent as literal
+        // characters, which is what `URLComponents`'s own re-encoding would
+        // have done for `+`.
+        #expect(sentQuery.contains("continuation-token=1%2FAB%2Bcd%3D%3D"))
+        #expect(!sentQuery.contains("AB+cd"))
+    }
+
+    /// Same encoding requirement for a `prefix` (e.g. a folder name) that
+    /// itself contains a `+` — this affects the FIRST page, not just
+    /// pagination, so it's worth its own assertion.
+    @Test func prefixWithPlusIsPercentEncodedOnTheWire() async throws {
+        let (fs, transport) = try await connect(responses: [(Data(rootListingXML.utf8), httpResponse(status: 200))])
+
+        _ = try await fs.list(path: "/folder+name")
+
+        let requests = await transport.requests
+        let listRequest = try #require(requests.last)
+        let sentQuery = try #require(listRequest.url?.query)
+
+        #expect(sentQuery.contains("prefix=folder%2Bname%2F"))
+        #expect(!sentQuery.contains("folder+name"))
+    }
+
     @Test func statFindsAFileByListingItsParent() async throws {
         let (fs, _) = try await connect(responses: [(Data(rootListingXML.utf8), httpResponse(status: 200))])
         let item = try await fs.stat(path: "/a.txt")
