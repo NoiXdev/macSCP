@@ -104,8 +104,12 @@ public enum TransferEngine {
         // Resume (M5d/T2): decide the starting offset BEFORE touching the
         // source stream. `resume == false` takes none of this — offset stays
         // 0 and the write mode stays `.overwrite`, identical to pre-M5d.
+        // S3-like destinations cannot append (no partial object survives a
+        // failed multipart, and a re-PUT replaces the whole object) — force a
+        // full overwrite regardless of the caller's `resume` (M13).
+        let effectiveResume = resume && destination.supportsAppendResume
         var resumeOffset: UInt64 = 0
-        if resume {
+        if effectiveResume {
             do {
                 let destinationSize = try await destination.stat(path: destinationPath).size ?? 0
                 if let total, destinationSize >= total {

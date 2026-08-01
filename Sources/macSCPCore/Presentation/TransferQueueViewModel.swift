@@ -895,6 +895,15 @@ public final class TransferQueueViewModel {
                 jobs[jobID] = nil
                 runningTransferTasks[jobID] = nil
                 resumeWaiter(jobID, with: .failure(error))
+            } else if !destination.supportsAppendResume {
+                // Destination cannot append (e.g. S3, M13): a resume would
+                // have to overwrite the whole object anyway, so a plain
+                // retry from scratch is equivalent — classify as `.failed`
+                // rather than offering a resume that can't actually resume.
+                setStatus(jobID, .failed(CoreL10n.string("core.transfer.interrupted")))
+                jobs[jobID] = nil
+                runningTransferTasks[jobID] = nil
+                resumeWaiter(jobID, with: .failure(error))
             } else {
                 // Connection lost mid-transfer (M5d/T3): mark `.interrupted`
                 // (NOT `.failed`) and RETAIN the job — under its EFFECTIVE

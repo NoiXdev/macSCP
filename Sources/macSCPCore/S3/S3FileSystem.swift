@@ -99,6 +99,9 @@ public final class S3FileSystem: RemoteFileSystem {
 
     public func disconnect() async {}
 
+    /// S3 has no append; a re-PUT replaces the whole object (M13).
+    public var supportsAppendResume: Bool { false }
+
     // MARK: - Request building + signed ListObjectsV2
 
     /// One signed `GET ?list-type=2&prefix=&delimiter=/[&continuation-token=]`

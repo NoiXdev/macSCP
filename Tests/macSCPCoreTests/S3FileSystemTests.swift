@@ -298,6 +298,13 @@ struct S3FileSystemTests {
         await fs.disconnect()
     }
 
+    /// S3 has no append; `TransferEngine` must never hand it a resumed
+    /// `.append` write from a non-zero offset (M13/T1).
+    @Test func supportsAppendResumeIsFalse() async throws {
+        let (fs, _) = try await connect(responses: [])
+        #expect(fs.supportsAppendResume == false)
+    }
+
     // MARK: - M13 stubs: every mutating method throws protocolError
 
     /// Runs `operation` and asserts it throws specifically
