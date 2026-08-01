@@ -204,4 +204,51 @@ struct SessionExportCodecTests {
         #expect(decoded.sessions.first?.authKind == .agent)
         #expect(decoded.sessions.first?.jumpAuthKind == .agent)
     }
+
+    // MARK: - Connection kind + S3 fields (M12)
+
+    @Test func s3SessionWithKindAndFieldsRoundtripsThroughEncodeDecode() throws {
+        let payload = SessionExportPayload(
+            includesSecrets: true,
+            groups: [],
+            sessions: [ExportedSession(
+                id: UUID(), name: "s3-prod", host: "unused", port: 22, username: "unused",
+                authKind: .password, keyPath: nil, groupID: nil, password: nil,
+                kind: .s3,
+                s3AccessKeyID: "AKIAEXAMPLE", s3Region: "eu-central-1",
+                s3Endpoint: "https://s3.eu-central-1.amazonaws.com", s3Bucket: "my-bucket",
+                s3UsePathStyle: true, s3SecretAccessKey: "shh-secret")])
+        let data = try SessionExportCodec.encode(payload, password: "pw")
+        let decoded = try SessionExportCodec.decode(data, password: "pw")
+        #expect(decoded == payload)
+        let session = decoded.sessions.first!
+        #expect(session.kind == .s3)
+        #expect(session.s3AccessKeyID == "AKIAEXAMPLE")
+        #expect(session.s3Region == "eu-central-1")
+        #expect(session.s3Endpoint == "https://s3.eu-central-1.amazonaws.com")
+        #expect(session.s3Bucket == "my-bucket")
+        #expect(session.s3UsePathStyle == true)
+        #expect(session.s3SecretAccessKey == "shh-secret")
+    }
+
+    /// A payload written before M12 has no `kind`/`s3*` keys at all --
+    /// synthesized `Codable` decodes those Optionals as `nil` (same pattern
+    /// as `groupID`/jump fields); the import planner maps `nil` kind to
+    /// `.ssh`.
+    @Test func legacyPayloadWithoutKindDecodesNilKind() throws {
+        let raw = Data("""
+        {"format":"macscp-sessions","version":1,"encrypted":false,"payload":{"includesSecrets":false,\
+        "groups":[],"sessions":[{"id":"\(UUID().uuidString)","name":"web","host":"h","port":22,\
+        "username":"u","authKind":"password"}]}}
+        """.utf8)
+        let payload = try SessionExportCodec.decode(raw, password: nil)
+        let session = payload.sessions.first!
+        #expect(session.kind == nil)
+        #expect(session.s3AccessKeyID == nil)
+        #expect(session.s3Region == nil)
+        #expect(session.s3Endpoint == nil)
+        #expect(session.s3Bucket == nil)
+        #expect(session.s3UsePathStyle == nil)
+        #expect(session.s3SecretAccessKey == nil)
+    }
 }

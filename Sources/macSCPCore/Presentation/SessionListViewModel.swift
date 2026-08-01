@@ -671,10 +671,37 @@ public final class SessionListViewModel {
             var password: String?
             // Agent entries (M10d) never carry a secret and are never
             // counted as missing one -- there is nothing to be missing.
-            if includePasswords, authKind != .agent {
+            // An `.s3` session's secret travels via `s3SecretAccessKey`
+            // below instead (same keychain slot, different export field) --
+            // skip here so it isn't fetched/counted twice.
+            if includePasswords, authKind != .agent, session.kind != .s3 {
                 password = resolved != nil ? resolved?.secret : self.password(for: session)
                 if password == nil {
                     missingPasswordCount += 1
+                }
+            }
+
+            // S3 fields (M12): only populated for an `.s3` session. The
+            // secret access key mirrors `password` above -- same keychain
+            // slot (the session's own `id`), same missing-password
+            // accounting, same "only with includePasswords" gate.
+            var s3AccessKeyID: String?
+            var s3Region: String?
+            var s3Endpoint: String?
+            var s3Bucket: String?
+            var s3UsePathStyle: Bool?
+            var s3SecretAccessKey: String?
+            if session.kind == .s3, let s3 = session.s3 {
+                s3AccessKeyID = s3.accessKeyID
+                s3Region = s3.region
+                s3Endpoint = s3.endpoint
+                s3Bucket = s3.bucket
+                s3UsePathStyle = s3.usePathStyle
+                if includePasswords {
+                    s3SecretAccessKey = self.password(for: session)
+                    if s3SecretAccessKey == nil {
+                        missingPasswordCount += 1
+                    }
                 }
             }
 
@@ -713,7 +740,11 @@ public final class SessionListViewModel {
                 username: username, authKind: authKind, keyPath: keyPath,
                 groupID: includeGroups ? session.groupID : nil, password: password,
                 jumpHost: jumpHost, jumpPort: jumpPort, jumpUsername: jumpUsername,
-                jumpAuthKind: jumpAuthKind, jumpKeyPath: jumpKeyPath, jumpPassword: jumpPassword)
+                jumpAuthKind: jumpAuthKind, jumpKeyPath: jumpKeyPath, jumpPassword: jumpPassword,
+                kind: session.kind,
+                s3AccessKeyID: s3AccessKeyID, s3Region: s3Region, s3Endpoint: s3Endpoint,
+                s3Bucket: s3Bucket, s3UsePathStyle: s3UsePathStyle,
+                s3SecretAccessKey: s3SecretAccessKey)
         }
 
         var exportedGroups: [ExportedGroup] = []

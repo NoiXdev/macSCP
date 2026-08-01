@@ -105,6 +105,50 @@ struct LoginSetStoreTests {
         #expect(stillVisible.map(\.name).sorted() == ["Keep", "NewOne"])
     }
 
+    // MARK: - Connection kind (M12)
+
+    /// Legacy `Record` JSON written before M12 has no `kind`/`accessKeyID`
+    /// keys at all -- synthesized `Codable` decodes the missing Optionals as
+    /// `nil`, and `all()` must map that to `.ssh`, exactly like
+    /// `StoredSession.kind`'s legacy-decode rule.
+    @Test func legacyRecordWithoutKindDecodesAsSSH() throws {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let id = UUID()
+        let fileURL = dir.appendingPathComponent("logins.json")
+        try Data("""
+        {
+          "sets": [
+            {"id": "\(id.uuidString)", "name": "Legacy", "username": "root", "authKind": "password"}
+          ],
+          "ignoredMergeGroups": []
+        }
+        """.utf8).write(to: fileURL)
+
+        let all = try store.all()
+        #expect(all.count == 1)
+        #expect(all.first?.kind == .ssh)
+        #expect(all.first?.accessKeyID == nil)
+    }
+
+    @Test func s3SetRoundtripsKindAndAccessKeyID() throws {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(
+            name: "S3 Prod", username: "unused", kind: .s3, accessKeyID: "AKIAEXAMPLE")
+        try store.upsert(set)
+
+        let all = try store.all()
+        #expect(all.count == 1)
+        #expect(all.first?.kind == .s3)
+        #expect(all.first?.accessKeyID == "AKIAEXAMPLE")
+
+        // The secret access key must never appear in the persisted file.
+        let raw = try String(contentsOf: dir.appendingPathComponent("logins.json"), encoding: .utf8)
+        #expect(!raw.contains("secretAccessKey"))
+    }
+
     @Test func ignoredMergeGroupsRoundtrip() throws {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }

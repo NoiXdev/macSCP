@@ -706,6 +706,65 @@ struct SessionListViewModelTests {
         #expect(try secrets.password(for: imported.jump!.secretID) == "jump-secret")
     }
 
+    // MARK: - Connection kind + S3 (M12)
+
+    /// End-to-end: an `.s3` session (built directly via the store, since the
+    /// VM's `save()` API is still SSH-only in this milestone) survives a
+    /// full export -> plan -> applyImport round trip with its kind and
+    /// secret-free config intact, and its Keychain secret (the access key's
+    /// secret) carried through the same `password` channel as an SSH
+    /// session's password.
+    @Test func s3SessionSurvivesExportImportRoundtrip() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let store = SessionStore(directory: dir)
+        let s3Config = StoredS3Config(
+            accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
+            endpoint: "https://s3.eu-central-1.amazonaws.com", bucket: "my-bucket",
+            usePathStyle: true)
+        let original = StoredSession(
+            name: "s3-prod", host: "unused", username: "unused", kind: .s3, s3: s3Config)
+        try store.upsert(original)
+        try secrets.savePassword("shh-secret", for: original.id)
+
+        let vm = SessionListViewModel(store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+        let (payload, missingPasswordCount) = vm.exportPayload(
+            for: .single(original), includeGroups: false, includePasswords: true)
+        #expect(missingPasswordCount == 0)
+        let exported = payload.sessions.first!
+        #expect(exported.kind == .s3)
+        #expect(exported.s3AccessKeyID == "AKIAEXAMPLE")
+        #expect(exported.s3Region == "eu-central-1")
+        #expect(exported.s3Endpoint == "https://s3.eu-central-1.amazonaws.com")
+        #expect(exported.s3Bucket == "my-bucket")
+        #expect(exported.s3UsePathStyle == true)
+        #expect(exported.s3SecretAccessKey == "shh-secret")
+        // The plaintext SSH `password` field must stay empty for an S3
+        // session -- the secret only travels via `s3SecretAccessKey`.
+        #expect(exported.password == nil)
+
+        // Round trip the payload through the encrypted codec too, proving
+        // the whole chain (not just the in-memory struct) preserves it.
+        let data = try SessionExportCodec.encode(payload, password: "export-pw")
+        let decoded = try SessionExportCodec.decode(data, password: "export-pw")
+
+        let plan = SessionImportPlanner.plan(existing: [], existingGroups: [], incoming: decoded)
+        let importedVM = SessionListViewModel(
+            store: SessionStore(directory: dir.appendingPathComponent("import-target")),
+            secrets: InMemorySecretStore())
+        let result = importedVM.applyImport(plan)
+        #expect(result.imported == 1)
+        #expect(result.passwordsImported == 1)
+
+        let imported = importedVM.sessions.first!
+        #expect(imported.kind == .s3)
+        #expect(imported.s3 == s3Config)
+        #expect(imported.id != original.id) // fresh id (M9a import rule)
+        #expect(importedVM.password(for: imported) == "shh-secret")
+    }
+
     // MARK: - Agent auth (M10d/T3)
 
     @Test func saveSwitchingTargetToAgentDeletesSessionSecret() throws {
