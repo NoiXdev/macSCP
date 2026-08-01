@@ -145,4 +145,36 @@ struct SessionImportPlannerTests {
         #expect(planned.password == nil)
         #expect(planned.jumpPassword == nil)
     }
+
+    // MARK: - Connection kind + S3 (M12)
+
+    @Test func s3FileSessionBuildsStoredS3ConfigAndCarriesSecretAsPassword() {
+        let file = ExportedSession(
+            id: UUID(), name: "s3-prod", host: "unused", port: 22, username: "unused",
+            authKind: .password, keyPath: nil, groupID: nil, password: nil,
+            kind: .s3,
+            s3AccessKeyID: "AKIAEXAMPLE", s3Region: "eu-central-1",
+            s3Endpoint: "https://s3.eu-central-1.amazonaws.com", s3Bucket: "my-bucket",
+            s3UsePathStyle: true, s3SecretAccessKey: "shh-secret")
+        let plan = SessionImportPlanner.plan(existing: [], existingGroups: [], incoming: incoming([file]))
+
+        let planned = plan.sessionsToImport[0]
+        #expect(planned.session.kind == .s3)
+        #expect(planned.session.s3 == StoredS3Config(
+            accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
+            endpoint: "https://s3.eu-central-1.amazonaws.com", bucket: "my-bucket",
+            usePathStyle: true))
+        // The S3 secret travels in the SAME `password` slot the SSH secret
+        // uses -- no separate PlannedSession field.
+        #expect(planned.password == "shh-secret")
+    }
+
+    /// A file session with no `kind` at all (legacy, pre-M12) must import as
+    /// `.ssh` with no S3 config, same as `StoredSession.kind`'s own default.
+    @Test func fileSessionWithoutKindImportsAsSSH() {
+        let plan = SessionImportPlanner.plan(existing: [], existingGroups: [], incoming: incoming([exported()]))
+        let planned = plan.sessionsToImport[0]
+        #expect(planned.session.kind == .ssh)
+        #expect(planned.session.s3 == nil)
+    }
 }

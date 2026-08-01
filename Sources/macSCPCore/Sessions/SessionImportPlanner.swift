@@ -92,6 +92,19 @@ public enum SessionImportPlanner {
                     authKind: fileSession.jumpAuthKind ?? .password,
                     keyPath: fileSession.jumpKeyPath)
             }
+            // Kind (M12): absent on legacy payloads -> `.ssh`, same
+            // legacy-safe default as `StoredSession.kind` itself. An `.s3`
+            // session's persisted (secret-free) config is only built when
+            // the file actually carries S3 fields.
+            let kind = fileSession.kind ?? .ssh
+            var s3: StoredS3Config?
+            if kind == .s3, let accessKeyID = fileSession.s3AccessKeyID,
+               let region = fileSession.s3Region, let endpoint = fileSession.s3Endpoint,
+               let bucket = fileSession.s3Bucket {
+                s3 = StoredS3Config(
+                    accessKeyID: accessKeyID, region: region, endpoint: endpoint,
+                    bucket: bucket, usePathStyle: fileSession.s3UsePathStyle ?? false)
+            }
             let session = StoredSession(
                 id: UUID(),
                 name: fileSession.name,
@@ -101,9 +114,16 @@ public enum SessionImportPlanner {
                 authKind: fileSession.authKind,
                 keyPath: fileSession.keyPath,
                 groupID: resolvedGroupID,
-                jump: jump)
+                jump: jump,
+                kind: kind,
+                s3: s3)
+            // The kind's single secret always travels in the same
+            // `password` slot -- for `.ssh` this is the SSH password, for
+            // `.s3` it's the secret access key (both stored in the Keychain
+            // under the session's own id at apply time).
+            let secret = kind == .s3 ? fileSession.s3SecretAccessKey : fileSession.password
             sessionsToImport.append(PlannedSession(
-                session: session, password: fileSession.password,
+                session: session, password: secret,
                 jumpPassword: jump != nil ? fileSession.jumpPassword : nil))
         }
 

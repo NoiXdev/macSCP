@@ -36,6 +36,18 @@ struct LoginResolverTests {
         }
     }
 
+    /// M12: a session must not bind to a login set of a different protocol
+    /// (an SSH session referencing an S3 set here) -- the connect must fail
+    /// honestly rather than resolve credentials shaped for the wrong kind.
+    @Test func kindMismatchBetweenSessionAndSetThrows() throws {
+        let set = LoginSet(name: "S3 Prod", username: "unused", kind: .s3, accessKeyID: "AKIAEXAMPLE")
+        let session = StoredSession(
+            name: "web", host: "example.com", username: "unused", loginSetID: set.id, kind: .ssh)
+        #expect(throws: LoginResolveError.kindMismatch) {
+            try LoginResolver.resolve(session: session, sets: [set], secrets: InMemorySecretStore())
+        }
+    }
+
     @Test func legacySessionJSONDecodesNilLoginSetID() throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-legacy-loginset-\(UUID().uuidString)")

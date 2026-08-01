@@ -11,6 +11,10 @@ public enum LoginResolveError: Error, Equatable {
     /// itself has a jump (chains are not supported — one hop only), or at
     /// itself (self-reference), which would be an infinite chain.
     case jumpChainNotSupported
+    /// A session's `kind` (M12) does not match the login set it references
+    /// -- e.g. an SSH session bound to an S3 set. Binding must fail honestly
+    /// rather than resolve credentials shaped for the wrong protocol.
+    case kindMismatch
 }
 
 /// Credentials resolved from a login set: what the connect flow needs to
@@ -58,6 +62,12 @@ public enum LoginResolver {
         guard let setID = session.loginSetID else { return nil }
         guard let set = sets.first(where: { $0.id == setID }) else {
             throw LoginResolveError.missingSet
+        }
+        // M12: a session must not bind to a set of a different protocol
+        // (e.g. an SSH session referencing an S3 set) -- fail honestly
+        // rather than resolve credentials shaped for the wrong kind.
+        guard set.kind == session.kind else {
+            throw LoginResolveError.kindMismatch
         }
         // Agent sets carry no secret and no key path (M10d) -- the keychain
         // is never read for them.
