@@ -21,6 +21,8 @@
 "settings.bandwidth.footer" = "0 = bez limitu";
 "settings.bandwidth.upload" = "Wysyłanie";
 "settings.bandwidth.download" = "Pobieranie";
+"settings.transfers.presignedExpiry.header" = "Linki udostępniania S3";
+"settings.transfers.presignedExpiry" = "Domyślny czas ważności linku udostępniania";
 
 /* Ustawienia — zakładka Terminal (M9d) */
 "settings.tab.terminal" = "Terminal";
@@ -221,6 +223,7 @@
 "menu.newFolder" = "Nowy folder…";
 "menu.copyPath" = "Kopiuj ścieżkę";
 "menu.delete" = "Usuń…";
+"browser.action.presignedURL" = "Link udostępniania…";
 
 /* Wspólne (M7b/T3) */
 "common.close" = "Zamknij";
@@ -572,3 +575,20 @@
 "settings.shortcuts.label.cancel" = "Anuluj";
 "settings.shortcuts.label.navigate" = "Przejdź do ścieżki";
 "settings.shortcuts.label.confirm" = "Potwierdź";
+
+/* Arkusz linku podpisanego (M14/T5) — akcja menu kontekstowego „Link udostępniania…" dla pliku S3 */
+"presigned.sheet.title" = "Link udostępniania";
+"presigned.method.get" = "Pobieranie (GET)";
+"presigned.method.put" = "Wysyłanie (PUT)";
+"presigned.expiry.label" = "Wygasa po";
+"presigned.expiry.15min" = "15 minutach";
+"presigned.expiry.1h" = "1 godzinie";
+"presigned.expiry.1d" = "1 dniu";
+"presigned.expiry.7d" = "7 dniach";
+"presigned.put.targetKey" = "Klucz docelowy";
+"presigned.put.overwriteWarning" = "Każdy, kto ma ten link, może nadpisać ten klucz aż do jego wygaśnięcia.";
+"presigned.url.label" = "Link";
+"presigned.generate" = "Wygeneruj";
+"presigned.copy" = "Kopiuj";
+"presigned.copied" = "Skopiowano";
+"presigned.error" = "Nie udało się utworzyć linku.";

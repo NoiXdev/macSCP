@@ -21,6 +21,8 @@
 "settings.bandwidth.footer" = "0 = illimité";
 "settings.bandwidth.upload" = "Envoi";
 "settings.bandwidth.download" = "Réception";
+"settings.transfers.presignedExpiry.header" = "Liens de partage S3";
+"settings.transfers.presignedExpiry" = "Expiration par défaut des liens de partage";
 
 /* Réglages — Onglet Terminal (M9d) */
 "settings.tab.terminal" = "Terminal";
@@ -222,6 +224,7 @@
 "menu.newFolder" = "Nouveau dossier…";
 "menu.copyPath" = "Copier le chemin";
 "menu.delete" = "Supprimer…";
+"browser.action.presignedURL" = "Lien de partage…";
 
 /* Commun (M7b/T3) */
 "common.close" = "Fermer";
@@ -573,3 +576,20 @@
 "settings.shortcuts.label.cancel" = "Annuler";
 "settings.shortcuts.label.navigate" = "Aller au chemin";
 "settings.shortcuts.label.confirm" = "Confirmer";
+
+/* Feuille de lien présigné (M14/T5) — action de menu contextuel « Lien de partage… » sur un fichier S3 */
+"presigned.sheet.title" = "Lien de partage";
+"presigned.method.get" = "Téléchargement (GET)";
+"presigned.method.put" = "Envoi (PUT)";
+"presigned.expiry.label" = "Expire après";
+"presigned.expiry.15min" = "15 minutes";
+"presigned.expiry.1h" = "1 heure";
+"presigned.expiry.1d" = "1 jour";
+"presigned.expiry.7d" = "7 jours";
+"presigned.put.targetKey" = "Clé cible";
+"presigned.put.overwriteWarning" = "Quiconque possède ce lien peut écraser cette clé jusqu'à son expiration.";
+"presigned.url.label" = "Lien";
+"presigned.generate" = "Générer";
+"presigned.copy" = "Copier";
+"presigned.copied" = "Copié";
+"presigned.error" = "Impossible de créer le lien.";

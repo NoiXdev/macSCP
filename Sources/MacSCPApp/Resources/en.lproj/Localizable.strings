@@ -19,6 +19,8 @@
 "settings.bandwidth.footer" = "0 = unlimited";
 "settings.bandwidth.upload" = "Upload";
 "settings.bandwidth.download" = "Download";
+"settings.transfers.presignedExpiry.header" = "S3 Share Links";
+"settings.transfers.presignedExpiry" = "Default share-link expiry";
 
 /* Settings — Terminal tab (M9d) */
 "settings.tab.terminal" = "Terminal";
@@ -218,6 +220,7 @@
 "menu.newFolder" = "New Folder…";
 "menu.copyPath" = "Copy Path";
 "menu.delete" = "Delete…";
+"browser.action.presignedURL" = "Share Link…";
 
 /* Shared (M7b/T3) */
 "common.close" = "Close";
@@ -569,3 +572,20 @@
 "settings.shortcuts.label.cancel" = "Cancel";
 "settings.shortcuts.label.navigate" = "Go to path";
 "settings.shortcuts.label.confirm" = "Confirm";
+
+/* Presigned URL sheet (M14/T5) — "Share Link…" context-menu action on an S3 file */
+"presigned.sheet.title" = "Share Link";
+"presigned.method.get" = "Download (GET)";
+"presigned.method.put" = "Upload (PUT)";
+"presigned.expiry.label" = "Expires after";
+"presigned.expiry.15min" = "15 Minutes";
+"presigned.expiry.1h" = "1 Hour";
+"presigned.expiry.1d" = "1 Day";
+"presigned.expiry.7d" = "7 Days";
+"presigned.put.targetKey" = "Target key";
+"presigned.put.overwriteWarning" = "Anyone with this link can overwrite this key until it expires.";
+"presigned.url.label" = "Link";
+"presigned.generate" = "Generate";
+"presigned.copy" = "Copy";
+"presigned.copied" = "Copied";
+"presigned.error" = "Couldn't create the link.";

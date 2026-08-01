@@ -55,6 +55,15 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// at that moment — Spec §5.3). `nil` (the local pane's default before
     /// `ContentView` wires it) yields the pre-M8b flat "Transfer" entry.
     var crossSessionTargets: (() -> [CrossSessionTarget])? = nil
+    /// Protocol-contributed file actions for the SELECTED item's backend
+    /// (M14/T5) — e.g. S3's "Share Link…". Evaluated fresh on every
+    /// `menuNeedsUpdate` call, the same discipline as `crossSessionTargets`
+    /// above, so a later backend/settings change is always reflected in the
+    /// next menu the user opens. `nil` (the default, and what the LOCAL pane
+    /// always passes) yields the pre-M14 entry list — a local file never
+    /// shows a backend action, since the local file system never contributes
+    /// any.
+    var fileActions: (() -> [FileActionContribution])? = nil
     /// Which columns to build, in `FileColumn.allCases` order (M11m/T2) —
     /// mirrors `SettingsStore.visibleColumns`. Defaults to the pre-M11m
     /// fixed three (`name`/`size`/`modified`) so any call site that doesn't
@@ -86,6 +95,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         coordinator.onGoUp = onGoUp
         coordinator.onOpenSearch = onOpenSearch
         coordinator.crossSessionTargets = crossSessionTargets
+        coordinator.fileActions = fileActions
         coordinator.onSortChange = onSortChange
         return coordinator
     }
@@ -208,6 +218,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.onGoUp = onGoUp
         context.coordinator.onOpenSearch = onOpenSearch
         context.coordinator.crossSessionTargets = crossSessionTargets
+        context.coordinator.fileActions = fileActions
         context.coordinator.onSortChange = onSortChange
         guard let table = nsView.documentView as? NSTableView else { return }
         // Column rebuild (M11m/T2): diffed against the last SET the
@@ -413,6 +424,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         var onGoUp: (() -> Void)?
         var onOpenSearch: (() -> Void)?
         var crossSessionTargets: (() -> [CrossSessionTarget])?
+        var fileActions: (() -> [FileActionContribution])?
         var onSortChange: ((FileSortKey, Bool) -> Void)?
         let side: BrowserPaneSide
         weak var table: NSTableView?
@@ -746,7 +758,8 @@ struct RemoteFileTableView: NSViewRepresentable {
             }
             menu.removeAllItems()
             let entries = BrowserContextMenu.entries(
-                for: selection, side: side, crossSessionTargets: crossSessionTargets?() ?? [])
+                for: selection, side: side, crossSessionTargets: crossSessionTargets?() ?? [],
+                fileActions: fileActions?() ?? [])
             // `.transferToOtherPane` is immediately followed (per the Core
             // model, `BrowserContextMenu.entries`) by zero or more
             // `.transferToSession` entries — those join the SAME "Transfer"
@@ -834,8 +847,9 @@ struct RemoteFileTableView: NSViewRepresentable {
             case .backendFileAction(let action):
                 // Generic render of a protocol-contributed action (M14): the
                 // table view never inspects the backend, just the title.
-                // Handler wiring (e.g. the S3 presigned-URL sheet) lands in a
-                // later M14 task; onMenuAction currently no-ops for this case.
+                // Handler wiring (e.g. the S3 presigned-URL sheet) happens at
+                // the `onMenuAction` call site in `ContentView`, keyed off
+                // `action.id` — this file never inspects it either.
                 return actionItem(
                     title: L10n.string(action.titleKey, action.titleDefault), entry: entry, selection: selection)
             }

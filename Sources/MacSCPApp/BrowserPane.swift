@@ -30,6 +30,11 @@ struct BrowserPane: View {
     /// Cross-session transfer targets for the context menu (M8b/T4) —
     /// forwarded verbatim to `RemoteFileTableView`; see its doc comment.
     var crossSessionTargets: (() -> [CrossSessionTarget])? = nil
+    /// Protocol-contributed file actions for the context menu (M14/T5) —
+    /// forwarded verbatim to `RemoteFileTableView`; see its doc comment.
+    /// `nil` for the local pane's call site (`ContentView`), since the local
+    /// file system never contributes any.
+    var fileActions: (() -> [FileActionContribution])? = nil
     /// Which columns the file list shows (M11m/T2) — mirrors
     /// `SettingsStore.visibleColumns`, app-global like the other display
     /// settings (`showHiddenFiles` etc.), so both panes always show the
@@ -195,6 +200,7 @@ struct BrowserPane: View {
                     },
                     focusRequestToken: tableFocusToken,
                     crossSessionTargets: crossSessionTargets,
+                    fileActions: fileActions,
                     visibleColumns: visibleColumns,
                     sortKey: viewModel.sortKey,
                     sortAscending: viewModel.sortAscending,

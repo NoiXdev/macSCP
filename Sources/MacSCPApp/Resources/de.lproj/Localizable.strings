@@ -19,6 +19,8 @@
 "settings.bandwidth.footer" = "0 = unbegrenzt";
 "settings.bandwidth.upload" = "Upload";
 "settings.bandwidth.download" = "Download";
+"settings.transfers.presignedExpiry.header" = "S3-Freigabe-Links";
+"settings.transfers.presignedExpiry" = "Standard-Ablaufzeit für Freigabe-Links";
 
 /* Settings — Tab „Terminal" (M9d) */
 "settings.tab.terminal" = "Terminal";
@@ -219,6 +221,7 @@
 "menu.newFolder" = "Neuer Ordner…";
 "menu.copyPath" = "Pfad kopieren";
 "menu.delete" = "Löschen…";
+"browser.action.presignedURL" = "Freigabe-Link…";
 
 /* Gemeinsam (M7b/T3) */
 "common.close" = "Schließen";
@@ -570,3 +573,20 @@
 "settings.shortcuts.label.cancel" = "Abbrechen";
 "settings.shortcuts.label.navigate" = "Zum Pfad";
 "settings.shortcuts.label.confirm" = "Bestätigen";
+
+/* Freigabe-Link-Sheet (M14/T5) — Kontextmenü-Aktion „Freigabe-Link…" bei einer S3-Datei */
+"presigned.sheet.title" = "Freigabe-Link";
+"presigned.method.get" = "Herunterladen (GET)";
+"presigned.method.put" = "Hochladen (PUT)";
+"presigned.expiry.label" = "Läuft ab nach";
+"presigned.expiry.15min" = "15 Minuten";
+"presigned.expiry.1h" = "1 Stunde";
+"presigned.expiry.1d" = "1 Tag";
+"presigned.expiry.7d" = "7 Tagen";
+"presigned.put.targetKey" = "Ziel-Schlüssel";
+"presigned.put.overwriteWarning" = "Wer diesen Link besitzt, kann diesen Schlüssel bis zum Ablauf überschreiben.";
+"presigned.url.label" = "Link";
+"presigned.generate" = "Erzeugen";
+"presigned.copy" = "Kopieren";
+"presigned.copied" = "Kopiert";
+"presigned.error" = "Der Link konnte nicht erzeugt werden.";
