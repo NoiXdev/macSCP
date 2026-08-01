@@ -118,6 +118,10 @@ struct TransferQueueViewModelTests {
         /// Tracks how many `write` calls are in flight at once (peak) — the
         /// parallel-slot tests assert the peak never exceeds `maxConcurrent`.
         private let concurrency: ConcurrencyTracker?
+        /// Configurable append-resume capability (M13/M16): defaults to `true`
+        /// (protocol default), so every pre-existing `QueueTestFS` use is
+        /// unaffected. Tests that need an S3-like destination pass `false`.
+        let supportsAppendResume: Bool
 
         init(
             reads: [String: Read],
@@ -126,7 +130,8 @@ struct TransferQueueViewModelTests {
             statGates: [String: TestSignal] = [:],
             listEntered: TestSignal? = nil, listGate: TestSignal? = nil,
             listGates: [String: TestSignal] = [:],
-            concurrency: ConcurrencyTracker? = nil
+            concurrency: ConcurrencyTracker? = nil,
+            supportsAppendResume: Bool = true
         ) {
             self.reads = reads
             self.listings = listings
@@ -137,6 +142,7 @@ struct TransferQueueViewModelTests {
             self.listGate = listGate
             self.listGates = listGates
             self.concurrency = concurrency
+            self.supportsAppendResume = supportsAppendResume
         }
 
         func list(path: String) async throws -> [RemoteFileItem] {
@@ -3122,6 +3128,55 @@ struct TransferQueueViewModelTests {
             destination: destination, destinationDirectory: "/ziel")
 
         #expect(vm.items.first?.status == .finished)
+    }
+
+    // MARK: - Cross-backend display metadata (M16)
+
+    @Test func enqueueToS3TargetMarksNoResumeAndCarriesTarget() async {
+        let vm = TransferQueueViewModel()
+        let source = QueueTestFS(reads: ["/a.bin": .init(content: Data("hello".utf8))])
+        let s3Dest = QueueTestFS(reads: [:], supportsAppendResume: false)
+        _ = vm.enqueue(
+            fileName: "a.bin", direction: .upload,
+            source: source, sourcePath: "/a.bin",
+            destination: s3Dest, destinationDirectory: "/",
+            onCompleted: nil, destinationTabID: UUID(), crossRemote: true,
+            crossBackendTarget: CrossBackendTarget(name: "prod-bucket", kind: .s3))
+        let item = vm.items.last!
+        #expect(item.destinationSupportsResume == false)
+        #expect(item.crossBackendTarget == CrossBackendTarget(name: "prod-bucket", kind: .s3))
+
+        await waitUntil { vm.isActive == false }
+    }
+
+    @Test func enqueueToSSHTargetAllowsResume() async {
+        let vm = TransferQueueViewModel()
+        let sshDest = QueueTestFS(reads: [:])
+        _ = vm.enqueue(
+            fileName: "b.bin", direction: .upload,
+            source: QueueTestFS(reads: ["/b.bin": .init(content: Data("hello".utf8))]), sourcePath: "/b.bin",
+            destination: sshDest, destinationDirectory: "/",
+            onCompleted: nil, destinationTabID: UUID(), crossRemote: true,
+            crossBackendTarget: CrossBackendTarget(name: "web", kind: .ssh))
+        let item = vm.items.last!
+        #expect(item.destinationSupportsResume == true)
+        #expect(item.crossBackendTarget?.kind == .ssh)
+
+        await waitUntil { vm.isActive == false }
+    }
+
+    @Test func sameSessionUploadToS3HasNoTargetButNoResume() async {
+        let vm = TransferQueueViewModel()
+        _ = vm.enqueue(
+            fileName: "c.bin", direction: .upload,
+            source: QueueTestFS(reads: ["/c.bin": .init(content: Data("hello".utf8))]), sourcePath: "/c.bin",
+            destination: QueueTestFS(reads: [:], supportsAppendResume: false), destinationDirectory: "/",
+            onCompleted: nil)
+        let item = vm.items.last!
+        #expect(item.destinationSupportsResume == false)
+        #expect(item.crossBackendTarget == nil)
+
+        await waitUntil { vm.isActive == false }
     }
 }
 
