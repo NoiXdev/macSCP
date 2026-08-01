@@ -16,7 +16,7 @@ struct S3FileSystemIntegrationTests {
     private func connect() async throws -> S3FileSystem {
         let config = S3ConnectionConfig(
             accessKeyID: "macscp", secretAccessKey: "macscpsecretkey",
-            region: "us-east-1", endpoint: "http://127.0.0.1:9000",
+            region: "us-east-1", endpoint: "http://127.0.0.1:19000",
             bucket: "macscp-seed", usePathStyle: true, sessionToken: nil)
         return try await S3FileSystem.connect(config)
     }
@@ -53,7 +53,7 @@ struct S3FileSystemIntegrationTests {
     @Test func connectFailsWithWrongCredentials() async throws {
         let config = S3ConnectionConfig(
             accessKeyID: "wrong", secretAccessKey: "alsowrongsecret",
-            region: "us-east-1", endpoint: "http://127.0.0.1:9000",
+            region: "us-east-1", endpoint: "http://127.0.0.1:19000",
             bucket: "macscp-seed", usePathStyle: true, sessionToken: nil)
         await #expect(throws: RemoteFSError.authenticationFailed) {
             _ = try await S3FileSystem.connect(config)
