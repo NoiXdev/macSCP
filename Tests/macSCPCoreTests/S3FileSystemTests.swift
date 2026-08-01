@@ -426,4 +426,33 @@ struct S3FileSystemTests {
         #expect(chunks.first?.count == TransferChunk.size)
         #expect(chunks.reduce(Data()) { $0 + $1 } == body)
     }
+
+    // MARK: - M13/T3: readStream is a real, signed range GET
+
+    /// `readStream` requests `Range: bytes={offset}-`, streams the object
+    /// body through `sendStreaming`, and yields whatever chunks the
+    /// transport hands back (chunking itself is `FakeS3Transport`'s job,
+    /// proven above — this test only cares that the bytes/header are right).
+    @Test func readStreamRequestsRangeAndYieldsChunkedBytes() async throws {
+        let body = Data((0..<(TransferChunk.size + 10)).map { UInt8($0 & 0xFF) })
+        let (fs, transport) = try await connect(responses: [(body, httpResponse(status: 206))])
+        var received = Data()
+        for try await chunk in try await fs.readStream(path: "/big.bin", fromOffset: 5) {
+            received.append(chunk)
+        }
+        #expect(received == body)
+        let req = await transport.requests.last!
+        #expect(req.value(forHTTPHeaderField: "Range") == "bytes=5-")
+        #expect(req.httpMethod == "GET")
+    }
+
+    /// S3 answers a range request past EOF with HTTP 416; the protocol
+    /// contract is "offset at or beyond EOF yields an empty stream", not an
+    /// error, so this must NOT throw.
+    @Test func readStreamBeyondEOFYieldsEmptyStream() async throws {
+        let (fs, _) = try await connect(responses: [(Data(), httpResponse(status: 416))])
+        var count = 0
+        for try await _ in try await fs.readStream(path: "/x", fromOffset: 999) { count += 1 }
+        #expect(count == 0)
+    }
 }

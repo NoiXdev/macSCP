@@ -133,9 +133,13 @@ public struct SigV4Signer: Sendable {
 
     // MARK: - Canonicalization
 
-    /// Encode each path segment per RFC 3986, leaving the `/` separators literal
-    /// (never double-encode).
-    private static func canonicalURI(path: String) -> String {
+    /// Widened to `internal` (like `canonicalQueryString`) so `S3FileSystem`
+    /// can percent-encode an OBJECT KEY path segment-by-segment with the
+    /// EXACT same RFC-3986 rules the signer uses to canonicalize the path it
+    /// signs — reusing this instead of re-implementing the encoding keeps
+    /// the signed and wire paths byte-identical by construction (same
+    /// reasoning as M12 review I-1's query fix).
+    static func canonicalURI(path: String) -> String {
         if path.isEmpty { return "/" }
         let segments = path.split(separator: "/", omittingEmptySubsequences: false)
         let encoded = segments.map { rfc3986Encode(String($0)) }

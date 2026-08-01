@@ -39,24 +39,22 @@ public struct URLSessionS3Transport: S3HTTPTransport {
         guard let http = response as? HTTPURLResponse else {
             throw RemoteFSError.protocolError(reason: "S3 transport received a non-HTTP response")
         }
-        let stream = AsyncThrowingStream<Data, Error> { continuation in
-            let task = Task {
-                do {
-                    var buffer = Data(); buffer.reserveCapacity(TransferChunk.size)
-                    for try await byte in bytes {
-                        buffer.append(byte)
-                        if buffer.count >= TransferChunk.size {
-                            continuation.yield(buffer); buffer.removeAll(keepingCapacity: true)
-                        }
-                    }
-                    if !buffer.isEmpty { continuation.yield(buffer) }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
+        // Pull-based: `AsyncThrowingStream(unfolding:)` only invokes this
+        // closure when the CONSUMER asks for the next element (each `for
+        // try await` iteration), so the network is read exactly as fast as
+        // the sink (e.g. a disk write) drains it — no read-ahead buffer for
+        // a slow sink to fall behind on.
+        var iterator = bytes.makeAsyncIterator()
+        let stream = AsyncThrowingStream<Data, Error>(unfolding: {
+            var buffer = Data(); buffer.reserveCapacity(TransferChunk.size)
+            while buffer.count < TransferChunk.size {
+                guard let byte = try await iterator.next() else {
+                    return buffer.isEmpty ? nil : buffer
                 }
+                buffer.append(byte)
             }
-            continuation.onTermination = { _ in task.cancel() }
-        }
+            return buffer
+        })
         return (stream, http)
     }
 }
