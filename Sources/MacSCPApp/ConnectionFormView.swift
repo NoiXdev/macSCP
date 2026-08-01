@@ -720,33 +720,96 @@ struct ConnectionFormView: View {
     /// new bespoke form section like `sshSections` above.
     private var s3Descriptor: BackendDescriptor { .descriptor(for: .s3) }
 
-    /// The schema-driven S3 section (M12/T7b): a provider-preset picker
-    /// followed by one row per `ConnectionField` in the descriptor's
-    /// `fieldSchema`. Deliberately simple/static — no derived layout, no
-    /// nested state machine — per the M11n lesson that new GUI here must not
-    /// risk an AttributeGraph cycle.
-    @ViewBuilder
+    /// The schema-driven S3 section (M12/T7b, login-set mode M15/T3): a
+    /// provider-preset picker, the location fields (endpoint/region/bucket/
+    /// usePathStyle) which are always shown, then the login switcher — Set
+    /// mode swaps the credential fields (accessKeyID/secretAccessKey) for a
+    /// `.s3`-filtered login-set picker, Manual mode keeps them plus "save as
+    /// new set". Deliberately simple/static — no derived layout, no nested
+    /// state machine — per the M11n lesson that new GUI here must not risk
+    /// an AttributeGraph cycle.
     private var s3Section: some View {
         let presetLabel = L10n.string("connection.s3.preset.label", "Provider preset")
-        FormRow(label: presetLabel) {
-            Picker(presetLabel, selection: Binding(
-                get: { selectedS3PresetID },
-                set: { id in
-                    selectedS3PresetID = id
-                    applyS3Preset(id)
+        return Group {
+            FormRow(label: presetLabel) {
+                Picker(presetLabel, selection: Binding(
+                    get: { selectedS3PresetID },
+                    set: { id in
+                        selectedS3PresetID = id
+                        applyS3Preset(id)
+                    }
+                )) {
+                    ForEach(s3Descriptor.fieldSchema.presets) { preset in
+                        Text(L10n.string(preset.nameKey, preset.nameDefault)).tag(preset.id)
+                    }
                 }
-            )) {
-                ForEach(s3Descriptor.fieldSchema.presets) { preset in
-                    Text(L10n.string(preset.nameKey, preset.nameDefault)).tag(preset.id)
+                .labelsHidden()
+            }
+
+            // Location fields (endpoint/region/bucket/usePathStyle) belong to
+            // the session, not the login set (M15 decision 1) — always shown.
+            ForEach(s3Descriptor.fieldSchema.fields.filter { !Self.s3CredentialFieldIDs.contains($0.id) }) { field in
+                s3FieldRow(field)
+            }
+
+            // Login switcher (M15): parity with the SSH block. Set mode swaps
+            // the access-key/secret fields for a kind-filtered picker; manual
+            // mode keeps today's fields plus "save as new set".
+            let loginModeLabel = L10n.string("form.loginMode.label", "Login")
+            FormRow(label: loginModeLabel) {
+                Picker(loginModeLabel, selection: $viewModel.loginMode) {
+                    Text(L10n.string("form.loginMode.set", "Login set"))
+                        .tag(ConnectionViewModel.LoginMode.set)
+                    Text(L10n.string("form.loginMode.manual", "Manual"))
+                        .tag(ConnectionViewModel.LoginMode.manual)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+
+            if viewModel.loginMode == .set {
+                FormRow(label: "") {
+                    HStack(spacing: 10) {
+                        Picker(loginModeLabel, selection: $viewModel.selectedLoginSetID) {
+                            Text(L10n.string("form.selectLogin", "Select a login")).tag(UUID?.none)
+                            ForEach(sessionList.loginSets.filter { $0.kind == .s3 }) { set in
+                                Text("\(set.name) — \(set.accessKeyID ?? "")").tag(UUID?.some(set.id))
+                            }
+                        }
+                        .labelsHidden()
+                        Button(L10n.string("form.manageLogins", "Manage logins…")) {
+                            showLoginSetsSheet = true
+                        }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+                        .foregroundStyle(DesignTokens.inkTertiary)
+                    }
+                }
+            } else {
+                ForEach(s3Descriptor.fieldSchema.fields.filter { Self.s3CredentialFieldIDs.contains($0.id) }) { field in
+                    s3FieldRow(field)
+                }
+                FormRow(label: "") {
+                    Toggle(
+                        L10n.string("form.saveAsSet", "Save as new login set"),
+                        isOn: $viewModel.saveAsNewLoginSet)
+                }
+                if viewModel.saveAsNewLoginSet {
+                    let setNameLabel = L10n.string("form.saveAsSet.name", "Login set name")
+                    FormRow(label: setNameLabel) {
+                        TextField(
+                            setNameLabel, text: $viewModel.newLoginSetName,
+                            prompt: Text(verbatim: ""))
+                    }
                 }
             }
-            .labelsHidden()
-        }
-
-        ForEach(s3Descriptor.fieldSchema.fields) { field in
-            s3FieldRow(field)
         }
     }
+
+    /// The two S3 schema fields that constitute the "login" (M15): swapped
+    /// for the set picker in Set mode. Everything else (endpoint/region/
+    /// bucket/usePathStyle) is session-owned and always visible.
+    private static let s3CredentialFieldIDs: Set<String> = ["accessKeyID", "secretAccessKey"]
 
     /// One form row for a single S3 `ConnectionField`, rendered by its
     /// `kind` and bound to the matching `viewModel.s3*` property BY FIELD
