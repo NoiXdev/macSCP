@@ -618,6 +618,14 @@ public final class SessionListViewModel {
         try LoginResolver.resolve(session: session, sets: loginSets, secrets: secrets)
     }
 
+    /// S3 counterpart of `resolvedLogin(for:)` (M15): resolves an S3
+    /// session's access key + secret from its bound set, or nil for a manual
+    /// S3 session. Throws on a dangling/kind-mismatched set, same as its SSH
+    /// sibling.
+    public func resolvedS3Login(for session: StoredSession) throws -> ResolvedS3Login? {
+        try LoginResolver.resolveS3(session: session, sets: loginSets, secrets: secrets)
+    }
+
     /// Resolves what a session's jump host should actually connect with
     /// (M10c). `nil` when the session has no jump; a dangling `loginSetID`
     /// on the jump throws, same as `resolvedLogin` (spec §2).

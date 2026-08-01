@@ -52,6 +52,21 @@ public struct ResolvedJump: Equatable, Sendable {
     }
 }
 
+/// S3 credentials resolved from a login set (M15). Parallel to
+/// `ResolvedLogin`; the connect path knows the `kind` up front and calls the
+/// matching resolver, so S3 gets its own shape rather than an optional field
+/// bolted onto the SSH type. `secretAccessKey` is the set's keychain entry
+/// (under `set.id`), nil when none is stored.
+public struct ResolvedS3Login: Equatable, Sendable {
+    public var accessKeyID: String
+    public var secretAccessKey: String?
+
+    public init(accessKeyID: String, secretAccessKey: String?) {
+        self.accessKeyID = accessKeyID
+        self.secretAccessKey = secretAccessKey
+    }
+}
+
 public enum LoginResolver {
     /// Resolves a session's login: `nil` for manual sessions
     /// (loginSetID == nil — the caller uses the session's own data),
@@ -78,6 +93,26 @@ public enum LoginResolver {
         return ResolvedLogin(
             username: set.username, authKind: set.authKind,
             keyPath: set.keyPath, secret: secret)
+    }
+
+    /// Resolves a session's S3 login (M15): `nil` for a manual S3 session
+    /// (loginSetID == nil — the caller uses the session's own access key),
+    /// the set's access key + keychain secret otherwise. Mirrors `resolve`
+    /// above: a dangling reference throws `.missingSet`, and binding a set of
+    /// a different protocol (an S3 session referencing an SSH set) throws
+    /// `.kindMismatch` — a hard stop, never a fallback to wrong-kind creds.
+    public static func resolveS3(
+        session: StoredSession, sets: [LoginSet], secrets: any SecretStore
+    ) throws -> ResolvedS3Login? {
+        guard let setID = session.loginSetID else { return nil }
+        guard let set = sets.first(where: { $0.id == setID }) else {
+            throw LoginResolveError.missingSet
+        }
+        guard set.kind == session.kind else {
+            throw LoginResolveError.kindMismatch
+        }
+        let secret = (try? secrets.password(for: set.id)) ?? nil
+        return ResolvedS3Login(accessKeyID: set.accessKeyID ?? "", secretAccessKey: secret)
     }
 
     /// Resolves a jump host's login (M10c): unlike `resolve`, this is ALWAYS
