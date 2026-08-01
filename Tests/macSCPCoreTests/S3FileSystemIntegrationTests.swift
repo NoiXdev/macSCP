@@ -281,6 +281,56 @@ struct S3FileSystemIntegrationTests {
         if let caught { throw caught }
     }
 
+    /// M13/T8: `deleteTree` against a REAL MinIO server — creates a folder
+    /// with several objects (one nested under a sub-prefix, plus the
+    /// folder's own trailing-slash marker), deletes the whole tree, and
+    /// asserts BOTH that a root listing no longer shows the folder AND that
+    /// no keys remain under its prefix. Same signing-bug rationale as the
+    /// rename tests above: the `DeleteObjects` `Content-MD5` header and the
+    /// bucket-root (`key: ""`) request path are exactly the kind of thing
+    /// only a live server that independently re-derives the SigV4 signature
+    /// from the wire bytes can validate.
+    @Test func deleteTreeRemovesEveryObjectUnderThePrefix() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let folder = "m13-deletetree-\(UUID().uuidString)"
+        let childKeys = ["a.txt", "sub/b.txt"]
+
+        var caught: Error?
+        do {
+            try await fs.createDirectory(at: "/\(folder)")
+            for child in childKeys {
+                let uploadStream = AsyncThrowingStream<Data, Error> { continuation in
+                    continuation.yield(Data(child.utf8))
+                    continuation.finish()
+                }
+                try await fs.write(path: "/\(folder)/\(child)", mode: .overwrite, contents: uploadStream)
+            }
+
+            try await fs.deleteTree(at: "/\(folder)")
+
+            let rootItems = try await fs.list(path: "/")
+            #expect(!rootItems.contains { $0.name == folder })
+            // `allObjectKeys` itself is private, so the "no keys remain
+            // under the prefix" half of the assertion goes through `list`
+            // on the (now nonexistent) folder path instead: ListObjectsV2
+            // returns an empty page for a prefix with zero matching keys
+            // rather than a 404, so an empty result here is exactly "no
+            // keys remain under this prefix".
+            let folderItems = try await fs.list(path: "/\(folder)")
+            #expect(folderItems.isEmpty)
+        } catch {
+            caught = error
+        }
+        // Best-effort cleanup so re-runs stay reproducible even if an
+        // assertion above fails partway through.
+        for child in childKeys {
+            try? await fs.delete(path: "/\(folder)/\(child)")
+        }
+        await Self.deleteMarkerObjectIgnoringErrors(key: "\(folder)/")
+        if let caught { throw caught }
+    }
+
     private static func deleteMarkerObjectIgnoringErrors(key: String) async {
         let bucket = "macscp-seed"
         let rawPath = "/\(bucket)/\(key)"
