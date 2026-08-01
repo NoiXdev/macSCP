@@ -386,6 +386,16 @@ struct ConnectionFormView: View {
                 } else {
                     Button(L10n.string("connection.connect", "Connect")) {
                         guard resolveLoginSetForSubmit() else { return }
+                        // M17: if this key is a managed key with a stored
+                        // passphrase and none was typed, resolve it from the
+                        // Keychain so the user need not re-enter it.
+                        if viewModel.authChoice == .privateKey {
+                            viewModel.password = ManagedKeyPassphrase.resolve(
+                                keyPath: viewModel.keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
+                                typed: viewModel.password,
+                                store: ManagedKeyStore(directory: SessionStore.defaultDirectory),
+                                secrets: KeychainSecretStore())
+                        }
                         Task {
                             if let fs = await viewModel.connect() {
                                 isHandingOff = true
