@@ -721,6 +721,36 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     }
 }
 
+/// M14/T2: `PresignedURLProvider` conformance — a time-limited signed URL
+/// for a key, generated PURELY from the signer + the same URL-building
+/// helpers `buildSignedRequest` uses, with no `transport` call at all.
+extension S3FileSystem: PresignedURLProvider {
+    public func presignedURL(method: PresignedMethod, key: String, expiresIn: TimeInterval) throws -> URL {
+        let seconds = Int(max(1, min(604_800, expiresIn))) // SigV4 max 7 days
+        // Base object URL (no query yet).
+        let base = try Self.keyRequestURL(config: config, key: key, queryPairs: [])
+        guard let host = base.host else {
+            throw RemoteFSError.connectionFailed(reason: "S3 endpoint has no host: \(config.endpoint)")
+        }
+        let hostHeader = base.port.map { "\(host):\($0)" } ?? host
+        let signer = SigV4Signer(
+            accessKeyID: config.accessKeyID, secretAccessKey: config.secretAccessKey,
+            region: config.region, service: "s3", sessionToken: config.sessionToken)
+        let query = signer.presignedQuery(
+            method: method.rawValue, host: hostHeader,
+            path: Self.canonicalKeyPath(config: config, key: key),
+            expiresInSeconds: seconds, date: Date())
+        guard var comps = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
+            throw RemoteFSError.protocolError(reason: "Failed to build presigned URL")
+        }
+        comps.percentEncodedQuery = SigV4Signer.canonicalQueryString(query: query)
+        guard let url = comps.url else {
+            throw RemoteFSError.protocolError(reason: "Failed to build presigned URL")
+        }
+        return url
+    }
+}
+
 /// Splits an array into subarrays of at most `size` elements each — used by
 /// `deleteTree` (M13/T8) to respect S3 `DeleteObjects`' 1000-key-per-call
 /// limit. A non-positive `size` returns the whole array as one chunk rather
