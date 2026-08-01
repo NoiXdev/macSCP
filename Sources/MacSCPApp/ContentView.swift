@@ -2078,6 +2078,16 @@ struct ContentView: View {
                         form.password = stored.authKind != .agent
                             ? (sessionListViewModel.password(for: stored) ?? "") : ""
                     }
+                    // M17: if this key is a managed key with a stored
+                    // passphrase and none was typed, resolve it from the
+                    // Keychain so the user need not re-enter it.
+                    if form.authChoice == .privateKey {
+                        form.password = ManagedKeyPassphrase.resolve(
+                            keyPath: form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
+                            typed: form.password,
+                            store: ManagedKeyStore(directory: SessionStore.defaultDirectory),
+                            secrets: KeychainSecretStore())
+                    }
                     form.loginMode = stored.loginSetID != nil ? .set : .manual
                     form.selectedLoginSetID = stored.loginSetID
                 } catch is LoginResolveError {
