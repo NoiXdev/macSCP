@@ -697,7 +697,9 @@ struct S3FileSystemTests {
     /// URL itself (it only ever feeds the signature, an HMAC digest).
     @Test func presignedGetURLCarriesSigV4QueryAndClampsExpiry() async throws {
         let (fs, _) = try await connect(responses: [(Data(rootListingXML.utf8), httpResponse(status: 200))])
-        let url = try (fs as! any PresignedURLProvider).presignedURL(
+        // `fs` already conforms to `PresignedURLProvider`; call it directly (the
+        // `as?` seam is exercised at the App call site, not here).
+        let url = try fs.presignedURL(
             method: .get, key: "dir/file.txt", expiresIn: 999_999_999) // clamp to 7d
         let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)!
         let q = Dictionary(uniqueKeysWithValues: (comps.queryItems ?? []).map { ($0.name, $0.value ?? "") })
