@@ -71,6 +71,13 @@ struct ConnectionFormView: View {
     /// (M10b/T3, mockup section 4C) — opened LOCALLY from the Set-mode
     /// picker, same pattern as `showKnownHostsSheet` above.
     @State private var showLoginSetsSheet = false
+    /// The provider-preset picker's current selection (M12/T7b) — purely a
+    /// UI convenience for `applyS3Preset(_:)` below, not a source of truth:
+    /// the actual S3 fields live on `viewModel` and stay independently
+    /// editable after a preset fills them. Defaults to "custom" (the
+    /// schema's own no-op preset, `values: [:]`) so a fresh or reopened S3
+    /// form never silently re-applies a stale provider's values.
+    @State private var selectedS3PresetID: String = "custom"
 
     private var isConnecting: Bool { viewModel.state == .connecting }
 
@@ -275,6 +282,124 @@ struct ConnectionFormView: View {
                 .font(.title2.bold())
 
             VStack(alignment: .leading, spacing: 10) {
+                // Type switcher (M12/T7b): the only row shown regardless of
+                // `viewModel.kind` — it's what flips the rest of the form
+                // between the SSH sections below (unchanged from before this
+                // feature) and the schema-driven S3 section.
+                let typeLabel = L10n.string("connection.type.label", "Connection type")
+                FormRow(label: typeLabel) {
+                    Picker(typeLabel, selection: $viewModel.kind) {
+                        ForEach(ConnectionKind.allCases, id: \.self) { kind in
+                            let descriptor = BackendDescriptor.descriptor(for: kind)
+                            Text(L10n.string(descriptor.badgeLabelKey, descriptor.badgeLabelDefault))
+                                .tag(kind)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+
+                if viewModel.kind == .ssh {
+                    sshSections
+                } else {
+                    s3Section
+                }
+
+                if !isEditMode {
+                    FormRow(label: "") {
+                        Toggle(
+                            L10n.string("connection.saveToggle", "Save as session"),
+                            isOn: $viewModel.shouldSaveSession)
+                    }
+                }
+
+                if isEditMode || viewModel.shouldSaveSession {
+                    let saveNameLabel = L10n.string("connection.field.saveName", "Session name")
+                    FormRow(label: saveNameLabel) {
+                        TextField(
+                            saveNameLabel, text: $viewModel.saveName,
+                            prompt: Text(L10n.string("connection.field.saveName.placeholder", "e.g. hetzner-web"))
+                        )
+                    }
+                    .errorHighlight(failedField == .saveName)
+
+                    let groupLabel = L10n.string("connection.field.group", "Group")
+                    FormRow(label: groupLabel) {
+                        Picker(
+                            groupLabel,
+                            selection: $viewModel.selectedGroupID
+                        ) {
+                            Text(L10n.string("sidebar.noGroup", "No group")).tag(UUID?.none)
+                            ForEach(groups) { group in
+                                Text(group.name).tag(UUID?.some(group.id))
+                            }
+                        }
+                        .labelsHidden()
+                    }
+                }
+            }
+            .textFieldStyle(.roundedBorder)
+            .disabled(isConnecting)
+
+            HStack {
+                Spacer()
+                if isConnecting || isHandingOff {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                if isEditMode {
+                    Button(L10n.string("common.back", "Back")) {
+                        onCancelEdit()
+                    }
+                    .buttonStyle(.polished)
+                    Button(L10n.string("common.save", "Save")) {
+                        guard resolveLoginSetForSubmit() else { return }
+                        if let session = viewModel.validateForEditSave() {
+                            onSaveEdited(session, viewModel.password.isEmpty ? nil : viewModel.password)
+                        } else if case .failed(let message, _) = viewModel.state {
+                            alertMessage = message
+                        }
+                    }
+                    .buttonStyle(.polished)
+                    .disabled(loginSetModeIncomplete || jumpLoginSetModeIncomplete || jumpSessionModeIncomplete)
+                    Button(L10n.string("connection.saveAndConnect", "Save & connect")) {
+                        guard resolveLoginSetForSubmit() else { return }
+                        if let session = viewModel.validateForEditSave() {
+                            onSaveEdited(session, viewModel.password.isEmpty ? nil : viewModel.password)
+                            onConnectEdited(session)
+                        } else if case .failed(let message, _) = viewModel.state {
+                            alertMessage = message
+                        }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.polishedProminent)
+                    .disabled(loginSetModeIncomplete || jumpLoginSetModeIncomplete || jumpSessionModeIncomplete)
+                } else {
+                    Button(L10n.string("connection.connect", "Connect")) {
+                        guard resolveLoginSetForSubmit() else { return }
+                        Task {
+                            if let fs = await viewModel.connect() {
+                                isHandingOff = true
+                                await onConnected(fs)
+                                isHandingOff = false
+                            } else if case .failed(let message, _) = viewModel.state {
+                                alertMessage = message
+                            }
+                        }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(isConnecting || isHandingOff || loginSetModeIncomplete || jumpLoginSetModeIncomplete || jumpSessionModeIncomplete)
+                    .buttonStyle(.polishedProminent)
+                }
+            }
+    }
+
+    /// The bespoke SSH sections (host/login/auth/jump), unchanged from
+    /// before the M12 type switcher — extracted into their own
+    /// `@ViewBuilder` so `formContent` above can gate them on
+    /// `viewModel.kind == .ssh` without duplicating this whole block.
+    @ViewBuilder
+    private var sshSections: some View {
                 let hostLabel = L10n.string("connection.field.host", "Host")
                 FormRow(label: hostLabel) {
                     TextField(
@@ -578,93 +703,100 @@ struct ConnectionFormView: View {
                     }
                 }
 
-                if !isEditMode {
-                    FormRow(label: "") {
-                        Toggle(
-                            L10n.string("connection.saveToggle", "Save as session"),
-                            isOn: $viewModel.shouldSaveSession)
-                    }
+    }
+
+    /// The S3 backend descriptor (M12/T7b) — its `fieldSchema` drives the
+    /// section below instead of hand-rolling S3-specific rows, so a future
+    /// backend with its own schema only needs a `BackendDescriptor`, not a
+    /// new bespoke form section like `sshSections` above.
+    private var s3Descriptor: BackendDescriptor { .descriptor(for: .s3) }
+
+    /// The schema-driven S3 section (M12/T7b): a provider-preset picker
+    /// followed by one row per `ConnectionField` in the descriptor's
+    /// `fieldSchema`. Deliberately simple/static — no derived layout, no
+    /// nested state machine — per the M11n lesson that new GUI here must not
+    /// risk an AttributeGraph cycle.
+    @ViewBuilder
+    private var s3Section: some View {
+        let presetLabel = L10n.string("connection.s3.preset.label", "Provider preset")
+        FormRow(label: presetLabel) {
+            Picker(presetLabel, selection: Binding(
+                get: { selectedS3PresetID },
+                set: { id in
+                    selectedS3PresetID = id
+                    applyS3Preset(id)
                 }
-
-                if isEditMode || viewModel.shouldSaveSession {
-                    let saveNameLabel = L10n.string("connection.field.saveName", "Session name")
-                    FormRow(label: saveNameLabel) {
-                        TextField(
-                            saveNameLabel, text: $viewModel.saveName,
-                            prompt: Text(L10n.string("connection.field.saveName.placeholder", "e.g. hetzner-web"))
-                        )
-                    }
-                    .errorHighlight(failedField == .saveName)
-
-                    let groupLabel = L10n.string("connection.field.group", "Group")
-                    FormRow(label: groupLabel) {
-                        Picker(
-                            groupLabel,
-                            selection: $viewModel.selectedGroupID
-                        ) {
-                            Text(L10n.string("sidebar.noGroup", "No group")).tag(UUID?.none)
-                            ForEach(groups) { group in
-                                Text(group.name).tag(UUID?.some(group.id))
-                            }
-                        }
-                        .labelsHidden()
-                    }
+            )) {
+                ForEach(s3Descriptor.fieldSchema.presets) { preset in
+                    Text(L10n.string(preset.nameKey, preset.nameDefault)).tag(preset.id)
                 }
             }
-            .textFieldStyle(.roundedBorder)
-            .disabled(isConnecting)
+            .labelsHidden()
+        }
 
-            HStack {
-                Spacer()
-                if isConnecting || isHandingOff {
-                    ProgressView()
-                        .controlSize(.small)
-                }
-                if isEditMode {
-                    Button(L10n.string("common.back", "Back")) {
-                        onCancelEdit()
-                    }
-                    .buttonStyle(.polished)
-                    Button(L10n.string("common.save", "Save")) {
-                        guard resolveLoginSetForSubmit() else { return }
-                        if let session = viewModel.validateForEditSave() {
-                            onSaveEdited(session, viewModel.password.isEmpty ? nil : viewModel.password)
-                        } else if case .failed(let message, _) = viewModel.state {
-                            alertMessage = message
-                        }
-                    }
-                    .buttonStyle(.polished)
-                    .disabled(loginSetModeIncomplete || jumpLoginSetModeIncomplete || jumpSessionModeIncomplete)
-                    Button(L10n.string("connection.saveAndConnect", "Save & connect")) {
-                        guard resolveLoginSetForSubmit() else { return }
-                        if let session = viewModel.validateForEditSave() {
-                            onSaveEdited(session, viewModel.password.isEmpty ? nil : viewModel.password)
-                            onConnectEdited(session)
-                        } else if case .failed(let message, _) = viewModel.state {
-                            alertMessage = message
-                        }
-                    }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.polishedProminent)
-                    .disabled(loginSetModeIncomplete || jumpLoginSetModeIncomplete || jumpSessionModeIncomplete)
-                } else {
-                    Button(L10n.string("connection.connect", "Connect")) {
-                        guard resolveLoginSetForSubmit() else { return }
-                        Task {
-                            if let fs = await viewModel.connect() {
-                                isHandingOff = true
-                                await onConnected(fs)
-                                isHandingOff = false
-                            } else if case .failed(let message, _) = viewModel.state {
-                                alertMessage = message
-                            }
-                        }
-                    }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(isConnecting || isHandingOff || loginSetModeIncomplete || jumpLoginSetModeIncomplete || jumpSessionModeIncomplete)
-                    .buttonStyle(.polishedProminent)
-                }
+        ForEach(s3Descriptor.fieldSchema.fields) { field in
+            s3FieldRow(field)
+        }
+    }
+
+    /// One form row for a single S3 `ConnectionField`, rendered by its
+    /// `kind` and bound to the matching `viewModel.s3*` property BY FIELD
+    /// ID (`s3TextBinding(for:)` below) — `.secret`/`.toggle` bind directly
+    /// since there is exactly one field of each in the current schema.
+    @ViewBuilder
+    private func s3FieldRow(_ field: ConnectionField) -> some View {
+        let label = L10n.string(field.labelKey, field.labelDefault)
+        switch field.kind {
+        case .toggle:
+            FormRow(label: "") {
+                Toggle(label, isOn: $viewModel.s3UsePathStyle)
             }
+        case .secret:
+            FormRow(label: label) {
+                SecureField(
+                    label, text: $viewModel.s3SecretAccessKey,
+                    prompt: isEditMode
+                        ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
+                        : Text(verbatim: ""))
+            }
+        case .text, .number:
+            FormRow(label: label) {
+                TextField(label, text: s3TextBinding(for: field.id), prompt: Text(verbatim: ""))
+            }
+        }
+    }
+
+    /// Maps a schema field id to the matching `viewModel.s3*` text property
+    /// (M12/T7b) — the ids are fixed by `BackendDescriptor.s3Descriptor`
+    /// (endpoint/region/bucket/accessKeyID); `secretAccessKey`/`usePathStyle`
+    /// are handled directly in `s3FieldRow` above, never routed through here.
+    private func s3TextBinding(for fieldID: String) -> Binding<String> {
+        switch fieldID {
+        case "endpoint": return $viewModel.s3Endpoint
+        case "region": return $viewModel.s3Region
+        case "bucket": return $viewModel.s3Bucket
+        case "accessKeyID": return $viewModel.s3AccessKeyID
+        default: return .constant("")
+        }
+    }
+
+    /// Fills the S3 fields from the selected preset's `values` (M12/T7b) —
+    /// only the ids present in `values` are touched (e.g. the "aws" preset
+    /// sets `endpoint`/`usePathStyle` and leaves region/bucket/accessKeyID
+    /// exactly as the user left them); "Custom" carries `values: [:]` and is
+    /// therefore a pure no-op.
+    private func applyS3Preset(_ id: String) {
+        guard let preset = s3Descriptor.fieldSchema.presets.first(where: { $0.id == id }) else { return }
+        for (fieldID, value) in preset.values {
+            switch fieldID {
+            case "endpoint": viewModel.s3Endpoint = value
+            case "region": viewModel.s3Region = value
+            case "bucket": viewModel.s3Bucket = value
+            case "accessKeyID": viewModel.s3AccessKeyID = value
+            case "usePathStyle": viewModel.s3UsePathStyle = (value == "true")
+            default: break
+            }
+        }
     }
 
     /// Full-pane trust decision for an unknown host key (M3c). Presentation

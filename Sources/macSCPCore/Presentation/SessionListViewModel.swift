@@ -68,12 +68,18 @@ public final class SessionListViewModel {
     /// mode, or replaced with a freshly-generated manual `JumpSpec` (a
     /// changed `secretID`) — has its keychain entry cleaned up (see
     /// `cleanOrphanedJumpSlot`'s own doc comment below for the exact rule).
+    /// `kind`/`s3` (M12/T7b): defaulted so every existing SSH call site is
+    /// untouched. For an `.s3` session, `password` carries the secret access
+    /// key — it rides the SAME keychain slot (`secrets.savePassword(_:for:
+    /// session.id)` below) as the SSH password; there is no separate S3
+    /// secret path.
     @discardableResult
     public func save(
         name: String, host: String, port: Int, username: String, password: String,
         authKind: StoredSession.AuthKind = .password, keyPath: String? = nil,
         groupID: UUID? = nil, loginSetID: UUID? = nil,
-        jump: StoredSession.JumpSpec? = nil, jumpSecret: String? = nil
+        jump: StoredSession.JumpSpec? = nil, jumpSecret: String? = nil,
+        kind: ConnectionKind = .ssh, s3: StoredS3Config? = nil
     ) -> StoredSession? {
         let session: StoredSession
         var previousJump: StoredSession.JumpSpec?
@@ -88,11 +94,14 @@ public final class SessionListViewModel {
             updated.groupID = groupID
             updated.loginSetID = loginSetID
             updated.jump = jump
+            updated.kind = kind
+            updated.s3 = s3
             session = updated
         } else {
             session = StoredSession(name: name, host: host, port: port,
                                     username: username, authKind: authKind, keyPath: keyPath,
-                                    groupID: groupID, loginSetID: loginSetID, jump: jump)
+                                    groupID: groupID, loginSetID: loginSetID, jump: jump,
+                                    kind: kind, s3: s3)
         }
         do {
             try store.upsert(session)

@@ -75,6 +75,25 @@
 "connection.hostkey.trust" = "Trust & connect";
 "connection.connect" = "Connect";
 
+/* Connection type switcher + S3 form section (M12/T7b) */
+"connection.type.label" = "Connection type";
+"connection.badge.ssh" = "SSH";
+"connection.badge.s3" = "S3";
+"connection.s3.endpoint" = "Endpoint";
+"connection.s3.region" = "Region";
+"connection.s3.bucket" = "Bucket";
+"connection.s3.accessKey" = "Access Key ID";
+"connection.s3.secretKey" = "Secret Access Key";
+"connection.s3.pathStyle" = "Use path-style URLs";
+"connection.s3.preset.label" = "Provider preset";
+"connection.s3.preset.aws" = "Amazon S3";
+"connection.s3.preset.hetzner" = "Hetzner Object Storage";
+"connection.s3.preset.custom" = "Custom";
+
+/* Shell-only shortcuts on a non-shell backend (M12/T7b) */
+"shortcut.unavailableForProtocol.title" = "Not Available";
+"shortcut.unavailableForProtocol" = "This shortcut isn't available for this connection type.";
+
 /* Shared */
 "common.cancel" = "Cancel";
 

@@ -410,6 +410,14 @@ private struct SessionRow: View {
 
     @State private var isHovering = false
 
+    /// "SSH"/"S3" (M12/T7b), localized through the backend descriptor —
+    /// never hand-picked here, so a future third `ConnectionKind` only needs
+    /// a new `BackendDescriptor` case, not a change at every badge site.
+    private var kindBadgeLabel: String {
+        let descriptor = BackendDescriptor.descriptor(for: session.kind)
+        return L10n.string(descriptor.badgeLabelKey, descriptor.badgeLabelDefault)
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             Circle()
@@ -428,6 +436,13 @@ private struct SessionRow: View {
                     .fontWeight(isActive ? .semibold : .regular)
                     .foregroundStyle(isActive ? DesignTokens.remoteBlue : Color.primary)
             }
+
+            // Protocol badge (M12/T7b): "SSH"/"S3" from the backend
+            // descriptor — unobtrusive, same small-label typography as the
+            // sidebar's own section headers above.
+            Text(kindBadgeLabel)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(DesignTokens.inkTertiary)
 
             Spacer(minLength: 0)
         }

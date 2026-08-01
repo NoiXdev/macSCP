@@ -99,6 +99,31 @@ struct SessionListViewModelTests {
         #expect(try secrets.password(for: first.id) == "p2")
     }
 
+    /// M12/T7b: saving an S3 session goes through the same `save(...)`
+    /// entry point as SSH, just with `kind`/`s3` filled in — the secret
+    /// access key rides the existing `password:` slot (no separate S3
+    /// secret path) and must never land in `sessions.json`.
+    @Test func saveWithS3KindPersistsConfigAndKeepsSecretInKeychainOnly() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let s3 = StoredS3Config(
+            accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
+            endpoint: "https://s3.example.com", bucket: "backups", usePathStyle: true)
+        let stored = vm.save(
+            name: "bucket", host: "unused", port: 22, username: "unused", password: "SECRET",
+            kind: .s3, s3: s3)
+
+        #expect(stored != nil)
+        #expect(stored?.kind == .s3)
+        #expect(stored?.s3 == s3)
+        #expect(vm.sessions.first?.kind == .s3)
+        #expect(vm.sessions.first?.s3 == s3)
+        #expect(try secrets.password(for: stored!.id) == "SECRET")
+
+        let raw = try String(contentsOf: dir.appendingPathComponent("sessions.json"), encoding: .utf8)
+        #expect(!raw.contains("SECRET"))
+    }
+
     @Test func saveWithFailingSecretsStillReloadsFromDisk() {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-slvm-fail-\(UUID().uuidString)")

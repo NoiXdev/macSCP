@@ -77,6 +77,25 @@
 "connection.hostkey.trust" = "Faire confiance et se connecter";
 "connection.connect" = "Se connecter";
 
+/* Sélecteur de type de connexion + section du formulaire S3 (M12/T7b) */
+"connection.type.label" = "Type de connexion";
+"connection.badge.ssh" = "SSH";
+"connection.badge.s3" = "S3";
+"connection.s3.endpoint" = "Point de terminaison";
+"connection.s3.region" = "Région";
+"connection.s3.bucket" = "Bucket";
+"connection.s3.accessKey" = "ID de clé d'accès";
+"connection.s3.secretKey" = "Clé d'accès secrète";
+"connection.s3.pathStyle" = "Utiliser des URL de style chemin";
+"connection.s3.preset.label" = "Modèle de fournisseur";
+"connection.s3.preset.aws" = "Amazon S3";
+"connection.s3.preset.hetzner" = "Hetzner Object Storage";
+"connection.s3.preset.custom" = "Personnalisé";
+
+/* Raccourci sans shell sur un backend sans shell (M12/T7b) */
+"shortcut.unavailableForProtocol.title" = "Non disponible";
+"shortcut.unavailableForProtocol" = "Ce raccourci n'est pas disponible pour ce type de connexion.";
+
 /* Commun */
 "common.cancel" = "Annuler";
 
