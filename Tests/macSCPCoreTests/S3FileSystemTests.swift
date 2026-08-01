@@ -372,12 +372,9 @@ struct S3FileSystemTests {
         }
     }
 
-    @Test func deleteTreeThrowsProtocolError() async throws {
-        let (fs, _) = try await connect(responses: [])
-        await expectProtocolError {
-            try await fs.deleteTree(at: "/sub")
-        }
-    }
+    // `deleteTree` is real as of M13/T8 (recursive list + batched
+    // DeleteObjects) — see the "M13/T8: deleteTree" section below for its
+    // coverage.
 
     // MARK: - M13/T2: streaming transport seam
 
@@ -689,5 +686,69 @@ struct S3FileSystemTests {
 
         let requests = await transport.requests
         #expect(!requests.contains { $0.httpMethod == "DELETE" })
+    }
+
+    // MARK: - M13/T8: deleteTree
+
+    /// A no-delimiter `ListObjectsV2` response listing exactly the given
+    /// raw keys as `<Contents><Key>` entries — the shape `allObjectKeys`
+    /// parses, parametrized so `deleteTree` tests can hand it whichever
+    /// keys (including a directory's own trailing-slash marker) they need.
+    private func listingWithKeys(_ keys: [String]) -> String {
+        let contents = keys.map { "<Contents><Key>\($0)</Key><Size>0</Size></Contents>" }.joined()
+        return """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+            <IsTruncated>false</IsTruncated>
+            \(contents)
+        </ListBucketResult>
+        """
+    }
+
+    /// `deleteTree` lists every key under the prefix (including the
+    /// directory's own trailing-slash marker) via `allObjectKeys`, then
+    /// issues ONE signed `POST {bucket}?delete` per <=1000-key batch with a
+    /// `Content-MD5` header (S3 requires it for this call) and an XML body
+    /// naming every key in the batch.
+    @Test func deleteTreeBatchesDeleteObjectsWithContentMD5() async throws {
+        let (fs, transport) = try await connect(responses: [
+            (Data(listingWithKeys(["d/", "d/a", "d/b"]).utf8), httpResponse(status: 200)),
+            (Data("<DeleteResult></DeleteResult>".utf8), httpResponse(status: 200)),
+        ])
+
+        try await fs.deleteTree(at: "/d")
+
+        let del = await transport.requests.last!
+        #expect(del.httpMethod == "POST")
+        #expect((del.url!.query ?? "").contains("delete"))
+        #expect(del.value(forHTTPHeaderField: "Content-MD5") != nil)
+        let bodyXML = String(data: del.httpBody!, encoding: .utf8)!
+        #expect(bodyXML.contains("<Key>d/a</Key>") && bodyXML.contains("<Key>d/</Key>"))
+    }
+
+    /// S3's `DeleteObjects` can answer HTTP 200 with a `<DeleteResult>` body
+    /// that STILL lists a per-key `<Error>` for an object it failed to
+    /// delete — the same "200 lies" shape `copyObject` already guards
+    /// against for CopyObject. `deleteTree` must inspect the 2xx body and
+    /// throw rather than reporting a partial failure as success.
+    @Test func deleteTreeThrowsWhenDeleteResultContainsAPerKeyError() async throws {
+        let deleteResultWithError = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <DeleteResult>
+            <Error>
+                <Key>d/a</Key>
+                <Code>InternalError</Code>
+                <Message>We encountered an internal error. Please try again.</Message>
+            </Error>
+        </DeleteResult>
+        """
+        let (fs, _) = try await connect(responses: [
+            (Data(listingWithKeys(["d/", "d/a"]).utf8), httpResponse(status: 200)),
+            (Data(deleteResultWithError.utf8), httpResponse(status: 200)),
+        ])
+
+        await expectProtocolError {
+            try await fs.deleteTree(at: "/d")
+        }
     }
 }

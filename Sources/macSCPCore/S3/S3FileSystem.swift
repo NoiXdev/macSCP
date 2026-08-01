@@ -1,12 +1,14 @@
+import Crypto
 import Foundation
 
 /// Thin S3 (and S3-compatible: MinIO, R2, Hetzner, …) implementation of
 /// `RemoteFileSystem` (M12/T5). `connect`/`list`/`stat`/`readStream` are
 /// real, signed calls; `delete` and `createDirectory` are real as of M13/T4,
-/// `write` (single-PUT and multipart) is real as of M13/T5-T6, and `rename`
-/// (copy+delete, with a re-key loop for directories) is real as of M13/T7.
-/// The remaining mutating operations (`setPermissions`, `deleteTree`) still
-/// throw `RemoteFSError.protocolError` — those land in later M13 tasks.
+/// `write` (single-PUT and multipart) is real as of M13/T5-T6, `rename`
+/// (copy+delete, with a re-key loop for directories) is real as of M13/T7,
+/// and `deleteTree` (recursive list + batched `DeleteObjects`) is real as of
+/// M13/T8. The one remaining mutating operation, `setPermissions`, still
+/// throws `RemoteFSError.protocolError` — S3 has no POSIX permissions.
 ///
 /// `Sendable` by construction rather than `@unchecked`: both stored
 /// properties are immutable and themselves `Sendable` (`S3ConnectionConfig`
@@ -192,8 +194,54 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         throw RemoteFSError.protocolError(reason: "S3 has no POSIX permissions to set (M13)")
     }
 
+    /// Recursively lists every key under the path's prefix (via
+    /// `allObjectKeys`, which also picks up the directory's own
+    /// trailing-slash marker key) and removes them in `<=1000`-key
+    /// `DeleteObjects` batches — S3's maximum per call. Each batch is one
+    /// signed `POST {bucket}?delete` carrying an XML `<Delete>` body and a
+    /// SIGNED `Content-MD5` header, which S3 requires for this call (unlike
+    /// every other request this file builds).
+    ///
+    /// `Task.checkCancellation()` runs once per batch, not per key — a batch
+    /// already in flight always completes. Like `rename`'s directory re-key
+    /// loop, this is deliberately NOT transactional: a cancellation or
+    /// mid-tree failure leaves a PARTIALLY deleted tree, with no rollback.
+    ///
+    /// S3's `DeleteObjects` can answer HTTP 200 with a `<DeleteResult>` body
+    /// that lists per-key `<Error>` entries for objects it failed to delete
+    /// — the same "200 lies" shape `copyObject` already guards against for
+    /// CopyObject. A clean response never contains an `<Error` element, so a
+    /// substring check on the body is enough to catch a partial failure
+    /// without a full XML parse.
     public func deleteTree(at path: String) async throws {
-        throw RemoteFSError.protocolError(reason: "S3 delete is not supported yet (M13)")
+        let keys = try await allObjectKeys(underPrefix: Self.s3Prefix(forPath: path))
+        for batch in keys.chunked(into: 1000) {
+            try Task.checkCancellation()
+            let body = Self.deleteObjectsXML(keys: batch)
+            let md5 = Data(Insecure.MD5.hash(data: body)).base64EncodedString()
+            let request = try buildSignedRequest(
+                method: "POST", key: "", query: [(name: "delete", value: "")],
+                extraHeaders: ["Content-MD5": md5], body: body,
+                payloadHash: SigV4Signer.hexSHA256(body))
+
+            let data: Data
+            let response: HTTPURLResponse
+            do {
+                (data, response) = try await transport.send(request)
+            } catch let error as RemoteFSError {
+                throw error
+            } catch {
+                throw RemoteFSError.connectionFailed(reason: "S3 request failed: \(error.localizedDescription)")
+            }
+            guard (200..<300).contains(response.statusCode) else {
+                throw Self.mapErrorStatus(response.statusCode, path: path)
+            }
+            let responseBody = String(data: data, encoding: .utf8) ?? ""
+            if responseBody.contains("<Error") {
+                throw RemoteFSError.protocolError(
+                    reason: "S3 deleteTree: one or more objects could not be deleted")
+            }
+        }
     }
 
     public func homeDirectoryPath() async throws -> String {
@@ -552,8 +600,41 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// string `keyRequestURL` feeds into `canonicalURI` for the wire URL.
     /// Signing MUST use THIS, not `URL.path` (which drops a trailing slash and
     /// would produce a SignatureDoesNotMatch for folder-marker keys) (M13).
+    ///
+    /// An EMPTY key addresses the bucket resource itself (`deleteTree`'s
+    /// `POST {bucket}?delete`, M13/T8), never an object with an empty-string
+    /// name — path-style must therefore omit the trailing slash a naive
+    /// `"/\(bucket)/\(key)"` concatenation would leave behind, matching
+    /// `requestURL`'s bucket-root path (`"/" + bucket`, no trailing slash)
+    /// used for `ListObjectsV2`.
     private static func canonicalKeyPath(config: S3ConnectionConfig, key: String) -> String {
-        config.usePathStyle ? "/\(config.bucket)/\(key)" : "/\(key)"
+        guard config.usePathStyle else { return "/\(key)" }
+        return key.isEmpty ? "/\(config.bucket)" : "/\(config.bucket)/\(key)"
+    }
+
+    /// Builds the `<Delete>` XML body for one `DeleteObjects` batch — an
+    /// `<Object><Key>…</Key></Object>` per key, XML-escaped (a key CAN
+    /// contain "&" or "<", e.g. an object named "a&b.txt").
+    private static func deleteObjectsXML(keys: [String]) -> Data {
+        var xml = "<Delete>"
+        for key in keys {
+            xml += "<Object><Key>\(Self.xmlEscape(key))</Key></Object>"
+        }
+        xml += "</Delete>"
+        return Data(xml.utf8)
+    }
+
+    /// Escapes the five XML predefined entities — the only characters that
+    /// are structurally significant inside an element's text content. "&"
+    /// MUST be replaced first, or escaping the other four would re-escape
+    /// the "&" those replacements themselves introduce.
+    private static func xmlEscape(_ string: String) -> String {
+        string
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&apos;")
     }
 
     /// Maps an absolute browser path to the S3 object key used for a FILE
@@ -637,5 +718,18 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         if normalized == "/" { return "" }
         let trimmed = String(normalized.dropFirst())
         return trimmed.hasSuffix("/") ? trimmed : trimmed + "/"
+    }
+}
+
+/// Splits an array into subarrays of at most `size` elements each — used by
+/// `deleteTree` (M13/T8) to respect S3 `DeleteObjects`' 1000-key-per-call
+/// limit. A non-positive `size` returns the whole array as one chunk rather
+/// than looping forever or crashing on a zero-stride `stride`.
+extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        guard size > 0 else { return [self] }
+        return stride(from: 0, to: count, by: size).map {
+            Array(self[$0..<Swift.min($0 + size, count)])
+        }
     }
 }
