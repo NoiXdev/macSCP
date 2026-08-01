@@ -59,4 +59,57 @@ struct S3FileSystemIntegrationTests {
             _ = try await S3FileSystem.connect(config)
         }
     }
+
+    /// Regression for M13/T4: `buildSignedRequest` used to sign
+    /// `URL.path`, which silently drops a trailing slash, so the PUT of a
+    /// folder-marker key ("name/") was signed as "name" and MinIO rejected
+    /// it with a 403 SignatureDoesNotMatch. This only reproduces against a
+    /// real S3-compatible server — the fake-transport unit tests build the
+    /// signature and the wire request from the same (buggy) path, so they
+    /// can never see the two diverge.
+    @Test func createDirectoryThenListShowsTheFolderAgainstMinIO() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let name = "m13-createdir-probe"
+
+        var caught: Error?
+        do {
+            try await fs.createDirectory(at: "/\(name)")
+            let items = try await fs.list(path: "/")
+            #expect(items.contains { $0.name == name && $0.kind == .directory })
+        } catch {
+            caught = error
+        }
+        // Best-effort cleanup so re-runs stay reproducible. `S3FileSystem
+        // .delete` normalizes away a trailing slash (it targets FILE keys),
+        // so it cannot address a folder-marker key ("name/") — issue a raw
+        // signed DELETE instead. `deleteTree` isn't implemented yet
+        // (M13/T8), and cleanup failing must never fail this test.
+        await Self.deleteMarkerObjectIgnoringErrors(key: "\(name)/")
+        if let caught { throw caught }
+    }
+
+    private static func deleteMarkerObjectIgnoringErrors(key: String) async {
+        let bucket = "macscp-seed"
+        let rawPath = "/\(bucket)/\(key)"
+        guard var components = URLComponents(string: "http://127.0.0.1:19000") else { return }
+        components.percentEncodedPath = rawPath
+        guard let url = components.url, let host = url.host else { return }
+        let hostHeader = url.port.map { "\(host):\($0)" } ?? host
+
+        let signer = SigV4Signer(
+            accessKeyID: "macscp", secretAccessKey: "macscpsecretkey",
+            region: "us-east-1", service: "s3", sessionToken: nil)
+        let (authorization, extraHeaders) = signer.authorizationHeader(
+            method: "DELETE", host: hostHeader, path: rawPath, query: [],
+            headers: ["host": hostHeader], payloadHash: SigV4Signer.emptyPayloadHash, date: Date())
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue(hostHeader, forHTTPHeaderField: "Host")
+        request.setValue(authorization, forHTTPHeaderField: "Authorization")
+        for (k, v) in extraHeaders { request.setValue(v, forHTTPHeaderField: k) }
+
+        _ = try? await URLSession.shared.data(for: request)
+    }
 }
