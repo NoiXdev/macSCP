@@ -275,6 +275,53 @@ struct LoginResolverTests {
         #expect(reloaded.first?.jump?.sessionID == bastionID)
         #expect(reloaded.first?.jump == jump)
     }
+
+    // MARK: - resolveS3 (M15)
+
+    @Test func resolveS3ManualSessionResolvesNil() throws {
+        let session = StoredSession(name: "bucket", host: "unused", username: "unused", kind: .s3)
+        let resolved = try LoginResolver.resolveS3(
+            session: session, sets: [], secrets: InMemorySecretStore())
+        #expect(resolved == nil)
+    }
+
+    @Test func resolveS3SetSessionResolvesAccessKeyAndSecret() throws {
+        let set = LoginSet(name: "S3 Prod", username: "unused", kind: .s3, accessKeyID: "AKIAEXAMPLE")
+        let secrets = InMemorySecretStore()
+        try secrets.savePassword("s3cr3t", for: set.id)
+        let session = StoredSession(
+            name: "bucket", host: "unused", username: "unused", loginSetID: set.id, kind: .s3)
+
+        let resolved = try LoginResolver.resolveS3(session: session, sets: [set], secrets: secrets)
+        #expect(resolved == ResolvedS3Login(accessKeyID: "AKIAEXAMPLE", secretAccessKey: "s3cr3t"))
+    }
+
+    @Test func resolveS3MissingSecretResolvesNilSecret() throws {
+        let set = LoginSet(name: "S3 Prod", username: "unused", kind: .s3, accessKeyID: "AKIAEXAMPLE")
+        let session = StoredSession(
+            name: "bucket", host: "unused", username: "unused", loginSetID: set.id, kind: .s3)
+
+        let resolved = try LoginResolver.resolveS3(
+            session: session, sets: [set], secrets: InMemorySecretStore())
+        #expect(resolved == ResolvedS3Login(accessKeyID: "AKIAEXAMPLE", secretAccessKey: nil))
+    }
+
+    @Test func resolveS3KindMismatchBetweenS3SessionAndSSHSetThrows() throws {
+        let set = LoginSet(name: "SSH", username: "deploy", authKind: .password)
+        let session = StoredSession(
+            name: "bucket", host: "unused", username: "unused", loginSetID: set.id, kind: .s3)
+        #expect(throws: LoginResolveError.kindMismatch) {
+            try LoginResolver.resolveS3(session: session, sets: [set], secrets: InMemorySecretStore())
+        }
+    }
+
+    @Test func resolveS3MissingSetThrows() throws {
+        let session = StoredSession(
+            name: "bucket", host: "unused", username: "unused", loginSetID: UUID(), kind: .s3)
+        #expect(throws: LoginResolveError.missingSet) {
+            try LoginResolver.resolveS3(session: session, sets: [], secrets: InMemorySecretStore())
+        }
+    }
 }
 
 /// Test double proving `.agent` resolution never reaches into the keychain
