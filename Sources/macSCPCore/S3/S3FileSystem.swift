@@ -1,9 +1,11 @@
 import Foundation
 
 /// Thin S3 (and S3-compatible: MinIO, R2, Hetzner, …) implementation of
-/// `RemoteFileSystem` (M12/T5). `connect`/`list`/`stat` are real, signed
-/// `ListObjectsV2` calls; every mutating operation throws
-/// `RemoteFSError.protocolError` — those land in M13.
+/// `RemoteFileSystem` (M12/T5). `connect`/`list`/`stat`/`readStream` are
+/// real, signed calls; `delete` and `createDirectory` are real as of M13/T4.
+/// The remaining mutating operations (`write`, `rename`, `setPermissions`,
+/// `deleteTree`) still throw `RemoteFSError.protocolError` — those land in
+/// later M13 tasks.
 ///
 /// `Sendable` by construction rather than `@unchecked`: both stored
 /// properties are immutable and themselves `Sendable` (`S3ConnectionConfig`
@@ -108,12 +110,28 @@ public final class S3FileSystem: RemoteFileSystem {
         throw RemoteFSError.protocolError(reason: "S3 write is not supported yet (M13)")
     }
 
+    /// A signed `DELETE` on the object key. S3's `DeleteObject` is
+    /// idempotent and returns 204 whether or not the key existed, but a
+    /// non-2xx (403/404/other) is still mapped through `sendExpectingSuccess`
+    /// like any other request.
     public func delete(path: String) async throws {
-        throw RemoteFSError.protocolError(reason: "S3 delete is not supported yet (M13)")
+        let request = try buildSignedRequest(
+            method: "DELETE", key: Self.objectKey(forPath: path), query: [],
+            payloadHash: SigV4Signer.emptyPayloadHash)
+        try await sendExpectingSuccess(request, path: path)
     }
 
+    /// Creates a 0-byte marker object whose key ends in "/" — the universal
+    /// S3 convention for representing an empty "folder" (S3 itself has no
+    /// directory concept; every other S3-compatible tool and console
+    /// recognizes this marker). Idempotent: re-PUTting the same marker is
+    /// harmless.
     public func createDirectory(at path: String) async throws {
-        throw RemoteFSError.protocolError(reason: "S3 create-directory is not supported yet (M13)")
+        let markerKey = Self.objectKey(forPath: path) + "/"
+        let request = try buildSignedRequest(
+            method: "PUT", key: markerKey, query: [], body: Data(),
+            payloadHash: SigV4Signer.emptyPayloadHash)
+        try await sendExpectingSuccess(request, path: path)
     }
 
     public func rename(from: String, to: String) async throws {
@@ -161,12 +179,43 @@ public final class S3FileSystem: RemoteFileSystem {
         switch response.statusCode {
         case 200..<300:
             return try S3ListParser.parse(data, prefix: prefix)
-        case 403:
-            throw RemoteFSError.authenticationFailed
-        case 404:
-            throw RemoteFSError.notFound(path: "/" + prefix)
         default:
-            throw RemoteFSError.protocolError(reason: "S3 request failed with HTTP status \(response.statusCode)")
+            throw Self.mapErrorStatus(response.statusCode, path: "/" + prefix)
+        }
+    }
+
+    /// Sends a signed request whose only interesting outcome is
+    /// success/failure — no response body to parse (`delete`,
+    /// `createDirectory`, and later mutating operations). Shares the
+    /// transport-error and non-2xx status mapping with `fetchPage` via
+    /// `mapErrorStatus`, so the two never drift into duplicated (and
+    /// possibly inconsistent) HTTP-status handling.
+    private func sendExpectingSuccess(_ request: URLRequest, path: String) async throws {
+        let response: HTTPURLResponse
+        do {
+            (_, response) = try await transport.send(request)
+        } catch let error as RemoteFSError {
+            throw error
+        } catch {
+            throw RemoteFSError.connectionFailed(reason: "S3 request failed: \(error.localizedDescription)")
+        }
+        guard (200..<300).contains(response.statusCode) else {
+            throw Self.mapErrorStatus(response.statusCode, path: path)
+        }
+    }
+
+    /// Maps a non-2xx HTTP status to the `RemoteFSError` it represents:
+    /// 403 → `.authenticationFailed`, 404 → `.notFound(path:)`, anything
+    /// else → `.protocolError`. Callers only reach this for a status
+    /// already known to be outside the 2xx range.
+    private static func mapErrorStatus(_ statusCode: Int, path: String) -> RemoteFSError {
+        switch statusCode {
+        case 403:
+            return .authenticationFailed
+        case 404:
+            return .notFound(path: path)
+        default:
+            return .protocolError(reason: "S3 request failed with HTTP status \(statusCode)")
         }
     }
 

@@ -367,19 +367,8 @@ struct S3FileSystemTests {
         }
     }
 
-    @Test func deleteThrowsProtocolError() async throws {
-        let (fs, _) = try await connect(responses: [])
-        await expectProtocolError {
-            try await fs.delete(path: "/a.txt")
-        }
-    }
-
-    @Test func createDirectoryThrowsProtocolError() async throws {
-        let (fs, _) = try await connect(responses: [])
-        await expectProtocolError {
-            try await fs.createDirectory(at: "/new")
-        }
-    }
+    // `delete`/`createDirectory` are real as of M13/T4 — see the
+    // "M13/T4: delete + createDirectory" section below for their coverage.
 
     @Test func renameThrowsProtocolError() async throws {
         let (fs, _) = try await connect(responses: [])
@@ -460,5 +449,42 @@ struct S3FileSystemTests {
         var count = 0
         for try await _ in try await fs.readStream(path: "/x", fromOffset: 999) { count += 1 }
         #expect(count == 0)
+    }
+
+    // MARK: - M13/T4: delete + createDirectory
+
+    @Test func deleteSendsDeleteForTheObjectKey() async throws {
+        let (fs, transport) = try await connect(responses: [(Data(), httpResponse(status: 204))])
+        try await fs.delete(path: "/dir/file.txt")
+        let req = await transport.requests.last!
+        #expect(req.httpMethod == "DELETE")
+        #expect(req.url!.path.hasSuffix("/dir/file.txt"))
+    }
+
+    @Test func deleteNotFoundResponseThrowsNotFound() async throws {
+        let (fs, _) = try await connect(responses: [(Data(), httpResponse(status: 404))])
+        do {
+            try await fs.delete(path: "/dir/file.txt")
+            Issue.record("expected throw")
+        } catch let error as RemoteFSError {
+            guard case .notFound = error else {
+                Issue.record("expected .notFound, got \(error)")
+                return
+            }
+        } catch {
+            Issue.record("unexpected error type: \(error)")
+        }
+    }
+
+    @Test func createDirectoryPutsAZeroByteMarkerKey() async throws {
+        let (fs, transport) = try await connect(responses: [(Data(), httpResponse(status: 200))])
+        try await fs.createDirectory(at: "/newfolder")
+        let req = await transport.requests.last!
+        #expect(req.httpMethod == "PUT")
+        // `URL.path` silently drops a trailing slash (a Foundation quirk),
+        // so assert against the percent-encoded path to actually see the
+        // marker's trailing "/" as it goes out on the wire.
+        #expect(req.url!.path(percentEncoded: true).hasSuffix("/newfolder/"))
+        #expect((req.httpBody?.count ?? 0) == 0)
     }
 }
