@@ -605,3 +605,29 @@
 "presigned.copy" = "Kopiuj";
 "presigned.copied" = "Skopiowano";
 "presigned.error" = "Nie udało się utworzyć linku.";
+
+/* Zakładka ustawień „Klucze SSH” (M17/T4) — generowanie/zarządzanie kluczami SSH macSCP */
+"settings.tab.sshKeys" = "Klucze SSH";
+"keys.empty" = "Brak kluczy. Wygeneruj pierwszy, aby zacząć.";
+"keys.generate" = "Generuj…";
+"keys.generate.title" = "Generuj klucz SSH";
+"keys.generate.name" = "Nazwa";
+"keys.generate.comment" = "Komentarz";
+"keys.generate.type" = "Typ";
+"keys.generate.bits" = "Rozmiar klucza";
+"keys.generate.passphrase" = "Hasło (opcjonalne)";
+"keys.generate.passphrase.confirm" = "Potwierdź hasło";
+"keys.generate.passphrase.mismatch" = "Hasła nie są zgodne.";
+"keys.generate.submit" = "Generuj";
+"keys.generate.error" = "Nie udało się wygenerować klucza.";
+"keys.type.ed25519" = "ED25519";
+"keys.type.rsa" = "RSA";
+"keys.type.ecdsa" = "ECDSA";
+"keys.notConnectable" = "Niedostępny jako login macSCP (tylko eksport klucza publicznego)";
+"keys.hasPassphrase" = "Chroniony hasłem";
+"keys.copyPublic" = "Kopiuj klucz publiczny";
+"keys.exportPublic" = "Eksportuj klucz publiczny…";
+"keys.export.error %@" = "Nie udało się zapisać pliku klucza publicznego: %@";
+"keys.delete" = "Usuń";
+"keys.delete.title" = "Usunąć ten klucz?";
+"keys.delete.confirm %lld" = "%lld zapisanych połączeń odwołuje się do tego klucza.";
