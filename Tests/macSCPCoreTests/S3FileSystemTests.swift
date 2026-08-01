@@ -543,6 +543,31 @@ struct S3FileSystemTests {
     </ListBucketResult>
     """
 
+    /// A well-formed `CopyObjectResult` body — what a genuinely successful
+    /// server-side copy returns on HTTP 200. Used as the canned PUT-copy
+    /// response in tests that exercise a rename all the way through, now
+    /// that `copyObject` inspects the 2xx body instead of trusting the
+    /// status code alone.
+    private let copyObjectResultXML = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <CopyObjectResult>
+        <LastModified>2024-01-02T03:04:05.000Z</LastModified>
+        <ETag>"abc123"</ETag>
+    </CopyObjectResult>
+    """
+
+    /// What S3 is documented to sometimes return for a server-side copy that
+    /// failed PARTWAY through: HTTP 200 with an `<Error>` XML body instead
+    /// of a `<CopyObjectResult>`. `copyObject` must treat this as a failure
+    /// even though the status code alone says success.
+    private let copyObjectErrorBodyXML = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <Error>
+        <Code>InternalError</Code>
+        <Message>We encountered an internal error. Please try again.</Message>
+    </Error>
+    """
+
     /// `rename` on a FILE: `stat(to)` (the destination pre-check — S3's
     /// PUT-copy would otherwise silently overwrite) finds nothing, `stat
     /// (from)` finds the source file, then a signed PUT carries `x-amz-
@@ -552,10 +577,10 @@ struct S3FileSystemTests {
     /// different canned responses — the sequence below mirrors that.
     @Test func renameFileCopiesThenDeletesAndPrechecksDestination() async throws {
         let (fs, transport) = try await connect(responses: [
-            (Data(emptyListingXML.utf8), httpResponse(status: 200)), // stat(to="/b.txt") -> not found
-            (Data(rootListingXML.utf8), httpResponse(status: 200)),  // stat(from="/a.txt") -> file found
-            (Data(), httpResponse(status: 200)),                     // PUT copy
-            (Data(), httpResponse(status: 204)),                     // DELETE source
+            (Data(emptyListingXML.utf8), httpResponse(status: 200)),    // stat(to="/b.txt") -> not found
+            (Data(rootListingXML.utf8), httpResponse(status: 200)),     // stat(from="/a.txt") -> file found
+            (Data(copyObjectResultXML.utf8), httpResponse(status: 200)), // PUT copy
+            (Data(), httpResponse(status: 204)),                        // DELETE source
         ])
 
         try await fs.rename(from: "/a.txt", to: "/b.txt")
@@ -594,9 +619,9 @@ struct S3FileSystemTests {
             (Data(emptyListingXML.utf8), httpResponse(status: 200)),        // stat(to="/destdir") -> not found
             (Data(srcdirAsCommonPrefixXML.utf8), httpResponse(status: 200)), // stat(from="/srcdir") -> directory found
             (Data(srcdirRawKeysXML.utf8), httpResponse(status: 200)),        // allObjectKeys(underPrefix: "srcdir/")
-            (Data(), httpResponse(status: 200)), (Data(), httpResponse(status: 204)), // copy+delete srcdir/a.txt
-            (Data(), httpResponse(status: 200)), (Data(), httpResponse(status: 204)), // copy+delete srcdir/sub/b.txt
-            (Data(), httpResponse(status: 200)), (Data(), httpResponse(status: 204)), // copy+delete srcdir/ (marker)
+            (Data(copyObjectResultXML.utf8), httpResponse(status: 200)), (Data(), httpResponse(status: 204)), // copy+delete srcdir/a.txt
+            (Data(copyObjectResultXML.utf8), httpResponse(status: 200)), (Data(), httpResponse(status: 204)), // copy+delete srcdir/sub/b.txt
+            (Data(copyObjectResultXML.utf8), httpResponse(status: 200)), (Data(), httpResponse(status: 204)), // copy+delete srcdir/ (marker)
         ])
 
         try await fs.rename(from: "/srcdir", to: "/destdir")
@@ -622,5 +647,47 @@ struct S3FileSystemTests {
         let copySourceForDestSub = puts.first { $0.url!.path(percentEncoded: true).hasSuffix("/destdir/sub/b.txt") }?
             .value(forHTTPHeaderField: "x-amz-copy-source")
         #expect(copySourceForDestSub?.contains("srcdir/sub/b.txt") == true)
+    }
+
+    /// A transient (non-404) failure on the destination pre-check `stat`
+    /// must NOT be treated as "destination absent". Before the fix, `(try?
+    /// await stat(path: to)) != nil` collapsed EVERY `stat` failure —
+    /// including a 500 — to `nil`, so `rename` proceeded to copy over
+    /// whatever really lives at `to`. Now only `RemoteFSError.notFound`
+    /// means "confirmed absent"; anything else must propagate and `rename`
+    /// must issue no copy or delete at all.
+    @Test func renameThrowsWhenDestinationPrecheckFailsTransiently() async throws {
+        let (fs, transport) = try await connect(responses: [
+            (Data(), httpResponse(status: 500)), // stat(to="/b.txt") -> transient server error, NOT "not found"
+        ])
+
+        await expectProtocolError {
+            try await fs.rename(from: "/a.txt", to: "/b.txt")
+        }
+
+        let requests = await transport.requests
+        #expect(!requests.contains { $0.httpMethod == "PUT" })
+        #expect(!requests.contains { $0.httpMethod == "DELETE" })
+    }
+
+    /// S3's server-side CopyObject can answer HTTP 200 with an `<Error>`
+    /// XML body when the copy fails partway through. `rename` unconditionally
+    /// deletes the source right after a successful copy, so treating that
+    /// "successful" 200 as real would delete the only remaining copy of the
+    /// data. `copyObject` must inspect the 2xx body and throw, and `rename`
+    /// must not reach the source DELETE.
+    @Test func renameThrowsAndDoesNotDeleteSourceWhenCopyReturns200WithErrorBody() async throws {
+        let (fs, transport) = try await connect(responses: [
+            (Data(emptyListingXML.utf8), httpResponse(status: 200)), // stat(to="/b.txt") -> not found
+            (Data(rootListingXML.utf8), httpResponse(status: 200)),  // stat(from="/a.txt") -> file found
+            (Data(copyObjectErrorBodyXML.utf8), httpResponse(status: 200)), // PUT copy -> 200 with <Error> body
+        ])
+
+        await expectProtocolError {
+            try await fs.rename(from: "/a.txt", to: "/b.txt")
+        }
+
+        let requests = await transport.requests
+        #expect(!requests.contains { $0.httpMethod == "DELETE" })
     }
 }
