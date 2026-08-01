@@ -50,6 +50,13 @@ final class TabCommands {
     /// two Terminal menu entries above has to be mirrored here explicitly
     /// (see `ContentView`'s `.onChange(of: isActiveTabConnected)`).
     var isActiveTabConnected = false
+    /// Capability gate (M12/T7b): `false` while the active tab's backend
+    /// has no shell (S3) — `ContentView` mirrors
+    /// `BackendDescriptor.descriptor(for:).capabilities.supportsShell` here
+    /// the same way it mirrors `isActiveTabConnected` above, for the same
+    /// reason (this Scene doesn't see `tabsModel`). Defaults `true` so the
+    /// menu behaves exactly as before this feature until the mirror runs.
+    var activeTabSupportsShell = true
 }
 
 @main
@@ -234,16 +241,18 @@ struct MacSCPApp: App {
             // change with that setting, so switching it never takes a
             // capability away. Both disabled while the active tab has no
             // connected session (`tabCommands.isActiveTabConnected`, kept in
-            // sync by `ContentView`).
+            // sync by `ContentView`), OR the active backend has no shell
+            // (`tabCommands.activeTabSupportsShell`, M12/T7b — e.g. an S3
+            // session).
             CommandMenu(L10n.string("menu.terminal", "Terminal")) {
                 Button(L10n.string("menu.terminal.toggle", "Show/Hide Terminal")) {
                     tabCommands.toggleTerminal?()
                 }
-                .disabled(!tabCommands.isActiveTabConnected)
+                .disabled(!tabCommands.isActiveTabConnected || !tabCommands.activeTabSupportsShell)
                 Button(L10n.string("menu.terminal.openExternal", "Open in External Terminal")) {
                     tabCommands.openExternalTerminal?()
                 }
-                .disabled(!tabCommands.isActiveTabConnected)
+                .disabled(!tabCommands.isActiveTabConnected || !tabCommands.activeTabSupportsShell)
             }
         }
 

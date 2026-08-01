@@ -143,6 +143,12 @@ struct BrowserPane: View {
                     onOpen: { item in Task { await viewModel.open(item) } },
                     onSelect: { viewModel.selectedItems = $0 },
                     onOpenFile: onOpenFile,
+                    // No capability gate needed here either (M12/T7b): the
+                    // symlink marker/double-click is governed by
+                    // `ProtocolCapabilities.supportsSymlinks`, but `item.kind`
+                    // can never be `.symlink` for an S3 session today — same
+                    // "nothing loads" reason as `.infoAndPermissions` above
+                    // (`S3FileSystem` listing throws, deferred to M13).
                     onOpenSymlink: { item in
                         Task {
                             // Navigates DIRECTLY (M11h/T1 review fix),
@@ -165,6 +171,17 @@ struct BrowserPane: View {
                     onMenuAction: { entry, selection in
                         switch entry {
                         case .rename: renameTarget = selection.first
+                        // No capability gate needed here (M12/T7b): the
+                        // permissions editor is governed by
+                        // `ProtocolCapabilities.permissionModel`, but an S3
+                        // session can never populate `selection` in the
+                        // first place today — `S3FileSystem`'s listing/read/
+                        // write/delete/rename all throw `.protocolError`
+                        // ("not supported yet (M13)"), so the remote pane
+                        // never loads any items to select for `.s3`. Gating
+                        // this menu entry now would be dead code; M13 (real
+                        // S3 listing) is where `permissionModel == .none`
+                        // actually needs to suppress it.
                         case .infoAndPermissions: infoTarget = selection.first
                         case .newFolder: showNewFolderSheet = true
                         case .delete: deleteRequest = selection

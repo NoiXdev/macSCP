@@ -98,6 +98,11 @@ private struct TabItemView: View {
                 .foregroundStyle(
                     isActive ? DesignTokens.ink
                     : tab.isConnected ? DesignTokens.inkSecondary : DesignTokens.inkTertiary)
+            // Protocol badge (M12/T7b): same small-label typography as the
+            // sidebar's own badge — "SSH"/"S3" from the backend descriptor.
+            Text(kindBadgeLabel)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(DesignTokens.inkTertiary)
             if isHovering {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
@@ -127,6 +132,16 @@ private struct TabItemView: View {
         .onHover { isHovering = $0 }
         .accessibilityElement(children: .combine)
         .accessibilityValue(accessibilityState)
+    }
+
+    /// "SSH"/"S3" (M12/T7b) — reads `tab.connectionViewModel.kind`, the
+    /// live form state. Stable once connected (`beginEditing`/
+    /// `exitEditMode` are the only mutators, and neither runs again after a
+    /// successful connect), so this reflects the CONNECTED backend for a
+    /// live tab, and the form's current pick for a still-open one.
+    private var kindBadgeLabel: String {
+        let descriptor = BackendDescriptor.descriptor(for: tab.connectionViewModel.kind)
+        return L10n.string(descriptor.badgeLabelKey, descriptor.badgeLabelDefault)
     }
 
     private var accessibilityState: String {
