@@ -24,6 +24,7 @@ struct SigV4SignerTests {
         #expect(result.authorization.contains("AWS4-HMAC-SHA256"))
         #expect(result.authorization.contains("Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request"))
         #expect(result.authorization.contains("SignedHeaders=host;x-amz-date"))
+        #expect(result.authorization.contains("Signature=5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31"))
         // x-amz-date header is emitted.
         #expect(result.extraHeaders["x-amz-date"] == "20150830T123600Z")
     }
