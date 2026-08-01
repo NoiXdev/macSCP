@@ -682,9 +682,12 @@ public final class SessionListViewModel {
             }
 
             // S3 fields (M12): only populated for an `.s3` session. The
-            // secret access key mirrors `password` above -- same keychain
-            // slot (the session's own `id`), same missing-password
-            // accounting, same "only with includePasswords" gate.
+            // secret access key mirrors `password` above -- prefer the
+            // RESOLVED login set's secret (a set-bound S3 session stores
+            // its secret under the SET's id, not the session's own id),
+            // falling back to the session's own keychain slot; same
+            // missing-password accounting, same "only with includePasswords"
+            // gate.
             var s3AccessKeyID: String?
             var s3Region: String?
             var s3Endpoint: String?
@@ -692,13 +695,16 @@ public final class SessionListViewModel {
             var s3UsePathStyle: Bool?
             var s3SecretAccessKey: String?
             if session.kind == .s3, let s3 = session.s3 {
+                // Access-key-ID is always the session's own value: resolving
+                // a login set's access key ID is deferred to M13
+                // (`ResolvedLogin` has no accessKeyID field yet).
                 s3AccessKeyID = s3.accessKeyID
                 s3Region = s3.region
                 s3Endpoint = s3.endpoint
                 s3Bucket = s3.bucket
                 s3UsePathStyle = s3.usePathStyle
                 if includePasswords {
-                    s3SecretAccessKey = self.password(for: session)
+                    s3SecretAccessKey = resolved != nil ? resolved?.secret : self.password(for: session)
                     if s3SecretAccessKey == nil {
                         missingPasswordCount += 1
                     }
