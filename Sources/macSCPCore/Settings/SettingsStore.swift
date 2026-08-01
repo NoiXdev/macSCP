@@ -75,6 +75,7 @@ public final class SettingsStore {
         static let visibleColumns = "visibleColumns"
         static let menuBarEnabled = "menuBarEnabled"
         static let appLanguage = "appLanguage"
+        static let presignedDefaultExpiry = "presignedDefaultExpiry"
     }
 
     private enum Defaults {
@@ -89,6 +90,7 @@ public final class SettingsStore {
         static let terminalCursorBlink = true
         static let updateCheckEnabled = true
         static let menuBarEnabled = true
+        static let presignedDefaultExpiry = PresignedExpiry.oneHour
     }
 
     /// Identical to `SessionStore.defaultDirectory` — both stores share the
@@ -379,6 +381,24 @@ public final class SettingsStore {
 
     private static var defaultVisibleColumns: Set<FileColumn> {
         Set(FileColumn.allCases.filter(\.defaultVisible))
+    }
+
+    /// Default expiry the share-link sheet pre-fills (M14). The user can
+    /// still override it per link; this only sets the initial selection.
+    /// An unrecognized raw value on disk (future app version, or
+    /// hand-edited garbage) reads as `.oneHour` instead of crashing or
+    /// propagating `nil` — same pattern as `terminalCursorStyle`.
+    public var presignedDefaultExpiry: PresignedExpiry {
+        get {
+            guard case .string(let value)? = raw[Keys.presignedDefaultExpiry] else {
+                return Defaults.presignedDefaultExpiry
+            }
+            return PresignedExpiry(rawValue: value) ?? .oneHour
+        }
+        set {
+            raw[Keys.presignedDefaultExpiry] = .string(newValue.rawValue)
+            persist()
+        }
     }
 
     /// Convenience: association lookup with the SAME normalization applied.

@@ -742,4 +742,49 @@ struct SettingsStoreTests {
         let reloaded = SettingsStore(directory: dir)
         #expect(reloaded.selectedLanguage == .system)
     }
+
+    // MARK: - Presigned share link default expiry (M14 Task 4)
+
+    @Test func presignedDefaultExpiryDefaultsToOneHourAndRoundtrips() {
+        #expect(PresignedExpiry.oneHour.seconds == 3600)
+        #expect(PresignedExpiry.sevenDays.seconds == 604_800)
+
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.presignedDefaultExpiry == .oneHour)
+
+        store.presignedDefaultExpiry = .oneDay
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.presignedDefaultExpiry == .oneDay)
+    }
+
+    /// An unrecognized raw expiry string (future app version, or hand-edited
+    /// garbage) must read as the safe default `.oneHour` — same pattern as
+    /// `terminalCursorStyleUnknownRawValueReadsAsBlock`.
+    @Test func presignedDefaultExpiryUnknownRawValueReadsAsOneHour() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"presignedDefaultExpiry": "weird"}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        #expect(store.presignedDefaultExpiry == .oneHour)
+    }
+
+    @Test func loadingOldSettingsFileWithoutPresignedDefaultExpiryKeyUsesDefault() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"maxConcurrentTransfers": 4, "uploadLimitKBs": 10, "downloadLimitKBs": 20}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        #expect(store.presignedDefaultExpiry == .oneHour)
+    }
 }
