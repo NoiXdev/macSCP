@@ -133,7 +133,12 @@ struct LoginSetsSheet: View {
     @ViewBuilder
     private func row(_ set: LoginSet) -> some View {
         HStack(spacing: 10) {
-            authKindBadge(set.authKind)
+            if set.kind == .s3 {
+                badge(label: L10n.string("loginSets.badge.s3", "S3"),
+                      soft: DesignTokens.s3Soft, ink: DesignTokens.s3Violet)
+            } else {
+                authKindBadge(set.authKind)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(set.name).font(.system(size: 13))
                 Text(subtitle(for: set))
@@ -151,6 +156,11 @@ struct LoginSetsSheet: View {
     @ViewBuilder
     private func authKindBadge(_ kind: StoredSession.AuthKind) -> some View {
         let (label, soft, ink) = badgeStyle(for: kind)
+        badge(label: label, soft: soft, ink: ink)
+    }
+
+    @ViewBuilder
+    private func badge(label: String, soft: Color, ink: Color) -> some View {
         Text(label)
             .font(.system(size: 10, weight: .semibold))
             .padding(.horizontal, 7)
@@ -176,6 +186,11 @@ struct LoginSetsSheet: View {
     }
 
     private func subtitle(for set: LoginSet) -> String {
+        if set.kind == .s3 {
+            return String(
+                format: L10n.string("loginSets.subtitle.s3 %@", "%@ · S3"),
+                set.accessKeyID ?? "")
+        }
         switch set.authKind {
         case .privateKey:
             return String(
@@ -300,6 +315,8 @@ private struct LoginSetEditorView: View {
     @State private var keyPath: String
     @State private var secret: String = ""
     @State private var showKeyImporter = false
+    @State private var kind: ConnectionKind
+    @State private var accessKeyID: String
 
     init(existing: LoginSet?, onSave: @escaping (LoginSet, String?) -> Void, onCancel: @escaping () -> Void) {
         self.existing = existing
@@ -313,14 +330,23 @@ private struct LoginSetEditorView: View {
         // misdisplay `.agent` as Password.
         _authChoice = State(initialValue: ConnectionViewModel.authChoice(for: existing?.authKind ?? .password))
         _keyPath = State(initialValue: existing?.keyPath ?? "")
+        _kind = State(initialValue: existing?.kind ?? .ssh)
+        _accessKeyID = State(initialValue: existing?.accessKeyID ?? "")
     }
 
     private var isEditing: Bool { existing != nil }
 
-    /// Save disabled until name+username are non-empty, trimmed (spec §2).
+    /// Save disabled until the required fields for the chosen kind are
+    /// non-empty, trimmed (M15). SSH: name + username. S3: name + access
+    /// key ID (the secret is optional on edit — "leave empty to keep").
     private var isSaveDisabled: Bool {
-        name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let nameEmpty = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        switch kind {
+        case .ssh:
+            return nameEmpty || username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .s3:
+            return nameEmpty || accessKeyID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
 
     var body: some View {
@@ -334,75 +360,114 @@ private struct LoginSetEditorView: View {
             EditorRow(label: nameLabel) {
                 TextField(nameLabel, text: $name, prompt: Text(verbatim: ""))
             }
-            let usernameLabel = L10n.string("loginSets.editor.username", "Username")
-            EditorRow(label: usernameLabel) {
-                TextField(usernameLabel, text: $username, prompt: Text(verbatim: ""))
-            }
 
-            let authLabel = L10n.string("connection.field.authMethod", "Authentication")
-            EditorRow(label: authLabel) {
-                Picker(authLabel, selection: $authChoice) {
-                    Text(L10n.string("connection.auth.password", "Password"))
-                        .tag(ConnectionViewModel.AuthChoice.password)
-                    Text(L10n.string("connection.auth.privateKey", "SSH key"))
-                        .tag(ConnectionViewModel.AuthChoice.privateKey)
-                    Text(L10n.string("connection.auth.agent", "Agent"))
-                        .tag(ConnectionViewModel.AuthChoice.agent)
+            let kindLabel = L10n.string("loginSets.editor.kind", "Type")
+            EditorRow(label: kindLabel) {
+                Picker(kindLabel, selection: $kind) {
+                    Text(L10n.string("loginSets.kind.ssh", "SSH")).tag(ConnectionKind.ssh)
+                    Text(L10n.string("loginSets.kind.s3", "S3")).tag(ConnectionKind.s3)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
             }
 
-            if authChoice == .password {
-                let passwordLabel = L10n.string("connection.auth.password", "Password")
-                EditorRow(label: passwordLabel) {
-                    SecureField(
-                        passwordLabel, text: $secret,
-                        prompt: isEditing
-                            ? Text(L10n.string("loginSets.editor.keepSecret", "leave empty to keep"))
-                            : Text(verbatim: ""))
+            if kind == .ssh {
+                let usernameLabel = L10n.string("loginSets.editor.username", "Username")
+                EditorRow(label: usernameLabel) {
+                    TextField(usernameLabel, text: $username, prompt: Text(verbatim: ""))
                 }
-            } else if authChoice == .privateKey {
-                let keyPathLabel = L10n.string("connection.field.keyPath", "Key path")
-                EditorRow(label: keyPathLabel) {
-                    HStack(spacing: 6) {
-                        TextField(
-                            keyPathLabel, text: $keyPath,
-                            prompt: Text(L10n.string(
-                                "connection.field.keyPath.placeholder", "~/.ssh/id_ed25519")))
-                        Button("…") { showKeyImporter = true }
-                            .buttonStyle(.polished)
-                            .help(L10n.string("connection.field.keyPath.browseHelp", "Choose key file"))
+
+                let authLabel = L10n.string("connection.field.authMethod", "Authentication")
+                EditorRow(label: authLabel) {
+                    Picker(authLabel, selection: $authChoice) {
+                        Text(L10n.string("connection.auth.password", "Password"))
+                            .tag(ConnectionViewModel.AuthChoice.password)
+                        Text(L10n.string("connection.auth.privateKey", "SSH key"))
+                            .tag(ConnectionViewModel.AuthChoice.privateKey)
+                        Text(L10n.string("connection.auth.agent", "Agent"))
+                            .tag(ConnectionViewModel.AuthChoice.agent)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+
+                if authChoice == .password {
+                    let passwordLabel = L10n.string("connection.auth.password", "Password")
+                    EditorRow(label: passwordLabel) {
+                        SecureField(
+                            passwordLabel, text: $secret,
+                            prompt: isEditing
+                                ? Text(L10n.string("loginSets.editor.keepSecret", "leave empty to keep"))
+                                : Text(verbatim: ""))
+                    }
+                } else if authChoice == .privateKey {
+                    let keyPathLabel = L10n.string("connection.field.keyPath", "Key path")
+                    EditorRow(label: keyPathLabel) {
+                        HStack(spacing: 6) {
+                            TextField(
+                                keyPathLabel, text: $keyPath,
+                                prompt: Text(L10n.string(
+                                    "connection.field.keyPath.placeholder", "~/.ssh/id_ed25519")))
+                            Button("…") { showKeyImporter = true }
+                                .buttonStyle(.polished)
+                                .help(L10n.string("connection.field.keyPath.browseHelp", "Choose key file"))
+                        }
+                    }
+                    let passphraseLabel = L10n.string("connection.field.passphrase", "Passphrase (optional)")
+                    EditorRow(label: passphraseLabel) {
+                        SecureField(
+                            passphraseLabel, text: $secret,
+                            prompt: isEditing
+                                ? Text(L10n.string("loginSets.editor.keepSecret", "leave empty to keep"))
+                                : Text(verbatim: ""))
                     }
                 }
-                let passphraseLabel = L10n.string("connection.field.passphrase", "Passphrase (optional)")
-                EditorRow(label: passphraseLabel) {
+                // .agent (M10d/T4): only Name + Username apply (spec §5.2) — no
+                // secret/key row, and Save-gating below stays name+username only.
+            } else {
+                let accessKeyLabel = L10n.string("loginSets.editor.accessKeyID", "Access Key ID")
+                EditorRow(label: accessKeyLabel) {
+                    TextField(accessKeyLabel, text: $accessKeyID, prompt: Text(verbatim: ""))
+                }
+                let secretLabel = L10n.string("loginSets.editor.secretAccessKey", "Secret Access Key")
+                EditorRow(label: secretLabel) {
                     SecureField(
-                        passphraseLabel, text: $secret,
+                        secretLabel, text: $secret,
                         prompt: isEditing
                             ? Text(L10n.string("loginSets.editor.keepSecret", "leave empty to keep"))
                             : Text(verbatim: ""))
                 }
             }
-            // .agent (M10d/T4): only Name + Username apply (spec §5.2) — no
-            // secret/key row, and Save-gating below stays name+username only.
 
             HStack {
                 Spacer()
                 Button(L10n.string("common.cancel", "Cancel")) { onCancel() }
                     .buttonStyle(.polished)
                 Button(L10n.string("common.save", "Save")) {
-                    let set = LoginSet(
-                        id: existing?.id ?? UUID(),
-                        name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-                        username: username.trimmingCharacters(in: .whitespacesAndNewlines),
-                        // Three-way mapping (M10d/T4): same Core helper as
-                        // the initializer above — a two-way ternary here
-                        // would silently save an agent-mode set as `.password`.
-                        authKind: ConnectionViewModel.storedAuthKind(for: authChoice),
-                        keyPath: authChoice == .privateKey
-                            ? keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
-                            : nil)
+                    let set: LoginSet
+                    switch kind {
+                    case .ssh:
+                        set = LoginSet(
+                            id: existing?.id ?? UUID(),
+                            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                            username: username.trimmingCharacters(in: .whitespacesAndNewlines),
+                            // Three-way mapping (M10d/T4): same Core helper as
+                            // the initializer above — a two-way ternary here
+                            // would silently save an agent-mode set as `.password`.
+                            authKind: ConnectionViewModel.storedAuthKind(for: authChoice),
+                            keyPath: authChoice == .privateKey
+                                ? keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
+                                : nil)
+                    case .s3:
+                        set = LoginSet(
+                            id: existing?.id ?? UUID(),
+                            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                            username: "",
+                            authKind: .password,
+                            keyPath: nil,
+                            kind: .s3,
+                            accessKeyID: accessKeyID.trimmingCharacters(in: .whitespacesAndNewlines))
+                    }
                     onSave(set, secret.isEmpty ? nil : secret)
                 }
                 .buttonStyle(.polishedProminent)
