@@ -21,6 +21,35 @@ struct S3FileSystemIntegrationTests {
         return try await S3FileSystem.connect(config)
     }
 
+    /// M15: an S3 session bound to an S3 login set resolves its credentials
+    /// from the set and those credentials really authenticate against MinIO.
+    /// Proves the resolve → S3ConnectionConfig → connect → list chain end to
+    /// end, not just in a fake.
+    @Test func setBoundS3SessionResolvesAndLists() async throws {
+        let set = LoginSet(
+            name: "rig", username: "",
+            kind: .s3, accessKeyID: "macscp")
+        let secrets = InMemorySecretStore()
+        try secrets.savePassword("macscpsecretkey", for: set.id)
+        let session = StoredSession(
+            name: "rig-session", host: "unused", username: "unused",
+            loginSetID: set.id, kind: .s3)
+
+        let resolved = try #require(
+            try LoginResolver.resolveS3(session: session, sets: [set], secrets: secrets))
+
+        let config = S3ConnectionConfig(
+            accessKeyID: resolved.accessKeyID,
+            secretAccessKey: resolved.secretAccessKey ?? "",
+            region: "us-east-1", endpoint: "http://127.0.0.1:19000",
+            bucket: "macscp-seed", usePathStyle: true, sessionToken: nil)
+
+        let fs = try await S3FileSystem.connect(config)
+        defer { Task { await fs.disconnect() } }
+        let items = try await fs.list(path: "/")
+        #expect(items.count >= 0)
+    }
+
     @Test func listsSeededBucketRoot() async throws {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
