@@ -180,6 +180,10 @@
 "transfers.interrupted.banner" = "Unterbrochene Übertragungen können fortgesetzt werden.";
 "transfers.interrupted.resume" = "Fortsetzen";
 
+/* Cross-backend resume warning (M16) — shown while a queued/running item's
+   destination backend cannot resume an interrupted upload/download. */
+"transfers.noResume.hint" = "Bei Abbruch startet dieser Upload von vorn.";
+
 /* Editor integration (M5e/T4) */
 "edit.openFailed" = "Datei konnte nicht zum Bearbeiten geöffnet werden: %@";
 

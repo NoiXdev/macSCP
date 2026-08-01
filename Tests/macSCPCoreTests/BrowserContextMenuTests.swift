@@ -51,8 +51,8 @@ struct BrowserContextMenuTests {
     }
 
     @Test func crossSessionTargetsFollowTransferEntry() {
-        let t1 = CrossSessionTarget(id: UUID(), title: "db-prod", remotePath: "/srv")
-        let t2 = CrossSessionTarget(id: UUID(), title: "backup", remotePath: "/volume1")
+        let t1 = CrossSessionTarget(id: UUID(), title: "db-prod", remotePath: "/srv", kind: .ssh)
+        let t2 = CrossSessionTarget(id: UUID(), title: "backup", remotePath: "/volume1", kind: .ssh)
         let entries = BrowserContextMenu.entries(
             for: [file("a.txt")], side: .local, crossSessionTargets: [t1, t2])
         #expect(entries.starts(with: [
@@ -60,7 +60,7 @@ struct BrowserContextMenuTests {
     }
 
     @Test func crossSessionTargetsAbsentWhenSelectionNotTransferable() {
-        let t = CrossSessionTarget(id: UUID(), title: "x", remotePath: "/")
+        let t = CrossSessionTarget(id: UUID(), title: "x", remotePath: "/", kind: .ssh)
         // Symlink-only selection: no transfer entry -> no session targets.
         let entries = BrowserContextMenu.entries(
             for: [symlink("l")], side: .remote, crossSessionTargets: [t])
@@ -75,7 +75,7 @@ struct BrowserContextMenuTests {
     }
 
     @Test func backgroundClickIgnoresTargets() {
-        let t = CrossSessionTarget(id: UUID(), title: "x", remotePath: "/")
+        let t = CrossSessionTarget(id: UUID(), title: "x", remotePath: "/", kind: .ssh)
         #expect(BrowserContextMenu.entries(for: [], side: .local, crossSessionTargets: [t]) == [.newFolder])
     }
 
