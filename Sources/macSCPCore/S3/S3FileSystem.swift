@@ -3,10 +3,10 @@ import Foundation
 /// Thin S3 (and S3-compatible: MinIO, R2, Hetzner, …) implementation of
 /// `RemoteFileSystem` (M12/T5). `connect`/`list`/`stat`/`readStream` are
 /// real, signed calls; `delete` and `createDirectory` are real as of M13/T4,
-/// and `write` (single-PUT and multipart) is real as of M13/T5-T6. The
-/// remaining mutating operations (`rename`, `setPermissions`, `deleteTree`)
-/// still throw `RemoteFSError.protocolError` — those land in later M13
-/// tasks.
+/// `write` (single-PUT and multipart) is real as of M13/T5-T6, and `rename`
+/// (copy+delete, with a re-key loop for directories) is real as of M13/T7.
+/// The remaining mutating operations (`setPermissions`, `deleteTree`) still
+/// throw `RemoteFSError.protocolError` — those land in later M13 tasks.
 ///
 /// `Sendable` by construction rather than `@unchecked`: both stored
 /// properties are immutable and themselves `Sendable` (`S3ConnectionConfig`
@@ -118,12 +118,23 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// A signed `DELETE` on the object key. S3's `DeleteObject` is
     /// idempotent and returns 204 whether or not the key existed, but a
     /// non-2xx (403/404/other) is still mapped through `sendExpectingSuccess`
-    /// like any other request.
+    /// like any other request. Delegates to the raw-key overload below.
     public func delete(path: String) async throws {
+        try await delete(key: Self.objectKey(forPath: path))
+    }
+
+    /// Raw-key counterpart to `delete(path:)`, for callers that already hold
+    /// a full S3 object key rather than a browser path — `rename` (M13/T7,
+    /// re-keying a directory) and `deleteTree` (M13/T8) both enumerate keys
+    /// via `allObjectKeys(underPrefix:)` and need to delete exactly those
+    /// keys, including a directory's own trailing-slash marker key, which
+    /// `objectKey(forPath:)` cannot address (it always strips trailing
+    /// slashes).
+    private func delete(key: String) async throws {
         let request = try buildSignedRequest(
-            method: "DELETE", key: Self.objectKey(forPath: path), query: [],
+            method: "DELETE", key: key, query: [],
             payloadHash: SigV4Signer.emptyPayloadHash)
-        try await sendExpectingSuccess(request, path: path)
+        try await sendExpectingSuccess(request, path: "/" + key)
     }
 
     /// Creates a 0-byte marker object whose key ends in "/" — the universal
@@ -139,8 +150,39 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         try await sendExpectingSuccess(request, path: path)
     }
 
+    /// Renames/moves an object or "directory" prefix. S3 has no native
+    /// rename — this is a server-side copy (`copyObject`, no bytes round-trip
+    /// through this process) followed by a delete of the source.
+    ///
+    /// Destination pre-check: S3's PUT-copy silently overwrites an existing
+    /// key, but the `RemoteFileSystem` contract forbids a silent overwrite on
+    /// rename, so `to` is `stat`-ed first and rejected (without touching
+    /// anything) if it already exists.
+    ///
+    /// A FILE rename is a single copy+delete. A DIRECTORY rename re-keys
+    /// every object under the source prefix (via `allObjectKeys`, which also
+    /// picks up the directory's own trailing-slash marker key) one at a
+    /// time. This is deliberately NOT atomic or transactional: a failure
+    /// partway through leaves some objects already copied to the
+    /// destination and the rest still at the source, with no rollback (v1—
+    /// S3 has no multi-object transaction to lean on here).
     public func rename(from: String, to: String) async throws {
-        throw RemoteFSError.protocolError(reason: "S3 rename is not supported yet (M13)")
+        if (try? await stat(path: to)) != nil {
+            throw RemoteFSError.protocolError(reason: "Destination already exists: \(to)")
+        }
+        let fromKind = try await stat(path: from).kind
+        if fromKind == .directory {
+            let fromPrefix = Self.s3Prefix(forPath: from)
+            let toPrefix = Self.s3Prefix(forPath: to)
+            for key in try await allObjectKeys(underPrefix: fromPrefix) {
+                let destKey = toPrefix + key.dropFirst(fromPrefix.count)
+                try await copyObject(fromKey: key, toKey: String(destKey))
+                try await delete(key: key)
+            }
+        } else {
+            try await copyObject(fromKey: Self.objectKey(forPath: from), toKey: Self.objectKey(forPath: to))
+            try await delete(key: Self.objectKey(forPath: from))
+        }
     }
 
     public func setPermissions(path: String, permissions: UInt32) async throws {
@@ -215,6 +257,126 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         }
     }
 
+    /// A signed `PUT {toKey}` carrying `x-amz-copy-source` — S3's
+    /// server-side copy, so the object body never round-trips through this
+    /// process. The header value is `/{bucket}/{rfc3986(fromKey)}` (a copy
+    /// source is ALWAYS addressed path-style, `/{bucket}/{key}`, regardless
+    /// of whether this connection itself uses path-style or virtual-hosted
+    /// addressing for its other requests) and is encoded with
+    /// `SigV4Signer.canonicalURI` — the exact same RFC-3986 rules the
+    /// signer uses elsewhere — so the signed and wire header values can
+    /// never diverge (same reasoning as M12 review I-1's query/path fix,
+    /// applied here to a header instead).
+    ///
+    /// The header MUST travel via `extraHeaders` so `buildSignedRequest`
+    /// folds it into the SigV4 canonical (and therefore signed) header set —
+    /// an unsigned `x-amz-copy-source` is rejected by S3 with a signature
+    /// mismatch. Empty body; `payloadHash` is the well-known empty-body
+    /// SHA-256, same as `delete`/`createDirectory`.
+    private func copyObject(fromKey: String, toKey: String) async throws {
+        let copySource = "/\(config.bucket)/\(SigV4Signer.canonicalURI(path: fromKey))"
+        let request = try buildSignedRequest(
+            method: "PUT", key: toKey, query: [],
+            extraHeaders: ["x-amz-copy-source": copySource], body: Data(),
+            payloadHash: SigV4Signer.emptyPayloadHash)
+        try await sendExpectingSuccess(request, path: "/" + toKey)
+    }
+
+    /// Pages a signed `ListObjectsV2` call WITHOUT a delimiter, collecting
+    /// every object's FULL raw key. Unlike `list`/`fetchPage` (which always
+    /// list with `delimiter=/` and group anything past the next slash into
+    /// `CommonPrefixes`), this flattens the entire subtree under `prefix`
+    /// into one list of keys — exactly what `rename` needs to re-key a
+    /// directory (and what `deleteTree`, M13/T8, will need to remove one).
+    /// Follows `NextContinuationToken` pagination the same way `list` does.
+    private func allObjectKeys(underPrefix prefix: String) async throws -> [String] {
+        var keys: [String] = []
+        var token: String?
+        repeat {
+            let request = try buildListRequest(prefix: prefix, continuationToken: token, delimiter: false)
+            let data: Data
+            let response: HTTPURLResponse
+            do {
+                (data, response) = try await transport.send(request)
+            } catch let error as RemoteFSError {
+                throw error
+            } catch {
+                throw RemoteFSError.connectionFailed(reason: "S3 request failed: \(error.localizedDescription)")
+            }
+            guard (200..<300).contains(response.statusCode) else {
+                throw Self.mapErrorStatus(response.statusCode, path: "/" + prefix)
+            }
+            let page = try Self.parseObjectKeys(data)
+            keys.append(contentsOf: page.keys)
+            token = page.continuationToken
+        } while token != nil
+        return keys
+    }
+
+    /// Parses a raw (no-delimiter) `ListObjectsV2` response into every
+    /// `<Contents><Key>` value — no leaf-name stripping, no
+    /// `CommonPrefixes`, unlike `S3ListParser` (which is built for the file
+    /// browser's leaf-name/grouping needs and therefore cannot be reused
+    /// where full keys are required). A small, focused counterpart kept
+    /// private here rather than folded into `S3ListParser`, since its job
+    /// (raw keys, no grouping) is genuinely different, not a variant of the
+    /// same thing.
+    private static func parseObjectKeys(_ data: Data) throws -> (keys: [String], continuationToken: String?) {
+        final class Delegate: NSObject, XMLParserDelegate {
+            var keys: [String] = []
+            var continuationToken: String?
+            private var isTruncated = false
+            private var elementStack: [String] = []
+            private var currentText = ""
+
+            func parser(
+                _ parser: XMLParser, didStartElement elementName: String,
+                namespaceURI: String?, qualifiedName qName: String?,
+                attributes attributeDict: [String: String] = [:]
+            ) {
+                elementStack.append(elementName)
+                currentText = ""
+            }
+
+            func parser(_ parser: XMLParser, foundCharacters string: String) {
+                currentText += string
+            }
+
+            func parser(
+                _ parser: XMLParser, didEndElement elementName: String,
+                namespaceURI: String?, qualifiedName qName: String?
+            ) {
+                let trimmed = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+                let parent = elementStack.count >= 2 ? elementStack[elementStack.count - 2] : nil
+                switch elementName {
+                case "Key" where parent == "Contents":
+                    keys.append(trimmed)
+                case "IsTruncated":
+                    isTruncated = trimmed.lowercased() == "true"
+                case "NextContinuationToken":
+                    continuationToken = trimmed
+                default:
+                    break
+                }
+                elementStack.removeLast()
+                currentText = ""
+            }
+
+            func parserDidEndDocument(_ parser: XMLParser) {
+                if !isTruncated { continuationToken = nil }
+            }
+        }
+
+        let delegate = Delegate()
+        let parser = XMLParser(data: data)
+        parser.delegate = delegate
+        guard parser.parse() else {
+            let reason = parser.parserError?.localizedDescription ?? "unknown XML error"
+            throw RemoteFSError.protocolError(reason: "Failed to parse S3 ListObjectsV2 response: \(reason)")
+        }
+        return (delegate.keys, delegate.continuationToken)
+    }
+
     /// Sends a signed request whose only interesting outcome is
     /// success/failure — no response body to parse (`delete`,
     /// `createDirectory`, and later mutating operations). Shares the
@@ -250,8 +412,10 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         }
     }
 
-    private func buildListRequest(prefix: String, continuationToken: String?) throws -> URLRequest {
-        let queryPairs = Self.queryPairs(prefix: prefix, continuationToken: continuationToken)
+    private func buildListRequest(
+        prefix: String, continuationToken: String?, delimiter: Bool = true
+    ) throws -> URLRequest {
+        let queryPairs = Self.queryPairs(prefix: prefix, continuationToken: continuationToken, delimiter: delimiter)
         let url = try Self.requestURL(config: config, queryPairs: queryPairs)
         guard let host = url.host else {
             throw RemoteFSError.connectionFailed(reason: "S3 endpoint has no host: \(config.endpoint)")
@@ -370,17 +534,26 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         return String(normalized.dropFirst())
     }
 
-    /// The `list-type`/`prefix`/`delimiter`[/`continuation-token`] pairs for
-    /// one ListObjectsV2 call, as raw (unencoded) `(name, value)` tuples.
-    /// Built once and shared by both the signer (`authorizationHeader`,
-    /// via `buildListRequest`) and the wire URL (`requestURL`) so the two
-    /// can never see different query contents.
-    private static func queryPairs(prefix: String, continuationToken: String?) -> [(name: String, value: String)] {
+    /// The `list-type`/`prefix`[/`delimiter`][/`continuation-token`] pairs
+    /// for one ListObjectsV2 call, as raw (unencoded) `(name, value)`
+    /// tuples. Built once and shared by both the signer
+    /// (`authorizationHeader`, via `buildListRequest`) and the wire URL
+    /// (`requestURL`) so the two can never see different query contents.
+    ///
+    /// `delimiter` defaults to `true` (the file-browser shape: group
+    /// anything past the next `/` into `CommonPrefixes`); `allObjectKeys`
+    /// passes `false` to get every key under `prefix` flattened, with no
+    /// grouping, regardless of depth.
+    private static func queryPairs(
+        prefix: String, continuationToken: String?, delimiter: Bool = true
+    ) -> [(name: String, value: String)] {
         var pairs: [(name: String, value: String)] = [
             (name: "list-type", value: "2"),
             (name: "prefix", value: prefix),
-            (name: "delimiter", value: "/"),
         ]
+        if delimiter {
+            pairs.append((name: "delimiter", value: "/"))
+        }
         if let continuationToken {
             pairs.append((name: "continuation-token", value: continuationToken))
         }
