@@ -765,6 +765,44 @@ struct SessionListViewModelTests {
         #expect(importedVM.password(for: imported) == "shh-secret")
     }
 
+    /// A set-bound `.s3` session (M12/M13) stores its secret under the
+    /// login SET's id, not the session's own id -- exactly like an SSH
+    /// session bound to a set. The export builder must prefer the
+    /// resolved set's secret for `s3SecretAccessKey`, the same way it
+    /// already does for the plaintext SSH `password` field; reading only
+    /// the session's own (here empty) keychain slot would silently drop
+    /// the credential and miscount it as missing.
+    @Test func exportResolvesS3LoginSet() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let store = SessionStore(directory: dir)
+        let vm = SessionListViewModel(
+            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+
+        let set = LoginSet(name: "S3 Deploy", username: "unused", kind: .s3, accessKeyID: "AKIASET")
+        vm.saveLoginSet(set, secret: "set-secret")
+
+        let s3Config = StoredS3Config(
+            accessKeyID: "AKIAOWN", region: "eu-central-1",
+            endpoint: "https://s3.eu-central-1.amazonaws.com", bucket: "my-bucket",
+            usePathStyle: true)
+        let session = StoredSession(
+            name: "s3-bound", host: "unused", username: "unused",
+            loginSetID: set.id, kind: .s3, s3: s3Config)
+        try store.upsert(session)
+
+        let (payload, missingPasswordCount) = vm.exportPayload(
+            for: .single(session), includeGroups: false, includePasswords: true)
+        let exported = payload.sessions.first!
+        #expect(exported.s3SecretAccessKey == "set-secret")
+        #expect(missingPasswordCount == 0)
+        // The access-key-ID still comes from the session's own config --
+        // resolving a login set's access key ID is deferred to M13.
+        #expect(exported.s3AccessKeyID == "AKIAOWN")
+    }
+
     // MARK: - Agent auth (M10d/T3)
 
     @Test func saveSwitchingTargetToAgentDeletesSessionSecret() throws {
