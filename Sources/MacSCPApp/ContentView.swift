@@ -1777,6 +1777,33 @@ struct ContentView: View {
     /// empty field here does NOT mean "no secret": it means the session's
     /// existing keychain secret must MOVE onto the new set rather than be
     /// dropped, or the session becomes unreachable after the rewire (B1).
+    /// M17 review fix: a managed key's passphrase lives in the Keychain
+    /// under its own `key.id` slot (`ManagedKeyPassphrase.resolve`'s doc
+    /// comment) -- a session's or login set's own secret slot must never
+    /// duplicate it, or a later stored-session open could read the
+    /// (stale-prone) session/set slot instead of the authoritative key.id
+    /// one. True only when `form` is in the SSH private-key case AND its
+    /// current `keyPath` resolves to a `ManagedKeyStore` entry that already
+    /// has a passphrase (`hasPassphrase`); password auth, S3, and
+    /// unmanaged/external key paths are unaffected.
+    private func isManagedKeyWithStoredPassphrase(_ form: ConnectionViewModel) -> Bool {
+        guard form.kind == .ssh, form.authChoice == .privateKey else { return false }
+        let keyPath = form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let store = ManagedKeyStore(directory: SessionStore.defaultDirectory)
+        let key = try? store.key(forPath: keyPath)
+        return key?.hasPassphrase ?? false
+    }
+
+    /// The value to persist under a session's OWN secret slot (`session.
+    /// id`). Empty for a managed key with a stored passphrase (see
+    /// `isManagedKeyWithStoredPassphrase` -- the transient connect-time fill
+    /// in `ConnectionFormView`'s Connect button and `connect(in:stored:)`
+    /// still resolves it from `key.id`, so nothing is lost); `form.password`
+    /// unchanged otherwise.
+    private func passwordToPersist(for form: ConnectionViewModel) -> String {
+        isManagedKeyWithStoredPassphrase(form) ? "" : form.password
+    }
+
     private func maybeCreateNewLoginSet(
         from form: ConnectionViewModel, editedSession: StoredSession? = nil
     ) -> UUID? {
@@ -1812,9 +1839,11 @@ struct ContentView: View {
         // refuses to write one for `.agent`, but skip the (then-discarded)
         // keychain lookup for the edited session's OWN secret too, rather
         // than reading a value that will never be used.
-        let carried: String? = authKind == .agent ? nil : (form.password.isEmpty
-            ? (editedSession.flatMap { sessionListViewModel.password(for: $0) })
-            : form.password)
+        let carried: String? = authKind == .agent ? nil
+            : isManagedKeyWithStoredPassphrase(form) ? ""
+            : (form.password.isEmpty
+                ? (editedSession.flatMap { sessionListViewModel.password(for: $0) })
+                : form.password)
         sessionListViewModel.saveLoginSet(newSet, secret: carried)
         return newSet.id
     }
@@ -1932,7 +1961,7 @@ struct ContentView: View {
                     host: form.host.trimmingCharacters(in: .whitespacesAndNewlines),
                     port: Int(form.port.trimmingCharacters(in: .whitespaces)) ?? 22,
                     username: form.username.trimmingCharacters(in: .whitespacesAndNewlines),
-                    password: form.password,
+                    password: passwordToPersist(for: form),
                     // Three-way mapping (M10d/T4, found alongside the hand-off
                     // list's sites): the old two-way `.password ? : .privateKey`
                     // ternary would silently save an agent-mode connection as a

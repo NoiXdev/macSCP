@@ -64,10 +64,14 @@ public enum SSHKeyGenerator {
 
         let pubURL = dir.appendingPathComponent(fileURL.lastPathComponent + ".pub")
         guard let pubContents = try? String(contentsOf: pubURL, encoding: .utf8) else {
+            try? FileManager.default.removeItem(at: fileURL)
+            try? FileManager.default.removeItem(at: pubURL)
             throw SSHKeyGenError.publicKeyUnreadable
         }
         let publicKeyOpenSSH = pubContents.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let fingerprint = fingerprint(fromOpenSSHPublicKey: publicKeyOpenSSH) else {
+            try? FileManager.default.removeItem(at: fileURL)
+            try? FileManager.default.removeItem(at: pubURL)
             throw SSHKeyGenError.fingerprintUnavailable
         }
 
