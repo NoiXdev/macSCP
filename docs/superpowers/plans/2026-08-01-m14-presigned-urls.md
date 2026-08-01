@@ -414,3 +414,42 @@ git commit -m "feat: share-link context action, sheet and settings"
 **Type consistency:** `presignedQuery(method:host:path:expiresInSeconds:date:)` (T1) consumed by T2; `PresignedMethod`/`PresignedURLProvider`/`presignedURL(method:key:expiresIn:)` (T2) consumed by T5; `BrowserMenuEntry.backendFileAction(FileActionContribution)` + `entries(...fileActions:)` (T3) consumed by T5; `PresignedExpiry`/`presignedDefaultExpiry` (T4) consumed by T5; `FileActionContribution(id:titleKey:titleDefault:)` used consistently (id `"s3.presignedURL"`, key `browser.action.presignedURL`). ✅
 
 **Placeholder scan:** no TBD/TODO; each code step carries real code. The test-helper-name notes in T2/T4 ("match the suite's actual helper names", "mirror an existing setting's test") are calibration against real existing code the implementer reads — not logic placeholders; the production code is fully specified. ✅
+
+---
+
+## Abschluss M14 (2026-08-01)
+
+**Alle 5 Tasks umgesetzt, jeweils Task-Review + Fix-Runden sauber.** Task 3
+wurde vom Koordinator committet (Implementer kehrte ohne Commit von einem
+Hintergrund-Testlauf zurück; Arbeit war korrekt). Task 5 (App) wurde nach einem
+API-Stall des ersten Implementers von einem Continuation-Agenten fertiggestellt
+(das korrekte Threading/Sheet-Gerüst blieb erhalten).
+
+**Verifikation:**
+- Voller gated Lauf `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → 992/71 grün;
+  die presign-GET/PUT-MinIO-Tests liefen und bestanden (plain URLSession nur mit
+  der signierten Query — der einzige Test, der einen echten SigV4-Bug fängt),
+  dazu S3-MinIO/SSH-Integration/Keychain. `swift build` sauber bis auf EINE
+  pre-existing `TransferEngine.swift:141`-Warnung (non-Sendable-Capture, von M14
+  NICHT berührt — Alt-Schuld für späteren Cleanup).
+- **Whole-Milestone Opus-Review: „Ready to merge: Yes"** — (a)–(g) alle
+  bestanden: presigned SigV4 gegen AWS-Vektor + gated GET/PUT live; die
+  presigned URL nur in die Zwischenablage, nie geloggt/persistiert, Secret nie
+  in der URL; Abstraktions-Reinheit (nur `as? PresignedURLProvider` +
+  Descriptor-`fileActions`, kein `if kind ==`); Ablauf geklemmt [1,604800];
+  PUT-Überschreib-Warnung; L10n-Parität ×4; ⌘W-Refactor verhaltensgleich.
+
+**Geliefert:** SigV4-Query-Signing (GET+PUT), `PresignedURLProvider`-Seam +
+`S3FileSystem.presignedURL`, erstmalige Verdrahtung des M12-Contribution-Seams
+ins Kontextmenü (S3 steuert „Share Link…" bei, generischer Layer rendert es),
+`PresignedURLSheet` (Methode/Ablauf/PUT-Key/Kopieren), Settings-Default-Ablauf,
+EN/DE/FR/PL.
+
+**Offen (bewusst, kein Blocker):** Maintainer-Sichtprüfung des Live-Share-Link-
+Flows (Rechtsklick S3-Datei → „Share Link…" → GET/PUT/Kopieren gegen echtes
+MinIO) steht aus. Ledger-Minors: SettingsView-Ablauf-Picker nutzt nicht
+`allCases` (künftige-Wartung); `supportsPresignedURL`-Flag ist rein
+dokumentarisch (vorbestehend M12); FR/PL KI-generiert (Native-Review vor Release).
+
+**Grenzen:** Cross-Backend S3↔SSH = M15; „Öffnen mit" S3-CLI = späterer
+Meilenstein. **KEIN Release.**
