@@ -25,6 +25,16 @@ actor FakeS3Transport: S3HTTPTransport {
     }
 }
 
+/// Always throws a raw (non-`RemoteFSError`) error from `send`, so tests can
+/// exercise `S3FileSystem`'s network-failure → `.connectionFailed` mapping
+/// (`fetchPage`'s `catch` clause), which `FakeS3Transport` cannot reach since
+/// it only ever returns canned responses or a `RemoteFSError` of its own.
+struct ThrowingS3Transport: S3HTTPTransport {
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        throw URLError(.cannotConnectToHost)
+    }
+}
+
 @Suite("S3FileSystem")
 struct S3FileSystemTests {
     private let config = S3ConnectionConfig(
@@ -114,8 +124,34 @@ struct S3FileSystemTests {
     @Test func notFoundResponseThrowsNotFound() async throws {
         let (fs, _) = try await connect(responses: [(Data(), httpResponse(status: 404))])
 
-        await #expect(throws: RemoteFSError.self) {
+        do {
             _ = try await fs.list(path: "/missing")
+            Issue.record("expected throw")
+        } catch let error as RemoteFSError {
+            guard case .notFound = error else {
+                Issue.record("expected .notFound, got \(error)")
+                return
+            }
+        } catch {
+            Issue.record("unexpected error type: \(error)")
+        }
+    }
+
+    /// `connect` performs a `ListObjectsV2` probe request itself, so a
+    /// transport that throws a raw (non-`RemoteFSError`) error surfaces the
+    /// `.connectionFailed` mapping there — there is no successfully-connected
+    /// `S3FileSystem` to call `list` on in this scenario.
+    @Test func networkFailureMapsToConnectionFailed() async throws {
+        do {
+            _ = try await S3FileSystem.connect(config, transport: ThrowingS3Transport())
+            Issue.record("expected connect to throw")
+        } catch let error as RemoteFSError {
+            guard case .connectionFailed = error else {
+                Issue.record("expected .connectionFailed, got \(error)")
+                return
+            }
+        } catch {
+            Issue.record("unexpected error type: \(error)")
         }
     }
 
@@ -169,8 +205,16 @@ struct S3FileSystemTests {
 
     @Test func statThrowsNotFoundWhenTheEntryIsMissing() async throws {
         let (fs, _) = try await connect(responses: [(Data(rootListingXML.utf8), httpResponse(status: 200))])
-        await #expect(throws: RemoteFSError.self) {
+        do {
             _ = try await fs.stat(path: "/does-not-exist.txt")
+            Issue.record("expected throw")
+        } catch let error as RemoteFSError {
+            guard case .notFound = error else {
+                Issue.record("expected .notFound, got \(error)")
+                return
+            }
+        } catch {
+            Issue.record("unexpected error type: \(error)")
         }
     }
 
@@ -186,9 +230,25 @@ struct S3FileSystemTests {
 
     // MARK: - M13 stubs: every mutating method throws protocolError
 
+    /// Runs `operation` and asserts it throws specifically
+    /// `RemoteFSError.protocolError`, not just some `RemoteFSError`.
+    private func expectProtocolError(_ operation: () async throws -> Void) async {
+        do {
+            try await operation()
+            Issue.record("expected throw")
+        } catch let error as RemoteFSError {
+            guard case .protocolError = error else {
+                Issue.record("expected .protocolError, got \(error)")
+                return
+            }
+        } catch {
+            Issue.record("unexpected error type: \(error)")
+        }
+    }
+
     @Test func readStreamThrowsProtocolError() async throws {
         let (fs, _) = try await connect(responses: [])
-        await #expect(throws: RemoteFSError.self) {
+        await expectProtocolError {
             _ = try await fs.readStream(path: "/a.txt", fromOffset: 0)
         }
     }
@@ -196,42 +256,42 @@ struct S3FileSystemTests {
     @Test func writeThrowsProtocolError() async throws {
         let (fs, _) = try await connect(responses: [])
         let stream = AsyncThrowingStream<Data, Error> { $0.finish() }
-        await #expect(throws: RemoteFSError.self) {
+        await expectProtocolError {
             try await fs.write(path: "/a.txt", mode: .overwrite, contents: stream)
         }
     }
 
     @Test func deleteThrowsProtocolError() async throws {
         let (fs, _) = try await connect(responses: [])
-        await #expect(throws: RemoteFSError.self) {
+        await expectProtocolError {
             try await fs.delete(path: "/a.txt")
         }
     }
 
     @Test func createDirectoryThrowsProtocolError() async throws {
         let (fs, _) = try await connect(responses: [])
-        await #expect(throws: RemoteFSError.self) {
+        await expectProtocolError {
             try await fs.createDirectory(at: "/new")
         }
     }
 
     @Test func renameThrowsProtocolError() async throws {
         let (fs, _) = try await connect(responses: [])
-        await #expect(throws: RemoteFSError.self) {
+        await expectProtocolError {
             try await fs.rename(from: "/a.txt", to: "/b.txt")
         }
     }
 
     @Test func setPermissionsThrowsProtocolError() async throws {
         let (fs, _) = try await connect(responses: [])
-        await #expect(throws: RemoteFSError.self) {
+        await expectProtocolError {
             try await fs.setPermissions(path: "/a.txt", permissions: 0o644)
         }
     }
 
     @Test func deleteTreeThrowsProtocolError() async throws {
         let (fs, _) = try await connect(responses: [])
-        await #expect(throws: RemoteFSError.self) {
+        await expectProtocolError {
             try await fs.deleteTree(at: "/sub")
         }
     }
