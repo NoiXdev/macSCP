@@ -156,6 +156,25 @@ public final class ConnectionViewModel {
     /// is selected yet (M11a/T3).
     public var jumpSessionID: UUID?
 
+    /// The protocol this form builds a connection for (M12/T7a). Default
+    /// `.ssh` — a brand-new form behaves exactly as before this feature
+    /// existed. The App layer's type switcher (a separate task) flips this;
+    /// `connect()`/`validateForEditSave()`/`beginEditing()` all branch on it.
+    public var kind: ConnectionKind = .ssh
+    /// S3 form fields (M12/T7a). Field identities match
+    /// `BackendDescriptor.descriptor(for: .s3).fieldSchema` ids
+    /// (endpoint/region/bucket/accessKeyID/secretAccessKey/usePathStyle) —
+    /// the App form binds to these directly.
+    public var s3Endpoint: String = ""
+    public var s3Region: String = ""
+    public var s3Bucket: String = ""
+    public var s3AccessKeyID: String = ""
+    /// Never persisted — same "leave unchanged in edit mode" rule as the
+    /// SSH `password`/jump `jumpPassword` above; the App layer resolves the
+    /// actual secret from the Keychain at connect time.
+    public var s3SecretAccessKey: String = ""
+    public var s3UsePathStyle: Bool = false
+
     /// The jump's existing MANUAL keychain slot when editing a session that
     /// already had one (M10c/T3), remembered by `beginEditing` so
     /// `validateForEditSave()` can reuse the SAME `secretID` in
@@ -215,9 +234,24 @@ public final class ConnectionViewModel {
     /// Returns the connected file system or nil; errors land in `state`.
     /// Re-entrancy safe: calls made while `.connecting` are dropped, so a
     /// double-click doesn't open a second (orphaned) connection.
+    ///
+    /// Branches on `kind` (M12/T7a): `.ssh` runs the ORIGINAL body
+    /// unchanged (`connectSSH()`, byte-identical to this method's
+    /// pre-M12 implementation); `.s3` runs the new, separate `connectS3()`
+    /// path. Splitting into two private methods -- rather than threading
+    /// an `if kind == .s3` branch through the existing body -- is what
+    /// makes "SSH connect path byte-identical" a structural guarantee
+    /// instead of a hopeful claim.
     public func connect() async -> (any RemoteFileSystem)? {
         guard state != .connecting else { return nil }
         defer { hostKeyPrompt = nil }
+        switch kind {
+        case .ssh: return await connectSSH()
+        case .s3: return await connectS3()
+        }
+    }
+
+    private func connectSSH() async -> (any RemoteFileSystem)? {
         guard let portNumber = Int(port.trimmingCharacters(in: .whitespaces)) else {
             state = .failed(message: CoreL10n.string("core.connect.portNumeric"), field: .port)
             return nil
@@ -279,6 +313,73 @@ public final class ConnectionViewModel {
                 jumpAuthChoice: jumpAuthChoice)
             return nil
         }
+    }
+
+    /// The S3 connect path (M12/T7a). No jump, no host-key TOFU -- S3 has
+    /// none of that machinery, so this is a much shorter mirror of
+    /// `connectSSH()` above: validate the required fields, build the
+    /// runtime `S3ConnectionConfig`, dispatch through the SAME `connector`
+    /// seam with `.s3(config)`, and reuse `Self.failedState(for:)` for any
+    /// thrown error -- identical failure plumbing to the SSH path, just fed
+    /// a different config type.
+    private func connectS3() async -> (any RemoteFileSystem)? {
+        if shouldSaveSession,
+           saveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            state = .failed(
+                message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName)
+            return nil
+        }
+        if let failure = validateS3Fields(requireSecret: true) {
+            state = failure
+            return nil
+        }
+        let config = S3ConnectionConfig(
+            accessKeyID: s3AccessKeyID.trimmingCharacters(in: .whitespacesAndNewlines),
+            secretAccessKey: s3SecretAccessKey.trimmingCharacters(in: .whitespacesAndNewlines),
+            region: s3Region.trimmingCharacters(in: .whitespacesAndNewlines),
+            endpoint: s3Endpoint.trimmingCharacters(in: .whitespacesAndNewlines),
+            bucket: s3Bucket.trimmingCharacters(in: .whitespacesAndNewlines),
+            usePathStyle: s3UsePathStyle,
+            sessionToken: nil)
+        state = .connecting
+        do {
+            // S3 has no host-key prompt (no TOFU) -- the decider is passed
+            // through unconditionally by the `Connector` typealias (every
+            // backend gets one), but S3 simply never consults it, so a
+            // decider that always answers `false` is never actually asked.
+            let fs = try await connector(.s3(config)) { _ in false }
+            state = .idle
+            return fs
+        } catch {
+            state = Self.failedState(for: error)
+            return nil
+        }
+    }
+
+    /// Validates the S3 form fields shared by `connectS3()` and
+    /// `validateForEditSaveS3(sessionID:)` -- the required, secret-free
+    /// fields (endpoint/region/bucket/accessKeyID) are always checked;
+    /// `requireSecret` gates `s3SecretAccessKey` the same way
+    /// `validateJump(requireSecret:)` gates the jump's own password above:
+    /// `connect()` needs an actual secret in hand, but edit-mode save
+    /// deliberately leaves it empty to mean "unchanged" (see
+    /// `beginEditing`). Returns the `.failed` state to publish, or `nil`
+    /// when every required field is non-empty after trimming.
+    private func validateS3Fields(requireSecret: Bool) -> State? {
+        let endpoint = s3Endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        let region = s3Region.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bucket = s3Bucket.trimmingCharacters(in: .whitespacesAndNewlines)
+        let accessKeyID = s3AccessKeyID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let secretAccessKey = s3SecretAccessKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !endpoint.isEmpty, !region.isEmpty, !bucket.isEmpty, !accessKeyID.isEmpty else {
+            return .failed(message: CoreL10n.string("core.connect.s3FieldRequired"), field: nil)
+        }
+        if requireSecret {
+            guard !secretAccessKey.isEmpty else {
+                return .failed(message: CoreL10n.string("core.connect.s3FieldRequired"), field: nil)
+            }
+        }
+        return nil
     }
 
     /// Decider side: publishes the prompt and suspends on a continuation
@@ -393,6 +494,7 @@ public final class ConnectionViewModel {
     /// empty; an empty password at save time means "leave unchanged" (see
     /// `validateForEditSave`/`ContentView.onSaveEdited`).
     public func beginEditing(_ stored: StoredSession) {
+        kind = stored.kind
         host = stored.host
         port = String(stored.port)
         username = stored.username
@@ -401,6 +503,28 @@ public final class ConnectionViewModel {
         saveName = stored.name
         selectedGroupID = stored.groupID
         password = ""
+        // S3 fields (M12/T7a): populated only for an `.s3` session, guarding
+        // a nil `stored.s3` (legacy/inconsistent data) the same defensive
+        // way as the `?? ""` fallbacks above. A non-S3 session resets these
+        // to blank -- the same sticky-toggle lesson `clearJumpFields()`
+        // documents above: a previous S3 edit's fields must not survive
+        // into this (possibly SSH) session's form. The secret is NEVER
+        // loaded from the keychain -- same "empty means unchanged" rule as
+        // `password` above.
+        if stored.kind == .s3, let s3 = stored.s3 {
+            s3Endpoint = s3.endpoint
+            s3Region = s3.region
+            s3Bucket = s3.bucket
+            s3AccessKeyID = s3.accessKeyID
+            s3UsePathStyle = s3.usePathStyle
+        } else {
+            s3Endpoint = ""
+            s3Region = ""
+            s3Bucket = ""
+            s3AccessKeyID = ""
+            s3UsePathStyle = false
+        }
+        s3SecretAccessKey = ""
         // A referenced login set (M10b/T3) puts the form straight into Set
         // mode with that set preselected; a manual session goes to Manual
         // exactly as before — see the doc comment on `loginMode`.
@@ -472,6 +596,10 @@ public final class ConnectionViewModel {
     /// `selectedLoginSetID` above): `jumpEnabled` is itself a MODE switch,
     /// so a stale "on" from a previous edit must not survive into whatever
     /// the caller (teardown/connectStored/import) fills in next.
+    ///
+    /// `kind`/S3 fields reset here too (M12/T7a, same lesson): `kind` is
+    /// itself a MODE switch, so a stale `.s3` from a previous edit must not
+    /// survive into whatever the caller fills in next.
     public func exitEditMode() {
         mode = .new
         selectedGroupID = nil
@@ -480,6 +608,13 @@ public final class ConnectionViewModel {
         saveAsNewLoginSet = false
         newLoginSetName = ""
         clearJumpFields()
+        kind = .ssh
+        s3Endpoint = ""
+        s3Region = ""
+        s3Bucket = ""
+        s3AccessKeyID = ""
+        s3SecretAccessKey = ""
+        s3UsePathStyle = false
     }
 
     /// Resets every jump-related field to its blank "no jump" state: the
@@ -516,8 +651,20 @@ public final class ConnectionViewModel {
     /// `StoredSession` carrying the id from `mode`. On failure sets `state`
     /// to `.failed` with the same `core.connect.*` messages/fields as
     /// `connect()` and returns nil.
+    ///
+    /// Branches on `kind` (M12/T7a): `.ssh` runs the ORIGINAL body
+    /// unchanged (`validateForEditSaveSSH(sessionID:)`); `.s3` runs the
+    /// new, separate `validateForEditSaveS3(sessionID:)` -- same
+    /// byte-identical-SSH-path rationale as the `connect()` split above.
     public func validateForEditSave() -> StoredSession? {
         guard case .edit(let sessionID) = mode else { return nil }
+        switch kind {
+        case .ssh: return validateForEditSaveSSH(sessionID: sessionID)
+        case .s3: return validateForEditSaveS3(sessionID: sessionID)
+        }
+    }
+
+    private func validateForEditSaveSSH(sessionID: UUID) -> StoredSession? {
         let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedHost.isEmpty else {
             state = .failed(message: CoreL10n.string("core.connect.emptyHost"), field: .host)
@@ -570,7 +717,44 @@ public final class ConnectionViewModel {
             // username/authChoice/keyPath from that set before this
             // validator runs, so the checks above still see valid data.
             loginSetID: loginMode == .set ? selectedLoginSetID : nil,
-            jump: buildJumpSpec(existingSecretID: existingJumpSecretID))
+            jump: buildJumpSpec(existingSecretID: existingJumpSecretID),
+            kind: .ssh,
+            s3: nil)
+    }
+
+    /// The S3 edit-save path (M12/T7a): mirrors `validateForEditSaveSSH`
+    /// above, but for the S3 fields -- saveName is still required, the
+    /// secret is NOT (edit mode leaves it empty to mean "unchanged", same
+    /// rule as `password`/`jumpPassword`), and the built `StoredSession`
+    /// carries a secret-free `StoredS3Config` instead of host/port/auth.
+    /// `host`/`username` are set to the established "unused" placeholder
+    /// (see `SessionListViewModel`'s own S3 sessions) -- `StoredSession`
+    /// requires non-optional values there, but an S3 session has no SSH
+    /// host/username of its own.
+    private func validateForEditSaveS3(sessionID: UUID) -> StoredSession? {
+        let trimmedName = saveName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            state = .failed(message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName)
+            return nil
+        }
+        if let failure = validateS3Fields(requireSecret: false) {
+            state = failure
+            return nil
+        }
+        state = .idle
+        return StoredSession(
+            id: sessionID,
+            name: trimmedName,
+            host: "unused",
+            username: "unused",
+            groupID: selectedGroupID,
+            kind: .s3,
+            s3: StoredS3Config(
+                accessKeyID: s3AccessKeyID.trimmingCharacters(in: .whitespacesAndNewlines),
+                region: s3Region.trimmingCharacters(in: .whitespacesAndNewlines),
+                endpoint: s3Endpoint.trimmingCharacters(in: .whitespacesAndNewlines),
+                bucket: s3Bucket.trimmingCharacters(in: .whitespacesAndNewlines),
+                usePathStyle: s3UsePathStyle))
     }
 
     /// Validates the optional jump block (M10c/T3, spec §3) when

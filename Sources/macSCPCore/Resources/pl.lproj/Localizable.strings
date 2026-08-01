@@ -33,6 +33,9 @@
 "core.connect.jumpPasswordEmpty" = "Hasło hosta pośredniczącego nie może być puste.";
 "core.connect.jumpKeyPathEmpty" = "Wprowadź ścieżkę do klucza SSH hosta pośredniczącego.";
 
+/* ConnectionViewModel S3 form validation (M12/T7a) */
+"core.connect.s3FieldRequired" = "Uzupełnij wszystkie wymagane pola S3.";
+
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "Host nie może być pusty.";
 "core.connect.emptyUsername" = "Nazwa użytkownika nie może być pusta.";
