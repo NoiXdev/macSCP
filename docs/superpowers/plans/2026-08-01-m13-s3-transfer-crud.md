@@ -626,3 +626,46 @@ Expected: all green, the `S3FileSystem against Docker MinIO` suite RUNS the new 
 **Type consistency:** `supportsAppendResume` (T1) consumed nowhere else by name mismatch; `buildSignedRequest`/`keyRequestURL`/`objectKey(forPath:)` defined T3, reused T4/T7/T8; `S3RequestBuilder` seam defined T5, extended for multipart T6; `allObjectKeys(underPrefix:)` defined T7, reused T8; `sendExpectingSuccess`/`mapStatus` DRY across T4/T5/T8. `hexSHA256Public` (widened signer helper) introduced T5, reused T8 — implementer widens `SigV4Signer`'s existing private `hexSHA256` to internal in T5. ✅
 
 **Placeholder scan:** no TBD/TODO; every code step carries real code or a precise, bounded instruction (e.g. the exact S3 XML shapes, the exact headers to sign vs. not sign). The few "adjust the canned sequence to match how `stat` lists the parent" notes are test-fixture calibration against real, already-existing code the implementer can read — not logic placeholders. ✅
+
+---
+
+## Abschluss M13 (2026-08-01)
+
+**Alle 8 Tasks umgesetzt, jeweils Task-Review + Fix-Runden sauber.** Kern-Lektion
+des Meilensteins: **Fake-Transport-Unit-Tests validieren die SigV4-Signatur
+NICHT** — ein Signatur-Bug (Task 4: `URL.path` verschluckt den Trailing-Slash
+des Ordner-Markers → SignatureDoesNotMatch) wurde NUR durch einen echten
+MinIO-Test gefangen. Konsequenz: jede signier-berührende Task
+(createDirectory, Upload, rename, deleteTree) wurde ab da **zur Task-Zeit gated
+gegen echtes MinIO** verifiziert, nicht erst im Abschluss.
+
+**Verifikation:**
+- Voller gated Lauf `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → 982/71 grün;
+  die MinIO-Suite lief mit allen 6 M13-Gated-Tests (createDirectory,
+  Upload/Download-Roundtrip klein + Multipart >8 MiB, Rename Datei + Ordner,
+  deleteTree) plus SSH-Integration, CitadelShell, KeychainSecretStore — zero
+  echte Skips. `swift build` sauber (0 Warnungen).
+- **Whole-Milestone Opus-Review: „Ready to merge: Yes"** — (a)–(g) alle
+  bestanden (Resume-Sperre byte-gleich für SSH/local; Multipart-Abort auf jedem
+  Fehlerpfad; canonicalKeyPath-Signatur korrekt + für non-empty Keys
+  unverändert; kein Silent-Overwrite/Datenverlust bei rename/copy/deleteTree;
+  Secret nur im Signer; Cancellation pro Teil/Batch; keine neue Dependency;
+  keine `if kind ==`-Verunreinigung).
+
+**Implementierte S3-Operationen:** `readStream` (Range-GET, gestreamt),
+`write` (Hybrid single-PUT ≤8 MiB / Multipart >8 MiB mit Abort), `delete`,
+`createDirectory` (0-Byte-Marker), `rename` (Datei copy+delete mit
+Precheck; Ordner re-key), `deleteTree` (DeleteObjects-Batches). `setPermissions`
+bleibt bewusst `protocolError` (kein POSIX). Resume-Sperre: `supportsAppendResume`
+(S3 false) + Engine-Guard verhindert Append-Korruption gegen S3-Ziele.
+
+**Offen (bewusst, kein Blocker):** Maintainer-Sichtprüfung (echtes S3-Browsen +
+Transfer im UI) steht aus (offline). Kleinere Ledger-Minors: Multipart-Unit-Test
+prüft nur Teil 1 (live-Multipart-Test kompensiert), kein dedizierter
+S3MultipartXML-Unit-Test, `parseObjectKeys` dupliziert S3ListParser (~40 Zeilen),
+`<Error`-Partial-Failure ist Substring-Check, kein `<Quiet>` in DeleteObjects,
+`sendStreaming` ohne explizites `onCancel` (relevant erst bei echtem
+Download-Cancel).
+
+**Grenzen:** Cross-Backend S3↔SSH-Transfer + Presigned-URLs = **M14**.
+**KEIN Release.**
