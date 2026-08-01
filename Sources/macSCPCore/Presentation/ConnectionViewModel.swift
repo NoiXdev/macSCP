@@ -70,8 +70,18 @@ public final class ConnectionViewModel {
         case edit(sessionID: UUID)
     }
 
+    /// The decider consulted for an unknown host key during an SSH connect
+    /// (TOFU) — extracted from the formerly-inline closure type so
+    /// `BackendConnector` and other callers can name it (M12/T3).
+    public typealias HostKeyDecider = @Sendable (HostKeyCandidate) async -> Bool
+
+    /// Generalized over `ConnectionKind` (M12/T3): the connector now takes a
+    /// typed `ConnectionConfig` instead of an SSH-only config, so the same
+    /// seam can route to S3 (or future backends) alongside SSH. The decider
+    /// is still passed through unconditionally — SSH uses it for TOFU; a
+    /// non-SSH backend simply ignores it.
     public typealias Connector = @Sendable (
-        SSHConnectionConfig, @escaping @Sendable (HostKeyCandidate) async -> Bool
+        ConnectionConfig, @escaping HostKeyDecider
     ) async throws -> any RemoteFileSystem
 
     /// State while waiting for the user's decision on an unknown host key
@@ -256,7 +266,7 @@ public final class ConnectionViewModel {
                 jump: buildJumpConfig()
             )
             state = .connecting
-            let fs = try await connector(config) { [weak self] candidate in
+            let fs = try await connector(.ssh(config)) { [weak self] candidate in
                 await self?.presentHostKeyPrompt(for: candidate) ?? false
             }
             state = .idle

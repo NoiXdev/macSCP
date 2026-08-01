@@ -1164,12 +1164,8 @@ struct ContentView: View {
         settingsStore: SettingsStore, limiter: BandwidthLimiter
     ) -> SessionTab {
         SessionTab(
-            connectionViewModel: ConnectionViewModel(connector: { config, onUnknownHostKey in
-                try await CitadelFileSystem.connect(
-                    config: config,
-                    knownHosts: KnownHostsStore(directory: SessionStore.defaultDirectory),
-                    onUnknownHostKey: onUnknownHostKey
-                )
+            connectionViewModel: ConnectionViewModel(connector: { config, decider in
+                try await BackendConnector.connect(config, decider: decider)
             }),
             limiter: limiter,
             maxConcurrent: settingsStore.maxConcurrentTransfers
