@@ -831,6 +831,13 @@ struct RemoteFileTableView: NSViewRepresentable {
             case .delete:
                 let item = actionItem(title: L10n.string("menu.delete", "Delete…"), entry: entry, selection: selection)
                 return item
+            case .backendFileAction(let action):
+                // Generic render of a protocol-contributed action (M14): the
+                // table view never inspects the backend, just the title.
+                // Handler wiring (e.g. the S3 presigned-URL sheet) lands in a
+                // later M14 task; onMenuAction currently no-ops for this case.
+                return actionItem(
+                    title: L10n.string(action.titleKey, action.titleDefault), entry: entry, selection: selection)
             }
         }
 

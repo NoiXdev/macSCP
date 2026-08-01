@@ -30,6 +30,7 @@ public enum BrowserMenuEntry: Equatable, Sendable {
     case newFolder             // always (also on background click)
     case copyPath              // any non-empty selection
     case delete                // any non-empty selection
+    case backendFileAction(FileActionContribution)   // protocol-contributed file action (M14)
 }
 
 public enum BrowserContextMenu {
@@ -39,7 +40,8 @@ public enum BrowserContextMenu {
     /// the "to other pane" item when `transferToOtherPane` is present.
     public static func entries(
         for selection: [RemoteFileItem], side: BrowserPaneSide,
-        crossSessionTargets: [CrossSessionTarget] = []
+        crossSessionTargets: [CrossSessionTarget] = [],
+        fileActions: [FileActionContribution] = []
     ) -> [BrowserMenuEntry] {
         guard !selection.isEmpty else { return [.newFolder] }
         var entries: [BrowserMenuEntry] = []
@@ -55,6 +57,10 @@ public enum BrowserContextMenu {
             entries.append(.rename)
             if only.kind != .symlink {
                 entries.append(.infoAndPermissions)
+            }
+            if only.kind == .file {
+                // M14: backend-contributed file actions (e.g. S3 presigned URL).
+                entries.append(contentsOf: fileActions.map { .backendFileAction($0) })
             }
         }
         entries.append(.newFolder)
