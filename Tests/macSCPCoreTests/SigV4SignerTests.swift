@@ -33,4 +33,24 @@ struct SigV4SignerTests {
         #expect(SigV4Signer.emptyPayloadHash ==
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
     }
+
+    @Test func presignedQueryMatchesAWSVector() {
+        // AWS docs "Example: GET Object (query parameters)". Secret is the docs'
+        // query-params example secret (note the '/' — distinct from get-vanilla).
+        let signer = SigV4Signer(
+            accessKeyID: "AKIAIOSFODNN7EXAMPLE",
+            secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            region: "us-east-1", service: "s3")
+        let date = Date(timeIntervalSince1970: 1_369_353_600) // 2013-05-24T00:00:00Z
+        let params = signer.presignedQuery(
+            method: "GET", host: "examplebucket.s3.amazonaws.com",
+            path: "/test.txt", expiresInSeconds: 86400, date: date)
+        let dict = Dictionary(uniqueKeysWithValues: params.map { ($0.name, $0.value) })
+        #expect(dict["X-Amz-Algorithm"] == "AWS4-HMAC-SHA256")
+        #expect(dict["X-Amz-Credential"] == "AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request")
+        #expect(dict["X-Amz-Date"] == "20130524T000000Z")
+        #expect(dict["X-Amz-Expires"] == "86400")
+        #expect(dict["X-Amz-SignedHeaders"] == "host")
+        #expect(dict["X-Amz-Signature"] == "aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404")
+    }
 }
