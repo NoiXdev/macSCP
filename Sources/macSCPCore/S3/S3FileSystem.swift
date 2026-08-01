@@ -11,7 +11,7 @@ import Foundation
 /// properties are immutable and themselves `Sendable` (`S3ConnectionConfig`
 /// is a `Sendable` struct; `any S3HTTPTransport` requires `Sendable`), so
 /// there is no shared mutable state to race on.
-public final class S3FileSystem: RemoteFileSystem {
+public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     private let config: S3ConnectionConfig
     private let transport: any S3HTTPTransport
 
@@ -106,8 +106,12 @@ public final class S3FileSystem: RemoteFileSystem {
         }
     }
 
+    /// Delegates to `S3Uploader` (M13/T5). `mode` is ignored: Task 1's
+    /// resume guard (`supportsAppendResume == false`) guarantees
+    /// `TransferEngine` only ever hands an S3 destination `.overwrite` — a
+    /// resumed `.append` write from a non-zero offset never reaches here.
     public func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {
-        throw RemoteFSError.protocolError(reason: "S3 write is not supported yet (M13)")
+        try await S3Uploader().upload(key: Self.objectKey(forPath: path), contents: contents, using: self)
     }
 
     /// A signed `DELETE` on the object key. S3's `DeleteObject` is
@@ -154,6 +158,32 @@ public final class S3FileSystem: RemoteFileSystem {
 
     /// S3 has no append; a re-PUT replaces the whole object (M13).
     public var supportsAppendResume: Bool { false }
+
+    // MARK: - S3RequestBuilder conformance (thin wrappers for S3Uploader, M13/T5)
+
+    /// `S3RequestBuilder.signedRequest`: a thin pass-through to
+    /// `buildSignedRequest` so `S3Uploader` can sign a PUT without knowing
+    /// about `S3ConnectionConfig` or `SigV4Signer` directly.
+    public func signedRequest(
+        method: String, key: String, query: [(name: String, value: String)],
+        extraHeaders: [String: String], body: Data?, payloadHash: String
+    ) throws -> URLRequest {
+        try buildSignedRequest(
+            method: method, key: key, query: query, extraHeaders: extraHeaders,
+            body: body, payloadHash: payloadHash)
+    }
+
+    /// `S3RequestBuilder.perform`: a thin pass-through to `transport.send`,
+    /// with the same transport-error mapping every other request path uses.
+    public func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        do {
+            return try await transport.send(request)
+        } catch let error as RemoteFSError {
+            throw error
+        } catch {
+            throw RemoteFSError.connectionFailed(reason: "S3 request failed: \(error.localizedDescription)")
+        }
+    }
 
     // MARK: - Request building + signed ListObjectsV2
 

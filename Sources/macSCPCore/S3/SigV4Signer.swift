@@ -127,7 +127,11 @@ public struct SigV4Signer: Sendable {
         hmac(key: key, data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    private static func hexSHA256(_ data: Data) -> String {
+    /// Widened to `internal` so `S3Uploader` can compute the REAL content
+    /// SHA-256 for a PUT body's `x-amz-content-sha256` (M13/T5) using the
+    /// exact same digest implementation the signer itself uses to hash the
+    /// canonical request — one SHA-256 implementation, not two.
+    static func hexSHA256(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
