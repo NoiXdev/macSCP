@@ -51,5 +51,7 @@ public struct BackendDescriptor: Sendable, Equatable {
                 ConnectionPreset(id: "custom", nameKey: "connection.s3.preset.custom", nameDefault: "Custom", values: [:]),
             ]),
         badgeLabelKey: "connection.badge.s3", badgeLabelDefault: "S3",
-        fileActions: [], connectionActions: [])
+        fileActions: [
+            FileActionContribution(id: "s3.presignedURL", titleKey: "browser.action.presignedURL", titleDefault: "Share Link…"),
+        ], connectionActions: [])
 }

@@ -78,4 +78,24 @@ struct BrowserContextMenuTests {
         let t = CrossSessionTarget(id: UUID(), title: "x", remotePath: "/")
         #expect(BrowserContextMenu.entries(for: [], side: .local, crossSessionTargets: [t]) == [.newFolder])
     }
+
+    @Test func singleFileSelectionIncludesBackendFileActions() {
+        let action = FileActionContribution(id: "s3.presignedURL", titleKey: "k", titleDefault: "Share Link…")
+        let entries = BrowserContextMenu.entries(for: [file("a")], side: .remote, fileActions: [action])
+        #expect(entries.contains(.backendFileAction(action)))
+    }
+
+    @Test func folderAndMultiSelectOmitBackendFileActions() {
+        let dir = RemoteFileItem(name: "d", path: "/d", kind: .directory, size: nil)
+        let action = FileActionContribution(id: "s3.presignedURL", titleKey: "k", titleDefault: "Share Link…")
+        #expect(!BrowserContextMenu.entries(for: [dir], side: .remote, fileActions: [action])
+            .contains(.backendFileAction(action)))
+        #expect(!BrowserContextMenu.entries(for: [file("a"), file("b")], side: .remote, fileActions: [action])
+            .contains(.backendFileAction(action)))
+    }
+
+    @Test func defaultFileActionsEmptyKeepsTodayShape() {
+        let entries = BrowserContextMenu.entries(for: [file("a")], side: .remote)
+        #expect(!entries.contains { if case .backendFileAction = $0 { return true }; return false })
+    }
 }

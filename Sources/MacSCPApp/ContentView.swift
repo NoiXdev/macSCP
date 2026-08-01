@@ -968,6 +968,8 @@ struct ContentView: View {
                                         break   // never emitted for the local pane (menu model)
                                     case .rename, .infoAndPermissions, .newFolder, .delete:
                                         break   // handled inside BrowserPane, never forwarded
+                                    case .backendFileAction:
+                                        break   // no fileActions contributed yet; wired in M14 Task 5
                                     }
                                 },
                                 crossSessionTargets: { crossSessionTargets(for: tab) },
@@ -1010,6 +1012,8 @@ struct ContentView: View {
                                         copyPaths(of: selection)
                                     case .rename, .infoAndPermissions, .newFolder, .delete:
                                         break   // handled inside BrowserPane, never forwarded
+                                    case .backendFileAction:
+                                        break   // no fileActions contributed yet; wired in M14 Task 5
                                     }
                                 },
                                 crossSessionTargets: { crossSessionTargets(for: tab) },
