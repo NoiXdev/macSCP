@@ -167,8 +167,11 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// destination and the rest still at the source, with no rollback (v1—
     /// S3 has no multi-object transaction to lean on here).
     public func rename(from: String, to: String) async throws {
-        if (try? await stat(path: to)) != nil {
+        do {
+            _ = try await stat(path: to)
             throw RemoteFSError.protocolError(reason: "Destination already exists: \(to)")
+        } catch RemoteFSError.notFound {
+            // Confirmed absent — safe to proceed.
         }
         let fromKind = try await stat(path: from).kind
         if fromKind == .directory {
@@ -273,13 +276,41 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// an unsigned `x-amz-copy-source` is rejected by S3 with a signature
     /// mismatch. Empty body; `payloadHash` is the well-known empty-body
     /// SHA-256, same as `delete`/`createDirectory`.
+    ///
+    /// Unlike `delete`/`createDirectory` (which go through
+    /// `sendExpectingSuccess` and never look at the response body),
+    /// `copyObject` inspects the body even on a 2xx: S3's server-side
+    /// CopyObject is documented to sometimes answer `200 OK` with an
+    /// `<Error>…</Error>` XML body when the copy fails partway through.
+    /// `rename` unconditionally deletes the SOURCE right after a successful
+    /// copy, so treating that "successful" 200 as real would delete the
+    /// only remaining copy of the data. A real `CopyObjectResult` body never
+    /// contains an `<Error` element, so a plain substring check is enough to
+    /// catch this without a full XML parse.
     private func copyObject(fromKey: String, toKey: String) async throws {
         let copySource = "/\(config.bucket)/\(SigV4Signer.canonicalURI(path: fromKey))"
         let request = try buildSignedRequest(
             method: "PUT", key: toKey, query: [],
             extraHeaders: ["x-amz-copy-source": copySource], body: Data(),
             payloadHash: SigV4Signer.emptyPayloadHash)
-        try await sendExpectingSuccess(request, path: "/" + toKey)
+
+        let data: Data
+        let response: HTTPURLResponse
+        do {
+            (data, response) = try await transport.send(request)
+        } catch let error as RemoteFSError {
+            throw error
+        } catch {
+            throw RemoteFSError.connectionFailed(reason: "S3 request failed: \(error.localizedDescription)")
+        }
+        guard (200..<300).contains(response.statusCode) else {
+            throw Self.mapErrorStatus(response.statusCode, path: "/" + toKey)
+        }
+        let body = String(data: data, encoding: .utf8) ?? ""
+        if body.contains("<Error") || !body.contains("<CopyObjectResult") {
+            throw RemoteFSError.protocolError(
+                reason: "S3 copy failed: \(body.isEmpty ? "empty response body" : body)")
+        }
     }
 
     /// Pages a signed `ListObjectsV2` call WITHOUT a delimiter, collecting
