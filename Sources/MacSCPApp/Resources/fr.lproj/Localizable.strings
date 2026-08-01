@@ -303,6 +303,8 @@
 
 /* Transfert entre sessions (M8b/T4) */
 "menu.transfer.toSession" = "Vers « %@ »";
+/* Cible de transfert entre sessions avec badge de backend (M16/T4) */
+"menu.transfer.toSession.kind" = "Vers « %@ » · %@";
 
 /* Avertissement de fermeture d'onglet : transferts entrants entre sessions (M8b/T4) */
 "tabs.close.incomingTransfers" = "D'autres onglets transfèrent des données vers cette session ; la fermeture annule ces transferts.";

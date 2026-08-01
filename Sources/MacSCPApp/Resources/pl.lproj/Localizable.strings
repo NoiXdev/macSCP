@@ -302,6 +302,8 @@
 
 /* Transfer między sesjami (M8b/T4) */
 "menu.transfer.toSession" = "Do „%@”";
+/* Cel transferu między sesjami z odznaką backendu (M16/T4) */
+"menu.transfer.toSession.kind" = "Do „%@” · %@";
 
 /* Ostrzeżenie przy zamykaniu karty: przychodzące transfery między sesjami (M8b/T4) */
 "tabs.close.incomingTransfers" = "Inne karty przesyłają dane do tej sesji; zamknięcie anuluje te transfery.";

@@ -300,6 +300,8 @@
 
 /* Sitzungsübergreifende Übertragung (M8b/T4) */
 "menu.transfer.toSession" = "Zu „%@“";
+/* Sitzungsübergreifendes Übertragungsziel mit Backend-Kürzel (M16/T4) */
+"menu.transfer.toSession.kind" = "Zu „%@“ · %@";
 
 /* Schließen-Warnung: eingehende sitzungsübergreifende Übertragungen (M8b/T4) */
 "tabs.close.incomingTransfers" = "Andere Tabs übertragen gerade zu dieser Session; Schließen bricht diese Übertragungen ab.";

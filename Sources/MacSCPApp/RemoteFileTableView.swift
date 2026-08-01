@@ -791,8 +791,9 @@ struct RemoteFileTableView: NSViewRepresentable {
         /// Builds the single "Transfer" submenu: the existing "to the other
         /// pane" item first, then — only when `targets` is non-empty — a
         /// separator followed by one item per cross-session target, titled
-        /// via `menu.transfer.toSession` with the target's remote path as
-        /// the item's subtitle (M8b/T4 requirement 2).
+        /// via `menu.transfer.toSession.kind` (target title + backend badge)
+        /// with the target's remote path as the item's subtitle (M8b/T4
+        /// requirement 2; backend badge added in M16 T4).
         private func makeTransferItem(
             selection: [RemoteFileItem], targets: [CrossSessionTarget]
         ) -> NSMenuItem {
@@ -807,7 +808,8 @@ struct RemoteFileTableView: NSViewRepresentable {
                 for target in targets {
                     let item = actionItem(
                         title: String(
-                            format: L10n.string("menu.transfer.toSession", "To “%@”"), target.title),
+                            format: L10n.string("menu.transfer.toSession.kind", "To “%@” · %@"),
+                            target.title, backendBadgeLabel(target.kind)),
                         entry: .transferToSession(target), selection: selection)
                     item.subtitle = target.remotePath
                     submenu.addItem(item)
@@ -815,6 +817,16 @@ struct RemoteFileTableView: NSViewRepresentable {
             }
             parent.submenu = submenu
             return parent
+        }
+
+        /// Backend badge label for a cross-session target (M16 T4) — reads
+        /// the canonical M12 `BackendDescriptor` source, same as
+        /// `SessionSidebar.swift`/`TabStripView.swift`/`TransferQueueBar.swift`,
+        /// so the label always tracks the shared badge L10n keys instead of
+        /// hardcoding a switch.
+        private func backendBadgeLabel(_ kind: ConnectionKind) -> String {
+            let descriptor = BackendDescriptor.descriptor(for: kind)
+            return L10n.string(descriptor.badgeLabelKey, descriptor.badgeLabelDefault)
         }
 
         private func makeItem(_ entry: BrowserMenuEntry, selection: [RemoteFileItem]) -> NSMenuItem {

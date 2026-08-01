@@ -299,6 +299,8 @@
 
 /* Cross-session transfer (M8b/T4) */
 "menu.transfer.toSession" = "To “%@”";
+/* Cross-session transfer target with backend badge (M16/T4) */
+"menu.transfer.toSession.kind" = "To “%@” · %@";
 
 /* Tab close warning: incoming cross-session transfers (M8b/T4) */
 "tabs.close.incomingTransfers" = "Other tabs are streaming to this session; closing cancels those transfers.";
