@@ -34,3 +34,34 @@ services:
     volumes:
       - ./seed2:/data/seed:ro
       - ./sshd_config.d:/config/sshd/sshd_config.d:ro
+
+  # MinIO (M12/T5): thin S3-compatible object store backing the gated S3
+  # integration test. Pinned image tags (never `latest`) so the rig is
+  # reproducible. Independent of sshd/sshd2 above — left byte-identical.
+  minio:
+    image: minio/minio:RELEASE.2024-07-16T23-46-41Z
+    container_name: macscp-test-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=macscp
+      - MINIO_ROOT_PASSWORD=macscpsecretkey
+
+  # One-shot seeding: waits for MinIO to accept requests, creates the seed
+  # bucket, and puts a couple of objects (incl. one under a "sub/" prefix)
+  # so the gated S3FileSystemIntegrationTests can assert both a file and a
+  # directory (CommonPrefixes) appear in a root listing.
+  minio-init:
+    image: minio/mc:RELEASE.2024-07-16T18-13-46Z
+    container_name: macscp-test-minio-init
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 macscp macscpsecretkey; do sleep 1; done &&
+      mc mb --ignore-existing local/macscp-seed &&
+      echo 'hello a' | mc pipe local/macscp-seed/a.txt &&
+      echo 'hello b' | mc pipe local/macscp-seed/sub/b.txt
+      "

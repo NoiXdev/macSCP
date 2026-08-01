@@ -18,10 +18,3 @@ public enum BackendConnector {
         }
     }
 }
-
-// TEMPORARY (M12 Task 3): real S3FileSystem lands in Task 5 — DELETE this then.
-enum S3FileSystem {
-    static func connect(_ config: S3ConnectionConfig) async throws -> any RemoteFileSystem {
-        throw RemoteFSError.protocolError(reason: "S3 backend not implemented yet")
-    }
-}
