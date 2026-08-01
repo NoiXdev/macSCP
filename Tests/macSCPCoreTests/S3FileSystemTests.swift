@@ -359,16 +359,10 @@ struct S3FileSystemTests {
         }
     }
 
-    @Test func writeThrowsProtocolError() async throws {
-        let (fs, _) = try await connect(responses: [])
-        let stream = AsyncThrowingStream<Data, Error> { $0.finish() }
-        await expectProtocolError {
-            try await fs.write(path: "/a.txt", mode: .overwrite, contents: stream)
-        }
-    }
-
-    // `delete`/`createDirectory` are real as of M13/T4 — see the
-    // "M13/T4: delete + createDirectory" section below for their coverage.
+    // `write` is real as of M13/T5 (delegates to `S3Uploader`), and
+    // `delete`/`createDirectory` are real as of M13/T4 — see the "M13/T5:
+    // write delegates to S3Uploader" and "M13/T4: delete + createDirectory"
+    // sections below for their coverage.
 
     @Test func renameThrowsProtocolError() async throws {
         let (fs, _) = try await connect(responses: [])
@@ -486,5 +480,37 @@ struct S3FileSystemTests {
         // marker's trailing "/" as it goes out on the wire.
         #expect(req.url!.path(percentEncoded: true).hasSuffix("/newfolder/"))
         #expect((req.httpBody?.count ?? 0) == 0)
+    }
+
+    // MARK: - M13/T5: write delegates to S3Uploader
+
+    /// `write`'s own logic (buffering, threshold, signing) is `S3Uploader`'s
+    /// job and is covered exhaustively in `S3UploaderTests.swift` against a
+    /// fake `S3RequestBuilder`. This only proves the WIRING: `write` reaches
+    /// the real transport as a single signed PUT of the exact key/body, `mode`
+    /// is accepted but ignored (Task 1's resume guard means an S3 destination
+    /// only ever gets `.overwrite`).
+    @Test func writeSendsASingleSignedPutOfTheStreamedContent() async throws {
+        let (fs, transport) = try await connect(responses: [(Data(), httpResponse(status: 200))])
+        let body = Data("hello s3".utf8)
+        let stream = AsyncThrowingStream<Data, Error> { continuation in
+            continuation.yield(body)
+            continuation.finish()
+        }
+
+        try await fs.write(path: "/dir/file.txt", mode: .overwrite, contents: stream)
+
+        let req = await transport.requests.last!
+        #expect(req.httpMethod == "PUT")
+        #expect(req.url!.path(percentEncoded: true).hasSuffix("/dir/file.txt"))
+        #expect(req.httpBody == body)
+    }
+
+    @Test func writeForbiddenResponseThrowsAuthenticationFailed() async throws {
+        let (fs, _) = try await connect(responses: [(Data(), httpResponse(status: 403))])
+        let stream = AsyncThrowingStream<Data, Error> { $0.finish() }
+        await #expect(throws: RemoteFSError.authenticationFailed) {
+            try await fs.write(path: "/a.txt", mode: .overwrite, contents: stream)
+        }
     }
 }

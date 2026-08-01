@@ -89,6 +89,41 @@ struct S3FileSystemIntegrationTests {
         if let caught { throw caught }
     }
 
+    /// M13/T5: a small object round-trip against a REAL MinIO server. Unit
+    /// tests (`S3UploaderTests.swift`) exercise `S3Uploader`'s buffering and
+    /// error-mapping logic with a fake builder that signs and sends the
+    /// request from the SAME data, so they can never catch a SigV4 signing
+    /// bug — only a live server that independently re-derives the signature
+    /// from the wire bytes can. This is that check: `write` a few KiB to a
+    /// unique key, `readStream` it back, and assert the bytes are identical.
+    @Test func writeThenReadStreamRoundTripsBitIdenticalContent() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let key = "m13-uploader-roundtrip-\(UUID().uuidString).bin"
+        let body = Data((0..<4096).map { UInt8($0 & 0xFF) })
+
+        var caught: Error?
+        do {
+            let uploadStream = AsyncThrowingStream<Data, Error> { continuation in
+                continuation.yield(body)
+                continuation.finish()
+            }
+            try await fs.write(path: "/\(key)", mode: .overwrite, contents: uploadStream)
+
+            var received = Data()
+            for try await chunk in try await fs.readStream(path: "/\(key)", fromOffset: 0) {
+                received.append(chunk)
+            }
+            #expect(received == body)
+        } catch {
+            caught = error
+        }
+        // Best-effort cleanup so re-runs stay reproducible, mirroring the
+        // pattern above for the folder-marker probe.
+        try? await fs.delete(path: "/\(key)")
+        if let caught { throw caught }
+    }
+
     private static func deleteMarkerObjectIgnoringErrors(key: String) async {
         let bucket = "macscp-seed"
         let rawPath = "/\(bucket)/\(key)"
