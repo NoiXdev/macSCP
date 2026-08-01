@@ -254,6 +254,25 @@ struct ContentView: View {
     }
 
     @State private var exportSheetItem: ExportSheetItem?
+
+    // MARK: - Share link (M14/T5)
+
+    /// Wraps the single selected remote file's S3 key plus the presigned
+    /// provider captured at presentation time — the same "capture now,
+    /// not later" discipline `detail`'s `bridge`/`tab` locals already use for
+    /// the conflict sheet, so the sheet keeps talking to the file system it
+    /// was opened against even if the active tab changes underneath it.
+    private struct PresignedSheetItem: Identifiable {
+        let id = UUID()
+        /// The object key (no leading slash) `PresignedURLSheet` pre-fills
+        /// for both GET (read-only) and PUT (editable) — see
+        /// `RemotePath.normalizedAbsolute` at the call site for how a
+        /// `RemoteFileItem.path` becomes this.
+        let itemKey: String
+        let provider: any PresignedURLProvider
+    }
+
+    @State private var presignedSheetItem: PresignedSheetItem?
     /// Set by `performExport` right before `showExportFileExporter` — the
     /// `fileExporter` completion handler reads it to decide whether the
     /// "exported without password" alert is needed (spec M9a §3.3).
@@ -555,24 +574,15 @@ struct ContentView: View {
                 guard window?.isKeyWindow == true else { return }
                 selectTab(atIndex: index)
             }
-            tabCommands.closeActiveTab = {
-                guard window?.isKeyWindow == true else {
-                    // Not our window: route Close to whichever window IS key
-                    // (typically Settings) via the system path instead of
-                    // silently doing nothing.
-                    NSApp.keyWindow?.performClose(nil)
-                    return
-                }
-                let tab = tabsModel.activeTab
-                if tabsModel.isLastTab && !tab.isConnected {
-                    // The only tab left, already a pristine form: Cmd-W
-                    // closes the WINDOW via the system path instead of the
-                    // tab-close flow (there is nothing left to revert to).
-                    window?.performClose(nil)
-                } else {
-                    requestClose(tab)
-                }
-            }
+            // Extracted into its own method (M14/T5 build fix — see
+            // `wireMenuBarBridge()`'s doc comment above for the exact same
+            // failure mode): inlined here, this closure's `if`/`else` body
+            // was the straw that finally tipped the surrounding `.task`
+            // closure over the type checker's "unable to type-check this
+            // expression in reasonable time" limit. A plain function
+            // reference assignment is far cheaper for the checker than a
+            // multi-statement closure literal in the same inference scope.
+            tabCommands.closeActiveTab = handleCloseActiveTabCommand
             // Sessions menu bridge (M10a/T2) — same key-window guard as the
             // tab commands above. Export/import route through the EXISTING
             // M9a state (`exportSheetItem`/`showImportFileImporter`), not a
@@ -665,6 +675,14 @@ struct ContentView: View {
                 scope: item.scope,
                 onExport: { options in performExport(scope: item.scope, options: options) }
             )
+        }
+        // Share-link sheet (M14/T5): opened from the remote pane's
+        // "Share Link…" context-menu entry (an S3-only `backendFileAction`,
+        // see `detail` below) — never offered for SSH, since its descriptor's
+        // `fileActions` is empty.
+        .sheet(item: $presignedSheetItem) { item in
+            PresignedURLSheet(
+                itemKey: item.itemKey, provider: item.provider, settingsStore: settingsStore)
         }
         // Audit log sheet (M9b/T3): opened from the sidebar context menu,
         // available whether or not the session is currently connected — it
@@ -969,7 +987,7 @@ struct ContentView: View {
                                     case .rename, .infoAndPermissions, .newFolder, .delete:
                                         break   // handled inside BrowserPane, never forwarded
                                     case .backendFileAction:
-                                        break   // no fileActions contributed yet; wired in M14 Task 5
+                                        break   // never contributed on the LOCAL pane (fileActions is nil here)
                                     }
                                 },
                                 crossSessionTargets: { crossSessionTargets(for: tab) },
@@ -1012,11 +1030,35 @@ struct ContentView: View {
                                         copyPaths(of: selection)
                                     case .rename, .infoAndPermissions, .newFolder, .delete:
                                         break   // handled inside BrowserPane, never forwarded
-                                    case .backendFileAction:
-                                        break   // no fileActions contributed yet; wired in M14 Task 5
+                                    case .backendFileAction(let action):
+                                        // Currently the only backend-contributed action is
+                                        // S3's presigned URL (M14/T5) — keyed off `action.id`
+                                        // so a future second contribution doesn't need a new
+                                        // `BrowserMenuEntry` case, just another `if` here.
+                                        // `selection.count == 1` mirrors the menu-model gate
+                                        // (`BrowserContextMenu.entries`) that only ever offers
+                                        // `backendFileAction` for a single selected file.
+                                        if action.id == "s3.presignedURL",
+                                            selection.count == 1, let file = selection.first,
+                                            let provider = session.remoteFS as? PresignedURLProvider
+                                        {
+                                            // Same "no leading slash" convention
+                                            // `S3FileSystem.objectKey(forPath:)` uses
+                                            // internally: normalize first (collapses any
+                                            // repeated slashes), then drop the single
+                                            // leading one.
+                                            let normalizedPath = RemotePath.normalizedAbsolute(file.path)
+                                            let key = normalizedPath == "/" ? "" : String(normalizedPath.dropFirst())
+                                            presignedSheetItem = PresignedSheetItem(
+                                                itemKey: key, provider: provider)
+                                        }
                                     }
                                 },
                                 crossSessionTargets: { crossSessionTargets(for: tab) },
+                                fileActions: {
+                                    BackendDescriptor.descriptor(for: tab.connectionViewModel.kind)
+                                        .fileActions
+                                },
                                 visibleColumns: settingsStore.visibleColumns
                             )
                             .frame(minWidth: 280)
@@ -1379,6 +1421,29 @@ struct ContentView: View {
         menuBarModel.showMainWindow = {
             NSApplication.shared.activate(ignoringOtherApps: true)
             NSApp.windows.first(where: { $0.canBecomeMain })?.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    /// `tabCommands.closeActiveTab` handler (⌘W) — extracted out of the
+    /// `.task` closure above (M14/T5 build fix) purely to keep that closure
+    /// small enough for the type checker; behavior is unchanged from the
+    /// inline version.
+    private func handleCloseActiveTabCommand() {
+        guard window?.isKeyWindow == true else {
+            // Not our window: route Close to whichever window IS key
+            // (typically Settings) via the system path instead of silently
+            // doing nothing.
+            NSApp.keyWindow?.performClose(nil)
+            return
+        }
+        let tab = tabsModel.activeTab
+        if tabsModel.isLastTab && !tab.isConnected {
+            // The only tab left, already a pristine form: Cmd-W closes the
+            // WINDOW via the system path instead of the tab-close flow
+            // (there is nothing left to revert to).
+            window?.performClose(nil)
+        } else {
+            requestClose(tab)
         }
     }
 

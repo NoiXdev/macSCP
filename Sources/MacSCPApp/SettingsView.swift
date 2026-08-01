@@ -351,6 +351,26 @@ private struct TransfersSettingsTab: View {
                 Text(L10n.string("settings.bandwidth.footer", "0 = unlimited"))
                     .foregroundStyle(.secondary)
             }
+
+            // S3 share links (M14/T5): the default expiry `PresignedURLSheet`
+            // pre-fills when generating a presigned GET/PUT link — the sheet
+            // itself lets a link override this per generation.
+            Section {
+                Picker(
+                    L10n.string("settings.transfers.presignedExpiry", "Default share-link expiry"),
+                    selection: Binding(
+                        get: { store.presignedDefaultExpiry },
+                        set: { store.presignedDefaultExpiry = $0 }
+                    )
+                ) {
+                    Text(L10n.string("presigned.expiry.15min", "15 Minutes")).tag(PresignedExpiry.fifteenMinutes)
+                    Text(L10n.string("presigned.expiry.1h", "1 Hour")).tag(PresignedExpiry.oneHour)
+                    Text(L10n.string("presigned.expiry.1d", "1 Day")).tag(PresignedExpiry.oneDay)
+                    Text(L10n.string("presigned.expiry.7d", "7 Days")).tag(PresignedExpiry.sevenDays)
+                }
+            } header: {
+                Text(L10n.string("settings.transfers.presignedExpiry.header", "S3 Share Links"))
+            }
         }
         .formStyle(.grouped)
         .padding()
