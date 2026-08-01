@@ -71,8 +71,12 @@ struct ConnectionViewModelTests {
 
     @Test func trimsPaddedHostAndUsernameForConnection() async {
         let vm = makeVM(connector: { config, _ in
-            #expect(config.host == "example.com")
-            #expect(config.username == "tim")
+            guard case .ssh(let ssh) = config else {
+                Issue.record("expected .ssh config")
+                throw RemoteFSError.protocolError(reason: "expected .ssh config")
+            }
+            #expect(ssh.host == "example.com")
+            #expect(ssh.username == "tim")
             return MockRemoteFileSystem(tree: ["/": []])
         })
         vm.host = "  example.com "
@@ -115,7 +119,11 @@ struct ConnectionViewModelTests {
 
     @Test func keyAuthAllowsEmptyPassphraseAndBuildsPrivateKeyAuth() async {
         let vm = makeVM(connector: { config, _ in
-            #expect(config.auth == .privateKey(keyPath: "~/.ssh/id_ed25519", passphrase: nil))
+            guard case .ssh(let ssh) = config else {
+                Issue.record("expected .ssh config")
+                throw RemoteFSError.protocolError(reason: "expected .ssh config")
+            }
+            #expect(ssh.auth == .privateKey(keyPath: "~/.ssh/id_ed25519", passphrase: nil))
             return MockRemoteFileSystem(tree: ["/": []])
         })
         vm.authChoice = .privateKey
@@ -637,7 +645,11 @@ struct ConnectionViewModelTests {
 
     @Test func agentAuthSkipsPasswordAndKeyPathValidationAndBuildsAgentAuth() async {
         let vm = makeVM(connector: { config, _ in
-            #expect(config.auth == .agent)
+            guard case .ssh(let ssh) = config else {
+                Issue.record("expected .ssh config")
+                throw RemoteFSError.protocolError(reason: "expected .ssh config")
+            }
+            #expect(ssh.auth == .agent)
             return MockRemoteFileSystem(tree: ["/": []])
         })
         vm.authChoice = .agent
@@ -669,7 +681,11 @@ struct ConnectionViewModelTests {
 
     @Test func jumpAgentModeRequiresNeitherSecretNorKeyPath() async {
         let vm = makeVM(connector: { config, _ in
-            #expect(config.jump?.auth == .agent)
+            guard case .ssh(let ssh) = config else {
+                Issue.record("expected .ssh config")
+                throw RemoteFSError.protocolError(reason: "expected .ssh config")
+            }
+            #expect(ssh.jump?.auth == .agent)
             return MockRemoteFileSystem(tree: ["/": []])
         })
         vm.jumpEnabled = true
