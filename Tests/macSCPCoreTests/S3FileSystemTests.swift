@@ -359,17 +359,11 @@ struct S3FileSystemTests {
         }
     }
 
-    // `write` is real as of M13/T5 (delegates to `S3Uploader`), and
-    // `delete`/`createDirectory` are real as of M13/T4 — see the "M13/T5:
-    // write delegates to S3Uploader" and "M13/T4: delete + createDirectory"
-    // sections below for their coverage.
-
-    @Test func renameThrowsProtocolError() async throws {
-        let (fs, _) = try await connect(responses: [])
-        await expectProtocolError {
-            try await fs.rename(from: "/a.txt", to: "/b.txt")
-        }
-    }
+    // `write` is real as of M13/T5 (delegates to `S3Uploader`),
+    // `delete`/`createDirectory` are real as of M13/T4, and `rename` is real
+    // as of M13/T7 — see the "M13/T5: write delegates to S3Uploader",
+    // "M13/T4: delete + createDirectory", and "M13/T7: rename" sections
+    // below for their coverage.
 
     @Test func setPermissionsThrowsProtocolError() async throws {
         let (fs, _) = try await connect(responses: [])
@@ -512,5 +506,121 @@ struct S3FileSystemTests {
         await #expect(throws: RemoteFSError.authenticationFailed) {
             try await fs.write(path: "/a.txt", mode: .overwrite, contents: stream)
         }
+    }
+
+    // MARK: - M13/T7: rename
+
+    /// A no-delimiter ListObjectsV2 response listing every key under a
+    /// prefix directly (used by `allObjectKeys`, exercised here indirectly
+    /// through a directory rename) — three raw keys, including the
+    /// directory's own trailing-slash marker.
+    private let srcdirRawKeysXML = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+        <IsTruncated>false</IsTruncated>
+        <Contents>
+            <Key>srcdir/a.txt</Key>
+            <Size>1</Size>
+        </Contents>
+        <Contents>
+            <Key>srcdir/sub/b.txt</Key>
+            <Size>2</Size>
+        </Contents>
+        <Contents>
+            <Key>srcdir/</Key>
+            <Size>0</Size>
+        </Contents>
+    </ListBucketResult>
+    """
+
+    private let srcdirAsCommonPrefixXML = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+        <IsTruncated>false</IsTruncated>
+        <CommonPrefixes>
+            <Prefix>srcdir/</Prefix>
+        </CommonPrefixes>
+    </ListBucketResult>
+    """
+
+    /// `rename` on a FILE: `stat(to)` (the destination pre-check — S3's
+    /// PUT-copy would otherwise silently overwrite) finds nothing, `stat
+    /// (from)` finds the source file, then a signed PUT carries `x-amz-
+    /// copy-source` referencing the source key, followed by a DELETE of the
+    /// source. Both `from` and `to` live at the bucket root here, so both
+    /// `stat` calls list the SAME parent prefix (""), just against
+    /// different canned responses — the sequence below mirrors that.
+    @Test func renameFileCopiesThenDeletesAndPrechecksDestination() async throws {
+        let (fs, transport) = try await connect(responses: [
+            (Data(emptyListingXML.utf8), httpResponse(status: 200)), // stat(to="/b.txt") -> not found
+            (Data(rootListingXML.utf8), httpResponse(status: 200)),  // stat(from="/a.txt") -> file found
+            (Data(), httpResponse(status: 200)),                     // PUT copy
+            (Data(), httpResponse(status: 204)),                     // DELETE source
+        ])
+
+        try await fs.rename(from: "/a.txt", to: "/b.txt")
+
+        let requests = await transport.requests
+        let copy = try #require(requests.first { $0.httpMethod == "PUT" })
+        #expect(copy.value(forHTTPHeaderField: "x-amz-copy-source")?.contains("a.txt") == true)
+        #expect(copy.url!.path(percentEncoded: true).hasSuffix("/b.txt"))
+
+        let delete = try #require(requests.first { $0.httpMethod == "DELETE" })
+        #expect(delete.url!.path(percentEncoded: true).hasSuffix("/a.txt"))
+    }
+
+    /// The destination pre-check must reject the rename WITHOUT issuing any
+    /// copy or delete when something already exists at `to`.
+    @Test func renameThrowsWhenDestinationAlreadyExists() async throws {
+        let (fs, transport) = try await connect(responses: [
+            (Data(rootListingXML.utf8), httpResponse(status: 200)), // stat(to="/a.txt") -> already exists
+        ])
+
+        await expectProtocolError {
+            try await fs.rename(from: "/other.txt", to: "/a.txt")
+        }
+
+        let requests = await transport.requests
+        #expect(!requests.contains { $0.httpMethod == "PUT" })
+        #expect(!requests.contains { $0.httpMethod == "DELETE" })
+    }
+
+    /// `rename` on a DIRECTORY re-keys every object under the source
+    /// prefix — including the directory's own trailing-slash marker — via
+    /// `allObjectKeys(underPrefix:)` (a no-delimiter listing), one
+    /// copy+delete pair per key.
+    @Test func renameDirectoryReKeysEveryObjectUnderThePrefix() async throws {
+        let (fs, transport) = try await connect(responses: [
+            (Data(emptyListingXML.utf8), httpResponse(status: 200)),        // stat(to="/destdir") -> not found
+            (Data(srcdirAsCommonPrefixXML.utf8), httpResponse(status: 200)), // stat(from="/srcdir") -> directory found
+            (Data(srcdirRawKeysXML.utf8), httpResponse(status: 200)),        // allObjectKeys(underPrefix: "srcdir/")
+            (Data(), httpResponse(status: 200)), (Data(), httpResponse(status: 204)), // copy+delete srcdir/a.txt
+            (Data(), httpResponse(status: 200)), (Data(), httpResponse(status: 204)), // copy+delete srcdir/sub/b.txt
+            (Data(), httpResponse(status: 200)), (Data(), httpResponse(status: 204)), // copy+delete srcdir/ (marker)
+        ])
+
+        try await fs.rename(from: "/srcdir", to: "/destdir")
+
+        let requests = await transport.requests
+        let puts = requests.filter { $0.httpMethod == "PUT" }
+        let deletes = requests.filter { $0.httpMethod == "DELETE" }
+        #expect(puts.count == 3)
+        #expect(deletes.count == 3)
+
+        let putPaths = puts.map { $0.url!.path(percentEncoded: true) }
+        #expect(putPaths.contains { $0.hasSuffix("/destdir/a.txt") })
+        #expect(putPaths.contains { $0.hasSuffix("/destdir/sub/b.txt") })
+        #expect(putPaths.contains { $0.hasSuffix("/destdir/") })
+
+        let deletePaths = deletes.map { $0.url!.path(percentEncoded: true) }
+        #expect(deletePaths.contains { $0.hasSuffix("/srcdir/a.txt") })
+        #expect(deletePaths.contains { $0.hasSuffix("/srcdir/sub/b.txt") })
+        #expect(deletePaths.contains { $0.hasSuffix("/srcdir/") })
+
+        // Every copy's `x-amz-copy-source` must reference its OWN source
+        // key, not just any key under the prefix.
+        let copySourceForDestSub = puts.first { $0.url!.path(percentEncoded: true).hasSuffix("/destdir/sub/b.txt") }?
+            .value(forHTTPHeaderField: "x-amz-copy-source")
+        #expect(copySourceForDestSub?.contains("srcdir/sub/b.txt") == true)
     }
 }

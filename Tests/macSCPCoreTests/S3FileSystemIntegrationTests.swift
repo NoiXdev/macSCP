@@ -179,6 +179,108 @@ struct S3FileSystemIntegrationTests {
         if let caught { throw caught }
     }
 
+    /// M13/T7: rename on a FILE — a signed `x-amz-copy-source` PUT followed
+    /// by a DELETE of the source, against a REAL MinIO server. Unit tests
+    /// (`S3FileSystemTests.swift`) exercise the copy-source header shape and
+    /// the destination pre-check with a fake transport that signs and sends
+    /// from the SAME data, so they can never catch a SigV4 signing bug in
+    /// the copy-source header — only a live server that independently
+    /// re-derives the signature from the wire bytes can (mirrors the
+    /// reasoning for the write/multipart round trips above).
+    @Test func renameFileMovesTheObjectToTheNewKey() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let sourceKey = "m13-rename-file-src-\(UUID().uuidString).txt"
+        let destKey = "m13-rename-file-dest-\(UUID().uuidString).txt"
+        let body = Data("rename me".utf8)
+
+        var caught: Error?
+        do {
+            let uploadStream = AsyncThrowingStream<Data, Error> { continuation in
+                continuation.yield(body)
+                continuation.finish()
+            }
+            try await fs.write(path: "/\(sourceKey)", mode: .overwrite, contents: uploadStream)
+
+            try await fs.rename(from: "/\(sourceKey)", to: "/\(destKey)")
+
+            var received = Data()
+            for try await chunk in try await fs.readStream(path: "/\(destKey)", fromOffset: 0) {
+                received.append(chunk)
+            }
+            #expect(received == body)
+
+            do {
+                _ = try await fs.stat(path: "/\(sourceKey)")
+                Issue.record("expected the source key to be gone after rename")
+            } catch let error as RemoteFSError {
+                guard case .notFound = error else {
+                    Issue.record("expected .notFound for the renamed-away source, got \(error)")
+                    return
+                }
+            }
+        } catch {
+            caught = error
+        }
+        // Best-effort cleanup so re-runs stay reproducible — the source
+        // should already be gone if the rename succeeded, but a partial
+        // failure could leave it behind.
+        try? await fs.delete(path: "/\(sourceKey)")
+        try? await fs.delete(path: "/\(destKey)")
+        if let caught { throw caught }
+    }
+
+    /// M13/T7: rename on a DIRECTORY — every object under the source prefix
+    /// (here two, one nested under a sub-prefix) must be re-keyed to the
+    /// destination prefix, and NONE may remain at the source, against a
+    /// REAL MinIO server. Same signing-bug rationale as the file-rename
+    /// test above, applied to the `allObjectKeys` pagination + per-key
+    /// copy+delete loop.
+    @Test func renameDirectoryMovesEveryObjectToTheNewPrefix() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let suffix = UUID().uuidString
+        let sourceFolder = "m13-rename-dir-src-\(suffix)"
+        let destFolder = "m13-rename-dir-dest-\(suffix)"
+        let childKeys = ["child-a.txt", "sub/child-b.txt"]
+
+        var caught: Error?
+        do {
+            for child in childKeys {
+                let uploadStream = AsyncThrowingStream<Data, Error> { continuation in
+                    continuation.yield(Data(child.utf8))
+                    continuation.finish()
+                }
+                try await fs.write(path: "/\(sourceFolder)/\(child)", mode: .overwrite, contents: uploadStream)
+            }
+
+            try await fs.rename(from: "/\(sourceFolder)", to: "/\(destFolder)")
+
+            for child in childKeys {
+                var received = Data()
+                for try await chunk in try await fs.readStream(path: "/\(destFolder)/\(child)", fromOffset: 0) {
+                    received.append(chunk)
+                }
+                #expect(received == Data(child.utf8))
+            }
+
+            // Nothing must remain at the OLD prefix; the NEW one must show
+            // up as a directory in a root listing.
+            let rootItems = try await fs.list(path: "/")
+            #expect(!rootItems.contains { $0.name == sourceFolder })
+            #expect(rootItems.contains { $0.name == destFolder && $0.kind == .directory })
+        } catch {
+            caught = error
+        }
+        // Best-effort cleanup at BOTH prefixes so re-runs stay reproducible
+        // even if an assertion above fails partway through the rename.
+        for child in childKeys {
+            try? await fs.delete(path: "/\(sourceFolder)/\(child)")
+            try? await fs.delete(path: "/\(destFolder)/\(child)")
+        }
+        if let caught { throw caught }
+    }
+
     private static func deleteMarkerObjectIgnoringErrors(key: String) async {
         let bucket = "macscp-seed"
         let rawPath = "/\(bucket)/\(key)"
