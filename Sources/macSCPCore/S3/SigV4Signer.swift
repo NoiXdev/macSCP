@@ -106,6 +106,52 @@ public struct SigV4Signer: Sendable {
         return (authorization, extraHeaders)
     }
 
+    /// SigV4 query-parameter ("presigned") signing. Returns every `X-Amz-*`
+    /// query parameter INCLUDING the final `X-Amz-Signature`, ready to attach
+    /// to the object URL. The only signed header is `host`; the payload hash
+    /// is `UNSIGNED-PAYLOAD`. Pure — no I/O.
+    public func presignedQuery(
+        method: String, host: String, path: String,
+        expiresInSeconds: Int, date: Date
+    ) -> [(name: String, value: String)] {
+        let amzDate = Self.amzDateFormatter.string(from: date)
+        let dateStamp = Self.dateStampFormatter.string(from: date)
+        let scope = "\(dateStamp)/\(region)/\(service)/aws4_request"
+
+        // Query params that must be part of the canonical (signed) query, in
+        // ANY order — canonicalQueryString sorts + RFC-3986-encodes them.
+        var query: [(name: String, value: String)] = [
+            ("X-Amz-Algorithm", "AWS4-HMAC-SHA256"),
+            ("X-Amz-Credential", "\(accessKeyID)/\(scope)"),
+            ("X-Amz-Date", amzDate),
+            ("X-Amz-Expires", String(expiresInSeconds)),
+            ("X-Amz-SignedHeaders", "host"),
+        ]
+        if let sessionToken {
+            query.append(("X-Amz-Security-Token", sessionToken))
+        }
+
+        let canonicalRequest = [
+            method,
+            Self.canonicalURI(path: path),
+            Self.canonicalQueryString(query: query),
+            "host:\(host)\n",       // canonical headers block (host only)
+            "host",                  // signed headers
+            "UNSIGNED-PAYLOAD",
+        ].joined(separator: "\n")
+
+        let stringToSign = [
+            "AWS4-HMAC-SHA256", amzDate, scope,
+            Self.hexSHA256(Data(canonicalRequest.utf8)),
+        ].joined(separator: "\n")
+
+        let signingKey = Self.signingKey(secretAccessKey: secretAccessKey, dateStamp: dateStamp,
+                                          region: region, service: service)
+        let signature = Self.hexHMAC(key: signingKey, data: Data(stringToSign.utf8))
+        query.append(("X-Amz-Signature", signature))
+        return query
+    }
+
     // MARK: - Signing key chain
 
     private static func signingKey(secretAccessKey: String, dateStamp: String,
