@@ -7,6 +7,13 @@ import Foundation
 /// without touching the network (M12/T5).
 public protocol S3HTTPTransport: Sendable {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse)
+
+    /// Streams a (large) response body instead of buffering it — for object
+    /// downloads. The response headers/status are available immediately; the
+    /// body arrives as `TransferChunk.size` chunks. Non-2xx statuses are the
+    /// CALLER's to map (see `S3FileSystem.readStream`) — this only transports.
+    func sendStreaming(_ request: URLRequest) async throws
+        -> (body: AsyncThrowingStream<Data, Error>, response: HTTPURLResponse)
 }
 
 /// Default transport: wraps `URLSession`. Used by `S3FileSystem.connect`
@@ -24,5 +31,32 @@ public struct URLSessionS3Transport: S3HTTPTransport {
             throw RemoteFSError.protocolError(reason: "S3 transport received a non-HTTP response")
         }
         return (data, httpResponse)
+    }
+
+    public func sendStreaming(_ request: URLRequest) async throws
+        -> (body: AsyncThrowingStream<Data, Error>, response: HTTPURLResponse) {
+        let (bytes, response) = try await session.bytes(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw RemoteFSError.protocolError(reason: "S3 transport received a non-HTTP response")
+        }
+        let stream = AsyncThrowingStream<Data, Error> { continuation in
+            let task = Task {
+                do {
+                    var buffer = Data(); buffer.reserveCapacity(TransferChunk.size)
+                    for try await byte in bytes {
+                        buffer.append(byte)
+                        if buffer.count >= TransferChunk.size {
+                            continuation.yield(buffer); buffer.removeAll(keepingCapacity: true)
+                        }
+                    }
+                    if !buffer.isEmpty { continuation.yield(buffer) }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+        return (stream, http)
     }
 }

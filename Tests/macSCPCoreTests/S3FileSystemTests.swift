@@ -23,6 +23,30 @@ actor FakeS3Transport: S3HTTPTransport {
         }
         return responses.removeFirst()
     }
+
+    /// Delivers the next canned response's body as a stream, sliced into
+    /// `TransferChunk.size` pieces so tests can observe chunking. Builds the
+    /// stream from the already-popped `Data` local — the `AsyncThrowingStream`
+    /// closure is non-isolated, so it must not touch `self` (an actor).
+    func sendStreaming(_ request: URLRequest) async throws
+        -> (body: AsyncThrowingStream<Data, Error>, response: HTTPURLResponse) {
+        requests.append(request)
+        guard !responses.isEmpty else {
+            throw RemoteFSError.protocolError(reason: "FakeS3Transport ran out of canned responses")
+        }
+        let (data, response) = responses.removeFirst()
+        let stream = AsyncThrowingStream<Data, Error> { continuation in
+            // Emit the canned body in <= TransferChunk.size slices so tests see chunking.
+            var offset = 0
+            while offset < data.count {
+                let end = min(offset + TransferChunk.size, data.count)
+                continuation.yield(data.subdata(in: offset..<end))
+                offset = end
+            }
+            continuation.finish()
+        }
+        return (stream, response)
+    }
 }
 
 /// Always throws a raw (non-`RemoteFSError`) error from `send`, so tests can
@@ -31,6 +55,11 @@ actor FakeS3Transport: S3HTTPTransport {
 /// it only ever returns canned responses or a `RemoteFSError` of its own.
 struct ThrowingS3Transport: S3HTTPTransport {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        throw URLError(.cannotConnectToHost)
+    }
+
+    func sendStreaming(_ request: URLRequest) async throws
+        -> (body: AsyncThrowingStream<Data, Error>, response: HTTPURLResponse) {
         throw URLError(.cannotConnectToHost)
     }
 }
@@ -371,5 +400,30 @@ struct S3FileSystemTests {
         await expectProtocolError {
             try await fs.deleteTree(at: "/sub")
         }
+    }
+
+    // MARK: - M13/T2: streaming transport seam
+
+    /// Proves `FakeS3Transport.sendStreaming` chunks a canned body into
+    /// `TransferChunk.size` pieces (so `S3FileSystem.readStream`, wired in
+    /// T3, sees the same chunking the real `URLSessionS3Transport` would
+    /// produce) and still returns the canned response. Deliberately
+    /// independent of `S3FileSystem` — this only exercises the transport seam.
+    @Test func fakeTransportSendStreamingChunksTheCannedBody() async throws {
+        let body = Data((0..<(TransferChunk.size + 10)).map { UInt8($0 % 256) })
+        let transport = FakeS3Transport(responses: [(body, httpResponse(status: 200))])
+        let request = URLRequest(url: URL(string: "http://127.0.0.1:9000/macscp-seed/a.txt")!)
+
+        let (stream, response) = try await transport.sendStreaming(request)
+
+        var chunks: [Data] = []
+        for try await chunk in stream {
+            chunks.append(chunk)
+        }
+
+        #expect(response.statusCode == 200)
+        #expect(chunks.count >= 2)
+        #expect(chunks.first?.count == TransferChunk.size)
+        #expect(chunks.reduce(Data()) { $0 + $1 } == body)
     }
 }
