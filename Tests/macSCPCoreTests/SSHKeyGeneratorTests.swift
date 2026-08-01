@@ -50,6 +50,20 @@ struct SSHKeyGeneratorTests {
             username: "tim", keyPath: key.privateKeyURL.path, passphrase: "s3cr3t")
     }
 
+    @Test func hardensPreexistingDirectoryTo0700() throws {
+        // The directory already exists before `generate` runs (as `tempDir()`
+        // creates it without explicit attributes) — `createDirectory` is then
+        // a no-op for permissions, so `generate` must chmod it explicitly.
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        _ = try SSHKeyGenerator.generate(
+            type: .ed25519, comment: "preexisting-dir", passphrase: nil, into: dir)
+
+        let perms = try FileManager.default.attributesOfItem(
+            atPath: dir.path)[.posixPermissions] as! NSNumber
+        #expect(perms.int16Value == 0o700)
+    }
+
     @Test func generatesRSAAndECDSA() throws {
         let dir = tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
