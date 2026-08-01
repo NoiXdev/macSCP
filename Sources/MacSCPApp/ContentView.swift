@@ -1599,6 +1599,13 @@ struct ContentView: View {
     /// `StoredSession` carrying that id is enough for `password(for:)` to
     /// find it, no separate lookup API needed on `SessionListViewModel`.
     private func fillForm(_ form: ConnectionViewModel, from set: LoginSet) {
+        if set.kind == .s3 {
+            form.s3AccessKeyID = set.accessKeyID ?? ""
+            let synthetic = StoredSession(
+                id: set.id, name: set.name, host: "", username: "")
+            form.s3SecretAccessKey = sessionListViewModel.password(for: synthetic) ?? ""
+            return
+        }
         form.username = set.username
         form.authChoice = ConnectionViewModel.authChoice(for: set.authKind)
         form.keyPath = set.keyPath ?? ""
@@ -1774,6 +1781,20 @@ struct ContentView: View {
         from form: ConnectionViewModel, editedSession: StoredSession? = nil
     ) -> UUID? {
         guard form.loginMode == .manual, form.saveAsNewLoginSet else { return nil }
+
+        if form.kind == .s3 {
+            let accessKeyID = form.s3AccessKeyID.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedName = form.newLoginSetName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let name = trimmedName.isEmpty
+                ? sessionListViewModel.suggestedSetName(forUsername: accessKeyID)
+                : trimmedName
+            let newSet = LoginSet(name: name, username: "", authKind: .password,
+                                  kind: .s3, accessKeyID: accessKeyID)
+            let secret = form.s3SecretAccessKey.isEmpty ? nil : form.s3SecretAccessKey
+            sessionListViewModel.saveLoginSet(newSet, secret: secret)
+            return newSet.id
+        }
+
         let username = form.username.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedName = form.newLoginSetName.trimmingCharacters(in: .whitespacesAndNewlines)
         let name = trimmedName.isEmpty
@@ -1896,6 +1917,7 @@ struct ContentView: View {
                     host: "unused", port: 22, username: "unused",
                     password: form.s3SecretAccessKey,
                     groupID: form.selectedGroupID,
+                    loginSetID: form.loginMode == .set ? form.selectedLoginSetID : newSetID,
                     kind: .s3,
                     s3: StoredS3Config(
                         accessKeyID: form.s3AccessKeyID.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -2010,9 +2032,30 @@ struct ContentView: View {
                 form.s3Endpoint = stored.s3?.endpoint ?? ""
                 form.s3Region = stored.s3?.region ?? ""
                 form.s3Bucket = stored.s3?.bucket ?? ""
-                form.s3AccessKeyID = stored.s3?.accessKeyID ?? ""
                 form.s3UsePathStyle = stored.s3?.usePathStyle ?? false
-                form.s3SecretAccessKey = sessionListViewModel.password(for: stored) ?? ""
+                // Credentials: from the bound S3 set if any, else the
+                // session's own (M15). A dangling/kind-mismatched set does
+                // NOT connect — same loginSets.missingSet path as SSH.
+                do {
+                    if let resolved = try sessionListViewModel.resolvedS3Login(for: stored) {
+                        form.s3AccessKeyID = resolved.accessKeyID
+                        form.s3SecretAccessKey = resolved.secretAccessKey ?? ""
+                    } else {
+                        form.s3AccessKeyID = stored.s3?.accessKeyID ?? ""
+                        form.s3SecretAccessKey = sessionListViewModel.password(for: stored) ?? ""
+                    }
+                    form.loginMode = stored.loginSetID != nil ? .set : .manual
+                    form.selectedLoginSetID = stored.loginSetID
+                } catch is LoginResolveError {
+                    form.s3AccessKeyID = stored.s3?.accessKeyID ?? ""
+                    form.s3SecretAccessKey = ""
+                    form.loginMode = .manual
+                    form.selectedLoginSetID = nil
+                    form.showFailure(message: L10n.string(
+                        "loginSets.missingSet",
+                        "The stored login for this connection was not found. Choose a login or enter credentials."))
+                    return
+                }
                 form.clearJumpFields()
             } else {
                 form.kind = .ssh
