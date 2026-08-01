@@ -31,6 +31,18 @@ public struct TransferConflict: Sendable, Equatable {
 public typealias ConflictDecider =
     @Sendable (TransferConflict) async -> (resolution: ConflictResolution, applyToAll: Bool)?
 
+/// A cross-backend transfer's destination label (M16): the target session's
+/// display name and protocol kind. Set only for cross-session transfers so
+/// the transfer row can show where a file is going and with which backend.
+public struct CrossBackendTarget: Equatable, Sendable {
+    public var name: String
+    public var kind: ConnectionKind
+    public init(name: String, kind: ConnectionKind) {
+        self.name = name
+        self.kind = kind
+    }
+}
+
 /// UI state of a serial transfer queue (FIFO).
 ///
 /// Replaces the single-transfer `TransferViewModel`: `enqueue` never discards
@@ -98,6 +110,15 @@ public final class TransferQueueViewModel {
         /// exactly, threaded through every construction site the same way
         /// `isEditUpload` is.
         public let destinationDirectory: String
+        /// Whether the destination backend supports append-based resume (M16).
+        /// Read from `destination.supportsAppendResume` at enqueue; `false`
+        /// for an S3 destination. Drives the passive resume warning in the
+        /// transfer row. `true` for terminal skip/error items (no transfer).
+        public let destinationSupportsResume: Bool
+        /// Cross-backend destination label (M16): the target session's name +
+        /// kind, `nil` for same-session transfers. The queue holds only the
+        /// opaque `destinationTabID`, so the App supplies this at enqueue.
+        public let crossBackendTarget: CrossBackendTarget?
     }
 
     public private(set) var items: [Item] = []
@@ -413,7 +434,8 @@ public final class TransferQueueViewModel {
         source: any RemoteFileSystem, sourcePath: String,
         destination: any RemoteFileSystem, destinationDirectory: String,
         onCompleted: (@MainActor () async -> Void)?,
-        destinationTabID: UUID? = nil, crossRemote: Bool = false
+        destinationTabID: UUID? = nil, crossRemote: Bool = false,
+        crossBackendTarget: CrossBackendTarget? = nil
     ) -> UUID {
         let id = UUID()
         jobs[id] = Job(
@@ -425,7 +447,9 @@ public final class TransferQueueViewModel {
         items.append(Item(
             id: id, fileName: fileName, direction: direction, status: .queued,
             destinationTabID: destinationTabID, isEditUpload: false,
-            destinationDirectory: destinationDirectory))
+            destinationDirectory: destinationDirectory,
+            destinationSupportsResume: destination.supportsAppendResume,
+            crossBackendTarget: crossBackendTarget))
         kickWorker()
         return id
     }
@@ -452,7 +476,9 @@ public final class TransferQueueViewModel {
         items.append(Item(
             id: id, fileName: fileName, direction: .upload, status: .queued,
             destinationTabID: nil, isEditUpload: true,
-            destinationDirectory: remoteDirectory))
+            destinationDirectory: remoteDirectory,
+            destinationSupportsResume: destination.supportsAppendResume,
+            crossBackendTarget: nil))
         kickWorker()
         return id
     }
@@ -527,7 +553,8 @@ public final class TransferQueueViewModel {
         source: any RemoteFileSystem, sourceDirectory: String,
         destination: any RemoteFileSystem, destinationDirectory: String,
         onCompleted: (@MainActor () async -> Void)?,
-        destinationTabID: UUID? = nil, crossRemote: Bool = false
+        destinationTabID: UUID? = nil, crossRemote: Bool = false,
+        crossBackendTarget: CrossBackendTarget? = nil
     ) {
         let groupID = UUID()
         groups[groupID] = TreeGroup(onCompleted: onCompleted)
@@ -538,7 +565,8 @@ public final class TransferQueueViewModel {
                     directoryName: directoryName, direction: direction,
                     source: source, sourceDirectory: sourceDirectory,
                     destination: destination, destinationDirectory: destinationDirectory,
-                    group: groupID, destinationTabID: destinationTabID, crossRemote: crossRemote)
+                    group: groupID, destinationTabID: destinationTabID, crossRemote: crossRemote,
+                    crossBackendTarget: crossBackendTarget)
                 self.finishExpansion(groupID, succeeded: true)
             } catch {
                 // Only cancellation propagates up to here — branch-local errors
@@ -1045,7 +1073,8 @@ public final class TransferQueueViewModel {
         directoryName: String, direction: TransferDirection,
         source: any RemoteFileSystem, sourceDirectory: String,
         destination: any RemoteFileSystem, destinationDirectory: String,
-        group groupID: UUID, destinationTabID: UUID? = nil, crossRemote: Bool = false
+        group groupID: UUID, destinationTabID: UUID? = nil, crossRemote: Bool = false,
+        crossBackendTarget: CrossBackendTarget? = nil
     ) async throws {
         try Task.checkCancellation()
         let destDir = RemotePath.join(destinationDirectory, directoryName)
@@ -1061,7 +1090,8 @@ public final class TransferQueueViewModel {
             addTerminalItem(
                 group: groupID, name: directoryName + "/",
                 direction: direction, status: .failed(Self.message(for: error)),
-                destinationTabID: destinationTabID, destinationDirectory: destinationDirectory)
+                destinationTabID: destinationTabID, destinationDirectory: destinationDirectory,
+                crossBackendTarget: crossBackendTarget)
             return
         }
 
@@ -1074,7 +1104,8 @@ public final class TransferQueueViewModel {
             addTerminalItem(
                 group: groupID, name: directoryName + "/",
                 direction: direction, status: .failed(Self.message(for: error)),
-                destinationTabID: destinationTabID, destinationDirectory: destinationDirectory)
+                destinationTabID: destinationTabID, destinationDirectory: destinationDirectory,
+                crossBackendTarget: crossBackendTarget)
             return
         }
 
@@ -1087,14 +1118,16 @@ public final class TransferQueueViewModel {
                     fileName: entry.name, direction: direction,
                     source: source, sourcePath: entry.path,
                     destination: destination, destinationDirectory: destDir,
-                    onCompleted: nil, destinationTabID: destinationTabID, crossRemote: crossRemote)
+                    onCompleted: nil, destinationTabID: destinationTabID, crossRemote: crossRemote,
+                    crossBackendTarget: crossBackendTarget)
                 registerGroupItem(id, group: groupID)
             case .directory:
                 try await expandTree(
                     directoryName: entry.name, direction: direction,
                     source: source, sourceDirectory: entry.path,
                     destination: destination, destinationDirectory: destDir,
-                    group: groupID, destinationTabID: destinationTabID, crossRemote: crossRemote)
+                    group: groupID, destinationTabID: destinationTabID, crossRemote: crossRemote,
+                    crossBackendTarget: crossBackendTarget)
             case .symlink, .other:
                 // Don't follow: terminal `.skipped` item with a " →" suffix.
                 // Lives IN this level's directory, exactly like the file
@@ -1102,7 +1135,7 @@ public final class TransferQueueViewModel {
                 addTerminalItem(
                     group: groupID, name: entry.name + " →",
                     direction: direction, status: .skipped, destinationTabID: destinationTabID,
-                    destinationDirectory: destDir)
+                    destinationDirectory: destDir, crossBackendTarget: crossBackendTarget)
             }
         }
     }
@@ -1123,13 +1156,15 @@ public final class TransferQueueViewModel {
     private func addTerminalItem(
         group groupID: UUID, name: String,
         direction: TransferDirection, status: Item.Status, destinationTabID: UUID? = nil,
-        destinationDirectory: String
+        destinationDirectory: String, crossBackendTarget: CrossBackendTarget? = nil
     ) {
         let id = UUID()
         items.append(Item(
             id: id, fileName: name, direction: direction, status: .queued,
             destinationTabID: destinationTabID, isEditUpload: false,
-            destinationDirectory: destinationDirectory))
+            destinationDirectory: destinationDirectory,
+            destinationSupportsResume: true,
+            crossBackendTarget: crossBackendTarget))
         registerGroupItem(id, group: groupID)
         setStatus(id, status)   // triggers groupItemBecameTerminal
     }

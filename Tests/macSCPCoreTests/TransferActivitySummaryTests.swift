@@ -18,7 +18,9 @@ struct TransferActivitySummaryTests {
             status: status,
             destinationTabID: nil,
             isEditUpload: false,
-            destinationDirectory: "/"
+            destinationDirectory: "/",
+            destinationSupportsResume: true,
+            crossBackendTarget: nil
         )
     }
 
