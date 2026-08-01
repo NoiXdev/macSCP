@@ -714,6 +714,97 @@ struct ConnectionViewModelTests {
         #expect(result?.jump?.authKind == .agent)
         #expect(result?.jump?.keyPath == nil)
     }
+
+    // MARK: - S3 kind (M12/T7a)
+
+    @Test func connectWithS3KindBuildsS3ConfigFromEnteredFields() async {
+        let vm = makeVM(connector: { config, _ in
+            guard case .s3(let s3) = config else {
+                Issue.record("expected .s3 config")
+                throw RemoteFSError.protocolError(reason: "expected .s3 config")
+            }
+            #expect(s3.accessKeyID == "AKIAEXAMPLE")
+            #expect(s3.secretAccessKey == "shh-secret")
+            #expect(s3.region == "eu-central-1")
+            #expect(s3.endpoint == "https://s3.eu-central-1.amazonaws.com")
+            #expect(s3.bucket == "my-bucket")
+            #expect(s3.usePathStyle == true)
+            return MockRemoteFileSystem(tree: ["/": []])
+        })
+        vm.kind = .s3
+        vm.s3AccessKeyID = "AKIAEXAMPLE"
+        vm.s3SecretAccessKey = "shh-secret"
+        vm.s3Region = "eu-central-1"
+        vm.s3Endpoint = "https://s3.eu-central-1.amazonaws.com"
+        vm.s3Bucket = "my-bucket"
+        vm.s3UsePathStyle = true
+
+        let fs = await vm.connect()
+
+        #expect(fs != nil)
+        #expect(vm.state == .idle)
+    }
+
+    @Test func connectWithS3KindAndMissingBucketFailsBeforeConnecting() async {
+        let vm = makeVM(connector: { _, _ in
+            Issue.record("Connector must not be called with a missing required S3 field")
+            throw RemoteFSError.connectionFailed(reason: "unreachable")
+        })
+        vm.kind = .s3
+        vm.s3AccessKeyID = "AKIAEXAMPLE"
+        vm.s3SecretAccessKey = "shh-secret"
+        vm.s3Region = "eu-central-1"
+        vm.s3Endpoint = "https://s3.eu-central-1.amazonaws.com"
+        vm.s3Bucket = ""
+
+        let fs = await vm.connect()
+
+        #expect(fs == nil)
+        #expect(vm.state == .failed(
+            message: CoreL10n.string("core.connect.s3FieldRequired"), field: nil))
+    }
+
+    @Test @MainActor func validateForEditSaveWithS3KindBuildsStoredSessionWithSecretFreeConfig() {
+        let vm = makeVM()
+        let stored = StoredSession(name: "s3-prod", host: "unused", username: "unused", kind: .s3)
+        vm.beginEditing(stored)
+        vm.kind = .s3
+        vm.s3AccessKeyID = "AKIAEXAMPLE"
+        vm.s3Region = "eu-central-1"
+        vm.s3Endpoint = "https://s3.eu-central-1.amazonaws.com"
+        vm.s3Bucket = "my-bucket"
+        vm.s3UsePathStyle = true
+        // Deliberately left empty -- edit mode never requires the secret
+        // (mirrors the SSH/jump password's "leave unchanged" rule).
+        vm.s3SecretAccessKey = ""
+
+        let saved = vm.validateForEditSave()
+
+        #expect(saved?.kind == .s3)
+        #expect(saved?.s3 == StoredS3Config(
+            accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
+            endpoint: "https://s3.eu-central-1.amazonaws.com", bucket: "my-bucket",
+            usePathStyle: true))
+    }
+
+    @Test @MainActor func beginEditingWithS3StoredSessionPopulatesFieldsWithoutTheSecret() {
+        let vm = makeVM()
+        let s3Config = StoredS3Config(
+            accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
+            endpoint: "https://s3.eu-central-1.amazonaws.com", bucket: "my-bucket",
+            usePathStyle: true)
+        let stored = StoredSession(name: "s3-prod", host: "unused", username: "unused", kind: .s3, s3: s3Config)
+
+        vm.beginEditing(stored)
+
+        #expect(vm.kind == .s3)
+        #expect(vm.s3Endpoint == "https://s3.eu-central-1.amazonaws.com")
+        #expect(vm.s3Region == "eu-central-1")
+        #expect(vm.s3Bucket == "my-bucket")
+        #expect(vm.s3AccessKeyID == "AKIAEXAMPLE")
+        #expect(vm.s3UsePathStyle == true)
+        #expect(vm.s3SecretAccessKey.isEmpty)
+    }
 }
 
 private actor CallCounter {

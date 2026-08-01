@@ -31,6 +31,9 @@
 "core.connect.jumpPasswordEmpty" = "Passwort für den Jump-Host darf nicht leer sein.";
 "core.connect.jumpKeyPathEmpty" = "Pfad zum SSH-Key des Jump-Hosts angeben.";
 
+/* ConnectionViewModel S3 form validation (M12/T7a) */
+"core.connect.s3FieldRequired" = "Bitte alle erforderlichen S3-Felder ausfüllen.";
+
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "Host darf nicht leer sein.";
 "core.connect.emptyUsername" = "Benutzername darf nicht leer sein.";
