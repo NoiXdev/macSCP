@@ -65,8 +65,35 @@ public final class S3FileSystem: RemoteFileSystem {
         throw RemoteFSError.notFound(path: path)
     }
 
+    /// A signed range GET on the object key, streamed through
+    /// `transport.sendStreaming`. Maps 2xx → the body stream, 416 (range at
+    /// or beyond EOF) → an EMPTY stream (per the `RemoteFileSystem` contract
+    /// — this is not an error), 403 → `.authenticationFailed`, 404 →
+    /// `.notFound`, anything else → `.protocolError`.
+    ///
+    /// `Range` is set on the request AFTER `buildSignedRequest` returns, so
+    /// it is never part of the SigV4-signed header set — AWS does not
+    /// require `Range` to be signed, and signing it here would just be
+    /// extra surface for a byte-identical-header bug with no benefit.
     public func readStream(path: String, fromOffset offset: UInt64) async throws -> AsyncThrowingStream<Data, Error> {
-        throw RemoteFSError.protocolError(reason: "S3 read is not supported yet (M13)")
+        let key = Self.objectKey(forPath: path)
+        var request = try buildSignedRequest(
+            method: "GET", key: key, query: [], payloadHash: SigV4Signer.emptyPayloadHash)
+        request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
+
+        let (body, response) = try await transport.sendStreaming(request)
+        switch response.statusCode {
+        case 200..<300:
+            return body
+        case 416:
+            return AsyncThrowingStream { $0.finish() }
+        case 403:
+            throw RemoteFSError.authenticationFailed
+        case 404:
+            throw RemoteFSError.notFound(path: path)
+        default:
+            throw RemoteFSError.protocolError(reason: "S3 download failed with HTTP status \(response.statusCode)")
+        }
     }
 
     public func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {
@@ -159,6 +186,92 @@ public final class S3FileSystem: RemoteFileSystem {
             request.setValue(value, forHTTPHeaderField: key)
         }
         return request
+    }
+
+    /// Generalized signed-request builder — any HTTP method against an
+    /// OBJECT KEY, with optional signed extra headers/body (later tasks:
+    /// `x-amz-copy-source` for rename, `Content-MD5` for uploads). Shares
+    /// the same host/path/signer machinery `buildListRequest` uses, just
+    /// keyed on an object key instead of a bucket-root query.
+    ///
+    /// IMPORTANT: `extraHeaders` are SIGNED (merged into the SigV4 canonical
+    /// header set). A caller that needs an unsigned header (e.g. `Range` —
+    /// AWS does not require it to be signed) must set it on the returned
+    /// `URLRequest` directly, never pass it here.
+    private func buildSignedRequest(
+        method: String, key: String, query: [(name: String, value: String)],
+        extraHeaders: [String: String] = [:], body: Data? = nil,
+        payloadHash: String
+    ) throws -> URLRequest {
+        let url = try Self.keyRequestURL(config: config, key: key, queryPairs: query)
+        guard let host = url.host else {
+            throw RemoteFSError.connectionFailed(reason: "S3 endpoint has no host: \(config.endpoint)")
+        }
+        let hostHeader = url.port.map { "\(host):\($0)" } ?? host
+        let canonicalPath = url.path.isEmpty ? "/" : url.path
+
+        var headers = extraHeaders
+        headers["host"] = hostHeader
+        let signer = SigV4Signer(
+            accessKeyID: config.accessKeyID, secretAccessKey: config.secretAccessKey,
+            region: config.region, service: "s3", sessionToken: config.sessionToken)
+        let (authorization, signed) = signer.authorizationHeader(
+            method: method, host: hostHeader, path: canonicalPath, query: query,
+            headers: headers, payloadHash: payloadHash, date: Date())
+
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue(hostHeader, forHTTPHeaderField: "Host")
+        request.setValue(authorization, forHTTPHeaderField: "Authorization")
+        for (k, v) in signed { request.setValue(v, forHTTPHeaderField: k) }
+        for (k, v) in extraHeaders { request.setValue(v, forHTTPHeaderField: k) }
+        if let body { request.httpBody = body }
+        return request
+    }
+
+    /// Builds the request URL for an OBJECT KEY — path-style
+    /// (`{endpoint}/{bucket}/{key}`) or virtual-hosted
+    /// (`{scheme}://{bucket}.{host}/{key}`) — analogous to `requestURL` but
+    /// keyed on an object key rather than a bucket-root query.
+    ///
+    /// The path is percent-encoded segment-by-segment via
+    /// `SigV4Signer.canonicalURI` (leaving `/` literal) and assigned through
+    /// `percentEncodedPath`, and the query through
+    /// `SigV4Signer.canonicalQueryString` via `percentEncodedQuery` — both
+    /// for the same reason `requestURL` does (M12 review I-1): letting
+    /// `URLComponents` re-encode a key or query value with its own (looser)
+    /// rules would desync the wire request from what the signer signed.
+    private static func keyRequestURL(
+        config: S3ConnectionConfig, key: String, queryPairs: [(name: String, value: String)]
+    ) throws -> URL {
+        guard var components = URLComponents(string: config.endpoint) else {
+            throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint: \(config.endpoint)")
+        }
+        if config.usePathStyle {
+            components.percentEncodedPath = SigV4Signer.canonicalURI(path: "/\(config.bucket)/\(key)")
+        } else {
+            guard let host = components.host else {
+                throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint host: \(config.endpoint)")
+            }
+            components.host = "\(config.bucket).\(host)"
+            components.percentEncodedPath = SigV4Signer.canonicalURI(path: "/\(key)")
+        }
+
+        components.percentEncodedQuery = SigV4Signer.canonicalQueryString(query: queryPairs)
+
+        guard let url = components.url else {
+            throw RemoteFSError.connectionFailed(reason: "Failed to build S3 request URL for endpoint: \(config.endpoint)")
+        }
+        return url
+    }
+
+    /// Maps an absolute browser path to the S3 object key used for a FILE
+    /// (unlike `s3Prefix`, no trailing slash — a key names one object, not
+    /// a "directory" prefix): no leading slash, no trailing slash.
+    private static func objectKey(forPath path: String) -> String {
+        let normalized = RemotePath.normalizedAbsolute(path)
+        if normalized == "/" { return "" }
+        return String(normalized.dropFirst())
     }
 
     /// The `list-type`/`prefix`/`delimiter`[/`continuation-token`] pairs for
