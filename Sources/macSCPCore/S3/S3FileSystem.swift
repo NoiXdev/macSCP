@@ -2,10 +2,11 @@ import Foundation
 
 /// Thin S3 (and S3-compatible: MinIO, R2, Hetzner, …) implementation of
 /// `RemoteFileSystem` (M12/T5). `connect`/`list`/`stat`/`readStream` are
-/// real, signed calls; `delete` and `createDirectory` are real as of M13/T4.
-/// The remaining mutating operations (`write`, `rename`, `setPermissions`,
-/// `deleteTree`) still throw `RemoteFSError.protocolError` — those land in
-/// later M13 tasks.
+/// real, signed calls; `delete` and `createDirectory` are real as of M13/T4,
+/// and `write` (single-PUT and multipart) is real as of M13/T5-T6. The
+/// remaining mutating operations (`rename`, `setPermissions`, `deleteTree`)
+/// still throw `RemoteFSError.protocolError` — those land in later M13
+/// tasks.
 ///
 /// `Sendable` by construction rather than `@unchecked`: both stored
 /// properties are immutable and themselves `Sendable` (`S3ConnectionConfig`
