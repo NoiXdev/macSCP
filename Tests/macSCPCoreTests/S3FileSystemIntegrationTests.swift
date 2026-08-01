@@ -354,7 +354,7 @@ struct S3FileSystemIntegrationTests {
             }
             try await fs.write(path: "/\(key)", mode: .overwrite, contents: uploadStream)
 
-            let url = try (fs as! any PresignedURLProvider).presignedURL(method: .get, key: key, expiresIn: 600)
+            let url = try fs.presignedURL(method: .get, key: key, expiresIn: 600)
             let (data, response) = try await URLSession.shared.data(from: url)
             #expect((response as? HTTPURLResponse)?.statusCode == 200)
             #expect(data == body)
@@ -378,7 +378,7 @@ struct S3FileSystemIntegrationTests {
 
         var caught: Error?
         do {
-            let url = try (fs as! any PresignedURLProvider).presignedURL(method: .put, key: key, expiresIn: 600)
+            let url = try fs.presignedURL(method: .put, key: key, expiresIn: 600)
             var request = URLRequest(url: url)
             request.httpMethod = "PUT"
             let body = Data(repeating: 0x5A, count: 4096)
