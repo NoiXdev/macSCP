@@ -603,3 +603,29 @@
 "presigned.copy" = "Kopieren";
 "presigned.copied" = "Kopiert";
 "presigned.error" = "Der Link konnte nicht erzeugt werden.";
+
+/* SSH-Schlüssel-Einstellungs-Tab (M17/T4) — macSCP-verwaltete SSH-Schlüssel erzeugen/verwalten */
+"settings.tab.sshKeys" = "SSH-Schlüssel";
+"keys.empty" = "Noch keine Schlüssel. Erzeuge einen, um loszulegen.";
+"keys.generate" = "Erzeugen…";
+"keys.generate.title" = "SSH-Schlüssel erzeugen";
+"keys.generate.name" = "Name";
+"keys.generate.comment" = "Kommentar";
+"keys.generate.type" = "Typ";
+"keys.generate.bits" = "Schlüssellänge";
+"keys.generate.passphrase" = "Passphrase (optional)";
+"keys.generate.passphrase.confirm" = "Passphrase bestätigen";
+"keys.generate.passphrase.mismatch" = "Die Passphrasen stimmen nicht überein.";
+"keys.generate.submit" = "Erzeugen";
+"keys.generate.error" = "Der Schlüssel konnte nicht erzeugt werden.";
+"keys.type.ed25519" = "ED25519";
+"keys.type.rsa" = "RSA";
+"keys.type.ecdsa" = "ECDSA";
+"keys.notConnectable" = "Nicht als macSCP-Login verwendbar (nur Public-Key-Export)";
+"keys.hasPassphrase" = "Passphrase-geschützt";
+"keys.copyPublic" = "Public Key kopieren";
+"keys.exportPublic" = "Public Key exportieren…";
+"keys.export.error %@" = "Die Exportdatei konnte nicht geschrieben werden: %@";
+"keys.delete" = "Löschen";
+"keys.delete.title" = "Diesen Schlüssel löschen?";
+"keys.delete.confirm %lld" = "%lld gespeicherte Verbindungen verweisen auf diesen Schlüssel.";

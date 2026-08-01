@@ -602,3 +602,29 @@
 "presigned.copy" = "Copy";
 "presigned.copied" = "Copied";
 "presigned.error" = "Couldn't create the link.";
+
+/* SSH Keys settings tab (M17/T4) — generate/manage macSCP-managed SSH keys */
+"settings.tab.sshKeys" = "SSH Keys";
+"keys.empty" = "No keys yet. Generate one to get started.";
+"keys.generate" = "Generate…";
+"keys.generate.title" = "Generate SSH Key";
+"keys.generate.name" = "Name";
+"keys.generate.comment" = "Comment";
+"keys.generate.type" = "Type";
+"keys.generate.bits" = "Key size";
+"keys.generate.passphrase" = "Passphrase (optional)";
+"keys.generate.passphrase.confirm" = "Confirm passphrase";
+"keys.generate.passphrase.mismatch" = "Passphrases don't match.";
+"keys.generate.submit" = "Generate";
+"keys.generate.error" = "Couldn't generate the key.";
+"keys.type.ed25519" = "ED25519";
+"keys.type.rsa" = "RSA";
+"keys.type.ecdsa" = "ECDSA";
+"keys.notConnectable" = "Not usable as a macSCP login (public key export only)";
+"keys.hasPassphrase" = "Passphrase-protected";
+"keys.copyPublic" = "Copy public key";
+"keys.exportPublic" = "Export public key…";
+"keys.export.error %@" = "Could not write the export file: %@";
+"keys.delete" = "Delete";
+"keys.delete.title" = "Delete this key?";
+"keys.delete.confirm %lld" = "%lld saved connections reference this key.";

@@ -606,3 +606,29 @@
 "presigned.copy" = "Copier";
 "presigned.copied" = "Copié";
 "presigned.error" = "Impossible de créer le lien.";
+
+/* Onglet de réglages « Clés SSH » (M17/T4) — générer/gérer les clés SSH gérées par macSCP */
+"settings.tab.sshKeys" = "Clés SSH";
+"keys.empty" = "Aucune clé pour l'instant. Générez-en une pour commencer.";
+"keys.generate" = "Générer…";
+"keys.generate.title" = "Générer une clé SSH";
+"keys.generate.name" = "Nom";
+"keys.generate.comment" = "Commentaire";
+"keys.generate.type" = "Type";
+"keys.generate.bits" = "Taille de la clé";
+"keys.generate.passphrase" = "Phrase secrète (optionnelle)";
+"keys.generate.passphrase.confirm" = "Confirmer la phrase secrète";
+"keys.generate.passphrase.mismatch" = "Les phrases secrètes ne correspondent pas.";
+"keys.generate.submit" = "Générer";
+"keys.generate.error" = "Impossible de générer la clé.";
+"keys.type.ed25519" = "ED25519";
+"keys.type.rsa" = "RSA";
+"keys.type.ecdsa" = "ECDSA";
+"keys.notConnectable" = "Inutilisable comme identifiant macSCP (export de la clé publique uniquement)";
+"keys.hasPassphrase" = "Protégée par phrase secrète";
+"keys.copyPublic" = "Copier la clé publique";
+"keys.exportPublic" = "Exporter la clé publique…";
+"keys.export.error %@" = "Impossible d'écrire le fichier exporté : %@";
+"keys.delete" = "Supprimer";
+"keys.delete.title" = "Supprimer cette clé ?";
+"keys.delete.confirm %lld" = "%lld connexions enregistrées font référence à cette clé.";
