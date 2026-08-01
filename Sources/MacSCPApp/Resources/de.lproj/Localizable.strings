@@ -629,3 +629,4 @@
 "keys.delete" = "Löschen";
 "keys.delete.title" = "Diesen Schlüssel löschen?";
 "keys.delete.confirm %lld" = "%lld gespeicherte Verbindungen verweisen auf diesen Schlüssel.";
+"keys.delete.error" = "Der Schlüssel konnte nicht gelöscht werden.";

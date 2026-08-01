@@ -631,3 +631,4 @@
 "keys.delete" = "Usuń";
 "keys.delete.title" = "Usunąć ten klucz?";
 "keys.delete.confirm %lld" = "%lld zapisanych połączeń odwołuje się do tego klucza.";
+"keys.delete.error" = "Nie udało się usunąć klucza.";

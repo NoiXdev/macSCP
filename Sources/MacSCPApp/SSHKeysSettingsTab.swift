@@ -21,7 +21,11 @@ struct SSHKeysSettingsTab: View {
     @State private var isExporting = false
     @State private var exportDocument: SSHPublicKeyDocument?
     @State private var exportFilename = "key.pub"
-    @State private var exportErrorMessage: String?
+    /// Shared error banner for this tab's own action failures — export
+    /// (`fileExporter`'s completion handler) and delete (`performDelete`)
+    /// both write into it, so a failure while removing a key is reported the
+    /// same way a failed export already is, instead of failing silently.
+    @State private var tabErrorMessage: String?
 
     private let store = ManagedKeyStore(directory: SessionStore.defaultDirectory)
 
@@ -40,8 +44,8 @@ struct SSHKeysSettingsTab: View {
                 List(keys) { key in row(key) }
             }
 
-            if let exportErrorMessage {
-                Text(exportErrorMessage).font(.caption).foregroundStyle(.red).lineLimit(2)
+            if let tabErrorMessage {
+                Text(tabErrorMessage).font(.caption).foregroundStyle(.red).lineLimit(2)
             }
 
             HStack {
@@ -62,11 +66,11 @@ struct SSHKeysSettingsTab: View {
             defaultFilename: exportFilename
         ) { result in
             if case .failure(let error) = result {
-                exportErrorMessage = String(
+                tabErrorMessage = String(
                     format: L10n.string("keys.export.error %@", "Could not write the export file: %@"),
                     String(describing: error))
             } else {
-                exportErrorMessage = nil
+                tabErrorMessage = nil
             }
         }
         .confirmationDialog(
@@ -206,7 +210,7 @@ struct SSHKeysSettingsTab: View {
     private func exportPublicKey(_ key: ManagedKey) {
         exportDocument = SSHPublicKeyDocument(text: key.publicKeyOpenSSH + "\n")
         exportFilename = "\(key.name).pub"
-        exportErrorMessage = nil
+        tabErrorMessage = nil
         isExporting = true
     }
 
@@ -244,7 +248,15 @@ struct SSHKeysSettingsTab: View {
 
     private func performDelete() {
         guard let key = keyPendingDelete else { return }
-        try? store.remove(id: key.id, secrets: KeychainSecretStore())
+        do {
+            try store.remove(id: key.id, secrets: KeychainSecretStore())
+            tabErrorMessage = nil
+        } catch {
+            // A swallowed failure here would leave the key sitting
+            // unnoticed in the list — surface it via the same error banner
+            // `fileExporter`'s completion handler already uses.
+            tabErrorMessage = L10n.string("keys.delete.error", "Couldn't delete the key.")
+        }
         keyPendingDelete = nil
         reload()
     }
@@ -391,10 +403,16 @@ private struct GenerateKeySheet: View {
     }
 
     /// Generates the key on disk, saves the passphrase (if any) to the
-    /// Keychain under a FRESH id, and persists the resulting `ManagedKey` —
-    /// order matters: the Keychain write and `store.add` only happen after
-    /// `SSHKeyGenerator.generate` succeeds, so a failed generation never
-    /// leaves an orphaned Keychain entry or metadata record.
+    /// Keychain under a FRESH id, and persists the resulting `ManagedKey`.
+    ///
+    /// `savePassword`/`store.add` run in an INNER `do/catch` so that a
+    /// failure on either of them — AFTER `SSHKeyGenerator.generate` already
+    /// wrote the private/public key files (and possibly the Keychain entry,
+    /// if `store.add` is what threw) — actively rolls back everything THIS
+    /// run created, instead of leaving orphaned artifacts behind (a key file
+    /// with no metadata record, or a Keychain entry with no matching key).
+    /// The cleaned-up error is then re-thrown so the outer `catch` still
+    /// reports the same single fixed message as any other failure.
     private func generate() {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedComment = comment.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -404,15 +422,24 @@ private struct GenerateKeySheet: View {
                 passphrase: passphrase.isEmpty ? nil : passphrase,
                 into: store.keyDirectory)
             let newID = UUID()
-            if !passphrase.isEmpty {
-                try KeychainSecretStore().savePassword(passphrase, for: newID)
+            do {
+                if !passphrase.isEmpty {
+                    try KeychainSecretStore().savePassword(passphrase, for: newID)
+                }
+                let key = ManagedKey(
+                    id: newID, name: trimmedName, comment: trimmedComment, type: resolvedType,
+                    fingerprint: generated.fingerprint, publicKeyOpenSSH: generated.publicKeyOpenSSH,
+                    createdAt: Date(), hasPassphrase: !passphrase.isEmpty,
+                    fileName: generated.privateKeyURL.lastPathComponent)
+                try store.add(key)
+            } catch {
+                try? FileManager.default.removeItem(at: generated.privateKeyURL)
+                try? FileManager.default.removeItem(
+                    at: generated.privateKeyURL.deletingLastPathComponent()
+                        .appendingPathComponent(generated.privateKeyURL.lastPathComponent + ".pub"))
+                try? KeychainSecretStore().deletePassword(for: newID)
+                throw error
             }
-            let key = ManagedKey(
-                id: newID, name: trimmedName, comment: trimmedComment, type: resolvedType,
-                fingerprint: generated.fingerprint, publicKeyOpenSSH: generated.publicKeyOpenSSH,
-                createdAt: Date(), hasPassphrase: !passphrase.isEmpty,
-                fileName: generated.privateKeyURL.lastPathComponent)
-            try store.add(key)
             onGenerated()
             dismiss()
         } catch {
