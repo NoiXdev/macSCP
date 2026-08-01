@@ -297,6 +297,9 @@ struct ConnectionFormView: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
+                    // Connection type is fixed after creation — editing a
+                    // session never changes its protocol.
+                    .disabled(isEditMode)
                 }
 
                 if viewModel.kind == .ssh {
@@ -355,7 +358,12 @@ struct ConnectionFormView: View {
                     Button(L10n.string("common.save", "Save")) {
                         guard resolveLoginSetForSubmit() else { return }
                         if let session = viewModel.validateForEditSave() {
-                            onSaveEdited(session, viewModel.password.isEmpty ? nil : viewModel.password)
+                            // The S3 secret lives in `s3SecretAccessKey`, not
+                            // `password` (which `beginEditing` always clears
+                            // for S3 sessions) — pick the field by kind so an
+                            // edited Secret Access Key isn't silently dropped.
+                            let secret = viewModel.kind == .s3 ? viewModel.s3SecretAccessKey : viewModel.password
+                            onSaveEdited(session, secret.isEmpty ? nil : secret)
                         } else if case .failed(let message, _) = viewModel.state {
                             alertMessage = message
                         }
@@ -365,7 +373,8 @@ struct ConnectionFormView: View {
                     Button(L10n.string("connection.saveAndConnect", "Save & connect")) {
                         guard resolveLoginSetForSubmit() else { return }
                         if let session = viewModel.validateForEditSave() {
-                            onSaveEdited(session, viewModel.password.isEmpty ? nil : viewModel.password)
+                            let secret = viewModel.kind == .s3 ? viewModel.s3SecretAccessKey : viewModel.password
+                            onSaveEdited(session, secret.isEmpty ? nil : secret)
                             onConnectEdited(session)
                         } else if case .failed(let message, _) = viewModel.state {
                             alertMessage = message
