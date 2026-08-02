@@ -386,6 +386,7 @@
 "menu.sessions" = "Sessions";
 "menu.knownHosts" = "Bekannte Hosts…";
 "menu.logins" = "Logins…";
+"menu.sshKeys" = "SSH-Schlüssel…";
 "menu.hiddenImports" = "Ausgeblendete Importe…";
 "menu.hiddenImports %@" = "Ausgeblendete Importe (%@)…";
 "menu.exportAllSessions" = "Alle Sitzungen exportieren…";
@@ -639,3 +640,18 @@
 "keys.delete.error" = "Der Schlüssel konnte nicht gelöscht werden.";
 "keys.picker.managed" = "Verwalteter Schlüssel";
 "keys.picker.manage" = "Schlüssel verwalten…";
+"keys.sheet.title" = "SSH-Schlüssel";
+"keys.noMatches" = "Keine Treffer.";
+"keys.import" = "Importieren…";
+"keys.import.title" = "SSH-Schlüssel importieren";
+"keys.import.file" = "Datei";
+"keys.import.submit" = "Importieren";
+"keys.import.error" = "Der Schlüssel konnte nicht importiert werden.";
+"keys.exportPrivate" = "Privaten Schlüssel exportieren…";
+"keys.exportPrivate.title" = "Privaten Schlüssel exportieren?";
+"keys.exportPrivate.warn" = "Der private Schlüssel verlässt den geschützten Speicher. Fortfahren?";
+"keys.exportPrivate.confirm" = "Exportieren";
+"keys.exportPrivate.error" = "Die private Schlüsseldatei konnte nicht gelesen werden.";
+"keys.rename" = "Umbenennen…";
+"keys.rename.title" = "Schlüssel umbenennen";
+"keys.rename.error" = "Der Schlüssel konnte nicht umbenannt werden.";

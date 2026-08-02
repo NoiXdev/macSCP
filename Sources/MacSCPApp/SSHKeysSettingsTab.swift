@@ -293,9 +293,11 @@ struct SSHPublicKeyDocument: FileDocument {
 /// calling `SSHKeyGenerator.generate` into the store's `keyDirectory` and
 /// persisting the result via `store.add`. Shape mirrors
 /// `LoginSetsSheet.LoginSetEditorView` (own small field-row helper below,
-/// `.polished`/`.polishedProminent` buttons) — kept private to this file
-/// since it is only ever opened from `SSHKeysSettingsTab` above.
-private struct GenerateKeySheet: View {
+/// `.polished`/`.polishedProminent` buttons). Internal (not `private`, M18/T5)
+/// so `SSHKeysSheet.swift`'s standalone sheet can open the SAME view instead
+/// of a duplicate — `SSHKeysSettingsTab` above and `SSHKeysSheet` both stay
+/// buildable until Task 6 removes this tab.
+struct GenerateKeySheet: View {
     let store: ManagedKeyStore
     let onGenerated: () -> Void
 

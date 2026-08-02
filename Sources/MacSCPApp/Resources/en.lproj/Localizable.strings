@@ -385,6 +385,7 @@
 "menu.sessions" = "Sessions";
 "menu.knownHosts" = "Known Hosts…";
 "menu.logins" = "Logins…";
+"menu.sshKeys" = "SSH Keys…";
 "menu.hiddenImports" = "Hidden Imports…";
 "menu.hiddenImports %@" = "Hidden Imports (%@)…";
 "menu.exportAllSessions" = "Export All Sessions…";
@@ -638,3 +639,18 @@
 "keys.delete.error" = "Couldn't delete the key.";
 "keys.picker.managed" = "Managed key";
 "keys.picker.manage" = "Manage keys…";
+"keys.sheet.title" = "SSH Keys";
+"keys.noMatches" = "No matches.";
+"keys.import" = "Import…";
+"keys.import.title" = "Import SSH Key";
+"keys.import.file" = "File";
+"keys.import.submit" = "Import";
+"keys.import.error" = "Couldn't import the key.";
+"keys.exportPrivate" = "Export private key…";
+"keys.exportPrivate.title" = "Export the private key?";
+"keys.exportPrivate.warn" = "The private key will leave the protected store. Continue?";
+"keys.exportPrivate.confirm" = "Export";
+"keys.exportPrivate.error" = "Couldn't read the private key file.";
+"keys.rename" = "Rename…";
+"keys.rename.title" = "Rename Key";
+"keys.rename.error" = "Couldn't rename the key.";

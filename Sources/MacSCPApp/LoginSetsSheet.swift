@@ -345,6 +345,10 @@ private struct LoginSetEditorView: View {
     @State private var showKeyImporter = false
     @State private var kind: ConnectionKind
     @State private var accessKeyID: String
+    /// Drives the SSH-keys management sheet's "Manage keys…" link (M18/T5) —
+    /// same locally opened sheet pattern `ConnectionFormView` uses, in place
+    /// of the M17 `SettingsLink` to the Settings tab.
+    @State private var showSSHKeysSheet = false
 
     init(existing: LoginSet?, onSave: @escaping (LoginSet, String?) -> Void, onCancel: @escaping () -> Void) {
         self.existing = existing
@@ -458,8 +462,8 @@ private struct LoginSetEditorView: View {
                         }
                     }
                     EditorRow(label: "") {
-                        SettingsLink {
-                            Text(L10n.string("keys.picker.manage", "Manage keys…"))
+                        Button(L10n.string("keys.picker.manage", "Manage keys…")) {
+                            showSSHKeysSheet = true
                         }
                         .buttonStyle(.plain)
                         .font(.caption)
@@ -534,6 +538,14 @@ private struct LoginSetEditorView: View {
             if case .success(let url) = result {
                 keyPath = url.path(percentEncoded: false)
             }
+        }
+        // "Manage keys…" (M18/T5): a third sheet layer on top of this
+        // editor's own `.sheet(item:)` presentation from `LoginSetsSheet`
+        // (which is itself opened over `ConnectionFormView`/`ContentView`) —
+        // SwiftUI presents each `.sheet` modally over whichever one is
+        // already up, so nesting this deep is unremarkable.
+        .sheet(isPresented: $showSSHKeysSheet) {
+            SSHKeysSheet()
         }
     }
 }

@@ -71,6 +71,10 @@ struct ConnectionFormView: View {
     /// (M10b/T3, mockup section 4C) — opened LOCALLY from the Set-mode
     /// picker, same pattern as `showKnownHostsSheet` above.
     @State private var showLoginSetsSheet = false
+    /// Drives the SSH-keys management sheet's "Manage keys…" link (M18/T5) —
+    /// replaces the M17 `SettingsLink` to the Settings tab with a locally
+    /// opened sheet, same pattern as `showLoginSetsSheet` above.
+    @State private var showSSHKeysSheet = false
     /// The provider-preset picker's current selection (M12/T7b) — purely a
     /// UI convenience for `applyS3Preset(_:)` below, not a source of truth:
     /// the actual S3 fields live on `viewModel` and stay independently
@@ -261,6 +265,12 @@ struct ConnectionFormView: View {
         // sidebar, which read the same observable object.
         .sheet(isPresented: $showLoginSetsSheet) {
             LoginSetsSheet(sessionList: sessionList)
+        }
+        // "Manage keys…" (M18/T5): opens the SSH-keys sheet locally, same
+        // reasoning as `showLoginSetsSheet` above — replaces the M17
+        // `SettingsLink` to the now-removed-in-Task-6 Settings tab.
+        .sheet(isPresented: $showSSHKeysSheet) {
+            SSHKeysSheet()
         }
         // Surfaces a `.failed` state set from OUTSIDE this view's own button
         // handlers (M10b/T3: `ContentView.connect(in:stored:)` calls
@@ -547,8 +557,8 @@ struct ConnectionFormView: View {
                         .errorHighlight(failedField == .keyPath)
 
                         FormRow(label: "") {
-                            SettingsLink {
-                                Text(L10n.string("keys.picker.manage", "Manage keys…"))
+                            Button(L10n.string("keys.picker.manage", "Manage keys…")) {
+                                showSSHKeysSheet = true
                             }
                             .buttonStyle(.plain)
                             .font(.caption)
