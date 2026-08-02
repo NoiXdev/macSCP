@@ -208,6 +208,60 @@ struct MockRemoteFileSystemTests {
         #expect(root.first { $0.path == "/docs" }?.kind == .directory)
     }
 
+    /// M18a final review (Important): `write` reads `tree[parent]` before
+    /// draining the caller's stream, then writes the (possibly stale) copy
+    /// back afterward -- the drain is the only suspension point in this
+    /// method, so it is also the actor-reentrancy window. Two concurrent
+    /// writes into the SAME directory that both suspend there (neither
+    /// stream has yielded yet) both capture the same pre-write `siblings`
+    /// snapshot; if the write-back doesn't re-read `tree[parent]` after the
+    /// drain, the first write to commit its stale-based list back gets
+    /// silently overwritten by the second, one-directional lost update, not
+    /// order-dependent. This mirrors the reentrancy hazard already documented
+    /// for `blockAfterSetPermissions`/`listGates`, but here the two
+    /// suspensions are driven by two independently-controlled continuations
+    /// rather than a single test hook.
+    @Test func concurrentWritesIntoSameDirectoryBothSurvive() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "dir", path: "/dir", kind: .directory)],
+            "/dir": [],
+        ])
+
+        let (streamA, continuationA) = AsyncThrowingStream<Data, Error>.makeStream()
+        let (streamB, continuationB) = AsyncThrowingStream<Data, Error>.makeStream()
+
+        let taskA = Task {
+            try await fs.write(path: "/dir/a.txt", mode: .overwrite, contents: streamA)
+        }
+        let taskB = Task {
+            try await fs.write(path: "/dir/b.txt", mode: .overwrite, contents: streamB)
+        }
+
+        // Neither continuation has yielded or finished yet, so both calls'
+        // first `next()` on their stream has nothing buffered and MUST
+        // suspend -- there is no way for either task to race past this
+        // point. These yields just hand the cooperative scheduler enough
+        // turns to actually start both tasks and run them up to that
+        // guaranteed suspension (same settle idiom as elsewhere in this
+        // suite, e.g. `EditSessionManagerTests`); no sleep, no timing guess
+        // about how far either call gets.
+        for _ in 0..<20 { await Task.yield() }
+
+        // Release A and let it fully commit before B's write-back can run,
+        // so a stale re-write-back in B is guaranteed to clobber A's entry
+        // rather than merely risk it.
+        continuationA.yield(Data("a".utf8))
+        continuationA.finish()
+        try await taskA.value
+
+        continuationB.yield(Data("b".utf8))
+        continuationB.finish()
+        try await taskB.value
+
+        let siblings = try await fs.list(path: "/dir")
+        #expect(siblings.map(\.name).sorted() == ["a.txt", "b.txt"])
+    }
+
     @Test func deleteRemovesExistingFile() async throws {
         let fs = makeMockWithFile(content: Data("bye".utf8))
         try await fs.delete(path: "/datei.bin")
