@@ -796,6 +796,15 @@ public final class RemoteBrowserViewModel {
         let directoryChanging = normalized != currentPath
         currentPath = normalized
         await load()
+        // Superseded (M18a final review, Important-2): with `load()`'s
+        // late-writer guard in place, a navigation whose `load()` lost the
+        // race no longer owns `state` — reading it below would describe
+        // SOMEONE ELSE's navigation. Acting on that verdict would roll
+        // `currentPath`/`displayedAll` back to this navigation's snapshot,
+        // silently undoing the winner, and hand its failure message back to
+        // this caller as if it were this navigation's own. A superseded
+        // navigation claims no verdict and touches nothing.
+        guard currentPath == normalized else { return nil }
         if case .failed(let message) = state {
             // Roll back the base and re-derive ALL search-facing state from
             // it in one place (M11k/T1 review): the failed `load()` above ran
@@ -808,7 +817,20 @@ public final class RemoteBrowserViewModel {
             // and can't drift as fields are added.
             currentPath = previousPath
             displayedAll = previousDisplayedAll
-            state = previousState
+            // A captured `.loading` must NEVER be restored (M18a final
+            // review, Important-2): `previousState` is sampled after the
+            // `stat` above, by which time a detached refresh (the `Task` the
+            // App fires after create/rename) may already have set
+            // `.loading`. That refresh is gone by the time we get here — it
+            // either finished or lost `load()`'s late-writer guard — so
+            // restoring `.loading` would strand the pane with a spinner over
+            // a correct listing and nothing in flight to clear it, with the
+            // table's `.allowsHitTesting(state == .loaded)` and the disabled
+            // Refresh/Go-Up buttons leaving no way out. The rollback below
+            // re-derives the full listing from `previousDisplayedAll`, so
+            // `.loaded` is the truthful state; a captured `.failed` still
+            // restores as-is (the pane WAS showing a failure before).
+            state = previousState == .loading ? .loaded : previousState
             selectedItems = previousSelection
             applySearch()
             return message

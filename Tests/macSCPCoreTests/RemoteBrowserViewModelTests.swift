@@ -1260,6 +1260,100 @@ struct RemoteBrowserViewModelTests {
         #expect(vm.items.map(\.name) == ["b.txt"])
     }
 
+    /// Regression (M18a final review, Important-2): `navigate(to:)` captures
+    /// `previousState` AFTER its `stat` await. If a detached refresh (the
+    /// `Task` the App fires after create/rename) is in flight at that
+    /// moment, it has already set `state = .loading`, and the failure
+    /// rollback then writes that `.loading` back with nothing left in flight
+    /// to repair it. The pane goes fully inert: `BrowserPane` gates the table
+    /// with `.allowsHitTesting(state == .loaded)` and disables Refresh/Go-Up
+    /// while `.loading`, so the user is left staring at a spinner over a
+    /// perfectly correct listing. The rollback restores a fully derived
+    /// `displayedAll`, so `.loaded` is the truthful state to restore.
+    @Test func navigateRollbackDoesNotRestoreAConcurrentLoadingState() async {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [
+                RemoteFileItem(name: "good.txt", path: "/good.txt", kind: .file, size: 1),
+                RemoteFileItem(name: "bad", path: "/bad", kind: .directory),
+            ],
+            // "/bad" is deliberately absent from the tree: it `stat`s fine
+            // (its parent lists it) but `list`ing it fails — the unreadable
+            // directory `navigate`'s rollback path exists for.
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs, startPath: "/")
+        await vm.load()
+        #expect(vm.state == .loaded)
+
+        // A detached refresh of "/" is in flight and has set `.loading`.
+        let refreshArrived = PlainSignal()
+        await fs.gateListCall(at: "/") { refreshArrived.fire() }
+        let detachedRefresh = Task { await vm.load() }
+        await refreshArrived.wait()
+        #expect(vm.state == .loading)
+
+        // Start the doomed navigation and let it get as far as its own
+        // `list("/bad")` — by then it has captured `previousState == .loading`.
+        let navArrived = PlainSignal()
+        await fs.gateListCall(at: "/bad") { navArrived.fire() }
+        let navigation = Task { await vm.navigate(to: "/bad") }
+        await navArrived.wait()
+
+        // Let the detached refresh finish FIRST — it loses to the newer
+        // `currentPath` and leaves nothing in flight to repair the state.
+        await fs.releaseListGate(at: "/")
+        await detachedRefresh.value
+
+        await fs.releaseListGate(at: "/bad")
+        let message = await navigation.value
+
+        #expect(message != nil)
+        #expect(vm.currentPath == "/")
+        #expect(vm.items.map(\.name) == ["bad", "good.txt"])   // directories first
+        // The listing is restored and complete, so the pane must be usable.
+        #expect(vm.state == .loaded)
+    }
+
+    /// Regression (M18a final review, Important-2, second defect): after
+    /// `await load()`, `navigate(to:)` reads `state` to decide success or
+    /// failure. With `load()`'s late-writer guard in place, a navigation
+    /// that has been SUPERSEDED sees the state of whoever won — and would
+    /// then roll `currentPath`/`displayedAll` back to ITS own snapshot,
+    /// undoing the winner's navigation, and return the winner's failure
+    /// message as its own verdict. A superseded navigation must return
+    /// without claiming a verdict and without touching anything.
+    @Test func supersededNavigateDoesNotClaimAnotherNavigationsVerdict() async {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [
+                RemoteFileItem(name: "A", path: "/A", kind: .directory),
+                RemoteFileItem(name: "bad", path: "/bad", kind: .directory),
+            ],
+            "/A": [RemoteFileItem(name: "a.txt", path: "/A/a.txt", kind: .file, size: 1)],
+            // "/bad" absent again: stats fine, fails to list.
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs, startPath: "/")
+        await vm.load()
+        let badItem = vm.items.first { $0.name == "bad" }!
+
+        // Navigation 1 to "/A" blocks inside its listing.
+        let arrived = PlainSignal()
+        await fs.gateListCall(at: "/A") { arrived.fire() }
+        let navigation = Task { await vm.navigate(to: "/A") }
+        await arrived.wait()
+
+        // A second, faster navigation supersedes it and ends in `.failed`.
+        await vm.open(badItem)
+        #expect(vm.currentPath == "/bad")
+
+        await fs.releaseListGate(at: "/A")
+        let message = await navigation.value
+
+        #expect(message == nil)
+        #expect(vm.currentPath == "/bad")
+        if case .failed = vm.state {} else {
+            Issue.record("expected the superseding navigation's .failed state, got \(vm.state)")
+        }
+    }
+
     @Test func refreshQuietlyReappliesActiveFilterToFreshListing() async {
         let fs = makeSearchFS()
         let vm = RemoteBrowserViewModel(fs: fs)
