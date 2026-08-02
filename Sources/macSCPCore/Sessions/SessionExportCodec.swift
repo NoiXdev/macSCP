@@ -1,5 +1,3 @@
-import CommonCrypto
-import CryptoKit
 import Foundation
 
 /// The on-disk payload of a `.macscpsessions` export (spec M9a §1). Key
@@ -107,133 +105,29 @@ public struct ExportedSession: Codable, Equatable, Sendable {
     }
 }
 
-public enum SessionExportError: Error, Equatable {
-    case notAnExportFile
-    case unsupportedVersion(Int)
-    case passwordRequired
-    /// Deliberately indistinguishable (spec M9a §1): GCM authentication
-    /// fails the same way for a wrong password and a tampered file — no
-    /// oracle for attackers, one honest message for users.
-    case wrongPasswordOrCorrupted
-    /// `SecRandomCopyBytes` failed while generating the export salt. Not
-    /// password-related; surfaced through the same generic encode-failure
-    /// message the UI already shows.
-    case randomnessUnavailable
-}
-
-/// Versioned envelope codec for `.macscpsessions` files (spec M9a §1+§2.1).
-/// Pure functions — no file system, no keychain — so every branch is unit
-/// testable.
+/// `.macscpsessions` binding of the shared `ExportEnvelopeCodec` (spec M9a
+/// §1+§2.1). Nothing but format identity lives here — envelope shape, key
+/// derivation and AES-GCM are the generic core's job.
 public enum SessionExportCodec {
     static let formatName = "macscp-sessions"
     static let currentVersion = 1
-    /// OWASP-aligned for PBKDF2-HMAC-SHA256. Stored in the file, so future
-    /// increases keep old files decodable.
-    static let iterations = 600_000
-
-    private struct Envelope: Codable {
-        var format: String
-        var version: Int
-        var encrypted: Bool
-        var payload: SessionExportPayload?
-        var salt: Data?
-        var iterations: Int?
-        var ciphertext: Data?
-    }
 
     public static func encode(_ payload: SessionExportPayload, password: String?) throws -> Data {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let password else {
-            return try encoder.encode(Envelope(
-                format: formatName, version: currentVersion, encrypted: false,
-                payload: payload))
-        }
-        var salt = Data(count: 16)
-        let saltResult = salt.withUnsafeMutableBytes {
-            SecRandomCopyBytes(kSecRandomDefault, 16, $0.baseAddress!)
-        }
-        guard saltResult == errSecSuccess else { throw SessionExportError.randomnessUnavailable }
-        let key = try derivedKey(password: password, salt: salt, iterations: iterations)
-        let plaintext = try JSONEncoder().encode(payload)
-        let sealed = try AES.GCM.seal(plaintext, using: key)
-        return try encoder.encode(Envelope(
-            format: formatName, version: currentVersion, encrypted: true,
-            salt: salt, iterations: iterations, ciphertext: sealed.combined))
+        try ExportEnvelopeCodec.encode(
+            payload, format: formatName, version: currentVersion, password: password)
     }
 
     /// True = encrypted. Lets the UI decide whether to ask for a password
     /// without attempting decryption.
     public static func probe(_ data: Data) throws -> Bool {
-        try envelope(from: data).encrypted
+        try ExportEnvelopeCodec.probe(
+            data, as: SessionExportPayload.self, format: formatName,
+            currentVersion: currentVersion)
     }
 
     public static func decode(_ data: Data, password: String?) throws -> SessionExportPayload {
-        let envelope = try envelope(from: data)
-        if !envelope.encrypted {
-            guard let payload = envelope.payload else { throw SessionExportError.notAnExportFile }
-            return payload
-        }
-        guard let password else { throw SessionExportError.passwordRequired }
-        guard let salt = envelope.salt, let iterations = envelope.iterations,
-              let ciphertext = envelope.ciphertext else {
-            throw SessionExportError.notAnExportFile
-        }
-        // A hostile or corrupt file can carry an out-of-range iteration
-        // count (negative, zero, or absurdly large) that would otherwise
-        // reach CommonCrypto: negative/huge values there trap the process,
-        // and merely-large in-range values freeze the main thread for
-        // minutes. This is a structural envelope check, not a password
-        // check — it rejects before key derivation, so it adds no oracle.
-        guard iterations > 0, iterations <= 10_000_000 else {
-            throw SessionExportError.notAnExportFile
-        }
-        let key = try derivedKey(password: password, salt: salt, iterations: iterations)
-        do {
-            let sealed = try AES.GCM.SealedBox(combined: ciphertext)
-            let plaintext = try AES.GCM.open(sealed, using: key)
-            return try JSONDecoder().decode(SessionExportPayload.self, from: plaintext)
-        } catch {
-            throw SessionExportError.wrongPasswordOrCorrupted
-        }
-    }
-
-    /// Just enough of the envelope to validate format/version before we
-    /// attempt to decode `payload` — a payload shape from a newer version
-    /// may not decode as `SessionExportPayload` at all, and that must report
-    /// `unsupportedVersion`, not `notAnExportFile`.
-    private struct EnvelopeHeader: Decodable {
-        var format: String
-        var version: Int
-    }
-
-    private static func envelope(from data: Data) throws -> Envelope {
-        guard let header = try? JSONDecoder().decode(EnvelopeHeader.self, from: data),
-              header.format == formatName else {
-            throw SessionExportError.notAnExportFile
-        }
-        guard header.version <= currentVersion else {
-            throw SessionExportError.unsupportedVersion(header.version)
-        }
-        guard let envelope = try? JSONDecoder().decode(Envelope.self, from: data) else {
-            throw SessionExportError.notAnExportFile
-        }
-        return envelope
-    }
-
-    private static func derivedKey(password: String, salt: Data, iterations: Int) throws -> SymmetricKey {
-        let passwordBytes = Array(password.utf8)
-        var keyBytes = [UInt8](repeating: 0, count: 32)
-        let status = salt.withUnsafeBytes { saltPtr in
-            CCKeyDerivationPBKDF(
-                CCPBKDFAlgorithm(kCCPBKDF2),
-                password, passwordBytes.count,
-                saltPtr.bindMemory(to: UInt8.self).baseAddress, salt.count,
-                CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256),
-                UInt32(iterations),
-                &keyBytes, keyBytes.count)
-        }
-        guard status == kCCSuccess else { throw SessionExportError.wrongPasswordOrCorrupted }
-        return SymmetricKey(data: Data(keyBytes))
+        try ExportEnvelopeCodec.decode(
+            data, as: SessionExportPayload.self, format: formatName,
+            currentVersion: currentVersion, password: password)
     }
 }
