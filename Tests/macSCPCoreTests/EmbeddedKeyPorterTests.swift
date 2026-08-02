@@ -248,6 +248,41 @@ struct EmbeddedKeyPorterTests {
         }
     }
 
+    /// A metadata entry whose `fileName` is not a single path component (only
+    /// reachable by hand-editing `managed_keys.json`) resolves to no file at
+    /// all, so it matches no path — and `embed` would have returned nil for it,
+    /// i.e. "not ours, skip", silently leaving a key out of the export the user
+    /// asked for. It is ours; it is just unusable, and that is what the
+    /// `keyFileMissing` documentation promises.
+    @Test func embedReportsATamperedFileNameAsAMissingKeyFile() throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let store = makeStore(in: dir)
+        let secrets = InMemorySecretStore()
+        try store.add(ManagedKey(
+            name: "prod", comment: "prod-key", type: .ed25519, fingerprint: "SHA256:x",
+            publicKeyOpenSSH: "ssh-ed25519 AAAA prod-key", createdAt: Date(),
+            hasPassphrase: false, fileName: "../outsider"))
+
+        // The path such an entry names by the naive join — with a real file
+        // planted there, so a matching-but-reading implementation would have
+        // something to carry off.
+        let outside = store.keyDirectory.deletingLastPathComponent()
+            .appendingPathComponent("outsider")
+        try Data("OUTSIDE PRIVATE KEY".utf8).write(to: outside)
+
+        #expect(throws: EmbeddedKeyPorter.PorterError.keyFileMissing(name: "prod")) {
+            _ = try EmbeddedKeyPorter.embed(
+                keyPath: outside.path(percentEncoded: false), includePassphrase: true,
+                store: store, secrets: secrets)
+        }
+        // The file outside the key directory is untouched, and a path that no
+        // entry names at all is still a plain "not ours".
+        #expect(try Data(contentsOf: outside) == Data("OUTSIDE PRIVATE KEY".utf8))
+        #expect(try EmbeddedKeyPorter.embed(
+            keyPath: dir.appendingPathComponent("elsewhere").path(percentEncoded: false),
+            includePassphrase: true, store: store, secrets: secrets) == nil)
+    }
+
     @Test func embedCarriesThePassphraseOnlyWhenAsked() throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let store = makeStore(in: dir)

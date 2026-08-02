@@ -74,12 +74,28 @@ public enum EmbeddedKeyPorter {
         // Ownership first, and from metadata only: nothing below this guard
         // runs for a path macSCP does not manage, so an external key file is
         // never opened (invariant 1). Keep the file read AFTER this line.
-        guard let key = try store.key(forPath: keyPath) else { return nil }
+        guard let key = try store.key(forPath: keyPath) else {
+            // `key(forPath:)` can only match an entry that resolves to a file
+            // INSIDE the key directory, so an entry whose `fileName` was
+            // hand-edited to something else ("../outsider") matches no path at
+            // all. Returning nil for it would silently drop a key the user
+            // asked to export, as if it were somebody else's: recognize it by
+            // the naive join it was written with — compared, never opened —
+            // and report it as that key's own missing-file condition.
+            if let unusable = try store.keyWithUnusableFileName(forPath: keyPath) {
+                throw PorterError.keyFileMissing(name: unusable.name)
+            }
+            return nil
+        }
 
         // Both failure modes below are NAMED conditions, not raw Cocoa
         // errors: a caller walking many login sets can report this one key as
         // broken and still export the rest. Neither carries the underlying
         // error, which would spell out the store path.
+        //
+        // `key` matched by its resolved path, so it does have a private key
+        // URL and that unwrap cannot fail here; what the guard really catches
+        // is the file having disappeared since the store was read.
         guard let fileURL = store.privateKeyURL(for: key),
               FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false))
         else {

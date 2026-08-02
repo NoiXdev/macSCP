@@ -79,11 +79,33 @@ public struct ManagedKeyStore: Sendable {
     /// The managed key whose private file is at `path`, or nil. Matches by the
     /// resolved absolute path of `keyDirectory/fileName` (tilde-expanded).
     public func key(forPath path: String) throws -> ManagedKey? {
-        let target = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
-            .standardizedFileURL.path
+        let target = Self.resolved(path)
         return try all().first {
             privateKeyURL(for: $0)?.standardizedFileURL.path == target
         }
+    }
+
+    /// The managed key that `path` names but that `key(forPath:)` can never
+    /// return, because its stored `fileName` is not a single path component and
+    /// so addresses no file inside the key directory at all.
+    ///
+    /// Matched against the naive `keyDirectory + fileName` join such an entry
+    /// was presumably written with, so a caller can tell "macSCP manages no key
+    /// at this path" apart from "macSCP manages this key, but its metadata
+    /// entry is unusable" — the difference between silently skipping a key and
+    /// reporting it. The joined path is only ever COMPARED here: it is never
+    /// opened, and no other store API will resolve such an entry to a file.
+    func keyWithUnusableFileName(forPath path: String) throws -> ManagedKey? {
+        let target = Self.resolved(path)
+        return try all().first {
+            !Self.isSinglePathComponent($0.fileName)
+                && keyDirectory.appendingPathComponent($0.fileName)
+                    .standardizedFileURL.path == target
+        }
+    }
+
+    private static func resolved(_ path: String) -> String {
+        URL(fileURLWithPath: NSString(string: path).expandingTildeInPath).standardizedFileURL.path
     }
 
     private func persist(_ keys: [ManagedKey]) throws {
