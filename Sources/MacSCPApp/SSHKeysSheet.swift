@@ -437,9 +437,11 @@ struct SSHPrivateKeyExportDocument: FileDocument {
 /// persisting the result via `store.add`. Shape mirrors
 /// `LoginSetsSheet.LoginSetEditorView` (own small field-row helper below,
 /// `.polished`/`.polishedProminent` buttons). Moved here from the removed
-/// `SSHKeysSettingsTab.swift` (M18/T6) — `internal` (not `private`) so it
-/// stays usable from `SSHKeysSheet.body`'s `.sheet(isPresented:)` above.
-struct GenerateKeySheet: View {
+/// `SSHKeysSettingsTab.swift` (M18/T6) — `private` like its neighbors
+/// `ImportKeySheet`/`RenameKeySheet` below: a top-level `private` type is
+/// file-scoped, so it stays usable from `SSHKeysSheet.body`'s
+/// `.sheet(isPresented:)` above without needing wider visibility.
+private struct GenerateKeySheet: View {
     let store: ManagedKeyStore
     let onGenerated: () -> Void
 

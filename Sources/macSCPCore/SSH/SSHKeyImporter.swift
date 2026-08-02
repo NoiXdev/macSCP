@@ -2,9 +2,13 @@ import Foundation
 
 /// Inspects an existing OpenSSH private key file so the app can import it as a
 /// managed key (M18). Shells out to the system `ssh-keygen` (argument array,
-/// never a shell string) to derive the public key (`-y`) and fingerprint
-/// (`-l`). Reads only — copying the file into the key store and creating the
-/// `ManagedKey`/Keychain entry is the app's job (it owns the id/name/comment).
+/// never a shell string) to derive the public key (`-y`). Reads only —
+/// copying the file into the key store and creating the `ManagedKey`/Keychain
+/// entry is the app's job (it owns the id/name/comment).
+///
+/// The passphrase is passed via `-P` in the argument array (never a shell
+/// string) — it is briefly visible in the process's argv to the same user via
+/// `ps`, the same accepted minor `SSHKeyGenerator` documents for its own `-N`.
 public enum SSHKeyImporter {
     public struct ImportedKeyInfo: Equatable, Sendable {
         public let type: KeyType
@@ -27,14 +31,23 @@ public enum SSHKeyImporter {
         let pub = try run(tool, ["-y", "-P", passphrase ?? "", "-f", privateKeyURL.path(percentEncoded: false)])
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard pub.contains(" ") else { throw SSHKeyImportError.unsupportedOrEncrypted }
-        // Fingerprint via `ssh-keygen -l -f <file>` → "<bits> SHA256:… comment (TYPE)".
-        let lf = try run(tool, ["-l", "-f", privateKeyURL.path(percentEncoded: false)])
-        guard let fingerprint = lf.split(separator: " ").first(where: { $0.hasPrefix("SHA256:") }).map(String.init)
+        // Fingerprint derived from the SAME `-y` output above (never a
+        // separate `ssh-keygen -l -f <file>` call, which prefers a sibling
+        // `.pub` file over the private key — if that `.pub` is stale/foreign
+        // it would silently report a different key's fingerprint). Mirrors
+        // `SSHKeyGenerator.fingerprint(fromOpenSSHPublicKey:)` exactly, so
+        // there is only one derivation path for both generate and import.
+        let parts = pub.split(separator: " ")
+        guard parts.count >= 2,
+              let fingerprint = HostKeyFingerprint.sha256(ofKeyBlobBase64: String(parts[1]))
         else {
             throw SSHKeyImportError.unreadable
         }
+        guard let type = keyType(fromOpenSSHPublicKey: pub) else {
+            throw SSHKeyImportError.unsupportedOrEncrypted
+        }
         return ImportedKeyInfo(
-            type: keyType(fromOpenSSHPublicKey: pub),
+            type: type,
             fingerprint: fingerprint,
             publicKeyOpenSSH: pub)
     }
@@ -55,9 +68,17 @@ public enum SSHKeyImporter {
         return s
     }
 
-    private static func keyType(fromOpenSSHPublicKey line: String) -> KeyType {
+    /// `nil` for any OpenSSH key type macSCP doesn't model (e.g. `ssh-dss`,
+    /// `sk-ssh-ed25519@openssh.com`) — the caller turns that into
+    /// `.unsupportedOrEncrypted` rather than mislabeling an unknown type as
+    /// RSA. `KeyType` intentionally gets no new case here: `.rsa`/`.ecdsa`
+    /// are exhaustively switched over in the picker/badge/`isConnectable`
+    /// call sites, and none of them need to distinguish "unsupported" from
+    /// the types already known.
+    private static func keyType(fromOpenSSHPublicKey line: String) -> KeyType? {
         if line.hasPrefix("ssh-ed25519") { return .ed25519 }
         if line.hasPrefix("ecdsa-") { return .ecdsa }
-        return .rsa(bits: 0)   // bits unknown from the public line; not connect-relevant
+        if line.hasPrefix("ssh-rsa") { return .rsa(bits: 0) }   // bits unknown from the public line; not connect-relevant
+        return nil
     }
 }

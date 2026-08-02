@@ -45,4 +45,40 @@ struct SSHKeyImporterTests {
         let info = try SSHKeyImporter.inspect(privateKeyURL: key, passphrase: "s3cr3t")
         #expect(info.type == .ed25519)
     }
+
+    /// `ssh-keygen -l -f <private key>` prefers a sibling `.pub` file over
+    /// deriving from the private key itself. If that sibling `.pub` belongs
+    /// to a DIFFERENT key, the fingerprint reported by `-l` and the public
+    /// key reported by `-y` (which always reads the private key directly)
+    /// end up describing two different keys. Regression coverage for that
+    /// mismatch: plant key B's `.pub` next to key A's private key, then
+    /// assert the returned fingerprint still matches the returned public key
+    /// (i.e. both describe key A, never key B).
+    @Test func fingerprintMatchesThePublicKeyEvenWithAStaleSiblingPubFile() throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+
+        let keyA = dir.appendingPathComponent("id_ed25519_a")
+        keygen(["-t", "ed25519", "-f", keyA.path, "-N", "", "-q", "-C", "key-a"])
+
+        let keyB = dir.appendingPathComponent("id_ed25519_b")
+        keygen(["-t", "ed25519", "-f", keyB.path, "-N", "", "-q", "-C", "key-b"])
+
+        // Overwrite key A's sibling .pub with key B's .pub, simulating a
+        // stale/foreign public key file sitting next to the private key.
+        let pubA = URL(fileURLWithPath: keyA.path + ".pub")
+        let pubB = URL(fileURLWithPath: keyB.path + ".pub")
+        try FileManager.default.removeItem(at: pubA)
+        try FileManager.default.copyItem(at: pubB, to: pubA)
+
+        let info = try SSHKeyImporter.inspect(privateKeyURL: keyA, passphrase: nil)
+
+        // The public key always comes from `-y` on the private key, so it
+        // must describe key A.
+        #expect(info.publicKeyOpenSSH.hasPrefix("ssh-ed25519 "))
+        // The fingerprint must be derived from THAT SAME public key blob —
+        // not from the stale sibling .pub file (which would describe key B).
+        let blob = info.publicKeyOpenSSH.split(separator: " ")[1]
+        let expectedFingerprint = HostKeyFingerprint.sha256(ofKeyBlobBase64: String(blob))
+        #expect(info.fingerprint == expectedFingerprint)
+    }
 }

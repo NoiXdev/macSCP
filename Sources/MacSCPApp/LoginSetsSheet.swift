@@ -72,6 +72,19 @@ struct LoginSetsSheet: View {
                 List(visibleSets, selection: $selectedID) { set in
                     row(set)
                 }
+                // M18 search regression fix: if the search text filters the
+                // selected row out of `visibleSets`, the footer's
+                // "Edit…"/"Delete…" buttons are gated on `selectedSet`, which
+                // reads from the FULL `sessionList.loginSets` — so without
+                // this, they'd stay enabled and act on (and the delete
+                // dialog would name) a row the user can no longer see.
+                // Clearing the selection here keeps both gates and dialog
+                // text truthful to what's on screen.
+                .onChange(of: visibleSets) { _, newValue in
+                    if let selectedID, !newValue.contains(where: { $0.id == selectedID }) {
+                        self.selectedID = nil
+                    }
+                }
             }
 
             HStack {
