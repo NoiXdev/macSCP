@@ -57,6 +57,12 @@ public enum EmbeddedKeyPorter {
         /// or it carried one). Broken or forged — never a reason to fall back
         /// to the values the payload declared about itself.
         case keyMaterialUnverifiable
+        /// The local key store could not be updated. Replaces the underlying
+        /// Cocoa error, which spells out the local `managed_keys.json` path —
+        /// the same thing `keyFileMissing`/`keyFileUnreadable` keep out of the
+        /// embed side. The caller holds the key it was importing and can name
+        /// it itself.
+        case keyStoreUnwritable
     }
 
     /// Returns an `EmbeddedKey` only when `keyPath` resolves to a MANAGED key.
@@ -171,7 +177,14 @@ public enum EmbeddedKeyPorter {
                 publicKeyOpenSSH: evidence.info.publicKeyOpenSSH,
                 createdAt: Date(), hasPassphrase: evidence.hasPassphrase,
                 fileName: newID.uuidString)
-            try store.add(managed)
+            do {
+                try store.add(managed)
+            } catch {
+                // `store.add` reads and rewrites `managed_keys.json`, and its
+                // Cocoa error spells that local path out. Name the condition
+                // instead, as the embed side already does.
+                throw PorterError.keyStoreUnwritable
+            }
         } catch {
             // Anything failing after the write above — chmod, Keychain save,
             // or the metadata write — must not leave an orphaned key file or
