@@ -155,6 +155,11 @@ struct SSHKeysSheet: View {
             } else {
                 errorMessage = nil
             }
+            // The completion handler fires after the write (success) or the
+            // cancel/failure path completes, so it's safe to drop the raw
+            // private key bytes here rather than keeping them in view state
+            // for the sheet's remaining lifetime.
+            exportPrivateDocument = nil
         }
         .confirmationDialog(
             L10n.string("keys.delete.title", "Delete this key?"),
@@ -498,6 +503,12 @@ private struct ImportKeySheet: View {
                 try FileManager.default.createDirectory(
                     at: store.keyDirectory, withIntermediateDirectories: true,
                     attributes: [.posixPermissions: 0o700])
+                // `createDirectory` only applies `attributes` when it creates the
+                // directory; if it already existed, permissions are left untouched.
+                // Harden explicitly so the 0700 invariant holds either way.
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o700],
+                    ofItemAtPath: store.keyDirectory.path(percentEncoded: false))
                 try FileManager.default.copyItem(at: fileURL, to: destination)
                 try FileManager.default.setAttributes(
                     [.posixPermissions: 0o600], ofItemAtPath: destination.path(percentEncoded: false))
