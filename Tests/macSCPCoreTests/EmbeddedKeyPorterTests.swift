@@ -61,6 +61,12 @@ struct EmbeddedKeyPorterTests {
         #expect(embedded.fingerprint == key.fingerprint)
         #expect(embedded.hasPassphrase == false)
         #expect(embedded.passphrase == nil)
+        // The public key is not secret and is already in `ManagedKey`, so it
+        // travels unconditionally — `materialize` must not have to re-derive
+        // it (which it cannot do for an encrypted key exported without its
+        // passphrase).
+        #expect(embedded.publicKeyOpenSSH == key.publicKeyOpenSSH)
+        #expect(!embedded.publicKeyOpenSSH.isEmpty)
         #expect(embedded.fileContents
             == (try Data(contentsOf: URL(fileURLWithPath: path(of: key, in: store)))))
 
@@ -336,6 +342,59 @@ struct EmbeddedKeyPorterTests {
         let imported = try #require(try target.key(forPath: importedPath))
         #expect(imported.type == .ed25519)
         #expect(imported.fingerprint == key.fingerprint)
+    }
+
+    /// An encrypted key exported WITHOUT its passphrase cannot be opened on
+    /// the import side, so nothing can be derived from the file — and the
+    /// keys sheet enables "copy public key" unconditionally. Without the
+    /// carried public key the button would hand out an empty string exactly
+    /// when the user needs the line for `authorized_keys`.
+    @Test func materializeKeepsThePublicKeyOfAnEncryptedKeyExportedWithoutItsPassphrase() throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let source = makeStore(in: dir)
+        let secrets = InMemorySecretStore()
+        let key = try addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
+        let embedded = try #require(
+            try EmbeddedKeyPorter.embed(
+                keyPath: path(of: key, in: source), includePassphrase: false,
+                store: source, secrets: secrets))
+        #expect(embedded.passphrase == nil)
+
+        let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
+        let importedPath = try EmbeddedKeyPorter.materialize(
+            embedded, store: target, secrets: InMemorySecretStore())
+
+        let imported = try #require(try target.key(forPath: importedPath))
+        #expect(imported.publicKeyOpenSSH == key.publicKeyOpenSSH)
+        #expect(imported.fingerprint == key.fingerprint)
+        #expect(imported.type == .ed25519)
+        #expect(imported.hasPassphrase == true)
+    }
+
+    /// …and the fingerprint check still bites in that case: the declared
+    /// fingerprint is cross-checked against the carried public key line, the
+    /// only thing left to check it against.
+    @Test func materializeRejectsAForgedFingerprintWithoutThePassphrase() throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let source = makeStore(in: dir)
+        let secrets = InMemorySecretStore()
+        let key = try addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
+        var embedded = try #require(
+            try EmbeddedKeyPorter.embed(
+                keyPath: path(of: key, in: source), includePassphrase: false,
+                store: source, secrets: secrets))
+        let victim = try addManagedKey(to: source, secrets: secrets, name: "prod")
+        embedded.fingerprint = victim.fingerprint
+
+        let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
+        #expect(throws: EmbeddedKeyPorter.PorterError.fingerprintMismatch) {
+            _ = try EmbeddedKeyPorter.materialize(
+                embedded, store: target, secrets: InMemorySecretStore())
+        }
+        let leftovers = (try? FileManager.default.contentsOfDirectory(
+            atPath: target.keyDirectory.path(percentEncoded: false))) ?? []
+        #expect(leftovers.isEmpty)
+        #expect(try target.all().isEmpty)
     }
 
     /// A crafted export can name the fingerprint of a key the victim knows
