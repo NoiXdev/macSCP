@@ -29,14 +29,27 @@ public enum SSHKeyImporter {
         }
         // Public key via `ssh-keygen -y -P <pass> -f <file>` (stdout).
         let pub = try run(tool, ["-y", "-P", passphrase ?? "", "-f", privateKeyURL.path(percentEncoded: false)])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard pub.contains(" ") else { throw SSHKeyImportError.unsupportedOrEncrypted }
         // Fingerprint derived from the SAME `-y` output above (never a
         // separate `ssh-keygen -l -f <file>` call, which prefers a sibling
         // `.pub` file over the private key — if that `.pub` is stale/foreign
         // it would silently report a different key's fingerprint). Mirrors
         // `SSHKeyGenerator.fingerprint(fromOpenSSHPublicKey:)` exactly, so
         // there is only one derivation path for both generate and import.
+        return try info(fromPublicKeyLine: pub)
+    }
+
+    /// The identity encoded in an OpenSSH public key line
+    /// (`<type> <base64 blob> [comment]`). Pure: no subprocess, no file
+    /// access — so a caller that ALREADY holds the public key line does not
+    /// have to shell out (and does not have to put a passphrase into
+    /// `ssh-keygen`'s argv) just to learn type and fingerprint.
+    ///
+    /// This says nothing about any private key: it verifies the line against
+    /// itself, not against key material. Prefer `inspect` whenever the
+    /// private key can actually be opened.
+    public static func info(fromPublicKeyLine line: String) throws -> ImportedKeyInfo {
+        let pub = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard pub.contains(" ") else { throw SSHKeyImportError.unsupportedOrEncrypted }
         let parts = pub.split(separator: " ")
         guard parts.count >= 2,
               let fingerprint = HostKeyFingerprint.sha256(ofKeyBlobBase64: String(parts[1]))

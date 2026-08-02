@@ -59,6 +59,13 @@ public struct EmbeddedKey: Codable, Equatable, Sendable {
     public var comment: String
     public var type: KeyType
     public var fingerprint: String
+    /// The OpenSSH public key line. Carried unconditionally (a public key is
+    /// not a secret, and it is already in `ManagedKey`, so it costs no extra
+    /// file read): for an encrypted key exported WITHOUT its passphrase the
+    /// import side cannot derive it, and would otherwise register the key
+    /// with an empty public key -- exactly when the user needs that line for
+    /// an `authorized_keys` entry.
+    public var publicKeyOpenSSH: String
     public var hasPassphrase: Bool
     /// Only present when the export ALSO included secrets
     /// (`LoginSetExportPayload.includesSecrets`) -- the managed key's
@@ -67,13 +74,15 @@ public struct EmbeddedKey: Codable, Equatable, Sendable {
 
     public init(
         fileContents: Data, name: String, comment: String, type: KeyType,
-        fingerprint: String, hasPassphrase: Bool, passphrase: String?
+        fingerprint: String, publicKeyOpenSSH: String, hasPassphrase: Bool,
+        passphrase: String?
     ) {
         self.fileContents = fileContents
         self.name = name
         self.comment = comment
         self.type = type
         self.fingerprint = fingerprint
+        self.publicKeyOpenSSH = publicKeyOpenSSH
         self.hasPassphrase = hasPassphrase
         self.passphrase = passphrase
     }

@@ -25,11 +25,12 @@ import Foundation
 ///    (best-effort, `try?`), exactly like the manual key import in
 ///    `SSHKeysSheet`. The metadata entry is written LAST, so the rollback
 ///    never has to undo a half-registered key.
-/// 5. **The imported key's identity comes from the key material**, not from
-///    the metadata next to it in the file. Type, fingerprint and public key
-///    are derived from the bytes that were actually written; a declared
+/// 5. **The imported key's identity is derived, never taken on trust.** Type,
+///    fingerprint and public key come from the key material where it can be
+///    opened, and from the carried public key line otherwise; a declared
 ///    fingerprint that disagrees aborts the import. Otherwise a crafted file
-///    could show the user a fingerprint they trust next to a foreign key.
+///    could show the user a fingerprint they trust next to a foreign key
+///    (see `identity(of:declaredBy:)` for what each case actually proves).
 public enum EmbeddedKeyPorter {
     /// Failures that name their own condition. A caller walking many login
     /// sets can catch one of these, report the affected key by name, and
@@ -69,7 +70,8 @@ public enum EmbeddedKeyPorter {
 
         return EmbeddedKey(
             fileContents: fileContents, name: key.name, comment: key.comment, type: key.type,
-            fingerprint: key.fingerprint, hasPassphrase: key.hasPassphrase, passphrase: passphrase)
+            fingerprint: key.fingerprint, publicKeyOpenSSH: key.publicKeyOpenSSH,
+            hasPassphrase: key.hasPassphrase, passphrase: passphrase)
     }
 
     /// Writes the key into the managed store under a FRESH id and returns the
@@ -136,23 +138,41 @@ public enum EmbeddedKeyPorter {
     /// The declared metadata is attacker-controlled: a crafted
     /// `.macscplogins` can pair foreign key bytes with the fingerprint of a
     /// key its victim recognizes, and the keys list would then repeat that
-    /// claim back at a user asking "is this my prod key?". So where the
-    /// private key can be opened, `ssh-keygen -y` decides — and a declared
-    /// fingerprint that disagrees aborts the import (the caller's rollback
-    /// removes the file and the Keychain slot).
+    /// claim back at a user asking "is this my prod key?". So the values that
+    /// end up in the store are derived, and a declared fingerprint that
+    /// disagrees with them aborts the import (the caller's rollback removes
+    /// the file and the Keychain slot).
     ///
-    /// For an encrypted key whose passphrase was NOT exported the derivation
-    /// is impossible; the entry then keeps the declared metadata and an empty
-    /// public key, which costs the "copy public key" convenience in the key
-    /// list.
+    /// Two strengths, depending on what the export carried:
+    ///
+    /// - **The private key can be opened** (plain key, or encrypted with the
+    ///   passphrase exported): `ssh-keygen -y` decides, which binds the
+    ///   fingerprint to the key MATERIAL that was just written. For the
+    ///   encrypted case this hands the passphrase to a subprocess's argv —
+    ///   the accepted minor `SSHKeyImporter` documents, and the price of the
+    ///   stronger check. Nothing is passed for a plain key.
+    /// - **It cannot** (encrypted, passphrase left at home): the carried
+    ///   public key line is the only thing left to check against. The stored
+    ///   fingerprint is then the one that line really encodes rather than a
+    ///   free-form claim, but nothing ties it to the private key bytes.
+    ///   Deriving the public key from the file is impossible here, which is
+    ///   exactly why `EmbeddedKey` carries it.
     private static func identity(of url: URL, declaredBy key: EmbeddedKey) throws
         -> SSHKeyImporter.ImportedKeyInfo
     {
-        guard let derived = try? SSHKeyImporter.inspect(
-            privateKeyURL: url, passphrase: key.passphrase)
-        else {
-            return SSHKeyImporter.ImportedKeyInfo(
-                type: key.type, fingerprint: key.fingerprint, publicKeyOpenSSH: "")
+        let canOpenPrivateKey = !key.hasPassphrase || key.passphrase != nil
+        let derived: SSHKeyImporter.ImportedKeyInfo
+        if canOpenPrivateKey,
+           let inspected = try? SSHKeyImporter.inspect(
+               privateKeyURL: url, passphrase: key.passphrase)
+        {
+            derived = inspected
+        } else {
+            // Also the fallback when `inspect` fails for a reason other than
+            // encryption (no `ssh-keygen`, a key type it rejects): a payload
+            // whose public key line is unusable throws out of here rather
+            // than registering an unverified fingerprint.
+            derived = try SSHKeyImporter.info(fromPublicKeyLine: key.publicKeyOpenSSH)
         }
         guard derived.fingerprint == key.fingerprint else {
             throw PorterError.fingerprintMismatch
