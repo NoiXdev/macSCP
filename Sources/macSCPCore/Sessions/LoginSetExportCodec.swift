@@ -51,13 +51,20 @@ public struct ExportedLoginSet: Codable, Equatable, Sendable {
     }
 }
 
+/// A macSCP-managed key travelling inside an export.
+///
+/// The v1 shape deliberately carries NO key type: `EmbeddedKeyPorter` derives
+/// type, fingerprint and public key from the material it materializes, so a
+/// carried type would have been an attacker-controlled field that nothing
+/// reads -- and the next reader of this struct would have had to rediscover
+/// that it must not be trusted. `name` and `comment` stay because they are
+/// user-facing LABELS, not identity.
 public struct EmbeddedKey: Codable, Equatable, Sendable {
     /// The private key file's raw bytes, read only from a macSCP-managed key
     /// directory -- never from an external path.
     public var fileContents: Data
     public var name: String
     public var comment: String
-    public var type: KeyType
     public var fingerprint: String
     /// The OpenSSH public key line. Carried unconditionally (a public key is
     /// not a secret, and it is already in `ManagedKey`, so it costs no extra
@@ -73,14 +80,13 @@ public struct EmbeddedKey: Codable, Equatable, Sendable {
     public var passphrase: String?
 
     public init(
-        fileContents: Data, name: String, comment: String, type: KeyType,
+        fileContents: Data, name: String, comment: String,
         fingerprint: String, publicKeyOpenSSH: String, hasPassphrase: Bool,
         passphrase: String?
     ) {
         self.fileContents = fileContents
         self.name = name
         self.comment = comment
-        self.type = type
         self.fingerprint = fingerprint
         self.publicKeyOpenSSH = publicKeyOpenSSH
         self.hasPassphrase = hasPassphrase

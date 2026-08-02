@@ -120,7 +120,7 @@ public enum EmbeddedKeyPorter {
         }
 
         return EmbeddedKey(
-            fileContents: fileContents, name: key.name, comment: key.comment, type: key.type,
+            fileContents: fileContents, name: key.name, comment: key.comment,
             fingerprint: key.fingerprint, publicKeyOpenSSH: key.publicKeyOpenSSH,
             hasPassphrase: key.hasPassphrase, passphrase: passphrase)
     }
