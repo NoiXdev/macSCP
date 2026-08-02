@@ -47,6 +47,23 @@ public actor ImportConflictArbiter {
     /// Returns nil once the user has cancelled — from that point on, every
     /// call returns nil without asking the decider again, and the caller
     /// must apply nothing for the remaining conflicts.
+    ///
+    /// Concurrency contract: callers MAY call `resolve` concurrently for
+    /// different conflicts — e.g. an import planner resolving several items
+    /// in parallel. Actor isolation does NOT span the `await decider(...)`
+    /// suspension below, so two concurrent calls can both observe
+    /// `rule == nil` / `isCancelled == false` before either has answered,
+    /// and both will invoke `decider`. Callers must therefore NOT assume
+    /// `decider` is asked at most once per overlapping pair of calls. What
+    /// IS guaranteed: every call re-checks `isCancelled` and `rule`
+    /// immediately after its own `decider` invocation returns, before
+    /// applying its own answer — so cancellation always wins (a call whose
+    /// own decider answered normally still returns nil if some other call
+    /// cancelled in the meantime) and an `applyToAll` rule set by another
+    /// call always wins over this call's own answer, even if this call
+    /// started first and is only now resuming. "Don't ask again" is a
+    /// promise about the RETURNED resolution and the terminal cancelled
+    /// state, not about how many times `decider` is invoked under overlap.
     public func resolve(_ conflict: ImportConflict) async -> ImportConflictResolution? {
         if isCancelled { return nil }
         if let rule { return rule }
@@ -54,6 +71,12 @@ public actor ImportConflictArbiter {
             isCancelled = true
             return nil
         }
+        // Re-check: a concurrent call may have cancelled or set the rule
+        // while this call's own `decider` invocation was suspended above
+        // (actor isolation does not span that suspension point). Both win
+        // over this call's own, now-stale answer.
+        if isCancelled { return nil }
+        if let rule { return rule }
         if decision.applyToAll { rule = decision.resolution }
         return decision.resolution
     }
