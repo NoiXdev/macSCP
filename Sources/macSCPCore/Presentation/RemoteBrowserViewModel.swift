@@ -510,6 +510,33 @@ public final class RemoteBrowserViewModel {
         return nil
     }
 
+    /// Creates an empty file in the current directory. Same collision probe
+    /// and error contract as `createFolder(named:)` — see its doc comment
+    /// for the rationale of probing via `stat` instead of the display-
+    /// filtered `items` list. Like it, this does NOT refresh the listing;
+    /// callers use `refreshAndSelect(path:)` afterwards (M18a).
+    public func createFile(named name: String) async -> String? {
+        let path = RemotePath.join(currentPath, name)
+        let detail = "create \(path)"
+        if (try? await fs.stat(path: path)) != nil {
+            let message = Self.message(
+                for: RemoteFSError.protocolError(reason: "destination already exists: \(path)"),
+                path: path)
+            auditSink?(AuditEvent(kind: .newFile, detail: detail, isError: true, errorMessage: message))
+            return message
+        }
+        do {
+            let empty = AsyncThrowingStream<Data, Error> { $0.finish() }
+            try await fs.write(path: path, mode: .overwrite, contents: empty)
+        } catch {
+            let message = Self.message(for: error, path: path)
+            auditSink?(AuditEvent(kind: .newFile, detail: detail, isError: true, errorMessage: message))
+            return message
+        }
+        auditSink?(AuditEvent(kind: .newFile, detail: detail))
+        return nil
+    }
+
     /// Applies the low 12 permission bits to `item`, then refreshes.
     public func applyPermissions(_ permissions: UInt32, to item: RemoteFileItem) async -> String? {
         let detail = "chmod \(PosixPermissions(rawValue: permissions).octalString) \(item.path)"

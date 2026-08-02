@@ -32,6 +32,7 @@ public enum BrowserMenuEntry: Equatable, Sendable {
     case rename                // single selection only
     case infoAndPermissions    // single, NEVER for symlinks (chmod follows links)
     case newFolder             // always (also on background click)
+    case newFile               // always (also on background click) — M18a
     case copyPath              // any non-empty selection
     case delete                // any non-empty selection
     case backendFileAction(FileActionContribution)   // protocol-contributed file action (M14)
@@ -47,7 +48,7 @@ public enum BrowserContextMenu {
         crossSessionTargets: [CrossSessionTarget] = [],
         fileActions: [FileActionContribution] = []
     ) -> [BrowserMenuEntry] {
-        guard !selection.isEmpty else { return [.newFolder] }
+        guard !selection.isEmpty else { return [.newFolder, .newFile] }
         var entries: [BrowserMenuEntry] = []
         if selection.contains(where: { $0.kind != .symlink }) {
             entries.append(.transferToOtherPane)
@@ -68,6 +69,7 @@ public enum BrowserContextMenu {
             }
         }
         entries.append(.newFolder)
+        entries.append(.newFile)
         entries.append(.copyPath)
         entries.append(.delete)
         return entries

@@ -851,6 +851,12 @@ struct RemoteFileTableView: NSViewRepresentable {
                 return actionItem(title: L10n.string("menu.info", "Info & Permissions…"), entry: entry, selection: selection)
             case .newFolder:
                 return actionItem(title: L10n.string("menu.newFolder", "New Folder…"), entry: entry, selection: selection)
+            case .newFile:
+                // Rendered title/localization + the actual sheet trigger are
+                // wired up in a later task (M18a/T4) — this case only needs
+                // to exist so the switch stays exhaustive now that Core
+                // (M18a/T3) added `BrowserMenuEntry.newFile`.
+                return actionItem(title: L10n.string("menu.newFile", "New File…"), entry: entry, selection: selection)
             case .copyPath:
                 return actionItem(title: L10n.string("menu.copyPath", "Copy Path"), entry: entry, selection: selection)
             case .delete:

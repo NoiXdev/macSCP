@@ -11,14 +11,14 @@ struct BrowserContextMenuTests {
         RemoteFileItem(name: name, path: "/\(name)", kind: .symlink, size: nil)
     }
 
-    @Test func backgroundShowsOnlyNewFolder() {
-        #expect(BrowserContextMenu.entries(for: [], side: .remote) == [.newFolder])
+    @Test func backgroundShowsOnlyNewFolderAndNewFile() {
+        #expect(BrowserContextMenu.entries(for: [], side: .remote) == [.newFolder, .newFile])
     }
 
     @Test func singleRemoteFileShowsEverything() {
         #expect(BrowserContextMenu.entries(for: [file("a")], side: .remote) == [
             .transferToOtherPane, .openInEditor, .rename, .infoAndPermissions,
-            .newFolder, .copyPath, .delete,
+            .newFolder, .newFile, .copyPath, .delete,
         ])
     }
 
@@ -29,19 +29,19 @@ struct BrowserContextMenuTests {
 
     @Test func symlinkGetsNoTransferNoEditorNoPermissions() {
         let entries = BrowserContextMenu.entries(for: [symlink("l")], side: .remote)
-        #expect(entries == [.rename, .newFolder, .copyPath, .delete])
+        #expect(entries == [.rename, .newFolder, .newFile, .copyPath, .delete])
     }
 
     @Test func multiSelectionDropsSingleOnlyEntries() {
         let entries = BrowserContextMenu.entries(
             for: [file("a"), file("b")], side: .remote)
-        #expect(entries == [.transferToOtherPane, .newFolder, .copyPath, .delete])
+        #expect(entries == [.transferToOtherPane, .newFolder, .newFile, .copyPath, .delete])
     }
 
     @Test func symlinkOnlyMultiSelectionHasNoTransfer() {
         let entries = BrowserContextMenu.entries(
             for: [symlink("l1"), symlink("l2")], side: .remote)
-        #expect(entries == [.newFolder, .copyPath, .delete])
+        #expect(entries == [.newFolder, .newFile, .copyPath, .delete])
     }
 
     @Test func directoriesGetNoEditor() {
@@ -76,7 +76,7 @@ struct BrowserContextMenuTests {
 
     @Test func backgroundClickIgnoresTargets() {
         let t = CrossSessionTarget(id: UUID(), title: "x", remotePath: "/", kind: .ssh)
-        #expect(BrowserContextMenu.entries(for: [], side: .local, crossSessionTargets: [t]) == [.newFolder])
+        #expect(BrowserContextMenu.entries(for: [], side: .local, crossSessionTargets: [t]) == [.newFolder, .newFile])
     }
 
     @Test func singleFileSelectionIncludesBackendFileActions() {
