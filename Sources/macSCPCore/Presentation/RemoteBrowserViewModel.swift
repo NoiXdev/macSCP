@@ -853,6 +853,19 @@ public final class RemoteBrowserViewModel {
             return String(format: CoreL10n.string("core.browse.notFound %@"), path)
         case RemoteFSError.permissionDenied:
             return String(format: CoreL10n.string("core.error.permissionDenied %@"), path)
+        // `.authenticationFailed` mid-browse-session (M18a final review,
+        // Minor B) is precisely the S3-403 case documented on
+        // `S3FileSystem.mapErrorStatus`: S3 collapses "bad credentials" and
+        // "credentials valid but the policy forbids this" into the same
+        // HTTP status, so from a browse action's point of view it reads
+        // exactly like `.permissionDenied` -- reusing that message avoids
+        // both a raw `default` dump AND a new catalog key. Distinct from
+        // `.jumpAuthenticationFailed`, which stays in `default` here: it is
+        // a connect-time-only case (`ConnectionViewModel` maps it to a
+        // dedicated, form-highlighting message) that a browse action never
+        // throws.
+        case RemoteFSError.authenticationFailed:
+            return String(format: CoreL10n.string("core.error.permissionDenied %@"), path)
         case RemoteFSError.protocolError(let reason):
             return String(format: CoreL10n.string("core.browse.protocolError %@"), reason)
         case RemoteFSError.connectionFailed(let reason):
