@@ -115,6 +115,7 @@ struct RemoteBrowserViewModelTests {
         let old = vm.items[0]
         let error = await vm.rename(old, to: "new.txt")
         #expect(error == nil)
+        await vm.refreshAndSelect(path: "/new.txt")
         #expect(vm.items.map(\.name) == ["new.txt"])
         #expect(vm.selectedItems.map(\.name) == ["new.txt"])
     }
@@ -166,7 +167,34 @@ struct RemoteBrowserViewModelTests {
         await vm.load()
         let error = await vm.createFolder(named: "fresh")
         #expect(error == nil)
+        await vm.refreshAndSelect(path: "/fresh")
         #expect(vm.items.map(\.name) == ["fresh"])
+        #expect(vm.selectedItems.map(\.name) == ["fresh"])
+    }
+
+    // MARK: - Operation does not wait on the listing (M18a)
+
+    @Test func createFolderReturnsWithoutRefreshingTheListing() async {
+        let fs = MockRemoteFileSystem(tree: ["/": []])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        let listsAfterLoad = await fs.listCallCounts["/"] ?? 0
+
+        let error = await vm.createFolder(named: "fresh")
+        #expect(error == nil)
+        // The create must NOT have triggered another listing — dismissing the
+        // sheet may not wait on it.
+        #expect(await fs.listCallCounts["/"] ?? 0 == listsAfterLoad)
+    }
+
+    @Test func refreshAndSelectRefreshesAndSelectsTheNewEntry() async {
+        let fs = MockRemoteFileSystem(tree: ["/": []])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        _ = await vm.createFolder(named: "fresh")
+
+        await vm.refreshAndSelect(path: RemotePath.join(vm.currentPath, "fresh"))
+        #expect(vm.items.contains { $0.name == "fresh" })
         #expect(vm.selectedItems.map(\.name) == ["fresh"])
     }
 
