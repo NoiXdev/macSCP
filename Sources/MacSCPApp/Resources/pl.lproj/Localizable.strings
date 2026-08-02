@@ -388,6 +388,7 @@
 "menu.sessions" = "Sesje";
 "menu.knownHosts" = "Znane hosty…";
 "menu.logins" = "Loginy…";
+"menu.sshKeys" = "Klucze SSH…";
 "menu.hiddenImports" = "Ukryte importy…";
 "menu.hiddenImports %@" = "Ukryte importy (%@)…";
 "menu.exportAllSessions" = "Eksportuj wszystkie sesje…";
@@ -641,3 +642,18 @@
 "keys.delete.error" = "Nie udało się usunąć klucza.";
 "keys.picker.managed" = "Zarządzany klucz";
 "keys.picker.manage" = "Zarządzaj kluczami…";
+"keys.sheet.title" = "Klucze SSH";
+"keys.noMatches" = "Brak wyników.";
+"keys.import" = "Importuj…";
+"keys.import.title" = "Importuj klucz SSH";
+"keys.import.file" = "Plik";
+"keys.import.submit" = "Importuj";
+"keys.import.error" = "Nie udało się zaimportować klucza.";
+"keys.exportPrivate" = "Eksportuj klucz prywatny…";
+"keys.exportPrivate.title" = "Wyeksportować klucz prywatny?";
+"keys.exportPrivate.warn" = "Klucz prywatny opuści chroniony magazyn. Kontynuować?";
+"keys.exportPrivate.confirm" = "Eksportuj";
+"keys.exportPrivate.error" = "Nie udało się odczytać pliku klucza prywatnego.";
+"keys.rename" = "Zmień nazwę…";
+"keys.rename.title" = "Zmień nazwę klucza";
+"keys.rename.error" = "Nie udało się zmienić nazwy klucza.";

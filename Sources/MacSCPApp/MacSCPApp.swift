@@ -25,6 +25,10 @@ final class TabCommands {
     /// `showKnownHosts`/`showLogins` above, opens the hidden-imports
     /// management sheet.
     var showHiddenImports: (() -> Void)?
+    /// "SSH Keys…" (M18/T5) — same bridge shape/key-window guard as
+    /// `showKnownHosts`/`showLogins`/`showHiddenImports` above, opens the
+    /// SSH-key management sheet (replaces the M17 Settings tab).
+    var showSSHKeys: (() -> Void)?
     /// Mirrors `ContentView`'s `hiddenImportAliases.count` (M11f/T2, same
     /// rationale as `isActiveTabConnected` below): the "Hidden Imports…"
     /// menu title's count suffix needs this observed value since `MacSCPApp`
@@ -219,6 +223,11 @@ struct MacSCPApp: App {
                     tabCommands.showLogins?()
                 }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
+                // "SSH Keys…" (M18/T5): opens the SSH-key management sheet —
+                // same key-window guard as the other entries in this menu.
+                Button(L10n.string("menu.sshKeys", "SSH Keys…")) {
+                    tabCommands.showSSHKeys?()
+                }
                 // "Hidden Imports…" (M11f/T2): the count suffix is the ONLY
                 // way back once every imported entry is hidden and the
                 // IMPORTED sidebar section itself disappears — see

@@ -243,6 +243,14 @@ struct ContentView: View {
     /// `HiddenImportStore` read of its own.
     @State private var showHiddenImportsSheet = false
 
+    // MARK: - SSH keys (M18/T5)
+
+    /// Drives the SSH-key management sheet — opened from the Sessions menu.
+    /// Same no-item-payload shape as `showKnownHostsSheet`/
+    /// `showLoginSetsSheet`/`showHiddenImportsSheet` above: `SSHKeysSheet`
+    /// always reflects the same window-wide `ManagedKeyStore` directory.
+    @State private var showSSHKeysSheet = false
+
     // MARK: - Session export/import (M9a/T3)
 
     /// Wraps `ExportScope` so it can drive `.sheet(item:)` — `ExportScope`
@@ -603,6 +611,12 @@ struct ContentView: View {
                 guard window?.isKeyWindow == true else { return }
                 showHiddenImportsSheet = true
             }
+            // "SSH Keys…" (M18/T5) — same key-window guard, opens the
+            // SSH-key management sheet.
+            tabCommands.showSSHKeys = {
+                guard window?.isKeyWindow == true else { return }
+                showSSHKeysSheet = true
+            }
             tabCommands.exportAllSessions = {
                 guard window?.isKeyWindow == true else { return }
                 exportSheetItem = ExportSheetItem(scope: .all)
@@ -702,6 +716,14 @@ struct ContentView: View {
         // always show the exact same, up-to-date list.
         .sheet(isPresented: $showLoginSetsSheet) {
             LoginSetsSheet(sessionList: sessionListViewModel)
+        }
+        // SSH-keys sheet (M18/T5) — standalone overlay replacement for the
+        // M17 Settings tab; owns its own `ManagedKeyStore` instance the same
+        // way `showKnownHostsSheet` above does for `KnownHostsStore` (there
+        // is no shared observable object to pass in, unlike
+        // `showLoginSetsSheet`'s `sessionListViewModel`).
+        .sheet(isPresented: $showSSHKeysSheet) {
+            SSHKeysSheet()
         }
         // Hidden-imports sheet (M11f/T2) — `fullImportedHosts` is the SAME
         // full inventory `refreshImportedHosts()` reads from, so the sheet's
