@@ -329,8 +329,12 @@ struct SSHKeysSheet: View {
     private func beginPrivateExport() {
         guard let key = exportPrivateTarget else { return }
         exportPrivateTarget = nil
-        let source = store.keyDirectory.appendingPathComponent(key.fileName)
-        guard let data = try? Data(contentsOf: source) else {
+        // `privateKeyURL` refuses a `fileName` that would leave the key
+        // directory, so a tampered store file cannot turn "export my key"
+        // into "export whatever that name points at".
+        guard let source = store.privateKeyURL(for: key),
+              let data = try? Data(contentsOf: source)
+        else {
             errorMessage = L10n.string("keys.exportPrivate.error", "Couldn't read the private key file.")
             return
         }
@@ -343,8 +347,7 @@ struct SSHKeysSheet: View {
     /// Best-effort usage count: sessions and login sets whose `keyPath`
     /// resolves to this key's private-key file.
     private func usageCount(of key: ManagedKey) -> Int {
-        let target = store.keyDirectory.appendingPathComponent(key.fileName)
-            .standardizedFileURL.path
+        guard let target = store.privateKeyURL(for: key)?.standardizedFileURL.path else { return 0 }
         func matches(_ path: String?) -> Bool {
             guard let path, !path.isEmpty else { return false }
             return URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)

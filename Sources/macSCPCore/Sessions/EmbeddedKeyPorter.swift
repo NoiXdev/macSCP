@@ -72,8 +72,9 @@ public enum EmbeddedKeyPorter {
         // errors: a caller walking many login sets can report this one key as
         // broken and still export the rest. Neither carries the underlying
         // error, which would spell out the store path.
-        let fileURL = store.keyDirectory.appendingPathComponent(key.fileName)
-        guard FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) else {
+        guard let fileURL = store.privateKeyURL(for: key),
+              FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false))
+        else {
             throw PorterError.keyFileMissing(name: key.name)
         }
         let fileContents: Data

@@ -44,13 +44,36 @@ public struct ManagedKeyStore: Sendable {
         let keys = try all()
         let key = keys.first(where: { $0.id == id })
         try persist(keys.filter { $0.id != id })
-        if let key {
-            let priv = keyDirectory.appendingPathComponent(key.fileName)
+        // A `fileName` that does not address a file inside the key directory
+        // resolves to nothing, so the deletions are skipped entirely rather
+        // than aimed at whatever it points to.
+        if let key, let priv = privateKeyURL(for: key) {
             try? FileManager.default.removeItem(at: priv)
-            try? FileManager.default.removeItem(
-                at: keyDirectory.appendingPathComponent(key.fileName + ".pub"))
+            try? FileManager.default.removeItem(at: priv.appendingPathExtension("pub"))
         }
         try? secrets.deletePassword(for: id)
+    }
+
+    /// The private key file of `key` inside `keyDirectory`, or `nil` when the
+    /// stored `fileName` is not a single path component.
+    ///
+    /// macSCP writes `managed_keys.json` itself and always stores a UUID
+    /// there, so the `nil` case needs a hand-edited or tampered store file to
+    /// happen at all. It is still the one place to close it: every caller
+    /// that turns a managed key into a file goes through here, and
+    /// `appendingPathComponent("../…")` would otherwise hand them a URL
+    /// OUTSIDE the key directory — which they would then read from or delete.
+    public func privateKeyURL(for key: ManagedKey) -> URL? {
+        guard Self.isSinglePathComponent(key.fileName) else { return nil }
+        return keyDirectory.appendingPathComponent(key.fileName)
+    }
+
+    /// A name that can only ever address a file directly inside the key
+    /// directory. Rejects the empty name, `.`/`..`, and anything with a
+    /// separator — including an absolute path, whose leading `/`
+    /// `appendingPathComponent` would otherwise simply swallow.
+    static func isSinglePathComponent(_ name: String) -> Bool {
+        !name.isEmpty && name != "." && name != ".." && !name.contains("/")
     }
 
     /// The managed key whose private file is at `path`, or nil. Matches by the
@@ -59,7 +82,7 @@ public struct ManagedKeyStore: Sendable {
         let target = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
             .standardizedFileURL.path
         return try all().first {
-            keyDirectory.appendingPathComponent($0.fileName).standardizedFileURL.path == target
+            privateKeyURL(for: $0)?.standardizedFileURL.path == target
         }
     }
 
