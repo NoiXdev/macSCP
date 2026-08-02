@@ -296,6 +296,15 @@ public final class RemoteBrowserViewModel {
         await load()
     }
 
+    /// Refreshes the listing and selects `path` when present. Called after a
+    /// successful create/rename so the sheet can dismiss immediately (M18a).
+    public func refreshAndSelect(path: String) async {
+        await load()
+        if let entry = items.first(where: { $0.path == path }) {
+            selectedItems = [entry]
+        }
+    }
+
     public func disconnect() async {
         await fs.disconnect()
     }
@@ -439,9 +448,14 @@ public final class RemoteBrowserViewModel {
         !name.isEmpty && !name.contains("/") && name != "." && name != ".."
     }
 
-    /// Renames `item` within the current directory. Returns nil on success
-    /// (after refreshing; the selection follows the renamed entry), or a
-    /// localized error message for inline display in the sheet.
+    /// Renames `item` within the current directory. Returns nil on success,
+    /// or a localized error message for inline display in the sheet.
+    /// Deliberately does NOT refresh the listing itself — refreshing is
+    /// presentation only, and keeping it out of this method means dismissing
+    /// the sheet never waits on a listing, which can block on a slow server,
+    /// a huge directory, or a macOS permission prompt (M18a). Callers refresh
+    /// via `refreshAndSelect(path:)` afterwards, passing the destination path
+    /// so the renamed entry ends up selected.
     public func rename(_ item: RemoteFileItem, to newName: String) async -> String? {
         let destination = RemotePath.join(currentPath, newName)
         let detail = "rename \(item.path) → \(newName)"
@@ -452,15 +466,15 @@ public final class RemoteBrowserViewModel {
             auditSink?(AuditEvent(kind: .rename, detail: detail, isError: true, errorMessage: message))
             return message
         }
-        await load()
-        if let renamed = items.first(where: { $0.path == destination }) {
-            selectedItems = [renamed]
-        }
         auditSink?(AuditEvent(kind: .rename, detail: detail))
         return nil
     }
 
-    /// Creates a folder in the current directory, refreshes, selects it.
+    /// Creates a folder in the current directory. Returns nil on success, or
+    /// a localized error message for inline display in the sheet. Deliberately
+    /// does NOT refresh the listing itself — see `rename(_:to:)`'s doc
+    /// comment for the rationale (M18a). Callers refresh via
+    /// `refreshAndSelect(path:)` afterwards.
     public func createFolder(named name: String) async -> String? {
         let path = RemotePath.join(currentPath, name)
         // `createDirectory` is idempotent by contract — an existing DIRECTORY
@@ -487,10 +501,11 @@ public final class RemoteBrowserViewModel {
             auditSink?(AuditEvent(kind: .newFolder, detail: detail, isError: true, errorMessage: message))
             return message
         }
-        await load()
-        if let created = items.first(where: { $0.path == path }) {
-            selectedItems = [created]
-        }
+        // The directory exists once `createDirectory` returns; refreshing the
+        // listing is presentation only. Keeping it out of this method means
+        // dismissing the sheet never waits on a listing — which can block on
+        // a slow server, a huge directory, or a macOS permission prompt
+        // (M18a). Callers refresh via `refreshAndSelect(path:)` afterwards.
         auditSink?(AuditEvent(kind: .newFolder, detail: detail))
         return nil
     }
