@@ -356,11 +356,11 @@
 "audit.filter.fileOps" = "Datei-Ops";
 "audit.filter.connection" = "Verbindung";
 "audit.filter.errors" = "Fehler";
-"audit.search" = "Suchen";
 "audit.column.time" = "Zeit";
 "audit.column.kind" = "Ereignis";
 "audit.column.detail" = "Detail";
 "audit.empty" = "Noch keine Einträge.";
+"audit.noMatches" = "Keine Treffer.";
 "audit.count %lld" = "%lld Einträge";
 "audit.countFiltered %lld %lld" = "%lld von %lld";
 "audit.export" = "Als Text exportieren…";
@@ -396,7 +396,6 @@
 
 /* Bekannte-Hosts-Sheet (M10a/T2) */
 "knownHosts.title" = "Bekannte Hosts";
-"knownHosts.search" = "Suchen (Host oder Fingerprint)";
 "knownHosts.column.host" = "Host";
 "knownHosts.column.port" = "Port";
 "knownHosts.column.keyType" = "Schlüsseltyp";
@@ -411,12 +410,14 @@
 "knownHosts.remove.messageMany %lld" = "%lld Hosts werden beim nächsten Verbinden wie unbekannte behandelt (neue Vertrauens-Prompts).";
 "knownHosts.remove.confirm" = "Entfernen";
 "knownHosts.empty" = "Noch keine bekannten Hosts.";
+"knownHosts.noMatches" = "Keine Treffer.";
 "knownHosts.loadError %@" = "Bekannte Hosts konnten nicht geladen werden: %@";
 "knownHosts.removeError %@" = "Der Host-Schlüssel konnte nicht entfernt werden: %@";
 
 /* Sheet für ausgeblendete Importe (M11f/T2) */
 "hiddenImports.title" = "Ausgeblendete Importe";
 "hiddenImports.empty" = "Rechtsklick auf eine importierte Verbindung in der Seitenleiste und „Ausblenden“ wählen, damit sie hier erscheint.";
+"hiddenImports.noMatches" = "Keine Treffer.";
 "hiddenImports.orphaned" = "nicht mehr in ~/.ssh/config";
 "hiddenImports.unhide" = "Wieder einblenden";
 "hiddenImports.removeFromList" = "Aus der Liste entfernen";

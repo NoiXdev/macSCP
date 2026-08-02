@@ -355,11 +355,11 @@
 "audit.filter.fileOps" = "File Ops";
 "audit.filter.connection" = "Connection";
 "audit.filter.errors" = "Errors";
-"audit.search" = "Search";
 "audit.column.time" = "Time";
 "audit.column.kind" = "Event";
 "audit.column.detail" = "Detail";
 "audit.empty" = "No entries yet.";
+"audit.noMatches" = "No matches.";
 "audit.count %lld" = "%lld entries";
 "audit.countFiltered %lld %lld" = "%lld of %lld";
 "audit.export" = "Export as Text…";
@@ -395,7 +395,6 @@
 
 /* Known hosts sheet (M10a/T2) */
 "knownHosts.title" = "Known Hosts";
-"knownHosts.search" = "Search (host or fingerprint)";
 "knownHosts.column.host" = "Host";
 "knownHosts.column.port" = "Port";
 "knownHosts.column.keyType" = "Key type";
@@ -410,12 +409,14 @@
 "knownHosts.remove.messageMany %lld" = "%lld hosts will be treated as unknown on the next connect (new trust prompts).";
 "knownHosts.remove.confirm" = "Remove";
 "knownHosts.empty" = "No known hosts yet.";
+"knownHosts.noMatches" = "No matches.";
 "knownHosts.loadError %@" = "Could not load known hosts: %@";
 "knownHosts.removeError %@" = "Could not remove the host key: %@";
 
 /* Hidden imports sheet (M11f/T2) */
 "hiddenImports.title" = "Hidden Imports";
 "hiddenImports.empty" = "Right-click an imported connection in the sidebar and choose “Hide” to have it show up here.";
+"hiddenImports.noMatches" = "No matches.";
 "hiddenImports.orphaned" = "no longer in ~/.ssh/config";
 "hiddenImports.unhide" = "Show Again";
 "hiddenImports.removeFromList" = "Remove from List";

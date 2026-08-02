@@ -31,6 +31,7 @@ struct KnownHostsSheet: View {
     @State private var rows: [KnownHostRow] = []
     @State private var selection: Set<String> = []
     @State private var searchText = ""
+    @State private var searchIsRegex = false
     @State private var errorMessage: String?
     @State private var isShowingRemoveConfirm = false
 
@@ -45,11 +46,8 @@ struct KnownHostsSheet: View {
     }()
 
     private var filteredRows: [KnownHostRow] {
-        guard !searchText.isEmpty else { return rows }
-        return rows.filter {
-            $0.key.host.localizedCaseInsensitiveContains(searchText)
-                || $0.key.fingerprintSHA256.localizedCaseInsensitiveContains(searchText)
-        }
+        let (predicate, _) = sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)
+        return rows.filter { predicate.matches("\($0.key.host) \($0.key.fingerprintSHA256)") }
     }
 
     private var isUnfiltered: Bool { searchText.isEmpty }
@@ -62,10 +60,8 @@ struct KnownHostsSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text(L10n.string("knownHosts.title", "Known Hosts")).font(.headline)
 
-            TextField(
-                L10n.string("knownHosts.search", "Search (host or fingerprint)"), text: $searchText
-            )
-            .textFieldStyle(.roundedBorder)
+            let (_, searchError) = sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)
+            SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
 
             if let errorMessage {
                 Text(errorMessage).font(.caption).foregroundStyle(.red).lineLimit(2)
@@ -74,9 +70,13 @@ struct KnownHostsSheet: View {
             // Only claim "no known hosts" when the list is GENUINELY empty
             // (final review): after a load error the empty table must not
             // suggest the store is empty — the red message above is the truth.
+            // A non-empty `rows` with an empty `filteredRows` means the
+            // search matched nothing, not that the store is empty (M18/T2).
             if filteredRows.isEmpty && errorMessage == nil {
                 Spacer(minLength: 0)
-                Text(L10n.string("knownHosts.empty", "No known hosts yet."))
+                Text(rows.isEmpty
+                    ? L10n.string("knownHosts.empty", "No known hosts yet.")
+                    : L10n.string("knownHosts.noMatches", "No matches."))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
                 Spacer(minLength: 0)
