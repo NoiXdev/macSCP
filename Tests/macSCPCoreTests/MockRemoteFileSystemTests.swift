@@ -175,6 +175,39 @@ struct MockRemoteFileSystemTests {
         #expect(readBack == Data("fresh".utf8))
     }
 
+    /// M18a final review (Minor): the mock used to create `tree[parent]` on
+    /// the fly, so listing a directory nobody ever created succeeded after a
+    /// write into it. Real backends answer `SSH_FX_NO_SUCH_FILE`/`ENOENT`.
+    @Test func writeToPathUnderMissingParentThrowsNotFound() async {
+        let fs = makeMock()
+        let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+        continuation.yield(Data("nope".utf8))
+        continuation.finish()
+
+        await #expect(throws: RemoteFSError.notFound(path: "/nirgends")) {
+            try await fs.write(path: "/nirgends/datei.bin", mode: .overwrite, contents: stream)
+        }
+        await #expect(throws: RemoteFSError.notFound(path: "/nirgends")) {
+            _ = try await fs.list(path: "/nirgends")
+        }
+    }
+
+    /// M18a final review (Minor): writing over a `.directory` entry used to
+    /// keep its kind and merely refresh its size. Real backends answer
+    /// `SSH_FX_FAILURE`/`EISDIR`.
+    @Test func writeOntoDirectoryEntryThrowsAndLeavesItADirectory() async throws {
+        let fs = makeMock()
+        let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+        continuation.yield(Data("nope".utf8))
+        continuation.finish()
+
+        await #expect(throws: RemoteFSError.protocolError(reason: "path is a directory: /docs")) {
+            try await fs.write(path: "/docs", mode: .overwrite, contents: stream)
+        }
+        let root = try await fs.list(path: "/")
+        #expect(root.first { $0.path == "/docs" }?.kind == .directory)
+    }
+
     @Test func deleteRemovesExistingFile() async throws {
         let fs = makeMockWithFile(content: Data("bye".utf8))
         try await fs.delete(path: "/datei.bin")

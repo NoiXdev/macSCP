@@ -168,6 +168,24 @@ actor MockRemoteFileSystem: RemoteFileSystem {
     }
 
     func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {
+        // Both checks mirror what a real backend rejects when OPENING the
+        // file — before a single byte is sent — so they run before the
+        // stream is drained (M18a final review, Minor):
+        //   * a parent directory that does not exist: SFTP answers
+        //     `SSH_FX_NO_SUCH_FILE`, POSIX `ENOENT`. The mock used to create
+        //     `tree[parent]` on the fly, which made `list()` of a directory
+        //     nobody ever created succeed afterwards.
+        //   * a path that is already a DIRECTORY: SFTP answers
+        //     `SSH_FX_FAILURE`, POSIX `EISDIR`. The mock used to keep
+        //     `kind: .directory` and merely refresh its size, so a test
+        //     could "write into" a directory entry and never notice.
+        let parent = RemotePath.parent(of: path)
+        guard var siblings = tree[parent] else {
+            throw RemoteFSError.notFound(path: parent)
+        }
+        if siblings.first(where: { $0.path == path })?.kind == .directory {
+            throw RemoteFSError.protocolError(reason: "path is a directory: \(path)")
+        }
         var collected = Data()
         for try await chunk in contents {
             collected.append(chunk)
@@ -183,12 +201,10 @@ actor MockRemoteFileSystem: RemoteFileSystem {
             files[path] = existing + collected
         }
         // Mirrors every real backend (Local/Citadel/S3): writing a path that
-        // isn't yet a listed entry creates one, so a `list()` right after
-        // `write()` sees it (M18a/T3 — needed for `createFile`'s
-        // refreshAndSelect-based tests). An existing entry's size is
-        // refreshed in place instead of duplicated.
-        let parent = RemotePath.parent(of: path)
-        var siblings = tree[parent] ?? []
+        // isn't yet a listed entry creates one INSIDE ITS EXISTING PARENT,
+        // so a `list()` right after `write()` sees it (M18a/T3 — needed for
+        // `createFile`'s refreshAndSelect-based tests). An existing entry's
+        // size is refreshed in place instead of duplicated.
         let newSize = UInt64(files[path]?.count ?? 0)
         if let index = siblings.firstIndex(where: { $0.path == path }) {
             let existing = siblings[index]
