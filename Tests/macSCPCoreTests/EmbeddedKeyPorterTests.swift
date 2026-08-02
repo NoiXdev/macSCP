@@ -199,6 +199,45 @@ struct EmbeddedKeyPorterTests {
         }
     }
 
+    /// A `managed_keys.json` entry outlives its file when the user deletes
+    /// something under `keys/` by hand. A later caller embeds one key per
+    /// login set, so this has to be a condition it can catch and report for
+    /// THAT set ("key file missing") — a raw Cocoa error would abort the
+    /// whole export over one orphaned entry. Dropping the key silently is not
+    /// an option either: the user asked for it to be embedded.
+    @Test func embedReportsAMissingKeyFileAsItsOwnCondition() throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let store = makeStore(in: dir)
+        let secrets = InMemorySecretStore()
+        let key = try addManagedKey(to: store, secrets: secrets, name: "prod")
+        let keyPath = path(of: key, in: store)
+        try FileManager.default.removeItem(atPath: keyPath)
+
+        #expect(throws: EmbeddedKeyPorter.PorterError.keyFileMissing(name: "prod")) {
+            _ = try EmbeddedKeyPorter.embed(
+                keyPath: keyPath, includePassphrase: false, store: store, secrets: secrets)
+        }
+    }
+
+    /// Present but not readable as a file (here: a directory in its place).
+    /// Also typed, and it carries the key's NAME rather than the underlying
+    /// error, which would spell out the store path.
+    @Test func embedReportsAnUnreadableKeyFileAsItsOwnCondition() throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let store = makeStore(in: dir)
+        let secrets = InMemorySecretStore()
+        let key = try addManagedKey(to: store, secrets: secrets, name: "prod")
+        let keyPath = path(of: key, in: store)
+        try FileManager.default.removeItem(atPath: keyPath)
+        try FileManager.default.createDirectory(
+            atPath: keyPath, withIntermediateDirectories: false)
+
+        #expect(throws: EmbeddedKeyPorter.PorterError.keyFileUnreadable(name: "prod")) {
+            _ = try EmbeddedKeyPorter.embed(
+                keyPath: keyPath, includePassphrase: false, store: store, secrets: secrets)
+        }
+    }
+
     @Test func embedCarriesThePassphraseOnlyWhenAsked() throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let store = makeStore(in: dir)

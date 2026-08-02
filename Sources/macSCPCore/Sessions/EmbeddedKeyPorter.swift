@@ -38,6 +38,14 @@ public enum EmbeddedKeyPorter {
     /// error would not allow. No case carries a path, key bytes or a
     /// passphrase.
     public enum PorterError: Error, Equatable {
+        /// `managed_keys.json` still lists the key, but there is no file for
+        /// it in the key store — typically because the user deleted
+        /// something under `keys/` by hand. Also covers a metadata entry
+        /// whose `fileName` is not a single path component and therefore
+        /// cannot name a file in the store at all.
+        case keyFileMissing(name: String)
+        /// The key file is there but cannot be read as a file.
+        case keyFileUnreadable(name: String)
         /// The import file declared a fingerprint that the embedded key
         /// material does not have — a hard stop, never a warning.
         case fingerprintMismatch
@@ -60,8 +68,20 @@ public enum EmbeddedKeyPorter {
         // never opened (invariant 1). Keep the file read AFTER this line.
         guard let key = try store.key(forPath: keyPath) else { return nil }
 
+        // Both failure modes below are NAMED conditions, not raw Cocoa
+        // errors: a caller walking many login sets can report this one key as
+        // broken and still export the rest. Neither carries the underlying
+        // error, which would spell out the store path.
         let fileURL = store.keyDirectory.appendingPathComponent(key.fileName)
-        let fileContents = try Data(contentsOf: fileURL)
+        guard FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) else {
+            throw PorterError.keyFileMissing(name: key.name)
+        }
+        let fileContents: Data
+        do {
+            fileContents = try Data(contentsOf: fileURL)
+        } catch {
+            throw PorterError.keyFileUnreadable(name: key.name)
+        }
 
         var passphrase: String?
         if includePassphrase && key.hasPassphrase {
