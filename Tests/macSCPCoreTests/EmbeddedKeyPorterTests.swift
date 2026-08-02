@@ -57,7 +57,6 @@ struct EmbeddedKeyPorterTests {
                 store: store, secrets: secrets))
         #expect(embedded.name == "prod")
         #expect(embedded.comment == "prod-key")
-        #expect(embedded.type == .ed25519)
         #expect(embedded.fingerprint == key.fingerprint)
         #expect(embedded.hasPassphrase == false)
         #expect(embedded.passphrase == nil)
@@ -422,20 +421,19 @@ struct EmbeddedKeyPorterTests {
         #expect(targetSecrets.deleted.count == 1)
     }
 
-    /// The import file's metadata is a claim, not a fact: where the key
-    /// material can be inspected, the derived type/fingerprint win over
-    /// whatever the file declared.
+    /// The import file's metadata is a claim, not a fact: the type and
+    /// fingerprint that reach the store are derived from the key material.
+    /// The payload has no `type` field to claim at all — `EmbeddedKey`'s v1
+    /// shape carries none, precisely so nothing can be tempted to read it.
     @Test func materializeTakesTypeAndFingerprintFromTheKeyMaterial() throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)
         let secrets = InMemorySecretStore()
         let key = try addManagedKey(to: source, secrets: secrets)
-        var embedded = try #require(
+        let embedded = try #require(
             try EmbeddedKeyPorter.embed(
                 keyPath: path(of: key, in: source), includePassphrase: false,
                 store: source, secrets: secrets))
-        // The file claims an RSA key; the bytes are the ed25519 key above.
-        embedded.type = .rsa(bits: 4096)
 
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
         let importedPath = try EmbeddedKeyPorter.materialize(
@@ -552,7 +550,7 @@ struct EmbeddedKeyPorterTests {
         // that steers the import away from the material.
         let payload = EmbeddedKey(
             fileContents: try Data(contentsOf: URL(fileURLWithPath: path(of: attacker, in: source))),
-            name: "prod", comment: "prod-key", type: .ed25519,
+            name: "prod", comment: "prod-key",
             fingerprint: victim.fingerprint, publicKeyOpenSSH: victim.publicKeyOpenSSH,
             hasPassphrase: true, passphrase: nil)
 
@@ -580,7 +578,7 @@ struct EmbeddedKeyPorterTests {
 
         let payload = EmbeddedKey(
             fileContents: Data("NOT A KEY AT ALL".utf8),
-            name: "prod", comment: "prod-key", type: .ed25519,
+            name: "prod", comment: "prod-key",
             fingerprint: victim.fingerprint, publicKeyOpenSSH: victim.publicKeyOpenSSH,
             hasPassphrase: false, passphrase: nil)
 
@@ -613,7 +611,7 @@ struct EmbeddedKeyPorterTests {
         // material answers the question by itself.
         let payload = EmbeddedKey(
             fileContents: try Data(contentsOf: URL(fileURLWithPath: path(of: plain, in: source))),
-            name: "plain", comment: "work-key", type: .ed25519,
+            name: "plain", comment: "work-key",
             fingerprint: plain.fingerprint, publicKeyOpenSSH: plain.publicKeyOpenSSH,
             hasPassphrase: true, passphrase: "not-really-needed")
 
