@@ -180,10 +180,10 @@ actor MockRemoteFileSystem: RemoteFileSystem {
         //     `kind: .directory` and merely refresh its size, so a test
         //     could "write into" a directory entry and never notice.
         let parent = RemotePath.parent(of: path)
-        guard var siblings = tree[parent] else {
+        guard let openSiblings = tree[parent] else {
             throw RemoteFSError.notFound(path: parent)
         }
-        if siblings.first(where: { $0.path == path })?.kind == .directory {
+        if openSiblings.first(where: { $0.path == path })?.kind == .directory {
             throw RemoteFSError.protocolError(reason: "path is a directory: \(path)")
         }
         var collected = Data()
@@ -199,6 +199,22 @@ actor MockRemoteFileSystem: RemoteFileSystem {
             let existing = files[path] ?? Data()
             written[path] = collected
             files[path] = existing + collected
+        }
+        // Re-read `siblings` from `tree` AFTER the drain, immediately before
+        // the write-back (M18a final review, Important — actor-reentrancy
+        // lost update introduced by the two guards above): the stream drain
+        // just above is this method's only suspension point, so it is also
+        // the only actor-reentrancy window. Reusing the PRE-drain
+        // `openSiblings` snapshot here would race a concurrent `write` into
+        // the SAME directory that also suspended during ITS drain and reads
+        // the same pre-write snapshot — whichever call's write-back lands
+        // second would silently discard the first call's new entry, since
+        // it would replace the whole `tree[parent]` list from a stale copy
+        // that never saw the other call's addition. Re-reading here closes
+        // that window: this read-modify-write is now atomic across the
+        // method's one `await`.
+        guard var siblings = tree[parent] else {
+            throw RemoteFSError.notFound(path: parent)
         }
         // Mirrors every real backend (Local/Citadel/S3): writing a path that
         // isn't yet a listed entry creates one INSIDE ITS EXISTING PARENT,
