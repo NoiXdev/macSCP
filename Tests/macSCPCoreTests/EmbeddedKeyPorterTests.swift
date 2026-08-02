@@ -653,7 +653,10 @@ struct EmbeddedKeyPorterTests {
             withIntermediateDirectories: true)
 
         let targetSecrets = RecordingSecretStore()
-        #expect(throws: (any Error).self) {
+        // Named, not the raw Cocoa error: that one spells out the local
+        // `managed_keys.json` path, which is what the embed side's own error
+        // cases exist to avoid.
+        #expect(throws: EmbeddedKeyPorter.PorterError.keyStoreUnwritable) {
             _ = try EmbeddedKeyPorter.materialize(embedded, store: target, secrets: targetSecrets)
         }
         let leftovers = (try? FileManager.default.contentsOfDirectory(
