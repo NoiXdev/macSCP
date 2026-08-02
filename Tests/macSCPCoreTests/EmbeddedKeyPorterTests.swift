@@ -486,6 +486,107 @@ struct EmbeddedKeyPorterTests {
         #expect(targetSecrets.stored.isEmpty)
     }
 
+    /// The payload must not get to pick which verification runs. `hasPassphrase`
+    /// comes out of the same attacker-controlled bytes as `fingerprint`, so a
+    /// payload that declares an encrypted key while carrying no passphrase used
+    /// to route the import to the pure-parser fallback — where the carried
+    /// public key line is checked against the carried fingerprint, both supplied
+    /// by the same hand, so they always agree.
+    ///
+    /// Here the bytes are a PLAIN key that opens with no passphrase at all: the
+    /// material is right there to be checked, and checking it must not depend on
+    /// what the payload said about it.
+    @Test func materializeRejectsAPlainKeyThatClaimsToBeEncrypted() throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let source = makeStore(in: dir)
+        let secrets = InMemorySecretStore()
+        let attacker = try addManagedKey(to: source, secrets: secrets, name: "attacker")
+        let victim = try addManagedKey(to: source, secrets: secrets, name: "prod")
+
+        // Attacker's plain key bytes, the victim's identity, and the declaration
+        // that steers the import away from the material.
+        let payload = EmbeddedKey(
+            fileContents: try Data(contentsOf: URL(fileURLWithPath: path(of: attacker, in: source))),
+            name: "prod", comment: "prod-key", type: .ed25519,
+            fingerprint: victim.fingerprint, publicKeyOpenSSH: victim.publicKeyOpenSSH,
+            hasPassphrase: true, passphrase: nil)
+
+        let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
+        let targetSecrets = RecordingSecretStore()
+        #expect(throws: EmbeddedKeyPorter.PorterError.fingerprintMismatch) {
+            _ = try EmbeddedKeyPorter.materialize(payload, store: target, secrets: targetSecrets)
+        }
+        let leftovers = (try? FileManager.default.contentsOfDirectory(
+            atPath: target.keyDirectory.path(percentEncoded: false))) ?? []
+        #expect(leftovers.isEmpty)
+        #expect(try target.all().isEmpty)
+        #expect(targetSecrets.stored.isEmpty)
+    }
+
+    /// Same root cause one branch over: `try? SSHKeyImporter.inspect` swallowed
+    /// every failure and silently downgraded to the declared values. When the
+    /// payload itself says the key is NOT encrypted, a failure to open it means
+    /// broken-or-forged — never "fall back to what the file claimed".
+    @Test func materializeRejectsAPayloadWhoseKeyMaterialCannotBeOpened() throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let source = makeStore(in: dir)
+        let secrets = InMemorySecretStore()
+        let victim = try addManagedKey(to: source, secrets: secrets, name: "prod")
+
+        let payload = EmbeddedKey(
+            fileContents: Data("NOT A KEY AT ALL".utf8),
+            name: "prod", comment: "prod-key", type: .ed25519,
+            fingerprint: victim.fingerprint, publicKeyOpenSSH: victim.publicKeyOpenSSH,
+            hasPassphrase: false, passphrase: nil)
+
+        let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
+        let targetSecrets = RecordingSecretStore()
+        #expect(throws: EmbeddedKeyPorter.PorterError.keyMaterialUnverifiable) {
+            _ = try EmbeddedKeyPorter.materialize(payload, store: target, secrets: targetSecrets)
+        }
+        let leftovers = (try? FileManager.default.contentsOfDirectory(
+            atPath: target.keyDirectory.path(percentEncoded: false))) ?? []
+        #expect(leftovers.isEmpty)
+        #expect(try target.all().isEmpty)
+        #expect(targetSecrets.stored.isEmpty)
+    }
+
+    /// `hasPassphrase` is displayed (lock glyph) and decides whether the connect
+    /// path looks for a Keychain passphrase at all — so it, too, has to follow
+    /// what actually happened rather than what the payload declared. A file that
+    /// opens with no passphrase is not encrypted, whatever it says, and the
+    /// passphrase it carried is not written to the Keychain: a key with no slot
+    /// must not claim to have one.
+    @Test func materializeDerivesHasPassphraseFromTheKeyMaterial() throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let source = makeStore(in: dir)
+        let secrets = InMemorySecretStore()
+        let plain = try addManagedKey(to: source, secrets: secrets, name: "plain")
+
+        // A plain key declared as encrypted, with a passphrase to match the
+        // story. `ssh-keygen -y` ignores `-P` for an unencrypted key, so the
+        // material answers the question by itself.
+        let payload = EmbeddedKey(
+            fileContents: try Data(contentsOf: URL(fileURLWithPath: path(of: plain, in: source))),
+            name: "plain", comment: "work-key", type: .ed25519,
+            fingerprint: plain.fingerprint, publicKeyOpenSSH: plain.publicKeyOpenSSH,
+            hasPassphrase: true, passphrase: "not-really-needed")
+
+        let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
+        let targetSecrets = RecordingSecretStore()
+        let importedPath = try EmbeddedKeyPorter.materialize(
+            payload, store: target, secrets: targetSecrets)
+
+        let imported = try #require(try target.key(forPath: importedPath))
+        #expect(imported.hasPassphrase == false)
+        #expect(targetSecrets.stored.isEmpty)
+        #expect(targetSecrets.savedIDs.isEmpty)
+        // The key itself is intact and usable without a passphrase.
+        #expect(imported.fingerprint == plain.fingerprint)
+        _ = try SSHPrivateKeyLoader.authentication(
+            username: "t", keyPath: importedPath, passphrase: nil)
+    }
+
     /// Same invariant one step later: the Keychain write succeeded and the
     /// metadata write is what fails. Both the file and the Keychain slot have
     /// to go.
