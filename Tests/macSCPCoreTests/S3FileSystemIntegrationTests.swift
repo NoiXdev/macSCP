@@ -360,6 +360,53 @@ struct S3FileSystemIntegrationTests {
         if let caught { throw caught }
     }
 
+    /// M18a final review (Important-1): `createFile`'s existence probe now
+    /// only proceeds on a DEFINITE `RemoteFSError.notFound`. That verdict is
+    /// produced by `S3FileSystem.stat`, which is a `ListObjectsV2` under the
+    /// hood — a fake transport cannot prove the real server drives it to
+    /// that exact case, and getting it wrong would leave New File
+    /// permanently broken on S3 (worse than the bug being fixed). This
+    /// exercises the whole view-model path against MinIO: the missing key
+    /// creates, the existing key collides, and the collision must not
+    /// truncate the object.
+    @MainActor
+    @Test func createFileCreatesThenCollidesAgainstMinIO() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let key = "m18a-createfile-\(UUID().uuidString).txt"
+
+        var caught: Error?
+        do {
+            let vm = RemoteBrowserViewModel(fs: fs, startPath: "/")
+            await vm.load()
+
+            #expect(await vm.createFile(named: key) == nil)
+            let created = try await fs.stat(path: "/\(key)")
+            #expect(created.kind == .file)
+            #expect(created.size == 0)
+
+            // Give the object content, then collide: the message comes back
+            // and the bytes survive.
+            let body = Data("keep me".utf8)
+            let uploadStream = AsyncThrowingStream<Data, Error> { continuation in
+                continuation.yield(body)
+                continuation.finish()
+            }
+            try await fs.write(path: "/\(key)", mode: .overwrite, contents: uploadStream)
+
+            #expect(await vm.createFile(named: key) != nil)
+            var readBack = Data()
+            for try await chunk in try await fs.readStream(path: "/\(key)", fromOffset: 0) {
+                readBack.append(chunk)
+            }
+            #expect(readBack == body)
+        } catch {
+            caught = error
+        }
+        try? await fs.delete(path: "/\(key)")
+        if let caught { throw caught }
+    }
+
     /// M14/T2: the signing proof for `presignedURL(.get)` — a presigned GET
     /// URL is only meaningful if a plain, unauthenticated `URLSession`
     /// request against it (no `Authorization` header at all — the signature
