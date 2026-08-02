@@ -168,7 +168,11 @@ struct EmbeddedKeyPorterTests {
     ///   reviewer, not this test, is what stops a deliberate bypass.
     ///
     /// The list is deliberately broad (Foundation, `AsyncBytes` and the POSIX
-    /// spellings), because the point is to trip over an accident.
+    /// spellings), because the point is to trip over an accident — and it
+    /// matches the CALL rather than the receiver, so the same read spelled a
+    /// different way trips the same entry: `FileManager().contents(atPath:)` is
+    /// `FileManager.default.contents(atPath:)`, and `Data.init(contentsOf:)` is
+    /// `Data(contentsOf:)`.
     @Test func embedReadsNothingBeforeDecidingOwnership() throws {
         let source = try String(contentsOf: Self.porterSource, encoding: .utf8)
         let start = try #require(source.range(of: "public static func embed("))
@@ -180,17 +184,23 @@ struct EmbeddedKeyPorterTests {
             Issue.record("`materialize` now precedes `embed`; re-anchor this source lint")
             return
         }
-        // Comments are stripped so prose about reading files cannot trip the scan.
+        // Comments are stripped so prose about reading files cannot trip the
+        // scan; explicit `.init` is normalized away so `Data.init(contentsOf:`
+        // is scanned as the `Data(contentsOf:` it is.
         let body = source[start.upperBound..<end.lowerBound]
             .split(separator: "\n", omittingEmptySubsequences: false)
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
             .joined(separator: "\n")
+            .replacingOccurrences(of: ".init(", with: "(")
 
         let ownership = try #require(body.range(of: "store.key(forPath:"))
+        // Every entry names the CALL — `(contentsOf` covers `Data`, `NSData`,
+        // `String` and anything else initialized from a URL, `.contents(atPath`
+        // covers `FileManager.default` and any other `FileManager` instance.
         for construct in [
-            "Data(contentsOf", "NSData(contentsOf", "String(contentsOf", "contentsOfFile",
-            "FileHandle(", "FileManager.default.contents(", "InputStream(",
-            ".resourceBytes", "open(", "fopen", "mmap(",
+            "(contentsOf", "contentsOfFile", ".contents(atPath",
+            "FileHandle(", "InputStream(", ".resourceBytes", ".bytes(",
+            "open(", "fopen", "mmap(",
         ] {
             guard let read = body.range(of: construct) else { continue }
             #expect(
