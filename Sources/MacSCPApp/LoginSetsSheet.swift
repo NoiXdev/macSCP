@@ -14,6 +14,8 @@ struct LoginSetsSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var selectedID: LoginSet.ID?
+    @State private var searchText = ""
+    @State private var searchIsRegex = false
     /// The single merge suggestion currently shown, or `nil` when none are
     /// left. Recomputed explicitly (not a live computed property) so a
     /// banner action's own re-render doesn't recompute mid-transition —
@@ -49,14 +51,23 @@ struct LoginSetsSheet: View {
                 Text(deleteErrorMessage).font(.caption).foregroundStyle(.red).lineLimit(2)
             }
 
-            if sessionList.loginSets.isEmpty {
+            let (predicate, searchError) = sheetSearchPredicate(
+                text: searchText, isRegex: searchIsRegex)
+            SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
+                .padding(.bottom, 4)
+
+            let visibleSets = sessionList.loginSets.filter {
+                predicate.matches("\($0.name) \($0.username) \($0.accessKeyID ?? "")")
+            }
+
+            if visibleSets.isEmpty {
                 Spacer(minLength: 0)
                 Text(L10n.string("loginSets.empty", "No login sets yet."))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
                 Spacer(minLength: 0)
             } else {
-                List(sessionList.loginSets, selection: $selectedID) { set in
+                List(visibleSets, selection: $selectedID) { set in
                     row(set)
                 }
             }

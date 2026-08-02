@@ -537,6 +537,11 @@
 "search.count.jump %lld" = "%lld Treffer";
 "search.error.invalidRegex" = "Ungültiger regulärer Ausdruck";
 
+/* Geteiltes Sheet-Suchfeld (M18/T1) */
+"search.regex" = "Regex";
+"search.regex.help" = "Mit regulärem Ausdruck suchen";
+"search.regex.invalid" = "Ungültiger regulärer Ausdruck";
+
 /* Menüleisten-Statuselement (M11n/T2) */
 "menubar.connections.count" = "%d Verbindungen";
 "menubar.empty" = "Keine aktiven Verbindungen";

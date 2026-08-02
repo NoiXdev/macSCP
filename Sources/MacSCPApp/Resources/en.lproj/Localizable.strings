@@ -536,6 +536,11 @@
 "search.count.jump %lld" = "%lld matches";
 "search.error.invalidRegex" = "Invalid regular expression";
 
+/* Shared sheet search field (M18/T1) */
+"search.regex" = "Regex";
+"search.regex.help" = "Match with a regular expression";
+"search.regex.invalid" = "Invalid regular expression";
+
 /* Menu-bar status item (M11n/T2) */
 "menubar.connections.count" = "%d connections";
 "menubar.empty" = "No active connections";

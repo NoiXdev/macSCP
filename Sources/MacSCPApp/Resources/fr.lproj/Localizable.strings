@@ -540,6 +540,11 @@
 "search.count.jump %lld" = "%lld résultats";
 "search.error.invalidRegex" = "Expression régulière invalide";
 
+/* Champ de recherche partagé des feuilles (M18/T1) */
+"search.regex" = "Regex";
+"search.regex.help" = "Filtrer avec une expression régulière";
+"search.regex.invalid" = "Expression régulière invalide";
+
 /* Élément d'état de la barre de menus (M11n/T2) */
 "menubar.connections.count" = "%d connexions";
 "menubar.empty" = "Aucune connexion active";
