@@ -439,6 +439,7 @@
 "loginSets.delete.confirm" = "Delete";
 "loginSets.deleteError %lld" = "Could not restore the stored password for %lld connections.";
 "loginSets.empty" = "No login sets yet.";
+"loginSets.noMatches" = "No matches.";
 "loginSets.subtitle.key %@ %@" = "%@ · SSH key (%@)";
 "loginSets.subtitle.password %@" = "%@ · Password";
 "loginSets.subtitle.agent %@" = "%@ · Agent";

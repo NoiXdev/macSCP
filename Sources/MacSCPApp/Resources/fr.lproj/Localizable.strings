@@ -443,6 +443,7 @@
 "loginSets.delete.confirm" = "Supprimer";
 "loginSets.deleteError %lld" = "Impossible de restaurer le mot de passe enregistré pour %lld connexions.";
 "loginSets.empty" = "Aucun ensemble de login pour l'instant.";
+"loginSets.noMatches" = "Aucun résultat.";
 "loginSets.subtitle.key %@ %@" = "%@ · Clé SSH (%@)";
 "loginSets.subtitle.password %@" = "%@ · Mot de passe";
 "loginSets.subtitle.agent %@" = "%@ · Agent";

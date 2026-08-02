@@ -440,6 +440,7 @@
 "loginSets.delete.confirm" = "Löschen";
 "loginSets.deleteError %lld" = "Das gespeicherte Passwort für %lld Verbindungen konnte nicht wiederhergestellt werden.";
 "loginSets.empty" = "Noch keine Logins.";
+"loginSets.noMatches" = "Keine Treffer.";
 "loginSets.subtitle.key %@ %@" = "%@ · SSH-Key (%@)";
 "loginSets.subtitle.password %@" = "%@ · Passwort";
 "loginSets.subtitle.agent %@" = "%@ · Agent";

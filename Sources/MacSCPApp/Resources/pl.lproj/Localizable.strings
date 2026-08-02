@@ -442,6 +442,7 @@
 "loginSets.delete.confirm" = "Usuń";
 "loginSets.deleteError %lld" = "Nie udało się przywrócić zapisanego hasła dla %lld połączeń.";
 "loginSets.empty" = "Brak zestawów loginów.";
+"loginSets.noMatches" = "Brak wyników.";
 "loginSets.subtitle.key %@ %@" = "%@ · Klucz SSH (%@)";
 "loginSets.subtitle.password %@" = "%@ · Hasło";
 "loginSets.subtitle.agent %@" = "%@ · Agent";
