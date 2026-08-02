@@ -1147,6 +1147,56 @@ struct RemoteBrowserViewModelTests {
         #expect(vm.items.map(\.name) == ["a.log", "b.txt"])
     }
 
+    /// Regression (M18a review, Important): the App fires
+    /// `refreshAndSelect(path:)` — which calls `load()` — in a DETACHED
+    /// `Task` after `createFolder`/`rename`/`createFile` so the sheet can
+    /// dismiss immediately (`BrowserPane.swift`). That means a `load()` for
+    /// the OLD directory can still be in flight when the user navigates
+    /// elsewhere; without a staleness guard, its late-arriving listing can
+    /// land AFTER the new directory's own listing and paint the wrong
+    /// directory's contents while `currentPath` still (correctly) names the
+    /// new one. `load()` must apply the same "late writer must lose" rule
+    /// `refreshQuietly()` already documents.
+    @Test func loadIgnoresStaleResultFromEarlierDirectory() async {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [
+                RemoteFileItem(name: "A", path: "/A", kind: .directory),
+                RemoteFileItem(name: "B", path: "/B", kind: .directory),
+            ],
+            "/A": [RemoteFileItem(name: "a.txt", path: "/A/a.txt", kind: .file, size: 1)],
+            "/B": [RemoteFileItem(name: "b.txt", path: "/B/b.txt", kind: .file, size: 2)],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs, startPath: "/A")
+        await vm.load()
+        #expect(vm.items.map(\.name) == ["a.txt"])
+
+        // Arm a gate on "/A"'s listing and start a second `load()` for it —
+        // the detached refresh a slow/gated create/rename/createFile would
+        // trigger. It blocks right after `list` records the call, until
+        // released below; `arrived` confirms the call has actually reached
+        // that point before the test proceeds (deterministic, no `sleep`).
+        let arrived = PlainSignal()
+        await fs.gateListCall(at: "/A") { arrived.fire() }
+        let staleLoad = Task { await vm.load() }
+        await arrived.wait()
+
+        // Navigate to "/B" while the stale "/A" load is still in flight —
+        // this is the fast path that must win.
+        let error = await vm.navigate(to: "/B")
+        #expect(error == nil)
+        #expect(vm.currentPath == "/B")
+        #expect(vm.items.map(\.name) == ["b.txt"])
+
+        // Now let the stale "/A" load complete — it must NOT overwrite "/B"'s
+        // listing nor its `.loaded` state.
+        await fs.releaseListGate(at: "/A")
+        await staleLoad.value
+
+        #expect(vm.currentPath == "/B")
+        #expect(vm.state == .loaded)
+        #expect(vm.items.map(\.name) == ["b.txt"])
+    }
+
     @Test func refreshQuietlyReappliesActiveFilterToFreshListing() async {
         let fs = makeSearchFS()
         let vm = RemoteBrowserViewModel(fs: fs)

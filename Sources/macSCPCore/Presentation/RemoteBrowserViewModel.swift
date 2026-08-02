@@ -222,18 +222,34 @@ public final class RemoteBrowserViewModel {
     /// directory CHANGE is the job of the three navigation entry points
     /// (`open(_:)`, `goUp()`, `navigate(to:)`), each of which calls
     /// `clearSearch()` itself before/around calling into this method.
+    ///
+    /// Staleness guard (M18a review, Important): the App fires
+    /// `refreshAndSelect(path:)` — which calls this method — in a DETACHED
+    /// `Task` after `createFolder`/`rename`/`createFile`, so the sheet can
+    /// dismiss immediately instead of waiting on a listing that may block on
+    /// a slow server or a macOS permission prompt. That means this method's
+    /// `await` can still be in flight when the user navigates elsewhere, so
+    /// the directory being listed is captured up front and the result — in
+    /// BOTH the success and the failure branch — is only applied if
+    /// `currentPath` is still that same directory afterwards: the late
+    /// writer must lose, exactly like `refreshQuietly()` below already
+    /// guards against the same race for its own (silent, timer-driven)
+    /// refresh.
     public func load() async {
         state = .loading
         selectedItems = []
+        let path = currentPath
         do {
-            let listed = try await fs.list(path: currentPath)
+            let listed = try await fs.list(path: path)
+            guard currentPath == path else { return }
             displayedAll = displayItems(from: listed)
             applySearch()
             state = .loaded
         } catch {
+            guard currentPath == path else { return }
             displayedAll = []
             applySearch()
-            state = .failed(message: Self.message(for: error, path: currentPath))
+            state = .failed(message: Self.message(for: error, path: path))
         }
     }
 
