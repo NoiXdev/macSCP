@@ -164,6 +164,21 @@ struct LoginSetsSheet: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 2)
+        // Row context menu (M18/T3): reuses the same footer triggers
+        // (`editorTarget`, `isShowingDeleteConfirm`) so behavior stays in
+        // sync with the "Edit…"/"Delete…" buttons — selection is set first
+        // so the action targets the right-clicked row even if it wasn't
+        // already selected.
+        .contextMenu {
+            Button(L10n.string("loginSets.edit", "Edit…")) {
+                selectedID = set.id
+                editorTarget = LoginSetEditorTarget(existing: set)
+            }
+            Button(L10n.string("loginSets.delete", "Delete…"), role: .destructive) {
+                selectedID = set.id
+                isShowingDeleteConfirm = true
+            }
+        }
     }
 
     @ViewBuilder
