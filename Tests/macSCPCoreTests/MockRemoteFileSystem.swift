@@ -49,6 +49,18 @@ actor MockRemoteFileSystem: RemoteFileSystem {
     /// denied) on a `stat` call without a bespoke double, mirroring
     /// `permissionsFailures` above.
     private var statFailures: [String: Error] = [:]
+    /// Test-only gate for `list(path:)` (M18a staleness-guard test
+    /// groundwork): while `listGates[path] == true`, a `list` call for that
+    /// path fires its `onReached` hook (letting the test know the call has
+    /// actually landed) and then blocks cooperatively via `Task.yield()`
+    /// until `releaseListGate(at:)` flips the flag back — deterministic
+    /// interleaving of two concurrent `load()`s with no `sleep` and no real
+    /// delay. Mirrors `blockAfterSetPermissions`'s hook-plus-spin idiom
+    /// below, but spins until an explicit release rather than cancellation,
+    /// since the staleness guard under test has nothing to do with
+    /// cancellation.
+    private var listGates: [String: Bool] = [:]
+    private var listGateHooks: [String: @Sendable () -> Void] = [:]
 
     init(tree: [String: [RemoteFileItem]] = [:], files: [String: Data] = [:]) {
         self.tree = tree
@@ -74,6 +86,14 @@ actor MockRemoteFileSystem: RemoteFileSystem {
 
     func list(path: String) async throws -> [RemoteFileItem] {
         listCallCounts[path, default: 0] += 1
+        if listGates[path] == true {
+            if let hook = listGateHooks.removeValue(forKey: path) {
+                hook()
+            }
+            while listGates[path] == true {
+                await Task.yield()
+            }
+        }
         if let listFailure {
             throw listFailure
         }
@@ -81,6 +101,18 @@ actor MockRemoteFileSystem: RemoteFileSystem {
             throw RemoteFSError.notFound(path: path)
         }
         return items
+    }
+
+    /// Test-only gate-arming toggle. See `listGates`'s doc comment.
+    func gateListCall(at path: String, onReached: @escaping @Sendable () -> Void) {
+        listGates[path] = true
+        listGateHooks[path] = onReached
+    }
+
+    /// Releases a `list(path:)` call previously blocked via
+    /// `gateListCall(at:onReached:)`.
+    func releaseListGate(at path: String) {
+        listGates[path] = false
     }
 
     /// Test-only direct tree mutation (M9c/T1): appends `item` to
