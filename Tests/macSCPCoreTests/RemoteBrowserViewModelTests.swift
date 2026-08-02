@@ -267,6 +267,28 @@ struct RemoteBrowserViewModelTests {
         #expect(capture.events[0].errorMessage == error)
     }
 
+    /// M18a final review (Minor B): `.authenticationFailed` -- the S3-403
+    /// verdict `createFile`'s unverifiable-probe branch surfaces directly --
+    /// used to fall through `message(for:path:)`'s `default` branch as
+    /// `"core.error.unexpected"` with a raw `String(describing:)` dump.
+    /// It now reuses `core.error.permissionDenied %@`, the closest existing
+    /// fit: S3 collapses "bad credentials" and "valid credentials, forbidden
+    /// by policy" into the same HTTP 403, which reads exactly like a
+    /// permission problem from this action's point of view.
+    @Test func createFileReportsPermissionDeniedMessageForAuthenticationFailed() async throws {
+        let fs = MockRemoteFileSystem(tree: ["/": []])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        await fs.setStatFailure(RemoteFSError.authenticationFailed, at: "/neu.txt")
+
+        let error = await vm.createFile(named: "neu.txt")
+
+        #expect(error == RemoteBrowserViewModel.message(
+            for: RemoteFSError.authenticationFailed, path: "/neu.txt"))
+        #expect(error == String(format: CoreL10n.string("core.error.permissionDenied %@"), "/neu.txt"))
+        #expect(await fs.writeModes["/neu.txt"] == nil)
+    }
+
     /// The deliberate asymmetry to the test above (M18a final review): the
     /// SAME probe guards `createFolder`, but `createDirectory` is idempotent
     /// by contract — it cannot destroy data — so an unverifiable probe there
