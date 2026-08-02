@@ -970,15 +970,21 @@ private extension ConnectionFormView {
     /// Filters on `KeyType.isConnectable` — `SSHPrivateKeyLoader` can only
     /// load ed25519, so rsa/ecdsa keys never appear in the picker menu.
     static func connectableManagedKeys() -> [ManagedKey] {
-        (try? ManagedKeyStore(directory: SessionStore.defaultDirectory).all())?
-            .filter { $0.type.isConnectable } ?? []
+        let store = ManagedKeyStore(directory: SessionStore.defaultDirectory)
+        // A key whose stored `fileName` does not address a file inside the
+        // key directory has no usable path, so it is not offerable either.
+        return (try? store.all())?
+            .filter { $0.type.isConnectable && store.privateKeyURL(for: $0) != nil } ?? []
     }
 
     /// The private-key file path a managed key resolves to, in the shape
-    /// `keyPath` expects (absolute, not percent-encoded).
+    /// `keyPath` expects (absolute, not percent-encoded). Empty — i.e. "no
+    /// key" — for a key whose stored `fileName` does not address a file
+    /// inside the key directory; `connectableManagedKeys` already keeps
+    /// those out of the picker.
     static func managedKeyPath(for key: ManagedKey) -> String {
         ManagedKeyStore(directory: SessionStore.defaultDirectory)
-            .keyDirectory.appendingPathComponent(key.fileName).path(percentEncoded: false)
+            .privateKeyURL(for: key)?.path(percentEncoded: false) ?? ""
     }
 
     /// The first ~12 characters after the `SHA256:` prefix, for a compact

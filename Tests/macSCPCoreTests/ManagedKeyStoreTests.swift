@@ -70,4 +70,49 @@ struct ManagedKeyStoreTests {
         try store.remove(id: key.id, secrets: secrets)
         #expect(try store.all().isEmpty)
     }
+
+    /// `fileName` is always a UUID that macSCP wrote itself, so this can only
+    /// be reached through a hand-edited or tampered `managed_keys.json`. It
+    /// is still worth closing: `appendingPathComponent("../…")` builds a URL
+    /// OUTSIDE the key directory, and everything that resolves a managed key
+    /// to a file would then follow it there — reading or deleting a file the
+    /// key store does not own.
+    @Test func aFileNameThatEscapesTheKeyDirectoryResolvesToNothing() throws {
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = ManagedKeyStore(directory: dir)
+        let outsider = dir.appendingPathComponent("outsider")
+        try Data("not the key store's file".utf8).write(to: outsider)
+
+        let key = sampleKey(fileName: "../outsider")
+        try store.add(key)
+
+        #expect(store.privateKeyURL(for: key) == nil)
+        // The escaped path resolves to the planted file, and must NOT match.
+        let escaped = store.keyDirectory.appendingPathComponent("../outsider")
+            .standardizedFileURL.path
+        #expect(escaped == outsider.standardizedFileURL.path)
+        #expect(try store.key(forPath: escaped) == nil)
+
+        // `remove` drops the metadata entry but must not delete outside the
+        // key directory on the way.
+        try store.remove(id: key.id, secrets: InMemorySecretStore())
+        #expect(try store.all().isEmpty)
+        #expect(FileManager.default.fileExists(atPath: outsider.path))
+    }
+
+    /// The same guard for the shapes that are not `../`: an empty name, a
+    /// dot, and an absolute-looking one.
+    @Test func onlyASinglePathComponentResolvesToAKeyFile() throws {
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = ManagedKeyStore(directory: dir)
+        for bad in ["", ".", "..", "sub/dir", "/etc/passwd"] {
+            #expect(
+                store.privateKeyURL(for: sampleKey(fileName: bad)) == nil,
+                "fileName \"\(bad)\" must not resolve to a key file")
+        }
+        let good = try #require(store.privateKeyURL(for: sampleKey(fileName: "abc123")))
+        #expect(good == store.keyDirectory.appendingPathComponent("abc123"))
+    }
 }
