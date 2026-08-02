@@ -612,8 +612,7 @@
 "presigned.copied" = "Kopiert";
 "presigned.error" = "Der Link konnte nicht erzeugt werden.";
 
-/* SSH-Schlüssel-Einstellungs-Tab (M17/T4) — macSCP-verwaltete SSH-Schlüssel erzeugen/verwalten */
-"settings.tab.sshKeys" = "SSH-Schlüssel";
+/* SSH-Schlüssel-Sheet (M17/T4, M18/T5) — macSCP-verwaltete SSH-Schlüssel erzeugen/verwalten */
 "keys.empty" = "Noch keine Schlüssel. Erzeuge einen, um loszulegen.";
 "keys.generate" = "Erzeugen…";
 "keys.generate.title" = "SSH-Schlüssel erzeugen";

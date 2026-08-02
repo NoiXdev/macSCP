@@ -611,8 +611,7 @@
 "presigned.copied" = "Copied";
 "presigned.error" = "Couldn't create the link.";
 
-/* SSH Keys settings tab (M17/T4) — generate/manage macSCP-managed SSH keys */
-"settings.tab.sshKeys" = "SSH Keys";
+/* SSH Keys sheet (M17/T4, M18/T5) — generate/manage macSCP-managed SSH keys */
 "keys.empty" = "No keys yet. Generate one to get started.";
 "keys.generate" = "Generate…";
 "keys.generate.title" = "Generate SSH Key";

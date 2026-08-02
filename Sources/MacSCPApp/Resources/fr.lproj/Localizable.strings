@@ -615,8 +615,7 @@
 "presigned.copied" = "Copié";
 "presigned.error" = "Impossible de créer le lien.";
 
-/* Onglet de réglages « Clés SSH » (M17/T4) — générer/gérer les clés SSH gérées par macSCP */
-"settings.tab.sshKeys" = "Clés SSH";
+/* Fenêtre « Clés SSH » (M17/T4, M18/T5) — générer/gérer les clés SSH gérées par macSCP */
 "keys.empty" = "Aucune clé pour l'instant. Générez-en une pour commencer.";
 "keys.generate" = "Générer…";
 "keys.generate.title" = "Générer une clé SSH";

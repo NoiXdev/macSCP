@@ -614,8 +614,7 @@
 "presigned.copied" = "Skopiowano";
 "presigned.error" = "Nie udało się utworzyć linku.";
 
-/* Zakładka ustawień „Klucze SSH” (M17/T4) — generowanie/zarządzanie kluczami SSH macSCP */
-"settings.tab.sshKeys" = "Klucze SSH";
+/* Arkusz „Klucze SSH” (M17/T4, M18/T5) — generowanie/zarządzanie kluczami SSH macSCP */
 "keys.empty" = "Brak kluczy. Wygeneruj pierwszy, aby zacząć.";
 "keys.generate" = "Generuj…";
 "keys.generate.title" = "Generuj klucz SSH";

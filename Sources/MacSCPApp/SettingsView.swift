@@ -7,9 +7,11 @@ import macSCPCore
 /// "Settings…" item (the `Settings` scene is wired up in MacSCPApp.swift).
 ///
 /// Structured as a `TabView` with a "General" tab (M7a/T4), a "Transfers"
-/// tab, an "Open with" tab (M5e/T2), a "Terminal" tab (M9d), a read-only
-/// "Shortcuts" tab (M11q), and an "SSH Keys" tab (M17/T4); future tabs slot
-/// in the same way.
+/// tab, an "Open with" tab (M5e/T2), a "Terminal" tab (M9d), and a read-only
+/// "Shortcuts" tab (M11q); future tabs slot in the same way. The former "SSH
+/// Keys" tab (M17/T4) was removed in M18/T6 — key management now lives
+/// entirely in the standalone `SSHKeysSheet` (M18/T5), reachable from the
+/// Sessions menu and the form's "Manage keys…" link.
 struct SettingsView: View {
     var store: SettingsStore
     /// App-global update-check state (M11h/T2) — same `UpdateCheckModel`
@@ -59,13 +61,6 @@ struct SettingsView: View {
                     Label(
                         L10n.string("settings.tab.shortcuts", "Shortcuts"),
                         systemImage: "keyboard")
-                }
-
-            SSHKeysSettingsTab()
-                .tabItem {
-                    Label(
-                        L10n.string("settings.tab.sshKeys", "SSH Keys"),
-                        systemImage: "key")
                 }
         }
         // Height bumped 420 -> 460 for this M9d polish pass: switching
