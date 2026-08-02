@@ -630,6 +630,142 @@ struct EmbeddedKeyPorterTests {
             username: "t", keyPath: importedPath, passphrase: nil)
     }
 
+    /// The third branch — "encrypted, and the passphrase stayed at home" —
+    /// looked irreducible and is not. The `openssh-key-v1` format macSCP
+    /// itself writes carries its PUBLIC key in CLEARTEXT even when the private
+    /// half is encrypted, so `ssh-keygen -l -f <file>` reads the file's real
+    /// identity with no passphrase and no secret in argv.
+    ///
+    /// Without that read, an attacker pairs their own ENCRYPTED key bytes with
+    /// the victim's public key line and fingerprint, declares `hasPassphrase`
+    /// and carries no passphrase — and the carried line is then checked only
+    /// against the carried fingerprint, both from the same hand. The keys sheet
+    /// would show a locked key named `prod` carrying the victim's genuine
+    /// fingerprint next to foreign bytes.
+    @Test func materializeRejectsAnEncryptedForeignKeyCarryingABorrowedFingerprint() throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let source = makeStore(in: dir)
+        let secrets = InMemorySecretStore()
+        let attacker = try addManagedKey(
+            to: source, secrets: secrets, name: "attacker", passphrase: "attacker-pass")
+        let victim = try addManagedKey(to: source, secrets: secrets, name: "prod")
+
+        let payload = EmbeddedKey(
+            fileContents: try Data(contentsOf: URL(fileURLWithPath: path(of: attacker, in: source))),
+            name: "prod", comment: "prod-key",
+            fingerprint: victim.fingerprint, publicKeyOpenSSH: victim.publicKeyOpenSSH,
+            hasPassphrase: true, passphrase: nil)
+
+        let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
+        let targetSecrets = RecordingSecretStore()
+        #expect(throws: EmbeddedKeyPorter.PorterError.fingerprintMismatch) {
+            _ = try EmbeddedKeyPorter.materialize(payload, store: target, secrets: targetSecrets)
+        }
+        let leftovers = (try? FileManager.default.contentsOfDirectory(
+            atPath: target.keyDirectory.path(percentEncoded: false))) ?? []
+        #expect(leftovers.isEmpty)
+        #expect(try target.all().isEmpty)
+        #expect(targetSecrets.stored.isEmpty)
+    }
+
+    /// Same branch, cruder payload: bytes that are not a key file at all
+    /// (`ssh-keygen -l` exits 255 on them) used to import as a
+    /// "passphrase-protected" key carrying the victim's fingerprint. Unable to
+    /// read the file's own public part is not a licence to believe the payload.
+    @Test func materializeRejectsNonKeyMaterialDeclaredAsPassphraseProtected() throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let source = makeStore(in: dir)
+        let secrets = InMemorySecretStore()
+        let victim = try addManagedKey(to: source, secrets: secrets, name: "prod")
+
+        let payload = EmbeddedKey(
+            fileContents: Data("NOT A KEY AT ALL".utf8),
+            name: "prod", comment: "prod-key",
+            fingerprint: victim.fingerprint, publicKeyOpenSSH: victim.publicKeyOpenSSH,
+            hasPassphrase: true, passphrase: nil)
+
+        let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
+        let targetSecrets = RecordingSecretStore()
+        #expect(throws: EmbeddedKeyPorter.PorterError.keyMaterialUnverifiable) {
+            _ = try EmbeddedKeyPorter.materialize(payload, store: target, secrets: targetSecrets)
+        }
+        let leftovers = (try? FileManager.default.contentsOfDirectory(
+            atPath: target.keyDirectory.path(percentEncoded: false))) ?? []
+        #expect(leftovers.isEmpty)
+        #expect(try target.all().isEmpty)
+        #expect(targetSecrets.stored.isEmpty)
+    }
+
+    /// A legacy PEM key (`Proc-Type: 4,ENCRYPTED` / `DEK-Info:`) encrypts the
+    /// WHOLE file, public part included, so `ssh-keygen -l -f` cannot read it
+    /// either ("is not a key file", exit 255). That case therefore fails
+    /// closed — deliberately: nothing is left that ties the file to the
+    /// declared identity, and accepting it on the payload's word would reopen
+    /// exactly the hole the two tests above close. Such keys are RSA/DSA/ECDSA,
+    /// which macSCP cannot connect with anyway (`KeyType.isConnectable`); the
+    /// way to carry one is to export WITH its passphrase, which lands in the
+    /// strong `ssh-keygen -y -P` branch.
+    @Test func materializeRejectsALegacyPEMEncryptedKeyExportedWithoutItsPassphrase() throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let source = makeStore(in: dir)
+        let secrets = InMemorySecretStore()
+        let victim = try addManagedKey(to: source, secrets: secrets, name: "prod")
+
+        let legacy = dir.appendingPathComponent("legacy")
+        let keygen = Process()
+        keygen.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
+        keygen.arguments = [
+            "-t", "rsa", "-b", "2048", "-m", "PEM", "-N", "s3cr3t", "-q",
+            "-C", "legacy", "-f", legacy.path(percentEncoded: false),
+        ]
+        keygen.standardInput = FileHandle.nullDevice
+        try keygen.run(); keygen.waitUntilExit()
+        #expect(keygen.terminationStatus == 0)
+
+        let payload = EmbeddedKey(
+            fileContents: try Data(contentsOf: legacy),
+            name: "prod", comment: "prod-key",
+            fingerprint: victim.fingerprint, publicKeyOpenSSH: victim.publicKeyOpenSSH,
+            hasPassphrase: true, passphrase: nil)
+
+        let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
+        #expect(throws: EmbeddedKeyPorter.PorterError.keyMaterialUnverifiable) {
+            _ = try EmbeddedKeyPorter.materialize(
+                payload, store: target, secrets: InMemorySecretStore())
+        }
+        #expect(try target.all().isEmpty)
+    }
+
+    /// A carried passphrase that no longer opens the key (the source Keychain
+    /// slot went stale out of band) must not fail the whole import: the file's
+    /// own cleartext public part still establishes its identity, so the key
+    /// lands as encrypted-without-a-slot, exactly as if it had been exported
+    /// without secrets. Strictness here bought nothing — an attacker after that
+    /// branch simply carries no passphrase — and only ever hit honest users.
+    @Test func materializeImportsAnEncryptedKeyWhoseCarriedPassphraseWentStale() throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let source = makeStore(in: dir)
+        let secrets = InMemorySecretStore()
+        let key = try addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
+        var embedded = try #require(
+            try EmbeddedKeyPorter.embed(
+                keyPath: path(of: key, in: source), includePassphrase: true,
+                store: source, secrets: secrets))
+        embedded.passphrase = "no-longer-the-passphrase"
+
+        let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
+        let targetSecrets = RecordingSecretStore()
+        let importedPath = try EmbeddedKeyPorter.materialize(
+            embedded, store: target, secrets: targetSecrets)
+
+        let imported = try #require(try target.key(forPath: importedPath))
+        #expect(imported.fingerprint == key.fingerprint)
+        #expect(imported.hasPassphrase == true)
+        // The stale string never reaches the Keychain: a slot must only ever
+        // hold a passphrase that demonstrably opens the key.
+        #expect(targetSecrets.stored.isEmpty)
+    }
+
     /// Same invariant one step later: the Keychain write succeeded and the
     /// metadata write is what fails. Both the file and the Keychain slot have
     /// to go.

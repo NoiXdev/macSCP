@@ -26,14 +26,16 @@ import Foundation
 ///    `SSHKeysSheet`. The metadata entry is written LAST, so the rollback
 ///    never has to undo a half-registered key.
 /// 5. **The imported key's identity is derived, never taken on trust.** Type,
-///    fingerprint, public key AND `hasPassphrase` come from the key material
-///    wherever it can be opened, and only from the carried public key line
-///    where the material genuinely cannot be opened at all; a declared
-///    fingerprint that disagrees aborts the import. Crucially, WHICH of those
-///    two the import lands in is decided by the outcome of actually trying,
-///    never by a flag out of the payload — otherwise a crafted file picks the
-///    check it can pass and shows the user a fingerprint they trust next to a
-///    foreign key (see `identity(of:declaredBy:)`).
+///    fingerprint, public key AND `hasPassphrase` come from the key material:
+///    from `ssh-keygen -y` wherever the private half can be opened, and
+///    otherwise from the CLEARTEXT public part that an `openssh-key-v1` file
+///    carries even while encrypted (`ssh-keygen -l -f`). A declared fingerprint
+///    that disagrees aborts the import, and a file that yields neither is
+///    rejected rather than believed. Crucially, WHICH check the import lands in
+///    is decided by the outcome of actually trying, never by a flag out of the
+///    payload — otherwise a crafted file picks the check it can pass and shows
+///    the user a fingerprint they trust next to a foreign key (see
+///    `identity(of:declaredBy:)`).
 public enum EmbeddedKeyPorter {
     /// Failures that name their own condition. A caller walking many login
     /// sets can catch one of these, report the affected key by name, and
@@ -210,8 +212,10 @@ public enum EmbeddedKeyPorter {
         /// It opened only with the passphrase the payload carried: the key is
         /// encrypted and that passphrase is the one worth keeping.
         case openedWithTheCarriedPassphrase(SSHKeyImporter.ImportedKeyInfo)
-        /// It did not open without a passphrase and the payload carried none
-        /// to try — the identity comes from the carried public key line.
+        /// No available passphrase opened it, so the key is encrypted and gets
+        /// no Keychain slot. The identity is the carried public key line —
+        /// admitted only after `ssh-keygen -l -f` read the SAME fingerprint out
+        /// of the file's own cleartext public part.
         case encryptedWithThePassphraseLeftAtHome(SSHKeyImporter.ImportedKeyInfo)
 
         var info: SSHKeyImporter.ImportedKeyInfo {
@@ -271,7 +275,8 @@ public enum EmbeddedKeyPorter {
     /// `/dev/null` for stdin anyway), and `-P` is ignored for an unencrypted
     /// key, so a crafted passphrase cannot force the fallback either.
     ///
-    /// Three outcomes, in decreasing strength:
+    /// Three outcomes, in decreasing strength — but all three check the stored
+    /// identity against the FILE, never against the payload's own word:
     ///
     /// - **Opens with no passphrase**: `ssh-keygen -y` binds type, fingerprint
     ///   and public key to the MATERIAL that was just written, and the key is
@@ -279,19 +284,20 @@ public enum EmbeddedKeyPorter {
     /// - **Opens with the carried passphrase**: equally strong, and the key is
     ///   recorded as encrypted. Cost: the passphrase is briefly in
     ///   `ssh-keygen`'s argv — the accepted minor `SSHKeyImporter` documents.
-    /// - **Does not open, and no passphrase was carried**: the genuinely
-    ///   irreducible case (an encrypted key deliberately exported without its
-    ///   passphrase). The carried public key line is the only thing left to
-    ///   check against: the stored fingerprint is then the one that line really
-    ///   encodes rather than a free-form claim, but nothing ties it to the
-    ///   private key bytes. Deriving the public key from the file is impossible
-    ///   here, which is exactly why `EmbeddedKey` carries it.
+    /// - **Encrypted, and no passphrase opens it here**: the private half
+    ///   cannot be read, but an `openssh-key-v1` file — the format macSCP
+    ///   itself writes — carries its PUBLIC key in CLEARTEXT regardless, so
+    ///   `ssh-keygen -l -f` still reads the file's real fingerprint with no
+    ///   passphrase and no secret in argv. The carried public key line supplies
+    ///   the type and the line itself (`-l` prints neither), and it is accepted
+    ///   only if the file's own fingerprint agrees with it. See
+    ///   `identityOfAKeyThatWillNotOpen`.
     ///
-    /// Anything else — the payload says the key is unencrypted, or hands over a
-    /// passphrase, and the material still will not open — is broken or forged
-    /// and throws `keyMaterialUnverifiable`. That also covers an environmental
-    /// failure (no `/usr/bin/ssh-keygen`, a key type it rejects): unable to
-    /// verify is not a licence to believe the payload.
+    /// Anything else — the payload says the key is unencrypted and the material
+    /// still will not open — is broken or forged and throws
+    /// `keyMaterialUnverifiable`. That also covers an environmental failure (no
+    /// `/usr/bin/ssh-keygen`, a key type it rejects): unable to verify is not a
+    /// licence to believe the payload.
     private static func identity(of url: URL, declaredBy key: EmbeddedKey) throws
         -> KeyMaterialEvidence
     {
@@ -304,11 +310,18 @@ public enum EmbeddedKeyPorter {
                       privateKeyURL: url, passphrase: carried)
         {
             derived = .openedWithTheCarriedPassphrase(unlocked)
-        } else if key.hasPassphrase, carried == nil {
-            // A payload whose public key line is unusable throws out of here
-            // rather than registering an unverified fingerprint.
+        } else if key.hasPassphrase {
+            // Note there is no `carried == nil` condition here. A carried
+            // passphrase that no longer opens the key (the exporting side's
+            // Keychain slot went stale out of band) lands in this branch too,
+            // rather than failing the whole import: the branch verifies the
+            // file against its own cleartext public part, so it is no weaker
+            // for having been reached this way — and an attacker who wanted it
+            // would simply have carried no passphrase at all. Only honest users
+            // were ever hit by the stricter reading. The stale string is then
+            // dropped, never stored (`keepsTheCarriedPassphrase`).
             derived = .encryptedWithThePassphraseLeftAtHome(
-                try SSHKeyImporter.info(fromPublicKeyLine: key.publicKeyOpenSSH))
+                try identityOfAKeyThatWillNotOpen(at: url, declaredBy: key))
         } else {
             throw PorterError.keyMaterialUnverifiable
         }
@@ -316,5 +329,46 @@ public enum EmbeddedKeyPorter {
             throw PorterError.fingerprintMismatch
         }
         return derived
+    }
+
+    /// The identity of an encrypted key that no available passphrase opens.
+    ///
+    /// The carried public key line is NOT taken on trust here — that was the
+    /// hole: checking it against the carried fingerprint compares two values
+    /// from the same hand, which always agree, so an attacker could pair their
+    /// own encrypted bytes with a victim's public key line and have the keys
+    /// list show a locked key carrying the victim's genuine fingerprint. And
+    /// bytes that are not a key file at all sailed through the same way.
+    ///
+    /// What actually decides it is `ssh-keygen -l -f` on the file that was just
+    /// written: an `openssh-key-v1` file carries its public key in cleartext
+    /// even when the private half is encrypted, so the file names its own
+    /// fingerprint without a passphrase and with no secret in argv. The carried
+    /// line only supplies what `-l` does not print (the type, and the line
+    /// itself for `authorized_keys`), and only if the two agree.
+    ///
+    /// Failing to read the file is a hard stop, not a fallback: that covers
+    /// non-key bytes, and legacy PEM (`DEK-Info`) keys, which encrypt the
+    /// public part too and therefore leave nothing to check against.
+    private static func identityOfAKeyThatWillNotOpen(
+        at url: URL, declaredBy key: EmbeddedKey
+    ) throws -> SSHKeyImporter.ImportedKeyInfo {
+        // A payload whose public key line is unusable throws out of here rather
+        // than registering an unverified fingerprint.
+        let carried = try SSHKeyImporter.info(fromPublicKeyLine: key.publicKeyOpenSSH)
+        let onDisk: String
+        do {
+            // `fingerprint(ofPrivateKeyFileAt:)` refuses to run at all when a
+            // sibling `<file>.pub` exists, because `ssh-keygen -l -f` would
+            // read THAT instead (the M18 trap). `materialize` writes only the
+            // private key under a fresh UUID, so there is none today — and if
+            // that ever changes, this throws instead of silently fingerprinting
+            // whatever the sibling holds.
+            onDisk = try SSHKeyImporter.fingerprint(ofPrivateKeyFileAt: url)
+        } catch {
+            throw PorterError.keyMaterialUnverifiable
+        }
+        guard onDisk == carried.fingerprint else { throw PorterError.fingerprintMismatch }
+        return carried
     }
 }
