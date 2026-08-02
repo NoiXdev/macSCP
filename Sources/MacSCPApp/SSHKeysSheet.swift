@@ -3,21 +3,17 @@ import SwiftUI
 import UniformTypeIdentifiers
 import macSCPCore
 
-/// SSH-key management sheet (M18/T5): the standalone overlay replacement for
-/// the M17 `SSHKeysSettingsTab` (reachable from the Sessions menu and the
-/// form's "Manage keys…" link, same as `LoginSetsSheet`/`KnownHostsSheet`).
-/// Shape mirrors `LoginSetsSheet` (title, `SheetSearchField` +
-/// `sheetSearchPredicate`, filtered list with a `*.noMatches` vs. `*.empty`
-/// distinction, footer buttons, fixed `.frame(width: 720, height: 460)`,
-/// row `.contextMenu`) rather than `SSHKeysSettingsTab`'s `SettingsView`-tab
-/// shape.
+/// SSH-key management sheet (M18/T5): the standalone overlay for managing
+/// macSCP-managed SSH keys, reachable from the Sessions menu and the form's
+/// "Manage keys…" link, same as `LoginSetsSheet`/`KnownHostsSheet`. Replaces
+/// the M17 `SSHKeysSettingsTab` (removed in M18/T6 — this sheet is now the
+/// only place keys are managed). Shape mirrors `LoginSetsSheet` (title,
+/// `SheetSearchField` + `sheetSearchPredicate`, filtered list with a
+/// `*.noMatches` vs. `*.empty` distinction, footer buttons, fixed
+/// `.frame(width: 720, height: 460)`, row `.contextMenu`).
 ///
-/// List/row rendering, copy/export-public/delete and the usage-count delete
-/// warning are carried over from `SSHKeysSettingsTab` (kept alive until Task
-/// 6 removes it) — duplicated as this view's own methods since they were
-/// private to that struct. `GenerateKeySheet` and `SSHPublicKeyDocument`
-/// stay defined once, in `SSHKeysSettingsTab.swift`, and are reused here
-/// directly (both files are internal to the same `MacSCPApp` target).
+/// `GenerateKeySheet` and `SSHPublicKeyDocument` below are this file's own
+/// types (moved from the removed `SSHKeysSettingsTab.swift`).
 struct SSHKeysSheet: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -40,7 +36,7 @@ struct SSHKeysSheet: View {
     @State private var renameTarget: ManagedKey?
 
     /// Drives the delete `confirmationDialog` — non-nil means "confirm
-    /// deleting this key" (same shape as `SSHKeysSettingsTab`).
+    /// deleting this key".
     @State private var keyPendingDelete: ManagedKey?
 
     /// Drives the private-key export warning `confirmationDialog` (M18/T5,
@@ -58,8 +54,7 @@ struct SSHKeysSheet: View {
     @State private var exportPrivateFilename = "key"
 
     /// Shared error banner for this sheet's own action failures — export
-    /// (both `fileExporter` completions) and delete write into it, same
-    /// pattern as `SSHKeysSettingsTab.tabErrorMessage`.
+    /// (both `fileExporter` completions) and delete write into it.
     @State private var errorMessage: String?
 
     private let store = ManagedKeyStore(directory: SessionStore.defaultDirectory)
@@ -232,9 +227,9 @@ struct SSHKeysSheet: View {
         .contextMenu { actionMenuItems(for: key) }
     }
 
-    /// Compact icon buttons, always visible per row — same "buttons plus a
-    /// context menu that repeats them" split `SSHKeysSettingsTab` used,
-    /// extended with rename and private-key export (Step 2).
+    /// Compact icon buttons, always visible per row — a "buttons plus a
+    /// context menu that repeats them" split, extended with rename and
+    /// private-key export (Step 2).
     @ViewBuilder
     private func actionButtons(for key: ManagedKey) -> some View {
         HStack(spacing: 8) {
@@ -345,9 +340,8 @@ struct SSHKeysSheet: View {
         isExportingPrivate = true
     }
 
-    /// Best-effort usage count (carried over from `SSHKeysSettingsTab`):
-    /// sessions and login sets whose `keyPath` resolves to this key's
-    /// private-key file.
+    /// Best-effort usage count: sessions and login sets whose `keyPath`
+    /// resolves to this key's private-key file.
     private func usageCount(of key: ManagedKey) -> Int {
         let target = store.keyDirectory.appendingPathComponent(key.fileName)
             .standardizedFileURL.path
@@ -385,12 +379,40 @@ struct SSHKeysSheet: View {
     }
 }
 
+/// Write-only `FileDocument` for exporting a managed key's OpenSSH public
+/// line as a `.pub` file — mirrors `AuditLogTextDocument`'s write-only
+/// contract (`AuditLogSheet.swift`): the text is already assembled by the
+/// time `fileExporter` is armed, and reading is never exercised. Moved here
+/// from the removed `SSHKeysSettingsTab.swift` (M18/T6).
+struct SSHPublicKeyDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [] }
+    static var writableContentTypes: [UTType] { [preferredType] }
+    /// `.pub` has no registered system `UTType`; a dynamic one keyed off
+    /// the extension keeps the save panel offering `.pub` instead of
+    /// silently falling back to `.plainText`'s own preferred extension.
+    static let preferredType = UTType(filenameExtension: "pub") ?? .plainText
+
+    let text: String
+
+    init(text: String) {
+        self.text = text
+    }
+
+    init(configuration: ReadConfiguration) throws {
+        throw CocoaError(.fileReadUnsupportedScheme)
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: Data(text.utf8))
+    }
+}
+
 /// Write-only `FileDocument` for exporting a managed key's PRIVATE key file
 /// bytes (M18/T5) — same write-only contract as `SSHPublicKeyDocument`
-/// (`SSHKeysSettingsTab.swift`), but holds the raw bytes read off disk
-/// instead of an assembled OpenSSH text line. Generic `.data` content type:
-/// private keys have no fixed extension (`id_ed25519` has none), so there is
-/// no single UTType to prefer the way `.pub` works for the public-key export.
+/// above, but holds the raw bytes read off disk instead of an assembled
+/// OpenSSH text line. Generic `.data` content type: private keys have no
+/// fixed extension (`id_ed25519` has none), so there is no single UTType to
+/// prefer the way `.pub` works for the public-key export.
 struct SSHPrivateKeyExportDocument: FileDocument {
     static var readableContentTypes: [UTType] { [] }
     static var writableContentTypes: [UTType] { [.data] }
@@ -407,6 +429,170 @@ struct SSHPrivateKeyExportDocument: FileDocument {
 
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
         FileWrapper(regularFileWithContents: data)
+    }
+}
+
+/// Generate-key sheet (M17/T4): name/comment/type/bits/passphrase fields,
+/// calling `SSHKeyGenerator.generate` into the store's `keyDirectory` and
+/// persisting the result via `store.add`. Shape mirrors
+/// `LoginSetsSheet.LoginSetEditorView` (own small field-row helper below,
+/// `.polished`/`.polishedProminent` buttons). Moved here from the removed
+/// `SSHKeysSettingsTab.swift` (M18/T6) — `internal` (not `private`) so it
+/// stays usable from `SSHKeysSheet.body`'s `.sheet(isPresented:)` above.
+struct GenerateKeySheet: View {
+    let store: ManagedKeyStore
+    let onGenerated: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var comment = ""
+    @State private var typeChoice: KeyTypeChoice = .ed25519
+    @State private var rsaBits = 3072
+    @State private var passphrase = ""
+    @State private var passphraseConfirm = ""
+    @State private var errorMessage: String?
+
+    /// A `Picker`-friendly stand-in for `KeyType` — `KeyType.rsa` carries a
+    /// `bits` payload, so it can't be a segmented-picker `tag` on its own;
+    /// `rsaBits` below supplies that payload separately.
+    private enum KeyTypeChoice: String, CaseIterable, Identifiable {
+        case ed25519, rsa, ecdsa
+        var id: String { rawValue }
+    }
+
+    private var resolvedType: KeyType {
+        switch typeChoice {
+        case .ed25519: return .ed25519
+        case .rsa: return .rsa(bits: rsaBits)
+        case .ecdsa: return .ecdsa
+        }
+    }
+
+    private var passphrasesMismatch: Bool { passphrase != passphraseConfirm }
+
+    private var isGenerateDisabled: Bool {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || passphrasesMismatch
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(L10n.string("keys.generate.title", "Generate SSH Key")).font(.title3.bold())
+
+            let nameLabel = L10n.string("keys.generate.name", "Name")
+            KeyFieldRow(label: nameLabel) {
+                TextField(nameLabel, text: $name, prompt: Text(verbatim: ""))
+            }
+            let commentLabel = L10n.string("keys.generate.comment", "Comment")
+            KeyFieldRow(label: commentLabel) {
+                TextField(commentLabel, text: $comment, prompt: Text(verbatim: ""))
+            }
+            let typeLabel = L10n.string("keys.generate.type", "Type")
+            KeyFieldRow(label: typeLabel) {
+                Picker(typeLabel, selection: $typeChoice) {
+                    Text(L10n.string("keys.type.ed25519", "ED25519")).tag(KeyTypeChoice.ed25519)
+                    Text(L10n.string("keys.type.rsa", "RSA")).tag(KeyTypeChoice.rsa)
+                    Text(L10n.string("keys.type.ecdsa", "ECDSA")).tag(KeyTypeChoice.ecdsa)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+            if typeChoice != .ed25519 {
+                Text(L10n.string(
+                    "keys.notConnectable", "Not usable as a macSCP login (public key export only)"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if typeChoice == .rsa {
+                let bitsLabel = L10n.string("keys.generate.bits", "Key size")
+                KeyFieldRow(label: bitsLabel) {
+                    Picker(bitsLabel, selection: $rsaBits) {
+                        Text("2048").tag(2048)
+                        Text("3072").tag(3072)
+                        Text("4096").tag(4096)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+            }
+            let passphraseLabel = L10n.string("keys.generate.passphrase", "Passphrase (optional)")
+            KeyFieldRow(label: passphraseLabel) {
+                SecureField(passphraseLabel, text: $passphrase, prompt: Text(verbatim: ""))
+            }
+            let confirmLabel = L10n.string("keys.generate.passphrase.confirm", "Confirm passphrase")
+            KeyFieldRow(label: confirmLabel) {
+                SecureField(confirmLabel, text: $passphraseConfirm, prompt: Text(verbatim: ""))
+            }
+            if passphrasesMismatch && !passphraseConfirm.isEmpty {
+                Text(L10n.string("keys.generate.passphrase.mismatch", "Passphrases don't match."))
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+            if let errorMessage {
+                Text(errorMessage).font(.caption).foregroundStyle(.red).lineLimit(2)
+            }
+
+            HStack {
+                Spacer()
+                Button(L10n.string("common.cancel", "Cancel")) { dismiss() }
+                    .buttonStyle(.polished)
+                Button(L10n.string("keys.generate.submit", "Generate")) { generate() }
+                    .buttonStyle(.polishedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(isGenerateDisabled)
+            }
+        }
+        .padding(20)
+        .frame(width: 380)
+        .textFieldStyle(.roundedBorder)
+    }
+
+    /// Generates the key on disk, saves the passphrase (if any) to the
+    /// Keychain under a FRESH id, and persists the resulting `ManagedKey`.
+    ///
+    /// `savePassword`/`store.add` run in an INNER `do/catch` so that a
+    /// failure on either of them — AFTER `SSHKeyGenerator.generate` already
+    /// wrote the private/public key files (and possibly the Keychain entry,
+    /// if `store.add` is what threw) — actively rolls back everything THIS
+    /// run created, instead of leaving orphaned artifacts behind (a key file
+    /// with no metadata record, or a Keychain entry with no matching key).
+    /// The cleaned-up error is then re-thrown so the outer `catch` still
+    /// reports the same single fixed message as any other failure.
+    private func generate() {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedComment = comment.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            let generated = try SSHKeyGenerator.generate(
+                type: resolvedType, comment: trimmedComment,
+                passphrase: passphrase.isEmpty ? nil : passphrase,
+                into: store.keyDirectory)
+            let newID = UUID()
+            do {
+                if !passphrase.isEmpty {
+                    try KeychainSecretStore().savePassword(passphrase, for: newID)
+                }
+                let key = ManagedKey(
+                    id: newID, name: trimmedName, comment: trimmedComment, type: resolvedType,
+                    fingerprint: generated.fingerprint, publicKeyOpenSSH: generated.publicKeyOpenSSH,
+                    createdAt: Date(), hasPassphrase: !passphrase.isEmpty,
+                    fileName: generated.privateKeyURL.lastPathComponent)
+                try store.add(key)
+            } catch {
+                try? FileManager.default.removeItem(at: generated.privateKeyURL)
+                try? FileManager.default.removeItem(
+                    at: generated.privateKeyURL.deletingLastPathComponent()
+                        .appendingPathComponent(generated.privateKeyURL.lastPathComponent + ".pub"))
+                try? KeychainSecretStore().deletePassword(for: newID)
+                throw error
+            }
+            onGenerated()
+            dismiss()
+        } catch {
+            // Never surface the underlying error (same reasoning as
+            // `PresignedURLSheet.generate`) — a fixed message only; the
+            // failure carries no secret material here, but this keeps the
+            // sheet consistent with the rest of the app's error surfaces.
+            errorMessage = L10n.string("keys.generate.error", "Couldn't generate the key.")
+        }
     }
 }
 
@@ -612,9 +798,9 @@ private struct RenameKeySheet: View {
     }
 }
 
-/// Narrow field-row helper for this file's two small sheets — same shape as
-/// `SSHKeysSettingsTab.GenerateFieldRow`/`LoginSetsSheet.EditorRow`, kept as
-/// its own private copy since those are private to their own files.
+/// Narrow field-row helper shared by this file's small sheets (Generate,
+/// Import, Rename) — same shape as `LoginSetsSheet.EditorRow`, kept as its
+/// own private copy since that one is private to its own file.
 private struct KeyFieldRow<Content: View>: View {
     let label: String
     @ViewBuilder let content: Content
