@@ -503,12 +503,21 @@ public final class RemoteBrowserViewModel {
         // existing directory. Probing the filesystem directly via `stat`
         // sees the real entry regardless of the display filter.
         let detail = "mkdir \(path)"
-        if (try? await fs.stat(path: path)) != nil {
+        switch await probeExistence(at: path) {
+        case .exists:
             let message = Self.message(
                 for: RemoteFSError.protocolError(reason: "destination already exists: \(path)"),
                 path: path)
             auditSink?(AuditEvent(kind: .newFolder, detail: detail, isError: true, errorMessage: message))
             return message
+        case .absent, .unverifiable:
+            // Unlike `createFile` below, an UNVERIFIABLE probe still proceeds
+            // here (M18a final review, Important-1): `createDirectory` is
+            // idempotent by contract and writes no content, so it cannot
+            // destroy anything — and letting it run keeps this path's
+            // user-visible messages exactly as they were (a permission
+            // problem surfaces as `createDirectory`'s own error below).
+            break
         }
         do {
             try await fs.createDirectory(at: path)
@@ -526,20 +535,71 @@ public final class RemoteBrowserViewModel {
         return nil
     }
 
+    /// Outcome of the pre-create existence probe shared by `createFolder`
+    /// and `createFile` (M18a final review, Important-1). The three cases
+    /// exist because "`stat` threw" is NOT one verdict: only
+    /// `RemoteFSError.notFound` means "there is definitely nothing here",
+    /// and only that verdict may let a create proceed blindly.
+    private enum ExistenceProbe {
+        /// `stat` returned an entry — something already occupies the path.
+        case exists
+        /// `stat` reported a definite "does not exist".
+        case absent
+        /// `stat` failed for any other reason (permission denied, a protocol
+        /// error, a dropped connection). Existence is UNKNOWN — the path may
+        /// well hold a file full of data.
+        case unverifiable(Error)
+    }
+
+    /// `stat`s `path` and classifies the outcome. All three backends report a
+    /// missing path as `RemoteFSError.notFound`: `LocalFileSystem.stat`
+    /// throws it directly, `CitadelFileSystem.stat` maps SFTP's
+    /// `SSH_FX_NO_SUCH_FILE` to it via `mapSFTPError`, and
+    /// `S3FileSystem.stat` throws it when its `ListObjectsV2` pages contain
+    /// no matching key. Everything else — SFTP's `SSH_FX_PERMISSION_DENIED`,
+    /// an S3 `ListObjectsV2` 403 from a bucket that grants `s3:PutObject`
+    /// but not `s3:ListBucket` (which maps to `.authenticationFailed`, not
+    /// `.notFound`), a torn connection — is `.unverifiable`.
+    private func probeExistence(at path: String) async -> ExistenceProbe {
+        do {
+            _ = try await fs.stat(path: path)
+            return .exists
+        } catch RemoteFSError.notFound {
+            return .absent
+        } catch {
+            return .unverifiable(error)
+        }
+    }
+
     /// Creates an empty file in the current directory. Same collision probe
     /// and error contract as `createFolder(named:)` — see its doc comment
     /// for the rationale of probing via `stat` instead of the display-
     /// filtered `items` list. Like it, this does NOT refresh the listing;
     /// callers use `refreshAndSelect(path:)` afterwards (M18a).
+    ///
+    /// Unlike `createFolder`, an `.unverifiable` probe is a HARD STOP here
+    /// (M18a final review, Important-1): the create below is a
+    /// `.overwrite` write, i.e. a truncation, so treating "I could not tell"
+    /// as "nothing is there" would silently blank an existing file whenever
+    /// `stat` fails for a reason other than "not found". The failure is
+    /// surfaced as an error message — the sheet stays open — and nothing is
+    /// written.
     public func createFile(named name: String) async -> String? {
         let path = RemotePath.join(currentPath, name)
         let detail = "create \(path)"
-        if (try? await fs.stat(path: path)) != nil {
+        switch await probeExistence(at: path) {
+        case .exists:
             let message = Self.message(
                 for: RemoteFSError.protocolError(reason: "destination already exists: \(path)"),
                 path: path)
             auditSink?(AuditEvent(kind: .newFile, detail: detail, isError: true, errorMessage: message))
             return message
+        case .unverifiable(let error):
+            let message = Self.message(for: error, path: path)
+            auditSink?(AuditEvent(kind: .newFile, detail: detail, isError: true, errorMessage: message))
+            return message
+        case .absent:
+            break
         }
         do {
             let empty = AsyncThrowingStream<Data, Error> { $0.finish() }

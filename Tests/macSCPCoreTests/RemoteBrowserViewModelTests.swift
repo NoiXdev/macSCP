@@ -207,6 +207,9 @@ struct RemoteBrowserViewModelTests {
 
         let error = await vm.createFile(named: "notes.txt")
         #expect(error == nil)
+        // The DEFINITE "not found" from the probe is the only verdict that
+        // may proceed to the write — and it must actually write.
+        #expect(await fs.writeModes["/notes.txt"] == .overwrite)
         await vm.refreshAndSelect(path: RemotePath.join(vm.currentPath, "notes.txt"))
         #expect(vm.items.contains { $0.name == "notes.txt" })
     }
@@ -219,6 +222,66 @@ struct RemoteBrowserViewModelTests {
         await vm.load()
         let error = await vm.createFile(named: "taken.txt")
         #expect(error != nil)
+        #expect(await fs.writeModes["/taken.txt"] == nil)
+    }
+
+    /// Regression (M18a final review, Important-1): the existence probe used
+    /// to be `if (try? await fs.stat(path:)) != nil`, which collapses
+    /// `permissionDenied`/`protocolError`/a dropped connection into the same
+    /// "nothing there" verdict as a genuine "not found" — and the write that
+    /// follows is `.overwrite`, i.e. a truncation. A server that denies
+    /// `SSH_FXP_STAT`, or an S3 bucket that grants `s3:PutObject` but not
+    /// `s3:ListBucket` (`S3FileSystem.stat` is a `ListObjectsV2` under the
+    /// hood, and a 403 there maps to `.authenticationFailed`, NOT
+    /// `.notFound`), would silently blank an existing file. Only a definite
+    /// "does not exist" may proceed; anything else must surface as an error
+    /// with the sheet left open, and must not write a single byte.
+    @Test func createFileFailsWithoutWritingWhenExistenceCannotBeVerified() async throws {
+        let existing = Data("important".utf8)
+        let fs = MockRemoteFileSystem(
+            tree: ["/": [RemoteFileItem(
+                name: "notes.txt", path: "/notes.txt", kind: .file,
+                size: UInt64(existing.count))]],
+            files: ["/notes.txt": existing])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        let capture = EventCapture()
+        vm.auditSink = { capture.record($0) }
+        await vm.load()
+        await fs.setStatFailure(RemoteFSError.permissionDenied(path: "/notes.txt"), at: "/notes.txt")
+
+        let error = await vm.createFile(named: "notes.txt")
+
+        #expect(error == RemoteBrowserViewModel.message(
+            for: RemoteFSError.permissionDenied(path: "/notes.txt"), path: "/notes.txt"))
+        // No write at all — neither recorded nor applied to the content.
+        #expect(await fs.writeModes["/notes.txt"] == nil)
+        #expect(await fs.writtenData(at: "/notes.txt") == nil)
+        var readBack = Data()
+        for try await chunk in try await fs.readStream(path: "/notes.txt", fromOffset: 0) {
+            readBack.append(chunk)
+        }
+        #expect(readBack == existing)
+        #expect(capture.events.count == 1)
+        #expect(capture.events[0].kind == .newFile)
+        #expect(capture.events[0].isError == true)
+        #expect(capture.events[0].errorMessage == error)
+    }
+
+    /// The deliberate asymmetry to the test above (M18a final review): the
+    /// SAME probe guards `createFolder`, but `createDirectory` is idempotent
+    /// by contract — it cannot destroy data — so an unverifiable probe there
+    /// still proceeds and lets the real `createDirectory` decide, keeping
+    /// that path's user-visible messages exactly as they were.
+    @Test func createFolderStillProceedsWhenExistenceCannotBeVerified() async {
+        let fs = MockRemoteFileSystem(tree: ["/": []])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        await fs.setStatFailure(RemoteFSError.permissionDenied(path: "/neu"), at: "/neu")
+
+        let error = await vm.createFolder(named: "neu")
+
+        #expect(error == nil)
+        #expect(await fs.createdDirectories == ["/neu"])
     }
 
     /// Same operation/refresh split as `createFolder` (M18a): `createFile`
