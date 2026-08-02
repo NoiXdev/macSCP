@@ -538,6 +538,43 @@ struct CitadelFileSystemIntegrationTests {
         rm.waitUntilExit()
     }
 
+    /// M18a final review (Important-1): the S3 counterpart of
+    /// `createFileCreatesThenCollidesAgainstMinIO` — proof that a real SFTP
+    /// server's "no such file" really arrives as `RemoteFSError.notFound`
+    /// (via `mapSFTPError`'s `SSH_FX_NO_SUCH_FILE` branch), so the strict
+    /// existence probe still lets New File work, and that a collision leaves
+    /// the existing file's bytes alone instead of truncating it.
+    @MainActor
+    @Test func createFileCreatesThenCollidesOnTheRealServer() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let base = "/config/macscp-createfile-\(UUID().uuidString)"
+        try await fs.createDirectory(at: base)
+        defer { cleanupConfigPath(base) }
+
+        let vm = RemoteBrowserViewModel(fs: fs, startPath: base)
+        await vm.load()
+
+        #expect(await vm.createFile(named: "notes.txt") == nil)
+        let created = try await fs.stat(path: "\(base)/notes.txt")
+        #expect(created.kind == .file)
+        #expect(created.size == 0)
+
+        let body = Data("keep me".utf8)
+        let uploadStream = AsyncThrowingStream<Data, Error> { continuation in
+            continuation.yield(body)
+            continuation.finish()
+        }
+        try await fs.write(path: "\(base)/notes.txt", mode: .overwrite, contents: uploadStream)
+
+        #expect(await vm.createFile(named: "notes.txt") != nil)
+        var readBack = Data()
+        for try await chunk in try await fs.readStream(path: "\(base)/notes.txt", fromOffset: 0) {
+            readBack.append(chunk)
+        }
+        #expect(readBack == body)
+    }
+
     @Test func createDirectoryCreatesNewDirectory() async throws {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
