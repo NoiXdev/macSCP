@@ -539,6 +539,11 @@
 "search.count.jump %lld" = "%lld dopasowań";
 "search.error.invalidRegex" = "Nieprawidłowe wyrażenie regularne";
 
+/* Współdzielone pole wyszukiwania w arkuszach (M18/T1) */
+"search.regex" = "Regex";
+"search.regex.help" = "Dopasuj wyrażeniem regularnym";
+"search.regex.invalid" = "Nieprawidłowe wyrażenie regularne";
+
 /* Element stanu na pasku menu (M11n/T2) */
 "menubar.connections.count" = "%d połączeń";
 "menubar.empty" = "Brak aktywnych połączeń";
