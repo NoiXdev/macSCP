@@ -770,8 +770,29 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// duplicate-name handling in `sftp.rename` instead of our stable
     /// `protocolError` (residual, accepted — matches the Local backend's
     /// best effort, not its exact guarantee).
+    ///
+    /// The probe is three-valued, like `S3FileSystem.rename`'s and the
+    /// `RemoteBrowserViewModel` create probes (M18a): only SSH_FX_NO_SUCH_FILE
+    /// — i.e. `mapSFTPError`'s `.notFound` — means the destination is
+    /// definitely free. Any other stat failure (permission denied, a protocol
+    /// error, a dropped connection) leaves existence UNKNOWN and is surfaced
+    /// as that error, naming `to`. A `try?` here would collapse all of them
+    /// into "nothing is there" and report whatever the server then says about
+    /// the SOURCE instead. No data is at stake (SSH_FXP_RENAME does not
+    /// overwrite) — the point is a truthful message and one probe contract
+    /// across all backends.
     public func rename(from: String, to: String) async throws {
-        if (try? await sftp.getAttributes(at: to)) != nil {
+        var destinationExists = true
+        do {
+            _ = try await sftp.getAttributes(at: to)
+        } catch {
+            let mapped = Self.mapSFTPError(error, path: to)
+            guard let fsError = mapped as? RemoteFSError, case .notFound = fsError else {
+                throw mapped
+            }
+            destinationExists = false
+        }
+        if destinationExists {
             throw RemoteFSError.protocolError(reason: "destination already exists: \(to)")
         }
         do {

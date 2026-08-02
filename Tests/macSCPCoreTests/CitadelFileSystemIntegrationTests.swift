@@ -917,6 +917,64 @@ struct CitadelFileSystemIntegrationTests {
         #expect((stat.permissions ?? 0) & 0o7777 == 0o640)
     }
 
+    /// Regression: the collision probe used to be
+    /// `if (try? await sftp.getAttributes(at: to)) != nil`, which collapses
+    /// EVERY stat failure — `permissionDenied`, a protocol error, a torn
+    /// connection — into the same "nothing is there" verdict as a genuine
+    /// "no such file". Only SSH_FX_NO_SUCH_FILE (i.e. `mapSFTPError`'s
+    /// `.notFound`) means the destination is definitely free; anything else
+    /// leaves existence UNKNOWN and must surface as that error, naming the
+    /// destination it could not probe — not fall through to `sftp.rename`
+    /// and report whatever the server then says about the SOURCE.
+    ///
+    /// The destination here sits in a chmod-000 directory, so SFTP stat on
+    /// it is denied (EACCES → SSH_FX_PERMISSION_DENIED) while the source is
+    /// perfectly readable. Matches `S3FileSystem.rename`'s strict
+    /// `catch RemoteFSError.notFound` probe.
+    @Test func renameSurfacesAnUnverifiableDestinationProbe() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        let base = "/config/macscp-rename-probe-\(UUID().uuidString)"
+        defer { cleanupConfigPath(base) }
+        let source = "\(base)/source.bin"
+        let destination = "\(base)/blocked/destination.bin"
+
+        let seed = Process()
+        seed.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
+        seed.arguments = [
+            "exec", "macscp-test-sshd", "sh", "-c",
+            // `docker exec` runs as root, so `base` is chowned to testuser
+            // (uid 1000, the SFTP user) to make the source writable over
+            // SFTP. `blocked` keeps mode 000 — testuser owns it but, not
+            // being root, is still denied traversal, so stat of anything
+            // inside it fails with EACCES rather than ENOENT.
+            "mkdir -p '\(base)/blocked' && chown -R 1000:1000 '\(base)'"
+                + " && chmod 000 '\(base)/blocked'",
+        ]
+        try seed.run()
+        seed.waitUntilExit()
+        #expect(seed.terminationStatus == 0)
+
+        let body = Data("do not move me".utf8)
+        let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+        continuation.yield(body)
+        continuation.finish()
+        try await fs.write(path: source, contents: stream)
+
+        do {
+            try await fs.rename(from: source, to: destination)
+            Issue.record("expected the unverifiable probe to throw")
+        } catch let error as RemoteFSError {
+            #expect(error == .permissionDenied(path: destination))
+        }
+
+        // The source stays exactly where it was, with its bytes intact.
+        let after = try await fs.stat(path: source)
+        #expect(after.kind == .file)
+        #expect(after.size == UInt64(body.count))
+    }
+
     // MARK: - M7a/T2: deleteTree (RISK)
 
     /// A 2-level nested tree (files + an empty subdirectory + a symlink
