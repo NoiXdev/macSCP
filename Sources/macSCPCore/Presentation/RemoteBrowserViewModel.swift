@@ -513,8 +513,14 @@ public final class RemoteBrowserViewModel {
         case .absent, .unverifiable:
             // Unlike `createFile` below, an UNVERIFIABLE probe still proceeds
             // here (M18a final review, Important-1): `createDirectory` is
-            // idempotent by contract and writes no content, so it cannot
-            // destroy anything — and letting it run keeps this path's
+            // idempotent by contract and writes at most a zero-byte marker.
+            // On `LocalFileSystem`/`CitadelFileSystem` that marker IS the
+            // directory itself, so there is nothing to destroy. On S3
+            // (`S3FileSystem.createDirectory`) the "marker" is an
+            // unconditional `PUT <key>/` with an empty body — harmless
+            // against another directory marker, but it silently replaces any
+            // object that already happens to live under that exact
+            // trailing-slash key. Proceeding anyway keeps this path's
             // user-visible messages exactly as they were (a permission
             // problem surfaces as `createDirectory`'s own error below).
             break
