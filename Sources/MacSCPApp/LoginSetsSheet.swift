@@ -62,7 +62,9 @@ struct LoginSetsSheet: View {
 
             if visibleSets.isEmpty {
                 Spacer(minLength: 0)
-                Text(L10n.string("loginSets.empty", "No login sets yet."))
+                Text(searchText.isEmpty
+                    ? L10n.string("loginSets.empty", "No login sets yet.")
+                    : L10n.string("loginSets.noMatches", "No matches."))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
                 Spacer(minLength: 0)
