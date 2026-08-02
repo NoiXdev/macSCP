@@ -65,6 +65,7 @@ struct BrowserPane: View {
     @State private var infoTarget: RemoteFileItem?
     @State private var deleteRequest: [RemoteFileItem]?
     @State private var showNewFolderSheet = false
+    @State private var showNewFileSheet = false
     @State private var deleteErrorMessage: String?
     /// Set only when a symlink double-click's `navigate(to:)` call FAILS
     /// (M11h/T1 review fix — see `onOpenSymlink` below): forwarded to
@@ -189,6 +190,7 @@ struct BrowserPane: View {
                         // actually needs to suppress it.
                         case .infoAndPermissions: infoTarget = selection.first
                         case .newFolder: showNewFolderSheet = true
+                        case .newFile: showNewFileSheet = true
                         case .delete: deleteRequest = selection
                         default: onMenuAction?(entry, selection)
                         }
@@ -252,14 +254,48 @@ struct BrowserPane: View {
                 title: L10n.string("sheet.rename.title", "Rename"),
                 confirmLabel: L10n.string("sheet.rename.confirm", "Rename"),
                 initialName: target.name,
-                onConfirm: { newName in await viewModel.rename(target, to: newName) })
+                onConfirm: { newName in
+                    let error = await viewModel.rename(target, to: newName)
+                    if error == nil {
+                        // Dismiss immediately; the listing refresh must not
+                        // hold the sheet open (M18a).
+                        let path = RemotePath.join(viewModel.currentPath, newName)
+                        Task { await viewModel.refreshAndSelect(path: path) }
+                    }
+                    return error
+                })
         }
         .sheet(isPresented: $showNewFolderSheet) {
             NameEntrySheet(
                 title: L10n.string("sheet.newFolder.title", "New Folder"),
                 confirmLabel: L10n.string("sheet.newFolder.confirm", "Create"),
                 initialName: L10n.string("sheet.newFolder.defaultName", "untitled folder"),
-                onConfirm: { name in await viewModel.createFolder(named: name) })
+                onConfirm: { name in
+                    let error = await viewModel.createFolder(named: name)
+                    if error == nil {
+                        // Dismiss immediately; the listing refresh must not
+                        // hold the sheet open (M18a).
+                        let path = RemotePath.join(viewModel.currentPath, name)
+                        Task { await viewModel.refreshAndSelect(path: path) }
+                    }
+                    return error
+                })
+        }
+        .sheet(isPresented: $showNewFileSheet) {
+            NameEntrySheet(
+                title: L10n.string("sheet.newFile.title", "New File"),
+                confirmLabel: L10n.string("sheet.newFile.confirm", "Create"),
+                initialName: L10n.string("sheet.newFile.defaultName", "untitled.txt"),
+                onConfirm: { name in
+                    let error = await viewModel.createFile(named: name)
+                    if error == nil {
+                        // Dismiss immediately; the listing refresh must not
+                        // hold the sheet open (M18a).
+                        let path = RemotePath.join(viewModel.currentPath, name)
+                        Task { await viewModel.refreshAndSelect(path: path) }
+                    }
+                    return error
+                })
         }
         .sheet(item: $infoTarget) { target in
             InfoPermissionsSheet(

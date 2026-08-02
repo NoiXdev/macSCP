@@ -231,6 +231,7 @@
 "menu.rename" = "Zmień nazwę…";
 "menu.info" = "Informacje i uprawnienia…";
 "menu.newFolder" = "Nowy folder…";
+"menu.newFile" = "Nowy plik…";
 "menu.copyPath" = "Kopiuj ścieżkę";
 "menu.delete" = "Usuń…";
 "browser.action.presignedURL" = "Link udostępniania…";
@@ -245,6 +246,11 @@
 "sheet.newFolder.title" = "Nowy folder";
 "sheet.newFolder.confirm" = "Utwórz";
 "sheet.newFolder.defaultName" = "folder bez nazwy";
+
+/* Arkusz Nowy plik (M18a/T4) */
+"sheet.newFile.title" = "Nowy plik";
+"sheet.newFile.confirm" = "Utwórz";
+"sheet.newFile.defaultName" = "bez-nazwy.txt";
 
 /* Arkusz informacji i uprawnień (M7b/T3) */
 "info.path" = "Ścieżka";

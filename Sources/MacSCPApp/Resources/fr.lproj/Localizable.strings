@@ -232,6 +232,7 @@
 "menu.rename" = "Renommer…";
 "menu.info" = "Infos et autorisations…";
 "menu.newFolder" = "Nouveau dossier…";
+"menu.newFile" = "Nouveau fichier…";
 "menu.copyPath" = "Copier le chemin";
 "menu.delete" = "Supprimer…";
 "browser.action.presignedURL" = "Lien de partage…";
@@ -246,6 +247,11 @@
 "sheet.newFolder.title" = "Nouveau dossier";
 "sheet.newFolder.confirm" = "Créer";
 "sheet.newFolder.defaultName" = "dossier sans titre";
+
+/* Feuille Nouveau fichier (M18a/T4) */
+"sheet.newFile.title" = "Nouveau fichier";
+"sheet.newFile.confirm" = "Créer";
+"sheet.newFile.defaultName" = "sans-titre.txt";
 
 /* Feuille Infos et autorisations (M7b/T3) */
 "info.path" = "Chemin";

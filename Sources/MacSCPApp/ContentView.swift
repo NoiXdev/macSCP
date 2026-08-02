@@ -1903,11 +1903,23 @@ struct ContentView: View {
         // `BrowserSession.id`'s doc comment.
         let sessionID = UUID()
         let queue = tab.transferQueue
+        // Only pay for the per-entry `FileManager.attributesOfItem` syscall
+        // (and the macOS permission prompt it can trigger on Desktop/
+        // Documents/Downloads) when the owner or group column is actually
+        // visible (M18a). Read once at session start: the local file system
+        // is built here and lives for the session's lifetime, so a
+        // visibility change made in Settings while this session is already
+        // open takes effect on the NEXT connect, not live — acceptable for
+        // this fix, matching how `visibleColumns` is otherwise threaded
+        // through as a snapshot at each call site.
+        let wantsOwnerGroup = settingsStore.visibleColumns.contains(.owner)
+            || settingsStore.visibleColumns.contains(.group)
         tab.session = BrowserSession(
             id: sessionID,
-            localFS: LocalFileSystem(),
+            localFS: LocalFileSystem(fetchesOwnerGroup: wantsOwnerGroup),
             remoteFS: fs,
-            local: RemoteBrowserViewModel(fs: LocalFileSystem(), startPath: NSHomeDirectory()),
+            local: RemoteBrowserViewModel(
+                fs: LocalFileSystem(fetchesOwnerGroup: wantsOwnerGroup), startPath: NSHomeDirectory()),
             remote: RemoteBrowserViewModel(fs: fs, startPath: startPath),
             terminal: TerminalPanelViewModel(openShell: { term, cols, rows in
                 guard let shellProvider else {
