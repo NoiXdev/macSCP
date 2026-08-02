@@ -154,15 +154,32 @@ struct EmbeddedKeyPorterTests {
     /// Third leg, and the only one that can see a read whose failure is
     /// swallowed: `_ = try? Data(contentsOf: keyPath)` placed before the
     /// ownership check would be invisible to every behavioural test above,
-    /// yet it would have pulled `~/.ssh/id_ed25519` into memory. So this is a
-    /// source guard (same spirit as `LocalizableStringsTests`): inside
-    /// `embed`, the ownership decision must textually precede every
-    /// file-reading construct, which is what keeps a later refactor from
-    /// quietly moving the read above the guard.
+    /// yet it would have pulled `~/.ssh/id_ed25519` into memory.
+    ///
+    /// So this is a **lint over the text of `embed`'s body** (same spirit as
+    /// `LocalizableStringsTests`), and it is worth being precise about what
+    /// that does and does not buy:
+    ///
+    /// - It catches the refactor that matters in practice — someone moving or
+    ///   adding a read above the ownership guard inside `embed`.
+    /// - It does NOT prove "no read happens first". A read reached through a
+    ///   helper — in this file or any other — is outside the slice and passes
+    ///   unseen, and the construct list below is a list, not a grammar. A
+    ///   reviewer, not this test, is what stops a deliberate bypass.
+    ///
+    /// The list is deliberately broad (Foundation, `AsyncBytes` and the POSIX
+    /// spellings), because the point is to trip over an accident.
     @Test func embedReadsNothingBeforeDecidingOwnership() throws {
         let source = try String(contentsOf: Self.porterSource, encoding: .utf8)
         let start = try #require(source.range(of: "public static func embed("))
         let end = try #require(source.range(of: "public static func materialize("))
+        // A refactor that swaps the two functions must FAIL this test, not
+        // trap the whole process on an inverted range (`String.subscript`
+        // requires lowerBound <= upperBound).
+        guard start.upperBound <= end.lowerBound else {
+            Issue.record("`materialize` now precedes `embed`; re-anchor this source lint")
+            return
+        }
         // Comments are stripped so prose about reading files cannot trip the scan.
         let body = source[start.upperBound..<end.lowerBound]
             .split(separator: "\n", omittingEmptySubsequences: false)
@@ -171,8 +188,9 @@ struct EmbeddedKeyPorterTests {
 
         let ownership = try #require(body.range(of: "store.key(forPath:"))
         for construct in [
-            "Data(contentsOf", "String(contentsOf", "FileHandle(", "contentsOfFile",
-            "FileManager.default.contents(",
+            "Data(contentsOf", "NSData(contentsOf", "String(contentsOf", "contentsOfFile",
+            "FileHandle(", "FileManager.default.contents(", "InputStream(",
+            ".resourceBytes", "open(", "fopen", "mmap(",
         ] {
             guard let read = body.range(of: construct) else { continue }
             #expect(
