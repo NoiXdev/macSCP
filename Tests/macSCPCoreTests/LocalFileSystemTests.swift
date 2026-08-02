@@ -527,10 +527,12 @@ struct LocalFileSystemTests {
     /// A file created by the current process is owned by the current user —
     /// the resource-value NAME lookup must resolve it, not fall back to the
     /// numeric uid (that fallback is for uids the local machine can't name).
+    /// Uses `fetchesOwnerGroup: true` (M18a): the lookup is opt-in now, so
+    /// this test must explicitly ask for it to exercise the name resolution.
     @Test func listReportsOwnerAndGroupNamesForOwnFiles() async throws {
         let root = try makeTempTree()
         defer { try? FileManager.default.removeItem(at: root) }
-        let fs = LocalFileSystem()
+        let fs = LocalFileSystem(fetchesOwnerGroup: true)
 
         let items = try await fs.list(path: root.path(percentEncoded: false))
         let file = items.first { $0.name == "datei.txt" }
@@ -541,11 +543,39 @@ struct LocalFileSystemTests {
     @Test func statReportsOwnerAndGroupNamesForOwnFiles() async throws {
         let root = try makeTempTree()
         defer { try? FileManager.default.removeItem(at: root) }
-        let fs = LocalFileSystem()
+        let fs = LocalFileSystem(fetchesOwnerGroup: true)
 
         let path = root.appendingPathComponent("datei.txt").path(percentEncoded: false)
         let item = try await fs.stat(path: path)
         #expect(item.owner == NSUserName())
         #expect(item.group != nil)
+    }
+
+    // MARK: - Owner/group is opt-in (M18a)
+
+    /// M18a finding: the owner/group syscall (`attributesOfItem`) runs once
+    /// PER ENTRY and can trigger a blocking macOS permission prompt on
+    /// TCC-protected folders (Desktop/Documents/Downloads). The plain
+    /// initializer must never pay for it.
+    @Test func listOmitsOwnerAndGroupByDefault() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fs = LocalFileSystem()
+
+        let items = try await fs.list(path: root.path(percentEncoded: false))
+        let file = items.first { $0.name == "datei.txt" }
+        #expect(file?.owner == nil)
+        #expect(file?.group == nil)
+    }
+
+    @Test func listIncludesOwnerAndGroupWhenRequested() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fs = LocalFileSystem(fetchesOwnerGroup: true)
+
+        let items = try await fs.list(path: root.path(percentEncoded: false))
+        let file = items.first { $0.name == "datei.txt" }
+        #expect(file?.owner != nil)
+        #expect(file?.group != nil)
     }
 }

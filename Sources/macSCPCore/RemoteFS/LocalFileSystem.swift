@@ -8,7 +8,13 @@ public struct LocalFileSystem: RemoteFileSystem {
         .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey,
     ]
 
-    public init() {}
+    /// `fetchesOwnerGroup`: whether `list`/`stat` resolve owner/group NAMES
+    /// (default `false`). See `ownerGroup(for:)` for why this is opt-in.
+    public let fetchesOwnerGroup: Bool
+
+    public init(fetchesOwnerGroup: Bool = false) {
+        self.fetchesOwnerGroup = fetchesOwnerGroup
+    }
 
     public func list(path: String) async throws -> [RemoteFileItem] {
         let url = URL(fileURLWithPath: path)
@@ -45,18 +51,20 @@ public struct LocalFileSystem: RemoteFileSystem {
         // `FileManager.attributesOfItem(atPath:)` (an `lstat` plus
         // `getpwuid`/`getgrgid` to resolve NAMEs, not just numeric ids —
         // `getpwuid`/`getgrgid` can block on directory-service-bound Macs,
-        // e.g. AD/LDAP-joined machines) for every entry. This is unavoidable
-        // with the current approach: owner/group account NAMEs are not
-        // exposed via `URLResourceValues` at all (only the numeric
-        // `.ownerAccountID`/`.groupOwnerAccountID` are), so there is no way
-        // to fold this into the `resourceValues` call above.
+        // e.g. AD/LDAP-joined machines) for every entry. Owner/group account
+        // NAMEs are not exposed via `URLResourceValues` at all (only the
+        // numeric `.ownerAccountID`/`.groupOwnerAccountID` are), so there is
+        // no way to fold this into the `resourceValues` call above — but
+        // M18a made the whole lookup opt-in via `fetchesOwnerGroup` (see
+        // `ownerGroup(for:)`), since on TCC-protected folders it can also
+        // trigger a blocking macOS permission prompt, not just a slow syscall.
         let names: [String]
         do {
             names = try FileManager.default.contentsOfDirectory(atPath: path)
         } catch {
             throw Self.map(error, path: path)
         }
-        return names.map { url.appendingPathComponent($0) }.map(Self.item(for:))
+        return names.map { url.appendingPathComponent($0) }.map(item(for:))
     }
 
     public func stat(path: String) async throws -> RemoteFileItem {
@@ -68,7 +76,7 @@ public struct LocalFileSystem: RemoteFileSystem {
            !FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
             throw RemoteFSError.notFound(path: path)
         }
-        return Self.item(for: url)
+        return item(for: url)
     }
 
     public func readStream(
@@ -263,8 +271,8 @@ public struct LocalFileSystem: RemoteFileSystem {
         return values?.isSymbolicLink == true || FileManager.default.fileExists(atPath: path)
     }
 
-    private static func item(for url: URL) -> RemoteFileItem {
-        let values = try? url.resourceValues(forKeys: Set(resourceKeys))
+    private func item(for url: URL) -> RemoteFileItem {
+        let values = try? url.resourceValues(forKeys: Set(Self.resourceKeys))
         let kind: RemoteFileKind
         if values?.isSymbolicLink == true {
             kind = .symlink
@@ -299,7 +307,16 @@ public struct LocalFileSystem: RemoteFileSystem {
     /// the raw number, never a guess) — mirrors the remote precedence.
     /// `attributesOfItem` reports the SYMLINK's own owner/group, not the
     /// target's, matching this file's existing no-follow behavior for kind/size.
-    private static func ownerGroup(for url: URL) -> (owner: String?, group: String?) {
+    ///
+    /// Gated behind `fetchesOwnerGroup` (M18a): `attributesOfItem` is a
+    /// separate syscall PER ENTRY, on top of the `resourceValues` lookup
+    /// already done for kind/size/date, and on TCC-protected folders
+    /// (Desktop/Documents/Downloads) it can trigger a blocking macOS
+    /// permission prompt — which is what made a plain directory listing
+    /// (e.g. behind the "New Folder" dialog) appear to hang. When the flag
+    /// is off, this returns the nil pair without touching the filesystem.
+    private func ownerGroup(for url: URL) -> (owner: String?, group: String?) {
+        guard fetchesOwnerGroup else { return (nil, nil) }
         guard
             let attributes = try? FileManager.default.attributesOfItem(
                 atPath: url.path(percentEncoded: false))
