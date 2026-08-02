@@ -1556,11 +1556,19 @@ struct ContentView: View {
 
     /// Actively grows/shrinks the window (animated) to the target size while
     /// keeping the top-left corner fixed — AppKit counts `origin.y` from the
-    /// bottom, so it's adjusted by the height difference.
+    /// bottom, so it's adjusted by the height difference. Growing downward
+    /// while the window sits low on its screen can push the computed bottom
+    /// edge below the visible area (AppKit's `constrainFrameRect` only
+    /// guards the top edge), so the target frame is clamped to the window's
+    /// own screen's `visibleFrame` via `clampedToVisibleArea` (M18a/T5b,
+    /// `macSCPCore`) before `setFrame` — a frame that's already fully
+    /// inside comes back unchanged. If the window can't resolve a screen
+    /// (`window.screen` and `NSScreen.main` both `nil`), the frame is set
+    /// unclamped rather than dropping the resize.
     ///
-    /// This is NOT where an off-screen window comes from (M18a/T5). The
-    /// launch position is restored by AppKit's own frame autosave, which
-    /// SwiftUI's `WindowGroup` installs for us: the key
+    /// This is NOT where a *launch-time* off-screen window comes from
+    /// (M18a/T5). That launch position is restored by AppKit's own frame
+    /// autosave, which SwiftUI's `WindowGroup` installs for us: the key
     /// `"NSWindow Frame MacSCPApp.ContentView-1-AppWindow-1"` in the app's
     /// user defaults holds `x y w h` plus the SCREEN frame that was current
     /// when it was saved. When the display arrangement changes between runs
@@ -1568,14 +1576,18 @@ struct ContentView: View {
     /// AppKit can restore the window onto coordinates no attached screen
     /// covers any more. The app sets no `frameAutosaveName` and persists no
     /// geometry of its own — `lastBrowserSize` below is in-memory `@State`
-    /// and is a SIZE only, never an origin. This function preserves
-    /// `origin.x` and the top edge verbatim, so it can never move a visible
-    /// window off-screen; do not "fix" restore bugs by clamping here.
+    /// and is a SIZE only, never an origin. The clamp added here only
+    /// bounds frames *this function itself* computes; it does not touch,
+    /// and cannot fix, that launch-time restore — do not fold the two
+    /// concerns together.
     private func resizeWindow(toWidth width: CGFloat, height: CGFloat) {
         guard let window else { return }
         let current = window.frame
         let newOrigin = NSPoint(x: current.origin.x, y: current.origin.y + current.height - height)
-        let newFrame = NSRect(origin: newOrigin, size: CGSize(width: width, height: height))
+        var newFrame = NSRect(origin: newOrigin, size: CGSize(width: width, height: height))
+        if let screen = window.screen ?? NSScreen.main {
+            newFrame = clampedToVisibleArea(newFrame, visible: screen.visibleFrame)
+        }
         window.setFrame(newFrame, display: true, animate: true)
     }
 
