@@ -314,6 +314,62 @@ struct EmbeddedKeyPorterTests {
         #expect(targetSecrets.deleted.count == 1)
     }
 
+    /// The import file's metadata is a claim, not a fact: where the key
+    /// material can be inspected, the derived type/fingerprint win over
+    /// whatever the file declared.
+    @Test func materializeTakesTypeAndFingerprintFromTheKeyMaterial() throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let source = makeStore(in: dir)
+        let secrets = InMemorySecretStore()
+        let key = try addManagedKey(to: source, secrets: secrets)
+        var embedded = try #require(
+            try EmbeddedKeyPorter.embed(
+                keyPath: path(of: key, in: source), includePassphrase: false,
+                store: source, secrets: secrets))
+        // The file claims an RSA key; the bytes are the ed25519 key above.
+        embedded.type = .rsa(bits: 4096)
+
+        let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
+        let importedPath = try EmbeddedKeyPorter.materialize(
+            embedded, store: target, secrets: InMemorySecretStore())
+
+        let imported = try #require(try target.key(forPath: importedPath))
+        #expect(imported.type == .ed25519)
+        #expect(imported.fingerprint == key.fingerprint)
+    }
+
+    /// A crafted export can name the fingerprint of a key the victim knows
+    /// ("SHA256:<their prod key>") next to foreign key bytes. Importing it
+    /// would put that fingerprint in the keys list, so anyone checking "is
+    /// this my prod key?" by fingerprint would be lied to. A declared
+    /// fingerprint the material does not have is therefore a hard stop.
+    @Test func materializeRejectsADeclaredFingerprintTheKeyMaterialDoesNotHave() throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let source = makeStore(in: dir)
+        let secrets = InMemorySecretStore()
+        let key = try addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
+        var embedded = try #require(
+            try EmbeddedKeyPorter.embed(
+                keyPath: path(of: key, in: source), includePassphrase: true,
+                store: source, secrets: secrets))
+        // The victim's real fingerprint, claimed for someone else's key.
+        let victim = try addManagedKey(to: source, secrets: secrets, name: "prod")
+        embedded.fingerprint = victim.fingerprint
+        #expect(embedded.fingerprint != key.fingerprint)
+
+        let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
+        let targetSecrets = RecordingSecretStore()
+        #expect(throws: EmbeddedKeyPorter.PorterError.fingerprintMismatch) {
+            _ = try EmbeddedKeyPorter.materialize(embedded, store: target, secrets: targetSecrets)
+        }
+        // The usual rollback: no key file, no metadata entry, no Keychain slot.
+        let leftovers = (try? FileManager.default.contentsOfDirectory(
+            atPath: target.keyDirectory.path(percentEncoded: false))) ?? []
+        #expect(leftovers.isEmpty)
+        #expect(try target.all().isEmpty)
+        #expect(targetSecrets.stored.isEmpty)
+    }
+
     /// Same invariant one step later: the Keychain write succeeded and the
     /// metadata write is what fails. Both the file and the Keychain slot have
     /// to go.
