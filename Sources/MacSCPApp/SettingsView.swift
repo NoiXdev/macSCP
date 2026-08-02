@@ -3,82 +3,142 @@ import SwiftUI
 import UniformTypeIdentifiers
 import macSCPCore
 
+/// One row in the Settings window's sidebar (M18/T7). Each case owns its own
+/// SF Symbol and localized title, and maps 1:1 to a section `struct` rendered
+/// in the detail column by `SettingsView.body`'s `switch`.
+enum SettingsSection: Hashable {
+    case general
+    case appearance
+    case transfers
+    case openWith
+    case terminal
+    case shortcuts
+    case ssh
+    case s3
+
+    var title: String {
+        switch self {
+        case .general: return L10n.string("settings.tab.general", "General")
+        case .appearance: return L10n.string("settings.section.appearance", "View")
+        case .transfers: return L10n.string("settings.tab.transfers", "Transfers")
+        case .openWith: return L10n.string("settings.tab.openWith", "Open with")
+        case .terminal: return L10n.string("settings.tab.terminal", "Terminal")
+        case .shortcuts: return L10n.string("settings.tab.shortcuts", "Shortcuts")
+        case .ssh: return L10n.string("settings.section.ssh", "SSH")
+        case .s3: return L10n.string("settings.section.s3", "S3")
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .general: return "gearshape"
+        case .appearance: return "eye"
+        case .transfers: return "arrow.up.arrow.down"
+        case .openWith: return "doc.badge.gearshape"
+        case .terminal: return "terminal"
+        case .shortcuts: return "keyboard"
+        case .ssh: return "key"
+        case .s3: return "cloud"
+        }
+    }
+}
+
 /// The app's Settings window content, opened via Cmd-, or the app menu's
 /// "Settings…" item (the `Settings` scene is wired up in MacSCPApp.swift).
 ///
-/// Structured as a `TabView` with a "General" tab (M7a/T4), a "Transfers"
-/// tab, an "Open with" tab (M5e/T2), a "Terminal" tab (M9d), and a read-only
-/// "Shortcuts" tab (M11q); future tabs slot in the same way. The former "SSH
-/// Keys" tab (M17/T4) was removed in M18/T6 — key management now lives
-/// entirely in the standalone `SSHKeysSheet` (M18/T5), reachable from the
-/// Sessions menu and the form's "Manage keys…" link.
+/// Structured as a `NavigationSplitView` (M18/T7) with a sidebar `List` over
+/// `SettingsSection` and a detail column that renders the matching section
+/// `struct`: "General" (M7a/T4, split from the former "General" tab in
+/// M18/T7), "View" (the other half of that split), "Transfers", "Open with"
+/// (M5e/T2), "Terminal" (M9d), a read-only "Shortcuts" overview (M11q), and
+/// two protocol-specific sections grouped under "Protocols" — "SSH" and "S3"
+/// (M18/T7). The former tab-bar layout and its "SSH Keys" tab (M17/T4) are
+/// gone; key management now lives entirely in the standalone `SSHKeysSheet`
+/// (M18/T5), reachable from the Sessions menu, the connection form's "Manage
+/// keys…" link, and this window's "SSH" section.
 struct SettingsView: View {
     var store: SettingsStore
     /// App-global update-check state (M11h/T2) — same `UpdateCheckModel`
     /// instance the app menu's "Check for Updates…" item drives, threaded
-    /// through from `MacSCPApp` like `store` above, so the General tab's
+    /// through from `MacSCPApp` like `store` above, so the General section's
     /// "Check Now" button reuses the one existing check path instead of
     /// starting a second one.
     var updateModel: UpdateCheckModel
     /// The language in effect when this process launched (M11p) — threaded
-    /// through from `MacSCPApp.init` to `GeneralSettingsTab`, which compares
-    /// it against the live `store.selectedLanguage` to decide whether to
-    /// show the relaunch button.
+    /// through from `MacSCPApp.init` to `GeneralSettingsSection`, which
+    /// compares it against the live `store.selectedLanguage` to decide
+    /// whether to show the relaunch button.
     var launchLanguage: AppLanguage
 
+    @State private var selection: SettingsSection? = .general
+
     var body: some View {
-        TabView {
-            GeneralSettingsTab(store: store, updateModel: updateModel, launchLanguage: launchLanguage)
-                .tabItem {
-                    Label(
-                        L10n.string("settings.tab.general", "General"),
-                        systemImage: "gearshape")
+        NavigationSplitView {
+            List(selection: $selection) {
+                ForEach(
+                    [
+                        SettingsSection.general, .appearance, .transfers,
+                        .openWith, .terminal, .shortcuts,
+                    ], id: \.self
+                ) { section in
+                    Label(section.title, systemImage: section.systemImage)
+                        .tag(section)
                 }
 
-            TransfersSettingsTab(store: store)
-                .tabItem {
-                    Label(
-                        L10n.string("settings.tab.transfers", "Transfers"),
-                        systemImage: "arrow.up.arrow.down")
+                Section(L10n.string("settings.section.protocols", "Protocols")) {
+                    ForEach([SettingsSection.ssh, .s3], id: \.self) { section in
+                        Label(section.title, systemImage: section.systemImage)
+                            .tag(section)
+                    }
                 }
-
-            OpenWithSettingsTab(store: store)
-                .tabItem {
-                    Label(
-                        L10n.string("settings.tab.openWith", "Open with"),
-                        systemImage: "doc.badge.gearshape")
+            }
+            .listStyle(.sidebar)
+            // Fixed sidebar width (M11n lesson: SwiftUI layout containers can
+            // spin in a `_sizeThatFits` loop on macOS 26 if left to negotiate
+            // an intrinsic width against the detail column) — verified with
+            // an idle-CPU smoke test after this change (see task report).
+            .navigationSplitViewColumnWidth(180)
+        } detail: {
+            Group {
+                switch selection ?? .general {
+                case .general:
+                    GeneralSettingsSection(store: store, updateModel: updateModel, launchLanguage: launchLanguage)
+                case .appearance:
+                    AppearanceSettingsSection(store: store)
+                case .transfers:
+                    TransfersSettingsTab(store: store)
+                case .openWith:
+                    OpenWithSettingsTab(store: store)
+                case .terminal:
+                    TerminalSettingsTab(store: store)
+                case .shortcuts:
+                    ShortcutsSettingsTab()
+                case .ssh:
+                    SSHSettingsSection(store: store)
+                case .s3:
+                    S3SettingsSection(store: store)
                 }
-
-            TerminalSettingsTab(store: store)
-                .tabItem {
-                    Label(
-                        L10n.string("settings.tab.terminal", "Terminal"),
-                        systemImage: "terminal")
-                }
-
-            ShortcutsSettingsTab()
-                .tabItem {
-                    Label(
-                        L10n.string("settings.tab.shortcuts", "Shortcuts"),
-                        systemImage: "keyboard")
-                }
+            }
+            .navigationSplitViewColumnWidth(min: 460, ideal: 500)
         }
-        // Height bumped 420 -> 460 for this M9d polish pass: switching
-        // General/Terminal to Section-based `.formStyle(.grouped)` (in line
-        // with Transfers/Open-with) adds header/footer/inter-section
-        // spacing that flat un-sectioned rows didn't need, and the
-        // Terminal tab's live preview sits below two Sections - rendered
-        // measurements showed content coming within ~30-40pt of the old
-        // 420pt frame BEFORE subtracting the native tab-strip's own height,
-        // so 420 was too tight going forward.
-        .frame(width: 460, height: 460)
+        .navigationSplitViewStyle(.balanced)
+        // Widened for the sidebar layout (was 460×460 for the flat TabView,
+        // M9d). 680 gives the sidebar its fixed 180pt plus ~500pt for the
+        // widest detail content (the Terminal section's Form + live
+        // preview). Height raised from the old 460 to 620: the tallest
+        // section is "View" (hidden files + 6 file-column toggles + the
+        // auto-refresh row), which measurably scrolled at 480 — 620 was
+        // reached by measuring that section's real rendered height in a
+        // dev build and adding headroom, per the idle-CPU-smoke task step.
+        .frame(width: 680, height: 620)
     }
 }
 
-/// General app options (M7a): the hidden-files toggle, plus (M9c) the
-/// auto-refresh toggle and its interval, and (M11h/T2) the manual
-/// "Check Now" update section below the automatic-check toggle.
-private struct GeneralSettingsTab: View {
+/// General app options (M7a/T4; split from the former, overloaded
+/// `GeneralSettingsTab` in M18/T7): the language switcher, the menu-bar icon
+/// toggle, and the update-check section. Appearance-related options (hidden
+/// files, file-list columns, auto-refresh) moved to `AppearanceSettingsSection`.
+private struct GeneralSettingsSection: View {
     @Bindable var store: SettingsStore
     /// Read-only here: the toggle two lines below already binds
     /// `store.updateCheckEnabled` directly; this is only consulted for
@@ -148,17 +208,6 @@ private struct GeneralSettingsTab: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section {
-                Toggle(
-                    L10n.string("settings.general.showHidden", "Show hidden files"),
-                    isOn: $store.showHiddenFiles)
-            } footer: {
-                Text(L10n.string(
-                    "settings.general.showHiddenHint",
-                    "Applies to both panes. Shortcut: ⌘⇧."))
-                    .foregroundStyle(.secondary)
-            }
-
             // Menu-bar status item toggle (M11n): the AppKit
             // `MenuBarController` observes this same `store.menuBarEnabled`
             // and installs/removes the `NSStatusItem` live.
@@ -166,58 +215,6 @@ private struct GeneralSettingsTab: View {
                 Toggle(
                     L10n.string("settings.general.menubar", "Show menu bar icon"),
                     isOn: $store.menuBarEnabled)
-            }
-
-            // File-list columns (M11m/T2): one checkbox per toggleable
-            // `FileColumn` — `name` is excluded (`FileColumn.isToggleable`
-            // is `false` only for it), so it never gets a row here and stays
-            // permanently shown, matching `SettingsStore.visibleColumns`'s
-            // own always-includes-`name` guarantee. Titles are the SAME
-            // localized strings the table's own column headers use
-            // (`FileColumn.localizedTitle`, `RemoteFileTableView.swift`), so
-            // a box's label always matches what the user sees atop the
-            // table it controls.
-            Section {
-                ForEach(FileColumn.allCases.filter(\.isToggleable), id: \.self) { column in
-                    Toggle(column.localizedTitle, isOn: Binding(
-                        get: { store.visibleColumns.contains(column) },
-                        set: { isOn in
-                            var columns = store.visibleColumns
-                            if isOn {
-                                columns.insert(column)
-                            } else {
-                                columns.remove(column)
-                            }
-                            store.visibleColumns = columns
-                        }
-                    ))
-                }
-            } header: {
-                Text(L10n.string("settings.general.columns.header", "File List Columns"))
-            } footer: {
-                Text(L10n.string(
-                    "settings.general.columns.footer",
-                    "Applies to both panes. Name is always shown."))
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
-                Toggle(
-                    L10n.string("settings.general.autoRefresh", "Auto-refresh remote view"),
-                    isOn: $store.autoRefreshEnabled)
-                Stepper(
-                    value: Binding(
-                        get: { store.autoRefreshIntervalSeconds },
-                        set: { store.autoRefreshIntervalSeconds = $0 }
-                    ),
-                    in: 2...300
-                ) {
-                    Text(String(
-                        format: L10n.string(
-                            "settings.general.autoRefreshInterval %lld", "Every %lld seconds"),
-                        store.autoRefreshIntervalSeconds))
-                }
-                .disabled(!store.autoRefreshEnabled)
             }
 
             Section {
@@ -272,7 +269,85 @@ private struct GeneralSettingsTab: View {
     }
 }
 
-/// The single "Transfers" settings tab: concurrency and bandwidth limits.
+/// "View" options (M18/T7; split out of the former `GeneralSettingsTab`):
+/// the hidden-files toggle, the file-list column checkboxes (M11m/T2), and
+/// the auto-refresh toggle/interval (M9c).
+private struct AppearanceSettingsSection: View {
+    @Bindable var store: SettingsStore
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle(
+                    L10n.string("settings.general.showHidden", "Show hidden files"),
+                    isOn: $store.showHiddenFiles)
+            } footer: {
+                Text(L10n.string(
+                    "settings.general.showHiddenHint",
+                    "Applies to both panes. Shortcut: ⌘⇧."))
+                    .foregroundStyle(.secondary)
+            }
+
+            // File-list columns (M11m/T2): one checkbox per toggleable
+            // `FileColumn` — `name` is excluded (`FileColumn.isToggleable`
+            // is `false` only for it), so it never gets a row here and stays
+            // permanently shown, matching `SettingsStore.visibleColumns`'s
+            // own always-includes-`name` guarantee. Titles are the SAME
+            // localized strings the table's own column headers use
+            // (`FileColumn.localizedTitle`, `RemoteFileTableView.swift`), so
+            // a box's label always matches what the user sees atop the
+            // table it controls.
+            Section {
+                ForEach(FileColumn.allCases.filter(\.isToggleable), id: \.self) { column in
+                    Toggle(column.localizedTitle, isOn: Binding(
+                        get: { store.visibleColumns.contains(column) },
+                        set: { isOn in
+                            var columns = store.visibleColumns
+                            if isOn {
+                                columns.insert(column)
+                            } else {
+                                columns.remove(column)
+                            }
+                            store.visibleColumns = columns
+                        }
+                    ))
+                }
+            } header: {
+                Text(L10n.string("settings.general.columns.header", "File List Columns"))
+            } footer: {
+                Text(L10n.string(
+                    "settings.general.columns.footer",
+                    "Applies to both panes. Name is always shown."))
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Toggle(
+                    L10n.string("settings.general.autoRefresh", "Auto-refresh remote view"),
+                    isOn: $store.autoRefreshEnabled)
+                Stepper(
+                    value: Binding(
+                        get: { store.autoRefreshIntervalSeconds },
+                        set: { store.autoRefreshIntervalSeconds = $0 }
+                    ),
+                    in: 2...300
+                ) {
+                    Text(String(
+                        format: L10n.string(
+                            "settings.general.autoRefreshInterval %lld", "Every %lld seconds"),
+                        store.autoRefreshIntervalSeconds))
+                }
+                .disabled(!store.autoRefreshEnabled)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+}
+
+/// The single "Transfers" section: concurrency and bandwidth limits. The S3
+/// presigned-link-expiry section moved to the protocol-specific
+/// `S3SettingsSection` in M18/T7.
 private struct TransfersSettingsTab: View {
     var store: SettingsStore
 
@@ -354,33 +429,13 @@ private struct TransfersSettingsTab: View {
                 Text(L10n.string("settings.bandwidth.footer", "0 = unlimited"))
                     .foregroundStyle(.secondary)
             }
-
-            // S3 share links (M14/T5): the default expiry `PresignedURLSheet`
-            // pre-fills when generating a presigned GET/PUT link — the sheet
-            // itself lets a link override this per generation.
-            Section {
-                Picker(
-                    L10n.string("settings.transfers.presignedExpiry", "Default share-link expiry"),
-                    selection: Binding(
-                        get: { store.presignedDefaultExpiry },
-                        set: { store.presignedDefaultExpiry = $0 }
-                    )
-                ) {
-                    Text(L10n.string("presigned.expiry.15min", "15 Minutes")).tag(PresignedExpiry.fifteenMinutes)
-                    Text(L10n.string("presigned.expiry.1h", "1 Hour")).tag(PresignedExpiry.oneHour)
-                    Text(L10n.string("presigned.expiry.1d", "1 Day")).tag(PresignedExpiry.oneDay)
-                    Text(L10n.string("presigned.expiry.7d", "7 Days")).tag(PresignedExpiry.sevenDays)
-                }
-            } header: {
-                Text(L10n.string("settings.transfers.presignedExpiry.header", "S3 Share Links"))
-            }
         }
         .formStyle(.grouped)
         .padding()
     }
 }
 
-/// The "Open with" settings tab (M5e/T2): the default editor used for remote
+/// The "Open with" section (M5e/T2): the default editor used for remote
 /// files without a matching extension rule, and per-extension overrides.
 private struct OpenWithSettingsTab: View {
     var store: SettingsStore
@@ -537,15 +592,13 @@ private struct OpenWithSettingsTab: View {
     }
 }
 
-/// The "Terminal" settings tab (M9d): font family/size and cursor
-/// style/blink, with a live preview. `@Bindable` (like `GeneralSettingsTab`)
-/// so the controls below can bind directly to `$store.*`.
+/// The "Terminal" section (M9d): font family/size and cursor style/blink,
+/// with a live preview. The external-terminal-target picker moved to the
+/// protocol-specific `SSHSettingsSection` in M18/T7. `@Bindable` (like
+/// `GeneralSettingsSection`) so the controls below can bind directly to
+/// `$store.*`.
 private struct TerminalSettingsTab: View {
     @Bindable var store: SettingsStore
-    /// Drives the custom-terminal-app picker (M11d/T2) — same
-    /// `.fileImporter` pattern as `OpenWithSettingsTab`'s default-editor
-    /// picker.
-    @State private var showCustomAppPicker = false
 
     /// One selectable fixed-pitch font family in the font popup.
     ///
@@ -603,17 +656,6 @@ private struct TerminalSettingsTab: View {
         return .system(size: CGFloat(store.terminalFontSize), design: .monospaced)
     }
 
-    /// Display name for `store.customTerminalAppPath`, or a placeholder when
-    /// none is chosen yet — same idea as `OpenWithSettingsTab.appDisplayName`
-    /// but with terminal-specific wording ("no app chosen" instead of
-    /// "system default": there IS no system default terminal app).
-    private var customAppDisplayName: String {
-        guard let path = store.customTerminalAppPath, !path.isEmpty else {
-            return L10n.string("settings.terminal.target.noneChosen", "No app chosen")
-        }
-        return FileManager.default.displayName(atPath: path)
-    }
-
     var body: some View {
         VStack(spacing: 16) {
             Form {
@@ -655,68 +697,8 @@ private struct TerminalSettingsTab: View {
                         L10n.string("settings.terminal.cursorBlink", "Blinking"),
                         isOn: $store.terminalCursorBlink)
                 }
-
-                // External terminal (M11d/T2): which app a session's shell
-                // opens in. Both routes to a shell (toggle the built-in
-                // panel, or open externally) stay reachable from the
-                // "Terminal" menu regardless of this choice — it only picks
-                // what ⌘T/the toolbar button do (footer below).
-                Section {
-                    Picker(
-                        L10n.string("settings.terminal.target", "Open sessions in"),
-                        selection: $store.terminalTarget
-                    ) {
-                        Text(L10n.string("settings.terminal.target.builtIn", "Built-in Terminal"))
-                            .tag(TerminalTarget.builtIn)
-                        Text(L10n.string("settings.terminal.target.terminalApp", "Terminal"))
-                            .tag(TerminalTarget.terminalApp)
-                        Text(L10n.string("settings.terminal.target.iTerm", "iTerm"))
-                            .tag(TerminalTarget.iTerm)
-                        Text(L10n.string("settings.terminal.target.custom", "Custom App…"))
-                            .tag(TerminalTarget.custom)
-                    }
-
-                    if store.terminalTarget == .custom {
-                        HStack {
-                            Text(customAppDisplayName)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Button(L10n.string("settings.openWith.choose", "Choose…")) {
-                                showCustomAppPicker = true
-                            }
-                        }
-                    }
-                } header: {
-                    Text(L10n.string("settings.terminal.target.header", "External Terminal"))
-                } footer: {
-                    // Two short, factual notes (review finding, M11d fix
-                    // round 1, second sentence): the first is the existing
-                    // "both routes stay reachable" note; the second makes
-                    // the `.builtIn` fallback visible — otherwise a user who
-                    // set a custom app but left this picker on "Built-in"
-                    // has no way to know the menu item quietly uses Terminal
-                    // instead of their configured app.
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(L10n.string(
-                            "settings.terminal.target.footer",
-                            "Both ways to open a session stay available from the Terminal menu, "
-                                + "regardless of this setting."))
-                        Text(L10n.string(
-                            "settings.terminal.target.builtInFallback.footer",
-                            "When \u{201C}Built-in\u{201D} is selected, that menu item opens your "
-                                + "custom app if one is set, otherwise Terminal."))
-                    }
-                    .foregroundStyle(.secondary)
-                }
             }
             .formStyle(.grouped)
-            .fileImporter(
-                isPresented: $showCustomAppPicker,
-                allowedContentTypes: [.application]
-            ) { result in
-                guard case .success(let url) = result else { return }
-                store.customTerminalAppPath = url.path(percentEncoded: false)
-            }
 
             // Preview: fixed, unlocalized sample text (a shell prompt reads
             // the same in every locale) rendered with the chosen font/size,
@@ -756,5 +738,143 @@ private struct ShortcutsSettingsTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// The "SSH" protocol section (M18/T7): the external-terminal target picker
+/// (moved out of the former "Terminal" tab) plus a link into managed-key
+/// administration. The "Manage keys…" button opens `SSHKeysSheet` as a
+/// locally presented sheet — the same pattern `ConnectionFormView`'s
+/// "Manage keys…" link uses (`@State` flag + `.sheet(isPresented:)`;
+/// `SSHKeysSheet` needs no injected `store`, it builds its own
+/// `ManagedKeyStore` internally).
+private struct SSHSettingsSection: View {
+    @Bindable var store: SettingsStore
+    /// Drives the custom-terminal-app picker (M11d/T2) — same
+    /// `.fileImporter` pattern as `OpenWithSettingsTab`'s default-editor
+    /// picker.
+    @State private var showCustomAppPicker = false
+    /// Drives the SSH-keys management sheet — same pattern as
+    /// `ConnectionFormView.showSSHKeysSheet`.
+    @State private var showSSHKeysSheet = false
+
+    /// Display name for `store.customTerminalAppPath`, or a placeholder when
+    /// none is chosen yet — same idea as `OpenWithSettingsTab.appDisplayName`
+    /// but with terminal-specific wording ("no app chosen" instead of
+    /// "system default": there IS no system default terminal app).
+    private var customAppDisplayName: String {
+        guard let path = store.customTerminalAppPath, !path.isEmpty else {
+            return L10n.string("settings.terminal.target.noneChosen", "No app chosen")
+        }
+        return FileManager.default.displayName(atPath: path)
+    }
+
+    var body: some View {
+        Form {
+            // External terminal (M11d/T2): which app a session's shell
+            // opens in. Both routes to a shell (toggle the built-in
+            // panel, or open externally) stay reachable from the
+            // "Terminal" menu regardless of this choice — it only picks
+            // what ⌘T/the toolbar button do (footer below).
+            Section {
+                Picker(
+                    L10n.string("settings.terminal.target", "Open sessions in"),
+                    selection: $store.terminalTarget
+                ) {
+                    Text(L10n.string("settings.terminal.target.builtIn", "Built-in Terminal"))
+                        .tag(TerminalTarget.builtIn)
+                    Text(L10n.string("settings.terminal.target.terminalApp", "Terminal"))
+                        .tag(TerminalTarget.terminalApp)
+                    Text(L10n.string("settings.terminal.target.iTerm", "iTerm"))
+                        .tag(TerminalTarget.iTerm)
+                    Text(L10n.string("settings.terminal.target.custom", "Custom App…"))
+                        .tag(TerminalTarget.custom)
+                }
+
+                if store.terminalTarget == .custom {
+                    HStack {
+                        Text(customAppDisplayName)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button(L10n.string("settings.openWith.choose", "Choose…")) {
+                            showCustomAppPicker = true
+                        }
+                    }
+                }
+            } header: {
+                Text(L10n.string("settings.terminal.target.header", "External Terminal"))
+            } footer: {
+                // Two short, factual notes (review finding, M11d fix
+                // round 1, second sentence): the first is the existing
+                // "both routes stay reachable" note; the second makes
+                // the `.builtIn` fallback visible — otherwise a user who
+                // set a custom app but left this picker on "Built-in"
+                // has no way to know the menu item quietly uses Terminal
+                // instead of their configured app.
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(L10n.string(
+                        "settings.terminal.target.footer",
+                        "Both ways to open a session stay available from the Terminal menu, "
+                            + "regardless of this setting."))
+                    Text(L10n.string(
+                        "settings.terminal.target.builtInFallback.footer",
+                        "When \u{201C}Built-in\u{201D} is selected, that menu item opens your "
+                            + "custom app if one is set, otherwise Terminal."))
+                }
+                .foregroundStyle(.secondary)
+            }
+
+            // Key management (M18/T7): opens the standalone `SSHKeysSheet`
+            // (M18/T5) — the same sheet reachable from the Sessions menu and
+            // the connection form's "Manage keys…" link, so there is exactly
+            // one place key administration lives.
+            Section {
+                Button(L10n.string("keys.picker.manage", "Manage keys…")) {
+                    showSSHKeysSheet = true
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .fileImporter(
+            isPresented: $showCustomAppPicker,
+            allowedContentTypes: [.application]
+        ) { result in
+            guard case .success(let url) = result else { return }
+            store.customTerminalAppPath = url.path(percentEncoded: false)
+        }
+        .sheet(isPresented: $showSSHKeysSheet) {
+            SSHKeysSheet()
+        }
+    }
+}
+
+/// The "S3" protocol section (M18/T7): the default presigned-link expiry
+/// (moved out of the former "Transfers" tab) — home for future S3-specific
+/// settings.
+private struct S3SettingsSection: View {
+    @Bindable var store: SettingsStore
+
+    var body: some View {
+        Form {
+            // S3 share links (M14/T5): the default expiry `PresignedURLSheet`
+            // pre-fills when generating a presigned GET/PUT link — the sheet
+            // itself lets a link override this per generation.
+            Section {
+                Picker(
+                    L10n.string("settings.transfers.presignedExpiry", "Default share-link expiry"),
+                    selection: $store.presignedDefaultExpiry
+                ) {
+                    Text(L10n.string("presigned.expiry.15min", "15 Minutes")).tag(PresignedExpiry.fifteenMinutes)
+                    Text(L10n.string("presigned.expiry.1h", "1 Hour")).tag(PresignedExpiry.oneHour)
+                    Text(L10n.string("presigned.expiry.1d", "1 Day")).tag(PresignedExpiry.oneDay)
+                    Text(L10n.string("presigned.expiry.7d", "7 Days")).tag(PresignedExpiry.sevenDays)
+                }
+            } header: {
+                Text(L10n.string("settings.transfers.presignedExpiry.header", "S3 Share Links"))
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
     }
 }

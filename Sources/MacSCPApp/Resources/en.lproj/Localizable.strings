@@ -11,6 +11,12 @@
 "settings.general.columns.header" = "File List Columns";
 "settings.general.columns.footer" = "Applies to both panes. Name is always shown.";
 
+/* Settings — sidebar section titles (M18/T7) */
+"settings.section.appearance" = "View";
+"settings.section.protocols" = "Protocols";
+"settings.section.ssh" = "SSH";
+"settings.section.s3" = "S3";
+
 /* Settings — Transfers tab */
 "settings.tab.transfers" = "Transfers";
 "settings.maxConcurrent.label" = "Maximum concurrent transfers";
