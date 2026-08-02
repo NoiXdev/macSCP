@@ -386,6 +386,7 @@
 "audit.kind.delete" = "Gelöscht";
 "audit.kind.permissions" = "Rechte geändert";
 "audit.kind.newFolder" = "Neuer Ordner";
+"audit.kind.newFile" = "Neue Datei";
 "audit.kind.editUpload" = "Editor-Upload";
 
 /* Sessions-Menü (M10a/T2, M10b/T3) */

@@ -385,6 +385,7 @@
 "audit.kind.delete" = "Deleted";
 "audit.kind.permissions" = "Permissions";
 "audit.kind.newFolder" = "New folder";
+"audit.kind.newFile" = "New file";
 "audit.kind.editUpload" = "Editor upload";
 
 /* Sessions menu (M10a/T2, M10b/T3) */

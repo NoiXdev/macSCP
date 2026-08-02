@@ -1006,7 +1006,7 @@ struct ContentView: View {
                                         copyPaths(of: selection)
                                     case .openInEditor:
                                         break   // never emitted for the local pane (menu model)
-                                    case .rename, .infoAndPermissions, .newFolder, .delete:
+                                    case .rename, .infoAndPermissions, .newFolder, .newFile, .delete:
                                         break   // handled inside BrowserPane, never forwarded
                                     case .backendFileAction:
                                         break   // never contributed on the LOCAL pane (fileActions is nil here)
@@ -1050,7 +1050,7 @@ struct ContentView: View {
                                         }
                                     case .copyPath:
                                         copyPaths(of: selection)
-                                    case .rename, .infoAndPermissions, .newFolder, .delete:
+                                    case .rename, .infoAndPermissions, .newFolder, .newFile, .delete:
                                         break   // handled inside BrowserPane, never forwarded
                                     case .backendFileAction(let action):
                                         // Currently the only backend-contributed action is

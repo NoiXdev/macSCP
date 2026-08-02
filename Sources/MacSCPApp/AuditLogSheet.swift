@@ -226,7 +226,7 @@ struct AuditLogSheet: View {
             }
         case .fileOps:
             switch event.kind {
-            case .rename, .delete, .permissions, .newFolder:
+            case .rename, .delete, .permissions, .newFolder, .newFile:
                 return true
             default:
                 return false

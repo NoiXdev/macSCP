@@ -198,6 +198,43 @@ struct RemoteBrowserViewModelTests {
         #expect(vm.selectedItems.map(\.name) == ["fresh"])
     }
 
+    // MARK: - createFile (M18a)
+
+    @Test func createFileCreatesAnEmptyFileAndReportsSuccess() async {
+        let fs = MockRemoteFileSystem(tree: ["/": []])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+
+        let error = await vm.createFile(named: "notes.txt")
+        #expect(error == nil)
+        await vm.refreshAndSelect(path: RemotePath.join(vm.currentPath, "notes.txt"))
+        #expect(vm.items.contains { $0.name == "notes.txt" })
+    }
+
+    @Test func createFileCollisionReturnsError() async {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "taken.txt", path: "/taken.txt", kind: .file, size: 0)],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        let error = await vm.createFile(named: "taken.txt")
+        #expect(error != nil)
+    }
+
+    /// Same operation/refresh split as `createFolder` (M18a): `createFile`
+    /// must not trigger a listing on its own — dismissing the sheet may not
+    /// wait on it.
+    @Test func createFileReturnsWithoutRefreshingTheListing() async {
+        let fs = MockRemoteFileSystem(tree: ["/": []])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        let listsAfterLoad = await fs.listCallCounts["/"] ?? 0
+
+        let error = await vm.createFile(named: "notes.txt")
+        #expect(error == nil)
+        #expect(await fs.listCallCounts["/"] ?? 0 == listsAfterLoad)
+    }
+
     // MARK: - applyPermissions (M7b Task 1 review follow-up)
 
     @Test func applyPermissionsSucceedsAndRefreshes() async {
@@ -410,6 +447,40 @@ struct RemoteBrowserViewModelTests {
         #expect(error != nil)
         #expect(capture.events.count == 1)
         #expect(capture.events[0].kind == .newFolder)
+        #expect(capture.events[0].isError == true)
+        #expect(capture.events[0].errorMessage == error)
+    }
+
+    @Test func createFileSuccessFiresNewFileEventWithFullPath() async throws {
+        let fs = MockRemoteFileSystem(tree: ["/": []])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        let capture = EventCapture()
+        vm.auditSink = { capture.record($0) }
+        await vm.load()
+
+        let error = await vm.createFile(named: "notes.txt")
+
+        #expect(error == nil)
+        #expect(capture.events.count == 1)
+        #expect(capture.events[0].kind == .newFile)
+        #expect(capture.events[0].detail.contains("/notes.txt"))
+        #expect(capture.events[0].isError == false)
+    }
+
+    @Test func createFileCollisionFiresIsErrorNewFileEvent() async throws {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [RemoteFileItem(name: "taken.txt", path: "/taken.txt", kind: .file, size: 0)],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        let capture = EventCapture()
+        vm.auditSink = { capture.record($0) }
+        await vm.load()
+
+        let error = await vm.createFile(named: "taken.txt")
+
+        #expect(error != nil)
+        #expect(capture.events.count == 1)
+        #expect(capture.events[0].kind == .newFile)
         #expect(capture.events[0].isError == true)
         #expect(capture.events[0].errorMessage == error)
     }

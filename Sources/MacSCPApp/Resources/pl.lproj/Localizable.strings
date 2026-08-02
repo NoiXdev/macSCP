@@ -388,6 +388,7 @@
 "audit.kind.delete" = "Usunięto";
 "audit.kind.permissions" = "Uprawnienia";
 "audit.kind.newFolder" = "Nowy folder";
+"audit.kind.newFile" = "Nowy plik";
 "audit.kind.editUpload" = "Wysłanie z edytora";
 
 /* Menu Sesje (M10a/T2, M10b/T3) */

@@ -53,6 +53,7 @@ public struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
         case delete
         case permissions
         case newFolder
+        case newFile
         case editUpload
         case crossSessionTransfer
     }
