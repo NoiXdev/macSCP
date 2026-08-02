@@ -11,6 +11,12 @@
 "settings.general.columns.header" = "Dateilisten-Spalten";
 "settings.general.columns.footer" = "Gilt für beide Seiten. Name ist immer sichtbar.";
 
+/* Einstellungen — Sidebar-Bereichstitel (M18/T7) */
+"settings.section.appearance" = "Ansicht";
+"settings.section.protocols" = "Protokolle";
+"settings.section.ssh" = "SSH";
+"settings.section.s3" = "S3";
+
 /* Settings — Übertragungen-Tab */
 "settings.tab.transfers" = "Übertragungen";
 "settings.maxConcurrent.label" = "Maximale gleichzeitige Übertragungen";

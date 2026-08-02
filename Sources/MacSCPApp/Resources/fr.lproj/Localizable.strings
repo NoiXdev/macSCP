@@ -13,6 +13,12 @@
 "settings.general.columns.header" = "Colonnes de la liste de fichiers";
 "settings.general.columns.footer" = "S'applique aux deux volets. Le nom est toujours affiché.";
 
+/* Réglages — Titres des sections de la barre latérale (M18/T7) */
+"settings.section.appearance" = "Affichage";
+"settings.section.protocols" = "Protocoles";
+"settings.section.ssh" = "SSH";
+"settings.section.s3" = "S3";
+
 /* Réglages — Onglet Transferts */
 "settings.tab.transfers" = "Transferts";
 "settings.maxConcurrent.label" = "Nombre maximal de transferts simultanés";
