@@ -1557,6 +1557,20 @@ struct ContentView: View {
     /// Actively grows/shrinks the window (animated) to the target size while
     /// keeping the top-left corner fixed — AppKit counts `origin.y` from the
     /// bottom, so it's adjusted by the height difference.
+    ///
+    /// This is NOT where an off-screen window comes from (M18a/T5). The
+    /// launch position is restored by AppKit's own frame autosave, which
+    /// SwiftUI's `WindowGroup` installs for us: the key
+    /// `"NSWindow Frame MacSCPApp.ContentView-1-AppWindow-1"` in the app's
+    /// user defaults holds `x y w h` plus the SCREEN frame that was current
+    /// when it was saved. When the display arrangement changes between runs
+    /// (external display detached, or re-arranged above/below the built-in),
+    /// AppKit can restore the window onto coordinates no attached screen
+    /// covers any more. The app sets no `frameAutosaveName` and persists no
+    /// geometry of its own — `lastBrowserSize` below is in-memory `@State`
+    /// and is a SIZE only, never an origin. This function preserves
+    /// `origin.x` and the top edge verbatim, so it can never move a visible
+    /// window off-screen; do not "fix" restore bugs by clamping here.
     private func resizeWindow(toWidth width: CGFloat, height: CGFloat) {
         guard let window else { return }
         let current = window.frame
