@@ -55,6 +55,13 @@ struct HiddenImportsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var rows: [HiddenImportRow] = []
     @State private var errorMessage: String?
+    @State private var searchText = ""
+    @State private var searchIsRegex = false
+
+    private var visibleRows: [HiddenImportRow] {
+        let (predicate, _) = sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)
+        return rows.filter { predicate.matches($0.alias) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -64,21 +71,28 @@ struct HiddenImportsSheet: View {
                 Text(errorMessage).font(.caption).foregroundStyle(.red).lineLimit(2)
             }
 
+            let (_, searchError) = sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)
+            SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
+
             // Only claim "nothing hidden" when the list is GENUINELY empty
             // (same rule as `KnownHostsSheet.load()`'s review finding): after
             // a load error the empty list must not suggest there is nothing
-            // hidden — the red message above is the truth.
-            if rows.isEmpty && errorMessage == nil {
+            // hidden — the red message above is the truth. A non-empty
+            // `rows` with an empty `visibleRows` means the search matched
+            // nothing, not that nothing is hidden (M18/T2).
+            if visibleRows.isEmpty && errorMessage == nil {
                 Spacer(minLength: 0)
-                Text(L10n.string(
-                    "hiddenImports.empty",
-                    "Right-click an imported connection in the sidebar and choose “Hide” to have it show up here."))
+                Text(rows.isEmpty
+                    ? L10n.string(
+                        "hiddenImports.empty",
+                        "Right-click an imported connection in the sidebar and choose “Hide” to have it show up here.")
+                    : L10n.string("hiddenImports.noMatches", "No matches."))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity, alignment: .center)
                 Spacer(minLength: 0)
             } else {
-                List(rows) { row in
+                List(visibleRows) { row in
                     rowView(row)
                 }
             }

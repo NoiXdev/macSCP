@@ -39,6 +39,7 @@ struct AuditLogSheet: View {
     @State private var events: [AuditEvent] = []
     @State private var filter: Filter = .all
     @State private var searchText = ""
+    @State private var searchIsRegex = false
     @State private var isShowingClearConfirm = false
     @State private var isExporting = false
     @State private var exportDocument: AuditLogTextDocument?
@@ -71,7 +72,8 @@ struct AuditLogSheet: View {
     }
 
     private var filteredEvents: [AuditEvent] {
-        sortedEvents.filter { matchesFilter($0) && matchesSearch($0) }
+        let (predicate, _) = sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)
+        return sortedEvents.filter { matchesFilter($0) && predicate.matches(searchString(for: $0)) }
     }
 
     private var isUnfiltered: Bool {
@@ -92,12 +94,19 @@ struct AuditLogSheet: View {
             .pickerStyle(.segmented)
             .labelsHidden()
 
-            TextField(L10n.string("audit.search", "Search"), text: $searchText)
-                .textFieldStyle(.roundedBorder)
+            let (_, searchError) = sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)
+            SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
 
+            // Genuinely empty (`events.isEmpty`, ignoring filter/search) gets
+            // the "no entries yet" text; a non-empty log with zero rows
+            // surviving the segment filter and/or search gets "no matches"
+            // instead (M18/T2, same rule as `KnownHostsSheet`/
+            // `HiddenImportsSheet`).
             if filteredEvents.isEmpty {
                 Spacer(minLength: 0)
-                Text(L10n.string("audit.empty", "No entries yet."))
+                Text(events.isEmpty
+                    ? L10n.string("audit.empty", "No entries yet.")
+                    : L10n.string("audit.noMatches", "No matches."))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
                 Spacer(minLength: 0)
@@ -234,15 +243,13 @@ struct AuditLogSheet: View {
         }
     }
 
-    private func matchesSearch(_ event: AuditEvent) -> Bool {
-        guard !searchText.isEmpty else { return true }
-        if event.detail.localizedCaseInsensitiveContains(searchText) { return true }
-        if let errorMessage = event.errorMessage,
-            errorMessage.localizedCaseInsensitiveContains(searchText)
-        {
-            return true
-        }
-        return false
+    /// Mirrors exactly what the row renders (time + event kind + detail,
+    /// the latter already including the error suffix via `detailText`) so a
+    /// search matches whatever the user can actually see in the table
+    /// (M18/T2 — same rationale as reusing `detailText` for the detail cell
+    /// itself, M9b/T4 finding 4).
+    private func searchString(for event: AuditEvent) -> String {
+        "\(Self.timeFormatter.string(from: event.timestamp)) \(kindLabel(event.kind)) \(detailText(for: event))"
     }
 
     /// Kind labels are the only localized part of an event row — `detail`

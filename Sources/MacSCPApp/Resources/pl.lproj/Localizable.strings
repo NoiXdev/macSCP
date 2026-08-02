@@ -358,11 +358,11 @@
 "audit.filter.fileOps" = "Operacje na plikach";
 "audit.filter.connection" = "Połączenie";
 "audit.filter.errors" = "Błędy";
-"audit.search" = "Szukaj";
 "audit.column.time" = "Czas";
 "audit.column.kind" = "Zdarzenie";
 "audit.column.detail" = "Szczegóły";
 "audit.empty" = "Brak wpisów.";
+"audit.noMatches" = "Brak wyników.";
 "audit.count %lld" = "%lld wpisów";
 "audit.countFiltered %lld %lld" = "%lld z %lld";
 "audit.export" = "Eksportuj jako tekst…";
@@ -398,7 +398,6 @@
 
 /* Arkusz znanych hostów (M10a/T2) */
 "knownHosts.title" = "Znane hosty";
-"knownHosts.search" = "Szukaj (host lub odcisk klucza)";
 "knownHosts.column.host" = "Host";
 "knownHosts.column.port" = "Port";
 "knownHosts.column.keyType" = "Typ klucza";
@@ -413,12 +412,14 @@
 "knownHosts.remove.messageMany %lld" = "%lld hostów zostanie potraktowanych jako nieznane przy następnym połączeniu (nowe pytania o zaufanie).";
 "knownHosts.remove.confirm" = "Usuń";
 "knownHosts.empty" = "Brak znanych hostów.";
+"knownHosts.noMatches" = "Brak wyników.";
 "knownHosts.loadError %@" = "Nie udało się wczytać znanych hostów: %@";
 "knownHosts.removeError %@" = "Nie udało się usunąć klucza hosta: %@";
 
 /* Arkusz ukrytych importów (M11f/T2) */
 "hiddenImports.title" = "Ukryte importy";
 "hiddenImports.empty" = "Kliknij prawym przyciskiem myszy zaimportowane połączenie na pasku bocznym i wybierz „Ukryj”, aby pojawiło się tutaj.";
+"hiddenImports.noMatches" = "Brak wyników.";
 "hiddenImports.orphaned" = "już nie w ~/.ssh/config";
 "hiddenImports.unhide" = "Pokaż ponownie";
 "hiddenImports.removeFromList" = "Usuń z listy";

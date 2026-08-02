@@ -359,11 +359,11 @@
 "audit.filter.fileOps" = "Opérations fichiers";
 "audit.filter.connection" = "Connexion";
 "audit.filter.errors" = "Erreurs";
-"audit.search" = "Rechercher";
 "audit.column.time" = "Heure";
 "audit.column.kind" = "Événement";
 "audit.column.detail" = "Détail";
 "audit.empty" = "Aucune entrée pour l'instant.";
+"audit.noMatches" = "Aucun résultat.";
 "audit.count %lld" = "%lld entrées";
 "audit.countFiltered %lld %lld" = "%lld sur %lld";
 "audit.export" = "Exporter en texte…";
@@ -399,7 +399,6 @@
 
 /* Feuille des hôtes connus (M10a/T2) */
 "knownHosts.title" = "Hôtes connus";
-"knownHosts.search" = "Rechercher (hôte ou empreinte)";
 "knownHosts.column.host" = "Hôte";
 "knownHosts.column.port" = "Port";
 "knownHosts.column.keyType" = "Type de clé";
@@ -414,12 +413,14 @@
 "knownHosts.remove.messageMany %lld" = "%lld hôtes seront traités comme inconnus lors de la prochaine connexion (nouvelles demandes de confiance).";
 "knownHosts.remove.confirm" = "Supprimer";
 "knownHosts.empty" = "Aucun hôte connu pour l'instant.";
+"knownHosts.noMatches" = "Aucun résultat.";
 "knownHosts.loadError %@" = "Impossible de charger les hôtes connus : %@";
 "knownHosts.removeError %@" = "Impossible de supprimer la clé de l'hôte : %@";
 
 /* Feuille des imports masqués (M11f/T2) */
 "hiddenImports.title" = "Imports masqués";
 "hiddenImports.empty" = "Faites un clic droit sur une connexion importée dans la barre latérale et choisissez « Masquer » pour qu'elle apparaisse ici.";
+"hiddenImports.noMatches" = "Aucun résultat.";
 "hiddenImports.orphaned" = "n'est plus dans ~/.ssh/config";
 "hiddenImports.unhide" = "Réafficher";
 "hiddenImports.removeFromList" = "Supprimer de la liste";
