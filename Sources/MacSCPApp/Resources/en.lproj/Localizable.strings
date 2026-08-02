@@ -228,6 +228,7 @@
 "menu.rename" = "Rename…";
 "menu.info" = "Info & Permissions…";
 "menu.newFolder" = "New Folder…";
+"menu.newFile" = "New File…";
 "menu.copyPath" = "Copy Path";
 "menu.delete" = "Delete…";
 "browser.action.presignedURL" = "Share Link…";
@@ -242,6 +243,11 @@
 "sheet.newFolder.title" = "New Folder";
 "sheet.newFolder.confirm" = "Create";
 "sheet.newFolder.defaultName" = "untitled folder";
+
+/* New File sheet (M18a/T4) */
+"sheet.newFile.title" = "New File";
+"sheet.newFile.confirm" = "Create";
+"sheet.newFile.defaultName" = "untitled.txt";
 
 /* Info & permissions sheet (M7b/T3) */
 "info.path" = "Path";

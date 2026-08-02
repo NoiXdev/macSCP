@@ -229,6 +229,7 @@
 "menu.rename" = "Umbenennen…";
 "menu.info" = "Informationen & Rechte…";
 "menu.newFolder" = "Neuer Ordner…";
+"menu.newFile" = "Neue Datei…";
 "menu.copyPath" = "Pfad kopieren";
 "menu.delete" = "Löschen…";
 "browser.action.presignedURL" = "Freigabe-Link…";
@@ -243,6 +244,11 @@
 "sheet.newFolder.title" = "Neuer Ordner";
 "sheet.newFolder.confirm" = "Erstellen";
 "sheet.newFolder.defaultName" = "unbenannter Ordner";
+
+/* Neue-Datei-Sheet (M18a/T4) */
+"sheet.newFile.title" = "Neue Datei";
+"sheet.newFile.confirm" = "Erstellen";
+"sheet.newFile.defaultName" = "unbenannt.txt";
 
 /* Info-&-Rechte-Sheet (M7b/T3) */
 "info.path" = "Pfad";
