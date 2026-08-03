@@ -16,6 +16,8 @@ public enum CLIErrorMapping {
         switch error {
         case is TransferSourceError:
             return .usage
+        case is DeleteSourceError:
+            return .usage
         case let error as TransferPlanError:
             switch error {
             case .conflict: return .conflict
@@ -58,6 +60,11 @@ public enum CLIErrorMapping {
             switch error {
             case .isDirectory(let path):
                 return "Error: '\(path)' is a directory; get/put transfer a single file only"
+            }
+        case let error as DeleteSourceError:
+            switch error {
+            case .isDirectory(let path):
+                return "Error: '\(path)' is a directory; pass --recursive to delete it and its contents"
             }
         case let error as TransferPlanError:
             switch error {

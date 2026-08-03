@@ -13,6 +13,19 @@ public enum TransferSourceError: Error, Equatable, Sendable {
     case isDirectory(path: String)
 }
 
+/// Errors from validating an `rm` target before deleting it — distinct from
+/// `TransferSourceError`, which guards a transfer's source argument, and from
+/// the raw `RemoteFSError.protocolError` the backend would otherwise throw
+/// for a directory target (M20 Task 11).
+public enum DeleteSourceError: Error, Equatable, Sendable {
+    /// `rm` without `--recursive` deletes a plain file only. `deleteTree`
+    /// walks a whole subtree — a typo must not be able to trigger that — so
+    /// a directory target without the flag is refused here with a clear
+    /// message rather than surfacing whatever raw error `delete(path:)`
+    /// would throw for it.
+    case isDirectory(path: String)
+}
+
 /// Rejects a directory source for a single-file transfer. Pure and I/O-free
 /// — the caller does the `stat` and hands in the already-fetched item — so
 /// this is fully unit-testable without a network or a filesystem, unlike the
@@ -21,6 +34,16 @@ public enum TransferSourceGuard {
     public static func checkNotDirectory(_ item: RemoteFileItem) throws {
         if item.isDirectory {
             throw TransferSourceError.isDirectory(path: item.path)
+        }
+    }
+
+    /// Rejects a directory target for `rm` unless `recursive` is set. Same
+    /// shape as `checkNotDirectory` — caller does the `stat`, this only
+    /// decides — kept as a sibling here rather than a new type/file since
+    /// the check is identical, only the error (and its message) differs.
+    public static func checkDeletable(_ item: RemoteFileItem, recursive: Bool) throws {
+        if item.isDirectory && !recursive {
+            throw DeleteSourceError.isDirectory(path: item.path)
         }
     }
 }

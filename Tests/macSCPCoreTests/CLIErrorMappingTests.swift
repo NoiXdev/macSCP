@@ -22,6 +22,11 @@ struct CLIErrorMappingTests {
         #expect(CLIErrorMapping.exitCode(for: error) == .usage)
     }
 
+    @Test func deleteDirectoryWithoutRecursiveIsAUsageError() {
+        let error = DeleteSourceError.isDirectory(path: "/var/logs")
+        #expect(CLIErrorMapping.exitCode(for: error) == .usage)
+    }
+
     @Test func destinationConflictExitsWithTheConflictCode() {
         let error = TransferPlanError.conflict("/tmp/dist.tar.gz")
         #expect(CLIErrorMapping.exitCode(for: error) == .conflict)
@@ -33,6 +38,12 @@ struct CLIErrorMappingTests {
     /// branch fire for a typo instead of a real collision.
     @Test func emptyDestinationDirectoryIsAUsageErrorNotAConflict() {
         #expect(CLIErrorMapping.exitCode(for: TransferPlanError.emptyDestinationDirectory) == .usage)
+    }
+
+    @Test func messageForDeleteDirectoryWithoutRecursiveMentionsTheFlag() {
+        let message = CLIErrorMapping.message(for: DeleteSourceError.isDirectory(path: "/var/logs"))
+        #expect(message.contains("/var/logs"))
+        #expect(message.contains("--recursive"))
     }
 
     @Test func messageForHostKeyMismatchNamesBothFingerprints() {
