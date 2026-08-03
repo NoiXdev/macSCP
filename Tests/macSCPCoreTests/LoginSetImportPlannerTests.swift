@@ -245,6 +245,22 @@ struct LoginSetImportPlannerTests {
         #expect(plan.setsToImport[0].set.name == "Prod")
     }
 
+    // The summary arrays feed the import result UI, so they must report the
+    // same name that was actually stored — not the file's untrimmed spelling.
+    @Test func summaryNamesAreTrimmedOnEveryResolution() async {
+        let existing = [LoginSet(id: UUID(), name: "Prod", username: "deploy", authKind: .password)]
+
+        let replacing = await LoginSetImportPlanner.plan(
+            existing: existing, incoming: payload([fileSet(name: "  Prod  ")]),
+            arbiter: ImportConflictArbiter { _ in (.replace, true) })
+        #expect(replacing.replaced == ["Prod"])
+
+        let skipping = await LoginSetImportPlanner.plan(
+            existing: existing, incoming: payload([fileSet(name: "  Prod  ")]),
+            arbiter: ImportConflictArbiter { _ in (.skip, true) })
+        #expect(skipping.skipped == ["Prod"])
+    }
+
     @Test func secretsAndKeysOnlyRideAlongWhenThePayloadSaysSo() async {
         let key = EmbeddedKey(
             fileContents: Data("key-bytes".utf8), name: "id_ed25519", comment: "",

@@ -107,7 +107,7 @@ public enum LoginSetImportPlanner {
 
             switch resolution {
             case .skip:
-                skipped.append(fileSet.name)
+                skipped.append(trimmedName)
 
             case .replace:
                 if let match = existing.first(where: {
@@ -117,7 +117,7 @@ public enum LoginSetImportPlanner {
                     setsToImport.append(PlannedLoginSet(
                         set: makeSet(from: fileSet, id: match.id, name: trimmedName),
                         secret: secret, embeddedKey: embeddedKey, replacesExisting: true))
-                    replaced.append(fileSet.name)
+                    replaced.append(trimmedName)
                 } else {
                     // Either the collision was against a name already
                     // claimed earlier in THIS run (e.g. an in-file duplicate
