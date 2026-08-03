@@ -848,27 +848,10 @@ struct ContentView: View {
             )
         }
         // Shared import conflict sheet (M19/T7) for SESSION imports — the
-        // login-set import shows the same view through its own bridge inside
-        // `LoginSetsSheet`. Both bindings route every non-button dismissal
-        // through `dismiss()`, so the arbiter's continuation is always
-        // resumed exactly once.
-        .sheet(
-            item: Binding(
-                get: { importConflictBridge.currentPrompt },
-                set: { newValue in
-                    if newValue == nil { importConflictBridge.dismiss() }
-                }),
-            onDismiss: { importConflictBridge.dismiss() }
-        ) { item in
-            ImportConflictSheet(
-                conflict: item.conflict,
-                onResolve: { resolution, applyToAll in
-                    importConflictBridge.resolve(
-                        (resolution: resolution, applyToAll: applyToAll))
-                },
-                onCancel: { importConflictBridge.dismiss() }
-            )
-        }
+        // login-set import presents the same view through the same modifier
+        // inside `LoginSetsSheet`, so the resumption contract documented on
+        // `importConflictSheet(bridge:)` covers both flows.
+        .importConflictSheet(bridge: importConflictBridge)
         .alert(
             L10n.string("import.error.title", "Import Failed"),
             isPresented: Binding(
