@@ -1,5 +1,14 @@
 import Foundation
 
+/// Thrown when a write to the target store reports success but the
+/// immediate read-back disagrees with what was just written. Kept distinct
+/// from `KeychainError` — a raw Security-framework call failure — so a
+/// caller can tell "the keychain call failed" from "the keychain reported
+/// success but the value disagrees". `errSecIO` is a status a real
+/// `SecItemCopyMatching` call can genuinely return, so reusing it here would
+/// have made the two indistinguishable.
+public struct KeychainVerificationMismatch: Error, Equatable, Sendable {}
+
 /// Moves secrets from one store to another — in practice from "no access
 /// group" to "shared access group", so the CLI can read what the app wrote
 /// (M20). The access group is an attribute set at creation time, so existing
@@ -27,7 +36,7 @@ public struct KeychainMigration: Sendable {
             guard let secret = try source.password(for: id), !secret.isEmpty else { continue }
             try target.savePassword(secret, for: id)
             guard try target.password(for: id) == secret else {
-                throw KeychainError(status: errSecIO)
+                throw KeychainVerificationMismatch()
             }
             try source.deletePassword(for: id)
             moved += 1
