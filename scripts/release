@@ -51,9 +51,31 @@ MACSCP_VERSION="$VERSION" scripts/package-app
 codesign --force --timestamp --sign "$IDENTITY" \
     "$APP/Contents/Resources/macSCP_MacSCPApp.bundle" \
     "$APP/Contents/Resources/macSCP_macSCPCore.bundle"
-codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP"
+codesign --force --options runtime --timestamp \
+    --entitlements Resources/macSCP.entitlements \
+    --sign "$IDENTITY" "$APP"
 codesign --verify --deep --strict "$APP"
 echo "signed: $(codesign -dv "$APP" 2>&1 | grep '^Authority=Developer ID Application')"
+
+# The CLI must carry the SAME keychain access group as the app, otherwise it
+# cannot read the secrets the app stored (M20). Ad-hoc dev builds have no team
+# identifier and therefore no group — that path falls back to per-item consent
+# (scripts/package-app, which this script calls above, is untouched by this).
+#
+# Both architecture slices are signed, not just arm64: package-app already
+# cross-builds macscp-cli for arm64-apple-macosx and x86_64-apple-macosx as a
+# side effect of assembling the universal app (it does the same two `swift
+# build --triple` calls and lipos the app binary from them). Signing only one
+# slice here would leave the other architecture's CLI silently without the
+# access group — a gap that would only show up as an unexplained fallback to
+# per-item keychain consent on whichever architecture was skipped.
+for TRIPLE in arm64-apple-macosx x86_64-apple-macosx; do
+    CLI_BIN="$(swift build -c release --triple "$TRIPLE" --show-bin-path)/macscp-cli"
+    codesign --force --options runtime --timestamp \
+        --entitlements Resources/macscp-cli.entitlements \
+        --sign "$IDENTITY" "$CLI_BIN"
+    codesign --verify --strict "$CLI_BIN"
+done
 
 # --- notarize the app, staple it -------------------------------------------
 ZIP="dist/macSCP-${VERSION}.zip"
