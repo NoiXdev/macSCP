@@ -244,7 +244,10 @@ struct EmbeddedKeyPorterTests {
             return .anchorsLost("`materialize` now precedes `embed`")
         }
         // Comments go first, so prose about reading files cannot trip the scan
-        // — whole-line ones AND the tail of a line that ends in one.
+        // — whole-line ones AND the tail of a line that ends in one. (A `//`
+        // inside a string literal would truncate that line too; `embed` has no
+        // string literals, and losing the tail of one can only ever make this
+        // lint miss a read, which the reviewer it backs is there to catch.)
         let code = source[start.upperBound..<end.lowerBound]
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { line -> Substring in
