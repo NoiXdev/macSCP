@@ -3,20 +3,26 @@ import Testing
 
 /// Guards ONE property: that every icon in the app target has been DECIDED
 /// about — it carries a hover hint, or it is on the decorative list below with
-/// a reason. It deliberately does not check that a hint is good, or even that
-/// it sits on the right element: a `.help` on a NEIGHBOURING control within the
-/// proximity window satisfies the scan (`SheetSearchField`'s magnifier passes
-/// on the regex toggle's hint, seven lines down). The window is a heuristic,
-/// unusual formatting can fool it, and the list needs maintenance by hand. In
-/// M19 a lint of this shape caught two real gaps — but only after a reviewer
-/// defeated an earlier version of it with a line break, so treat its reach as
-/// narrow and its value as "nobody adds an icon without thinking", nothing
-/// more.
+/// a reason. The app is not purely SwiftUI, so BOTH halves are scanned:
+/// SwiftUI's `Image(systemName:)` / `systemImage:` and AppKit's
+/// `NSImage(systemSymbolName:)`, and a hint is either a `.help(…)` or an
+/// AppKit `toolTip =` assignment. It deliberately does not check that a hint
+/// is good, or even that it sits on the right element: a `.help` on a
+/// NEIGHBOURING control within the proximity window satisfies the scan
+/// (`SheetSearchField`'s magnifier passes on the regex toggle's hint, seven
+/// lines down). The window is a heuristic, unusual formatting can fool it, and
+/// the list needs maintenance by hand. In M19 a lint of this shape caught two
+/// real gaps — but only after a reviewer defeated an earlier version of it
+/// with a line break, so treat its reach as narrow and its value as "nobody
+/// adds an icon without thinking", nothing more.
 ///
-/// `.accessibilityLabel` does NOT count as a decision. It labels the control
-/// for VoiceOver and produces no hover hint at all — the "remove rule" button
-/// in `SettingsView` had exactly that and still needed a `.help` (M19a/T1), so
-/// the two live side by side there with the same key.
+/// Neither `.accessibilityLabel` (SwiftUI) nor `accessibilityDescription:`
+/// (AppKit) counts as a decision. They label the control for VoiceOver and
+/// produce no hover hint at all — the "remove rule" button in `SettingsView`
+/// had exactly that and still needed a `.help` (M19a/T1), so the two live side
+/// by side there with the same key; the menu-bar status item had exactly that
+/// and still needed a `toolTip` (M19a/T2, found the day the AppKit spelling
+/// was added to this scan).
 ///
 /// Known blind spots, so nobody mistakes a green run for a proof:
 /// - The app target has no test target of its own (`Package.swift` declares
@@ -27,6 +33,18 @@ import Testing
 /// - Icons named through a variable (`SettingsSection.systemImage`'s `switch`
 ///   returns bare strings) are invisible; the decision is recorded at the call
 ///   site that passes them, which is what the scan sees.
+/// - A HELPER that builds an icon (`func iconButton(_ name: String) -> some
+///   View { … Image(systemName: name) … }`) is scanned once, at its body, with
+///   the symbol `name`; every call site then becomes invisible and a single
+///   entry blankets all of them. No such helper exists today — but extracting
+///   one is ordinary refactoring, not evasion, so a later reader has to know
+///   that it silently shrinks this test's reach.
+/// - The area a hint may live in is small but LOPSIDED. The windows this scan
+///   accepts cover 2.6% of the app target's lines overall, and they bunch up
+///   in exactly the icon-dense files where the next icon-only button will be
+///   added: `SheetSearchField` 25%, `TransferQueueBar` 21%, `FileSearchBar`
+///   17%, `TabStripView` 15%. In those files a stray `.help` on an unrelated
+///   control is fairly likely to sit inside somebody else's window.
 @Suite("IconTooltipLint")
 struct IconTooltipLintTests {
     private struct DecorativeIcon {
@@ -64,21 +82,24 @@ struct IconTooltipLintTests {
             file: "SettingsView.swift", symbol: "section.systemImage",
             reason: "Settings sidebar rows; each `Label` shows the section title next to the glyph and macOS gives list rows no tooltip."),
         DecorativeIcon(
-            file: "ContentView.swift", symbol: "xmark.circle.fill",
-            reason: "Dismisses the inline edit-error banner it sits in; the banner's own text is the message, and the ✕ is its only control."),
+            file: "MenuBarController.swift", symbol: "circle.fill",
+            reason: "Colour-coded status dot on a menu ITEM, whose own title already spells the state out in words (Connected/Connecting…/Failed/Ready); `NSMenuItem.image` takes no tooltip of its own."),
     ]
 
-    /// How far below an icon a `.help` still counts as belonging to it.
+    /// How far below an icon a hover hint still counts as belonging to it.
     ///
-    /// Measured against the real code rather than guessed: the longest gap any
-    /// currently hinted icon has to its `.help` is **9** lines
-    /// (`SessionSidebar`'s `arrow.down.doc`, whose hint sits on the enclosing
-    /// `HStack` after the label, spacer and gesture modifiers); second longest
-    /// is 8 (`SettingsView`'s `minus.circle`, padded by a four-line comment —
-    /// comments are blanked in place, not deleted, so they still cost lines).
-    /// Twelve is that 9 plus room for a couple more modifiers before a future
-    /// chain trips this test for the wrong reason. Re-derive it the same way if
-    /// it ever needs to move; do not widen it to silence a finding.
+    /// Measured against the real code rather than guessed — but read the shape
+    /// of the measurement, not just its maximum. Of the 24 icons that reach a
+    /// hint at all, 18 sit at a distance of 2–4 lines; the tail is thin and
+    /// almost entirely made of single cases: 7 (four icons), then 8 exactly
+    /// once (`SettingsView`'s `minus.circle`, padded by a four-line comment —
+    /// comments are blanked in place, not deleted, so they still cost lines),
+    /// then **9** exactly once (`SessionSidebar.swift:292 → 301`,
+    /// `arrow.down.doc`, whose hint sits on the enclosing `HStack` after the
+    /// label, spacer and gesture modifiers). So 12 is the lone 9-line outlier
+    /// plus room for a couple more modifiers — not a typical distance doubled.
+    /// Re-derive it the same way if it ever needs to move; do not widen it to
+    /// silence a finding.
     private static let hintWindow = 12
 
     /// `#filePath` here is
@@ -86,10 +107,30 @@ struct IconTooltipLintTests {
     /// `deletingLastPathComponent()` calls recover the repo root regardless of
     /// `swift test`'s working directory (same trick as `LocalizableStringsTests`
     /// and `EmbeddedKeyPorterTests`).
-    private static let appSources: URL = URL(fileURLWithPath: #filePath)
+    private static let repoRoot: URL = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent()
+
+    private static let appSources: URL = repoRoot
         .appendingPathComponent("Sources/MacSCPApp")
+
+    /// Findings name a REPO-RELATIVE path, so the reader can open the file
+    /// straight from the failure line; the absolute path is the fallback when
+    /// something unexpected sits outside the checkout.
+    ///
+    /// The trailing slash has to come off first: `repoRoot` is a DIRECTORY
+    /// URL, and `path(percentEncoded:)` keeps its trailing separator where the
+    /// older `.path` property stripped it. Without this, the prefix compared
+    /// is `…/macSCP//` — which never matches, so every finding silently took
+    /// the absolute-path fallback (`findingsNameARepoRelativePath` holds this
+    /// down).
+    private static func repoRelativePath(of file: URL) -> String {
+        var root = repoRoot.path(percentEncoded: false)
+        while root.hasSuffix("/") { root.removeLast() }
+        let path = file.path(percentEncoded: false)
+        guard path.hasPrefix(root + "/") else { return path }
+        return String(path.dropFirst(root.count + 1))
+    }
 
     // MARK: - The guard
 
@@ -107,13 +148,15 @@ struct IconTooltipLintTests {
         for file in files {
             let source = try String(contentsOf: file, encoding: .utf8)
             let name = file.lastPathComponent
+            let path = Self.repoRelativePath(of: file)
             for finding in Self.undecidedIcons(file: name, source: source) {
                 Issue.record("""
-                    \(name):\(finding.line): icon "\(finding.symbol)" has no hover hint. \
-                    Add a `.help(…)` to the control it belongs to, or — if it explains \
-                    nothing because it is not a hit target — put it on `decorativeIcons` \
-                    with a reason. (`.accessibilityLabel` does not count: it is for \
-                    VoiceOver and produces no tooltip.)
+                    \(path):\(finding.line): icon "\(finding.symbol)" has no hover hint. \
+                    Add a `.help(…)` — or, in AppKit, a `toolTip` — to the control it \
+                    belongs to, or, if it explains nothing because it is not a hit \
+                    target, put it on `decorativeIcons` with a reason. \
+                    (`.accessibilityLabel` and `accessibilityDescription:` do not \
+                    count: they are for VoiceOver and produce no tooltip.)
                     """)
             }
         }
@@ -161,6 +204,56 @@ struct IconTooltipLintTests {
             .accessibilityLabel("Settings")
             """
         #expect(Self.undecidedIcons(file: "Synthetic.swift", source: source).count == 1)
+    }
+
+    /// The AppKit half of the app is scanned by the same rules: an
+    /// `NSImage(systemSymbolName:)` on a hit target needs a `toolTip`, and the
+    /// `accessibilityDescription:` sitting right there does NOT stand in for
+    /// one. This is the shape of the live gap the needle surfaced on the
+    /// menu-bar status item (M19a/T2).
+    @Test func scanFlagsAnAppKitSymbolWithNoToolTip() {
+        let source = """
+            let image = NSImage(
+                systemSymbolName: "arrow.up.arrow.down",
+                accessibilityDescription: "macSCP")
+            button.image = image
+            """
+        let found = Self.undecidedIcons(file: "Synthetic.swift", source: source)
+        #expect(found.map(\.symbol) == ["arrow.up.arrow.down"])
+        #expect(found.first?.line == 2)
+    }
+
+    /// …and the same symbol passes once the button carries a real tooltip.
+    @Test func scanAcceptsAToolTipAsAHint() {
+        let hinted = """
+            button.image = NSImage(systemSymbolName: "gear", accessibilityDescription: nil)
+            button.toolTip = "Settings"
+            """
+        #expect(Self.undecidedIcons(file: "Synthetic.swift", source: hinted).isEmpty)
+
+        // A reset to nil is not a hint — it is the other half of a recycling
+        // branch, and vouching for the icon on it would be a lie.
+        let cleared = """
+            cell.imageView?.image = NSImage(systemSymbolName: "link", accessibilityDescription: nil)
+            cell.toolTip = nil
+            """
+        #expect(Self.undecidedIcons(file: "Synthetic.swift", source: cleared).count == 1)
+    }
+
+    /// A finding names a path the reader can act on. Worth its own test
+    /// because the obvious spelling silently does the wrong thing:
+    /// `URL.path(percentEncoded:)` KEEPS a directory URL's trailing slash
+    /// (unlike the older `.path` property), so a naive
+    /// `hasPrefix(root + "/")` never matches and every finding quietly falls
+    /// back to the absolute path — green tests, useless output.
+    @Test func findingsNameARepoRelativePath() {
+        let file = Self.appSources.appendingPathComponent("TabStripView.swift")
+        #expect(Self.repoRelativePath(of: file) == "Sources/MacSCPApp/TabStripView.swift")
+
+        // Anything outside the checkout keeps its absolute path rather than
+        // being mangled into a misleading relative one.
+        let outside = URL(fileURLWithPath: "/somewhere/else/Other.swift")
+        #expect(Self.repoRelativePath(of: outside) == "/somewhere/else/Other.swift")
     }
 
     /// A hint is a hint however the call wraps — the M19 lesson: an earlier
@@ -306,14 +399,17 @@ struct IconTooltipLintTests {
         }
     }
 
-    /// Both spellings of "this is an SF Symbol": `Image(systemName:)` and the
-    /// `systemImage:` label shared by `Label`, `Button`, `Toggle` and friends.
-    /// The label is matched on its own rather than as part of `Image(` so a
-    /// call that wrapped after the opening paren is still seen.
+    /// All three spellings of "this is an SF Symbol": SwiftUI's
+    /// `Image(systemName:)` and the `systemImage:` label shared by `Label`,
+    /// `Button`, `Toggle` and friends, plus AppKit's
+    /// `NSImage(systemSymbolName:)` — the app is not purely SwiftUI (menu bar,
+    /// file table), and an icon the scan cannot spell is an icon nobody has to
+    /// decide about. Each label is matched on its own rather than as part of
+    /// `Image(` so a call that wrapped after the opening paren is still seen.
     private static func icons(in code: [String]) -> [Icon] {
         var found: [Icon] = []
         for (index, line) in code.enumerated() {
-            for needle in ["systemName:", "systemImage:"] {
+            for needle in ["systemName:", "systemImage:", "systemSymbolName:"] {
                 var cursor = line.startIndex
                 while let match = line.range(of: needle, range: cursor..<line.endIndex) {
                     cursor = match.upperBound
@@ -370,15 +466,27 @@ struct IconTooltipLintTests {
         return argument.trimmingCharacters(in: .whitespaces)
     }
 
-    /// A `.help` anywhere in the `hintWindow` lines starting at the icon's own
-    /// line (a one-line `Button { … }.help(…)` counts). Whitespace is squeezed
-    /// out of the window first: Swift lets a call wrap anywhere, so `.help(\n…)`
-    /// and `.help\n(…)` are the same call and must satisfy the same needle —
-    /// matching literal text is exactly how the M19 source lint was walked past.
+    /// A hover hint anywhere in the `hintWindow` lines starting at the icon's
+    /// own line (a one-line `Button { … }.help(…)` counts), in either
+    /// framework's spelling: SwiftUI's `.help(…)` or AppKit's `toolTip = …`.
+    /// Whitespace is squeezed out of the window first: Swift lets a call wrap
+    /// anywhere, so `.help(\n…)` and `.help\n(…)` are the same call and must
+    /// satisfy the same needle — matching literal text is exactly how the M19
+    /// source lint was walked past.
     private static func hasHint(below line: Int, in code: [String]) -> Bool {
         let start = line - 1
         let end = min(start + hintWindow, code.count - 1)
         guard start <= end else { return false }
-        return code[start...end].joined().filter { !$0.isWhitespace }.contains(".help(")
+        let window = code[start...end].joined().filter { !$0.isWhitespace }
+        if window.contains(".help(") { return true }
+        // `toolTip = nil` is the OPPOSITE of a decision — it is the reset half
+        // of a cell-recycling branch (`RemoteFileTableView` writes both on
+        // every reuse), so only an assignment of something else vouches.
+        var cursor = window.startIndex
+        while let match = window.range(of: "toolTip=", range: cursor..<window.endIndex) {
+            cursor = match.upperBound
+            if !window[match.upperBound...].hasPrefix("nil") { return true }
+        }
+        return false
     }
 }
