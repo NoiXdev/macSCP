@@ -98,7 +98,7 @@ public enum LoginSetImportPlanner {
             }
 
             guard let resolution = await arbiter.resolve(
-                ImportConflict(itemName: fileSet.name, kindLabel: kindLabel)
+                ImportConflict(itemName: trimmedName, kindLabel: kindLabel)
             ) else {
                 // Cancellation applies nothing at all — discard whatever was
                 // accumulated so far in this run, not just the remainder.

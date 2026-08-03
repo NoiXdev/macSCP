@@ -274,6 +274,33 @@ struct SessionListViewModelTests {
         #expect(try secrets.password(for: existing.id) == "keep")
     }
 
+    /// `plan.cancelled` must be authoritative on its own, not merely inferred
+    /// from the other arrays being empty (which is all a real planner ever
+    /// produces): a plan that intentionally carries non-empty content
+    /// alongside `cancelled: true` still must apply and report nothing.
+    @Test func applyImportIgnoresEverythingWhenPlanIsCancelled() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let plan = SessionImportPlan(
+            groupsToCreate: [StoredGroup(name: "Ghost")],
+            sessionsToImport: [
+                PlannedSession(
+                    session: StoredSession(name: "ghost", host: "h1", username: "root"),
+                    password: "pw"),
+            ],
+            cancelled: true)
+
+        let result = vm.applyImport(plan)
+
+        #expect(result == SessionListViewModel.SessionImportResult(
+            imported: 0, skipped: 0, passwordsImported: 0, passwordFailures: 0,
+            storeFailures: 0))
+        #expect(vm.sessions.isEmpty)
+        #expect(vm.groups.isEmpty)
+        #expect(try secrets.password(for: UUID()) == nil)
+    }
+
     @Test func applyImportSurvivesKeychainFailure() throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")

@@ -10,11 +10,23 @@ public struct PlannedSession: Equatable, Sendable {
     /// the jump's FRESH `secretID` when applied, mirroring `password` for
     /// the target.
     public var jumpPassword: String?
+    /// True when this replaces an existing session — `session.id` is the
+    /// EXISTING record's id, so `store.upsert` overwrites it in place rather
+    /// than creating a new one. Mirrors `PlannedLoginSet.replacesExisting`
+    /// (M19): the applier must also overwrite that session's Keychain
+    /// secret in this case, which is not yet wired (a following task's job —
+    /// this field is the seam it uses). Defaults to `false` so call sites
+    /// that only ever plan a fresh import need not repeat it.
+    public var replacesExisting: Bool
 
-    public init(session: StoredSession, password: String?, jumpPassword: String? = nil) {
+    public init(
+        session: StoredSession, password: String?, jumpPassword: String? = nil,
+        replacesExisting: Bool = false
+    ) {
         self.session = session
         self.password = password
         self.jumpPassword = jumpPassword
+        self.replacesExisting = replacesExisting
     }
 }
 
@@ -140,7 +152,7 @@ public enum SessionImportPlanner {
             }
 
             guard let resolution = await arbiter.resolve(
-                ImportConflict(itemName: fileSession.name, kindLabel: kindLabel)
+                ImportConflict(itemName: trimmedName, kindLabel: kindLabel)
             ) else {
                 // Cancellation applies nothing at all — not the items already
                 // accepted earlier in this run, and therefore no groups
@@ -160,7 +172,8 @@ public enum SessionImportPlanner {
                     replacedExistingIDs.insert(match.id)
                     takenNames.insert(normalizedName(trimmedName))
                     sessionsToImport.append(makePlanned(
-                        from: fileSession, id: match.id, name: trimmedName, groupID: resolvedGroupID))
+                        from: fileSession, id: match.id, name: trimmedName, groupID: resolvedGroupID,
+                        replacesExisting: true))
                     replaced.append(trimmedName)
                 } else {
                     // Either the collision was against a triple first seen in
@@ -174,7 +187,10 @@ public enum SessionImportPlanner {
                     takenNames.insert(normalizedName(name))
                     sessionsToImport.append(makePlanned(
                         from: fileSession, id: UUID(), name: name, groupID: resolvedGroupID))
-                    renamed.append(name)
+                    // `uniqueName` returns the name unchanged when nothing
+                    // else uses it (the collision key here is the endpoint
+                    // triple, not the name) — only report an actual rename.
+                    if name != trimmedName { renamed.append(name) }
                 }
 
             case .rename:
@@ -182,7 +198,7 @@ public enum SessionImportPlanner {
                 takenNames.insert(normalizedName(name))
                 sessionsToImport.append(makePlanned(
                     from: fileSession, id: UUID(), name: name, groupID: resolvedGroupID))
-                renamed.append(name)
+                if name != trimmedName { renamed.append(name) }
             }
         }
 
@@ -204,7 +220,8 @@ public enum SessionImportPlanner {
     /// id and name, so the unchanged, replaced and renamed paths cannot drift
     /// apart in how they map the file's fields.
     private static func makePlanned(
-        from fileSession: ExportedSession, id: UUID, name: String, groupID: UUID?
+        from fileSession: ExportedSession, id: UUID, name: String, groupID: UUID?,
+        replacesExisting: Bool = false
     ) -> PlannedSession {
         // Jump fields are only present together (all-or-nothing from
         // `exportPayload`) -- `jumpHost`/`jumpUsername` gate construction.
@@ -253,7 +270,8 @@ public enum SessionImportPlanner {
         let secret = kind == .s3 ? fileSession.s3SecretAccessKey : fileSession.password
         return PlannedSession(
             session: session, password: secret,
-            jumpPassword: jump != nil ? fileSession.jumpPassword : nil)
+            jumpPassword: jump != nil ? fileSession.jumpPassword : nil,
+            replacesExisting: replacesExisting)
     }
 
     private static func duplicateKey(host: String, port: Int, username: String) -> String {
