@@ -18,8 +18,7 @@ struct PutCommand: AsyncParsableCommand {
 
     func run() async throws {
         let reference = SessionReference.parse(destination)
-        let fs = try await connect(to: reference, options: options)
-        do {
+        try await withConnection(to: reference, options: options) { fs in
             let localFS = LocalFileSystem()
             let sourceItem = try await localFS.stat(path: source)
             try TransferSourceGuard.checkNotDirectory(sourceItem)
@@ -31,7 +30,6 @@ struct PutCommand: AsyncParsableCommand {
                 destinationExists: exists, action: onConflict)
             guard let job = jobs.first else {
                 if options.verbose { OutputFormatter.note("skipped: \(targetPath)") }
-                await fs.disconnect()
                 return
             }
             try await TransferEngine.copyFile(
@@ -39,11 +37,7 @@ struct PutCommand: AsyncParsableCommand {
                 to: fs, destinationDirectory: reference.path,
                 fileName: sourceItem.name
             ) { _ in }
-            await fs.disconnect()
             if options.verbose { OutputFormatter.note("uploaded to \(job.destination)") }
-        } catch {
-            await fs.disconnect()
-            throw error
         }
     }
 

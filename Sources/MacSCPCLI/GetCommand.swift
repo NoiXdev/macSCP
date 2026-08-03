@@ -23,12 +23,7 @@ struct GetCommand: AsyncParsableCommand {
 
     func run() async throws {
         let reference = SessionReference.parse(source)
-        let fs = try await connect(to: reference, options: options)
-        // Awaited disconnect on every path (success, skip, and error) —
-        // mirrors `LsCommand`: the process exits right after `run()`
-        // returns, so a detached `Task` in a `defer` has no guarantee of
-        // running before that happens.
-        do {
+        try await withConnection(to: reference, options: options) { fs in
             let sourceItem = try await fs.stat(path: reference.path)
             try TransferSourceGuard.checkNotDirectory(sourceItem)
 
@@ -39,7 +34,6 @@ struct GetCommand: AsyncParsableCommand {
                 destinationExists: exists, action: onConflict)
             guard let job = jobs.first else {
                 if options.verbose { OutputFormatter.note("skipped: \(targetPath)") }
-                await fs.disconnect()
                 return
             }
             try await TransferEngine.copyFile(
@@ -47,11 +41,7 @@ struct GetCommand: AsyncParsableCommand {
                 to: LocalFileSystem(), destinationDirectory: destination,
                 fileName: sourceItem.name
             ) { _ in }
-            await fs.disconnect()
             if options.verbose { OutputFormatter.note("downloaded to \(job.destination)") }
-        } catch {
-            await fs.disconnect()
-            throw error
         }
     }
 }
