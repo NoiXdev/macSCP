@@ -8,9 +8,20 @@ import Foundation
 public struct PasswordCommandSecretSource: SecretSource {
     public let label = "--password-command"
     private let command: String
+    private let timeout: TimeInterval
 
-    public init(command: String) {
+    /// `timeout` bounds the ENTIRE invocation (launch through exit). 10
+    /// seconds by default: stdin is the null device (see `secret(for:)`
+    /// below), so a correctly-behaving helper can never be waiting on an
+    /// interactive prompt — it is reading from an already-unlocked vault, a
+    /// cache, or making a bounded network call. A helper that hasn't
+    /// answered within a handful of seconds is broken (hung on the network,
+    /// waiting on a prompt with nowhere to answer, or simply wedged), and in
+    /// cron/CI that must fail fast, not hang the invocation forever.
+    /// Injectable so tests never have to wait out the real duration.
+    public init(command: String, timeout: TimeInterval = 10.0) {
         self.command = command
+        self.timeout = timeout
     }
 
     /// A failure here names the COMMAND's failure only: an exit code, or
@@ -32,12 +43,41 @@ public struct PasswordCommandSecretSource: SecretSource {
         } catch {
             throw PasswordCommandError.launchFailed
         }
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+
+        // Drain the pipe on a background queue so a slow/stalled child can
+        // never block this thread past `timeout`. This keeps the safe
+        // ordering (drain BEFORE waiting) that avoids the classic deadlock —
+        // calling `waitUntilExit()` first and draining after can wedge
+        // forever if the child fills the pipe's kernel buffer before it
+        // exits, since the child then blocks on its own `write()` while we
+        // block on `waitUntilExit()`, and neither side ever proceeds. Here
+        // the pipe is always drained concurrently with waiting, on both the
+        // normal and the timeout path.
+        let collected = CollectedOutput()
+        let readQueue = DispatchQueue(label: "macscp.password-command.read")
+        let readDone = DispatchSemaphore(value: 0)
+        readQueue.async {
+            collected.data = stdout.fileHandleForReading.readDataToEndOfFile()
+            readDone.signal()
+        }
+
+        guard readDone.wait(timeout: .now() + timeout) == .success else {
+            // Escalate: ask nicely first, then insist. A broken helper that
+            // ignores SIGTERM (the scenario this whole fix exists for) must
+            // not be left running.
+            process.terminate()
+            if process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+            }
+            process.waitUntilExit()
+            throw PasswordCommandError.timedOut(after: timeout)
+        }
+
         process.waitUntilExit()
         guard process.terminationStatus == 0 else {
             throw PasswordCommandError.commandFailed(status: process.terminationStatus)
         }
-        guard let output = String(data: data, encoding: .utf8) else {
+        guard let output = String(data: collected.data, encoding: .utf8) else {
             throw PasswordCommandError.unreadableOutput
         }
         // Trailing newline stripped the same way shell command substitution
@@ -47,14 +87,25 @@ public struct PasswordCommandSecretSource: SecretSource {
     }
 }
 
+/// Plain reference-type box for the background read queue's result. Only
+/// ever written once, from the read queue, before `readDone` is signaled;
+/// only ever read afterward, from the calling thread — the semaphore
+/// establishes the happens-before edge, so a single unsynchronized property
+/// is safe despite crossing queues.
+private final class CollectedOutput: @unchecked Sendable {
+    var data = Data()
+}
+
 /// Thrown by `PasswordCommandSecretSource`. Deliberately carries no trace of
-/// the command's input or output — only what kind of failure happened — so a
-/// logged or printed error can never disclose a secret typed into, or printed
-/// by, the helper command.
+/// the command's input or output — only what kind of failure happened (and,
+/// for a timeout, the bound that was configured — a fixed setting, never
+/// anything the command produced) — so a logged or printed error can never
+/// disclose a secret typed into, or printed by, the helper command.
 public enum PasswordCommandError: Error, Equatable, Sendable {
     case launchFailed
     case commandFailed(status: Int32)
     case unreadableOutput
+    case timedOut(after: TimeInterval)
 }
 
 /// Reads a secret from a named environment variable — the CI path (M20).

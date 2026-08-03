@@ -28,7 +28,7 @@ struct PasswordCommandSecretSourceTests {
     /// edit can't quietly add an associated value that leaks it.
     @Test func theFailureCasesCarryNoStringPayload() {
         let cases: [PasswordCommandError] = [
-            .launchFailed, .commandFailed(status: 1), .unreadableOutput,
+            .launchFailed, .commandFailed(status: 1), .unreadableOutput, .timedOut(after: 0.05),
         ]
         for failure in cases {
             let description = String(describing: failure)
@@ -50,6 +50,41 @@ struct PasswordCommandSecretSourceTests {
         // command actually printed.
         let source = PasswordCommandSecretSource(command: "true")
         #expect(try source.secret(for: UUID()) == "")
+    }
+
+    /// A helper that stalls forever (a broken script, a hung network call,
+    /// an unanswered prompt with nowhere to answer since stdin is the null
+    /// device) must not hang the CLI forever — it must be bounded and
+    /// throw. `timeout` is injected as a tiny value so this test itself
+    /// finishes quickly rather than waiting out a real-world duration.
+    @Test func aCommandThatOutlivesTheTimeoutThrowsInsteadOfHangingForever() throws {
+        let source = PasswordCommandSecretSource(command: "sleep 30", timeout: 0.05)
+        let started = Date()
+        #expect(throws: PasswordCommandError.timedOut(after: 0.05)) {
+            try source.secret(for: UUID())
+        }
+        // The whole point: this test must finish quickly, not after 30s.
+        #expect(Date().timeIntervalSince(started) < 5)
+    }
+
+    /// The timed-out child must actually be gone, not left running in the
+    /// background consuming resources or holding a lock the next invocation
+    /// might need. Proven by having the command report its own PID before
+    /// stalling, then checking that PID is no longer alive afterward.
+    @Test func aTimedOutCommandsChildProcessDoesNotSurvive() throws {
+        let pidFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macscp-timeout-test-\(UUID().uuidString).pid")
+        defer { try? FileManager.default.removeItem(at: pidFile) }
+        let source = PasswordCommandSecretSource(
+            command: "echo $$ > \(pidFile.path); sleep 30", timeout: 0.05)
+        #expect(throws: PasswordCommandError.timedOut(after: 0.05)) {
+            try source.secret(for: UUID())
+        }
+        let pidText = try String(contentsOf: pidFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let pid = try #require(pid_t(pidText))
+        // Signal 0 sends nothing but checks liveness; ESRCH (-1) means gone.
+        #expect(kill(pid, 0) == -1)
     }
 }
 
