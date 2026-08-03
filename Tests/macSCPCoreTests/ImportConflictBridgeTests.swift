@@ -126,6 +126,40 @@ struct ImportConflictBridgeTests {
         #expect(plan.skipped == ["alpha", "beta"])
     }
 
+    /// M19/T8 review (leftover 1): calling `ask` a second time while a first
+    /// `ask` is still pending must not silently overwrite `self.continuation`
+    /// — that would leak the first continuation and hang whichever import is
+    /// waiting on it forever. Unreachable through the real planners (both
+    /// walk conflicts with a plain sequential `for` loop, never `TaskGroup`/
+    /// `async let`), but nothing enforces that structurally, so the bridge
+    /// itself must not depend on it.
+    @Test func aSecondAskResolvesTheStrandedFirstContinuation() async {
+        let bridge = ImportConflictBridge()
+        let first = Task {
+            await bridge.ask(ImportConflict(itemName: "first", kindLabel: "session"))
+        }
+        _ = await awaitPrompt(bridge)
+        #expect(bridge.currentPrompt?.conflict.itemName == "first")
+
+        let second = Task {
+            await bridge.ask(ImportConflict(itemName: "second", kindLabel: "session"))
+        }
+        // Let the second `ask` run far enough to strand-resolve the first
+        // and install its own prompt.
+        for _ in 0..<50 { await Task.yield() }
+
+        // The stranded first continuation was resolved (as `nil`) rather than
+        // left hanging.
+        let firstResult = await first.value
+        #expect(firstResult == nil)
+        // The second prompt is now the open one — its own continuation is
+        // untouched and can still be answered normally.
+        #expect(bridge.currentPrompt?.conflict.itemName == "second")
+        bridge.resolve((resolution: .skip, applyToAll: false))
+        let secondResult = await second.value
+        #expect(secondResult?.resolution == .skip)
+    }
+
     /// A cancelled planning task resolves an open prompt instead of leaving
     /// the continuation unfulfilled.
     @Test func cancellingThePlanningTaskResolvesTheOpenPrompt() async {

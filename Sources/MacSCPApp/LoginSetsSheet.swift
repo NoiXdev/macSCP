@@ -99,6 +99,15 @@ struct LoginSetsSheet: View {
     }
 
     var body: some View {
+        // Hoisted out of the VStack's own scope (M19/T8 review, leftover 5)
+        // so `.onChange(of: visibleSets)` below — attached to the VStack
+        // itself rather than to the `List` inside it — can still name it.
+        let (predicate, searchError) = sheetSearchPredicate(
+            text: searchText, isRegex: searchIsRegex)
+        let visibleSets = sessionList.loginSets.filter {
+            predicate.matches("\($0.name) \($0.username) \($0.accessKeyID ?? "")")
+        }
+
         VStack(alignment: .leading, spacing: 14) {
             Text(L10n.string("loginSets.title", "Logins")).font(.headline)
 
@@ -110,14 +119,8 @@ struct LoginSetsSheet: View {
                 Text(deleteErrorMessage).font(.caption).foregroundStyle(.red).lineLimit(2)
             }
 
-            let (predicate, searchError) = sheetSearchPredicate(
-                text: searchText, isRegex: searchIsRegex)
             SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
                 .padding(.bottom, 4)
-
-            let visibleSets = sessionList.loginSets.filter {
-                predicate.matches("\($0.name) \($0.username) \($0.accessKeyID ?? "")")
-            }
 
             if visibleSets.isEmpty {
                 Spacer(minLength: 0)
@@ -130,19 +133,6 @@ struct LoginSetsSheet: View {
             } else {
                 List(visibleSets, selection: $selectedID) { set in
                     row(set)
-                }
-                // M18 search regression fix: if the search text filters the
-                // selected row out of `visibleSets`, the footer's
-                // "Edit…"/"Delete…" buttons are gated on `selectedSet`, which
-                // reads from the FULL `sessionList.loginSets` — so without
-                // this, they'd stay enabled and act on (and the delete
-                // dialog would name) a row the user can no longer see.
-                // Clearing the selection here keeps both gates and dialog
-                // text truthful to what's on screen.
-                .onChange(of: visibleSets) { _, newValue in
-                    if let selectedID, !newValue.contains(where: { $0.id == selectedID }) {
-                        self.selectedID = nil
-                    }
                 }
             }
 
@@ -191,6 +181,23 @@ struct LoginSetsSheet: View {
                 Button(L10n.string("common.close", "Close")) { dismiss() }
                     .buttonStyle(.polishedProminent)
                     .keyboardShortcut(.defaultAction)
+            }
+        }
+        // M18 search regression fix, hoisted onto the enclosing container
+        // (M19/T8 review, leftover 5): attaching this to the `List` directly
+        // left it covered only while `visibleSets` was non-empty — the `List`
+        // is removed from the tree entirely once a search matches nothing,
+        // taking the `onChange` with it. Edit…/Delete… are gated on
+        // `selectedSet`, which reads the FULL `sessionList.loginSets`, so
+        // with the search showing "No matches" they stayed enabled and acted
+        // on (and the delete dialog named) a row the user could no longer
+        // see — Export was already immune via `exportScope`'s own membership
+        // check. Attaching to the VStack instead covers both branches of the
+        // `if visibleSets.isEmpty` above, so the selection is cleared
+        // whichever one is on screen.
+        .onChange(of: visibleSets) { _, newValue in
+            if let selectedID, !newValue.contains(where: { $0.id == selectedID }) {
+                self.selectedID = nil
             }
         }
         .padding(20)

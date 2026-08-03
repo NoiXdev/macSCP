@@ -40,7 +40,16 @@ import macSCPCore
 ///
 /// Both import flows present it through `ImportConflictBridge` above:
 /// `ContentView` for sessions, `LoginSetsSheet` for logins.
-struct ImportConflictSheet: View {
+///
+/// `private` (M19/T8 review, leftover 3): the implementer's own worry when
+/// this was still `internal` was that a third import flow could hand-roll
+/// its own `.sheet` around this type and reintroduce the Critical dismissal
+/// bug the bridge exists to prevent. Marking it `private` closes that
+/// structurally rather than by convention — the ONLY way to present this
+/// view from outside this file is `importConflictSheet(bridge:)` below,
+/// which is where the presentation contract that keeps the bridge honest
+/// actually lives.
+private struct ImportConflictSheet: View {
     let conflict: ImportConflict
     let onResolve: (ImportConflictResolution, Bool) -> Void
     let onCancel: () -> Void

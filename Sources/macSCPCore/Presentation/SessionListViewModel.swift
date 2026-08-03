@@ -831,8 +831,11 @@ public final class SessionListViewModel {
     ///
     /// A replace is a replace of the SECRET too (M19). The import file
     /// decides which secret the replaced session ends up with:
-    /// - it carries one → that one is saved under the (reused) id;
-    /// - it carries none (`includesSecrets == false`, the default export) →
+    /// - it carries one (a non-empty string) → that one is saved under the
+    ///   (reused) id;
+    /// - it carries none — either `nil`, or an empty string, which counts as
+    ///   "none" the same way the login-set twin (`applyLoginSetImport`)
+    ///   treats it — (`includesSecrets == false`, the default export) →
     ///   the OLD secret is DELETED rather than left silently bound to the new
     ///   record. Keeping it would mean a session the user just replaced
     ///   connects with a password that is nowhere in the file they imported
@@ -882,7 +885,13 @@ public final class SessionListViewModel {
                 storeFailures += 1
                 continue
             }
-            if let password = planned.password {
+            // `!password.isEmpty`, matching the login-set twin
+            // (`applyLoginSetImport`'s `secretForSet` check): without it, a
+            // file carrying `"password": ""` on a replace took THIS branch
+            // instead of the removal one below, writing an empty Keychain
+            // entry and counting a `passwordsImported` for a "password" that
+            // is not one.
+            if let password = planned.password, !password.isEmpty {
                 do {
                     try secrets.savePassword(password, for: planned.session.id)
                     passwordsImported += 1
