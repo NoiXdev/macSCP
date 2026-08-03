@@ -614,6 +614,7 @@
 "menubar.status.connecting" = "Connexion en cours…";
 "menubar.status.failed" = "Échec";
 "menubar.status.ready" = "Prêt";
+"menubar.tooltip" = "macSCP — connexions et transferts";
 "menubar.transfer.running" = "%d en transfert";
 "menubar.transfer.queued" = "%d en attente";
 "settings.general.menubar" = "Afficher l'icône dans la barre de menus";

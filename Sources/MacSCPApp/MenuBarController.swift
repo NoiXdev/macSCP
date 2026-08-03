@@ -78,9 +78,16 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let name = model.anyTransferActive
             ? "arrow.up.arrow.down.circle.fill"
             : "arrow.up.arrow.down"
+        // The status item is a hit target (clicking it opens the menu below),
+        // and the icon is its only label. `accessibilityDescription` is for
+        // VoiceOver and produces no hover text, so the button carries its own
+        // tooltip. Static on purpose: `updateIcon()` only runs on the
+        // visibility flag and `anyTransferActive`, so anything counting
+        // connections here would go stale between menu opens.
         let image = NSImage(systemSymbolName: name, accessibilityDescription: "macSCP")
         image?.isTemplate = true
         button.image = image
+        button.toolTip = L10n.string("menubar.tooltip", "macSCP — connections and transfers")
     }
 
     // MARK: - NSMenuDelegate
