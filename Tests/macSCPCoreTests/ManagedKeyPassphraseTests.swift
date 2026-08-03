@@ -77,15 +77,15 @@ struct ManagedKeyPassphraseTests {
         func path(_ name: String) -> String {
             store.keyDirectory.appendingPathComponent(name).path
         }
-        #expect(ManagedKeyPassphrase.hasStoredPassphrase(
+        #expect(try ManagedKeyPassphrase.hasStoredPassphrase(
             keyPath: path("with-slot"), store: store, secrets: secrets))
-        #expect(!ManagedKeyPassphrase.hasStoredPassphrase(
+        #expect(try !ManagedKeyPassphrase.hasStoredPassphrase(
             keyPath: path("without-slot"), store: store, secrets: secrets))
-        #expect(!ManagedKeyPassphrase.hasStoredPassphrase(
+        #expect(try !ManagedKeyPassphrase.hasStoredPassphrase(
             keyPath: path("plain"), store: store, secrets: secrets))
         // An external key path is nobody's managed key, so its passphrase
         // belongs in the session's/set's own slot too.
-        #expect(!ManagedKeyPassphrase.hasStoredPassphrase(
+        #expect(try !ManagedKeyPassphrase.hasStoredPassphrase(
             keyPath: "/Users/tim/.ssh/id_ed25519", store: store, secrets: secrets))
         // …and resolving still falls back to the typed value for the
         // slot-less key rather than inventing one.
@@ -106,8 +106,36 @@ struct ManagedKeyPassphraseTests {
         try store.add(key)
         try secrets.savePassword("", for: key.id)
 
-        #expect(!ManagedKeyPassphrase.hasStoredPassphrase(
+        #expect(try !ManagedKeyPassphrase.hasStoredPassphrase(
             keyPath: store.keyDirectory.appendingPathComponent("kf").path,
             store: store, secrets: secrets))
     }
+
+    /// A Keychain read that FAILS is not evidence that no slot exists (M19).
+    /// Answering `false` there makes the save paths persist the typed
+    /// passphrase into the session's/set's own slot while the key's own slot
+    /// still holds it — the very duplication this probe exists to prevent. So
+    /// the failure travels to the caller instead of being flattened into "no".
+    @Test func anUnreadableKeychainThrowsInsteadOfAnsweringNo() throws {
+        let store = tempStore()
+        let key = ManagedKey(
+            name: "k", comment: "", type: .ed25519, fingerprint: "SHA256:x",
+            publicKeyOpenSSH: "ssh-ed25519 AAAA", createdAt: Date(),
+            hasPassphrase: true, fileName: "kf")
+        try store.add(key)
+        let path = store.keyDirectory.appendingPathComponent("kf").path
+
+        #expect(throws: KeychainError.self) {
+            try ManagedKeyPassphrase.hasStoredPassphrase(
+                keyPath: path, store: store, secrets: UnreadableSecretStore())
+        }
+    }
+}
+
+/// Test double whose READ path fails the way a locked Keychain does, while
+/// nothing is missing — the case a `try?` used to render as "no slot".
+private struct UnreadableSecretStore: SecretStore {
+    func savePassword(_ password: String, for sessionID: UUID) throws {}
+    func password(for sessionID: UUID) throws -> String? { throw KeychainError(status: -25308) }
+    func deletePassword(for sessionID: UUID) throws {}
 }
