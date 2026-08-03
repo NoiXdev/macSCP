@@ -14,7 +14,9 @@ struct HostKeyPolicyTests {
 
     @Test func askRejectsWithoutATerminal() {
         // The non-interactive case: no way to ask, so refuse rather than
-        // silently trust. This is the promise every cron job relies on.
+        // silently trust. This is critical for CLI use and the promise every
+        // cron job relies on. This is the regression the old M1 driver failed —
+        // it trusted unknown keys and merely printed the fingerprint.
         #expect(HostKeyPolicy.decision(for: .ask, hasTTY: false) == .reject)
     }
 
@@ -26,14 +28,5 @@ struct HostKeyPolicyTests {
     @Test func acceptNewAcceptsRegardlessOfTerminal() {
         #expect(HostKeyPolicy.decision(for: .acceptNew, hasTTY: true) == .accept)
         #expect(HostKeyPolicy.decision(for: .acceptNew, hasTTY: false) == .accept)
-    }
-
-    /// The shape the CLI relies on: with no terminal and the default policy,
-    /// an unknown key must NOT be trusted. This is the regression that the
-    /// old M1 driver failed — it trusted everything and printed a fingerprint.
-    @Test func defaultPolicyWithoutTerminalNeverAccepts() {
-        let decision = HostKeyPolicy.decision(for: .ask, hasTTY: false)
-        #expect(decision != .accept)
-        #expect(decision == .reject)
     }
 }
