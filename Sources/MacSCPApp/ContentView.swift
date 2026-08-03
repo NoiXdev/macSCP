@@ -1831,15 +1831,25 @@ struct ContentView: View {
     /// duplicate it, or a later stored-session open could read the
     /// (stale-prone) session/set slot instead of the authoritative key.id
     /// one. True only when `form` is in the SSH private-key case AND its
-    /// current `keyPath` resolves to a `ManagedKeyStore` entry that already
-    /// has a passphrase (`hasPassphrase`); password auth, S3, and
-    /// unmanaged/external key paths are unaffected.
+    /// current `keyPath` resolves to a managed key whose slot actually
+    /// EXISTS; password auth, S3, and unmanaged/external key paths are
+    /// unaffected.
+    ///
+    /// The slot is probed, not inferred from `ManagedKey.hasPassphrase`.
+    /// That flag says the key file is encrypted, which for a key materialized
+    /// out of a login-set export WITHOUT secrets (the default, and the common
+    /// case) is true while no slot exists. Trusting it there made
+    /// `passwordToPersist` force `""` and threw away the passphrase the user
+    /// typed -- with no other UI anywhere to store a managed key's passphrase,
+    /// that meant retyping it on every connect, forever. With no `key.id` slot
+    /// there is also nothing to duplicate, so the session/set slot is the right
+    /// home for it, exactly as it is for an external key path.
     private func isManagedKeyWithStoredPassphrase(_ form: ConnectionViewModel) -> Bool {
         guard form.kind == .ssh, form.authChoice == .privateKey else { return false }
-        let keyPath = form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        let store = ManagedKeyStore(directory: SessionStore.defaultDirectory)
-        let key = try? store.key(forPath: keyPath)
-        return key?.hasPassphrase ?? false
+        return ManagedKeyPassphrase.hasStoredPassphrase(
+            keyPath: form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
+            store: ManagedKeyStore(directory: SessionStore.defaultDirectory),
+            secrets: KeychainSecretStore())
     }
 
     /// The value to persist under a session's OWN secret slot (`session.
