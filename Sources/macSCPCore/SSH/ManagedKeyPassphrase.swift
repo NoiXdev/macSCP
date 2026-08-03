@@ -36,11 +36,23 @@ public enum ManagedKeyPassphrase {
     /// `false` for a path macSCP does not manage, which is what the caller
     /// wants: an external key's passphrase belongs in the session's or login
     /// set's own secret slot, and so does a managed key's when it has no slot.
+    ///
+    /// THROWS instead of answering `false` when the key store or the Keychain
+    /// cannot be read at all (M19). "There is no slot" and "I could not find
+    /// out" are different answers, and swallowing the second into the first is
+    /// what makes a transient `SecItemCopyMatching` failure — a locked
+    /// Keychain, a denied prompt — look like a key that never had a slot: the
+    /// caller then persists the typed passphrase into the session's or set's
+    /// own slot, and the SAME secret now sits in two places, which is exactly
+    /// the duplication this function exists to prevent. Callers must decide
+    /// deliberately what an unanswerable probe means for them (see
+    /// `ContentView.isManagedKeyWithStoredPassphrase`, which treats it as "a
+    /// slot may well exist" and declines to duplicate).
     public static func hasStoredPassphrase(
         keyPath: String, store: ManagedKeyStore, secrets: any SecretStore
-    ) -> Bool {
-        guard let key = try? store.key(forPath: keyPath), key.hasPassphrase else { return false }
-        let stored = (try? secrets.password(for: key.id)) ?? nil
+    ) throws -> Bool {
+        guard let key = try store.key(forPath: keyPath), key.hasPassphrase else { return false }
+        let stored = try secrets.password(for: key.id)
         return !(stored ?? "").isEmpty
     }
 }

@@ -274,6 +274,95 @@ struct SessionListViewModelTests {
         #expect(try secrets.password(for: existing.id) == "keep")
     }
 
+    /// M19 finding 1: a replace sourced from a secret-free export must not
+    /// leave the OLD password bound to the reused id. Doing so makes a session
+    /// the user just replaced connect with a credential that appears neither
+    /// in the imported file nor anywhere on screen.
+    @Test func replacingWithoutASecretRemovesTheStaleOne() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let existing = vm.save(name: "web", host: "old.example.com", port: 22,
+                               username: "u", password: "old-pw")!
+
+        let replacement = StoredSession(
+            id: existing.id, name: "web", host: "new.example.com", username: "u2")
+        let result = vm.applyImport(SessionImportPlan(
+            sessionsToImport: [
+                PlannedSession(session: replacement, password: nil, replacesExisting: true),
+            ],
+            replaced: ["web"]))
+
+        #expect(result.secretsRemoved == 1)
+        #expect(result.imported == 1)
+        #expect(try secrets.password(for: existing.id) == nil)
+        #expect(vm.sessions.first { $0.id == existing.id }?.host == "new.example.com")
+    }
+
+    /// A replace that DOES carry a secret simply overwrites, and reports no
+    /// removal — the user loses nothing and is told nothing alarming.
+    @Test func replacingWithASecretOverwritesIt() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let existing = vm.save(name: "web", host: "old.example.com", port: 22,
+                               username: "u", password: "old-pw")!
+
+        let replacement = StoredSession(
+            id: existing.id, name: "web", host: "new.example.com", username: "u2")
+        let result = vm.applyImport(SessionImportPlan(
+            sessionsToImport: [
+                PlannedSession(session: replacement, password: "new-pw", replacesExisting: true),
+            ],
+            replaced: ["web"]))
+
+        #expect(result.secretsRemoved == 0)
+        #expect(result.passwordsImported == 1)
+        #expect(try secrets.password(for: existing.id) == "new-pw")
+    }
+
+    /// A fresh (non-replacing) import that carries no password must not delete
+    /// anything — there is nothing of the user's under that brand-new id.
+    @Test func aFreshImportWithoutAPasswordRemovesNothing() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let existing = vm.save(name: "keep", host: "h", port: 22, username: "u", password: "kept")!
+
+        let result = vm.applyImport(SessionImportPlan(sessionsToImport: [
+            PlannedSession(
+                session: StoredSession(name: "new", host: "h2", username: "u"), password: nil),
+        ]))
+
+        #expect(result.secretsRemoved == 0)
+        #expect(try secrets.password(for: existing.id) == "kept")
+    }
+
+    /// The planner mints a FRESH `secretID` for every imported jump, so a
+    /// replaced record's old jump slot is unreachable afterwards — it must not
+    /// stay in the Keychain forever.
+    @Test func replacingCleansUpTheOldJumpSecretSlot() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let oldJump = StoredSession.JumpSpec(
+            host: "bastion", port: 22, username: "j", authKind: .password)
+        let existing = vm.save(name: "web", host: "h", port: 22, username: "u",
+                               password: "pw", jump: oldJump, jumpSecret: "jump-pw")!
+        let storedJumpID = try #require(vm.sessions.first { $0.id == existing.id }?.jump?.secretID)
+        #expect(try secrets.password(for: storedJumpID) == "jump-pw")
+
+        let replacement = StoredSession(
+            id: existing.id, name: "web", host: "h", username: "u",
+            jump: StoredSession.JumpSpec(
+                host: "bastion", port: 22, username: "j", authKind: .password))
+        _ = vm.applyImport(SessionImportPlan(
+            sessionsToImport: [
+                PlannedSession(
+                    session: replacement, password: "pw", jumpPassword: "new-jump-pw",
+                    replacesExisting: true),
+            ],
+            replaced: ["web"]))
+
+        #expect(try secrets.password(for: storedJumpID) == nil)
+    }
+
     /// `plan.cancelled` must be authoritative on its own, not merely inferred
     /// from the other arrays being empty (which is all a real planner ever
     /// produces): a plan that intentionally carries non-empty content

@@ -793,16 +793,21 @@ public final class SessionListViewModel {
         /// store directory). These are excluded from `imported` and never
         /// get a password save, so no orphaned keychain entry is created.
         public var storeFailures: Int
+        /// Replaced sessions whose previously stored password was DELETED
+        /// because the import file carried none (M19) — see `applyImport`.
+        /// Reported to the user: those sessions now have no saved password.
+        public var secretsRemoved: Int
 
         public init(
             imported: Int, skipped: Int, passwordsImported: Int, passwordFailures: Int,
-            storeFailures: Int
+            storeFailures: Int, secretsRemoved: Int = 0
         ) {
             self.imported = imported
             self.skipped = skipped
             self.passwordsImported = passwordsImported
             self.passwordFailures = passwordFailures
             self.storeFailures = storeFailures
+            self.secretsRemoved = secretsRemoved
         }
     }
 
@@ -815,18 +820,30 @@ public final class SessionListViewModel {
     /// Existing GROUPS are never mutated. Existing SESSIONS can be: a
     /// `PlannedSession` whose `replacesExisting` is true (M19) carries an
     /// EXISTING record's id, and `store.upsert` overwrites that record in
-    /// place. The Keychain side of that overwrite is not yet wired here —
-    /// `planned.password` is only saved when non-nil, so a replace sourced
-    /// from a secret-free export (`includesSecrets == false`) currently
-    /// leaves the OLD session's Keychain secret bound to the (reused) id
-    /// untouched; wiring that up is a following task's job, and
-    /// `replacesExisting` is the seam it uses. A keychain failure for one
-    /// session's password does not abort the import; the session is still
-    /// created/overwritten and the failure is counted. A store-write
-    /// failure for one session does not abort the import either, but that
-    /// session is skipped entirely — including its password save, so no
-    /// keychain entry is orphaned for a session that never landed in the
-    /// store — and it is counted in `storeFailures` rather than `imported`.
+    /// place.
+    ///
+    /// A replace is a replace of the SECRET too (M19). The import file
+    /// decides which secret the replaced session ends up with:
+    /// - it carries one → that one is saved under the (reused) id;
+    /// - it carries none (`includesSecrets == false`, the default export) →
+    ///   the OLD secret is DELETED rather than left silently bound to the new
+    ///   record. Keeping it would mean a session the user just replaced
+    ///   connects with a password that is nowhere in the file they imported
+    ///   and nowhere on screen — the worst of both readings. Deleting it is
+    ///   reported (`secretsRemoved`), so the user knows to re-enter it, and
+    ///   is counted only when a non-empty secret was actually there.
+    /// The old record's JUMP slot is cleaned up on the same principle: the
+    /// planner mints a FRESH `secretID` for every imported jump, so whatever
+    /// the replaced record referenced is unreachable afterwards and would
+    /// linger in the Keychain forever.
+    ///
+    /// A keychain failure for one session's password does not abort the
+    /// import; the session is still created/overwritten and the failure is
+    /// counted. A store-write failure for one session does not abort the
+    /// import either, but that session is skipped entirely — including its
+    /// password save, so no keychain entry is orphaned for a session that
+    /// never landed in the store — and it is counted in `storeFailures`
+    /// rather than `imported`.
     public func applyImport(_ plan: SessionImportPlan) -> SessionImportResult {
         guard !plan.cancelled else {
             return SessionImportResult(
@@ -836,6 +853,10 @@ public final class SessionListViewModel {
         var passwordsImported = 0
         var passwordFailures = 0
         var storeFailures = 0
+        var secretsRemoved = 0
+        // Snapshot BEFORE any write: `store.upsert` overwrites a replaced
+        // record, so its previous jump binding is only readable now.
+        let previousByID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
         for group in plan.groupsToCreate {
             // A failed group write is not fatal: sessions still import
@@ -845,6 +866,7 @@ public final class SessionListViewModel {
             try? store.upsertGroup(group)
         }
         for planned in plan.sessionsToImport {
+            let previous = planned.replacesExisting ? previousByID[planned.session.id] : nil
             do {
                 try store.upsert(planned.session)
                 imported += 1
@@ -859,6 +881,24 @@ public final class SessionListViewModel {
                 } catch {
                     passwordFailures += 1
                 }
+            } else if planned.replacesExisting {
+                // No secret came with the replacement: the old one must not
+                // survive under the reused id. Probed first so the report
+                // only ever claims a removal that happened.
+                let stale = (try? secrets.password(for: planned.session.id)) ?? nil
+                if !(stale ?? "").isEmpty {
+                    try? secrets.deletePassword(for: planned.session.id)
+                    secretsRemoved += 1
+                }
+            }
+            // Orphan hygiene for a replaced record's jump secret: the planner
+            // always mints a fresh `secretID`, so the old slot is unreachable
+            // from here on. Best-effort and never counted — nothing the user
+            // could act on, unlike the target secret above.
+            if let previousJumpID = previous?.jump?.secretID,
+               previousJumpID != planned.session.jump?.secretID
+            {
+                try? secrets.deletePassword(for: previousJumpID)
             }
             // Jump secret (M10c): stored under the FRESH secretID the
             // planner generated for `planned.session.jump`. Counted the same
@@ -878,6 +918,248 @@ public final class SessionListViewModel {
         return SessionImportResult(
             imported: imported, skipped: plan.skipped.count,
             passwordsImported: passwordsImported, passwordFailures: passwordFailures,
-            storeFailures: storeFailures)
+            storeFailures: storeFailures, secretsRemoved: secretsRemoved)
+    }
+
+    // MARK: - Login-set export/import (M19)
+
+    /// A built `.macscplogins` payload plus everything the export sheet has to
+    /// tell the user about what did NOT make it into the file.
+    public struct LoginSetExportResult: Equatable {
+        public var payload: LoginSetExportPayload
+        /// Password/S3 sets that have no stored secret while secrets were
+        /// requested. Key sets are excluded: an unencrypted key legitimately
+        /// has no passphrase, so counting them would cry wolf on every export.
+        public var missingSecretCount: Int
+        /// Names of the sets whose MANAGED key could not be read (the key file
+        /// vanished, or is unreadable). Those sets export without their key
+        /// file — everything else about them still travels.
+        public var keyErrors: [String]
+        /// Embedded key files that travel WITHOUT their passphrase: encrypted
+        /// key material the receiving side cannot unlock until the user types
+        /// the passphrase there. Never silent — the sheet says so.
+        public var keysWithoutPassphrase: Int
+        /// Key sets whose `keyPath` is not a macSCP-managed key. Their file is
+        /// deliberately never read (`EmbeddedKeyPorter.embed`), so the export
+        /// carries the path string only.
+        public var externalKeyCount: Int
+
+        public init(
+            payload: LoginSetExportPayload, missingSecretCount: Int, keyErrors: [String],
+            keysWithoutPassphrase: Int, externalKeyCount: Int
+        ) {
+            self.payload = payload
+            self.missingSecretCount = missingSecretCount
+            self.keyErrors = keyErrors
+            self.keysWithoutPassphrase = keysWithoutPassphrase
+            self.externalKeyCount = externalKeyCount
+        }
+    }
+
+    /// Builds the export payload for the given sets (spec M19 "Payload").
+    ///
+    /// `includesSecrets`/`includesKeyFiles` on the returned payload describe
+    /// what is ACTUALLY in it, not what was asked for: both planners gate on
+    /// those flags, so a flag that overstates makes the import promise
+    /// material that is not there, and one that understates makes it drop
+    /// material that is. Asking for secrets when no set has one therefore
+    /// yields `includesSecrets == false`.
+    ///
+    /// Key files are embedded only for macSCP-MANAGED keys — an external
+    /// `keyPath` (`~/.ssh/...`) is never opened, only its path travels.
+    ///
+    /// Passphrase sourcing (M19 finding 3): `EmbeddedKeyPorter.embed` can only
+    /// look in the key's OWN Keychain slot. A key that arrived from an earlier
+    /// import WITHOUT its passphrase has no such slot, and the passphrase the
+    /// user has typed since lives in the LOGIN SET's slot instead (that is
+    /// where `ManagedKeyPassphrase`/`LoginResolver` put it and read it from).
+    /// The porter cannot see that slot; this caller can, and fills it in — so
+    /// "export with secrets" does not silently ship a locked key whose
+    /// passphrase the exporting machine had all along.
+    public func loginSetExportPayload(
+        for sets: [LoginSet], includeSecrets: Bool, includeKeyFiles: Bool,
+        keyStore: ManagedKeyStore = ManagedKeyStore(directory: SessionStore.defaultDirectory)
+    ) -> LoginSetExportResult {
+        var missingSecretCount = 0
+        var keyErrors: [String] = []
+        var keysWithoutPassphrase = 0
+        var externalKeyCount = 0
+
+        let exported: [ExportedLoginSet] = sets.map { set in
+            // Agent sets (M10d) never have a secret — nothing to read, nothing
+            // to report as missing.
+            var secret: String?
+            if includeSecrets, set.authKind != .agent {
+                secret = (try? secrets.password(for: set.id)) ?? nil
+                if (secret ?? "").isEmpty, set.authKind == .password {
+                    missingSecretCount += 1
+                }
+            }
+
+            var embeddedKey: EmbeddedKey?
+            if includeKeyFiles, set.authKind == .privateKey {
+                do {
+                    embeddedKey = try EmbeddedKeyPorter.embed(
+                        keyPath: set.keyPath, includePassphrase: includeSecrets,
+                        store: keyStore, secrets: secrets)
+                    if embeddedKey == nil, !(set.keyPath ?? "").isEmpty {
+                        externalKeyCount += 1
+                    }
+                } catch {
+                    // One broken key never aborts the export of the other
+                    // sets; the set travels without its key file and is named
+                    // in the summary.
+                    keyErrors.append(set.name)
+                }
+                if var key = embeddedKey, key.hasPassphrase, (key.passphrase ?? "").isEmpty {
+                    if includeSecrets, let setSecret = secret, !setSecret.isEmpty {
+                        key.passphrase = setSecret
+                        embeddedKey = key
+                    } else {
+                        keysWithoutPassphrase += 1
+                    }
+                }
+            }
+
+            return ExportedLoginSet(
+                id: set.id, name: set.name, kind: set.kind, username: set.username,
+                authKind: set.authKind, keyPath: set.keyPath, accessKeyID: set.accessKeyID,
+                secret: (secret ?? "").isEmpty ? nil : secret, embeddedKey: embeddedKey)
+        }
+
+        let payload = LoginSetExportPayload(
+            includesSecrets: exported.contains {
+                $0.secret != nil || !($0.embeddedKey?.passphrase ?? "").isEmpty
+            },
+            includesKeyFiles: exported.contains { $0.embeddedKey != nil },
+            sets: exported)
+        return LoginSetExportResult(
+            payload: payload, missingSecretCount: missingSecretCount, keyErrors: keyErrors,
+            keysWithoutPassphrase: keysWithoutPassphrase, externalKeyCount: externalKeyCount)
+    }
+
+    /// The outcome of applying a `LoginSetImportPlan`.
+    public struct LoginSetImportResult: Equatable {
+        public var imported: Int
+        public var replaced: Int
+        public var skipped: Int
+        public var renamed: Int
+        public var secretsImported: Int
+        /// Replaced sets whose previously stored secret was deleted because
+        /// the file carried none — same rule as `SessionImportResult`.
+        public var secretsRemoved: Int
+        public var secretFailures: Int
+        public var storeFailures: Int
+        public var keysImported: Int
+        /// Names of the sets whose embedded key could not be materialized
+        /// (fingerprint mismatch, unverifiable material, unwritable key
+        /// store). The set itself is still imported — with the `keyPath` the
+        /// file carried, which usually points nowhere on this machine and is
+        /// then flagged in `missingKeyPaths`.
+        public var keyFailures: [String]
+        /// Names of the imported key sets whose `keyPath` does not exist on
+        /// THIS machine. Not an error — the list says so, and the user can
+        /// point the set at a local key.
+        public var missingKeyPaths: [String]
+
+        public init(
+            imported: Int = 0, replaced: Int = 0, skipped: Int = 0, renamed: Int = 0,
+            secretsImported: Int = 0, secretsRemoved: Int = 0, secretFailures: Int = 0,
+            storeFailures: Int = 0, keysImported: Int = 0, keyFailures: [String] = [],
+            missingKeyPaths: [String] = []
+        ) {
+            self.imported = imported
+            self.replaced = replaced
+            self.skipped = skipped
+            self.renamed = renamed
+            self.secretsImported = secretsImported
+            self.secretsRemoved = secretsRemoved
+            self.secretFailures = secretFailures
+            self.storeFailures = storeFailures
+            self.keysImported = keysImported
+            self.keyFailures = keyFailures
+            self.missingKeyPaths = missingKeyPaths
+        }
+    }
+
+    /// Applies a `LoginSetImportPlan`: materializes embedded keys, writes the
+    /// sets, and stores their secrets (spec M19).
+    ///
+    /// A cancelled plan applies and reports NOTHING — checked directly, like
+    /// `applyImport`, rather than inferred from empty arrays.
+    ///
+    /// Order per set: materialize the key first (it decides the final
+    /// `keyPath`), then the store record, then the Keychain. A key that lands
+    /// while the store write then fails is rolled back out of the key store
+    /// again, so a failed import leaves no key behind that belongs to no set.
+    ///
+    /// Replace and secrets follow the session importer exactly: a replacement
+    /// that carries a secret overwrites the old one, and a replacement that
+    /// carries none DELETES it (counted in `secretsRemoved`) instead of
+    /// leaving the previous credential bound to the set the user just
+    /// replaced.
+    public func applyLoginSetImport(
+        _ plan: LoginSetImportPlan,
+        keyStore: ManagedKeyStore = ManagedKeyStore(directory: SessionStore.defaultDirectory)
+    ) -> LoginSetImportResult {
+        guard !plan.cancelled else { return LoginSetImportResult() }
+
+        var result = LoginSetImportResult(
+            skipped: plan.skipped.count, renamed: plan.renamed.count)
+
+        for planned in plan.setsToImport {
+            var set = planned.set
+            var materializedKeyID: UUID?
+
+            if let embedded = planned.embeddedKey {
+                do {
+                    let path = try EmbeddedKeyPorter.materialize(
+                        embedded, store: keyStore, secrets: secrets)
+                    set.keyPath = path
+                    materializedKeyID = (try? keyStore.key(forPath: path))??.id
+                    result.keysImported += 1
+                } catch {
+                    // The set still imports — without a usable key path, which
+                    // `missingKeyPaths` below then surfaces.
+                    result.keyFailures.append(set.name)
+                }
+            }
+
+            do {
+                try loginSetStore.upsert(set)
+            } catch {
+                result.storeFailures += 1
+                // Undo the key that was just written for a set that never
+                // landed: it would otherwise sit in the key list owned by
+                // nothing.
+                if let materializedKeyID {
+                    try? keyStore.remove(id: materializedKeyID, secrets: secrets)
+                    result.keysImported -= 1
+                }
+                continue
+            }
+            result.imported += 1
+            if planned.replacesExisting { result.replaced += 1 }
+
+            if let secret = planned.secret, !secret.isEmpty {
+                do {
+                    try secrets.savePassword(secret, for: set.id)
+                    result.secretsImported += 1
+                } catch {
+                    result.secretFailures += 1
+                }
+            } else if planned.replacesExisting {
+                let stale = (try? secrets.password(for: set.id)) ?? nil
+                if !(stale ?? "").isEmpty {
+                    try? secrets.deletePassword(for: set.id)
+                    result.secretsRemoved += 1
+                }
+            }
+
+            if set.keyFileIsMissing { result.missingKeyPaths.append(set.name) }
+        }
+
+        reload()
+        return result
     }
 }

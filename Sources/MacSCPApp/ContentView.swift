@@ -1844,12 +1844,24 @@ struct ContentView: View {
     /// that meant retyping it on every connect, forever. With no `key.id` slot
     /// there is also nothing to duplicate, so the session/set slot is the right
     /// home for it, exactly as it is for an external key path.
+    ///
+    /// M19: a probe that cannot be ANSWERED (an unreadable key store, a
+    /// Keychain that refuses the read) is treated as `true`, i.e. "assume the
+    /// key has its own slot". The alternative — the `try?` this used to be —
+    /// turns a transient failure into "no slot" and duplicates the typed
+    /// passphrase into the session's/set's own slot, permanently, which is
+    /// precisely what this function exists to prevent. Declining to persist is
+    /// recoverable (the user retypes it); a silent duplicate is not.
     private func isManagedKeyWithStoredPassphrase(_ form: ConnectionViewModel) -> Bool {
         guard form.kind == .ssh, form.authChoice == .privateKey else { return false }
-        return ManagedKeyPassphrase.hasStoredPassphrase(
-            keyPath: form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
-            store: ManagedKeyStore(directory: SessionStore.defaultDirectory),
-            secrets: KeychainSecretStore())
+        do {
+            return try ManagedKeyPassphrase.hasStoredPassphrase(
+                keyPath: form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
+                store: ManagedKeyStore(directory: SessionStore.defaultDirectory),
+                secrets: KeychainSecretStore())
+        } catch {
+            return true
+        }
     }
 
     /// The value to persist under a session's OWN secret slot (`session.

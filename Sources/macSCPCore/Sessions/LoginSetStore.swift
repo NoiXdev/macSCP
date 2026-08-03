@@ -33,6 +33,25 @@ public struct LoginSet: Equatable, Identifiable, Sendable {
     }
 }
 
+extension LoginSet {
+    /// True when this set authenticates with a private key whose file is NOT
+    /// on this machine (M19). A `.macscplogins` file exported without embedded
+    /// key files carries only the `keyPath` STRING, so an imported set can
+    /// point at a path that exists on the exporting machine and nowhere else —
+    /// and the failure would otherwise only surface at connect time.
+    ///
+    /// Display-only: nothing acts on this, it just lets the login list say so.
+    /// `false` for every other auth kind (and for an empty path), because
+    /// "missing key file" is not a statement anyone can make about them.
+    public var keyFileIsMissing: Bool {
+        guard authKind == .privateKey else { return false }
+        guard let keyPath, !keyPath.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return false
+        }
+        return !FileManager.default.fileExists(atPath: (keyPath as NSString).expandingTildeInPath)
+    }
+}
+
 /// JSON persistence for login sets (`logins.json`), following the
 /// SessionStore pattern: stateless, atomic writes.
 ///
