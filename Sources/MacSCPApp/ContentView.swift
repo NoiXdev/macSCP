@@ -3128,6 +3128,16 @@ struct ContentView: View {
                 "Stored passwords removed because the file had none: %lld"),
                 result.secretsRemoved))
         }
+        // The other half of that rule: a removal the Keychain refused leaves
+        // the OLD credential live under the reused id. Silence there would be
+        // the worst case of all — a session connecting with a password the
+        // user believes they just replaced.
+        if result.secretRemovalFailures > 0 {
+            lines.append(String(format: L10n.string(
+                "import.result.secretsRemoveFailed %lld",
+                "Stored passwords that could not be removed: %lld"),
+                result.secretRemovalFailures))
+        }
         if result.passwordFailures > 0 {
             lines.append(String(format: L10n.string(
                 "import.result.passwordFailures %lld", "Passwords that could not be saved: %lld"),

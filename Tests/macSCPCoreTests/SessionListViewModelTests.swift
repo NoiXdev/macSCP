@@ -319,6 +319,68 @@ struct SessionListViewModelTests {
         #expect(try secrets.password(for: existing.id) == "new-pw")
     }
 
+    /// M19 review (important 1): the stale-secret probe used `try?`, so a
+    /// Keychain that is there but not ANSWERING — locked, prompt denied,
+    /// `errSecInteractionNotAllowed` — read as "there is no secret", and the
+    /// replace left the old password bound to the reused id with nothing said
+    /// to the user. That is the very state finding 1 exists to eliminate, and
+    /// it re-flattened the distinction `hasStoredPassphrase` had just drawn
+    /// 250 lines away. The delete is idempotent, so it no longer depends on
+    /// what the probe could establish.
+    @Test func aReplaceRemovesTheStaleSecretEvenWhenTheKeychainCannotBeRead() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = UnreliableSecretStore(failsReads: true)
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: secrets,
+            loginSetStore: LoginSetStore(directory: dir))
+        let existing = vm.save(name: "web", host: "old.example.com", port: 22,
+                               username: "u", password: "old-pw")!
+        #expect(secrets.peek(existing.id) == "old-pw")
+
+        let result = vm.applyImport(SessionImportPlan(
+            sessionsToImport: [
+                PlannedSession(
+                    session: StoredSession(
+                        id: existing.id, name: "web", host: "new.example.com", username: "u2"),
+                    password: nil, replacesExisting: true),
+            ],
+            replaced: ["web"]))
+
+        #expect(secrets.peek(existing.id) == nil)
+        // Nothing is CLAIMED: the probe could not establish that a secret was
+        // there, and the summary never reports a removal it cannot prove.
+        #expect(result.secretsRemoved == 0)
+    }
+
+    /// …and when the DELETE itself fails, the old credential really can
+    /// survive the replace. That is the one case the user has to hear about.
+    @Test func aRemovalThatFailsIsReported() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = UnreliableSecretStore(failsDeletes: true)
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: secrets,
+            loginSetStore: LoginSetStore(directory: dir))
+        let existing = vm.save(name: "web", host: "old.example.com", port: 22,
+                               username: "u", password: "old-pw")!
+
+        let result = vm.applyImport(SessionImportPlan(
+            sessionsToImport: [
+                PlannedSession(
+                    session: StoredSession(
+                        id: existing.id, name: "web", host: "new.example.com", username: "u2"),
+                    password: nil, replacesExisting: true),
+            ],
+            replaced: ["web"]))
+
+        #expect(result.secretRemovalFailures == 1)
+        #expect(result.secretsRemoved == 0)
+        #expect(secrets.peek(existing.id) == "old-pw")
+    }
+
     /// A fresh (non-replacing) import that carries no password must not delete
     /// anything — there is nothing of the user's under that brand-new id.
     @Test func aFreshImportWithoutAPasswordRemovesNothing() throws {

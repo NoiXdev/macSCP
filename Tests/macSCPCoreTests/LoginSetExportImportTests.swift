@@ -286,6 +286,53 @@ struct LoginSetExportImportTests {
         #expect(try secrets.password(for: existing.id) == nil)
     }
 
+    /// The login-set twin of `aReplaceRemovesTheStaleSecretEvenWhenTheKeychain
+    /// CannotBeRead` (M19 review, important 1): an unreadable Keychain is not
+    /// evidence that there is no secret, so the delete runs regardless.
+    @Test func aReplaceRemovesTheStaleSecretEvenWhenTheKeychainCannotBeRead() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-loginio-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = UnreliableSecretStore(failsReads: true)
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: secrets,
+            loginSetStore: LoginSetStore(directory: dir))
+        let existing = LoginSet(name: "prod", username: "old")
+        vm.saveLoginSet(existing, secret: "old-pw")
+        #expect(secrets.peek(existing.id) == "old-pw")
+
+        let result = vm.applyLoginSetImport(LoginSetImportPlan(setsToImport: [
+            PlannedLoginSet(
+                set: LoginSet(id: existing.id, name: "prod", username: "new"),
+                secret: nil, embeddedKey: nil, replacesExisting: true),
+        ], replaced: ["prod"]), keyStore: keyStore(in: dir))
+
+        #expect(secrets.peek(existing.id) == nil)
+        #expect(result.secretsRemoved == 0)
+    }
+
+    @Test func aRemovalThatFailsIsReported() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-loginio-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = UnreliableSecretStore(failsDeletes: true)
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: secrets,
+            loginSetStore: LoginSetStore(directory: dir))
+        let existing = LoginSet(name: "prod", username: "old")
+        vm.saveLoginSet(existing, secret: "old-pw")
+
+        let result = vm.applyLoginSetImport(LoginSetImportPlan(setsToImport: [
+            PlannedLoginSet(
+                set: LoginSet(id: existing.id, name: "prod", username: "new"),
+                secret: nil, embeddedKey: nil, replacesExisting: true),
+        ], replaced: ["prod"]), keyStore: keyStore(in: dir))
+
+        #expect(result.secretRemovalFailures == 1)
+        #expect(result.secretsRemoved == 0)
+        #expect(secrets.peek(existing.id) == "old-pw")
+    }
+
     /// A FRESH import that carries no secret must not delete anything — only a
     /// replace touches an existing slot.
     @Test func aFreshImportWithoutASecretRemovesNothing() throws {

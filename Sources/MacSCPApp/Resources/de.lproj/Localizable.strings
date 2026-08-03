@@ -382,6 +382,7 @@
 // Login-Sets: Export/Import (M19/T8)
 "import.result.resolved %lld %lld" = "%lld ersetzt, %lld umbenannt";
 "import.result.secretsRemoved %lld" = "Gespeicherte Passwörter entfernt, weil die Datei keine enthielt: %lld";
+"import.result.secretsRemoveFailed %lld" = "Gespeicherte Passwörter, die nicht entfernt werden konnten: %lld";
 "logins.export.title" = "Logins exportieren";
 "logins.export.summary %lld" = "%lld Logins";
 "logins.export.action" = "Exportieren…";
