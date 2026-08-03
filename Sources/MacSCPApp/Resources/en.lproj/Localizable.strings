@@ -378,6 +378,29 @@
 "import.conflict.cancel" = "Cancel Import";
 "import.conflict.cancelNote" = "Cancelling imports nothing.";
 
+// Login sets: export/import (M19/T8)
+"import.result.resolved %lld %lld" = "%lld replaced, %lld renamed";
+"import.result.secretsRemoved %lld" = "Stored passwords removed because the file had none: %lld";
+"logins.export.title" = "Export Logins";
+"logins.export.summary %lld" = "%lld logins";
+"logins.export.action" = "Export…";
+"logins.export.includeSecrets" = "Include passwords";
+"logins.export.includeKeyFiles" = "Embed key files";
+"logins.export.keyFilesHint" = "Only keys managed by macSCP are embedded. Keys from other locations travel as a path only.";
+"logins.export.plaintextWarning" = "Passwords and private key files will be stored unencrypted in this file. Anyone who obtains it can use these logins.";
+"logins.export.missingSecrets %lld" = "Exported without a password: %lld";
+"logins.export.externalKeys %lld" = "Key files not embedded (not managed by macSCP): %lld";
+"logins.export.keysWithoutPassphrase %lld" = "Key files exported without their passphrase: %lld";
+"logins.export.keyErrors %@" = "Key files that could not be read: %@";
+"logins.import.action" = "Import…";
+"logins.import.result %lld %lld %lld" = "%lld imported, %lld replaced, %lld skipped";
+"logins.import.renamed %lld" = "Imported under a new name: %lld";
+"logins.import.keysImported %lld" = "Key files imported: %lld";
+"logins.import.missingKeys %@" = "Key file missing on this Mac: %@";
+"logins.import.keyFailures %@" = "Key files that could not be imported: %@";
+"logins.import.secretsRemoved %lld" = "Stored passwords removed because the file had none: %lld";
+"logins.import.notExport" = "Not a macSCP logins file.";
+
 /* Audit log sheet (M9b/T3) */
 "audit.filter.all" = "All";
 "audit.filter.transfers" = "Transfers";
@@ -420,6 +443,7 @@
 "menu.hiddenImports %@" = "Hidden Imports (%@)…";
 "menu.exportAllSessions" = "Export All Sessions…";
 "menu.importSessions" = "Import Sessions…";
+"menu.importLogins" = "Import Logins…";
 "menu.terminal" = "Terminal";
 "menu.terminal.toggle" = "Show/Hide Terminal";
 "menu.terminal.openExternal" = "Open in External Terminal";
@@ -497,6 +521,8 @@
 "loginSets.badge.pass" = "PASS";
 "loginSets.badge.agent" = "AGENT";
 "loginSets.badge.s3" = "S3";
+"loginSets.keyMissing" = "Key file missing";
+"loginSets.keyMissing.help" = "This key file does not exist on this Mac. Choose a key in the editor.";
 
 /* Connection form — three-way login switcher (M10b/T3) */
 "form.loginMode.label" = "Login";

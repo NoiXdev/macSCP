@@ -36,6 +36,10 @@ final class TabCommands {
     var hiddenImportsCount = 0
     var exportAllSessions: (() -> Void)?
     var importSessions: (() -> Void)?
+    /// "Import Logins…" (M19/T8) — opens the login-sets sheet with its file
+    /// picker armed. Exporting logins lives in that sheet only (it needs a
+    /// selection to scope), so there is no menu counterpart for it.
+    var importLogins: (() -> Void)?
     /// Terminal menu (M11d/T2): these two entries always offer BOTH ways to
     /// open a session's shell, regardless of `SettingsStore.terminalTarget`
     /// — the setting only picks what ⌘T/the toolbar button do, it never
@@ -242,6 +246,9 @@ struct MacSCPApp: App {
                 }
                 Button(L10n.string("menu.importSessions", "Import Sessions…")) {
                     tabCommands.importSessions?()
+                }
+                Button(L10n.string("menu.importLogins", "Import Logins…")) {
+                    tabCommands.importLogins?()
                 }
             }
             // "Terminal" menu (M11d/T2, spec §4): always offers BOTH ways to
