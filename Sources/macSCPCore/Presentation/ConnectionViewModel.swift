@@ -70,10 +70,10 @@ public final class ConnectionViewModel {
         case edit(sessionID: UUID)
     }
 
-    /// The decider consulted for an unknown host key during an SSH connect
-    /// (TOFU) — extracted from the formerly-inline closure type so
-    /// `BackendConnector` and other callers can name it (M12/T3).
-    public typealias HostKeyDecider = @Sendable (HostKeyCandidate) async -> Bool
+    /// Moved to `Connection/HostKeyDecider.swift` in M20 so non-UI callers
+    /// (the CLI) need not reach into the presentation layer. Kept as an alias
+    /// so existing call sites and their doc references keep working.
+    public typealias HostKeyDecider = macSCPCore.HostKeyDecider
 
     /// Generalized over `ConnectionKind` (M12/T3): the connector now takes a
     /// typed `ConnectionConfig` instead of an SSH-only config, so the same
