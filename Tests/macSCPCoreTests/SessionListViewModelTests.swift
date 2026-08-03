@@ -739,7 +739,7 @@ struct SessionListViewModelTests {
     /// secret-free config intact, and its Keychain secret (the access key's
     /// secret) carried through the same `password` channel as an SSH
     /// session's password.
-    @Test func s3SessionSurvivesExportImportRoundtrip() throws {
+    @Test func s3SessionSurvivesExportImportRoundtrip() async throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -775,7 +775,11 @@ struct SessionListViewModelTests {
         let data = try SessionExportCodec.encode(payload, password: "export-pw")
         let decoded = try SessionExportCodec.decode(data, password: "export-pw")
 
-        let plan = SessionImportPlanner.plan(existing: [], existingGroups: [], incoming: decoded)
+        // Nothing exists in the target store, so the planner must not reach
+        // for the arbiter at all (M19).
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: decoded,
+            arbiter: ImportConflictArbiter { _ in Issue.record("decider must not be asked"); return nil })
         let importedVM = SessionListViewModel(
             store: SessionStore(directory: dir.appendingPathComponent("import-target")),
             secrets: InMemorySecretStore())

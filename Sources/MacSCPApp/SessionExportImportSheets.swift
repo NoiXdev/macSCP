@@ -232,7 +232,7 @@ struct ImportPasswordSheet: View {
     /// Attempts `SessionExportCodec.decode` + the planner + `applyImport`
     /// with the given password. Returns an inline error message (stays open)
     /// or `nil` (dismiss — `ContentView` has already shown the result alert).
-    let onSubmit: (String) -> String?
+    let onSubmit: (String) async -> String?
     let onCancel: () -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -273,12 +273,17 @@ struct ImportPasswordSheet: View {
         guard !isWorking, !password.isEmpty else { return }
         isWorking = true
         let candidate = password
-        let error = onSubmit(candidate)
-        isWorking = false
-        if let error {
-            errorMessage = error
-        } else {
-            dismiss()
+        // Decoding and planning are async since M19 (the planner can ask
+        // about duplicates), so the sheet stays responsive and `isWorking`
+        // actually covers the work instead of flipping within one turn.
+        Task {
+            let error = await onSubmit(candidate)
+            isWorking = false
+            if let error {
+                errorMessage = error
+            } else {
+                dismiss()
+            }
         }
     }
 }
