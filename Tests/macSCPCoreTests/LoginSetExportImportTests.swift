@@ -381,6 +381,125 @@ struct LoginSetExportImportTests {
         #expect(try targetKeys.all().count == 1)
     }
 
+    // MARK: - Roundtrip: where an imported key's passphrase ends up
+
+    /// M19 review (important 2): export with secrets AND keys on machine A,
+    /// import on machine B. The passphrase used to land in BOTH slots — the
+    /// managed key's own (written by `materialize`) and the login set's
+    /// (written by the applier from the same value) — which is precisely the
+    /// duplication `ManagedKeyPassphrase.hasStoredPassphrase` exists to
+    /// prevent. Worse, the SET's slot wins at connect time (`resolve` prefers
+    /// the typed/set value), so changing the passphrase later in the SSH keys
+    /// sheet would leave the stale copy in force.
+    @Test func anImportedKeyPassphraseIsStoredInExactlyOneSlot() throws {
+        // Machine A: a managed key with its passphrase, and a set bound to it
+        // whose own slot holds the same value (what the editor writes).
+        let (vmA, secretsA, dirA) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dirA) }
+        let keysA = keyStore(in: dirA)
+        let keyA = try addManagedKey(to: keysA, secrets: secretsA, name: "prod", passphrase: "pp")
+        vmA.saveLoginSet(
+            LoginSet(name: "prod", username: "deploy", authKind: .privateKey,
+                     keyPath: path(of: keyA, in: keysA)),
+            secret: "pp")
+        let payload = vmA.loginSetExportPayload(
+            for: vmA.loginSets, includeSecrets: true, includeKeyFiles: true,
+            keyStore: keysA).payload
+        #expect(payload.sets[0].secret == "pp")
+        #expect(payload.sets[0].embeddedKey?.passphrase == "pp")
+
+        // Machine B.
+        let (vmB, secretsB, dirB) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dirB) }
+        let keysB = keyStore(in: dirB)
+        let fileSet = payload.sets[0]
+        let plan = LoginSetImportPlan(setsToImport: [
+            PlannedLoginSet(
+                set: LoginSet(name: fileSet.name, username: fileSet.username,
+                              authKind: fileSet.authKind, keyPath: fileSet.keyPath),
+                secret: fileSet.secret, embeddedKey: fileSet.embeddedKey,
+                replacesExisting: false),
+        ])
+
+        let result = vmB.applyLoginSetImport(plan, keyStore: keysB)
+
+        #expect(result.keysImported == 1)
+        let imported = try #require(vmB.loginSets.first)
+        let importedKey = try #require(try keysB.key(forPath: imported.keyPath ?? ""))
+        // The key owns its passphrase…
+        #expect(try secretsB.password(for: importedKey.id) == "pp")
+        // …and the set does NOT hold a second copy.
+        #expect(try secretsB.password(for: imported.id) == nil)
+        // Connect time still finds it, through the key's slot.
+        #expect(ManagedKeyPassphrase.resolve(
+            keyPath: imported.keyPath ?? "", typed: "", store: keysB,
+            secrets: secretsB) == "pp")
+    }
+
+    /// The other side of that rule: when `materialize` did NOT take the
+    /// passphrase (an unencrypted key, or one whose carried passphrase did not
+    /// open it), the set's secret is still the only place it can live, and
+    /// must not be dropped.
+    @Test func aSecretIsStillStoredWhenTheKeyDidNotTakeIt() throws {
+        let (vmA, secretsA, dirA) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dirA) }
+        let keysA = keyStore(in: dirA)
+        // No passphrase on the key at all.
+        let keyA = try addManagedKey(to: keysA, secrets: secretsA, name: "prod")
+        let embedded = try #require(try EmbeddedKeyPorter.embed(
+            keyPath: path(of: keyA, in: keysA), includePassphrase: true,
+            store: keysA, secrets: secretsA))
+
+        let (vmB, secretsB, dirB) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dirB) }
+        let plan = LoginSetImportPlan(setsToImport: [
+            PlannedLoginSet(
+                set: LoginSet(name: "prod", username: "deploy", authKind: .privateKey,
+                              keyPath: "/nowhere/id_ed25519"),
+                secret: "kept", embeddedKey: embedded, replacesExisting: false),
+        ])
+
+        let result = vmB.applyLoginSetImport(plan, keyStore: keyStore(in: dirB))
+
+        #expect(result.secretsImported == 1)
+        let imported = try #require(vmB.loginSets.first)
+        #expect(try secretsB.password(for: imported.id) == "kept")
+    }
+
+    /// A REPLACE whose key took the passphrase must also clear the set's old
+    /// slot — leaving it would keep the stale value winning at connect time.
+    /// It is not reported as a removal: nothing was lost, the passphrase just
+    /// lives with the key now.
+    @Test func aReplaceWhoseKeyTookThePassphraseClearsTheSetSlotQuietly() throws {
+        let (vmA, secretsA, dirA) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dirA) }
+        let keysA = keyStore(in: dirA)
+        let keyA = try addManagedKey(to: keysA, secrets: secretsA, name: "prod", passphrase: "new-pp")
+        let embedded = try #require(try EmbeddedKeyPorter.embed(
+            keyPath: path(of: keyA, in: keysA), includePassphrase: true,
+            store: keysA, secrets: secretsA))
+
+        let (vmB, secretsB, dirB) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dirB) }
+        let existing = LoginSet(name: "prod", username: "old", authKind: .privateKey,
+                                keyPath: "/old/id_ed25519")
+        vmB.saveLoginSet(existing, secret: "old-pp")
+
+        let result = vmB.applyLoginSetImport(LoginSetImportPlan(setsToImport: [
+            PlannedLoginSet(
+                set: LoginSet(id: existing.id, name: "prod", username: "new",
+                              authKind: .privateKey, keyPath: "/old/id_ed25519"),
+                secret: "new-pp", embeddedKey: embedded, replacesExisting: true),
+        ], replaced: ["prod"]), keyStore: keyStore(in: dirB))
+
+        #expect(try secretsB.password(for: existing.id) == nil)
+        #expect(result.secretsRemoved == 0)
+        #expect(result.secretRemovalFailures == 0)
+        let imported = try #require(vmB.loginSets.first)
+        let importedKey = try #require(try keyStore(in: dirB).key(forPath: imported.keyPath ?? ""))
+        #expect(try secretsB.password(for: importedKey.id) == "new-pp")
+    }
+
     /// A set whose key file is nowhere on this machine imports anyway — and
     /// says so, instead of failing at the next connect.
     @Test func aSetWhoseKeyIsMissingLocallyIsReported() throws {
