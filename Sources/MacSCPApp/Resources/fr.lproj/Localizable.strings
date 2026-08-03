@@ -301,6 +301,7 @@
 
 /* Barre d'onglets (M8a/T4) */
 "tabs.newTabHelp" = "Nouvel onglet (⌘N)";
+"tabs.closeTabHelp" = "Fermer l’onglet (⌘W)";
 "tabs.a11y.uploading" = "envoi en cours";
 "tabs.a11y.downloading" = "téléchargement en cours";
 "tabs.a11y.attention" = "nécessite votre attention";

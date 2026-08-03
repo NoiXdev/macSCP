@@ -112,6 +112,7 @@ private struct TabItemView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(DesignTokens.inkTertiary)
+                .help(L10n.string("tabs.closeTabHelp", "Close tab (⌘W)"))
             } else {
                 Color.clear.frame(width: 15, height: 15)
             }

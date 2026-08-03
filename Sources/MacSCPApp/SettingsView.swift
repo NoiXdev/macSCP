@@ -511,7 +511,12 @@ private struct OpenWithSettingsTab: View {
                             Image(systemName: "minus.circle")
                         }
                         .buttonStyle(.plain)
+                        // `.accessibilityLabel` and `.help` are different affordances,
+                        // not a duplication: the former labels the control for
+                        // VoiceOver, the latter produces the hover tooltip. Both are
+                        // needed and intentionally share the same key.
                         .accessibilityLabel(L10n.string("settings.openWith.rules.remove", "Remove"))
+                        .help(L10n.string("settings.openWith.rules.remove", "Remove"))
                     }
                 }
 
