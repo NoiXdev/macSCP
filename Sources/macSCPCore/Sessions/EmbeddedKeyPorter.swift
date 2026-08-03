@@ -350,12 +350,32 @@ public enum EmbeddedKeyPorter {
     /// Failing to read the file is a hard stop, not a fallback: that covers
     /// non-key bytes, and legacy PEM (`DEK-Info`) keys, which encrypt the
     /// public part too and therefore leave nothing to check against.
+    ///
+    /// **What this does NOT establish**, stated plainly because the previous
+    /// version of this comment overclaimed: it binds the stored identity to the
+    /// file's own CLEARTEXT public part, not to the encrypted private half. An
+    /// `openssh-key-v1` file's two halves are independent until the private one
+    /// is decrypted, so an attacker can still assemble a file carrying a
+    /// victim's public key next to private bytes that are not the matching key,
+    /// and the keys list will show the victim's fingerprint for it. Checking
+    /// further needs the passphrase, which by definition is not here. What that
+    /// residue cannot do is produce a WORKING credential: such a key fails at
+    /// the first connect, and no version of it lets an attacker read anything
+    /// of the user's. Closing it entirely would mean refusing to import
+    /// encrypted keys exported without their passphrase at all — which is the
+    /// normal, default export.
     private static func identityOfAKeyThatWillNotOpen(
         at url: URL, declaredBy key: EmbeddedKey
     ) throws -> SSHKeyImporter.ImportedKeyInfo {
-        // A payload whose public key line is unusable throws out of here rather
-        // than registering an unverified fingerprint.
-        let carried = try SSHKeyImporter.info(fromPublicKeyLine: key.publicKeyOpenSSH)
+        // A payload whose public key line is unusable (empty, malformed, or
+        // naming a type its own blob contradicts) is reported as this porter's
+        // own condition rather than letting an `SSHKeyImportError` escape the
+        // `PorterError` contract — and never as a registered, unverified
+        // fingerprint.
+        guard let carried = try? SSHKeyImporter.info(fromPublicKeyLine: key.publicKeyOpenSSH)
+        else {
+            throw PorterError.keyMaterialUnverifiable
+        }
         let onDisk: String
         do {
             // `fingerprint(ofPrivateKeyFileAt:)` refuses to run at all when a
