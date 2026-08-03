@@ -2,6 +2,23 @@ import Foundation
 import Testing
 @testable import macSCPCore
 
+/// Records which item names the decider was actually asked about, in order
+/// (mirrors `DeciderCallLog` in `ImportConflictTests.swift` and
+/// `LoginSetImportPlannerTests.swift`, duplicated per that established
+/// convention so this suite has no cross-file dependency on it).
+private actor DeciderCallLog {
+    private(set) var names: [String] = []
+    func record(_ name: String) { names.append(name) }
+}
+
+/// Captures the `kindLabel` an `ImportConflict` carried, so a test can pin
+/// the literal the planner sends without the app being able to see it
+/// (Core has no UI language; the app maps this label to localized text).
+private actor CapturedKindLabel {
+    private(set) var value: String?
+    func record(_ value: String) { self.value = value }
+}
+
 @Suite("SessionImportPlanner")
 struct SessionImportPlannerTests {
     private func incoming(_ sessions: [ExportedSession], groups: [ExportedGroup] = []) -> SessionExportPayload {
@@ -17,48 +34,91 @@ struct SessionImportPlannerTests {
             authKind: .password, keyPath: nil, groupID: groupID, password: password)
     }
 
-    @Test func duplicateTripleIsSkippedDespiteDifferentName() {
+    /// Restores the pre-M19 behaviour with a single click: every duplicate is
+    /// skipped, and the sticky rule means nothing further is asked. Every
+    /// test that used to assert "duplicates are silently skipped" now passes
+    /// this and keeps its original expectation.
+    private var skipEverything: ImportConflictArbiter {
+        ImportConflictArbiter { _ in (.skip, true) }
+    }
+
+    /// Fails the test if the planner asks about anything at all — used by the
+    /// cases that must not produce a conflict in the first place.
+    private var neverAsked: ImportConflictArbiter {
+        ImportConflictArbiter { _ in Issue.record("decider must not be asked"); return nil }
+    }
+
+    /// A decider that always returns the same fixed answer, logging every
+    /// name it was asked about.
+    private func fixedDecider(
+        _ resolution: ImportConflictResolution, applyToAll: Bool = false, log: DeciderCallLog
+    ) -> ImportConflictDecider {
+        { conflict in
+            await log.record(conflict.itemName)
+            return (resolution, applyToAll)
+        }
+    }
+
+    @Test func duplicateTripleIsSkippedDespiteDifferentName() async {
         let existing = [StoredSession(name: "anders", host: "WEB-01", username: "root")]
-        let plan = SessionImportPlanner.plan(
+        let plan = await SessionImportPlanner.plan(
             existing: existing, existingGroups: [],
-            incoming: incoming([exported(name: "neu", host: "web-01")]))
+            incoming: incoming([exported(name: "neu", host: "web-01")]),
+            arbiter: skipEverything)
         #expect(plan.sessionsToImport.isEmpty)
         #expect(plan.skipped.count == 1)
     }
 
-    @Test func hostCaseAndPortDistinguishCorrectly() {
+    @Test func hostCaseAndPortDistinguishCorrectly() async {
         let existing = [StoredSession(name: "a", host: "web-01", username: "root")]
-        let plan = SessionImportPlanner.plan(
+        let plan = await SessionImportPlanner.plan(
             existing: existing, existingGroups: [],
             incoming: incoming([
                 exported(host: "Web-01", port: 2222),     // other port -> import
                 exported(host: "web-01", username: "deploy"), // other user -> import
-            ]))
+            ]),
+            arbiter: neverAsked)
         #expect(plan.sessionsToImport.count == 2)
         #expect(plan.skipped.isEmpty)
     }
 
-    @Test func inFileDuplicatesKeepFirst() {
-        let plan = SessionImportPlanner.plan(
+    /// The duplicate key stays `(host, port, username)` — M19 only changed how
+    /// a duplicate is HANDLED, not what counts as one. Two sessions sharing a
+    /// name on different hosts are not a conflict and must never be asked
+    /// about.
+    @Test func sameNameOnDifferentHostsIsNotAConflict() async {
+        let existing = [StoredSession(name: "web", host: "host-a", username: "root")]
+        let plan = await SessionImportPlanner.plan(
+            existing: existing, existingGroups: [],
+            incoming: incoming([exported(name: "web", host: "host-b")]),
+            arbiter: neverAsked)
+        #expect(plan.sessionsToImport.map(\.session.name) == ["web"])
+        #expect(plan.skipped.isEmpty)
+    }
+
+    @Test func inFileDuplicatesKeepFirst() async {
+        let plan = await SessionImportPlanner.plan(
             existing: [], existingGroups: [],
             incoming: incoming([
                 exported(name: "erste", host: "Host-A"),
                 exported(name: "zweite", host: "host-a"),
-            ]))
+            ]),
+            arbiter: skipEverything)
         #expect(plan.sessionsToImport.map(\.session.name) == ["erste"])
         #expect(plan.skipped.map(\.name) == ["zweite"])
     }
 
-    @Test func groupsMatchByNameOrGetCreatedFresh() {
+    @Test func groupsMatchByNameOrGetCreatedFresh() async {
         let existingGroup = StoredGroup(name: "Prod")
         let fileGroupProd = ExportedGroup(id: UUID(), name: "Prod")
         let fileGroupNew = ExportedGroup(id: UUID(), name: "Staging")
-        let plan = SessionImportPlanner.plan(
+        let plan = await SessionImportPlanner.plan(
             existing: [], existingGroups: [existingGroup],
             incoming: incoming(
                 [exported(name: "p", host: "h1", groupID: fileGroupProd.id),
                  exported(name: "s", host: "h2", groupID: fileGroupNew.id)],
-                groups: [fileGroupProd, fileGroupNew]))
+                groups: [fileGroupProd, fileGroupNew]),
+            arbiter: neverAsked)
         #expect(plan.groupsToCreate.map(\.name) == ["Staging"])
         let p = plan.sessionsToImport.first { $0.session.name == "p" }!
         let s = plan.sessionsToImport.first { $0.session.name == "s" }!
@@ -67,18 +127,19 @@ struct SessionImportPlannerTests {
         #expect(plan.groupsToCreate[0].id != fileGroupNew.id)   // fresh id
     }
 
-    @Test func importedSessionsGetFreshIDsAndCarryPasswords() {
+    @Test func importedSessionsGetFreshIDsAndCarryPasswords() async {
         let file = exported(password: "geheim")
-        let plan = SessionImportPlanner.plan(
-            existing: [], existingGroups: [], incoming: incoming([file]))
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
         #expect(plan.sessionsToImport[0].session.id != file.id)
         #expect(plan.sessionsToImport[0].password == "geheim")
     }
 
-    @Test func unknownGroupReferenceFallsBackToNil() {
-        let plan = SessionImportPlanner.plan(
+    @Test func unknownGroupReferenceFallsBackToNil() async {
+        let plan = await SessionImportPlanner.plan(
             existing: [], existingGroups: [],
-            incoming: incoming([exported(groupID: UUID())])) // group not in file
+            incoming: incoming([exported(groupID: UUID())]), // group not in file
+            arbiter: neverAsked)
         #expect(plan.sessionsToImport[0].session.groupID == nil)
     }
 
@@ -86,28 +147,248 @@ struct SessionImportPlannerTests {
     /// referencing a group are all skipped as duplicates must not create
     /// that group — otherwise "0 imported" still leaves a ghost group behind
     /// in the store.
-    @Test func ghostGroupIsNotCreatedWhenAllItsSessionsAreDuplicates() {
+    @Test func ghostGroupIsNotCreatedWhenAllItsSessionsAreDuplicates() async {
         let existing = [StoredSession(name: "a", host: "host", port: 22, username: "root")]
         let ghostGroup = ExportedGroup(id: UUID(), name: "GhostGroup")
-        let plan = SessionImportPlanner.plan(
+        let plan = await SessionImportPlanner.plan(
             existing: existing, existingGroups: [],
             incoming: incoming(
                 [exported(host: "host", port: 22, username: "root", groupID: ghostGroup.id)],
-                groups: [ghostGroup]))
+                groups: [ghostGroup]),
+            arbiter: skipEverything)
         #expect(plan.groupsToCreate.isEmpty)
         #expect(plan.sessionsToImport.isEmpty)
         #expect(plan.skipped.count == 1)
     }
 
+    // MARK: - Conflict resolution (M19)
+
+    @Test func conflictCarriesTheSessionNameAndTheStableKindLabel() async {
+        let existing = [StoredSession(name: "stored-name", host: "host", username: "root")]
+        let log = DeciderCallLog()
+        let captured = CapturedKindLabel()
+        let arbiter = ImportConflictArbiter { conflict in
+            await log.record(conflict.itemName)
+            await captured.record(conflict.kindLabel)
+            return (.skip, false)
+        }
+        _ = await SessionImportPlanner.plan(
+            existing: existing, existingGroups: [],
+            incoming: incoming([exported(name: "file-name", host: "host")]),
+            arbiter: arbiter)
+
+        // The user sees the INCOMING session's name, not the triple.
+        #expect(await log.names == ["file-name"])
+        // A literal, not a reference to the constant: a typo in the planner's
+        // `kindLabel` must fail this test rather than pass by both sides
+        // drifting together.
+        #expect(await captured.value == "session")
+    }
+
+    @Test func replaceKeepsTheExistingSessionID() async {
+        let existing = [StoredSession(name: "old", host: "host", username: "root")]
+        let arbiter = ImportConflictArbiter(decider: fixedDecider(.replace, log: DeciderCallLog()))
+        let plan = await SessionImportPlanner.plan(
+            existing: existing, existingGroups: [],
+            incoming: incoming([exported(name: "new", host: "host", password: "pw")]),
+            arbiter: arbiter)
+
+        #expect(plan.sessionsToImport.count == 1)
+        // The id carries over so anything referencing the stored session
+        // still points at it after `applyImport`'s upsert overwrites it.
+        #expect(plan.sessionsToImport[0].session.id == existing[0].id)
+        #expect(plan.sessionsToImport[0].session.name == "new")
+        #expect(plan.sessionsToImport[0].password == "pw")
+        #expect(plan.replaced == ["new"])
+        #expect(plan.skipped.isEmpty)
+        #expect(plan.renamed.isEmpty)
+        #expect(!plan.cancelled)
+    }
+
+    @Test func renameGivesTheImportedSessionAUniqueNameAndFreshID() async {
+        let existing = [StoredSession(name: "web", host: "host", username: "root")]
+        let file = exported(name: "web", host: "host")
+        let arbiter = ImportConflictArbiter(decider: fixedDecider(.rename, log: DeciderCallLog()))
+        let plan = await SessionImportPlanner.plan(
+            existing: existing, existingGroups: [],
+            incoming: incoming([file]), arbiter: arbiter)
+
+        #expect(plan.sessionsToImport.count == 1)
+        let planned = plan.sessionsToImport[0].session
+        #expect(planned.name != existing[0].name)
+        #expect(planned.id != existing[0].id)
+        #expect(planned.id != file.id)
+        // Host/port/username are untouched — a renamed duplicate is a second
+        // entry for the SAME endpoint, deliberately.
+        #expect(planned.host == "host")
+        #expect(planned.username == "root")
+        #expect(plan.renamed == [planned.name])
+        #expect(plan.replaced.isEmpty)
+        #expect(plan.skipped.isEmpty)
+    }
+
+    /// Unlike the login-set planner (whose collision key IS the name), a
+    /// session collides on `(host, port, username)`. A rename therefore only
+    /// has to make the NAME unique: a name nothing else uses is kept as it
+    /// stands instead of gaining a pointless " (2)".
+    @Test func renameKeepsAnAlreadyFreeNameUnchanged() async {
+        let existing = [StoredSession(name: "taken", host: "host", username: "root")]
+        let arbiter = ImportConflictArbiter(decider: fixedDecider(.rename, log: DeciderCallLog()))
+        let plan = await SessionImportPlanner.plan(
+            existing: existing, existingGroups: [],
+            incoming: incoming([exported(name: "free", host: "host")]),
+            arbiter: arbiter)
+
+        #expect(plan.sessionsToImport.map(\.session.name) == ["free"])
+        #expect(plan.renamed == ["free"])
+    }
+
+    /// A renamed session must not collide with a name committed earlier in
+    /// the same run — the second rename has to skip past whatever the first
+    /// one produced.
+    @Test func renameStaysUniqueAcrossSeveralCollisionsInOneRun() async {
+        let existing = [StoredSession(name: "web", host: "host", username: "root")]
+        let arbiter = ImportConflictArbiter(
+            decider: fixedDecider(.rename, applyToAll: true, log: DeciderCallLog()))
+        let plan = await SessionImportPlanner.plan(
+            existing: existing, existingGroups: [],
+            incoming: incoming([exported(name: "web", host: "host"), exported(name: "WEB", host: "host")]),
+            arbiter: arbiter)
+
+        #expect(plan.sessionsToImport.count == 2)
+        let names = plan.sessionsToImport.map(\.session.name)
+        // Compared under the planner's OWN name key (trimmed,
+        // case-insensitive) — a case-sensitive comparison here would stay
+        // green even if the two renames landed on "web (2)" and "WEB (2)",
+        // which collide under the planner's actual matching rule.
+        let normalized = Set(names.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
+        #expect(normalized.count == 2)          // the renames differ from each other
+        #expect(!normalized.contains("web"))    // and from the existing name
+        #expect(Set(plan.renamed) == Set(names))
+    }
+
+    /// `SessionStore.upsert` matches on id, so two planned sessions carrying
+    /// the same id would silently overwrite each other. An existing session
+    /// may therefore be the target of a `replace` at most ONCE per run: the
+    /// second incoming duplicate of the same triple must fall back to a fresh
+    /// id under a unique name.
+    @Test func replaceNeverBindsTwoIncomingSessionsToTheSameExistingID() async {
+        let existing = [StoredSession(name: "web", host: "host", username: "root")]
+        let arbiter = ImportConflictArbiter(
+            decider: fixedDecider(.replace, applyToAll: true, log: DeciderCallLog()))
+        let plan = await SessionImportPlanner.plan(
+            existing: existing, existingGroups: [],
+            incoming: incoming([
+                exported(name: "alpha", host: "host", password: "a"),
+                exported(name: "beta", host: "host", password: "b"),
+            ]),
+            arbiter: arbiter)
+
+        #expect(plan.sessionsToImport.count == 2)
+        let ids = plan.sessionsToImport.map(\.session.id)
+        #expect(Set(ids).count == 2)        // no two planned sessions share an id
+        #expect(ids.contains(existing[0].id))  // the first collision still replaces the real record
+        // Neither incoming session is silently dropped.
+        #expect(Set(plan.sessionsToImport.compactMap(\.password)) == ["a", "b"])
+        // Exactly one of them actually replaced something; the other was
+        // renamed, which is what the summary must report.
+        #expect(plan.replaced == ["alpha"])
+        #expect(plan.renamed == ["beta"])
+    }
+
+    /// The defensive fallback is reachable with an EMPTY store too: two
+    /// sessions inside the same file share a triple and collide with each
+    /// other, not with anything existing. A `.replace` decision then has
+    /// nothing on record to replace — it must land in `renamed`, not
+    /// `replaced`, since the summary UI reads those arrays.
+    @Test func replaceOfAnInFileDuplicateWithNoExistingMatchFallsBackToRename() async {
+        let arbiter = ImportConflictArbiter(
+            decider: fixedDecider(.replace, applyToAll: true, log: DeciderCallLog()))
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [],
+            incoming: incoming([exported(name: "A", host: "host"), exported(name: "A", host: "host")]),
+            arbiter: arbiter)
+
+        #expect(plan.sessionsToImport.map(\.session.name) == ["A", "A (2)"])
+        #expect(Set(plan.sessionsToImport.map(\.session.id)).count == 2)
+        #expect(plan.renamed == ["A (2)"])
+        #expect(plan.replaced.isEmpty)
+    }
+
+    @Test func applyToAllStopsAskingAndAppliesTheSameResolution() async {
+        let existing = [StoredSession(name: "web", host: "host", username: "root")]
+        let log = DeciderCallLog()
+        let arbiter = ImportConflictArbiter(decider: fixedDecider(.skip, applyToAll: true, log: log))
+        let plan = await SessionImportPlanner.plan(
+            existing: existing, existingGroups: [],
+            incoming: incoming([exported(name: "one", host: "host"), exported(name: "two", host: "host")]),
+            arbiter: arbiter)
+
+        #expect(plan.skipped.map(\.name) == ["one", "two"])
+        #expect(plan.sessionsToImport.isEmpty)
+        #expect(await log.names.count == 1)  // the second used the sticky rule, not a fresh ask
+    }
+
+    /// Cancelling applies NOTHING — including groups. The ghost-group
+    /// invariant (M9a Finding 2) has to hold on this path too: a cancelled
+    /// import must not leave a group behind for sessions that never landed.
+    @Test func cancellingImportsNothingAndCreatesNoGroups() async {
+        let existing = [StoredSession(name: "web", host: "host", username: "root")]
+        let group = ExportedGroup(id: UUID(), name: "Prod")
+        let arbiter = ImportConflictArbiter { _ in nil }
+        let plan = await SessionImportPlanner.plan(
+            existing: existing, existingGroups: [],
+            incoming: incoming(
+                [exported(name: "fresh", host: "other-host", groupID: group.id),
+                 exported(name: "dupe", host: "host", groupID: group.id)],
+                groups: [group]),
+            arbiter: arbiter)
+
+        #expect(plan.cancelled)
+        #expect(plan.sessionsToImport.isEmpty)
+        #expect(plan.groupsToCreate.isEmpty)
+        // Not even the session accepted BEFORE the cancelled conflict survives.
+        #expect(plan.skipped.isEmpty)
+        #expect(plan.replaced.isEmpty)
+        #expect(plan.renamed.isEmpty)
+    }
+
+    /// The connection form trims on save (`ContentView.saveSession`), so
+    /// import is the only path that could otherwise store a session name
+    /// carrying whitespace the UI would never create — and the summary
+    /// arrays must report exactly the name that was stored.
+    @Test func namesAreTrimmedWhenStoredAndWhenReported() async {
+        let plain = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [],
+            incoming: incoming([exported(name: "  web  ")]), arbiter: neverAsked)
+        #expect(plain.sessionsToImport[0].session.name == "web")
+
+        let existing = [StoredSession(name: "web", host: "host", username: "root")]
+        let replacing = await SessionImportPlanner.plan(
+            existing: existing, existingGroups: [],
+            incoming: incoming([exported(name: "  fresh  ", host: "host")]),
+            arbiter: ImportConflictArbiter { _ in (.replace, true) })
+        #expect(replacing.sessionsToImport[0].session.name == "fresh")
+        #expect(replacing.replaced == ["fresh"])
+
+        let renaming = await SessionImportPlanner.plan(
+            existing: existing, existingGroups: [],
+            incoming: incoming([exported(name: "  web  ", host: "host")]),
+            arbiter: ImportConflictArbiter { _ in (.rename, true) })
+        #expect(renaming.sessionsToImport[0].session.name == "web (2)")
+        #expect(renaming.renamed == ["web (2)"])
+    }
+
     // MARK: - Jump host fields (M10c)
 
-    @Test func plannedSessionCarriesJumpFieldsWithFreshSecretID() {
+    @Test func plannedSessionCarriesJumpFieldsWithFreshSecretID() async {
         let file = ExportedSession(
             id: UUID(), name: "web", host: "h", port: 22, username: "root",
             authKind: .password, keyPath: nil, groupID: nil, password: nil,
             jumpHost: "bastion.example.com", jumpPort: 2222, jumpUsername: "jumper",
             jumpAuthKind: .privateKey, jumpKeyPath: "/k", jumpPassword: "jp")
-        let plan = SessionImportPlanner.plan(existing: [], existingGroups: [], incoming: incoming([file]))
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
 
         let planned = plan.sessionsToImport[0]
         let jump = planned.session.jump
@@ -122,22 +403,23 @@ struct SessionImportPlannerTests {
         #expect(planned.jumpPassword == "jp")
     }
 
-    @Test func plannedSessionOmitsJumpWhenFileSessionHasNone() {
-        let plan = SessionImportPlanner.plan(
-            existing: [], existingGroups: [], incoming: incoming([exported()]))
+    @Test func plannedSessionOmitsJumpWhenFileSessionHasNone() async {
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming([exported()]), arbiter: neverAsked)
         #expect(plan.sessionsToImport[0].session.jump == nil)
         #expect(plan.sessionsToImport[0].jumpPassword == nil)
     }
 
     // MARK: - Agent auth (M10d/T3)
 
-    @Test func plannedSessionCarriesAgentAuthKindThrough() {
+    @Test func plannedSessionCarriesAgentAuthKindThrough() async {
         let file = ExportedSession(
             id: UUID(), name: "web", host: "h", port: 22, username: "root",
             authKind: .agent, keyPath: nil, groupID: nil, password: nil,
             jumpHost: "bastion.example.com", jumpPort: 22, jumpUsername: "jumper",
             jumpAuthKind: .agent, jumpKeyPath: nil, jumpPassword: nil)
-        let plan = SessionImportPlanner.plan(existing: [], existingGroups: [], incoming: incoming([file]))
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
 
         let planned = plan.sessionsToImport[0]
         #expect(planned.session.authKind == .agent)
@@ -148,7 +430,7 @@ struct SessionImportPlannerTests {
 
     // MARK: - Connection kind + S3 (M12)
 
-    @Test func s3FileSessionBuildsStoredS3ConfigAndCarriesSecretAsPassword() {
+    @Test func s3FileSessionBuildsStoredS3ConfigAndCarriesSecretAsPassword() async {
         let file = ExportedSession(
             id: UUID(), name: "s3-prod", host: "unused", port: 22, username: "unused",
             authKind: .password, keyPath: nil, groupID: nil, password: nil,
@@ -156,7 +438,8 @@ struct SessionImportPlannerTests {
             s3AccessKeyID: "AKIAEXAMPLE", s3Region: "eu-central-1",
             s3Endpoint: "https://s3.eu-central-1.amazonaws.com", s3Bucket: "my-bucket",
             s3UsePathStyle: true, s3SecretAccessKey: "shh-secret")
-        let plan = SessionImportPlanner.plan(existing: [], existingGroups: [], incoming: incoming([file]))
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
 
         let planned = plan.sessionsToImport[0]
         #expect(planned.session.kind == .s3)
@@ -171,8 +454,9 @@ struct SessionImportPlannerTests {
 
     /// A file session with no `kind` at all (legacy, pre-M12) must import as
     /// `.ssh` with no S3 config, same as `StoredSession.kind`'s own default.
-    @Test func fileSessionWithoutKindImportsAsSSH() {
-        let plan = SessionImportPlanner.plan(existing: [], existingGroups: [], incoming: incoming([exported()]))
+    @Test func fileSessionWithoutKindImportsAsSSH() async {
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming([exported()]), arbiter: neverAsked)
         let planned = plan.sessionsToImport[0]
         #expect(planned.session.kind == .ssh)
         #expect(planned.session.s3 == nil)

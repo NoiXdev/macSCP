@@ -786,7 +786,7 @@ struct ContentView: View {
             ImportPasswordSheet(
                 onSubmit: { password in
                     guard let data = importFileData else { return nil }
-                    return finishImport(data: data, password: password)
+                    return await finishImport(data: data, password: password)
                 },
                 onCancel: { importFileData = nil }
             )
@@ -2933,7 +2933,10 @@ struct ContentView: View {
                     importFileData = data
                     showImportPasswordSheet = true
                 } else {
-                    _ = finishImport(data: data, password: nil)
+                    // The planner is async since M19; the file bytes are
+                    // already in memory, so the security-scoped access this
+                    // method holds does not have to outlive the task.
+                    Task { await finishImport(data: data, password: nil) }
                 }
             } catch let error as SessionExportError {
                 importErrorMessage = importErrorText(for: error)
@@ -2951,13 +2954,17 @@ struct ContentView: View {
     /// the top-level `importErrorMessage` alert directly and `nil` is
     /// returned so a presenting sheet dismisses.
     @discardableResult
-    private func finishImport(data: Data, password: String?) -> String? {
+    private func finishImport(data: Data, password: String?) async -> String? {
         do {
             let payload = try SessionExportCodec.decode(data, password: password)
-            let plan = SessionImportPlanner.plan(
+            // M19/T6: the real dialog lands in the conflict-sheet task; until
+            // then this reproduces the previous silent-skip behaviour exactly.
+            let arbiter = ImportConflictArbiter { _ in (.skip, true) }
+            let plan = await SessionImportPlanner.plan(
                 existing: sessionListViewModel.sessions,
                 existingGroups: sessionListViewModel.groups,
-                incoming: payload)
+                incoming: payload,
+                arbiter: arbiter)
             let result = sessionListViewModel.applyImport(plan)
             importResultMessage = importResultText(
                 result, includesSecrets: payload.includesSecrets, encrypted: password != nil)

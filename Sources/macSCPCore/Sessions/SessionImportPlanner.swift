@@ -18,27 +18,66 @@ public struct PlannedSession: Equatable, Sendable {
     }
 }
 
-/// The result of planning an import: what to create, additively, against
-/// the existing store. Pure data — applying it is the caller's job.
+/// The result of planning an import: what to create against the existing
+/// store, plus what the user decided about every duplicate. Pure data —
+/// applying it is the caller's job.
 public struct SessionImportPlan: Equatable, Sendable {
     public var groupsToCreate: [StoredGroup]
     public var sessionsToImport: [PlannedSession]
+    /// Duplicates the user chose to skip. Still the whole `ExportedSession`
+    /// (not just a name) so `applyImport`'s count and the M9a result alert
+    /// keep working unchanged.
     public var skipped: [ExportedSession]
+    /// Final (trimmed) names of the sessions that overwrote an existing
+    /// record, and of the ones that came in under a new name — reported to
+    /// the user, so they must be the names actually stored.
+    public var replaced: [String]
+    public var renamed: [String]
+    /// True when the user cancelled the run; every other array is then empty
+    /// and the caller must apply nothing at all.
+    public var cancelled: Bool
 
-    public init(groupsToCreate: [StoredGroup], sessionsToImport: [PlannedSession], skipped: [ExportedSession]) {
+    public init(
+        groupsToCreate: [StoredGroup] = [], sessionsToImport: [PlannedSession] = [],
+        skipped: [ExportedSession] = [], replaced: [String] = [], renamed: [String] = [],
+        cancelled: Bool = false
+    ) {
         self.groupsToCreate = groupsToCreate
         self.sessionsToImport = sessionsToImport
         self.skipped = skipped
+        self.replaced = replaced
+        self.renamed = renamed
+        self.cancelled = cancelled
     }
 }
 
 /// Plans an additive import from a decoded `SessionExportPayload` against
-/// the current store contents (spec M9a §2.2/§2.3). Pure function: no
-/// store, no keychain — every branch is unit testable.
+/// the current store contents (spec M9a §2.2/§2.3), resolving duplicates
+/// through the shared `ImportConflictArbiter` (M19) — the same arbiter the
+/// login-set importer uses, so both flows read as siblings. Pure aside from
+/// that one `await`: no store, no keychain — every branch is unit testable.
+///
+/// Duplicates used to be skipped silently; since M19 the user is asked.
+/// An arbiter of `{ _ in (.skip, true) }` reproduces the old behaviour
+/// exactly.
+///
+/// Items are walked SEQUENTIALLY (a plain `for` loop, no `TaskGroup`/`async
+/// let`), so at most one `arbiter.resolve` call is ever in flight from this
+/// planner. `ImportConflictArbiter.resolve` documents a residual: under
+/// genuinely CONCURRENT calls its decider can be invoked more than once
+/// before a rule exists (actor isolation does not span the `await
+/// decider(...)` suspension). Walking sequentially means this planner never
+/// creates that overlap, so the residual never applies here.
 public enum SessionImportPlanner {
+    /// Stable identifier passed as `ImportConflict.kindLabel` — NOT display
+    /// text (Core has no UI language). The app maps this to its localized
+    /// string.
+    public static let kindLabel = "session"
+
     public static func plan(
-        existing: [StoredSession], existingGroups: [StoredGroup], incoming: SessionExportPayload
-    ) -> SessionImportPlan {
+        existing: [StoredSession], existingGroups: [StoredGroup],
+        incoming: SessionExportPayload, arbiter: ImportConflictArbiter
+    ) async -> SessionImportPlan {
         // Resolve groups first: exact name match against existing groups,
         // otherwise a fresh group is prepared. A local mapping tracks
         // file-local group id -> resolved (existing or freshly created) id.
@@ -60,71 +99,91 @@ public enum SessionImportPlanner {
             }
         }
 
-        // Then sessions, in file order: duplicate key is
-        // (host.lowercased(), port, username) against both the existing
-        // store and triples already accepted from earlier in this file
-        // (keep-first).
+        // Then sessions, in file order. The duplicate key is still
+        // (host.lowercased(), port, username) — unchanged since M9a —
+        // checked against both the existing store and the triples already
+        // accepted earlier in this same file. Only the HANDLING changed in
+        // M19: a duplicate is put to the arbiter instead of being dropped.
         var seenKeys = Set(existing.map { duplicateKey(host: $0.host, port: $0.port, username: $0.username) })
+        // Names are NOT the duplicate key and the store never enforces them
+        // unique, but a rename still has to land on a name nothing else uses.
+        // Seeded with the store's names and grown with every name this run
+        // commits to (imported-unchanged, replaced, or renamed) — otherwise
+        // two renames from the same file could collide with each other.
+        var takenNames = Set(existing.map { normalizedName($0.name) })
+        // An existing session may be the target of a `replace` at most once
+        // per run: `SessionStore.upsert` matches on id, so two planned
+        // sessions carrying the same id would end up as one, with the later
+        // one silently overwriting the earlier. Tracked here so a second
+        // collision against an already-claimed record falls through to the
+        // fresh-id-and-unique-name fallback instead.
+        var replacedExistingIDs: Set<UUID> = []
         var sessionsToImport: [PlannedSession] = []
         var skipped: [ExportedSession] = []
+        var replaced: [String] = []
+        var renamed: [String] = []
 
         for fileSession in incoming.sessions {
             let key = duplicateKey(host: fileSession.host, port: fileSession.port, username: fileSession.username)
-            if seenKeys.contains(key) {
-                skipped.append(fileSession)
+            // The connection form trims on save, so import must not be the
+            // one path that stores a name with surrounding whitespace — and
+            // the summary arrays below report exactly what was stored.
+            let trimmedName = fileSession.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedGroupID = fileSession.groupID.flatMap { groupIDMap[$0] }
+
+            guard seenKeys.contains(key) else {
+                seenKeys.insert(key)
+                takenNames.insert(normalizedName(trimmedName))
+                sessionsToImport.append(makePlanned(
+                    from: fileSession, id: UUID(), name: trimmedName, groupID: resolvedGroupID))
                 continue
             }
-            seenKeys.insert(key)
 
-            let resolvedGroupID = fileSession.groupID.flatMap { groupIDMap[$0] }
-            // Jump fields are only present together (all-or-nothing from
-            // `exportPayload`) -- `jumpHost`/`jumpUsername` gate construction.
-            // `secretID` is left at its default, generating a FRESH slot;
-            // `loginSetID` is always nil -- login sets are never imported, so
-            // a jump that referenced one becomes plain manual mode with the
-            // resolved values baked in at export time.
-            var jump: StoredSession.JumpSpec?
-            if let jumpHost = fileSession.jumpHost, let jumpUsername = fileSession.jumpUsername {
-                jump = StoredSession.JumpSpec(
-                    host: jumpHost,
-                    port: fileSession.jumpPort ?? 22,
-                    username: jumpUsername,
-                    authKind: fileSession.jumpAuthKind ?? .password,
-                    keyPath: fileSession.jumpKeyPath)
+            guard let resolution = await arbiter.resolve(
+                ImportConflict(itemName: fileSession.name, kindLabel: kindLabel)
+            ) else {
+                // Cancellation applies nothing at all — not the items already
+                // accepted earlier in this run, and therefore no groups
+                // either (M9a Finding 2 holds on this path by construction).
+                return SessionImportPlan(cancelled: true)
             }
-            // Kind (M12): absent on legacy payloads -> `.ssh`, same
-            // legacy-safe default as `StoredSession.kind` itself. An `.s3`
-            // session's persisted (secret-free) config is only built when
-            // the file actually carries S3 fields.
-            let kind = fileSession.kind ?? .ssh
-            var s3: StoredS3Config?
-            if kind == .s3, let accessKeyID = fileSession.s3AccessKeyID,
-               let region = fileSession.s3Region, let endpoint = fileSession.s3Endpoint,
-               let bucket = fileSession.s3Bucket {
-                s3 = StoredS3Config(
-                    accessKeyID: accessKeyID, region: region, endpoint: endpoint,
-                    bucket: bucket, usePathStyle: fileSession.s3UsePathStyle ?? false)
+
+            switch resolution {
+            case .skip:
+                skipped.append(fileSession)
+
+            case .replace:
+                if let match = existing.first(where: {
+                    duplicateKey(host: $0.host, port: $0.port, username: $0.username) == key
+                        && !replacedExistingIDs.contains($0.id)
+                }) {
+                    replacedExistingIDs.insert(match.id)
+                    takenNames.insert(normalizedName(trimmedName))
+                    sessionsToImport.append(makePlanned(
+                        from: fileSession, id: match.id, name: trimmedName, groupID: resolvedGroupID))
+                    replaced.append(trimmedName)
+                } else {
+                    // Either the collision was against a triple first seen in
+                    // THIS file (nothing on record to replace), or every
+                    // existing session under that triple has already been
+                    // claimed by an earlier replace in this same run. Fall
+                    // back to a fresh id under a unique name rather than
+                    // replacing a session that does not exist, or
+                    // double-binding two incoming sessions to one id.
+                    let name = uniqueName(for: trimmedName, avoiding: takenNames)
+                    takenNames.insert(normalizedName(name))
+                    sessionsToImport.append(makePlanned(
+                        from: fileSession, id: UUID(), name: name, groupID: resolvedGroupID))
+                    renamed.append(name)
+                }
+
+            case .rename:
+                let name = uniqueName(for: trimmedName, avoiding: takenNames)
+                takenNames.insert(normalizedName(name))
+                sessionsToImport.append(makePlanned(
+                    from: fileSession, id: UUID(), name: name, groupID: resolvedGroupID))
+                renamed.append(name)
             }
-            let session = StoredSession(
-                id: UUID(),
-                name: fileSession.name,
-                host: fileSession.host,
-                port: fileSession.port,
-                username: fileSession.username,
-                authKind: fileSession.authKind,
-                keyPath: fileSession.keyPath,
-                groupID: resolvedGroupID,
-                jump: jump,
-                kind: kind,
-                s3: s3)
-            // The kind's single secret always travels in the same
-            // `password` slot -- for `.ssh` this is the SSH password, for
-            // `.s3` it's the secret access key (both stored in the Keychain
-            // under the session's own id at apply time).
-            let secret = kind == .s3 ? fileSession.s3SecretAccessKey : fileSession.password
-            sessionsToImport.append(PlannedSession(
-                session: session, password: secret,
-                jumpPassword: jump != nil ? fileSession.jumpPassword : nil))
         }
 
         // Only commit a freshly-created group if an actually-imported
@@ -137,10 +196,90 @@ public enum SessionImportPlanner {
         }
 
         return SessionImportPlan(
-            groupsToCreate: groupsToCreate, sessionsToImport: sessionsToImport, skipped: skipped)
+            groupsToCreate: groupsToCreate, sessionsToImport: sessionsToImport,
+            skipped: skipped, replaced: replaced, renamed: renamed, cancelled: false)
+    }
+
+    /// Builds the planned session for one file entry under an already-decided
+    /// id and name, so the unchanged, replaced and renamed paths cannot drift
+    /// apart in how they map the file's fields.
+    private static func makePlanned(
+        from fileSession: ExportedSession, id: UUID, name: String, groupID: UUID?
+    ) -> PlannedSession {
+        // Jump fields are only present together (all-or-nothing from
+        // `exportPayload`) -- `jumpHost`/`jumpUsername` gate construction.
+        // `secretID` is left at its default, generating a FRESH slot;
+        // `loginSetID` is always nil -- login sets are never imported, so
+        // a jump that referenced one becomes plain manual mode with the
+        // resolved values baked in at export time.
+        var jump: StoredSession.JumpSpec?
+        if let jumpHost = fileSession.jumpHost, let jumpUsername = fileSession.jumpUsername {
+            jump = StoredSession.JumpSpec(
+                host: jumpHost,
+                port: fileSession.jumpPort ?? 22,
+                username: jumpUsername,
+                authKind: fileSession.jumpAuthKind ?? .password,
+                keyPath: fileSession.jumpKeyPath)
+        }
+        // Kind (M12): absent on legacy payloads -> `.ssh`, same
+        // legacy-safe default as `StoredSession.kind` itself. An `.s3`
+        // session's persisted (secret-free) config is only built when
+        // the file actually carries S3 fields.
+        let kind = fileSession.kind ?? .ssh
+        var s3: StoredS3Config?
+        if kind == .s3, let accessKeyID = fileSession.s3AccessKeyID,
+           let region = fileSession.s3Region, let endpoint = fileSession.s3Endpoint,
+           let bucket = fileSession.s3Bucket {
+            s3 = StoredS3Config(
+                accessKeyID: accessKeyID, region: region, endpoint: endpoint,
+                bucket: bucket, usePathStyle: fileSession.s3UsePathStyle ?? false)
+        }
+        let session = StoredSession(
+            id: id,
+            name: name,
+            host: fileSession.host,
+            port: fileSession.port,
+            username: fileSession.username,
+            authKind: fileSession.authKind,
+            keyPath: fileSession.keyPath,
+            groupID: groupID,
+            jump: jump,
+            kind: kind,
+            s3: s3)
+        // The kind's single secret always travels in the same
+        // `password` slot -- for `.ssh` this is the SSH password, for
+        // `.s3` it's the secret access key (both stored in the Keychain
+        // under the session's own id at apply time).
+        let secret = kind == .s3 ? fileSession.s3SecretAccessKey : fileSession.password
+        return PlannedSession(
+            session: session, password: secret,
+            jumpPassword: jump != nil ? fileSession.jumpPassword : nil)
     }
 
     private static func duplicateKey(host: String, port: Int, username: String) -> String {
         "\(host.lowercased())|\(port)|\(username)"
+    }
+
+    private static func normalizedName(_ name: String) -> String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    /// Keeps `name` when nothing else uses it, otherwise appends " (2)",
+    /// " (3)", … until it is free. `taken` already carries every name
+    /// committed so far this run.
+    ///
+    /// Deliberately different from `LoginSetImportPlanner.uniqueName`, which
+    /// always suffixes: there the collision key IS the name, so the base is
+    /// taken by definition. Here the collision is on the endpoint triple, so
+    /// an incoming duplicate whose name nothing else uses keeps it.
+    private static func uniqueName(for name: String, avoiding taken: Set<String>) -> String {
+        guard taken.contains(normalizedName(name)) else { return name }
+        var suffix = 2
+        var candidate = "\(name) (\(suffix))"
+        while taken.contains(normalizedName(candidate)) {
+            suffix += 1
+            candidate = "\(name) (\(suffix))"
+        }
+        return candidate
     }
 }
