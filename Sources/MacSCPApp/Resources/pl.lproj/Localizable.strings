@@ -300,6 +300,7 @@
 
 /* Pasek kart (M8a/T4) */
 "tabs.newTabHelp" = "Nowa karta (⌘N)";
+"tabs.closeTabHelp" = "Zamknij kartę (⌘W)";
 "tabs.a11y.uploading" = "wysyłanie";
 "tabs.a11y.downloading" = "pobieranie";
 "tabs.a11y.attention" = "wymaga uwagi";

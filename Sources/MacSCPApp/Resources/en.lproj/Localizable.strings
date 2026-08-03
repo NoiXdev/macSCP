@@ -297,6 +297,7 @@
 
 /* Tab strip (M8a/T4) */
 "tabs.newTabHelp" = "New tab (⌘N)";
+"tabs.closeTabHelp" = "Close tab (⌘W)";
 "tabs.a11y.uploading" = "uploading";
 "tabs.a11y.downloading" = "downloading";
 "tabs.a11y.attention" = "needs attention";

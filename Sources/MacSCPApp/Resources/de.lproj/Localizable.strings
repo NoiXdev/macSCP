@@ -298,6 +298,7 @@
 
 /* Tableiste (M8a/T4) */
 "tabs.newTabHelp" = "Neuer Tab (⌘N)";
+"tabs.closeTabHelp" = "Tab schließen (⌘W)";
 "tabs.a11y.uploading" = "wird hochgeladen";
 "tabs.a11y.downloading" = "wird heruntergeladen";
 "tabs.a11y.attention" = "erfordert Aufmerksamkeit";
