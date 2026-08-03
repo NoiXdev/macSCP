@@ -5,7 +5,7 @@ import Testing
 
 /// The policy answers ONE question: what to do about an UNKNOWN host key.
 /// A mismatch never reaches it — `HostKeyValidation` stops that before any
-/// decider runs (M3c). `mismatchNeverReachesThePolicy` pins that boundary.
+/// decider runs (M3c). `HostKeyValidationTests.knownDifferentKeyIsMismatch` pins that boundary.
 @Suite("HostKeyPolicy")
 struct HostKeyPolicyTests {
     @Test func askPromptsWhenATerminalIsAvailable() {
