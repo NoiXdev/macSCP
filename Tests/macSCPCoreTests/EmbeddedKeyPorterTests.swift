@@ -200,6 +200,14 @@ struct EmbeddedKeyPorterTests {
             "_ = try? Data.init(\n            contentsOf: URL(fileURLWithPath: keyPath))",
             // and a stream whose receiver and call parted company.
             "_ = InputStream\n            (fileAtPath: keyPath)",
+            // Two real reads past the OLD needle list, found against this
+            // very source: `.contentsEqual` opens and reads `keyPath` to
+            // compare its bytes against another file, and `copyItem` reads
+            // `keyPath`'s bytes out to a destination — neither is
+            // `.contents(atPath` nor any `(contentsOf` spelling, so both used
+            // to walk straight past the lint.
+            "_ = FileManager.default.contentsEqual(\n            atPath: keyPath, andPath: keyPath)",
+            "_ = try? FileManager.default.copyItem(\n            atPath: keyPath, toPath: keyPath)",
             // Controls: reads that the literal-text scan already caught, kept
             // so a future rewrite cannot lose them while chasing the wraps.
             "_ = try? Data.init(contentsOf: URL(fileURLWithPath: keyPath))",
@@ -274,13 +282,18 @@ struct EmbeddedKeyPorterTests {
             return .anchorsLost("the ownership guard is no longer recognizable")
         }
         // Every entry names the CALL — `(contentsOf` covers `Data`, `NSData`,
-        // `String` and anything else initialized from a URL, `.contents(atPath`
-        // covers `FileManager.default` and any other `FileManager` instance.
-        // The needles carry no whitespace, matching the stripped body.
+        // `String` and anything else initialized from a URL, `.contents`
+        // covers not just `FileManager.default.contents(atPath:)` but also
+        // `.contentsEqual(atPath:andPath:)`, which opens and reads the file at
+        // `keyPath` just as surely to compare its bytes, and `copyItem` covers
+        // `FileManager.default.copyItem(atPath:…)`/`.copyItem(at:…)`, which
+        // reads the external file's bytes out to another path without ever
+        // going through `Data` or `FileManager.contents`. The needles carry no
+        // whitespace, matching the stripped body.
         return .reads([
-            "(contentsOf", "contentsOfFile", ".contents(atPath",
+            "(contentsOf", "contentsOfFile", ".contents",
             "FileHandle(", "InputStream(", ".resourceBytes", ".bytes(",
-            "open(", "fopen", "mmap(",
+            "open(", "fopen", "mmap(", "copyItem",
         ].filter { needle in
             guard let read = body.range(of: needle) else { return false }
             return read.lowerBound < ownership.lowerBound
@@ -846,6 +859,37 @@ struct EmbeddedKeyPorterTests {
             }
             #expect(try target.all().isEmpty)
         }
+    }
+
+    /// A file that is nothing but the victim's PUBLIC key line needs no
+    /// assembly at all: a public key is public by definition, and
+    /// `ssh-keygen -l -f` fingerprints a plain public key file exactly as
+    /// readily as a private one. Without a check that the file actually IS an
+    /// OpenSSH private key, this used to import cleanly and register an entry
+    /// showing the victim's real fingerprint behind a lock glyph — no key
+    /// material required, let alone a splice.
+    @Test func materializeRejectsAFileThatIsOnlyAPublicKeyLine() throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let source = makeStore(in: dir)
+        let secrets = InMemorySecretStore()
+        let victim = try addManagedKey(to: source, secrets: secrets, name: "prod")
+
+        let payload = EmbeddedKey(
+            fileContents: Data(victim.publicKeyOpenSSH.utf8),
+            name: "prod", comment: "prod-key",
+            fingerprint: victim.fingerprint, publicKeyOpenSSH: victim.publicKeyOpenSSH,
+            hasPassphrase: true, passphrase: nil)
+
+        let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
+        let targetSecrets = RecordingSecretStore()
+        #expect(throws: EmbeddedKeyPorter.PorterError.keyMaterialUnverifiable) {
+            _ = try EmbeddedKeyPorter.materialize(payload, store: target, secrets: targetSecrets)
+        }
+        let leftovers = (try? FileManager.default.contentsOfDirectory(
+            atPath: target.keyDirectory.path(percentEncoded: false))) ?? []
+        #expect(leftovers.isEmpty)
+        #expect(try target.all().isEmpty)
+        #expect(targetSecrets.stored.isEmpty)
     }
 
     /// A carried passphrase that no longer opens the key (the source Keychain

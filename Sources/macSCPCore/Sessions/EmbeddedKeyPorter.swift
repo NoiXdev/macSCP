@@ -340,33 +340,58 @@ public enum EmbeddedKeyPorter {
     /// list show a locked key carrying the victim's genuine fingerprint. And
     /// bytes that are not a key file at all sailed through the same way.
     ///
-    /// What actually decides it is `ssh-keygen -l -f` on the file that was just
-    /// written: an `openssh-key-v1` file carries its public key in cleartext
-    /// even when the private half is encrypted, so the file names its own
-    /// fingerprint without a passphrase and with no secret in argv. The carried
-    /// line only supplies what `-l` does not print (the type, and the line
-    /// itself for `authorized_keys`), and only if the two agree.
+    /// The file must also actually BE an `openssh-key-v1` private key — start
+    /// with the OpenSSH armor header, `-----BEGIN OPENSSH PRIVATE KEY-----` —
+    /// before any of the below runs. Without that check, a `fileContents` that
+    /// carried nothing but the victim's PUBLIC key line needed no assembly at
+    /// all: a public key is public by definition, and `ssh-keygen -l -f`
+    /// fingerprints a plain public key file exactly as readily as a private
+    /// one, so that line alone made this branch report the victim's real
+    /// fingerprint for a "key" that was never key material to begin with.
+    ///
+    /// Once the header is present, what decides identity is `ssh-keygen -l -f`
+    /// on the file that was just written: an `openssh-key-v1` file carries its
+    /// public key in cleartext even when the private half is encrypted, so the
+    /// file names its own fingerprint without a passphrase and with no secret
+    /// in argv. The carried line only supplies what `-l` does not print (the
+    /// type, and the line itself for `authorized_keys`), and only if the two
+    /// agree.
     ///
     /// Failing to read the file is a hard stop, not a fallback: that covers
     /// non-key bytes, and legacy PEM (`DEK-Info`) keys, which encrypt the
     /// public part too and therefore leave nothing to check against.
     ///
-    /// **What this does NOT establish**, stated plainly because the previous
-    /// version of this comment overclaimed: it binds the stored identity to the
-    /// file's own CLEARTEXT public part, not to the encrypted private half. An
-    /// `openssh-key-v1` file's two halves are independent until the private one
-    /// is decrypted, so an attacker can still assemble a file carrying a
-    /// victim's public key next to private bytes that are not the matching key,
-    /// and the keys list will show the victim's fingerprint for it. Checking
-    /// further needs the passphrase, which by definition is not here. What that
-    /// residue cannot do is produce a WORKING credential: such a key fails at
-    /// the first connect, and no version of it lets an attacker read anything
-    /// of the user's. Closing it entirely would mean refusing to import
+    /// **What this does NOT establish**, stated plainly so this comment does
+    /// not overclaim again: an `openssh-key-v1` file's cleartext section
+    /// (cipher name, KDF, and the public key(s)) and its encrypted private
+    /// section are independent, and nothing here ties one to the other. So ANY
+    /// file whose CLEARTEXT section names the claimed key still passes here —
+    /// header and all — regardless of what its encrypted section actually
+    /// holds: private bytes for an entirely different key, or bytes that are
+    /// simply corrupted. That still takes real assembly of a genuine
+    /// `openssh-key-v1` envelope (unlike the bare public-key-line variant just
+    /// closed above), and what it produces is not a WORKING credential either
+    /// way: such a key fails at the first connect, and no version of it lets an
+    /// attacker read anything of the user's. A related residue one level down:
+    /// a spliced file that is genuinely unencrypted (`cipher "none"`) but fails
+    /// `-y` for some other structural reason also lands in this branch and gets
+    /// recorded with `hasPassphrase == true` — a lock glyph on a key that has
+    /// none. Closing either residue fully would mean refusing to import
     /// encrypted keys exported without their passphrase at all — which is the
     /// normal, default export.
+    private static let opensshPrivateKeyHeader = Data(
+        "-----BEGIN OPENSSH PRIVATE KEY-----".utf8)
+
     private static func identityOfAKeyThatWillNotOpen(
         at url: URL, declaredBy key: EmbeddedKey
     ) throws -> SSHKeyImporter.ImportedKeyInfo {
+        // `ssh-keygen -l -f` fingerprints a plain public key file exactly as
+        // readily as a private one, so this guard — not `-l -f` — is what
+        // rejects a `fileContents` that is only ever the claimed public key
+        // line: no splice, no key material, nothing to open at all.
+        guard key.fileContents.starts(with: Self.opensshPrivateKeyHeader) else {
+            throw PorterError.keyMaterialUnverifiable
+        }
         // A payload whose public key line is unusable (empty, malformed, or
         // naming a type its own blob contradicts) is reported as this porter's
         // own condition rather than letting an `SSHKeyImportError` escape the
