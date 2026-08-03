@@ -1,17 +1,46 @@
 import Foundation
 
-/// Resolves the effective key passphrase at connect time (M17). A typed
-/// passphrase always wins. Otherwise, if `keyPath` points at a managed key
-/// that has a stored passphrase, it is read from the Keychain under the key's
-/// id. Otherwise the (empty) typed value is returned. Keeps
-/// `SSHPrivateKeyLoader` and the connect view model unchanged — the caller
-/// just supplies a better `passphrase` than the empty form field.
+/// Resolves the effective key passphrase at connect time (M17), and answers
+/// the related question the save paths need: does a managed key actually HAVE
+/// a Keychain slot?
+///
+/// The two are not the same question, and conflating them cost a milestone.
+/// `ManagedKey.hasPassphrase` means "the key FILE is encrypted" — see its own
+/// doc comment. Every key macSCP creates itself is encrypted exactly when it
+/// also got a slot, so the two coincided until `EmbeddedKeyPorter` produced the
+/// first key that is encrypted with NO slot (a login-set export without
+/// secrets, which is the default).
 public enum ManagedKeyPassphrase {
     public static func resolve(
         keyPath: String, typed: String, store: ManagedKeyStore, secrets: any SecretStore
     ) -> String {
         if !typed.isEmpty { return typed }
+        // `hasPassphrase` is only a fast path here: an encrypted key with no
+        // slot simply falls through to the (empty) typed value, exactly as an
+        // unencrypted one does.
         guard let key = try? store.key(forPath: keyPath), key.hasPassphrase else { return typed }
         return (try? secrets.password(for: key.id)) ?? typed
+    }
+
+    /// Whether the managed key at `keyPath` has a Keychain slot of its own
+    /// holding a passphrase.
+    ///
+    /// Ask this — never `ManagedKey.hasPassphrase` — before deciding that a
+    /// typed passphrase does NOT need persisting because the key's own slot is
+    /// authoritative (`ContentView.isManagedKeyWithStoredPassphrase`). For a
+    /// key imported from a login-set export that carried no secrets, the flag
+    /// is true and the slot does not exist: trusting the flag there discards
+    /// the passphrase the user types on every save, with no other UI anywhere
+    /// to store it, so the user retypes it on every connect forever.
+    ///
+    /// `false` for a path macSCP does not manage, which is what the caller
+    /// wants: an external key's passphrase belongs in the session's or login
+    /// set's own secret slot, and so does a managed key's when it has no slot.
+    public static func hasStoredPassphrase(
+        keyPath: String, store: ManagedKeyStore, secrets: any SecretStore
+    ) -> Bool {
+        guard let key = try? store.key(forPath: keyPath), key.hasPassphrase else { return false }
+        let stored = (try? secrets.password(for: key.id)) ?? nil
+        return !(stored ?? "").isEmpty
     }
 }

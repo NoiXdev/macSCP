@@ -27,6 +27,14 @@ public struct ManagedKey: Identifiable, Equatable, Sendable, Codable {
     public var fingerprint: String        // "SHA256:…"
     public var publicKeyOpenSSH: String   // "ssh-ed25519 AAAA… comment"
     public var createdAt: Date
+    /// Whether the key FILE is encrypted — NOT whether a Keychain slot exists.
+    /// The two coincide for keys macSCP generates or imports by hand, but not
+    /// for one materialized out of a login-set export that carried no secrets:
+    /// that key is encrypted and has no slot. Anything asking "is the
+    /// passphrase stored?" must call
+    /// `ManagedKeyPassphrase.hasStoredPassphrase(keyPath:store:secrets:)`;
+    /// this flag drives the lock glyph and the "look for a passphrase at all"
+    /// fast path, nothing else.
     public var hasPassphrase: Bool
     public var fileName: String           // private key file, relative to the key dir
 
