@@ -185,6 +185,21 @@ struct SessionImportPlannerTests {
         #expect(await captured.value == "session")
     }
 
+    /// Everything else about the incoming item is trimmed before it is
+    /// stored or reported; the conflict shown to the user must not be the
+    /// one place a padded name leaks through.
+    @Test func conflictCarriesTheTrimmedSessionName() async {
+        let existing = [StoredSession(name: "stored-name", host: "host", username: "root")]
+        let log = DeciderCallLog()
+        let arbiter = ImportConflictArbiter(decider: fixedDecider(.skip, log: log))
+        _ = await SessionImportPlanner.plan(
+            existing: existing, existingGroups: [],
+            incoming: incoming([exported(name: "  padded-name  ", host: "host")]),
+            arbiter: arbiter)
+
+        #expect(await log.names == ["padded-name"])
+    }
+
     @Test func replaceKeepsTheExistingSessionID() async {
         let existing = [StoredSession(name: "old", host: "host", username: "root")]
         let arbiter = ImportConflictArbiter(decider: fixedDecider(.replace, log: DeciderCallLog()))
@@ -199,10 +214,30 @@ struct SessionImportPlannerTests {
         #expect(plan.sessionsToImport[0].session.id == existing[0].id)
         #expect(plan.sessionsToImport[0].session.name == "new")
         #expect(plan.sessionsToImport[0].password == "pw")
+        // The applier's seam (M19 T6): true only when this planned session
+        // actually overwrites an existing record.
+        #expect(plan.sessionsToImport[0].replacesExisting)
         #expect(plan.replaced == ["new"])
         #expect(plan.skipped.isEmpty)
         #expect(plan.renamed.isEmpty)
         #expect(!plan.cancelled)
+    }
+
+    /// `replacesExisting` must be false on every path that does NOT bind to
+    /// an existing record: a fresh (non-colliding) import, and a `.rename`
+    /// resolution that always mints a fresh id.
+    @Test func freshAndRenamedSessionsAreNotMarkedAsReplacing() async {
+        let fresh = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [],
+            incoming: incoming([exported(name: "fresh", host: "host")]), arbiter: neverAsked)
+        #expect(!fresh.sessionsToImport[0].replacesExisting)
+
+        let existing = [StoredSession(name: "web", host: "host", username: "root")]
+        let renamed = await SessionImportPlanner.plan(
+            existing: existing, existingGroups: [],
+            incoming: incoming([exported(name: "web", host: "host")]),
+            arbiter: ImportConflictArbiter(decider: fixedDecider(.rename, log: DeciderCallLog())))
+        #expect(!renamed.sessionsToImport[0].replacesExisting)
     }
 
     @Test func renameGivesTheImportedSessionAUniqueNameAndFreshID() async {
@@ -231,6 +266,10 @@ struct SessionImportPlannerTests {
     /// session collides on `(host, port, username)`. A rename therefore only
     /// has to make the NAME unique: a name nothing else uses is kept as it
     /// stands instead of gaining a pointless " (2)".
+    ///
+    /// `renamed` reports actual renames only: since "free" was never in use,
+    /// the stored name equals the file's trimmed name, so nothing was
+    /// actually renamed and the summary must not claim otherwise.
     @Test func renameKeepsAnAlreadyFreeNameUnchanged() async {
         let existing = [StoredSession(name: "taken", host: "host", username: "root")]
         let arbiter = ImportConflictArbiter(decider: fixedDecider(.rename, log: DeciderCallLog()))
@@ -240,7 +279,7 @@ struct SessionImportPlannerTests {
             arbiter: arbiter)
 
         #expect(plan.sessionsToImport.map(\.session.name) == ["free"])
-        #expect(plan.renamed == ["free"])
+        #expect(plan.renamed.isEmpty)
     }
 
     /// A renamed session must not collide with a name committed earlier in
@@ -290,10 +329,13 @@ struct SessionImportPlannerTests {
         #expect(ids.contains(existing[0].id))  // the first collision still replaces the real record
         // Neither incoming session is silently dropped.
         #expect(Set(plan.sessionsToImport.compactMap(\.password)) == ["a", "b"])
-        // Exactly one of them actually replaced something; the other was
-        // renamed, which is what the summary must report.
+        // Exactly one of them actually replaced something.
         #expect(plan.replaced == ["alpha"])
-        #expect(plan.renamed == ["beta"])
+        // "beta" fell back to a fresh id, but nothing named "beta" was taken,
+        // so its stored name equals the file's trimmed name -- not an actual
+        // rename, and the summary must not claim one.
+        #expect(plan.renamed.isEmpty)
+        #expect(plan.sessionsToImport.first { $0.session.name == "beta" }?.replacesExisting == false)
     }
 
     /// The defensive fallback is reachable with an EMPTY store too: two

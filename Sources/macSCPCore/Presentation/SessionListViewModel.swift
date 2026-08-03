@@ -807,15 +807,31 @@ public final class SessionListViewModel {
     }
 
     /// Applies a previously computed `SessionImportPlan` (spec M9a §2.3).
-    /// Purely additive — existing sessions and groups are never mutated. A
-    /// keychain failure for one session's password does not abort the
-    /// import; the session is still created and the failure is counted.
-    /// A store-write failure for one session does not abort the import
-    /// either, but that session is skipped entirely — including its
-    /// password save, so no keychain entry is orphaned for a session that
-    /// never landed in the store — and it is counted in `storeFailures`
-    /// rather than `imported`.
+    /// A cancelled plan (`plan.cancelled`) applies and reports NOTHING — an
+    /// all-zero result, no store or keychain writes, `reload()` not even
+    /// called — checked directly rather than inferred from every array
+    /// happening to be empty.
+    ///
+    /// Existing GROUPS are never mutated. Existing SESSIONS can be: a
+    /// `PlannedSession` whose `replacesExisting` is true (M19) carries an
+    /// EXISTING record's id, and `store.upsert` overwrites that record in
+    /// place. The Keychain side of that overwrite is not yet wired here —
+    /// `planned.password` is only saved when non-nil, so a replace sourced
+    /// from a secret-free export (`includesSecrets == false`) currently
+    /// leaves the OLD session's Keychain secret bound to the (reused) id
+    /// untouched; wiring that up is a following task's job, and
+    /// `replacesExisting` is the seam it uses. A keychain failure for one
+    /// session's password does not abort the import; the session is still
+    /// created/overwritten and the failure is counted. A store-write
+    /// failure for one session does not abort the import either, but that
+    /// session is skipped entirely — including its password save, so no
+    /// keychain entry is orphaned for a session that never landed in the
+    /// store — and it is counted in `storeFailures` rather than `imported`.
     public func applyImport(_ plan: SessionImportPlan) -> SessionImportResult {
+        guard !plan.cancelled else {
+            return SessionImportResult(
+                imported: 0, skipped: 0, passwordsImported: 0, passwordFailures: 0, storeFailures: 0)
+        }
         var imported = 0
         var passwordsImported = 0
         var passwordFailures = 0

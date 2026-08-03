@@ -73,6 +73,19 @@ struct LoginSetImportPlannerTests {
         #expect(await log.names == ["PROD"])
     }
 
+    /// Everything else about the incoming item is trimmed before it is
+    /// stored or reported; the conflict shown to the user must not be the
+    /// one place a padded name leaks through.
+    @Test func conflictCarriesTheTrimmedSetName() async {
+        let existing = [LoginSet(name: "Prod", username: "root")]
+        let log = DeciderCallLog()
+        let arbiter = ImportConflictArbiter(decider: fixedDecider(.skip, log: log))
+        _ = await LoginSetImportPlanner.plan(
+            existing: existing, incoming: payload([fileSet(name: "  Prod  ")]), arbiter: arbiter)
+
+        #expect(await log.names == ["Prod"])
+    }
+
     @Test func skipDropsTheIncomingSet() async {
         let existing = [LoginSet(name: "Prod", username: "root")]
         let arbiter = ImportConflictArbiter(decider: fixedDecider(.skip, log: DeciderCallLog()))
