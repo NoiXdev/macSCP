@@ -812,6 +812,39 @@ struct EmbeddedKeyPorterTests {
         #expect(try target.all().isEmpty)
     }
 
+    /// The carried public key line is the only source for the type and the
+    /// `authorized_keys` line in that branch, so an unusable one is this
+    /// porter's own failure — reported as `keyMaterialUnverifiable` rather
+    /// than letting a raw `SSHKeyImportError` escape `PorterError`, and never
+    /// as a registered key with an unverified fingerprint.
+    @Test func materializeRejectsAnEncryptedKeyWhoseCarriedPublicKeyLineIsUnusable() throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let source = makeStore(in: dir)
+        let secrets = InMemorySecretStore()
+        let key = try addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
+        let bytes = try Data(contentsOf: URL(fileURLWithPath: path(of: key, in: source)))
+        let blob = String(key.publicKeyOpenSSH.split(separator: " ")[1])
+
+        for line in [
+            "",                                     // nothing at all
+            "ssh-ed25519",                          // no blob
+            "ssh-ed25519 not-base64!! work-key",    // blob that is not a key
+            "ssh-rsa \(blob) work-key",             // type contradicting the blob
+        ] {
+            let payload = EmbeddedKey(
+                fileContents: bytes, name: "work", comment: "work-key",
+                fingerprint: key.fingerprint, publicKeyOpenSSH: line,
+                hasPassphrase: true, passphrase: nil)
+            let target = ManagedKeyStore(
+                directory: dir.appendingPathComponent("imported-\(UUID().uuidString)"))
+            #expect(throws: EmbeddedKeyPorter.PorterError.keyMaterialUnverifiable) {
+                _ = try EmbeddedKeyPorter.materialize(
+                    payload, store: target, secrets: InMemorySecretStore())
+            }
+            #expect(try target.all().isEmpty)
+        }
+    }
+
     /// A carried passphrase that no longer opens the key (the source Keychain
     /// slot went stale out of band) must not fail the whole import: the file's
     /// own cleartext public part still establishes its identity, so the key
