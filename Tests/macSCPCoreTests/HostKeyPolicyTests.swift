@@ -27,4 +27,13 @@ struct HostKeyPolicyTests {
         #expect(HostKeyPolicy.decision(for: .acceptNew, hasTTY: true) == .accept)
         #expect(HostKeyPolicy.decision(for: .acceptNew, hasTTY: false) == .accept)
     }
+
+    /// The shape the CLI relies on: with no terminal and the default policy,
+    /// an unknown key must NOT be trusted. This is the regression that the
+    /// old M1 driver failed — it trusted everything and printed a fingerprint.
+    @Test func defaultPolicyWithoutTerminalNeverAccepts() {
+        let decision = HostKeyPolicy.decision(for: .ask, hasTTY: false)
+        #expect(decision != .accept)
+        #expect(decision == .reject)
+    }
 }
