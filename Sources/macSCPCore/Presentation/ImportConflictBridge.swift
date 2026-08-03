@@ -28,8 +28,11 @@ public struct ImportConflictPromptItem: Identifiable, Sendable {
 ///
 /// ## Exactly-once resumption
 ///
-/// `finish(_:)` is the ONLY place a continuation is ever resumed, and it
-/// takes `self.continuation` out before resuming. Everything else — the
+/// `finish(_:)` is the only place a STORED continuation is ever resumed, and
+/// it takes `self.continuation` out before resuming. (The one other resume in
+/// the file is `ask`'s `Task.isCancelled` fast path, which resumes the
+/// continuation it was just handed without ever storing it — nothing else can
+/// reach that one, so it cannot double-resume.) Everything else — the
 /// buttons, the cancellation handler, the presenter's safety net — funnels
 /// through it, so the guarantee is a property of one five-line function
 /// rather than of the call sites:
@@ -59,9 +62,14 @@ public struct ImportConflictPromptItem: Identifiable, Sendable {
 ///   event: a dismissal cancels an import the user never cancelled, and a
 ///   stale tap on `Replace` (the destructive choice, which also overwrites
 ///   stored secrets — and with `applyToAll` spreads that across the rest of
-///   the run) silently answers a question the user never saw. (The transfer
-///   twin only survives this because real network I/O sits between two
-///   transfer conflicts.) So BOTH sheet-facing entry points name the prompt
+///   the run) silently answers a question the user never saw. (This was once
+///   argued to be import-only, on the grounds that real network I/O sits
+///   between two TRANSFER conflicts. It does not: that gap is a single remote
+///   `stat` over an already-open channel, while a dismissal arrives only after
+///   a ~250 ms close animation — a wider stale window than this one, not a
+///   narrower one. `ConflictPromptBridge` carries the same guards for the same
+///   reason, and its tests reproduce the folder transfer that died of this.)
+///   So BOTH sheet-facing entry points name the prompt
 ///   they are about and fire only while that prompt is still the open one;
 ///   `finish` itself is private, so there is no unattributed way in from the
 ///   UI.
