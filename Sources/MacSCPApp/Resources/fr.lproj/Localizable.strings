@@ -365,6 +365,23 @@
 "import.error.readFailed %@" = "Impossible de lire le fichier : %@";
 "import.error.title" = "Échec de l'import";
 
+/* Feuille de conflit d'import partagée (M19/T7) — les deux flux d'import
+   (sessions et jeux d'identifiants) résolvent les collisions de nom via le
+   même ImportConflictArbiter (Core, M19/T3) ; kindLabel est un identifiant
+   stable, ici mappé vers un texte affiché, jamais la valeur brute. */
+"import.conflict.title" = "Nom déjà existant";
+"import.conflict.message" = "« %@ » existe déjà.";
+"import.conflict.kind.loginSet" = "jeu d’identifiants";
+"import.conflict.kind.session" = "connexion";
+"import.conflict.kind.other" = "élément";
+"import.conflict.skip" = "Ignorer";
+"import.conflict.replace" = "Remplacer";
+"import.conflict.rename" = "Renommer";
+"import.conflict.replaceNote" = "Le remplacement écrase aussi le mot de passe ou la phrase secrète enregistrés.";
+"import.conflict.applyToAll" = "Appliquer à tous les conflits suivants";
+"import.conflict.cancel" = "Annuler l’importation";
+"import.conflict.cancelNote" = "En annulant, rien n’est importé.";
+
 /* Feuille du journal d'audit (M9b/T3) */
 "audit.filter.all" = "Tout";
 "audit.filter.transfers" = "Transferts";

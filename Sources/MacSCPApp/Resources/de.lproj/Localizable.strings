@@ -362,6 +362,23 @@
 "import.error.readFailed %@" = "Die Datei konnte nicht gelesen werden: %@";
 "import.error.title" = "Import fehlgeschlagen";
 
+/* Geteiltes Import-Konflikt-Sheet (M19/T7) — beide Import-Flüsse (Sitzungen
+   und Login-Sets) führen Namenskollisionen über denselben
+   ImportConflictArbiter (Core, M19/T3); kindLabel ist ein stabiler
+   Bezeichner, hier auf Anzeigetext abgebildet, nicht der Rohwert selbst. */
+"import.conflict.title" = "Name bereits vorhanden";
+"import.conflict.message" = "„%@“ ist bereits vorhanden.";
+"import.conflict.kind.loginSet" = "Login-Set";
+"import.conflict.kind.session" = "Verbindung";
+"import.conflict.kind.other" = "Eintrag";
+"import.conflict.skip" = "Überspringen";
+"import.conflict.replace" = "Ersetzen";
+"import.conflict.rename" = "Umbenennen";
+"import.conflict.replaceNote" = "Ersetzen überschreibt auch das gespeicherte Passwort bzw. die Schlüssel-Passphrase.";
+"import.conflict.applyToAll" = "Für alle weiteren Konflikte übernehmen";
+"import.conflict.cancel" = "Import abbrechen";
+"import.conflict.cancelNote" = "Beim Abbrechen wird nichts importiert.";
+
 /* Audit-Log-Sheet (M9b/T3) */
 "audit.filter.all" = "Alle";
 "audit.filter.transfers" = "Transfers";

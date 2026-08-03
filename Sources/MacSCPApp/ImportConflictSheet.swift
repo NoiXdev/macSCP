@@ -1,0 +1,109 @@
+import SwiftUI
+import macSCPCore
+
+/// Shared conflict-resolution sheet (M19/T7) for BOTH import flows — session
+/// imports and login-set imports each route their naming collisions through
+/// the same `ImportConflictArbiter`/`ImportConflict` (Core, M19/T3), so this
+/// is the ONE sheet both present, instead of two near-identical inventions.
+///
+/// Shape mirrors the M5b transfer conflict sheet (`ConflictSheetView` in
+/// `ContentView.swift`) on purpose, so imports read as a sibling of
+/// transfers: same padding/spacing/frame, the same "apply to all" toggle,
+/// the same button order (Cancel first with `role: .cancel`, then the
+/// non-destructive actions, then the destructive one last carrying
+/// `.keyboardShortcut(.defaultAction)`), and the same
+/// `.interactiveDismissDisabled(true)` contract — Escape/click-outside must
+/// never resolve the prompt on their own; only the buttons call `onResolve`/
+/// `onCancel`. Whatever wires this sheet in (M19/T8, a continuation-based
+/// bridge like `ConflictPromptBridge`) depends on that contract to avoid
+/// ever leaving its continuation unfulfilled.
+///
+/// Two deliberate differences from the transfer sheet, both real
+/// consequences of what an import conflict actually is:
+/// - `kindLabel` arrives from Core as a stable identifier
+///   (`LoginSetImportPlanner.kindLabel` / `SessionImportPlanner.kindLabel`),
+///   not display text — Core has no UI language. `kindText` below maps it to
+///   localized text, falling back to a neutral generic noun (never the raw
+///   identifier) for any value neither planner currently sets.
+/// - `Replace` here also destroys secret material (the stored password or
+///   key passphrase for whatever it overwrites), which a mere file overwrite
+///   never does — the sheet says so explicitly via `replaceNote` rather than
+///   leaving it implicit the way the transfer sheet's plain "Overwrite" can.
+///
+/// This file only builds the sheet and its strings — wiring it into the two
+/// import flows and touching `ContentView`'s import paths is the next task.
+struct ImportConflictSheet: View {
+    let conflict: ImportConflict
+    let onResolve: (ImportConflictResolution, Bool) -> Void
+    let onCancel: () -> Void
+
+    @State private var applyToAll = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(L10n.string("import.conflict.title", "Name Already Exists"))
+                .font(.headline)
+            Text(String(format: L10n.string(
+                "import.conflict.message", "“%@” already exists."), conflict.itemName))
+                .foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Text(L10n.string("info.kind", "Kind"))
+                    .foregroundStyle(DesignTokens.inkSecondary)
+                Text(kindText)
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption)
+            Text(L10n.string(
+                "import.conflict.replaceNote",
+                "Replacing also overwrites the stored password or key passphrase."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Toggle(
+                L10n.string("import.conflict.applyToAll", "Apply to all remaining conflicts"),
+                isOn: $applyToAll)
+            Text(L10n.string("import.conflict.cancelNote", "Cancelling imports nothing."))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button(L10n.string("import.conflict.cancel", "Cancel Import"), role: .cancel) {
+                    onCancel()
+                }
+                Button(L10n.string("import.conflict.rename", "Rename")) {
+                    onResolve(.rename, applyToAll)
+                }
+                Button(L10n.string("import.conflict.skip", "Skip")) {
+                    onResolve(.skip, applyToAll)
+                }
+                Button(L10n.string("import.conflict.replace", "Replace"), role: .destructive) {
+                    onResolve(.replace, applyToAll)
+                }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 360)
+        // Escape/click-outside must NOT resolve the prompt without fulfilling
+        // whatever continuation the wiring task (T8) hangs off `onCancel` —
+        // same reasoning `ConflictSheetView` documents for the M5b transfer
+        // sheet. Resolution happens exclusively through the buttons above.
+        .interactiveDismissDisabled(true)
+    }
+
+    /// Maps Core's stable `kindLabel` identifier to localized display text.
+    /// `LoginSetImportPlanner.kindLabel` ("loginSet") and
+    /// `SessionImportPlanner.kindLabel` ("session") are the only two values
+    /// either import flow currently sets; anything else — a hypothetical
+    /// future planner, or a value that drifted — falls back to a neutral
+    /// generic noun instead of surfacing the raw identifier to the user.
+    private var kindText: String {
+        switch conflict.kindLabel {
+        case LoginSetImportPlanner.kindLabel:
+            return L10n.string("import.conflict.kind.loginSet", "login set")
+        case SessionImportPlanner.kindLabel:
+            return L10n.string("import.conflict.kind.session", "session")
+        default:
+            return L10n.string("import.conflict.kind.other", "item")
+        }
+    }
+}
