@@ -386,7 +386,7 @@
 "import.result.secretsRemoved %lld" = "Usunięto zapisane hasła, ponieważ plik ich nie zawierał: %lld";
 "import.result.secretsRemoveFailed %lld" = "Zapisane hasła, których nie udało się usunąć: %lld";
 "logins.export.title" = "Eksportuj zestawy logowania";
-"logins.export.summary %lld" = "Zestawy logowania: %lld";
+"logins.export.summary %lld" = "Zestawy logowania zapisane do pliku: %lld.";
 "logins.export.action" = "Eksportuj…";
 "logins.export.includeSecrets" = "Dołącz hasła";
 "logins.export.includeKeyFiles" = "Osadź pliki kluczy";

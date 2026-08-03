@@ -384,7 +384,7 @@
 "import.result.secretsRemoved %lld" = "Gespeicherte Passwörter entfernt, weil die Datei keine enthielt: %lld";
 "import.result.secretsRemoveFailed %lld" = "Gespeicherte Passwörter, die nicht entfernt werden konnten: %lld";
 "logins.export.title" = "Logins exportieren";
-"logins.export.summary %lld" = "%lld Logins";
+"logins.export.summary %lld" = "%lld Logins werden in die Datei geschrieben.";
 "logins.export.action" = "Exportieren…";
 "logins.export.includeSecrets" = "Passwörter einschließen";
 "logins.export.includeKeyFiles" = "Schlüsseldateien einbetten";
