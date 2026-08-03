@@ -69,6 +69,16 @@ macSCP is a Swift package: `swift build -c release` builds the binary,
 runnable `macSCP.app` under `dist/`. Integration tests expect the Docker
 SSH test rig from `docker/test-server/` (`MACSCP_ITEST=1`).
 
+## Command line
+
+The same build also produces `macscp-cli`, a small command-line companion
+built alongside the app; it is not part of the DMG, so building it means
+building from source. A release built with `scripts/release` signs both
+the app and the CLI into the same keychain access group, so the CLI can
+read passwords and passphrases the app already saved instead of asking
+for them again. A CLI built directly with `swift build` has no such group
+and falls back to asking for each secret on its own.
+
 ## License
 
 [MIT](LICENSE) — © 2026 noix.
