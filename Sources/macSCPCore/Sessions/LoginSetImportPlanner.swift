@@ -57,7 +57,7 @@ public enum LoginSetImportPlanner {
     /// Stable identifier passed as `ImportConflict.kindLabel` — NOT display
     /// text (Core has no UI language). The app maps this to its localized
     /// string.
-    static let kindLabel = "loginSet"
+    public static let kindLabel = "loginSet"
 
     public static func plan(
         existing: [LoginSet], incoming: LoginSetExportPayload, arbiter: ImportConflictArbiter
@@ -72,7 +72,19 @@ public enum LoginSetImportPlanner {
         var replaced: [String] = []
         var renamed: [String] = []
 
+        // Names are never enforced unique in the store, so `existing` can
+        // legitimately contain two entries that collide under
+        // `normalizedKey` (e.g. "Prod" and "prod"), and a single existing
+        // entry can also be the collision target of more than one incoming
+        // set (e.g. incoming "Prod" and "prod" both matching the store's one
+        // "Prod"). Either way, an existing set may be REPLACED at most
+        // once per run — tracked here so a second collision against an
+        // already-claimed id falls through to the same fresh-id-and-rename
+        // fallback used when there is nothing on record to replace at all.
+        var replacedExistingIDs: Set<UUID> = []
+
         for fileSet in incoming.sets {
+            let trimmedName = fileSet.name.trimmingCharacters(in: .whitespacesAndNewlines)
             let key = normalizedKey(fileSet.name)
             let secret = incoming.includesSecrets ? fileSet.secret : nil
             let embeddedKey = incoming.includesKeyFiles ? fileSet.embeddedKey : nil
@@ -80,7 +92,7 @@ public enum LoginSetImportPlanner {
             guard takenNames.contains(key) else {
                 takenNames.insert(key)
                 setsToImport.append(PlannedLoginSet(
-                    set: makeSet(from: fileSet, id: UUID(), name: fileSet.name),
+                    set: makeSet(from: fileSet, id: UUID(), name: trimmedName),
                     secret: secret, embeddedKey: embeddedKey, replacesExisting: false))
                 continue
             }
@@ -98,19 +110,24 @@ public enum LoginSetImportPlanner {
                 skipped.append(fileSet.name)
 
             case .replace:
-                if let match = existing.first(where: { normalizedKey($0.name) == key }) {
+                if let match = existing.first(where: {
+                    normalizedKey($0.name) == key && !replacedExistingIDs.contains($0.id)
+                }) {
+                    replacedExistingIDs.insert(match.id)
                     setsToImport.append(PlannedLoginSet(
-                        set: makeSet(from: fileSet, id: match.id, name: fileSet.name),
+                        set: makeSet(from: fileSet, id: match.id, name: trimmedName),
                         secret: secret, embeddedKey: embeddedKey, replacesExisting: true))
                     replaced.append(fileSet.name)
                 } else {
-                    // The collision was against a name already claimed
-                    // earlier in THIS run (e.g. an in-file duplicate or an
-                    // earlier rename), not against an actual existing set —
-                    // there is nothing on record to replace. Fall back to a
-                    // fresh id under a unique name rather than replacing a
-                    // set that does not exist.
-                    let uniqueName = uniqueName(for: fileSet.name, avoiding: takenNames)
+                    // Either the collision was against a name already
+                    // claimed earlier in THIS run (e.g. an in-file duplicate
+                    // or an earlier rename) and there is nothing on record
+                    // to replace, OR every existing set under this name has
+                    // already been claimed by a previous replace in this
+                    // same run. Fall back to a fresh id under a unique name
+                    // rather than replacing a set that does not exist, or
+                    // double-binding two incoming sets to the same id.
+                    let uniqueName = uniqueName(for: trimmedName, avoiding: takenNames)
                     takenNames.insert(normalizedKey(uniqueName))
                     setsToImport.append(PlannedLoginSet(
                         set: makeSet(from: fileSet, id: UUID(), name: uniqueName),
@@ -119,7 +136,7 @@ public enum LoginSetImportPlanner {
                 }
 
             case .rename:
-                let uniqueName = uniqueName(for: fileSet.name, avoiding: takenNames)
+                let uniqueName = uniqueName(for: trimmedName, avoiding: takenNames)
                 takenNames.insert(normalizedKey(uniqueName))
                 setsToImport.append(PlannedLoginSet(
                     set: makeSet(from: fileSet, id: UUID(), name: uniqueName),
