@@ -611,6 +611,7 @@
 "menubar.status.connecting" = "Verbindet…";
 "menubar.status.failed" = "Fehlgeschlagen";
 "menubar.status.ready" = "Bereit";
+"menubar.tooltip" = "macSCP — Verbindungen und Übertragungen";
 "menubar.transfer.running" = "%d überträgt";
 "menubar.transfer.queued" = "%d in Warteschlange";
 "settings.general.menubar" = "Menüleisten-Symbol anzeigen";

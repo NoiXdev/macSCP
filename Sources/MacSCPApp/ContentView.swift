@@ -1191,6 +1191,11 @@ struct ContentView: View {
                                 .foregroundStyle(.red)
                                 .lineLimit(2)
                             Spacer()
+                            // Icon-only hit target: the banner text is the
+                            // error message and never says that the ✕ dismisses
+                            // it, so the glyph needs its own hint — the same
+                            // one the identical dismiss button in
+                            // `FileSearchBar` carries.
                             Button {
                                 tab.editErrorMessage = nil
                             } label: {
@@ -1198,6 +1203,7 @@ struct ContentView: View {
                             }
                             .buttonStyle(.plain)
                             .foregroundStyle(.secondary)
+                            .help(L10n.string("common.close", "Close"))
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 4)
