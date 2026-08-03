@@ -292,23 +292,10 @@ struct LoginSetsSheet: View {
                 }
             )
         }
-        .sheet(
-            item: Binding(
-                get: { importConflictBridge.currentPrompt },
-                set: { newValue in
-                    if newValue == nil { importConflictBridge.dismiss() }
-                }),
-            onDismiss: { importConflictBridge.dismiss() }
-        ) { item in
-            ImportConflictSheet(
-                conflict: item.conflict,
-                onResolve: { resolution, applyToAll in
-                    importConflictBridge.resolve(
-                        (resolution: resolution, applyToAll: applyToAll))
-                },
-                onCancel: { importConflictBridge.dismiss() }
-            )
-        }
+        // Same modifier the session import uses (`ContentView`), so both
+        // flows share one presentation contract — see
+        // `importConflictSheet(bridge:)`.
+        .importConflictSheet(bridge: importConflictBridge)
         .alert(
             L10n.string("import.error.title", "Import Failed"),
             isPresented: Binding(

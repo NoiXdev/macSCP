@@ -1,82 +1,13 @@
 import SwiftUI
 import macSCPCore
 
-/// Sheet item wrapper giving `ImportConflict` `Identifiable` conformance
-/// without extending the Core type — same reason `ConflictPromptItem` exists
-/// for transfers. One fresh id per prompt is enough: an import run resolves
-/// its conflicts strictly one at a time.
-struct ImportConflictPromptItem: Identifiable {
-    let id = UUID()
-    let conflict: ImportConflict
-}
-
-/// Turns `ImportConflictSheet`'s two callbacks into the `(resolution,
-/// applyToAll)?` an `ImportConflictArbiter`'s decider must return — the import
-/// twin of `ConflictPromptBridge` (transfers), down to the cancellation
-/// handler.
-///
-/// **Exactly-once resumption** is the whole point, and it holds on every path:
-/// - `resolve` is the ONLY place the continuation is ever resumed. It clears
-///   `self.continuation` before resuming, so a second call (double click, or
-///   a dismissal racing a button tap) finds `nil` and returns.
-/// - The sheet is `.interactiveDismissDisabled(true)`, so Escape and
-///   click-outside cannot answer it behind the bridge's back; every exit is
-///   one of the buttons, and every button calls `onResolve`/`onCancel`.
-/// - `.sheet(item:)` in the presenting view additionally routes its own
-///   `onDismiss` (and a `nil` write to the binding) through `dismiss()`, which
-///   is just `resolve(nil)` — harmless after a button already answered,
-///   because of the guard above, and the safety net if the sheet ever
-///   disappears for a reason outside its own buttons.
-/// - If the planning task is cancelled while the prompt is open, the
-///   cancellation handler resolves it as "cancel" instead of leaving the
-///   continuation hanging forever.
-@MainActor
-@Observable
-final class ImportConflictBridge {
-    private(set) var currentPrompt: ImportConflictPromptItem?
-    private var continuation:
-        CheckedContinuation<(resolution: ImportConflictResolution, applyToAll: Bool)?, Never>?
-
-    /// Decider side: awaited by `ImportConflictArbiter`.
-    func ask(_ conflict: ImportConflict) async
-        -> (resolution: ImportConflictResolution, applyToAll: Bool)?
-    {
-        currentPrompt = ImportConflictPromptItem(conflict: conflict)
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                if Task.isCancelled {
-                    currentPrompt = nil
-                    continuation.resume(returning: nil)
-                    return
-                }
-                self.continuation = continuation
-            }
-        } onCancel: {
-            Task { @MainActor [weak self] in
-                self?.resolve(nil)
-            }
-        }
-    }
-
-    /// Called from the sheet's buttons. Exactly-once: a second resolution is
-    /// ignored.
-    func resolve(_ result: (resolution: ImportConflictResolution, applyToAll: Bool)?) {
-        guard let continuation else {
-            // No pending question — but a prompt may still be on screen from
-            // the `Task.isCancelled` fast path above; make sure it goes away.
-            currentPrompt = nil
-            return
-        }
-        self.continuation = nil
-        currentPrompt = nil
-        continuation.resume(returning: result)
-    }
-
-    /// Resolves a still-open prompt as "cancel the import".
-    func dismiss() {
-        resolve(nil)
-    }
-}
+/// The continuation bridge both import flows present this sheet through
+/// (`ImportConflictBridge`, with `ImportConflictPromptItem`) lives in Core,
+/// next to the arbiter it feeds — it is pure state machine, and the app
+/// target has no tests to hold its resumption rules honest. See
+/// `Sources/macSCPCore/Presentation/ImportConflictBridge.swift`; the
+/// presentation contract both presenters must honour is
+/// `importConflictSheet(bridge:)` at the bottom of this file.
 
 /// Shared conflict-resolution sheet (M19/T7) for BOTH import flows — session
 /// imports and login-set imports each route their naming collisions through
@@ -181,6 +112,48 @@ struct ImportConflictSheet: View {
             return L10n.string("import.conflict.kind.session", "session")
         default:
             return L10n.string("import.conflict.kind.other", "item")
+        }
+    }
+}
+
+extension View {
+    /// The ONE way either import flow presents `ImportConflictSheet` —
+    /// `ContentView` (sessions) and `LoginSetsSheet` (logins) both call this
+    /// and nothing else, so the presentation contract below cannot drift
+    /// apart between them or be reinvented by a third flow.
+    ///
+    /// Three deliberate choices, each of which the bridge's exactly-once
+    /// argument depends on:
+    ///
+    /// 1. **The binding's setter is inert.** SwiftUI writes `nil` to it when
+    ///    it decides the sheet should go away — but that write says nothing
+    ///    about WHICH prompt it refers to, and by the time it lands the
+    ///    (I/O-free) planner may already be asking the next question.
+    ///    Answering "whatever is current" there cancelled imports the user had
+    ///    just answered. The getter alone is what drives presentation, and
+    ///    `resolve` clearing `currentPrompt` is what dismisses the sheet.
+    /// 2. **The safety net names its prompt.** `onDisappear` fires on the
+    ///    content view being torn down, which is the only hook that still has
+    ///    `item` — so the net can say "the sheet for THIS prompt went away"
+    ///    and `dismiss(promptID:)` can ignore it unless that prompt is still
+    ///    the open, unanswered one. There is no `onDismiss:` here for exactly
+    ///    that reason: it carries no item.
+    /// 3. **Every button routes into the bridge**, and the sheet itself is
+    ///    `.interactiveDismissDisabled(true)`, so Escape/click-outside cannot
+    ///    strand a continuation for the net to have to catch.
+    func importConflictSheet(bridge: ImportConflictBridge) -> some View {
+        sheet(item: Binding(
+            get: { bridge.currentPrompt },
+            set: { _ in /* see 1. above — deliberately inert */ })
+        ) { item in
+            ImportConflictSheet(
+                conflict: item.conflict,
+                onResolve: { resolution, applyToAll in
+                    bridge.resolve((resolution: resolution, applyToAll: applyToAll))
+                },
+                onCancel: { bridge.dismiss(promptID: item.id) }
+            )
+            .onDisappear { bridge.dismiss(promptID: item.id) }
         }
     }
 }
