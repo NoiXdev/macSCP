@@ -420,7 +420,7 @@ struct EmbeddedKeyPorterTests {
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
         let targetSecrets = InMemorySecretStore()
         let path = try EmbeddedKeyPorter.materialize(
-            embedded, store: target, secrets: targetSecrets)
+            embedded, store: target, secrets: targetSecrets).path
 
         #expect(try permissions(of: path) == 0o600)
         #expect(try permissions(of: target.keyDirectory.path(percentEncoded: false)) == 0o700)
@@ -465,9 +465,14 @@ struct EmbeddedKeyPorterTests {
 
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
         let targetSecrets = InMemorySecretStore()
-        let path = try EmbeddedKeyPorter.materialize(
+        let materialized = try EmbeddedKeyPorter.materialize(
             embedded, store: target, secrets: targetSecrets)
+        let path = materialized.path
 
+        // Reported to the caller, which holds the same value a second time
+        // (a `.privateKey` login set's secret IS its key passphrase) and uses
+        // this to NOT store it again under its own id (M19 review).
+        #expect(materialized.storedPassphrase)
         let imported = try #require(try target.key(forPath: path))
         #expect(imported.id != key.id)
         #expect(imported.fileName == imported.id.uuidString)
@@ -529,7 +534,7 @@ struct EmbeddedKeyPorterTests {
 
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
         let importedPath = try EmbeddedKeyPorter.materialize(
-            embedded, store: target, secrets: InMemorySecretStore())
+            embedded, store: target, secrets: InMemorySecretStore()).path
 
         let imported = try #require(try target.key(forPath: importedPath))
         #expect(imported.type == .ed25519)
@@ -554,7 +559,7 @@ struct EmbeddedKeyPorterTests {
 
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
         let importedPath = try EmbeddedKeyPorter.materialize(
-            embedded, store: target, secrets: InMemorySecretStore())
+            embedded, store: target, secrets: InMemorySecretStore()).path
 
         let imported = try #require(try target.key(forPath: importedPath))
         #expect(imported.publicKeyOpenSSH == key.publicKeyOpenSSH)
@@ -709,11 +714,15 @@ struct EmbeddedKeyPorterTests {
 
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
         let targetSecrets = RecordingSecretStore()
-        let importedPath = try EmbeddedKeyPorter.materialize(
+        let materialized = try EmbeddedKeyPorter.materialize(
             payload, store: target, secrets: targetSecrets)
+        let importedPath = materialized.path
 
         let imported = try #require(try target.key(forPath: importedPath))
         #expect(imported.hasPassphrase == false)
+        // Nothing was stored, so the caller must keep whatever secret IT
+        // holds — the flag says so.
+        #expect(materialized.storedPassphrase == false)
         #expect(targetSecrets.stored.isEmpty)
         #expect(targetSecrets.savedIDs.isEmpty)
         // The key itself is intact and usable without a passphrase.
@@ -912,7 +921,7 @@ struct EmbeddedKeyPorterTests {
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
         let targetSecrets = RecordingSecretStore()
         let importedPath = try EmbeddedKeyPorter.materialize(
-            embedded, store: target, secrets: targetSecrets)
+            embedded, store: target, secrets: targetSecrets).path
 
         let imported = try #require(try target.key(forPath: importedPath))
         #expect(imported.fingerprint == key.fingerprint)

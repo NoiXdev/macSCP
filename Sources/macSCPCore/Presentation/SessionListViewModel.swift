@@ -1139,14 +1139,32 @@ public final class SessionListViewModel {
         for planned in plan.setsToImport {
             var set = planned.set
             var materializedKeyID: UUID?
+            // What this set's own Keychain slot should end up holding. Starts
+            // as whatever the file carried and is cleared below when the KEY
+            // took the same value — see `EmbeddedKeyPorter.MaterializedKey`.
+            var secretForSet = planned.secret
+            var passphraseWentToTheKey = false
 
             if let embedded = planned.embeddedKey {
                 do {
-                    let path = try EmbeddedKeyPorter.materialize(
+                    let materialized = try EmbeddedKeyPorter.materialize(
                         embedded, store: keyStore, secrets: secrets)
-                    set.keyPath = path
-                    materializedKeyID = (try? keyStore.key(forPath: path))??.id
+                    set.keyPath = materialized.path
+                    materializedKeyID = (try? keyStore.key(forPath: materialized.path))??.id
                     result.keysImported += 1
+                    if materialized.storedPassphrase, set.authKind == .privateKey {
+                        // For a `.privateKey` set the set's secret IS the key
+                        // passphrase (that is how `LoginResolver` and
+                        // `ManagedKeyPassphrase` read it), so writing it again
+                        // under the set id would put ONE secret in TWO slots —
+                        // the duplication `hasStoredPassphrase` exists to
+                        // prevent. And since the set's slot wins at connect
+                        // time, the copy would go on shadowing the key's own
+                        // value after the user changes it in the SSH keys
+                        // sheet. The key owns it; the set stays out of it.
+                        secretForSet = nil
+                        passphraseWentToTheKey = true
+                    }
                 } catch {
                     // The set still imports — without a usable key path, which
                     // `missingKeyPaths` below then surfaces.
@@ -1170,7 +1188,7 @@ public final class SessionListViewModel {
             result.imported += 1
             if planned.replacesExisting { result.replaced += 1 }
 
-            if let secret = planned.secret, !secret.isEmpty {
+            if let secret = secretForSet, !secret.isEmpty {
                 do {
                     try secrets.savePassword(secret, for: set.id)
                     result.secretsImported += 1
@@ -1182,10 +1200,19 @@ public final class SessionListViewModel {
                 // stale-secret branch: delete unconditionally (idempotent, and
                 // an unreadable Keychain is not evidence of an empty slot),
                 // probe only to decide what may be claimed.
+                //
+                // The removal runs for `passphraseWentToTheKey` too, and must:
+                // a stale set slot would otherwise keep winning at connect
+                // time over the key's own, correct passphrase. It is not
+                // REPORTED in that case — nothing was lost, the value simply
+                // lives with the key now, and "removed because the file had
+                // none" would be a plain untruth about a file that had one.
                 let stale = (try? secrets.password(for: set.id)) ?? nil
                 do {
                     try secrets.deletePassword(for: set.id)
-                    if !(stale ?? "").isEmpty { result.secretsRemoved += 1 }
+                    if !passphraseWentToTheKey, !(stale ?? "").isEmpty {
+                        result.secretsRemoved += 1
+                    }
                 } catch {
                     result.secretRemovalFailures += 1
                 }

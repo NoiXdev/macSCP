@@ -127,15 +127,39 @@ public enum EmbeddedKeyPorter {
             hasPassphrase: key.hasPassphrase, passphrase: passphrase)
     }
 
-    /// Writes the key into the managed store under a FRESH id and returns the
-    /// new local path for the imported set's `keyPath`. The caller owns the
-    /// login set; this function only touches the key store and the Keychain.
+    /// What `materialize` did — beyond where the key file landed.
+    public struct MaterializedKey: Equatable, Sendable {
+        /// The new local path, for the imported set's `keyPath`.
+        public let path: String
+        /// True when the carried passphrase was verified against the key
+        /// material and written into the NEW key's own Keychain slot.
+        ///
+        /// Reported because the CALLER usually holds the same value a second
+        /// time (a `.privateKey` login set's secret IS its key passphrase) and
+        /// must not store it again under the set's id: one secret in two slots
+        /// is what `ManagedKeyPassphrase.hasStoredPassphrase` exists to
+        /// prevent, and the set's slot WINS at connect time — so the copy
+        /// would silently shadow a later passphrase change made in the SSH
+        /// keys sheet (M19 review, important 2).
+        public let storedPassphrase: Bool
+
+        public init(path: String, storedPassphrase: Bool) {
+            self.path = path
+            self.storedPassphrase = storedPassphrase
+        }
+    }
+
+    /// Writes the key into the managed store under a FRESH id and reports the
+    /// new local path plus whether the key took the passphrase (see
+    /// `MaterializedKey`). The caller owns the login set; this function only
+    /// touches the key store and the Keychain.
     public static func materialize(
         _ key: EmbeddedKey, store: ManagedKeyStore, secrets: any SecretStore
-    ) throws -> String {
+    ) throws -> MaterializedKey {
         let newID = UUID()
         let destination = store.keyDirectory.appendingPathComponent(newID.uuidString)
         let destinationPath = destination.path(percentEncoded: false)
+        var storedPassphrase = false
 
         try FileManager.default.createDirectory(
             at: store.keyDirectory, withIntermediateDirectories: true,
@@ -166,6 +190,10 @@ public enum EmbeddedKeyPorter {
                let passphrase = key.passphrase, !passphrase.isEmpty
             {
                 try secrets.savePassword(passphrase, for: newID)
+                // Only after the write actually succeeded: the caller decides
+                // whether to keep its own copy based on this, and a `true`
+                // that nothing backs would drop the passphrase entirely.
+                storedPassphrase = true
             }
 
             // `name` and `comment` stay as the payload wrote them BY DESIGN:
@@ -198,7 +226,7 @@ public enum EmbeddedKeyPorter {
             throw error
         }
 
-        return destinationPath
+        return MaterializedKey(path: destinationPath, storedPassphrase: storedPassphrase)
     }
 
     /// What could actually be established about the key material that was just
