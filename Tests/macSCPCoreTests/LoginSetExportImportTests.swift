@@ -335,21 +335,101 @@ struct LoginSetExportImportTests {
 
     /// A FRESH import that carries no secret must not delete anything — only a
     /// replace touches an existing slot.
+    ///
+    /// The obvious version of this test (a fresh set, an unrelated stored
+    /// secret) is VACUOUS: a fresh set's brand-new UUID finds nothing under
+    /// its own id either way, so mutating the applier's
+    /// `else if planned.replacesExisting` to a plain `else` leaves it green.
+    /// The set therefore carries an id that DOES have a slot — the leftover
+    /// state a re-import after a delete produces — so the guard is the only
+    /// thing standing between "fresh import" and "wipes that slot".
     @Test func aFreshImportWithoutASecretRemovesNothing() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let unrelated = LoginSet(name: "other", username: "u")
         vm.saveLoginSet(unrelated, secret: "keep")
+        let freshSet = LoginSet(name: "prod", username: "deploy")
+        try secrets.savePassword("orphaned-but-not-ours-to-delete", for: freshSet.id)
 
         let plan = LoginSetImportPlan(setsToImport: [
             PlannedLoginSet(
-                set: LoginSet(name: "prod", username: "deploy"), secret: nil,
-                embeddedKey: nil, replacesExisting: false),
+                set: freshSet, secret: nil, embeddedKey: nil, replacesExisting: false),
         ])
         let result = vm.applyLoginSetImport(plan, keyStore: keyStore(in: dir))
 
         #expect(result.secretsRemoved == 0)
+        #expect(result.secretRemovalFailures == 0)
+        #expect(try secrets.password(for: freshSet.id) == "orphaned-but-not-ours-to-delete")
         #expect(try secrets.password(for: unrelated.id) == "keep")
+    }
+
+    /// M19 review (minor): `imported` counted replaced sets too, so the
+    /// summary's one line — "%lld imported, %lld replaced, %lld skipped" —
+    /// reported a single replacing set as "1 imported, 1 replaced". `imported`
+    /// now means what the line says: sets that are NEW to this machine.
+    @Test func aReplacedSetIsNotAlsoCountedAsImported() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let existing = LoginSet(name: "prod", username: "old")
+        vm.saveLoginSet(existing, secret: nil)
+
+        let result = vm.applyLoginSetImport(LoginSetImportPlan(setsToImport: [
+            PlannedLoginSet(
+                set: LoginSet(id: existing.id, name: "prod", username: "new"),
+                secret: nil, embeddedKey: nil, replacesExisting: true),
+            PlannedLoginSet(
+                set: LoginSet(name: "staging", username: "u"),
+                secret: nil, embeddedKey: nil, replacesExisting: false),
+        ], replaced: ["prod"]), keyStore: keyStore(in: dir))
+
+        #expect(result.imported == 1)
+        #expect(result.replaced == 1)
+        // Both records did land — the count is about what is NEW, not about
+        // what was written.
+        #expect(vm.loginSets.count == 2)
+    }
+
+    /// M19 review (minor): `saveLoginSet` enforces "an agent set never holds a
+    /// secret" (M10d); the applier bypassed it, so a hand-written file pairing
+    /// `authKind: agent` with a secret created a Keychain entry our own UI can
+    /// never show, change or clean up. Not producible by our exporter — which
+    /// is exactly why the applier has to uphold the rule itself.
+    @Test func anAgentSetNeverGetsAKeychainEntry() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let agentSet = LoginSet(name: "agent", username: "u", authKind: .agent)
+
+        let result = vm.applyLoginSetImport(LoginSetImportPlan(setsToImport: [
+            PlannedLoginSet(
+                set: agentSet, secret: "should-never-be-stored", embeddedKey: nil,
+                replacesExisting: false),
+        ]), keyStore: keyStore(in: dir))
+
+        #expect(result.imported == 1)
+        #expect(result.secretsImported == 0)
+        #expect(try secrets.password(for: agentSet.id) == nil)
+    }
+
+    /// …and switching an existing password set to agent mode by replacing it
+    /// clears the slot that set used to have, exactly as `saveLoginSet` does.
+    /// The removal is not REPORTED here: "removed because the file had none"
+    /// would be untrue about a file that carried one — the same reasoning that
+    /// keeps a passphrase handed to the key out of `secretsRemoved`.
+    @Test func replacingWithAnAgentSetClearsTheOldSecret() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let existing = LoginSet(name: "prod", username: "u")
+        vm.saveLoginSet(existing, secret: "old-pw")
+
+        let result = vm.applyLoginSetImport(LoginSetImportPlan(setsToImport: [
+            PlannedLoginSet(
+                set: LoginSet(id: existing.id, name: "prod", username: "u", authKind: .agent),
+                secret: "should-never-be-stored", embeddedKey: nil, replacesExisting: true),
+        ], replaced: ["prod"]), keyStore: keyStore(in: dir))
+
+        #expect(try secrets.password(for: existing.id) == nil)
+        #expect(result.secretsRemoved == 0)
+        #expect(result.secretsImported == 0)
     }
 
     @Test func embeddedKeysAreMaterializedAndRepointTheSet() throws {

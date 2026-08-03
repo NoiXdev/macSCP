@@ -1065,6 +1065,10 @@ public final class SessionListViewModel {
 
     /// The outcome of applying a `LoginSetImportPlan`.
     public struct LoginSetImportResult: Equatable {
+        /// Sets that are NEW to this machine — disjoint from `replaced`, since
+        /// the summary shows both in one line. A renamed set counts here (it
+        /// is a new record); `renamed` says how many of them had to take a
+        /// different name.
         public var imported: Int
         public var replaced: Int
         public var skipped: Int
@@ -1142,8 +1146,23 @@ public final class SessionListViewModel {
             // What this set's own Keychain slot should end up holding. Starts
             // as whatever the file carried and is cleared below when the KEY
             // took the same value — see `EmbeddedKeyPorter.MaterializedKey`.
-            var secretForSet = planned.secret
-            var passphraseWentToTheKey = false
+            //
+            // An AGENT set never holds a secret (M10d), the invariant
+            // `saveLoginSet` enforces for every set the UI writes. Our own
+            // exporter cannot produce `authKind: agent` WITH a secret, but a
+            // hand-written file can — and the applier must uphold the rule
+            // itself rather than trust the file, or the import creates a
+            // Keychain entry no screen in the app can ever show, change or
+            // clean up. Falling through to the removal branch below also
+            // clears the slot a replaced password set used to have.
+            var secretForSet = planned.set.authKind == .agent ? nil : planned.secret
+            // True once the file DID carry a secret that this applier
+            // deliberately declined to write under the set id — because the
+            // key took it, or because an agent set may not hold one. It gates
+            // only what may be CLAIMED below: the stale slot is still cleared,
+            // but "removed because the file had none" would be a plain untruth
+            // about a file that had one.
+            var secretWithheld = planned.set.authKind == .agent && !(planned.secret ?? "").isEmpty
 
             if let embedded = planned.embeddedKey {
                 do {
@@ -1163,7 +1182,7 @@ public final class SessionListViewModel {
                         // value after the user changes it in the SSH keys
                         // sheet. The key owns it; the set stays out of it.
                         secretForSet = nil
-                        passphraseWentToTheKey = true
+                        secretWithheld = !(planned.secret ?? "").isEmpty
                     }
                 } catch {
                     // The set still imports — without a usable key path, which
@@ -1185,8 +1204,17 @@ public final class SessionListViewModel {
                 }
                 continue
             }
-            result.imported += 1
-            if planned.replacesExisting { result.replaced += 1 }
+            // `imported` and `replaced` are DISJOINT: they sit in one summary
+            // line ("N imported, N replaced, N skipped"), so counting a
+            // replaced set in both made a single replacing set report itself
+            // twice. `imported` means "new to this machine" — which includes a
+            // renamed set (it IS a new record; `renamed` details how it got
+            // its name) but never one that overwrote an existing record.
+            if planned.replacesExisting {
+                result.replaced += 1
+            } else {
+                result.imported += 1
+            }
 
             if let secret = secretForSet, !secret.isEmpty {
                 do {
@@ -1201,16 +1229,15 @@ public final class SessionListViewModel {
                 // an unreadable Keychain is not evidence of an empty slot),
                 // probe only to decide what may be claimed.
                 //
-                // The removal runs for `passphraseWentToTheKey` too, and must:
-                // a stale set slot would otherwise keep winning at connect
-                // time over the key's own, correct passphrase. It is not
-                // REPORTED in that case — nothing was lost, the value simply
-                // lives with the key now, and "removed because the file had
-                // none" would be a plain untruth about a file that had one.
+                // The removal runs for a WITHHELD secret too, and must: a stale
+                // set slot would otherwise keep winning at connect time over
+                // the key's own, correct passphrase, and an agent set would go
+                // on owning a Keychain entry no screen can reach. Only the
+                // CLAIM is suppressed then — see `secretWithheld`.
                 let stale = (try? secrets.password(for: set.id)) ?? nil
                 do {
                     try secrets.deletePassword(for: set.id)
-                    if !passphraseWentToTheKey, !(stale ?? "").isEmpty {
+                    if !secretWithheld, !(stale ?? "").isEmpty {
                         result.secretsRemoved += 1
                     }
                 } catch {

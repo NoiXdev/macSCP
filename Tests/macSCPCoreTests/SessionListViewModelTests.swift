@@ -382,18 +382,30 @@ struct SessionListViewModelTests {
     }
 
     /// A fresh (non-replacing) import that carries no password must not delete
-    /// anything — there is nothing of the user's under that brand-new id.
+    /// anything.
+    ///
+    /// The obvious version of this — a fresh session plus an unrelated stored
+    /// password — is VACUOUS: the imported session's brand-new UUID addresses
+    /// nothing under its own id either way, so dropping the applier's
+    /// `replacesExisting` guard leaves it green. The fresh session therefore
+    /// carries an id that DOES have a slot (the leftover state a re-import
+    /// after a delete produces), which is the only arrangement where the guard
+    /// is load-bearing. Same construction as the login-set twin
+    /// `aFreshImportWithoutASecretRemovesNothing`.
     @Test func aFreshImportWithoutAPasswordRemovesNothing() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let existing = vm.save(name: "keep", host: "h", port: 22, username: "u", password: "kept")!
+        let fresh = StoredSession(name: "new", host: "h2", username: "u")
+        try secrets.savePassword("orphaned-but-not-ours-to-delete", for: fresh.id)
 
         let result = vm.applyImport(SessionImportPlan(sessionsToImport: [
-            PlannedSession(
-                session: StoredSession(name: "new", host: "h2", username: "u"), password: nil),
+            PlannedSession(session: fresh, password: nil),
         ]))
 
         #expect(result.secretsRemoved == 0)
+        #expect(result.secretRemovalFailures == 0)
+        #expect(try secrets.password(for: fresh.id) == "orphaned-but-not-ours-to-delete")
         #expect(try secrets.password(for: existing.id) == "kept")
     }
 
