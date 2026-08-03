@@ -93,3 +93,77 @@ struct KeychainSecretSourceTests {
         #expect(KeychainSecretSource(store: InMemorySecretStore()).label == "keychain")
     }
 }
+
+/// Pins the composition the CLI relies on: the FIXED source order
+/// (`--password-command` → environment variable → Keychain) and the
+/// agent-auth guard (an SSH session authenticating via the local ssh-agent
+/// needs no secret at all, so the chain is empty). This used to live in
+/// `Sources/MacSCPCLI/SessionConnecting.swift`, a target with no test
+/// target — a swapped append or a dropped guard would have compiled and
+/// passed the whole suite. Asserting on `label` sequences, not just count,
+/// is what makes a swap fail.
+@Suite("secretSources(for:passwordCommand:keychainStore:) composition")
+struct SecretSourcesCompositionTests {
+    private func makeSession(
+        kind: ConnectionKind, authKind: StoredSession.AuthKind = .password
+    ) -> StoredSession {
+        StoredSession(
+            name: "test", host: "example.test", username: "user",
+            authKind: authKind, kind: kind,
+            s3: kind == .s3
+                ? StoredS3Config(
+                    accessKeyID: "id", region: "r", endpoint: "https://example.test",
+                    bucket: "b", usePathStyle: true)
+                : nil)
+    }
+
+    @Test func sshOrderIsPasswordCommandThenEnvironmentThenKeychain() {
+        let session = makeSession(kind: .ssh)
+        let sources = secretSources(
+            for: session, passwordCommand: "echo x", keychainStore: InMemorySecretStore())
+        #expect(sources.map(\.label) == [
+            "--password-command", "environment variable MACSCP_PASSWORD", "keychain",
+        ])
+    }
+
+    @Test func sshWithoutPasswordCommandSkipsStraightToEnvironmentThenKeychain() {
+        let session = makeSession(kind: .ssh)
+        let sources = secretSources(
+            for: session, passwordCommand: nil, keychainStore: InMemorySecretStore())
+        #expect(sources.map(\.label) == [
+            "environment variable MACSCP_PASSWORD", "keychain",
+        ])
+    }
+
+    @Test func s3OrderUsesTheAWSConventionalVariableName() {
+        let session = makeSession(kind: .s3)
+        let sources = secretSources(
+            for: session, passwordCommand: "echo x", keychainStore: InMemorySecretStore())
+        #expect(sources.map(\.label) == [
+            "--password-command", "environment variable AWS_SECRET_ACCESS_KEY", "keychain",
+        ])
+    }
+
+    /// The agent is an authentication METHOD, not a secret source (M20
+    /// design): an agent-auth session needs nothing resolved, so an
+    /// unrelated broken `--password-command` must never be consulted for
+    /// it, let alone fail the connect.
+    @Test func agentAuthSSHSessionYieldsAnEmptyChainEvenWithPasswordCommandSet() {
+        let session = makeSession(kind: .ssh, authKind: .agent)
+        let sources = secretSources(
+            for: session, passwordCommand: "echo x", keychainStore: InMemorySecretStore())
+        #expect(sources.isEmpty)
+    }
+
+    /// The guard is keyed on `kind`/`authKind`, not merely "is agent set
+    /// somewhere": an S3 session always needs its secret access key,
+    /// regardless of what `authKind` happens to hold (S3 sessions don't use
+    /// it, but the guard must not accidentally key off a field that isn't
+    /// meaningful for this kind).
+    @Test func s3SessionAlwaysNeedsASecretRegardlessOfAuthKind() {
+        let session = makeSession(kind: .s3, authKind: .agent)
+        let sources = secretSources(
+            for: session, passwordCommand: nil, keychainStore: InMemorySecretStore())
+        #expect(!sources.isEmpty)
+    }
+}
