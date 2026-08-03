@@ -174,38 +174,114 @@ struct EmbeddedKeyPorterTests {
     /// `Data(contentsOf:)`.
     @Test func embedReadsNothingBeforeDecidingOwnership() throws {
         let source = try String(contentsOf: Self.porterSource, encoding: .utf8)
-        let start = try #require(source.range(of: "public static func embed("))
-        let end = try #require(source.range(of: "public static func materialize("))
+        switch Self.readsBeforeOwnership(inEmbedBodyOf: source) {
+        case .anchorsLost(let why):
+            Issue.record("\(why); re-anchor this source lint")
+        case .reads(let found):
+            #expect(found.isEmpty, "\(found) must not run before the managed-key lookup in embed")
+        }
+    }
+
+    /// The lint above is only worth its comment if it cannot be walked past by
+    /// writing the same read differently. Each mutant below is a real read of
+    /// `keyPath`, inserted immediately above the ownership guard — spelled the
+    /// way this file's own style would wrap it.
+    @Test func embedSourceLintCatchesAReadHoweverItIsWrapped() throws {
+        let mutants = [
+            // The reviewer's two: both are ordinary line wraps, and both used
+            // to keep the suite green.
+            "_ = try? Data(\n            contentsOf: URL(fileURLWithPath: keyPath))",
+            "_ = FileManager.default.contents(\n            atPath: keyPath)",
+            // Three more of the same kind, each breaking a different needle:
+            // a handle whose opening paren wrapped,
+            "_ = FileHandle\n            (forReadingAtPath: keyPath)",
+            // an explicit `.init` that ALSO wrapped (normalizing `.init(` away
+            // is not enough once the label moved to the next line),
+            "_ = try? Data.init(\n            contentsOf: URL(fileURLWithPath: keyPath))",
+            // and a stream whose receiver and call parted company.
+            "_ = InputStream\n            (fileAtPath: keyPath)",
+            // Controls: reads that the literal-text scan already caught, kept
+            // so a future rewrite cannot lose them while chasing the wraps.
+            "_ = try? Data.init(contentsOf: URL(fileURLWithPath: keyPath))",
+            "_ = FileManager\n            .default\n            .contents(atPath: keyPath)",
+            "_ = try? String(\n            contentsOfFile: keyPath, encoding: .utf8)",
+        ]
+        let source = try String(contentsOf: Self.porterSource, encoding: .utf8)
+        let anchor = try #require(source.range(of: "guard let key = try store.key(forPath:"))
+        for mutant in mutants {
+            let mutated = source.replacingCharacters(
+                in: anchor.lowerBound..<anchor.lowerBound, with: mutant + "\n        ")
+            switch Self.readsBeforeOwnership(inEmbedBodyOf: mutated) {
+            case .anchorsLost(let why):
+                Issue.record("\(why) for mutant <\(mutant)>")
+            case .reads(let found):
+                #expect(!found.isEmpty, "the source lint did not catch <\(mutant)>")
+            }
+        }
+    }
+
+    private enum EmbedBodyScan {
+        /// The slice anchors no longer hold — the lint is scanning nothing and
+        /// must be re-anchored rather than silently passing.
+        case anchorsLost(String)
+        /// The read constructs found BEFORE the ownership guard.
+        case reads([String])
+    }
+
+    /// The scanner behind both tests above: everything in `embed`'s body that
+    /// reads a file before `store.key(forPath:)` has decided the key is ours.
+    private static func readsBeforeOwnership(inEmbedBodyOf source: String) -> EmbedBodyScan {
+        guard let start = source.range(of: "public static func embed(") else {
+            return .anchorsLost("`embed` not found")
+        }
+        guard let end = source.range(of: "public static func materialize(") else {
+            return .anchorsLost("`materialize` not found")
+        }
         // A refactor that swaps the two functions must FAIL this test, not
         // trap the whole process on an inverted range (`String.subscript`
         // requires lowerBound <= upperBound).
         guard start.upperBound <= end.lowerBound else {
-            Issue.record("`materialize` now precedes `embed`; re-anchor this source lint")
-            return
+            return .anchorsLost("`materialize` now precedes `embed`")
         }
-        // Comments are stripped so prose about reading files cannot trip the
-        // scan; explicit `.init` is normalized away so `Data.init(contentsOf:`
-        // is scanned as the `Data(contentsOf:` it is.
-        let body = source[start.upperBound..<end.lowerBound]
+        // Comments go first, so prose about reading files cannot trip the scan
+        // — whole-line ones AND the tail of a line that ends in one.
+        let code = source[start.upperBound..<end.lowerBound]
             .split(separator: "\n", omittingEmptySubsequences: false)
-            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .map { line -> Substring in
+                guard let comment = line.range(of: "//") else { return line }
+                return line[line.startIndex..<comment.lowerBound]
+            }
             .joined(separator: "\n")
+        // ALL whitespace then goes, needles included. Swift lets a call wrap
+        // anywhere, so `Data(\n    contentsOf: …)` is the same call as
+        // `Data(contentsOf: …)` and has to trip the same needle; matching the
+        // literal text let an ordinary line wrap — the way this file's own
+        // style breaks long calls — walk straight past this lint. Explicit
+        // `.init` is normalized away for the same reason.
+        //
+        // The cost of joining without a separator is that tokens from adjacent
+        // lines touch, so a needle could in principle be spelled by two
+        // innocent line ends meeting. That fails LOUDLY (this test goes red and
+        // the needle gets refined), which is the right way round for a lint
+        // whose job is to trip over an accident.
+        let body = code.filter { !$0.isWhitespace }
             .replacingOccurrences(of: ".init(", with: "(")
 
-        let ownership = try #require(body.range(of: "store.key(forPath:"))
+        guard let ownership = body.range(of: "store.key(forPath:") else {
+            return .anchorsLost("the ownership guard is no longer recognizable")
+        }
         // Every entry names the CALL — `(contentsOf` covers `Data`, `NSData`,
         // `String` and anything else initialized from a URL, `.contents(atPath`
         // covers `FileManager.default` and any other `FileManager` instance.
-        for construct in [
+        // The needles carry no whitespace, matching the stripped body.
+        return .reads([
             "(contentsOf", "contentsOfFile", ".contents(atPath",
             "FileHandle(", "InputStream(", ".resourceBytes", ".bytes(",
             "open(", "fopen", "mmap(",
-        ] {
-            guard let read = body.range(of: construct) else { continue }
-            #expect(
-                read.lowerBound > ownership.upperBound,
-                "\(construct) must not run before the managed-key lookup in embed")
-        }
+        ].filter { needle in
+            guard let read = body.range(of: needle) else { return false }
+            return read.lowerBound < ownership.lowerBound
+        })
     }
 
     /// A `managed_keys.json` entry outlives its file when the user deletes
