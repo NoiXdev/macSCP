@@ -2,70 +2,13 @@ import AppKit
 import SwiftUI
 import macSCPCore
 
-/// Sheet item wrapper: gives `TransferConflict` `Identifiable` conformance
-/// without extending the Core type via extension (binding requirement
-/// M5b/T4). One fresh UUID per prompt suffices because at most one sheet is
-/// ever open at a time.
-struct ConflictPromptItem: Identifiable {
-    let id = UUID()
-    let conflict: TransferConflict
-}
-
-/// Holds the continuation for the transfer queue's `ConflictDecider` prompt.
-/// Pattern: `ConnectionViewModel.presentHostKeyPrompt`, including the
-/// cancellation handler and exactly-once resolution. A reference type
-/// (instead of a `@State` field directly on the view) because
-/// `TransferQueueViewModel.conflictDecider` is a `@Sendable` closure that
-/// outlives the `ContentView` struct. Owned per tab by `SessionTab` (M8a/T3),
-/// so a background tab's prompt never presents on the active tab.
-@MainActor
-@Observable
-final class ConflictPromptBridge {
-    /// Currently open prompt — drives `.sheet(item:)` in `ContentView`.
-    private(set) var currentPrompt: ConflictPromptItem?
-    private var continuation:
-        CheckedContinuation<(resolution: ConflictResolution, applyToAll: Bool)?, Never>?
-
-    /// Decider side: awaited by `TransferQueueViewModel.conflictDecider`.
-    /// Cancellation-safe: if the calling task is cancelled while the prompt
-    /// is open, it resolves with `nil` (cancel) instead of hanging.
-    func ask(_ conflict: TransferConflict) async
-        -> (resolution: ConflictResolution, applyToAll: Bool)?
-    {
-        currentPrompt = ConflictPromptItem(conflict: conflict)
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                if Task.isCancelled {
-                    continuation.resume(returning: nil)
-                    return
-                }
-                self.continuation = continuation
-            }
-        } onCancel: {
-            Task { @MainActor [weak self] in
-                self?.resolve(nil)
-            }
-        }
-    }
-
-    /// Called from the sheet buttons. Exactly-once: a second resolution
-    /// (e.g. a double click, or dismissal right after a button tap) is
-    /// ignored.
-    func resolve(_ result: (resolution: ConflictResolution, applyToAll: Bool)?) {
-        guard let continuation else { return }
-        self.continuation = nil
-        currentPrompt = nil
-        continuation.resume(returning: result)
-    }
-
-    /// Callable from the outside (teardown): resolves a still-open prompt as
-    /// "cancel". MUST run before `transferQueue.cancelAll()` — `cancelAll`
-    /// blocks (documented) on an open decider prompt that would otherwise
-    /// never be answered (deadlock on disconnect with an open sheet).
-    func dismiss() {
-        resolve(nil)
-    }
-}
+/// The continuation bridge this sheet is presented through
+/// (`ConflictPromptBridge`, with `ConflictPromptItem`) lives in Core, next to
+/// the queue that drives it — it is pure state machine, and the app target
+/// has no tests to hold its resumption rules honest. See
+/// `Sources/macSCPCore/Presentation/ConflictPromptBridge.swift`; the
+/// presentation contract it must be presented under is
+/// `transferConflictSheet(bridge:)`, right below the sheet itself.
 
 /// Conflict sheet content. Its own view type because of the local toggle
 /// state (`applyToAll`) — SwiftUI instantiates it fresh for every sheet
@@ -113,6 +56,55 @@ private struct ConflictSheetView: View {
         // the continuation — that would leave `cancelAll`/the queue hanging.
         // Resolution happens exclusively through the buttons.
         .interactiveDismissDisabled(true)
+    }
+}
+
+extension View {
+    /// The ONE way the conflict sheet is presented, so the contract below
+    /// cannot drift or be reinvented next to it.
+    ///
+    /// Three deliberate choices, each of which the bridge's exactly-once
+    /// argument depends on (see `ConflictPromptBridge` in Core):
+    ///
+    /// 1. **The binding's setter is inert.** SwiftUI writes `nil` to it when it
+    ///    decides the sheet should go away — but that write says nothing about
+    ///    WHICH prompt it refers to, and by the time it lands the queue may
+    ///    already be asking about the next file (one remote `stat` between two
+    ///    conflicts, against a ~250 ms dismissal animation). Answering
+    ///    "whatever is current" there returned `nil` — cancel — for a conflict
+    ///    the user had not been asked about yet, and a cancelled item takes its
+    ///    whole group with it: the folder transfer died after the user pressed
+    ///    "Skip". The getter alone drives presentation, and `resolve` clearing
+    ///    `currentPrompt` is what dismisses the sheet.
+    /// 2. **The safety net names its prompt.** `onDisappear` fires on the
+    ///    content view being torn down, which is the only hook that still has
+    ///    `item` — so the net can say "the sheet for THIS prompt went away" and
+    ///    `dismiss(promptID:)` can ignore it unless that prompt is still the
+    ///    open, unanswered one. There is no `onDismiss:` here for exactly that
+    ///    reason: it carries no item, so it structurally cannot name one.
+    /// 3. **Every button routes into the bridge NAMING ITS OWN PROMPT**, and
+    ///    the sheet itself is `.interactiveDismissDisabled(true)`, so
+    ///    Escape/click-outside cannot strand a continuation for the net to have
+    ///    to catch. The buttons pass `item.id` for the same reason the net
+    ///    does: a tap delivered twice (double click, or a repeated press of
+    ///    `Overwrite`'s `.defaultAction` shortcut) while this sheet animates
+    ///    out would otherwise answer the NEXT conflict — the queue has already
+    ///    asked it.
+    func transferConflictSheet(bridge: ConflictPromptBridge) -> some View {
+        sheet(item: Binding(
+            get: { bridge.currentPrompt },
+            set: { _ in /* see 1. above — deliberately inert */ })
+        ) { item in
+            ConflictSheetView(
+                conflict: item.conflict,
+                onResolve: { resolution, applyToAll in
+                    bridge.resolve(
+                        promptID: item.id, (resolution: resolution, applyToAll: applyToAll))
+                },
+                onCancel: { bridge.dismiss(promptID: item.id) }
+            )
+            .onDisappear { bridge.dismiss(promptID: item.id) }
+        }
     }
 }
 
@@ -1240,23 +1232,7 @@ struct ContentView: View {
                         await session.remote.refreshQuietly()
                     }
                 }
-                .sheet(
-                    item: Binding(
-                        get: { bridge.currentPrompt },
-                        set: { newValue in
-                            if newValue == nil { bridge.dismiss() }
-                        }
-                    ),
-                    onDismiss: { bridge.dismiss() }
-                ) { item in
-                    ConflictSheetView(
-                        conflict: item.conflict,
-                        onResolve: { resolution, applyToAll in
-                            bridge.resolve((resolution: resolution, applyToAll: applyToAll))
-                        },
-                        onCancel: { bridge.dismiss() }
-                    )
-                }
+                .transferConflictSheet(bridge: bridge)
             } else {
                 // Align the form to the top instead of centering it vertically
                 // (user feedback 2026-07-10, M5c/T0) — otherwise the compact
@@ -1422,7 +1398,7 @@ struct ContentView: View {
             // MUST run before `cancelAll()`: an open conflict sheet would
             // otherwise keep the decider prompt open, which `cancelAll`
             // (documented) hangs on until it's answered — deadlock on disconnect.
-            tab.conflictBridge.dismiss()
+            tab.conflictBridge.cancelOpenPrompt()
             await tab.transferQueue.cancelAll()
             // Binding order (M5e/T4 plan): AFTER `cancelAll` (any in-flight
             // edit download/upload has already been cancelled/settled by the
