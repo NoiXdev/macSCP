@@ -9,13 +9,28 @@ public protocol SecretSource: Sendable {
     func secret(for sessionID: UUID) throws -> String?
 }
 
-public struct ResolvedSecret: Equatable, Sendable {
+/// A secret value paired with its source label.
+///
+/// Conforms to `CustomStringConvertible` and `CustomDebugStringConvertible` to
+/// prevent accidental disclosure: when printed, interpolated into strings, or
+/// inspected in a debugger, only the source label appears, never the credential
+/// value itself. This protects against leaks via `print()`, string interpolation,
+/// log statements, and crash dumps.
+public struct ResolvedSecret: Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible {
     public let value: String
     public let sourceLabel: String
 
     public init(value: String, sourceLabel: String) {
         self.value = value
         self.sourceLabel = sourceLabel
+    }
+
+    public var description: String {
+        "[redacted from \(sourceLabel)]"
+    }
+
+    public var debugDescription: String {
+        "[redacted from \(sourceLabel)]"
     }
 }
 

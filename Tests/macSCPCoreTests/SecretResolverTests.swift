@@ -58,4 +58,15 @@ struct SecretResolverTests {
     @Test func anEmptyChainReturnsNil() throws {
         #expect(try SecretResolver(sources: []).resolve(for: UUID()) == nil)
     }
+
+    @Test func resolvedSecretDoesNotLeakValueInStringInterpolation() throws {
+        let secret = ResolvedSecret(value: "supersecret123", sourceLabel: "keychain")
+        let interpolated = "\(secret)"
+        let debugDescription = String(reflecting: secret)
+
+        #expect(!interpolated.contains("supersecret123"), "value must not leak in string interpolation")
+        #expect(!debugDescription.contains("supersecret123"), "value must not leak in debug description")
+        #expect(interpolated.contains("keychain"), "source label must be present in string description")
+        #expect(debugDescription.contains("keychain"), "source label must be present in debug description")
+    }
 }
