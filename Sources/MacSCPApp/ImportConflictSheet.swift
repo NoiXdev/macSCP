@@ -1,6 +1,83 @@
 import SwiftUI
 import macSCPCore
 
+/// Sheet item wrapper giving `ImportConflict` `Identifiable` conformance
+/// without extending the Core type — same reason `ConflictPromptItem` exists
+/// for transfers. One fresh id per prompt is enough: an import run resolves
+/// its conflicts strictly one at a time.
+struct ImportConflictPromptItem: Identifiable {
+    let id = UUID()
+    let conflict: ImportConflict
+}
+
+/// Turns `ImportConflictSheet`'s two callbacks into the `(resolution,
+/// applyToAll)?` an `ImportConflictArbiter`'s decider must return — the import
+/// twin of `ConflictPromptBridge` (transfers), down to the cancellation
+/// handler.
+///
+/// **Exactly-once resumption** is the whole point, and it holds on every path:
+/// - `resolve` is the ONLY place the continuation is ever resumed. It clears
+///   `self.continuation` before resuming, so a second call (double click, or
+///   a dismissal racing a button tap) finds `nil` and returns.
+/// - The sheet is `.interactiveDismissDisabled(true)`, so Escape and
+///   click-outside cannot answer it behind the bridge's back; every exit is
+///   one of the buttons, and every button calls `onResolve`/`onCancel`.
+/// - `.sheet(item:)` in the presenting view additionally routes its own
+///   `onDismiss` (and a `nil` write to the binding) through `dismiss()`, which
+///   is just `resolve(nil)` — harmless after a button already answered,
+///   because of the guard above, and the safety net if the sheet ever
+///   disappears for a reason outside its own buttons.
+/// - If the planning task is cancelled while the prompt is open, the
+///   cancellation handler resolves it as "cancel" instead of leaving the
+///   continuation hanging forever.
+@MainActor
+@Observable
+final class ImportConflictBridge {
+    private(set) var currentPrompt: ImportConflictPromptItem?
+    private var continuation:
+        CheckedContinuation<(resolution: ImportConflictResolution, applyToAll: Bool)?, Never>?
+
+    /// Decider side: awaited by `ImportConflictArbiter`.
+    func ask(_ conflict: ImportConflict) async
+        -> (resolution: ImportConflictResolution, applyToAll: Bool)?
+    {
+        currentPrompt = ImportConflictPromptItem(conflict: conflict)
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if Task.isCancelled {
+                    currentPrompt = nil
+                    continuation.resume(returning: nil)
+                    return
+                }
+                self.continuation = continuation
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.resolve(nil)
+            }
+        }
+    }
+
+    /// Called from the sheet's buttons. Exactly-once: a second resolution is
+    /// ignored.
+    func resolve(_ result: (resolution: ImportConflictResolution, applyToAll: Bool)?) {
+        guard let continuation else {
+            // No pending question — but a prompt may still be on screen from
+            // the `Task.isCancelled` fast path above; make sure it goes away.
+            currentPrompt = nil
+            return
+        }
+        self.continuation = nil
+        currentPrompt = nil
+        continuation.resume(returning: result)
+    }
+
+    /// Resolves a still-open prompt as "cancel the import".
+    func dismiss() {
+        resolve(nil)
+    }
+}
+
 /// Shared conflict-resolution sheet (M19/T7) for BOTH import flows — session
 /// imports and login-set imports each route their naming collisions through
 /// the same `ImportConflictArbiter`/`ImportConflict` (Core, M19/T3), so this
@@ -30,8 +107,8 @@ import macSCPCore
 ///   never does — the sheet says so explicitly via `replaceNote` rather than
 ///   leaving it implicit the way the transfer sheet's plain "Overwrite" can.
 ///
-/// This file only builds the sheet and its strings — wiring it into the two
-/// import flows and touching `ContentView`'s import paths is the next task.
+/// Both import flows present it through `ImportConflictBridge` above:
+/// `ContentView` for sessions, `LoginSetsSheet` for logins.
 struct ImportConflictSheet: View {
     let conflict: ImportConflict
     let onResolve: (ImportConflictResolution, Bool) -> Void

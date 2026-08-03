@@ -382,6 +382,29 @@
 "import.conflict.cancel" = "Annuler l’importation";
 "import.conflict.cancelNote" = "En annulant, rien n’est importé.";
 
+// Jeux d’identifiants : export/import (M19/T8)
+"import.result.resolved %lld %lld" = "%lld remplacés, %lld renommés";
+"import.result.secretsRemoved %lld" = "Mots de passe enregistrés supprimés, car le fichier n’en contenait aucun : %lld";
+"logins.export.title" = "Exporter les identifiants";
+"logins.export.summary %lld" = "%lld jeux d’identifiants";
+"logins.export.action" = "Exporter…";
+"logins.export.includeSecrets" = "Inclure les mots de passe";
+"logins.export.includeKeyFiles" = "Intégrer les fichiers de clé";
+"logins.export.keyFilesHint" = "Seules les clés gérées par macSCP sont intégrées. Les clés d’autres emplacements ne voyagent que sous forme de chemin.";
+"logins.export.plaintextWarning" = "Les mots de passe et les fichiers de clé privée seront enregistrés en clair dans ce fichier. Quiconque l’obtient peut utiliser ces identifiants.";
+"logins.export.missingSecrets %lld" = "Exportés sans mot de passe : %lld";
+"logins.export.externalKeys %lld" = "Fichiers de clé non intégrés (non gérés par macSCP) : %lld";
+"logins.export.keysWithoutPassphrase %lld" = "Fichiers de clé exportés sans leur phrase secrète : %lld";
+"logins.export.keyErrors %@" = "Fichiers de clé illisibles : %@";
+"logins.import.action" = "Importer…";
+"logins.import.result %lld %lld %lld" = "%lld importés, %lld remplacés, %lld ignorés";
+"logins.import.renamed %lld" = "Importés sous un nouveau nom : %lld";
+"logins.import.keysImported %lld" = "Fichiers de clé importés : %lld";
+"logins.import.missingKeys %@" = "Fichier de clé absent de ce Mac : %@";
+"logins.import.keyFailures %@" = "Fichiers de clé qui n’ont pas pu être importés : %@";
+"logins.import.secretsRemoved %lld" = "Mots de passe enregistrés supprimés, car le fichier n’en contenait aucun : %lld";
+"logins.import.notExport" = "Ce n’est pas un fichier d’identifiants macSCP.";
+
 /* Feuille du journal d'audit (M9b/T3) */
 "audit.filter.all" = "Tout";
 "audit.filter.transfers" = "Transferts";
@@ -424,6 +447,7 @@
 "menu.hiddenImports %@" = "Imports masqués (%@)…";
 "menu.exportAllSessions" = "Exporter toutes les sessions…";
 "menu.importSessions" = "Importer des sessions…";
+"menu.importLogins" = "Importer des identifiants…";
 "menu.terminal" = "Terminal";
 "menu.terminal.toggle" = "Afficher/Masquer le terminal";
 "menu.terminal.openExternal" = "Ouvrir dans le terminal externe";
@@ -501,6 +525,8 @@
 "loginSets.badge.pass" = "PASS";
 "loginSets.badge.agent" = "AGENT";
 "loginSets.badge.s3" = "S3";
+"loginSets.keyMissing" = "Fichier de clé manquant";
+"loginSets.keyMissing.help" = "Ce fichier de clé n’existe pas sur ce Mac. Choisissez une clé dans l’éditeur.";
 
 /* Formulaire de connexion — sélecteur de login à trois modes (M10b/T3) */
 "form.loginMode.label" = "Login";

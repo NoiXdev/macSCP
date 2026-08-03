@@ -233,6 +233,12 @@ struct ContentView: View {
     /// no-item-payload shape as `showKnownHostsSheet` above (always the same
     /// window-wide `sessionListViewModel`).
     @State private var showLoginSetsSheet = false
+    /// Arms the login-sets sheet to open its file picker straight away
+    /// (M19/T8): the Sessions menu's "Import Logins…" opens the SAME sheet the
+    /// import lives in, rather than growing a second import implementation
+    /// here — and the sheet is where the result belongs anyway, since the
+    /// imported sets appear in its list.
+    @State private var loginSetsSheetStartsImport = false
 
     // MARK: - Hidden imports (M11f/T2)
 
@@ -262,6 +268,13 @@ struct ContentView: View {
     }
 
     @State private var exportSheetItem: ExportSheetItem?
+
+    /// A decoded session-import payload plus whether the file it came from was
+    /// itself encrypted (which the result alert's plaintext notice needs).
+    private struct PendingSessionImport {
+        let payload: SessionExportPayload
+        let wasEncrypted: Bool
+    }
 
     // MARK: - Share link (M14/T5)
 
@@ -295,6 +308,17 @@ struct ContentView: View {
     /// `probe` and the (optional) password prompt's `decode` attempt.
     @State private var importFileData: Data?
     @State private var showImportPasswordSheet = false
+    /// A successfully decoded payload waiting to be planned and applied
+    /// (M19/T8). Planning can open the conflict sheet, and SwiftUI presents
+    /// only one sheet per view at a time — so an import that came through the
+    /// password prompt decodes while that prompt is up and plans only once it
+    /// has closed. Without the split, the conflict sheet would never appear
+    /// and the password sheet would wait on it forever.
+    @State private var pendingImport: PendingSessionImport?
+    /// Bridges the shared `ImportConflictSheet`'s callbacks to the
+    /// `ImportConflictArbiter`'s decider for SESSION imports (login-set
+    /// imports own an instance of the same bridge inside `LoginSetsSheet`).
+    @State private var importConflictBridge = ImportConflictBridge()
     @State private var importResultMessage: String = ""
     @State private var showImportResultAlert = false
     @State private var importErrorMessage: String?
@@ -603,6 +627,14 @@ struct ContentView: View {
             // login-sets management sheet.
             tabCommands.showLogins = {
                 guard window?.isKeyWindow == true else { return }
+                loginSetsSheetStartsImport = false
+                showLoginSetsSheet = true
+            }
+            // "Import Logins…" (M19/T8) — opens the same sheet, with its file
+            // picker already armed.
+            tabCommands.importLogins = {
+                guard window?.isKeyWindow == true else { return }
+                loginSetsSheetStartsImport = true
                 showLoginSetsSheet = true
             }
             // "Hidden Imports…" (M11f/T2) — same key-window guard, opens the
@@ -714,8 +746,11 @@ struct ContentView: View {
         // fresh store) so the Sessions-menu/sidebar entry point and the
         // form's own local "Manage logins…" sheet (`ConnectionFormView`)
         // always show the exact same, up-to-date list.
-        .sheet(isPresented: $showLoginSetsSheet) {
-            LoginSetsSheet(sessionList: sessionListViewModel)
+        .sheet(isPresented: $showLoginSetsSheet, onDismiss: {
+            loginSetsSheetStartsImport = false
+        }) {
+            LoginSetsSheet(
+                sessionList: sessionListViewModel, startsImport: loginSetsSheetStartsImport)
         }
         // SSH-keys sheet (M18/T5) — standalone overlay replacement for the
         // M17 Settings tab; owns its own `ManagedKeyStore` instance the same
@@ -782,13 +817,56 @@ struct ContentView: View {
             // `onCancel` handler below (M9a final review, Finding 4) — the
             // pending ciphertext must not linger in view state either way.
             importFileData = nil
+            // Planning happens HERE, not in the sheet: it may open the
+            // conflict sheet, which cannot present while this one is up
+            // (M19/T8). A cancelled prompt leaves `pendingImport` nil and
+            // nothing runs.
+            if let pending = pendingImport {
+                pendingImport = nil
+                Task { await applyImport(pending) }
+            }
         }) {
             ImportPasswordSheet(
                 onSubmit: { password in
                     guard let data = importFileData else { return nil }
-                    return await finishImport(data: data, password: password)
+                    switch decodeImport(data: data, password: password) {
+                    case .ready(let pending):
+                        // Parked for `onDismiss` above; dismissing is what
+                        // clears the way for the conflict sheet.
+                        pendingImport = pending
+                        return nil
+                    case .retry(let message):
+                        return message
+                    case .failed:
+                        return nil
+                    }
                 },
-                onCancel: { importFileData = nil }
+                onCancel: {
+                    importFileData = nil
+                    pendingImport = nil
+                }
+            )
+        }
+        // Shared import conflict sheet (M19/T7) for SESSION imports — the
+        // login-set import shows the same view through its own bridge inside
+        // `LoginSetsSheet`. Both bindings route every non-button dismissal
+        // through `dismiss()`, so the arbiter's continuation is always
+        // resumed exactly once.
+        .sheet(
+            item: Binding(
+                get: { importConflictBridge.currentPrompt },
+                set: { newValue in
+                    if newValue == nil { importConflictBridge.dismiss() }
+                }),
+            onDismiss: { importConflictBridge.dismiss() }
+        ) { item in
+            ImportConflictSheet(
+                conflict: item.conflict,
+                onResolve: { resolution, applyToAll in
+                    importConflictBridge.resolve(
+                        (resolution: resolution, applyToAll: applyToAll))
+                },
+                onCancel: { importConflictBridge.dismiss() }
             )
         }
         .alert(
@@ -2945,10 +3023,13 @@ struct ContentView: View {
                     importFileData = data
                     showImportPasswordSheet = true
                 } else {
-                    // The planner is async since M19; the file bytes are
-                    // already in memory, so the security-scoped access this
-                    // method holds does not have to outlive the task.
-                    Task { await finishImport(data: data, password: nil) }
+                    // Unencrypted: decode right here (no sheet is up), then
+                    // plan/apply — the planner is async since M19, and the
+                    // file bytes are already in memory, so the security-scoped
+                    // access this method holds need not outlive the task.
+                    if case .ready(let pending) = decodeImport(data: data, password: nil) {
+                        Task { await applyImport(pending) }
+                    }
                 }
             } catch let error as SessionExportError {
                 importErrorMessage = importErrorText(for: error)
@@ -2958,40 +3039,58 @@ struct ContentView: View {
         }
     }
 
-    /// Decode → plan → apply for a chosen import file (spec M9a §3.4). No
-    /// auto-connect afterwards (spec M9a §3.5) — only the store/keychain are
-    /// touched. Returns an inline message for the CALLER to show (only
-    /// meaningful for the password sheet's "wrong password" case, so it can
-    /// stay open for another attempt); every other error kind is pushed to
-    /// the top-level `importErrorMessage` alert directly and `nil` is
-    /// returned so a presenting sheet dismisses.
-    @discardableResult
-    private func finishImport(data: Data, password: String?) async -> String? {
+    /// What a decode attempt produced: something to plan, something the user
+    /// can fix by retyping the password, or a failure already surfaced in the
+    /// top-level alert.
+    private enum ImportDecodeOutcome {
+        case ready(PendingSessionImport)
+        /// Keep the password sheet open and show this message.
+        case retry(String)
+        case failed
+    }
+
+    /// Decode step of an import (spec M9a §3.4). Planning deliberately does
+    /// NOT happen here — see `pendingImport`'s doc comment.
+    private func decodeImport(data: Data, password: String?) -> ImportDecodeOutcome {
         do {
-            let payload = try SessionExportCodec.decode(data, password: password)
-            // M19/T6: the real dialog lands in the conflict-sheet task; until
-            // then this reproduces the previous silent-skip behaviour exactly.
-            let arbiter = ImportConflictArbiter { _ in (.skip, true) }
-            let plan = await SessionImportPlanner.plan(
-                existing: sessionListViewModel.sessions,
-                existingGroups: sessionListViewModel.groups,
-                incoming: payload,
-                arbiter: arbiter)
-            let result = sessionListViewModel.applyImport(plan)
-            importResultMessage = importResultText(
-                result, includesSecrets: payload.includesSecrets, encrypted: password != nil)
-            showImportResultAlert = true
-            importFileData = nil
-            return nil
+            return .ready(PendingSessionImport(
+                payload: try SessionExportCodec.decode(data, password: password),
+                wasEncrypted: password != nil))
         } catch SessionExportError.wrongPasswordOrCorrupted {
-            return L10n.string("import.password.wrong", "Wrong password, or the file is corrupted.")
+            return .retry(
+                L10n.string("import.password.wrong", "Wrong password, or the file is corrupted."))
         } catch let error as SessionExportError {
             importErrorMessage = importErrorText(for: error)
-            return nil
+            return .failed
         } catch {
             importErrorMessage = readErrorMessage(error)
-            return nil
+            return .failed
         }
+    }
+
+    /// Plan → apply for an already-decoded payload. No auto-connect afterwards
+    /// (spec M9a §3.5) — only the store/keychain are touched.
+    ///
+    /// Duplicates are resolved through the SHARED arbiter (M19), whose decider
+    /// is `importConflictBridge` and therefore the same `ImportConflictSheet`
+    /// the login-set import shows. A cancelled run reports NOTHING: no alert
+    /// at all, rather than an "import finished" full of zeros for an import
+    /// the user explicitly called off.
+    private func applyImport(_ pending: PendingSessionImport) async {
+        let bridge = importConflictBridge
+        let arbiter = ImportConflictArbiter { conflict in await bridge.ask(conflict) }
+        let plan = await SessionImportPlanner.plan(
+            existing: sessionListViewModel.sessions,
+            existingGroups: sessionListViewModel.groups,
+            incoming: pending.payload,
+            arbiter: arbiter)
+        importFileData = nil
+        guard !plan.cancelled else { return }
+        let result = sessionListViewModel.applyImport(plan)
+        importResultMessage = importResultText(
+            result, plan: plan, includesSecrets: pending.payload.includesSecrets,
+            encrypted: pending.wasEncrypted)
+        showImportResultAlert = true
     }
 
     /// Maps the two non-password `SessionExportError` cases the top-level
@@ -3019,16 +3118,33 @@ struct ContentView: View {
     }
 
     /// Assembles the multi-line import result alert body (spec M9a §3.4):
-    /// the base imported/skipped/passwords-imported line, plus optional
-    /// lines for password-save failures, store-write failures, and an
-    /// unencrypted-secrets notice when the file wasn't itself encrypted.
+    /// the base imported/skipped/passwords-imported line, the M19 lines for
+    /// what the user decided about duplicates (replaced/renamed) and for
+    /// secrets a replace removed, plus optional lines for password-save
+    /// failures, store-write failures, and an unencrypted-secrets notice when
+    /// the file wasn't itself encrypted.
     private func importResultText(
-        _ result: SessionListViewModel.SessionImportResult, includesSecrets: Bool, encrypted: Bool
+        _ result: SessionListViewModel.SessionImportResult, plan: SessionImportPlan,
+        includesSecrets: Bool, encrypted: Bool
     ) -> String {
         var lines = [String(format: L10n.string(
             "import.result.body %lld %lld %lld",
             "%lld imported, %lld skipped as duplicates, %lld passwords imported"),
             result.imported, result.skipped, result.passwordsImported)]
+        if !plan.replaced.isEmpty || !plan.renamed.isEmpty {
+            lines.append(String(format: L10n.string(
+                "import.result.resolved %lld %lld", "%lld replaced, %lld renamed"),
+                plan.replaced.count, plan.renamed.count))
+        }
+        // A replace from a secret-free file drops the stored password rather
+        // than leaving the old one bound (see `applyImport`) — the user has to
+        // be told, or the session silently stops connecting.
+        if result.secretsRemoved > 0 {
+            lines.append(String(format: L10n.string(
+                "import.result.secretsRemoved %lld",
+                "Stored passwords removed because the file had none: %lld"),
+                result.secretsRemoved))
+        }
         if result.passwordFailures > 0 {
             lines.append(String(format: L10n.string(
                 "import.result.passwordFailures %lld", "Passwords that could not be saved: %lld"),

@@ -381,6 +381,29 @@
 "import.conflict.cancel" = "Anuluj import";
 "import.conflict.cancelNote" = "Anulowanie nic nie importuje.";
 
+// Zestawy logowania: eksport/import (M19/T8)
+"import.result.resolved %lld %lld" = "%lld zastąpiono, %lld ze zmienioną nazwą";
+"import.result.secretsRemoved %lld" = "Usunięto zapisane hasła, ponieważ plik ich nie zawierał: %lld";
+"logins.export.title" = "Eksportuj zestawy logowania";
+"logins.export.summary %lld" = "Zestawy logowania: %lld";
+"logins.export.action" = "Eksportuj…";
+"logins.export.includeSecrets" = "Dołącz hasła";
+"logins.export.includeKeyFiles" = "Osadź pliki kluczy";
+"logins.export.keyFilesHint" = "Osadzane są tylko klucze zarządzane przez macSCP. Klucze z innych lokalizacji są przenoszone wyłącznie jako ścieżka.";
+"logins.export.plaintextWarning" = "Hasła i pliki kluczy prywatnych zostaną zapisane w tym pliku bez szyfrowania. Każdy, kto go zdobędzie, może użyć tych danych logowania.";
+"logins.export.missingSecrets %lld" = "Wyeksportowano bez hasła: %lld";
+"logins.export.externalKeys %lld" = "Pliki kluczy nieosadzone (niezarządzane przez macSCP): %lld";
+"logins.export.keysWithoutPassphrase %lld" = "Pliki kluczy wyeksportowane bez hasła klucza: %lld";
+"logins.export.keyErrors %@" = "Pliki kluczy, których nie udało się odczytać: %@";
+"logins.import.action" = "Importuj…";
+"logins.import.result %lld %lld %lld" = "%lld zaimportowano, %lld zastąpiono, %lld pominięto";
+"logins.import.renamed %lld" = "Zaimportowano pod nową nazwą: %lld";
+"logins.import.keysImported %lld" = "Zaimportowane pliki kluczy: %lld";
+"logins.import.missingKeys %@" = "Brak pliku klucza na tym Macu: %@";
+"logins.import.keyFailures %@" = "Pliki kluczy, których nie udało się zaimportować: %@";
+"logins.import.secretsRemoved %lld" = "Usunięto zapisane hasła, ponieważ plik ich nie zawierał: %lld";
+"logins.import.notExport" = "To nie jest plik zestawów logowania macSCP.";
+
 /* Arkusz dziennika audytu (M9b/T3) */
 "audit.filter.all" = "Wszystkie";
 "audit.filter.transfers" = "Transfery";
@@ -423,6 +446,7 @@
 "menu.hiddenImports %@" = "Ukryte importy (%@)…";
 "menu.exportAllSessions" = "Eksportuj wszystkie sesje…";
 "menu.importSessions" = "Importuj sesje…";
+"menu.importLogins" = "Importuj zestawy logowania…";
 "menu.terminal" = "Terminal";
 "menu.terminal.toggle" = "Pokaż/ukryj terminal";
 "menu.terminal.openExternal" = "Otwórz w zewnętrznym terminalu";
@@ -500,6 +524,8 @@
 "loginSets.badge.pass" = "HASŁO";
 "loginSets.badge.agent" = "AGENT";
 "loginSets.badge.s3" = "S3";
+"loginSets.keyMissing" = "Brak pliku klucza";
+"loginSets.keyMissing.help" = "Ten plik klucza nie istnieje na tym Macu. Wybierz klucz w edytorze.";
 
 /* Formularz połączenia — trójstanowy przełącznik loginu (M10b/T3) */
 "form.loginMode.label" = "Login";

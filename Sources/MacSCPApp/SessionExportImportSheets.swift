@@ -15,6 +15,10 @@ import macSCPCore
 /// below, which is sufficient for this app's own save/open panels.
 extension UTType {
     static let macscpSessions = UTType(exportedAs: "dev.noix.macscp.sessions", conformingTo: .json)
+    /// `.macscplogins` (M19/T8) — same declaration story as
+    /// `macscpSessions` above, including the matching `Info.plist` entry in
+    /// `scripts/package-app`.
+    static let macscpLogins = UTType(exportedAs: "dev.noix.macscp.logins", conformingTo: .json)
 }
 
 /// Write-only `FileDocument` wrapper around already-encoded export bytes.
@@ -27,6 +31,29 @@ extension UTType {
 struct SessionExportDocument: FileDocument {
     static var readableContentTypes: [UTType] { [] }
     static var writableContentTypes: [UTType] { [.macscpSessions] }
+
+    let data: Data
+
+    init(data: Data) {
+        self.data = data
+    }
+
+    init(configuration: ReadConfiguration) throws {
+        throw CocoaError(.fileReadUnsupportedScheme)
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
+    }
+}
+
+/// Write-only `FileDocument` for `.macscplogins` bytes — the login-set twin
+/// of `SessionExportDocument` above, with the same read path deliberately
+/// left unimplemented (import reads `Data` from the chosen URL and hands it
+/// to `LoginSetExportCodec.decode`).
+struct LoginSetExportDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [] }
+    static var writableContentTypes: [UTType] { [.macscpLogins] }
 
     let data: Data
 
@@ -213,6 +240,173 @@ struct SessionExportSheet: View {
         let options = SessionExportOptions(
             includeGroups: includeGroups,
             includePasswords: includePasswords,
+            password: encryptionMode == .encrypted ? password : nil)
+        let error = onExport(options)
+        isWorking = false
+        if let error {
+            errorMessage = error
+            isConfirmingPlaintext = false
+        } else {
+            dismiss()
+        }
+    }
+}
+
+/// Finalized choices from `LoginSetExportSheet` (M19/T8). `password` is `nil`
+/// for an unencrypted export, exactly as in `SessionExportOptions`.
+struct LoginSetExportOptions {
+    var includeSecrets: Bool
+    var includeKeyFiles: Bool
+    var password: String?
+}
+
+/// Export sheet for login sets — the `.macscplogins` sibling of
+/// `SessionExportSheet` above, and deliberately its twin in shape: same
+/// layout, same encrypted/unencrypted picker, same two-stage plaintext
+/// confirmation.
+///
+/// One real difference: a login-set export can leak two DIFFERENT kinds of
+/// material, so the plaintext warning arms for either. Passwords and key
+/// passphrases are the obvious one; an embedded PRIVATE KEY FILE is the other,
+/// and it is the more dangerous of the two — an unencrypted export containing
+/// one is a private key lying in the user's Downloads folder. The warning
+/// therefore names both, and the confirmation triggers when EITHER switch is
+/// on, not only for secrets.
+struct LoginSetExportSheet: View {
+    /// The sets this export covers — the selection when the user made one,
+    /// otherwise all of them (decided by the caller, `LoginSetsSheet`).
+    let sets: [LoginSet]
+    /// Runs the export (payload build + encode + arms the `fileExporter`).
+    /// Returns an inline error message to show while staying open, or `nil`
+    /// on success — same contract as `SessionExportSheet.onExport`.
+    let onExport: (LoginSetExportOptions) -> String?
+
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var includeSecrets = false
+    @State private var includeKeyFiles = false
+    @State private var encryptionMode: SessionExportSheet.EncryptionMode = .encrypted
+    @State private var password = ""
+    @State private var passwordRepeat = ""
+    @State private var isConfirmingPlaintext = false
+    @State private var errorMessage: String?
+    @State private var isWorking = false
+
+    /// Armed for BOTH kinds of material: secrets and key files each make an
+    /// unencrypted file dangerous on their own.
+    private var showsPlaintextWarning: Bool {
+        encryptionMode == .unencrypted && (includeSecrets || includeKeyFiles)
+    }
+
+    private var passwordsMatchAndPresent: Bool {
+        !password.isEmpty && password == passwordRepeat
+    }
+
+    private var canExport: Bool {
+        guard !sets.isEmpty else { return false }
+        if encryptionMode == .encrypted { return passwordsMatchAndPresent }
+        return true
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(L10n.string("logins.export.title", "Export Logins")).font(.headline)
+            Text(String(format: L10n.string("logins.export.summary %lld", "%lld logins"), sets.count))
+                .foregroundStyle(.secondary)
+
+            Toggle(L10n.string("logins.export.includeSecrets", "Include passwords"), isOn: $includeSecrets)
+                .disabled(isWorking)
+                .onChange(of: includeSecrets) { _, _ in isConfirmingPlaintext = false }
+            Toggle(
+                L10n.string("logins.export.includeKeyFiles", "Embed key files"),
+                isOn: $includeKeyFiles
+            )
+            .disabled(isWorking)
+            .onChange(of: includeKeyFiles) { _, _ in isConfirmingPlaintext = false }
+            Text(L10n.string(
+                "logins.export.keyFilesHint",
+                "Only keys managed by macSCP are embedded. Keys from other locations "
+                    + "travel as a path only."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Picker("", selection: $encryptionMode) {
+                Text(L10n.string("export.encrypted", "Encrypted"))
+                    .tag(SessionExportSheet.EncryptionMode.encrypted)
+                Text(L10n.string("export.unencrypted", "Unencrypted"))
+                    .tag(SessionExportSheet.EncryptionMode.unencrypted)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityLabel(L10n.string("export.encryptionLabel", "Encryption"))
+            .disabled(isWorking)
+            .onChange(of: encryptionMode) { _, _ in isConfirmingPlaintext = false }
+
+            if encryptionMode == .encrypted {
+                SecureField(L10n.string("export.password", "Password"), text: $password)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(isWorking)
+                SecureField(L10n.string("export.passwordRepeat", "Repeat password"), text: $passwordRepeat)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(isWorking)
+                Text(L10n.string(
+                    "export.passwordHint",
+                    "A long password makes the export harder to crack if the file is intercepted."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if showsPlaintextWarning {
+                Text(L10n.string(
+                    "logins.export.plaintextWarning",
+                    "Passwords and private key files will be stored unencrypted in this file. "
+                        + "Anyone who obtains it can use these logins."))
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.red.opacity(0.1)))
+            }
+
+            if let errorMessage {
+                Text(errorMessage).font(.caption).foregroundStyle(.red).lineLimit(2)
+            }
+
+            HStack {
+                Spacer()
+                if isWorking { ProgressView().controlSize(.small) }
+                Button(L10n.string("common.cancel", "Cancel"), role: .cancel) { dismiss() }
+                    .buttonStyle(.polished)
+                    .disabled(isWorking)
+                if showsPlaintextWarning && isConfirmingPlaintext {
+                    Button(L10n.string("export.confirmAnyway", "Export Anyway…"), role: .destructive) {
+                        runExport()
+                    }
+                    .buttonStyle(.polishedProminent)
+                    .disabled(isWorking || !canExport)
+                } else {
+                    Button(L10n.string("export.action", "Export…")) {
+                        if showsPlaintextWarning {
+                            isConfirmingPlaintext = true
+                        } else {
+                            runExport()
+                        }
+                    }
+                    .buttonStyle(.polishedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(isWorking || !canExport)
+                }
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 380)
+    }
+
+    private func runExport() {
+        guard !isWorking else { return }
+        isWorking = true
+        let options = LoginSetExportOptions(
+            includeSecrets: includeSecrets, includeKeyFiles: includeKeyFiles,
             password: encryptionMode == .encrypted ? password : nil)
         let error = onExport(options)
         isWorking = false
