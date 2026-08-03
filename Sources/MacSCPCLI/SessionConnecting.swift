@@ -49,6 +49,29 @@ func connect(
         config, decider: makeDecider(policy: options.hostKeyPolicy))
 }
 
+/// Connects to `reference`, runs `body`, and awaits `fs.disconnect()` on
+/// every exit path — `body` returning normally (including an early `return`
+/// inside it), `body` throwing, or the connect itself throwing before
+/// `body` ever runs. Every subcommand needs this exact shape (M20 Task 10
+/// had three copies by hand; this is the extraction the Task 10 review
+/// flagged once a fourth command arrived). NOT a `Task { }` in a `defer`:
+/// this process exits right after a subcommand's `run()` returns, and a
+/// detached task has no guarantee of completing before that happens.
+func withConnection(
+    to reference: SessionReference,
+    options: GlobalOptions,
+    _ body: (any RemoteFileSystem) async throws -> Void
+) async throws {
+    let fs = try await connect(to: reference, options: options)
+    do {
+        try await body(fs)
+        await fs.disconnect()
+    } catch {
+        await fs.disconnect()
+        throw error
+    }
+}
+
 /// Builds the decider for UNKNOWN host keys. A mismatch never reaches this:
 /// `HostKeyValidation` stops it first, and this function has no branch that
 /// could accept one. Moved here, unchanged, from the M1 driver being
