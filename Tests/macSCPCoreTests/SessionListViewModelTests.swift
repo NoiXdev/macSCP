@@ -282,13 +282,12 @@ struct SessionListViewModelTests {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
 
+        // Hold on to the ghost session's own id — asserting against a fresh
+        // random UUID would pass even if the password HAD been written.
+        let ghost = StoredSession(name: "ghost", host: "h1", username: "root")
         let plan = SessionImportPlan(
             groupsToCreate: [StoredGroup(name: "Ghost")],
-            sessionsToImport: [
-                PlannedSession(
-                    session: StoredSession(name: "ghost", host: "h1", username: "root"),
-                    password: "pw"),
-            ],
+            sessionsToImport: [PlannedSession(session: ghost, password: "pw")],
             cancelled: true)
 
         let result = vm.applyImport(plan)
@@ -298,7 +297,7 @@ struct SessionListViewModelTests {
             storeFailures: 0))
         #expect(vm.sessions.isEmpty)
         #expect(vm.groups.isEmpty)
-        #expect(try secrets.password(for: UUID()) == nil)
+        #expect(try secrets.password(for: ghost.id) == nil)
     }
 
     @Test func applyImportSurvivesKeychainFailure() throws {
