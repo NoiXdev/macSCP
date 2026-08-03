@@ -85,6 +85,19 @@ struct LoginSetsSheet: View {
         sessionList.loginSets.first { $0.id == selectedID }
     }
 
+    /// What the footer's "Export…" covers: the selection when it is one of the
+    /// rows on screen, otherwise every row on screen. `selectedSet` reads from
+    /// the FULL list, so the membership check is what keeps a selection that
+    /// the search has filtered away from silently widening — or narrowing —
+    /// the scope. The export sheet then states the count before anything is
+    /// written.
+    private func exportScope(within visibleSets: [LoginSet]) -> [LoginSet] {
+        if let selectedSet, visibleSets.contains(where: { $0.id == selectedSet.id }) {
+            return [selectedSet]
+        }
+        return visibleSets
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(L10n.string("loginSets.title", "Logins")).font(.headline)
@@ -156,15 +169,21 @@ struct LoginSetsSheet: View {
                 }
                 .buttonStyle(.polished)
                 .disabled(selectedSet == nil)
-                // Export scope (M19/T8): the selected set when there is one,
-                // otherwise every set — the same "act on the selection, fall
-                // back to everything" rule the sidebar's export uses.
+                // Export scope (M19/T8, corrected in review): the selected set
+                // when there is one, otherwise everything the LIST CURRENTLY
+                // SHOWS — never everything that exists. With an active search
+                // the two differ, and M18's regression fix above clears the
+                // selection as soon as the selected row is filtered out, so
+                // "no selection" is the NORMAL state while searching: falling
+                // back to `sessionList.loginSets` meant filtering 60 logins
+                // down to 3, hitting "Export…", and writing all 60 — with
+                // their passwords, if that switch was on. Edit and Delete were
+                // hardened against exactly this in M18; export was not.
                 Button(L10n.string("logins.export.action", "Export…")) {
-                    exportTarget = ExportTarget(
-                        sets: selectedSet.map { [$0] } ?? sessionList.loginSets)
+                    exportTarget = ExportTarget(sets: exportScope(within: visibleSets))
                 }
                 .buttonStyle(.polished)
-                .disabled(sessionList.loginSets.isEmpty)
+                .disabled(visibleSets.isEmpty)
                 Button(L10n.string("logins.import.action", "Import…")) {
                     showImportFileImporter = true
                 }

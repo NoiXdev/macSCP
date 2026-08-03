@@ -387,7 +387,7 @@
 "import.result.secretsRemoved %lld" = "Mots de passe enregistrés supprimés, car le fichier n’en contenait aucun : %lld";
 "import.result.secretsRemoveFailed %lld" = "Mots de passe enregistrés n’ayant pas pu être supprimés : %lld";
 "logins.export.title" = "Exporter les identifiants";
-"logins.export.summary %lld" = "%lld jeux d’identifiants";
+"logins.export.summary %lld" = "%lld jeux d’identifiants seront écrits dans le fichier.";
 "logins.export.action" = "Exporter…";
 "logins.export.includeSecrets" = "Inclure les mots de passe";
 "logins.export.includeKeyFiles" = "Intégrer les fichiers de clé";

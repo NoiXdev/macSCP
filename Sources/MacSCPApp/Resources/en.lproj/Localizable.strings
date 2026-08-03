@@ -383,7 +383,7 @@
 "import.result.secretsRemoved %lld" = "Stored passwords removed because the file had none: %lld";
 "import.result.secretsRemoveFailed %lld" = "Stored passwords that could not be removed: %lld";
 "logins.export.title" = "Export Logins";
-"logins.export.summary %lld" = "%lld logins";
+"logins.export.summary %lld" = "%lld logins will be written to the file.";
 "logins.export.action" = "Export…";
 "logins.export.includeSecrets" = "Include passwords";
 "logins.export.includeKeyFiles" = "Embed key files";
