@@ -147,9 +147,14 @@ extension View {
     ///    and `dismiss(promptID:)` can ignore it unless that prompt is still
     ///    the open, unanswered one. There is no `onDismiss:` here for exactly
     ///    that reason: it carries no item.
-    /// 3. **Every button routes into the bridge**, and the sheet itself is
-    ///    `.interactiveDismissDisabled(true)`, so Escape/click-outside cannot
-    ///    strand a continuation for the net to have to catch.
+    /// 3. **Every button routes into the bridge NAMING ITS OWN PROMPT**, and
+    ///    the sheet itself is `.interactiveDismissDisabled(true)`, so
+    ///    Escape/click-outside cannot strand a continuation for the net to
+    ///    have to catch. The buttons pass `item.id` for the same reason the
+    ///    net does: a tap delivered twice (double click, or a repeated press
+    ///    of `Replace`'s `.defaultAction` shortcut) while this sheet animates
+    ///    out would otherwise answer the NEXT question — the planner has no
+    ///    I/O between two conflicts and has already asked it.
     func importConflictSheet(bridge: ImportConflictBridge) -> some View {
         sheet(item: Binding(
             get: { bridge.currentPrompt },
@@ -158,7 +163,8 @@ extension View {
             ImportConflictSheet(
                 conflict: item.conflict,
                 onResolve: { resolution, applyToAll in
-                    bridge.resolve((resolution: resolution, applyToAll: applyToAll))
+                    bridge.resolve(
+                        promptID: item.id, (resolution: resolution, applyToAll: applyToAll))
                 },
                 onCancel: { bridge.dismiss(promptID: item.id) }
             )

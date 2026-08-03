@@ -5,8 +5,8 @@ import Testing
 /// The continuation bridge behind the shared import conflict sheet (M19/T8).
 /// What is proven here is the resumption contract the app cannot test for
 /// itself: every prompt is asked, every prompt is answered exactly once, and
-/// a dismissal that arrives late answers the question it belongs to — or
-/// nothing at all.
+/// an event that arrives late — a button tap as much as a dismissal — answers
+/// the question it belongs to, or nothing at all.
 @Suite("Import conflict bridge")
 @MainActor
 struct ImportConflictBridgeTests {
@@ -60,7 +60,7 @@ struct ImportConflictBridgeTests {
             guard let prompt = await awaitPrompt(bridge) else { break }
             asked.append(prompt.conflict.itemName)
             // The user answers: the button resolves the prompt…
-            bridge.resolve((resolution: .skip, applyToAll: false))
+            bridge.resolve(promptID: prompt.id, (resolution: .skip, applyToAll: false))
             // …and the framework reports the sheet's disappearance only
             // afterwards — a later main-actor turn, after the dismissal
             // animation. Modelled by yielding until the planner has had every
@@ -75,6 +75,55 @@ struct ImportConflictBridgeTests {
         #expect(asked == ["alpha", "beta"])
         #expect(plan.cancelled == false)
         #expect(plan.skipped == ["alpha", "beta"])
+    }
+
+    /// The mirror of the above, on the BUTTON path: a tap that belongs to the
+    /// first sheet must not answer the second question. The same absence of
+    /// I/O that made the dismissal case real makes this one real — the
+    /// planner installs the next continuation microseconds after the first
+    /// resumes, while the answered sheet is still animating out and a double
+    /// click or a repeated press of `Replace`'s default-action shortcut is
+    /// still being delivered. Replace is the destructive choice (it also
+    /// overwrites stored secrets) and `applyToAll` would spread it across the
+    /// rest of the run, so the wrong question getting it is the worst case.
+    @Test func aStaleButtonTapDoesNotAnswerTheNextPrompt() async {
+        let (existing, payload) = collidingPayload()
+        let bridge = ImportConflictBridge()
+        let arbiter = ImportConflictArbiter { conflict in await bridge.ask(conflict) }
+        let planning = Task {
+            await LoginSetImportPlanner.plan(
+                existing: existing, incoming: payload, arbiter: arbiter)
+        }
+
+        guard let first = await awaitPrompt(bridge) else {
+            Issue.record("no prompt")
+            return
+        }
+        #expect(first.conflict.itemName == "alpha")
+        // The user taps "Skip" on the first sheet…
+        bridge.resolve(promptID: first.id, (resolution: .skip, applyToAll: false))
+        // …and the planner, having no I/O to wait on, is already asking about
+        // "beta" before the first sheet has finished going away.
+        for _ in 0..<50 { await Task.yield() }
+        guard let second = bridge.currentPrompt else {
+            Issue.record("the planner did not ask a second time")
+            return
+        }
+        #expect(second.conflict.itemName == "beta")
+
+        // A second tap on the FIRST sheet's "Replace" lands now. It must be
+        // dropped: "beta" is still the open, unanswered question.
+        bridge.resolve(promptID: first.id, (resolution: .replace, applyToAll: true))
+        #expect(bridge.currentPrompt?.id == second.id)
+
+        // The user then actually answers "beta" on ITS sheet, which still
+        // works — the stale tap consumed nothing.
+        bridge.resolve(promptID: second.id, (resolution: .skip, applyToAll: false))
+
+        let plan = await planning.value
+        #expect(plan.replaced.isEmpty)
+        #expect(plan.skipped == ["alpha", "beta"])
+        #expect(plan.cancelled == false)
     }
 
     /// The net still does its job: a sheet that disappears WITHOUT an answer
@@ -115,8 +164,8 @@ struct ImportConflictBridgeTests {
         }
         // Double click on "Replace", then the dismissal, then a stale net for
         // a prompt that is long gone.
-        bridge.resolve((resolution: .skip, applyToAll: true))
-        bridge.resolve((resolution: .replace, applyToAll: false))
+        bridge.resolve(promptID: first.id, (resolution: .skip, applyToAll: true))
+        bridge.resolve(promptID: first.id, (resolution: .replace, applyToAll: false))
         bridge.dismiss(promptID: first.id)
 
         let plan = await planning.value
@@ -154,8 +203,12 @@ struct ImportConflictBridgeTests {
         #expect(firstResult == nil)
         // The second prompt is now the open one — its own continuation is
         // untouched and can still be answered normally.
-        #expect(bridge.currentPrompt?.conflict.itemName == "second")
-        bridge.resolve((resolution: .skip, applyToAll: false))
+        guard let secondPrompt = bridge.currentPrompt else {
+            Issue.record("the second ask installed no prompt")
+            return
+        }
+        #expect(secondPrompt.conflict.itemName == "second")
+        bridge.resolve(promptID: secondPrompt.id, (resolution: .skip, applyToAll: false))
         let secondResult = await second.value
         #expect(secondResult?.resolution == .skip)
     }
