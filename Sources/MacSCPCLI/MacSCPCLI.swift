@@ -3,14 +3,17 @@ import Foundation
 import macSCPCore
 
 /// Root dispatcher: subcommands do the work, this type just lists them.
-/// `get`/`put` land in M20 Task 10 — `rm`/`mkdir` remain for a later task,
-/// per the implementation plan.
+/// `get`/`put` landed in M20 Task 10; `rm`/`mkdir` complete the set in
+/// M20 Task 11.
 @main
 struct MacSCPCLI: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "macscp-cli",
         abstract: "Work with stored macSCP sessions over SFTP and S3.",
-        subcommands: [LsCommand.self, GetCommand.self, PutCommand.self]
+        subcommands: [
+            LsCommand.self, GetCommand.self, PutCommand.self,
+            RmCommand.self, MkdirCommand.self,
+        ]
     )
 
     /// Overrides `AsyncParsableCommand`'s default `main()` so an error
