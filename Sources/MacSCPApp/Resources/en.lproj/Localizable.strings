@@ -361,6 +361,23 @@
 "import.error.readFailed %@" = "Could not read the file: %@";
 "import.error.title" = "Import Failed";
 
+/* Shared import conflict sheet (M19/T7) — both import flows (sessions and
+   login sets) route naming collisions through the same ImportConflictArbiter
+   (Core, M19/T3); kindLabel is a stable identifier, mapped to display text
+   here, not the raw value itself. */
+"import.conflict.title" = "Name Already Exists";
+"import.conflict.message" = "“%@” already exists.";
+"import.conflict.kind.loginSet" = "login set";
+"import.conflict.kind.session" = "session";
+"import.conflict.kind.other" = "item";
+"import.conflict.skip" = "Skip";
+"import.conflict.replace" = "Replace";
+"import.conflict.rename" = "Rename";
+"import.conflict.replaceNote" = "Replacing also overwrites the stored password or key passphrase.";
+"import.conflict.applyToAll" = "Apply to all remaining conflicts";
+"import.conflict.cancel" = "Cancel Import";
+"import.conflict.cancelNote" = "Cancelling imports nothing.";
+
 /* Audit log sheet (M9b/T3) */
 "audit.filter.all" = "All";
 "audit.filter.transfers" = "Transfers";

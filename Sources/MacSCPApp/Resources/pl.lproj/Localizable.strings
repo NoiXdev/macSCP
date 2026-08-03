@@ -364,6 +364,23 @@
 "import.error.readFailed %@" = "Nie udało się odczytać pliku: %@";
 "import.error.title" = "Import nieudany";
 
+/* Wspólny arkusz konfliktu importu (M19/T7) — oba przepływy importu (sesje
+   i zestawy logowania) rozwiązują kolizje nazw przez ten sam
+   ImportConflictArbiter (Core, M19/T3); kindLabel to stabilny identyfikator,
+   tutaj mapowany na wyświetlany tekst, nigdy na surową wartość. */
+"import.conflict.title" = "Nazwa już istnieje";
+"import.conflict.message" = "„%@” już istnieje.";
+"import.conflict.kind.loginSet" = "zestaw logowania";
+"import.conflict.kind.session" = "połączenie";
+"import.conflict.kind.other" = "element";
+"import.conflict.skip" = "Pomiń";
+"import.conflict.replace" = "Zastąp";
+"import.conflict.rename" = "Zmień nazwę";
+"import.conflict.replaceNote" = "Zastąpienie nadpisuje także zapisane hasło lub hasło klucza.";
+"import.conflict.applyToAll" = "Zastosuj do wszystkich kolejnych konfliktów";
+"import.conflict.cancel" = "Anuluj import";
+"import.conflict.cancelNote" = "Anulowanie nic nie importuje.";
+
 /* Arkusz dziennika audytu (M9b/T3) */
 "audit.filter.all" = "Wszystkie";
 "audit.filter.transfers" = "Transfery";
