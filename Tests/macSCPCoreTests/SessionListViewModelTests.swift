@@ -298,6 +298,33 @@ struct SessionListViewModelTests {
         #expect(vm.sessions.first { $0.id == existing.id }?.host == "new.example.com")
     }
 
+    /// M19/T8 review (leftover 4): the login-set twin (`applyLoginSetImport`)
+    /// treats an EMPTY string the same as no secret at all (`!secret.isEmpty`
+    /// guards its save branch); this applier did not, so a file carrying
+    /// `"password": ""` on a replace took the SAVE branch instead of the
+    /// removal one — writing an empty Keychain entry and counting a
+    /// `passwordsImported` for a "password" that is not one, instead of
+    /// removing the stale credential the way `nil` does two tests up.
+    @Test func replacingWithAnEmptyPasswordRemovesTheStaleOne() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let existing = vm.save(name: "web", host: "old.example.com", port: 22,
+                               username: "u", password: "old-pw")!
+
+        let replacement = StoredSession(
+            id: existing.id, name: "web", host: "new.example.com", username: "u2")
+        let result = vm.applyImport(SessionImportPlan(
+            sessionsToImport: [
+                PlannedSession(session: replacement, password: "", replacesExisting: true),
+            ],
+            replaced: ["web"]))
+
+        #expect(result.secretsRemoved == 1)
+        #expect(result.passwordsImported == 0)
+        #expect(try secrets.password(for: existing.id) == nil)
+        #expect(vm.sessions.first { $0.id == existing.id }?.host == "new.example.com")
+    }
+
     /// A replace that DOES carry a secret simply overwrites, and reports no
     /// removal — the user loses nothing and is told nothing alarming.
     @Test func replacingWithASecretOverwritesIt() throws {

@@ -38,8 +38,10 @@ public struct ImportConflictPromptItem: Identifiable, Sendable {
 /// - **At least once.** `ask` hands the continuation out only after storing
 ///   it, and every route out of the sheet ends in `resolve`: the four
 ///   buttons directly; a task cancelled mid-prompt through
-///   `withTaskCancellationHandler`; and a sheet that vanishes for a reason
-///   outside its own buttons through `dismiss(promptID:)`. The sheet itself
+///   `withTaskCancellationHandler`; a sheet that vanishes for a reason
+///   outside its own buttons through `dismiss(promptID:)`; and a STRANDED
+///   continuation from a previous `ask` that nothing ever resolved, which a
+///   new `ask` resolves (as `nil`) before it stores its own. The sheet itself
 ///   is `.interactiveDismissDisabled(true)`, so Escape and click-outside
 ///   cannot answer behind the bridge's back.
 /// - **The right question.** This is what `promptID` is for. An import's
@@ -66,7 +68,17 @@ public final class ImportConflictBridge {
     public func ask(_ conflict: ImportConflict) async
         -> (resolution: ImportConflictResolution, applyToAll: Bool)?
     {
-        currentPrompt = ImportConflictPromptItem(conflict: conflict)
+        // Guard against a stranded continuation: nothing today calls `ask`
+        // twice without the first having resolved (one bridge per view, one
+        // planning task each), but nothing enforces that structurally either.
+        // Without this, storing into `self.continuation` below would silently
+        // overwrite a still-pending one, leaking it forever and hanging
+        // whichever import is waiting on it. Routes through `resolve` — the
+        // one resume site — so this stays "at least once" rather than a
+        // second ad hoc resumption path.
+        resolve(nil)
+        let prompt = ImportConflictPromptItem(conflict: conflict)
+        currentPrompt = prompt
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 if Task.isCancelled {
@@ -77,8 +89,19 @@ public final class ImportConflictBridge {
                 self.continuation = continuation
             }
         } onCancel: {
+            // Routes through `dismiss(promptID:)`, not `resolve(nil)`
+            // directly — "whatever is current" is exactly the ambiguous
+            // shape the Critical fix (see the type's doc comment) removed
+            // from the PRESENTER's dismissal net, and this net has the same
+            // hazard: an import planner does no I/O between two conflicts, so
+            // it can already be back inside `ask` for the NEXT question by
+            // the time a cancellation from the FIRST one is delivered here.
+            // It is harmless today only because a cancelled task's next `ask`
+            // takes the `Task.isCancelled` fast path above and stores no
+            // continuation for this to clobber — a coincidence of ordering,
+            // not a guarantee. Naming the prompt keeps both nets symmetric.
             Task { @MainActor [weak self] in
-                self?.resolve(nil)
+                self?.dismiss(promptID: prompt.id)
             }
         }
     }
