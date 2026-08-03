@@ -18,17 +18,24 @@ public struct KeychainError: Error, Equatable, Sendable {
 
 public struct KeychainSecretStore: SecretStore {
     private let service: String
+    private let accessGroup: String?
 
-    public init(service: String = "dev.noix.macSCP") {
+    /// `accessGroup` stays OPTIONAL on purpose. The dev build is ad-hoc signed
+    /// and has no team identifier, so a required group would block development
+    /// outright and make the shared-keychain path untestable locally (M20).
+    public init(service: String = "dev.noix.macSCP", accessGroup: String? = nil) {
         self.service = service
+        self.accessGroup = accessGroup
     }
 
     private func baseQuery(for sessionID: UUID) -> [String: Any] {
-        [
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: sessionID.uuidString,
         ]
+        if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
+        return query
     }
 
     public func savePassword(_ password: String, for sessionID: UUID) throws {
