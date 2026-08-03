@@ -254,24 +254,8 @@ struct ConnectionViewModelTests {
 
         connectTask.cancel()
 
-        // Without a cancellation handler, connect() would hang forever. A
-        // withTaskGroup race would implicitly wait for the hanging child task
-        // when leaving the closure despite cancelAll() (Swift always waits
-        // for all child tasks) and would itself block forever — hence two
-        // unstructured tasks here that race for the continuation via an
-        // actor claim; a hanging losing task therefore doesn't block the
-        // return value.
-        let claim = RaceClaim()
-        let finished: Bool = await withCheckedContinuation { continuation in
-            Task {
-                _ = await connectTask.value
-                if await claim.tryClaim() { continuation.resume(returning: true) }
-            }
-            Task {
-                try? await Task.sleep(for: .seconds(3))
-                if await claim.tryClaim() { continuation.resume(returning: false) }
-            }
-        }
+        // Without a cancellation handler, connect() would hang forever.
+        let finished = await completesWithoutHanging(connectTask)
         #expect(finished, "connect() must return after cancel (continuation resolved)")
     }
 
@@ -306,19 +290,9 @@ struct ConnectionViewModelTests {
         connectTask.cancel()
         releaseContinuation.finish()
 
-        // Timeout-race pattern from this file (see cancelWhileHostKeyPromptPendingResolvesConnect):
-        // without cancellation handling (fast path AND onCancel), connect() would hang forever.
-        let claim = RaceClaim()
-        let finished: Bool = await withCheckedContinuation { continuation in
-            Task {
-                _ = await connectTask.value
-                if await claim.tryClaim() { continuation.resume(returning: true) }
-            }
-            Task {
-                try? await Task.sleep(for: .seconds(3))
-                if await claim.tryClaim() { continuation.resume(returning: false) }
-            }
-        }
+        // Without cancellation handling (fast path AND onCancel), connect()
+        // would hang forever.
+        let finished = await completesWithoutHanging(connectTask)
         #expect(finished, "connect() must return when cancel is already set before the prompt")
         #expect(vm.hostKeyPrompt == nil)
         #expect(vm.state == .failed(
@@ -812,8 +786,45 @@ private actor CallCounter {
     func increment() { value += 1 }
 }
 
+/// Reports whether `task` returned at all — the assertion the cancellation
+/// tests above actually make ("connect() does not hang forever"). They
+/// deliberately do NOT assert how *fast* it returns.
+///
+/// The success path is therefore signal-driven: the awaiting task resolves
+/// the continuation the moment `task` returns, with no wall clock involved.
+/// `deadline` is only an emergency exit so a genuine hang fails the test
+/// instead of blocking the whole suite forever (`swift test` has no per-test
+/// timeout). It is deliberately generous — the watchdog sleeps on the
+/// cooperative pool while the work it judges hops through the MainActor, so a
+/// tight deadline lets the timer beat correct behaviour on a loaded machine
+/// (parallel builds, gated integration suites) and the test would measure
+/// system load instead of cancellation handling.
+///
+/// A `withTaskGroup` race would implicitly wait for the hanging child task
+/// when leaving the closure despite `cancelAll()` (Swift always waits for all
+/// child tasks) and would itself block forever — hence two unstructured tasks
+/// racing for the continuation via an actor claim; a hanging losing task
+/// therefore doesn't block the return value.
+private func completesWithoutHanging<T: Sendable>(
+    _ task: Task<T, Never>,
+    within deadline: Duration = .seconds(30)
+) async -> Bool {
+    let claim = RaceClaim()
+    return await withCheckedContinuation { continuation in
+        let watchdog = Task {
+            try? await Task.sleep(for: deadline)
+            if await claim.tryClaim() { continuation.resume(returning: false) }
+        }
+        Task {
+            _ = await task.value
+            if await claim.tryClaim() { continuation.resume(returning: true) }
+            watchdog.cancel()
+        }
+    }
+}
+
 /// Lets exactly one of several competing tasks "win" — prevents a double
-/// `continuation.resume` in the timeout race.
+/// `continuation.resume` in the watchdog race.
 private actor RaceClaim {
     private var claimed = false
     func tryClaim() -> Bool {
