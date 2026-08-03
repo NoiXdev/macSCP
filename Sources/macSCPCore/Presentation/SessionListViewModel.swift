@@ -797,10 +797,16 @@ public final class SessionListViewModel {
         /// because the import file carried none (M19) — see `applyImport`.
         /// Reported to the user: those sessions now have no saved password.
         public var secretsRemoved: Int
+        /// Replaced sessions whose stale password could NOT be deleted (the
+        /// Keychain refused). The old credential may still be bound to the
+        /// reused id — the one outcome of the removal rule the user has to
+        /// hear about, since it is the one that leaves a hidden credential
+        /// live.
+        public var secretRemovalFailures: Int
 
         public init(
             imported: Int, skipped: Int, passwordsImported: Int, passwordFailures: Int,
-            storeFailures: Int, secretsRemoved: Int = 0
+            storeFailures: Int, secretsRemoved: Int = 0, secretRemovalFailures: Int = 0
         ) {
             self.imported = imported
             self.skipped = skipped
@@ -808,6 +814,7 @@ public final class SessionListViewModel {
             self.passwordFailures = passwordFailures
             self.storeFailures = storeFailures
             self.secretsRemoved = secretsRemoved
+            self.secretRemovalFailures = secretRemovalFailures
         }
     }
 
@@ -854,6 +861,7 @@ public final class SessionListViewModel {
         var passwordFailures = 0
         var storeFailures = 0
         var secretsRemoved = 0
+        var secretRemovalFailures = 0
         // Snapshot BEFORE any write: `store.upsert` overwrites a replaced
         // record, so its previous jump binding is only readable now.
         let previousByID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -883,12 +891,28 @@ public final class SessionListViewModel {
                 }
             } else if planned.replacesExisting {
                 // No secret came with the replacement: the old one must not
-                // survive under the reused id. Probed first so the report
-                // only ever claims a removal that happened.
+                // survive under the reused id.
+                //
+                // The delete runs REGARDLESS of what the probe below could
+                // establish, because it is idempotent and because "there is no
+                // secret" and "I could not find out" are different answers
+                // (the same distinction `ManagedKeyPassphrase.hasStoredPass-
+                // phrase` throws to preserve). Gating the delete on a `try?`
+                // read meant a Keychain that is there but not answering —
+                // locked, prompt denied — left the OLD password bound to the
+                // reused id, silently: exactly the state this rule exists to
+                // prevent.
+                //
+                // The probe now only decides what may be CLAIMED. A read that
+                // failed proves nothing, so nothing is reported; a delete that
+                // failed is the one case where the stale credential really can
+                // still be live, and that is reported.
                 let stale = (try? secrets.password(for: planned.session.id)) ?? nil
-                if !(stale ?? "").isEmpty {
-                    try? secrets.deletePassword(for: planned.session.id)
-                    secretsRemoved += 1
+                do {
+                    try secrets.deletePassword(for: planned.session.id)
+                    if !(stale ?? "").isEmpty { secretsRemoved += 1 }
+                } catch {
+                    secretRemovalFailures += 1
                 }
             }
             // Orphan hygiene for a replaced record's jump secret: the planner
@@ -918,7 +942,8 @@ public final class SessionListViewModel {
         return SessionImportResult(
             imported: imported, skipped: plan.skipped.count,
             passwordsImported: passwordsImported, passwordFailures: passwordFailures,
-            storeFailures: storeFailures, secretsRemoved: secretsRemoved)
+            storeFailures: storeFailures, secretsRemoved: secretsRemoved,
+            secretRemovalFailures: secretRemovalFailures)
     }
 
     // MARK: - Login-set export/import (M19)
@@ -1048,6 +1073,9 @@ public final class SessionListViewModel {
         /// Replaced sets whose previously stored secret was deleted because
         /// the file carried none — same rule as `SessionImportResult`.
         public var secretsRemoved: Int
+        /// Replaced sets whose stale secret could NOT be deleted — same
+        /// meaning as `SessionImportResult.secretRemovalFailures`.
+        public var secretRemovalFailures: Int
         public var secretFailures: Int
         public var storeFailures: Int
         public var keysImported: Int
@@ -1064,9 +1092,9 @@ public final class SessionListViewModel {
 
         public init(
             imported: Int = 0, replaced: Int = 0, skipped: Int = 0, renamed: Int = 0,
-            secretsImported: Int = 0, secretsRemoved: Int = 0, secretFailures: Int = 0,
-            storeFailures: Int = 0, keysImported: Int = 0, keyFailures: [String] = [],
-            missingKeyPaths: [String] = []
+            secretsImported: Int = 0, secretsRemoved: Int = 0, secretRemovalFailures: Int = 0,
+            secretFailures: Int = 0, storeFailures: Int = 0, keysImported: Int = 0,
+            keyFailures: [String] = [], missingKeyPaths: [String] = []
         ) {
             self.imported = imported
             self.replaced = replaced
@@ -1074,6 +1102,7 @@ public final class SessionListViewModel {
             self.renamed = renamed
             self.secretsImported = secretsImported
             self.secretsRemoved = secretsRemoved
+            self.secretRemovalFailures = secretRemovalFailures
             self.secretFailures = secretFailures
             self.storeFailures = storeFailures
             self.keysImported = keysImported
@@ -1149,10 +1178,16 @@ public final class SessionListViewModel {
                     result.secretFailures += 1
                 }
             } else if planned.replacesExisting {
+                // Identical rule and identical reasoning to `applyImport`'s
+                // stale-secret branch: delete unconditionally (idempotent, and
+                // an unreadable Keychain is not evidence of an empty slot),
+                // probe only to decide what may be claimed.
                 let stale = (try? secrets.password(for: set.id)) ?? nil
-                if !(stale ?? "").isEmpty {
-                    try? secrets.deletePassword(for: set.id)
-                    result.secretsRemoved += 1
+                do {
+                    try secrets.deletePassword(for: set.id)
+                    if !(stale ?? "").isEmpty { result.secretsRemoved += 1 }
+                } catch {
+                    result.secretRemovalFailures += 1
                 }
             }
 

@@ -384,6 +384,7 @@
 // Zestawy logowania: eksport/import (M19/T8)
 "import.result.resolved %lld %lld" = "%lld zastąpiono, %lld ze zmienioną nazwą";
 "import.result.secretsRemoved %lld" = "Usunięto zapisane hasła, ponieważ plik ich nie zawierał: %lld";
+"import.result.secretsRemoveFailed %lld" = "Zapisane hasła, których nie udało się usunąć: %lld";
 "logins.export.title" = "Eksportuj zestawy logowania";
 "logins.export.summary %lld" = "Zestawy logowania: %lld";
 "logins.export.action" = "Eksportuj…";

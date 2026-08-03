@@ -695,6 +695,14 @@ struct LoginSetsSheet: View {
                 "Stored passwords removed because the file had none: %lld"),
                 result.secretsRemoved))
         }
+        // Same shared line the session summary uses: a stale secret the
+        // Keychain refused to delete is still bound to the replaced set.
+        if result.secretRemovalFailures > 0 {
+            lines.append(String(format: L10n.string(
+                "import.result.secretsRemoveFailed %lld",
+                "Stored passwords that could not be removed: %lld"),
+                result.secretRemovalFailures))
+        }
         if result.secretFailures > 0 {
             lines.append(String(format: L10n.string(
                 "import.result.passwordFailures %lld", "Passwords that could not be saved: %lld"),

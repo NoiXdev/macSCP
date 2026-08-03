@@ -381,6 +381,7 @@
 // Login sets: export/import (M19/T8)
 "import.result.resolved %lld %lld" = "%lld replaced, %lld renamed";
 "import.result.secretsRemoved %lld" = "Stored passwords removed because the file had none: %lld";
+"import.result.secretsRemoveFailed %lld" = "Stored passwords that could not be removed: %lld";
 "logins.export.title" = "Export Logins";
 "logins.export.summary %lld" = "%lld logins";
 "logins.export.action" = "Export…";
