@@ -26,35 +26,6 @@ struct GlobalOptions: ParsableArguments {
     init() {}
 }
 
-/// Builds the staged secret sources in the ORDER the M20 design fixes as a
-/// security decision: an explicit `--password-command` wins over everything;
-/// the environment variable is the CI path (the S3-conventional
-/// `AWS_SECRET_ACCESS_KEY` for an S3 session, so existing pipelines don't
-/// have to relearn a name; `MACSCP_PASSWORD` for SSH, the name the M1 driver
-/// already used); the Keychain is the workstation default, last in line.
-/// `SecretResolver` is what actually enforces "empty means did not deliver"
-/// and "a throwing source aborts the whole attempt" — this function only has
-/// to get the order and the variable names right.
-func secretSources(options: GlobalOptions, kind: ConnectionKind) -> [any SecretSource] {
-    var sources: [any SecretSource] = []
-    if let command = options.passwordCommand {
-        sources.append(PasswordCommandSecretSource(command: command))
-    }
-    switch kind {
-    case .ssh:
-        sources.append(EnvironmentSecretSource(variableName: "MACSCP_PASSWORD"))
-    case .s3:
-        sources.append(EnvironmentSecretSource(variableName: "AWS_SECRET_ACCESS_KEY"))
-    }
-    // No access group (M20 Task 7 wired the entitlements/signing but the App
-    // itself still constructs `KeychainSecretStore()` with none — see
-    // `ContentView`/`ConnectionFormView`/`SSHKeysSheet`); matching that
-    // keeps the CLI reading the exact slot the App reads today rather than
-    // inventing a group nothing else requests yet.
-    sources.append(KeychainSecretSource(store: KeychainSecretStore()))
-    return sources
-}
-
 /// Resolves a reference to a stored session, gathers its secret and
 /// connects. The CLI does none of the deciding itself — it hands the pieces
 /// to Core.
@@ -64,18 +35,12 @@ func connect(
 ) async throws -> any RemoteFileSystem {
     let store = SessionStore(directory: SessionStore.defaultDirectory)
     let session = try reference.resolve(in: try store.all())
-    // The SSH agent is an authentication METHOD, not a secret source (M20
-    // design): an agent session needs nothing resolved at all, and running
-    // `--password-command`/reading the environment for it anyway would mean
-    // an unrelated broken credential helper could fail an agent-auth connect
-    // that never needed a secret in the first place.
-    let needsSecret = session.kind == .s3
-        || (session.kind == .ssh && session.authKind != .agent)
-    var secret: ResolvedSecret?
-    if needsSecret {
-        let resolver = SecretResolver(sources: secretSources(options: options, kind: session.kind))
-        secret = try resolver.resolve(for: session.id)
-    }
+    // `secretSources(for:passwordCommand:)` (Core) already encodes the
+    // agent-auth guard: an agent-auth SSH session yields an empty chain, and
+    // `SecretResolver` walking an empty chain harmlessly resolves to `nil` —
+    // so this call site is pure argument plumbing, no branching of its own.
+    let sources = secretSources(for: session, passwordCommand: options.passwordCommand)
+    let secret = try SecretResolver(sources: sources).resolve(for: session.id)
     if options.verbose, let secret {
         OutputFormatter.note("secret source: \(secret.sourceLabel)")
     }

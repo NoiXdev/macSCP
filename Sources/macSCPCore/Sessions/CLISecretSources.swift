@@ -97,3 +97,57 @@ public struct KeychainSecretSource: SecretSource {
         try store.password(for: sessionID)
     }
 }
+
+/// Builds the staged secret sources for a stored session, in the ORDER the
+/// M20 design fixes as a security decision: an explicit `--password-command`
+/// wins over everything; the environment variable is the CI path (the
+/// S3-conventional `AWS_SECRET_ACCESS_KEY` for an S3 session, so existing
+/// pipelines don't have to relearn a name; `MACSCP_PASSWORD` for SSH, the
+/// name the M1 driver already used); the Keychain is the workstation
+/// default, last in line. `SecretResolver` is what actually enforces "empty
+/// means did not deliver" and "a throwing source aborts the whole attempt"
+/// — this function only has to get the order, the variable names, and the
+/// agent-auth guard right.
+///
+/// This used to live in the CLI target as `secretSources(options:kind:)`
+/// (`Sources/MacSCPCLI/SessionConnecting.swift`) — a target with NO test
+/// target. A future edit swapping two appends, or dropping the agent-auth
+/// guard below, would have compiled and passed the entire suite without
+/// this file's tests noticing. Moved here, alongside the source types, so
+/// the order and the guard are both pinned.
+///
+/// An SSH agent-auth session needs no secret at all (M20 design): the agent
+/// is an authentication METHOD, not a secret source. Consulting
+/// `--password-command`/the environment/Keychain anyway would mean an
+/// unrelated broken credential helper could fail an agent-auth connect that
+/// never needed a secret in the first place — so this returns an EMPTY
+/// chain for that case. `SecretResolver` walking an empty chain harmlessly
+/// resolves to `nil`, so callers don't need a separate "does this session
+/// need a secret" branch of their own.
+public func secretSources(
+    for session: StoredSession,
+    passwordCommand: String?,
+    keychainStore: any SecretStore = KeychainSecretStore()
+) -> [any SecretSource] {
+    let needsSecret = session.kind == .s3
+        || (session.kind == .ssh && session.authKind != .agent)
+    guard needsSecret else { return [] }
+
+    var sources: [any SecretSource] = []
+    if let command = passwordCommand {
+        sources.append(PasswordCommandSecretSource(command: command))
+    }
+    switch session.kind {
+    case .ssh:
+        sources.append(EnvironmentSecretSource(variableName: "MACSCP_PASSWORD"))
+    case .s3:
+        sources.append(EnvironmentSecretSource(variableName: "AWS_SECRET_ACCESS_KEY"))
+    }
+    // No access group (M20 Task 7 wired the entitlements/signing but the App
+    // itself still constructs `KeychainSecretStore()` with none — see
+    // `ContentView`/`ConnectionFormView`/`SSHKeysSheet`); matching that
+    // keeps the CLI reading the exact slot the App reads today rather than
+    // inventing a group nothing else requests yet.
+    sources.append(KeychainSecretSource(store: keychainStore))
+    return sources
+}
