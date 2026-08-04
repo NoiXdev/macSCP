@@ -72,12 +72,61 @@ SSH test rig from `docker/test-server/` (`MACSCP_ITEST=1`).
 ## Command line
 
 The same build also produces `macscp-cli`, a small command-line companion
-built alongside the app; it is not part of the DMG, so building it means
-building from source. A release built with `scripts/release` signs both
-the app and the CLI into the same keychain access group, so the CLI can
-read passwords and passphrases the app already saved instead of asking
-for them again. A CLI built directly with `swift build` has no such group
-and falls back to asking for each secret on its own.
+built alongside the app; it is not part of the DMG, and no packaging or
+release step publishes it anywhere — the only way to get it today is to
+build it yourself: `swift build -c release`, then run
+`.build/release/macscp-cli`. A release built with `scripts/release` signs
+both the app and the CLI into the same keychain access group, so the CLI
+can read passwords and passphrases the app already saved instead of
+asking for them again. A CLI built directly with `swift build` has no
+such group and falls back to asking for each secret on its own.
+
+The CLI works only with sessions already saved by the app — there is no
+way to pass a host and password directly on the command line. Point it at
+one with `name:/path`, e.g. `macscp-cli ls prod:/var/www`.
+
+**Commands**
+
+| Command | Effect |
+|---|---|
+| `ls <session>:<path>` | List a remote directory. |
+| `get <session>:<path> <local dir>` | Download a remote file into a local directory (keeps its remote name). |
+| `put <local file> <session>:<path>` | Upload a local file into a remote directory (keeps its local name). |
+| `rm <session>:<path> [--recursive]` | Delete a remote file, or a whole directory with `--recursive`. |
+| `mkdir <session>:<path>` | Create a remote directory. |
+
+`get`/`put` take `--on-conflict fail\|skip\|overwrite` for what to do when
+the destination already exists (`fail` is the default — nothing is
+overwritten unless asked).
+
+**Secrets.** A session's password or key passphrase is looked up in this
+order, stopping at the first one that answers: an explicit
+`--password-command <cmd>` (the command's own stdout, trimmed); an
+environment variable (`MACSCP_PASSWORD` for an SSH session,
+`AWS_SECRET_ACCESS_KEY` for an S3 one); the keychain, same as the app
+itself uses. A session authenticating through an SSH agent needs none of
+these — the agent supplies the key.
+
+**Host keys.** The same first-connect trust-on-first-use rule as the app
+applies: an unknown host key is refused unless the CLI can either ask
+interactively or was given `--accept-new`, and a host key that *changed*
+is always a hard stop, never something a flag can wave through.
+`--non-interactive` refuses to prompt even with a terminal attached; with
+no terminal at all (a cron job, a CI runner) the CLI refuses to prompt on
+its own.
+
+**Exit codes** — stable and meant to be scripted against:
+
+| Code | Meaning |
+|---|---|
+| 0 | Success. |
+| 2 | Usage error (bad arguments, a directory where a file was expected, an empty destination). |
+| 10 | Authentication failed. |
+| 11 | Unknown host key, and nothing confirmed it (no terminal, or refused). |
+| 12 | Host key changed since it was last trusted. |
+| 13 | Connection failed. |
+| 14 | The remote path was not found, or access to it was denied. |
+| 15 | The destination already exists and `--on-conflict fail` (the default) was in effect. |
 
 ## License
 
