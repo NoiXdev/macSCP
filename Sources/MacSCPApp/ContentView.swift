@@ -477,78 +477,94 @@ struct ContentView: View {
             }
     }
 
-    private var mainContent: some View {
-        HSplitView {
-            SessionSidebar(
-                viewModel: sessionListViewModel,
-                importedHosts: importedHosts,
-                activeSessionID: activeTab.activeStoredSessionID,
-                // A running transfer no longer locks the sidebar (M8a): a
-                // sidebar click opens a NEW tab instead of tearing the
-                // connected one down. Only the active tab's own in-flight
-                // connect/reconnect blocks interaction.
-                interactionsDisabled: activeTab.isReconnecting
-                    || activeTab.connectionViewModel.state == .connecting,
-                onSelect: { stored in connectFromSidebar(stored) },
-                onDelete: { stored in
-                    // Return value (M11a/T3): the sidebar surfaces
-                    // `secretFailures` as its own red inline message, the
-                    // same way `LoginSetsSheet.deleteSelected()` does for
-                    // `deleteLoginSet`.
-                    let result = sessionListViewModel.delete(stored)
-                    for tab in tabsModel.tabs where tab.activeStoredSessionID == stored.id {
-                        tab.activeStoredSessionID = nil
-                        // Same release as `teardown`'s audit recorder block
-                        // (M9b/T4 review, finding 1): leaving `auditRecorder`
-                        // and its two sinks wired after the STORE's log file
-                        // was just deleted means the next event (teardown's
-                        // own `recordDisconnected()` is guaranteed to fire
-                        // later) recreates `audit/<id>.json` from scratch —
-                        // an unreachable, permanent orphan, since no session
-                        // list entry (and no sidebar menu) points at that id
-                        // anymore.
-                        tab.auditRecorder = nil
-                        tab.transferQueue.auditSink = nil
-                        tab.session?.remote.auditSink = nil
-                    }
-                    return result
-                },
-                onNew: { newConnection() },
-                onSelectImported: { fillFromImported($0) },
-                onEdit: { stored in editStored(stored) },
-                onExport: { scope in exportSheetItem = ExportSheetItem(scope: scope) },
-                onImport: { showImportFileImporter = true },
-                onShowAuditLog: { stored in auditLogSession = stored },
-                onShowKnownHosts: { showKnownHostsSheet = true },
-                onShowLogins: { showLoginSetsSheet = true },
-                onHideImported: { host in hideImported(host) },
-                onShowHiddenImports: { showHiddenImportsSheet = true },
-                hiddenImportsCount: hiddenImportAliases.count,
-                hiddenImportsErrorMessage: hiddenImportsErrorMessage
-            )
-            .frame(minWidth: 170, idealWidth: 190, maxWidth: 260)
-
-            VStack(spacing: 0) {
-                // Hidden in the pristine (single unconnected tab) state — a
-                // strip with nothing to switch between would just be clutter
-                // (M8a/T4 spec 2).
-                if !isPristine {
-                    TabStripView(
-                        tabs: tabsModel.tabs,
-                        activeTabID: tabsModel.activeTabID,
-                        onActivate: { activate($0) },
-                        onClose: { requestClose($0) },
-                        onAdd: { tabsModel.addTab(makeTab()) }
-                    )
+    /// The window's two-pane layout: session sidebar on the left, tab strip
+    /// plus detail on the right.
+    ///
+    /// Split out of `mainContent` (M20 CI fix) so the layout and the modifier
+    /// chain that decorates it are two separate inference problems instead of
+    /// one. Together they had grown past what the type checker will solve.
+    private var splitLayout: some View {
+    HSplitView {
+        SessionSidebar(
+            viewModel: sessionListViewModel,
+            importedHosts: importedHosts,
+            activeSessionID: activeTab.activeStoredSessionID,
+            // A running transfer no longer locks the sidebar (M8a): a
+            // sidebar click opens a NEW tab instead of tearing the
+            // connected one down. Only the active tab's own in-flight
+            // connect/reconnect blocks interaction.
+            interactionsDisabled: activeTab.isReconnecting
+                || activeTab.connectionViewModel.state == .connecting,
+            onSelect: { stored in connectFromSidebar(stored) },
+            onDelete: { stored in
+                // Return value (M11a/T3): the sidebar surfaces
+                // `secretFailures` as its own red inline message, the
+                // same way `LoginSetsSheet.deleteSelected()` does for
+                // `deleteLoginSet`.
+                let result = sessionListViewModel.delete(stored)
+                for tab in tabsModel.tabs where tab.activeStoredSessionID == stored.id {
+                    tab.activeStoredSessionID = nil
+                    // Same release as `teardown`'s audit recorder block
+                    // (M9b/T4 review, finding 1): leaving `auditRecorder`
+                    // and its two sinks wired after the STORE's log file
+                    // was just deleted means the next event (teardown's
+                    // own `recordDisconnected()` is guaranteed to fire
+                    // later) recreates `audit/<id>.json` from scratch —
+                    // an unreachable, permanent orphan, since no session
+                    // list entry (and no sidebar menu) points at that id
+                    // anymore.
+                    tab.auditRecorder = nil
+                    tab.transferQueue.auditSink = nil
+                    tab.session?.remote.auditSink = nil
                 }
-                detail
+                return result
+            },
+            onNew: { newConnection() },
+            onSelectImported: { fillFromImported($0) },
+            onEdit: { stored in editStored(stored) },
+            onExport: { scope in exportSheetItem = ExportSheetItem(scope: scope) },
+            onImport: { showImportFileImporter = true },
+            onShowAuditLog: { stored in auditLogSession = stored },
+            onShowKnownHosts: { showKnownHostsSheet = true },
+            onShowLogins: { showLoginSetsSheet = true },
+            onHideImported: { host in hideImported(host) },
+            onShowHiddenImports: { showHiddenImportsSheet = true },
+            hiddenImportsCount: hiddenImportAliases.count,
+            hiddenImportsErrorMessage: hiddenImportsErrorMessage
+        )
+        .frame(minWidth: 170, idealWidth: 190, maxWidth: 260)
+
+        VStack(spacing: 0) {
+            // Hidden in the pristine (single unconnected tab) state — a
+            // strip with nothing to switch between would just be clutter
+            // (M8a/T4 spec 2).
+            if !isPristine {
+                TabStripView(
+                    tabs: tabsModel.tabs,
+                    activeTabID: tabsModel.activeTabID,
+                    onActivate: { activate($0) },
+                    onClose: { requestClose($0) },
+                    onAdd: { tabsModel.addTab(makeTab()) }
+                )
             }
-            // The detail minimum must fit inside the window minimum
-            // below together with the sidebar minimum (170), otherwise
-            // the split view's content overflows the window and gets
-            // clipped on both sides instead of shrinking.
-            .frame(minWidth: isPristine ? 500 : 590, maxWidth: .infinity)
+            detail
         }
+        // The detail minimum must fit inside the window minimum
+        // below together with the sidebar minimum (170), otherwise
+        // the split view's content overflows the window and gets
+        // clipped on both sides instead of shrinking.
+        .frame(minWidth: isPristine ? 500 : 590, maxWidth: .infinity)
+    }
+    }
+
+    /// Window-level chrome: minimum size, tint, title, the `NSWindow` handle,
+    /// and the once-per-appearance setup hook.
+    /// 
+    /// One of three modifier groups `mainContent` composes (M20 CI fix). Each is
+    /// its own generic function so the type checker solves three small problems
+    /// rather than one it gives up on.
+    private func windowChrome<Content: View>(_ content: Content) -> some View {
+        content
         // Compact form vs. browser: the minimum size depends on the window's
         // pristine state (M5c/T0, M8a/T3) — replaces the global `.frame` from
         // `MacSCPApp.swift`.
@@ -556,133 +572,23 @@ struct ContentView: View {
         .tint(DesignTokens.remoteBlue)
         .navigationTitle(activeTab.titleName.map { "macSCP — \($0)" } ?? "macSCP")
         .background(WindowAccessor { window = $0 })
-        .task {
-            // Full inventory, read once (M11f/T2) — `refreshImportedHosts()`
-            // below (and every later hide/unhide) re-splits THIS instead of
-            // re-parsing the config file.
-            fullImportedHosts = SSHConfigImporter.load(path: SSHConfigImporter.defaultPath)
-            refreshImportedHosts()
-            // Seed the shared limiter from the settings once per window; the
-            // `.onChange` observers below keep it in sync afterwards. KBs → bytes/s.
-            bandwidthLimiter.uploadLimitBytesPerSec = settingsStore.uploadLimitKBs * 1024
-            bandwidthLimiter.downloadLimitBytesPerSec = settingsStore.downloadLimitKBs * 1024
-            // Startup automatic update check (M11b/T2, spec §3): fires at
-            // most once a day and only if due — `checkAutomaticallyIfDue`
-            // no-ops instantly when disabled or not yet due, and otherwise
-            // starts its own detached `Task`, so this never blocks the
-            // window from appearing. `isChecking`'s synchronous guard (see
-            // `UpdateCheckModel`) keeps this safe even if a second window
-            // somehow ran this same `.task` concurrently.
-            updateModel.checkAutomaticallyIfDue(settingsStore: settingsStore)
-            // Menu-bar status bridge wiring (M11n/T2) — extracted into its
-            // own method (like `refreshImportedHosts()` above) rather than
-            // inlined here: this `.task` closure is already large enough
-            // that the type checker times out on it (M11d/M11f review
-            // precedent for this exact failure mode).
-            wireMenuBarBridge()
-            // Command bridge wiring (M8a/T4): `MacSCPApp` has no reference to
-            // this view, so the menu items call back through these closures.
-            //
-            // Key-window guard (M8a T5 review, finding 1): the `Settings`
-            // scene shares this exact ⌘N/⌘W/⌘1–9 command set (SwiftUI attaches
-            // one `.commands` menu app-wide, not per window/scene), so with
-            // Settings focused these closures would otherwise still fire
-            // against THIS window's tabs instead of Settings — e.g. ⌘W would
-            // tear down a tab instead of closing the Settings window. Each
-            // closure checks that this window is actually key before acting.
-            tabCommands.newTab = {
-                guard window?.isKeyWindow == true else { return }
-                tabsModel.addTab(makeTab())
-            }
-            tabCommands.selectTab = { index in
-                guard window?.isKeyWindow == true else { return }
-                selectTab(atIndex: index)
-            }
-            // Extracted into its own method (M14/T5 build fix — see
-            // `wireMenuBarBridge()`'s doc comment above for the exact same
-            // failure mode): inlined here, this closure's `if`/`else` body
-            // was the straw that finally tipped the surrounding `.task`
-            // closure over the type checker's "unable to type-check this
-            // expression in reasonable time" limit. A plain function
-            // reference assignment is far cheaper for the checker than a
-            // multi-statement closure literal in the same inference scope.
-            tabCommands.closeActiveTab = handleCloseActiveTabCommand
-            // Sessions menu bridge (M10a/T2) — same key-window guard as the
-            // tab commands above. Export/import route through the EXISTING
-            // M9a state (`exportSheetItem`/`showImportFileImporter`), not a
-            // duplicate handler.
-            tabCommands.showKnownHosts = {
-                guard window?.isKeyWindow == true else { return }
-                showKnownHostsSheet = true
-            }
-            // "Logins…" (M10b/T3) — same key-window guard, opens the
-            // login-sets management sheet.
-            tabCommands.showLogins = {
-                guard window?.isKeyWindow == true else { return }
-                loginSetsSheetStartsImport = false
-                showLoginSetsSheet = true
-            }
-            // "Import Logins…" (M19/T8) — opens the same sheet, with its file
-            // picker already armed.
-            tabCommands.importLogins = {
-                guard window?.isKeyWindow == true else { return }
-                loginSetsSheetStartsImport = true
-                showLoginSetsSheet = true
-            }
-            // "Hidden Imports…" (M11f/T2) — same key-window guard, opens the
-            // hidden-imports management sheet.
-            tabCommands.showHiddenImports = {
-                guard window?.isKeyWindow == true else { return }
-                showHiddenImportsSheet = true
-            }
-            // "SSH Keys…" (M18/T5) — same key-window guard, opens the
-            // SSH-key management sheet.
-            tabCommands.showSSHKeys = {
-                guard window?.isKeyWindow == true else { return }
-                showSSHKeysSheet = true
-            }
-            tabCommands.exportAllSessions = {
-                guard window?.isKeyWindow == true else { return }
-                exportSheetItem = ExportSheetItem(scope: .all)
-            }
-            tabCommands.importSessions = {
-                guard window?.isKeyWindow == true else { return }
-                showImportFileImporter = true
-            }
-            // "Terminal" menu bridge (M11d/T2) — same key-window guard as
-            // the tab commands above. Unlike the toolbar button, these two
-            // ALWAYS route to their own specific action regardless of
-            // `settingsStore.terminalTarget` (spec §4 item 5).
-            //
-            // Capability guard (M12/T7b): the menu entry is already
-            // disabled for a non-shell backend (`MacSCPApp`'s
-            // `tabCommands.activeTabSupportsShell`), but this closure
-            // re-checks anyway — belt-and-suspenders against any path that
-            // reaches it regardless (spec: "no silent no-op").
-            tabCommands.toggleTerminal = {
-                guard window?.isKeyWindow == true else { return }
-                guard activeTabSupportsShell else {
-                    presentTerminalUnavailable()
-                    return
-                }
-                activeTab.session?.terminal.toggle()
-            }
-            // Transfer-bar menu bridge (M11o) — same key-window guard as
-            // the other tab commands; toggles the active tab's per-tab flag.
-            tabCommands.toggleTransfers = {
-                guard window?.isKeyWindow == true else { return }
-                activeTab.transfersPanelVisible.toggle()
-            }
-            tabCommands.openExternalTerminal = {
-                guard window?.isKeyWindow == true else { return }
-                guard activeTabSupportsShell else {
-                    presentTerminalUnavailable()
-                    return
-                }
-                requestExternalTerminal(for: activeTab)
-            }
-        }
+        // Extracted wholesale into `performWindowSetup()` (M20 CI fix).
+        // This closure had grown to ~125 statements in the same inference
+        // scope as the `HSplitView` above, and the type checker gave up on
+        // the whole `mainContent` expression -- on the CI runner first,
+        // which is slower than a dev machine and hits the per-expression
+        // time budget sooner. Same failure mode and same remedy as
+        // `wireMenuBarBridge()` (M11n/T2) and `handleCloseActiveTabCommand`
+        // (M14/T5); this time the whole body moves rather than one closure.
+        .task { performWindowSetup() }
         // Destructive confirmation for closing a tab with active transfers
+    }
+
+    /// Every sheet, alert, dialog, and file importer/exporter this window owns.
+    /// 
+    /// See `windowChrome(_:)` for why these are grouped.
+    private func sheetsAndAlerts<Content: View>(_ content: Content) -> some View {
+        content
         // (M8a/T4) — mirrors `SessionSidebar`'s delete-confirmation pattern.
         // An idle tab bypasses this and closes immediately (`requestClose`).
         .confirmationDialog(
@@ -890,6 +796,14 @@ struct ContentView: View {
         // `UpdateCheckModel.check`/`presentFallbackAlert`). On disappear —
         // this window closing — any leftover `presentedResult` is cleared
         // too, so a check that completed just as the window went away can
+    }
+
+    /// Appearance lifecycle, the toolbar, and the settings observers that keep
+    /// live state in sync after `performWindowSetup()` seeded it.
+    /// 
+    /// See `windowChrome(_:)` for why these are grouped.
+    private func lifecycleAndToolbar<Content: View>(_ content: Content) -> some View {
+        content
         // never resurface as a stale, unrequested dialog the next time a
         // fresh window opens.
         .onAppear { updateModel.hasPresentationTarget = true }
@@ -992,6 +906,12 @@ struct ContentView: View {
         .onChange(of: tabIDs) { _, _ in
             menuBarModel.tabs = tabsModel.tabs
         }
+    }
+
+    /// Composed from `splitLayout` plus three modifier groups rather than one
+    /// long chain -- see `windowChrome(_:)`.
+    private var mainContent: some View {
+        lifecycleAndToolbar(sheetsAndAlerts(windowChrome(splitLayout)))
     }
 
     /// See the `.onChange(of: tabIDs)` call above.
@@ -1461,6 +1381,141 @@ struct ContentView: View {
     private func selectTab(atIndex index: Int) {
         guard tabsModel.tabs.indices.contains(index) else { return }
         activate(tabsModel.tabs[index].id)
+    }
+
+    /// Everything this window does once, when it first appears: reading the
+    /// SSH config inventory, seeding the bandwidth limiter, the due-check for
+    /// updates, and wiring the menu-bar and menu-command bridges.
+    ///
+    /// A method rather than an inline `.task` closure, and deliberately so:
+    /// see the comment at the call site. Nothing here is async -- the work is
+    /// synchronous setup, and `.task` is only the hook that runs it once per
+    /// window appearance.
+    private func performWindowSetup() {
+        // Full inventory, read once (M11f/T2) — `refreshImportedHosts()`
+        // below (and every later hide/unhide) re-splits THIS instead of
+        // re-parsing the config file.
+        fullImportedHosts = SSHConfigImporter.load(path: SSHConfigImporter.defaultPath)
+        refreshImportedHosts()
+        // Seed the shared limiter from the settings once per window; the
+        // `.onChange` observers below keep it in sync afterwards. KBs → bytes/s.
+        bandwidthLimiter.uploadLimitBytesPerSec = settingsStore.uploadLimitKBs * 1024
+        bandwidthLimiter.downloadLimitBytesPerSec = settingsStore.downloadLimitKBs * 1024
+        // Startup automatic update check (M11b/T2, spec §3): fires at
+        // most once a day and only if due — `checkAutomaticallyIfDue`
+        // no-ops instantly when disabled or not yet due, and otherwise
+        // starts its own detached `Task`, so this never blocks the
+        // window from appearing. `isChecking`'s synchronous guard (see
+        // `UpdateCheckModel`) keeps this safe even if a second window
+        // somehow ran this same `.task` concurrently.
+        updateModel.checkAutomaticallyIfDue(settingsStore: settingsStore)
+        // Menu-bar status bridge wiring (M11n/T2) — extracted into its
+        // own method (like `refreshImportedHosts()` above) rather than
+        // inlined here: this `.task` closure is already large enough
+        // that the type checker times out on it (M11d/M11f review
+        // precedent for this exact failure mode).
+        wireMenuBarBridge()
+        // Command bridge wiring (M8a/T4): `MacSCPApp` has no reference to
+        // this view, so the menu items call back through these closures.
+        //
+        // Key-window guard (M8a T5 review, finding 1): the `Settings`
+        // scene shares this exact ⌘N/⌘W/⌘1–9 command set (SwiftUI attaches
+        // one `.commands` menu app-wide, not per window/scene), so with
+        // Settings focused these closures would otherwise still fire
+        // against THIS window's tabs instead of Settings — e.g. ⌘W would
+        // tear down a tab instead of closing the Settings window. Each
+        // closure checks that this window is actually key before acting.
+        tabCommands.newTab = {
+            guard window?.isKeyWindow == true else { return }
+            tabsModel.addTab(makeTab())
+        }
+        tabCommands.selectTab = { index in
+            guard window?.isKeyWindow == true else { return }
+            selectTab(atIndex: index)
+        }
+        // Extracted into its own method (M14/T5 build fix — see
+        // `wireMenuBarBridge()`'s doc comment above for the exact same
+        // failure mode): inlined here, this closure's `if`/`else` body
+        // was the straw that finally tipped the surrounding `.task`
+        // closure over the type checker's "unable to type-check this
+        // expression in reasonable time" limit. A plain function
+        // reference assignment is far cheaper for the checker than a
+        // multi-statement closure literal in the same inference scope.
+        tabCommands.closeActiveTab = handleCloseActiveTabCommand
+        // Sessions menu bridge (M10a/T2) — same key-window guard as the
+        // tab commands above. Export/import route through the EXISTING
+        // M9a state (`exportSheetItem`/`showImportFileImporter`), not a
+        // duplicate handler.
+        tabCommands.showKnownHosts = {
+            guard window?.isKeyWindow == true else { return }
+            showKnownHostsSheet = true
+        }
+        // "Logins…" (M10b/T3) — same key-window guard, opens the
+        // login-sets management sheet.
+        tabCommands.showLogins = {
+            guard window?.isKeyWindow == true else { return }
+            loginSetsSheetStartsImport = false
+            showLoginSetsSheet = true
+        }
+        // "Import Logins…" (M19/T8) — opens the same sheet, with its file
+        // picker already armed.
+        tabCommands.importLogins = {
+            guard window?.isKeyWindow == true else { return }
+            loginSetsSheetStartsImport = true
+            showLoginSetsSheet = true
+        }
+        // "Hidden Imports…" (M11f/T2) — same key-window guard, opens the
+        // hidden-imports management sheet.
+        tabCommands.showHiddenImports = {
+            guard window?.isKeyWindow == true else { return }
+            showHiddenImportsSheet = true
+        }
+        // "SSH Keys…" (M18/T5) — same key-window guard, opens the
+        // SSH-key management sheet.
+        tabCommands.showSSHKeys = {
+            guard window?.isKeyWindow == true else { return }
+            showSSHKeysSheet = true
+        }
+        tabCommands.exportAllSessions = {
+            guard window?.isKeyWindow == true else { return }
+            exportSheetItem = ExportSheetItem(scope: .all)
+        }
+        tabCommands.importSessions = {
+            guard window?.isKeyWindow == true else { return }
+            showImportFileImporter = true
+        }
+        // "Terminal" menu bridge (M11d/T2) — same key-window guard as
+        // the tab commands above. Unlike the toolbar button, these two
+        // ALWAYS route to their own specific action regardless of
+        // `settingsStore.terminalTarget` (spec §4 item 5).
+        //
+        // Capability guard (M12/T7b): the menu entry is already
+        // disabled for a non-shell backend (`MacSCPApp`'s
+        // `tabCommands.activeTabSupportsShell`), but this closure
+        // re-checks anyway — belt-and-suspenders against any path that
+        // reaches it regardless (spec: "no silent no-op").
+        tabCommands.toggleTerminal = {
+            guard window?.isKeyWindow == true else { return }
+            guard activeTabSupportsShell else {
+                presentTerminalUnavailable()
+                return
+            }
+            activeTab.session?.terminal.toggle()
+        }
+        // Transfer-bar menu bridge (M11o) — same key-window guard as
+        // the other tab commands; toggles the active tab's per-tab flag.
+        tabCommands.toggleTransfers = {
+            guard window?.isKeyWindow == true else { return }
+            activeTab.transfersPanelVisible.toggle()
+        }
+        tabCommands.openExternalTerminal = {
+            guard window?.isKeyWindow == true else { return }
+            guard activeTabSupportsShell else {
+                presentTerminalUnavailable()
+                return
+            }
+            requestExternalTerminal(for: activeTab)
+        }
     }
 
     /// Menu-bar status bridge wiring (M11n), called once from `.task`:
