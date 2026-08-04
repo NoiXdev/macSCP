@@ -82,6 +82,9 @@ struct ConnectionFormView: View {
     /// schema's own no-op preset, `values: [:]`) so a fresh or reopened S3
     /// form never silently re-applies a stale provider's values.
     @State private var selectedS3PresetID: String = "custom"
+    /// Same idea as `selectedS3PresetID` above, for the WebDAV provider
+    /// preset picker (M21/T9) -- defaults to the schema's own no-op preset.
+    @State private var selectedWebDAVPresetID: String = "custom"
 
     private var isConnecting: Bool { viewModel.state == .connecting }
 
@@ -314,8 +317,10 @@ struct ConnectionFormView: View {
 
                 if viewModel.kind == .ssh {
                     sshSections
-                } else {
+                } else if viewModel.kind == .s3 {
                     s3Section
+                } else {
+                    webdavSection
                 }
 
                 if !isEditMode {
@@ -911,6 +916,94 @@ struct ConnectionFormView: View {
             case "bucket": viewModel.s3Bucket = value
             case "accessKeyID": viewModel.s3AccessKeyID = value
             case "usePathStyle": viewModel.s3UsePathStyle = (value == "true")
+            default: break
+            }
+        }
+    }
+
+    /// The WebDAV backend descriptor (M21/T9) — mirrors `s3Descriptor`
+    /// above; its `fieldSchema` drives `webdavSection` below.
+    private var webdavDescriptor: BackendDescriptor { .descriptor(for: .webdav) }
+
+    /// The schema-driven WebDAV section (M21/T9): a provider-preset picker
+    /// followed by every schema field, mirroring `s3Section` above but
+    /// simpler — WebDAV has no login-set switcher (spec: out of scope for
+    /// this milestone), so every field is always shown and bound directly.
+    private var webdavSection: some View {
+        let presetLabel = L10n.string("connection.s3.preset.label", "Provider preset")
+        return Group {
+            FormRow(label: presetLabel) {
+                Picker(presetLabel, selection: Binding(
+                    get: { selectedWebDAVPresetID },
+                    set: { id in
+                        selectedWebDAVPresetID = id
+                        applyWebDAVPreset(id)
+                    }
+                )) {
+                    ForEach(webdavDescriptor.fieldSchema.presets) { preset in
+                        Text(L10n.string(preset.nameKey, preset.nameDefault)).tag(preset.id)
+                    }
+                }
+                .labelsHidden()
+            }
+
+            ForEach(webdavDescriptor.fieldSchema.fields) { field in
+                webdavFieldRow(field)
+            }
+        }
+    }
+
+    /// One form row for a single WebDAV `ConnectionField`, rendered by its
+    /// `kind` and bound BY FIELD ID (`webdavTextBinding(for:)` below) — same
+    /// shape as `s3FieldRow` above. `username`/`password` are deliberately
+    /// the SAME shared `viewModel` fields the SSH section uses (see
+    /// `ConnectionViewModel.webdavBaseURL`'s own doc comment), not separate
+    /// `.secret`/text bindings of their own.
+    @ViewBuilder
+    private func webdavFieldRow(_ field: ConnectionField) -> some View {
+        let label = L10n.string(field.labelKey, field.labelDefault)
+        switch field.kind {
+        case .toggle:
+            FormRow(label: "") {
+                Toggle(label, isOn: $viewModel.webdavUseNextcloudPath)
+            }
+        case .secret:
+            FormRow(label: label) {
+                SecureField(
+                    label, text: $viewModel.password,
+                    prompt: isEditMode
+                        ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
+                        : Text(verbatim: ""))
+            }
+        case .text, .number:
+            FormRow(label: label) {
+                TextField(label, text: webdavTextBinding(for: field.id), prompt: Text(verbatim: ""))
+            }
+        }
+    }
+
+    /// Maps a schema field id to the matching `viewModel` text property
+    /// (M21/T9) — the ids are fixed by `BackendDescriptor.webdavDescriptor`
+    /// (baseURL/username); `password`/`useNextcloudPath` are handled
+    /// directly in `webdavFieldRow` above, never routed through here.
+    private func webdavTextBinding(for fieldID: String) -> Binding<String> {
+        switch fieldID {
+        case "baseURL": return $viewModel.webdavBaseURL
+        case "username": return $viewModel.username
+        default: return .constant("")
+        }
+    }
+
+    /// Fills the WebDAV fields from the selected preset's `values` (M21/T9)
+    /// — mirrors `applyS3Preset` above. Only `useNextcloudPath` is ever set
+    /// by a preset (see `BackendDescriptor.webdavDescriptor`'s own doc
+    /// comment): the server origin is the user's own, and a preset that
+    /// guessed at it would be wrong for everyone.
+    private func applyWebDAVPreset(_ id: String) {
+        guard let preset = webdavDescriptor.fieldSchema.presets.first(where: { $0.id == id }) else { return }
+        for (fieldID, value) in preset.values {
+            switch fieldID {
+            case "useNextcloudPath": viewModel.webdavUseNextcloudPath = (value == "true")
             default: break
             }
         }

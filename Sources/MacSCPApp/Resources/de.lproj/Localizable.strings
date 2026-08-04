@@ -97,6 +97,15 @@
 "connection.s3.preset.aws" = "Amazon S3";
 "connection.s3.preset.hetzner" = "Hetzner Object Storage";
 "connection.s3.preset.custom" = "Benutzerdefiniert";
+"connection.badge.webdav" = "WebDAV";
+
+/* WebDAV-Formularabschnitt (M21/T9) */
+"connection.webdav.baseURL" = "Server-URL";
+"connection.webdav.username" = "Benutzername";
+"connection.webdav.password" = "Passwort";
+"connection.webdav.nextcloudPath" = "Nextcloud-Pfad anhängen";
+"connection.webdav.preset.nextcloud" = "Nextcloud / ownCloud";
+"connection.webdav.preset.custom" = "Eigene";
 
 /* Tastenkürzel ohne Shell auf nicht-Shell-Backend (M12/T7b) */
 "shortcut.unavailableForProtocol.title" = "Nicht verfügbar";
