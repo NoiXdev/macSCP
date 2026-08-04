@@ -133,6 +133,15 @@ public enum CLIErrorMapping {
                 return "Error: \(reason)"
             }
         default:
+            // Stringifying an arbitrary, unmapped error is safe ONLY because
+            // no error type reachable from a subcommand's `run()` today
+            // carries user-supplied secret material (passwords, private key
+            // bytes, passphrases) in an associated value — every error type
+            // that touches a credential is already handled by a case above.
+            // Adding a new error type that embeds user input (e.g. a raw
+            // credential in a `.protocolError`-shaped case) without also
+            // adding an explicit case here would silently start leaking it
+            // to stderr through this fallback.
             return "Error: \(error)"
         }
     }

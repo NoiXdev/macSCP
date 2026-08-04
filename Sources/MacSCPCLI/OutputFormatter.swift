@@ -9,11 +9,14 @@ enum OutputFormatter {
     static func print(items: [RemoteFileItem], asJSON: Bool) {
         if asJSON {
             for item in items {
+                // `null`, not `0`, when the size is unknown — collapsing the
+                // two would make an empty file and an unreported size look
+                // identical to a `jq` consumer (M20 final-review minor).
                 let object: [String: Any] = [
                     "name": item.name,
                     "path": item.path,
                     "directory": item.isDirectory,
-                    "size": item.size ?? 0,
+                    "size": item.size.map { $0 as Any } ?? NSNull(),
                 ]
                 if let data = try? JSONSerialization.data(withJSONObject: object),
                    let line = String(data: data, encoding: .utf8) {
