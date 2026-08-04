@@ -557,10 +557,9 @@ struct ContentView: View {
         .navigationTitle(activeTab.titleName.map { "macSCP — \($0)" } ?? "macSCP")
         .background(WindowAccessor { window = $0 })
         .task {
-            // Keychain access-group migration (M20 finding fix), fired once
-            // per window launch — see `migrateKeychainSecretsIfNeeded()`'s
-            // own doc comment for the full "why here" reasoning.
-            migrateKeychainSecretsIfNeeded()
+            // NO keychain migration runs here — see the note above
+            // `KeychainMigration` for why running one today would DESTROY
+            // the user's saved secrets.
             // Full inventory, read once (M11f/T2) — `refreshImportedHosts()`
             // below (and every later hide/unhide) re-splits THIS instead of
             // re-parsing the config file.
@@ -1465,46 +1464,6 @@ struct ContentView: View {
     private func selectTab(atIndex index: Int) {
         guard tabsModel.tabs.indices.contains(index) else { return }
         activate(tabsModel.tabs[index].id)
-    }
-
-    /// Moves existing keychain entries into the app's own keychain access
-    /// group, so the CLI can read secrets the App already saved before this
-    /// fix (M20 finding fix). Called once per window from `.task`.
-    ///
-    /// Where this runs, and why: the App is the only surface that WRITES
-    /// session/key secrets today (`ContentView`, `ConnectionFormView`,
-    /// `SSHKeysSheet` — the CLI only ever reads, via `KeychainSecretSource`),
-    /// so it is the only place pre-migration, group-less entries can exist,
-    /// and the only place that needs to move them. Running it at App launch
-    /// — once, centrally — beats scattering a "have I migrated this
-    /// session yet?" check across every read call site, and beats a
-    /// separate background job for a one-shot, idempotent piece of work
-    /// this small.
-    ///
-    /// Safe to run on every launch: `KeychainMigration.migrate` is
-    /// idempotent (entries already in the target group are simply absent
-    /// from the source and skipped), and this early-outs before touching
-    /// the keychain at all when `KeychainAccessGroup.current()` is `nil` —
-    /// an ad-hoc dev build has nowhere to migrate INTO, so it must not run
-    /// (migrating into a group that doesn't exist would be pointless at
-    /// best, and would mean a dev build's later reads have to check two
-    /// slots instead of the one they've always used).
-    ///
-    /// Non-blocking: `sessionListViewModel.sessions` is already loaded
-    /// synchronously in its own `init` (no extra store read needed here),
-    /// but the actual `SecItemAdd`/`SecItemUpdate`/`SecItemDelete` calls run
-    /// off the main actor in a detached `Task` — a user with many saved
-    /// sessions never sees the window hitch on launch waiting for them.
-    private func migrateKeychainSecretsIfNeeded() {
-        guard let accessGroup = KeychainAccessGroup.current() else { return }
-        let sessionIDs = sessionListViewModel.sessions.map(\.id)
-        guard !sessionIDs.isEmpty else { return }
-        let migration = KeychainMigration(
-            reading: KeychainSecretStore(),
-            writing: KeychainSecretStore(accessGroup: accessGroup))
-        Task.detached(priority: .utility) {
-            _ = try? migration.migrate(sessionIDs: sessionIDs)
-        }
     }
 
     /// Menu-bar status bridge wiring (M11n), called once from `.task`:
