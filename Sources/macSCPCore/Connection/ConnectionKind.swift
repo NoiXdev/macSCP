@@ -4,4 +4,5 @@
 public enum ConnectionKind: String, Codable, CaseIterable, Sendable {
     case ssh
     case s3
+    case webdav
 }

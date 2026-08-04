@@ -34,6 +34,11 @@
 /* ConnectionViewModel S3 form validation (M12/T7a) */
 "core.connect.s3FieldRequired" = "Fill in all required S3 fields.";
 
+/* ConnectionViewModel WebDAV placeholder (M21/T8): the form fields and the
+   real connect path land in T9 -- this only makes the `.webdav` switch case
+   compile in the meantime and fails cleanly if ever reached. */
+"core.connect.webdavNotYetAvailable" = "WebDAV connections are not available yet.";
+
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "Host must not be empty.";
 "core.connect.emptyUsername" = "Username must not be empty.";

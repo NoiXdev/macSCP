@@ -813,6 +813,12 @@ private struct LoginSetEditorView: View {
     /// Save disabled until the required fields for the chosen kind are
     /// non-empty, trimmed (M15). SSH: name + username. S3: name + access
     /// key ID (the secret is optional on edit — "leave empty to keep").
+    /// `.webdav` (M21/T8): login sets don't model WebDAV at all -- `LoginSet`
+    /// has no `baseURL`/`useNextcloudPath` fields, and the type picker below
+    /// only ever offers `.ssh`/`.s3` tags, so this state is unreachable
+    /// through this editor. Kept exhaustive (Save stays disabled) rather
+    /// than a `default:`, matching the same reasoning as the placeholder
+    /// switches in `ConnectionViewModel`.
     private var isSaveDisabled: Bool {
         let nameEmpty = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         switch kind {
@@ -820,6 +826,8 @@ private struct LoginSetEditorView: View {
             return nameEmpty || username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .s3:
             return nameEmpty || accessKeyID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .webdav:
+            return true
         }
     }
 
@@ -965,6 +973,17 @@ private struct LoginSetEditorView: View {
                             keyPath: nil,
                             kind: .s3,
                             accessKeyID: accessKeyID.trimmingCharacters(in: .whitespacesAndNewlines))
+                    case .webdav:
+                        // Unreachable (M21/T8): `isSaveDisabled` returns
+                        // `true` for `.webdav` and the type picker above
+                        // never offers this tag, so this button is disabled
+                        // whenever `kind == .webdav`. A loud failure here is
+                        // preferable to silently building a meaningless
+                        // `LoginSet` -- `LoginSet` has no WebDAV fields at
+                        // all, so there is nothing correct to construct.
+                        preconditionFailure(
+                            "LoginSetEditorView.kind == .webdav is unreachable: "
+                                + "isSaveDisabled always returns true for this case")
                     }
                     onSave(set, secret.isEmpty ? nil : secret)
                 }
