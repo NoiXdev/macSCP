@@ -28,6 +28,20 @@ public struct KeychainSecretStore: SecretStore {
         self.accessGroup = accessGroup
     }
 
+    /// The store every production call site (App and CLI alike) should
+    /// construct instead of `KeychainSecretStore()` (M20 finding fix): the
+    /// access group comes from THIS PROCESS's own code signature via
+    /// `KeychainAccessGroup.current()`, never a literal in source. A signed
+    /// release build — where `scripts/release` has expanded
+    /// `$(TeamIdentifierPrefix)` into the entitlements and signed both the
+    /// app and the CLI into the same group — transparently starts sharing
+    /// secrets between them. An ad-hoc dev build gets `nil` back from
+    /// `current()` and keeps the exact group-less, per-item-consent
+    /// behavior it always had; nothing here has to know which case it is.
+    public static func production(service: String = "dev.noix.macSCP") -> KeychainSecretStore {
+        KeychainSecretStore(service: service, accessGroup: KeychainAccessGroup.current())
+    }
+
     private func baseQuery(for sessionID: UUID) -> [String: Any] {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
