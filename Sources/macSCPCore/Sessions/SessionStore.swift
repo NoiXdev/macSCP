@@ -9,8 +9,22 @@ public struct SessionStore: Sendable {
         self.directory = directory
     }
 
+    /// `MACSCP_STORAGE_DIRECTORY` redirects every store that derives its
+    /// location from this property (sessions, known hosts, settings, audit
+    /// log, managed keys, hidden imports) to a throwaway directory instead of
+    /// the real `~/Library/Application Support/macSCP` (M20 Task 12). This
+    /// exists ONLY so a gated integration test can drive the built
+    /// `macscp-cli` binary as a subprocess — the one place that has no other
+    /// way to point a stored session or the known-hosts store somewhere
+    /// isolated, short of touching the developer's real data. The GUI app
+    /// never sets this variable, so production behavior is unchanged; the
+    /// check is a no-op whenever it is unset or empty.
     public static var defaultDirectory: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        if let override = ProcessInfo.processInfo.environment["MACSCP_STORAGE_DIRECTORY"],
+           !override.isEmpty {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("macSCP", isDirectory: true)
     }
 
