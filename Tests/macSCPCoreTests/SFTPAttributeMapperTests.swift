@@ -34,6 +34,38 @@ struct SFTPAttributeMapperTests {
         #expect(item.size == 1024)
     }
 
+    /// Regression: the root is the ONE path whose basename is the path
+    /// itself, so `CitadelFileSystem.stat("/")` passes "/" as both `name`
+    /// and `directory` (`RemotePath.parent(of: "/") == "/"`). Naively
+    /// joining those yields "//" — and since `RemoteFileItem.id` IS the
+    /// path, that doubled slash leaks into navigation, breadcrumbs and
+    /// error messages. Root must stay exactly "/".
+    @Test func rootItemPathIsExactlyRoot() {
+        let item = SFTPAttributeMapper.item(
+            name: "/",
+            directory: "/",
+            size: nil,
+            permissions: 0o040755,
+            modifiedAt: nil
+        )
+        #expect(item.path == "/")
+        #expect(item.id == "/")
+        #expect(item.kind == .directory)
+    }
+
+    /// The root special-case must not swallow ordinary entries directly
+    /// beneath the root — those still compose normally.
+    @Test func itemDirectlyBelowRootKeepsSingleSlash() {
+        let item = SFTPAttributeMapper.item(
+            name: "etc",
+            directory: "/",
+            size: nil,
+            permissions: 0o040755,
+            modifiedAt: nil
+        )
+        #expect(item.path == "/etc")
+    }
+
     // MARK: - Owner/group precedence (M11m/T1)
 
     /// longname parses successfully → its NAMES win, even when numeric

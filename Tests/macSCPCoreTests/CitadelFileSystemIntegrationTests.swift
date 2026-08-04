@@ -84,6 +84,23 @@ struct CitadelFileSystemIntegrationTests {
         #expect((item.size ?? 0) > 0)
     }
 
+    /// Regression: `stat("/")` used to compose its path by joining the
+    /// root's basename ("/") onto its parent (also "/"), yielding "//".
+    /// `RemoteFileItem.id` IS the path, so the doubled slash travelled on
+    /// into navigation, breadcrumbs and error texts. Pinned live because
+    /// the unit-level fix (`SFTPAttributeMapper.item`) only holds if
+    /// `stat` keeps handing the root down as both name and directory.
+    @Test func statOfRootYieldsSingleSlashPath() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        let item = try await fs.stat(path: "/")
+        #expect(item.path == "/")
+        #expect(item.id == "/")
+        #expect(item.name == "/")
+        #expect(item.kind == .directory)
+    }
+
     @Test func listNonexistentPathThrowsNotFound() async throws {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
