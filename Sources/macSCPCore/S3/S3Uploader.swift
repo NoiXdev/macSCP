@@ -4,7 +4,7 @@ import Foundation
 /// request — exactly the two operations `buildSignedRequest` +
 /// `transport.send` provide, exposed as thin wrappers so the uploader is
 /// unit-testable with a fake builder and never needs to know about
-/// `S3ConnectionConfig`, `S3HTTPTransport`, or pagination (M13/T5).
+/// `S3ConnectionConfig`, `HTTPTransport`, or pagination (M13/T5).
 public protocol S3RequestBuilder: Sendable {
     func signedRequest(
         method: String, key: String, query: [(name: String, value: String)],
