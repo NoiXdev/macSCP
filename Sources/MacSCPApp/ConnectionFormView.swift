@@ -404,7 +404,7 @@ struct ConnectionFormView: View {
                                 keyPath: viewModel.keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
                                 typed: viewModel.password,
                                 store: ManagedKeyStore(directory: SessionStore.defaultDirectory),
-                                secrets: KeychainSecretStore())
+                                secrets: KeychainSecretStore.production())
                         }
                         Task {
                             if let fs = await viewModel.connect() {

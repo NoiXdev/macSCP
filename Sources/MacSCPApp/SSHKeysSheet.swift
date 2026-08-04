@@ -372,7 +372,7 @@ struct SSHKeysSheet: View {
     private func performDelete() {
         guard let key = keyPendingDelete else { return }
         do {
-            try store.remove(id: key.id, secrets: KeychainSecretStore())
+            try store.remove(id: key.id, secrets: KeychainSecretStore.production())
             errorMessage = nil
         } catch {
             errorMessage = L10n.string("keys.delete.error", "Couldn't delete the key.")
@@ -573,7 +573,7 @@ private struct GenerateKeySheet: View {
             let newID = UUID()
             do {
                 if !passphrase.isEmpty {
-                    try KeychainSecretStore().savePassword(passphrase, for: newID)
+                    try KeychainSecretStore.production().savePassword(passphrase, for: newID)
                 }
                 let key = ManagedKey(
                     id: newID, name: trimmedName, comment: trimmedComment, type: resolvedType,
@@ -586,7 +586,7 @@ private struct GenerateKeySheet: View {
                 try? FileManager.default.removeItem(
                     at: generated.privateKeyURL.deletingLastPathComponent()
                         .appendingPathComponent(generated.privateKeyURL.lastPathComponent + ".pub"))
-                try? KeychainSecretStore().deletePassword(for: newID)
+                try? KeychainSecretStore.production().deletePassword(for: newID)
                 throw error
             }
             onGenerated()
@@ -704,7 +704,7 @@ private struct ImportKeySheet: View {
                 try FileManager.default.setAttributes(
                     [.posixPermissions: 0o600], ofItemAtPath: destination.path(percentEncoded: false))
                 if !passphrase.isEmpty {
-                    try KeychainSecretStore().savePassword(passphrase, for: newID)
+                    try KeychainSecretStore.production().savePassword(passphrase, for: newID)
                 }
                 let key = ManagedKey(
                     id: newID, name: trimmedName, comment: trimmedComment, type: info.type,
@@ -719,7 +719,7 @@ private struct ImportKeySheet: View {
                 // safe to run even if the step that "created" them never
                 // actually got there (e.g. `copyItem` itself is what threw).
                 try? FileManager.default.removeItem(at: destination)
-                try? KeychainSecretStore().deletePassword(for: newID)
+                try? KeychainSecretStore.production().deletePassword(for: newID)
                 throw error
             }
             onImported()

@@ -178,7 +178,7 @@ public struct KeychainSecretSource: SecretSource {
 public func secretSources(
     for session: StoredSession,
     passwordCommand: String?,
-    keychainStore: any SecretStore = KeychainSecretStore()
+    keychainStore: any SecretStore = KeychainSecretStore.production()
 ) -> [any SecretSource] {
     let needsSecret = session.kind == .s3
         || (session.kind == .ssh && session.authKind != .agent)
@@ -194,11 +194,12 @@ public func secretSources(
     case .s3:
         sources.append(EnvironmentSecretSource(variableName: "AWS_SECRET_ACCESS_KEY"))
     }
-    // No access group (M20 Task 7 wired the entitlements/signing but the App
-    // itself still constructs `KeychainSecretStore()` with none — see
-    // `ContentView`/`ConnectionFormView`/`SSHKeysSheet`); matching that
-    // keeps the CLI reading the exact slot the App reads today rather than
-    // inventing a group nothing else requests yet.
+    // `KeychainSecretStore.production()` reads the access group from THIS
+    // process's own code signature (M20 finding fix): a release-signed CLI
+    // binary reads the exact group `scripts/release` signed it into, which
+    // is the same group the App writes new secrets into, and an ad-hoc dev
+    // build gets no group — matching the App's own fallback exactly, not a
+    // second, independently-drifting default.
     sources.append(KeychainSecretSource(store: keychainStore))
     return sources
 }
