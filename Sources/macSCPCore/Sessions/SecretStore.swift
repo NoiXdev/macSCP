@@ -16,40 +16,31 @@ public struct KeychainError: Error, Equatable, Sendable {
     public let status: OSStatus
 }
 
+/// Talks to the legacy, file-based login keychain — the same store the app
+/// and the CLI have always used. Access is governed per item by macOS's own
+/// consent dialog: a binary other than the one that created an item is
+/// prompted for on first read, and confirming with "Always Allow" adds that
+/// binary to the item's ACL for good.
+///
+/// Deliberately NOT using keychain access groups: `kSecAttrAccessGroup` is
+/// honored only by the data-protection keychain, which a query has to opt
+/// into with `kSecUseDataProtectionKeychain`. Without that flag the
+/// attribute is silently dropped, so an access group would be pure
+/// decoration here (established empirically against the real keychain, M20
+/// final review).
 public struct KeychainSecretStore: SecretStore {
     private let service: String
-    private let accessGroup: String?
 
-    /// `accessGroup` stays OPTIONAL on purpose. The dev build is ad-hoc signed
-    /// and has no team identifier, so a required group would block development
-    /// outright and make the shared-keychain path untestable locally (M20).
-    public init(service: String = "dev.noix.macSCP", accessGroup: String? = nil) {
+    public init(service: String = "dev.noix.macSCP") {
         self.service = service
-        self.accessGroup = accessGroup
-    }
-
-    /// The store every production call site (App and CLI alike) should
-    /// construct instead of `KeychainSecretStore()` (M20 finding fix): the
-    /// access group comes from THIS PROCESS's own code signature via
-    /// `KeychainAccessGroup.current()`, never a literal in source. A signed
-    /// release build — where `scripts/release` has expanded
-    /// `$(TeamIdentifierPrefix)` into the entitlements and signed both the
-    /// app and the CLI into the same group — transparently starts sharing
-    /// secrets between them. An ad-hoc dev build gets `nil` back from
-    /// `current()` and keeps the exact group-less, per-item-consent
-    /// behavior it always had; nothing here has to know which case it is.
-    public static func production(service: String = "dev.noix.macSCP") -> KeychainSecretStore {
-        KeychainSecretStore(service: service, accessGroup: KeychainAccessGroup.current())
     }
 
     private func baseQuery(for sessionID: UUID) -> [String: Any] {
-        var query: [String: Any] = [
+        [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: sessionID.uuidString,
         ]
-        if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
-        return query
     }
 
     public func savePassword(_ password: String, for sessionID: UUID) throws {

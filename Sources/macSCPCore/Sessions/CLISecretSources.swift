@@ -178,7 +178,7 @@ public struct KeychainSecretSource: SecretSource {
 public func secretSources(
     for session: StoredSession,
     passwordCommand: String?,
-    keychainStore: any SecretStore = KeychainSecretStore.production()
+    keychainStore: any SecretStore = KeychainSecretStore()
 ) -> [any SecretSource] {
     let needsSecret = session.kind == .s3
         || (session.kind == .ssh && session.authKind != .agent)
@@ -194,12 +194,14 @@ public func secretSources(
     case .s3:
         sources.append(EnvironmentSecretSource(variableName: "AWS_SECRET_ACCESS_KEY"))
     }
-    // `KeychainSecretStore.production()` reads the access group from THIS
-    // process's own code signature (M20 finding fix): a release-signed CLI
-    // binary reads the exact group `scripts/release` signed it into, which
-    // is the same group the App writes new secrets into, and an ad-hoc dev
-    // build gets no group — matching the App's own fallback exactly, not a
-    // second, independently-drifting default.
+    // Last resort, and the comfortable one at a workstation: the very same
+    // keychain items the app writes. macOS asks the user for consent the
+    // first time THIS binary reads an item the app created; answering
+    // "Always Allow" puts the CLI on that item's ACL permanently, which is
+    // what lets a later unattended run (cron, CI) read it without a prompt.
+    // That standing grant is tied to the CLI's code signature, so the
+    // shipped, Developer-ID-signed binary keeps it across invocations while
+    // a locally rebuilt, ad-hoc-signed one has to be confirmed again.
     sources.append(KeychainSecretSource(store: keychainStore))
     return sources
 }
