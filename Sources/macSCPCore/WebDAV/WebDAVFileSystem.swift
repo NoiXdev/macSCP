@@ -190,9 +190,19 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// Streaming PUT.
     ///
     /// The body is fed through a bound stream pair rather than buffered: a
-    /// multi-gigabyte upload must not be held in memory. `httpBodyStream` is
-    /// also what lets URLSession replay the body after an auth challenge —
-    /// it asks the delegate for a fresh stream via `needNewBodyStream`.
+    /// multi-gigabyte upload must not be held in memory.
+    ///
+    /// A consequence worth naming: **this body is not replayable.** If
+    /// URLSession decides to send the request again — an auth challenge on a
+    /// connection it had already started writing to, a redirect — it asks the
+    /// delegate for a fresh stream via `needNewBodyStream`, and there is
+    /// nothing to hand back. The pair's `InputStream` is single-use, and the
+    /// source it was fed from is a one-shot `AsyncThrowingStream` that has
+    /// already been consumed; re-reading either is impossible, not merely
+    /// unimplemented. `WebDAVSessionDelegate` therefore refuses the request
+    /// and records why. In practice this does not bite, because URLSession
+    /// only replays a body it has not begun sending, and the credential is
+    /// supplied on the challenge for the *first* attempt.
     public func write(path: String, mode: WriteMode,
                       contents: AsyncThrowingStream<Data, Error>) async throws {
         guard mode == .overwrite else {
@@ -215,56 +225,37 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         }
         request.httpBodyStream = input
 
+        // `BoundStreamWriter` owns every call on the output half: it never
+        // issues a write that could park a thread, and it waits for space on
+        // the run loop's `hasSpaceAvailable` event rather than on a timer.
+        // See that type for why both properties are load-bearing.
+        let writer = BoundStreamWriter(stream: output)
+        // Whichever way we leave — success, mapped status, thrown transport
+        // error, cancellation — the writer's thread is stopped and any
+        // suspended pump write is released. No parked thread, no orphaned
+        // continuation, no leaked run loop.
+        defer { writer.close() }
+
         // Feeds the bound pair while the request is in flight, so a
         // multi-gigabyte upload is never held in memory. Runs detached so
         // the transport can start reading immediately — the pair has a
         // single chunk of buffer, so the pump has to wait for the reader to
         // drain it before it can write more.
-        //
-        // That "wait" is deliberately a poll on `hasSpaceAvailable` plus a
-        // cancellable `Task.sleep`, never a direct blocking `write` into a
-        // full buffer: `OutputStream.write` is a synchronous Foundation call
-        // that parks the underlying thread until space frees up, and
-        // nothing we can do from outside — not `Task.cancel()`, not closing
-        // the stream's peer — interrupts a call already parked inside it
-        // (verified empirically: a thread blocked in `write()` on a full,
-        // unread buffer stays blocked even after the paired `InputStream` is
-        // closed). If the request fails before ever reading the body — a
-        // connection error, or a fast 4xx — polling is what lets
-        // `pump.cancel()` actually stop the pump instead of leaking a
-        // permanently parked thread.
         let pump = Task.detached {
-            output.open()
-            defer { output.close() }
+            defer { writer.close() }
             for try await chunk in contents {
                 try Task.checkCancellation()
-                var written = 0
-                while written < chunk.count {
-                    while !output.hasSpaceAvailable {
-                        try Task.checkCancellation()
-                        try await Task.sleep(nanoseconds: 5_000_000)
-                    }
-                    try Task.checkCancellation()
-                    let n = chunk.withUnsafeBytes { raw -> Int in
-                        output.write(
-                            raw.baseAddress!.advanced(by: written)
-                                .assumingMemoryBound(to: UInt8.self),
-                            maxLength: chunk.count - written)
-                    }
-                    guard n > 0 else {
-                        throw RemoteFSError.connectionFailed(
-                            reason: "The upload stream closed early")
-                    }
-                    written += n
-                }
+                try await writer.write(chunk)
             }
         }
 
+        let response: HTTPURLResponse
         do {
-            let (_, response) = try await transport.send(request)
-            try await pump.value
-            try Self.mapStatus(response.statusCode, path: path, method: "PUT")
+            response = try await transport.send(request).1
         } catch {
+            // The request is over; nothing will drain the body again. Stop
+            // the pump BEFORE looking at its outcome — awaiting a pump that
+            // is parked on an unread buffer is exactly the wedge.
             pump.cancel()
             // If the pump had ALSO failed on its own — e.g. the SOURCE
             // stream threw a read error — that is the real cause and wins
@@ -277,17 +268,50 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
             }
             throw error
         }
+
+        // A server that rejects a PUT early — 401 after a stale Digest nonce,
+        // 403, 507 Insufficient Storage — answers WITHOUT reading the rest of
+        // the body, so `send` returns normally while the pump is still parked
+        // on a buffer that now has no reader at all. Cancel it and report the
+        // status: that status is the server's own answer, and it outranks
+        // whatever the abandoned body did on its way down.
+        //
+        // `mapStatus` throws for every non-2xx status, so control only reaches
+        // the wait below on success.
+        if !(200...299).contains(response.statusCode) {
+            pump.cancel()
+            try Self.mapStatus(response.statusCode, path: path, method: "PUT")
+        }
+
+        // 2xx: the server read the body to the end, so the pump has finished
+        // or is about to, and its outcome is the real one. The wait is made
+        // cancellation-responsive explicitly — `Task.value` does not observe
+        // the *awaiting* task's cancellation, so without this the caller
+        // could not break out of a stalled upload either.
+        try await withTaskCancellationHandler {
+            try await pump.value
+        } onCancel: {
+            pump.cancel()
+        }
     }
 
     /// Awaits `pump`'s outcome without throwing, so `write` can decide which
     /// of two failures — the pump's or the transport's — is the more useful
     /// one to report. `nil` means the pump succeeded, or its only failure was
-    /// our own cancellation of it (which carries no information).
+    /// our own teardown of it (cancellation, or the writer being closed under
+    /// it), neither of which carries information.
+    ///
+    /// Safe to await only after `pump.cancel()`: every suspension point in the
+    /// pump — the source stream, and `BoundStreamWriter.write` — is
+    /// cancellation-responsive, so this returns promptly rather than
+    /// inheriting the wait it was called to escape.
     private func pumpFailure(_ pump: Task<Void, Error>) async -> Error? {
         do {
             try await pump.value
             return nil
         } catch is CancellationError {
+            return nil
+        } catch is BoundStreamWriter.Failure {
             return nil
         } catch {
             return error

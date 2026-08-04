@@ -1,9 +1,9 @@
 import Foundation
+import os
 
 /// The one place macOS offers everything WebDAV needs from below the request:
 /// the authentication challenge (Basic and Digest, computed by URLSession
-/// itself once we hand it a credential), the server-trust challenge, and the
-/// body stream for a streaming upload.
+/// itself once we hand it a credential) and the server-trust challenge.
 ///
 /// The certificate decision may be answered asynchronously: unlike NIO's
 /// promise-based host-key hook — which forced `CitadelFileSystem` into a
@@ -19,15 +19,30 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
     private let trustStore: TrustedCertificateStore
     private let decider: CertificateDecider
 
+    private static let logger = Logger(
+        subsystem: "dev.noix.macscp", category: "WebDAVSessionDelegate")
+
     private let lock = NSLock()
     private var certificateError: ServerCertificateError?
-    private var bodyStreams: [Int: InputStream] = [:]
+    private var bodyStreamRefusal: String?
 
     /// Set when a challenge was refused, so the connect path can report the
     /// precise cause instead of URLSession's generic cancellation.
     public var lastCertificateError: ServerCertificateError? {
         lock.lock(); defer { lock.unlock() }
         return certificateError
+    }
+
+    /// Set when URLSession asked to replay a request body and was refused —
+    /// see `needNewBodyStream`. Sticky for the life of the session, and
+    /// deliberately not folded into any single request's thrown error: one
+    /// delegate serves every concurrent request on the connection, so it
+    /// cannot attribute a refusal to a particular one without misreporting
+    /// somebody else's failure. It exists to name the cause in a bug report,
+    /// alongside the log line.
+    public var lastBodyStreamRefusal: String? {
+        lock.lock(); defer { lock.unlock() }
+        return bodyStreamRefusal
     }
 
     public init(username: String, password: String,
@@ -37,13 +52,6 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
         self.password = password
         self.trustStore = trustStore
         self.decider = decider
-    }
-
-    /// Registers the body stream a streaming PUT will hand back when
-    /// URLSession asks for it (including on a retry after an auth challenge).
-    public func attachBodyStream(_ stream: InputStream, for taskIdentifier: Int) {
-        lock.lock(); defer { lock.unlock() }
-        bodyStreams[taskIdentifier] = stream
     }
 
     /// The TOFU decision, separated from the URLSession plumbing so it is
@@ -135,20 +143,28 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
         }
     }
 
+    /// URLSession asks for this when it wants to send a request body a second
+    /// time. A WebDAV PUT body cannot be replayed, and this is not a gap to
+    /// be filled later: the body is the `InputStream` half of a
+    /// `Stream.getBoundStreams` pair, which is single-use, and it was fed
+    /// from a one-shot `AsyncThrowingStream` that has already been consumed.
+    /// Neither can be rewound — the bytes are gone.
+    ///
+    /// So the answer is always `nil`, and URLSession fails the task with an
+    /// error that says nothing about why. Recording and logging the refusal
+    /// is what turns that into something diagnosable.
     public func urlSession(
         _ session: URLSession, task: URLSessionTask,
         needNewBodyStream completionHandler: @escaping (InputStream?) -> Void
     ) {
+        let reason = "URLSession asked to replay the request body of "
+            + "\(task.originalRequest?.httpMethod ?? "?"); a WebDAV upload body "
+            + "is a single-use stream and cannot be resent"
         lock.lock()
-        let stream = bodyStreams[task.taskIdentifier]
+        bodyStreamRefusal = reason
         lock.unlock()
-        completionHandler(stream)
-    }
-
-    public func urlSession(_ session: URLSession, task: URLSessionTask,
-                           didCompleteWithError error: Error?) {
-        lock.lock(); defer { lock.unlock() }
-        bodyStreams[task.taskIdentifier] = nil
+        Self.logger.error("\(reason, privacy: .public)")
+        completionHandler(nil)
     }
 
     private static func candidate(

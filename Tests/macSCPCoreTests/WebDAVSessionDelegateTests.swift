@@ -99,6 +99,38 @@ struct WebDAVSessionDelegateTests {
             return
         }
     }
+
+    /// A WebDAV upload body is a single-use bound stream fed from a one-shot
+    /// async sequence, so a replay request can only be refused. What must not
+    /// happen is refusing it *silently*: URLSession then fails the task with
+    /// an error that names no cause at all. The refusal is recorded (and
+    /// logged) so the failure is diagnosable.
+    @Test func bodyReplayIsRefusedAndRecorded() async throws {
+        let (store, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let delegate = WebDAVSessionDelegate(
+            username: "u", password: "p", trustStore: store, decider: { _ in true })
+        #expect(delegate.lastBodyStreamRefusal == nil)
+
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        var request = URLRequest(url: URL(string: "https://dav.example.com/dav/a.txt")!)
+        request.httpMethod = "PUT"
+        let task = session.dataTask(with: request)   // never resumed
+
+        let handed = TestBox<InputStream?>(nil)
+        let answered = TestBox(false)
+        delegate.urlSession(session, task: task, needNewBodyStream: { stream in
+            handed.value = stream
+            answered.value = true
+        })
+
+        #expect(answered.value)
+        #expect(handed.value == nil)
+        let refusal = try #require(delegate.lastBodyStreamRefusal)
+        #expect(refusal.contains("PUT"))
+        #expect(refusal.contains("cannot be resent"))
+    }
 }
 
 /// Minimal mutable box for capturing a flag out of an escaping closure.

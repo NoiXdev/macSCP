@@ -5,26 +5,97 @@ import Testing
 /// Records every request and answers from a scripted queue, so request
 /// building and error mapping are provable without a server — the same
 /// approach the S3 tests take.
+///
+/// It also **drains `httpBodyStream`** and records what it carried. That is
+/// not a nicety: a streaming PUT feeds a bound stream pair with a single
+/// `TransferChunk.size` buffer, so any body larger than that buffer only
+/// finishes if somebody reads the other end. A transport that ignored the
+/// body stream would make every multi-buffer upload test hang, and would let
+/// a pump that wrote nothing at all pass unnoticed.
 final class FakeHTTPTransport: HTTPTransport, @unchecked Sendable {
     struct Reply { let status: Int; let body: Data; let headers: [String: String] }
 
+    /// Carries a reference type Swift cannot prove `Sendable` across to the
+    /// draining thread. Safe here: exactly one thread ever touches it.
+    private struct Unchecked<T>: @unchecked Sendable { let value: T }
+
     private let lock = NSLock()
     private var replies: [Reply]
-    private(set) var requests: [URLRequest] = []
+    private var recordedRequests: [URLRequest] = []
+    private var recordedBodies: [Data] = []
 
-    init(replies: [Reply]) { self.replies = replies }
+    /// A server that rejects a PUT early — 401 on a stale nonce, 403, 507 —
+    /// answers *without* reading the rest of the body. Pass `false` to
+    /// reproduce exactly that.
+    private let drainsRequestBody: Bool
+
+    init(replies: [Reply], drainsRequestBody: Bool = true) {
+        self.replies = replies
+        self.drainsRequestBody = drainsRequestBody
+    }
+
+    var requests: [URLRequest] {
+        lock.lock(); defer { lock.unlock() }
+        return recordedRequests
+    }
+
+    /// The bytes each streamed request body actually carried, in request order.
+    var bodies: [Data] {
+        lock.lock(); defer { lock.unlock() }
+        return recordedBodies
+    }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        lock.lock(); defer { lock.unlock() }
-        requests.append(request)
+        lock.lock()
+        recordedRequests.append(request)
+        lock.unlock()
+
+        if drainsRequestBody, let stream = request.httpBodyStream {
+            let body = try await Self.drain(stream)
+            lock.lock()
+            recordedBodies.append(body)
+            lock.unlock()
+        }
+
+        lock.lock()
         guard !replies.isEmpty else {
+            lock.unlock()
             throw RemoteFSError.protocolError(reason: "fake transport ran out of replies")
         }
         let reply = replies.removeFirst()
+        lock.unlock()
+
         let response = HTTPURLResponse(
             url: request.url!, statusCode: reply.status,
             httpVersion: "HTTP/1.1", headerFields: reply.headers)!
         return (reply.body, response)
+    }
+
+    /// Reads the body to EOF on a thread of its own. `InputStream.read`
+    /// blocks, and blocking a cooperative executor thread here would starve
+    /// the very pump that has to keep feeding the other end.
+    private static func drain(_ stream: InputStream) async throws -> Data {
+        let boxed = Unchecked(value: stream)
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global().async {
+                let input = boxed.value
+                input.open()
+                defer { input.close() }
+                var collected = Data()
+                var buffer = [UInt8](repeating: 0, count: 32 * 1024)
+                while true {
+                    let read = input.read(&buffer, maxLength: buffer.count)
+                    if read < 0 {
+                        continuation.resume(throwing: RemoteFSError.connectionFailed(
+                            reason: "fake transport failed to read the request body"))
+                        return
+                    }
+                    if read == 0 { break }
+                    collected.append(contentsOf: buffer[0..<read])
+                }
+                continuation.resume(returning: collected)
+            }
+        }
     }
 
     func sendStreaming(_ request: URLRequest) async throws
