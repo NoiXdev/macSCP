@@ -151,6 +151,82 @@ struct CLIRoundtripITests {
         #expect(knownHosts.isEmpty, "an unknown host key was written despite being rejected")
     }
 
+    /// Pins the actual DEFAULT of `--on-conflict` on `put` — not merely what
+    /// `.fail` does once selected. `TransferPlanTests
+    /// .anExistingDestinationFailsByDefault` passes `action: .fail`
+    /// EXPLICITLY, so it proves nothing about `PutCommand`'s own `@Option
+    /// var onConflict: ConflictAction = .fail` declaration; that default
+    /// lives in the CLI target, which has no unit test target at all, so
+    /// only a subprocess run of the real binary can pin it (M20 final-review
+    /// Finding B). `put`s the same file twice with NO `--on-conflict` flag
+    /// on either invocation and asserts the second exits `CLIExitCode
+    /// .conflict` (15) — the exit code a script would branch on — AND that
+    /// the remote content is still the FIRST upload's bytes, not merely that
+    /// the command failed.
+    @Test func putWithNoConflictFlagRefusesAnExistingDestinationByDefault() async throws {
+        let binary = try Self.locateCLIBinary()
+        let storageDirectory = try Self.makeTempDirectory(prefix: "macscp-cli-conflict-storage")
+        defer { try? FileManager.default.removeItem(at: storageDirectory) }
+        let localDirectory = try Self.makeTempDirectory(prefix: "macscp-cli-conflict-local")
+        defer { try? FileManager.default.removeItem(at: localDirectory) }
+
+        let session = StoredSession(
+            name: "m20-conflict", host: Self.rigHost, port: Self.rigPort,
+            username: Self.rigUsername, authKind: .password)
+        try SessionStore(directory: storageDirectory).upsert(session)
+
+        let remoteFileName = "cli-conflict-\(UUID().uuidString).txt"
+        let originalPayload = "m20-conflict-original-\(UUID().uuidString)"
+        let secondPayload = "m20-conflict-second-\(UUID().uuidString)"
+        let localSourceFile = localDirectory.appendingPathComponent(remoteFileName)
+        try Data(originalPayload.utf8).write(to: localSourceFile)
+
+        let remoteDirectory = "\(session.name):/config"
+
+        defer {
+            _ = try? Self.runCLI(
+                binary, ["rm", "--accept-new", "\(remoteDirectory)/\(remoteFileName)"],
+                storageDirectory: storageDirectory)
+        }
+
+        let firstPut = try Self.runCLI(
+            binary,
+            ["put", "--accept-new", localSourceFile.path(percentEncoded: false), remoteDirectory + "/"],
+            storageDirectory: storageDirectory)
+        #expect(firstPut.status == 0, "first put failed: \(firstPut.stderr)")
+
+        // Overwrite the LOCAL file's content: if `.fail` were not actually
+        // the default (e.g. it silently regressed to `.overwrite`), the
+        // second `put` below would clobber the remote copy with THIS
+        // content instead of refusing — which is exactly what the final
+        // assertion below would catch.
+        try Data(secondPayload.utf8).write(to: localSourceFile)
+
+        let secondPut = try Self.runCLI(
+            binary,
+            ["put", "--accept-new", localSourceFile.path(percentEncoded: false), remoteDirectory + "/"],
+            storageDirectory: storageDirectory)
+        let conflictMessage = "put with no --on-conflict flag must refuse an existing destination "
+            + "by default; stderr: \(secondPut.stderr)"
+        #expect(secondPut.status == CLIExitCode.conflict.rawValue, "\(conflictMessage)")
+        #expect(secondPut.status == 15)
+
+        let downloadDirectory = localDirectory.appendingPathComponent("download", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: downloadDirectory, withIntermediateDirectories: true)
+        let getResult = try Self.runCLI(
+            binary,
+            ["get", "--accept-new", "\(remoteDirectory)/\(remoteFileName)",
+             downloadDirectory.path(percentEncoded: false)],
+            storageDirectory: storageDirectory)
+        #expect(getResult.status == 0, "get failed: \(getResult.stderr)")
+        let downloadedFile = downloadDirectory.appendingPathComponent(remoteFileName)
+        let downloadedContent = try String(contentsOf: downloadedFile, encoding: .utf8)
+        #expect(
+            downloadedContent == originalPayload,
+            "remote content changed despite the conflicting put being refused")
+    }
+
     // MARK: - Test harness
 
     /// Creates the directory, rather than only naming it. The earlier version
