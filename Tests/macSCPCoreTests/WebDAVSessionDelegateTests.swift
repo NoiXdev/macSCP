@@ -70,6 +70,35 @@ struct WebDAVSessionDelegateTests {
         #expect(decision == false)
         #expect(try store.allCertificates().isEmpty)
     }
+
+    /// A corrupt trust store must fail closed WITHOUT being reported as a
+    /// user refusal — otherwise whatever surfaces `lastCertificateError`
+    /// would tell the user they rejected a certificate they were never
+    /// shown.
+    @Test func corruptTrustStoreFailsClosedWithoutAskingTheDecider() async throws {
+        let (store, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try "not valid json".write(
+            to: directory.appendingPathComponent("trusted-certificates.json"),
+            atomically: true, encoding: .utf8)
+
+        let asked = TestBox(false)
+        let delegate = WebDAVSessionDelegate(
+            username: "u", password: "p", trustStore: store,
+            decider: { _ in asked.value = true; return true })
+
+        let decision = await delegate.decideCertificate(
+            ServerCertificateCandidate(
+                host: "nas.local", port: 443, derBase64: "QUJD",
+                subject: "CN=nas.local", issuer: "CN=nas.local", notAfter: nil))
+
+        #expect(decision == false)
+        #expect(asked.value == false)
+        guard case .trustStoreUnreadable = try #require(delegate.lastCertificateError) else {
+            Issue.record("expected .trustStoreUnreadable, got \(String(describing: delegate.lastCertificateError))")
+            return
+        }
+    }
 }
 
 /// Minimal mutable box for capturing a flag out of an escaping closure.
