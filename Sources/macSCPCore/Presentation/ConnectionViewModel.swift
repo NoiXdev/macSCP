@@ -175,6 +175,15 @@ public final class ConnectionViewModel {
     public var s3SecretAccessKey: String = ""
     public var s3UsePathStyle: Bool = false
 
+    /// WebDAV form fields (M21/T9). Field identities match
+    /// `BackendDescriptor.descriptor(for: .webdav).fieldSchema` ids
+    /// (baseURL/useNextcloudPath) — `username`/`password` are deliberately
+    /// the SAME shared fields the SSH form uses, not separate `webdav*`
+    /// properties: WebDAV has no jump/agent/key-file concepts to conflict
+    /// with, so there is nothing to disambiguate.
+    public var webdavBaseURL: String = ""
+    public var webdavUseNextcloudPath: Bool = false
+
     /// The jump's existing MANUAL keychain slot when editing a session that
     /// already had one (M10c/T3), remembered by `beginEditing` so
     /// `validateForEditSave()` can reuse the SAME `secretID` in
@@ -243,22 +252,15 @@ public final class ConnectionViewModel {
     /// makes "SSH connect path byte-identical" a structural guarantee
     /// instead of a hopeful claim.
     ///
-    /// `.webdav` (M21/T8) is a PLACEHOLDER: the form fields
-    /// (`webdavBaseURL`/`webdavUseNextcloudPath`) and the real
-    /// `connectWebDAV()` body are Task 9's job (same split this file
-    /// already uses for S3). This case exists only so the switch compiles
-    /// now that `ConnectionKind` has a third case -- it cannot "read the
-    /// descriptor" the way the brief asks for other seams, because there is
-    /// no typed field to read yet.
+    /// `.webdav` (M21/T9) runs `connectWebDAV()` -- the same
+    /// byte-identical-SSH-path split this file already uses for S3.
     public func connect() async -> (any RemoteFileSystem)? {
         guard state != .connecting else { return nil }
         defer { hostKeyPrompt = nil }
         switch kind {
         case .ssh: return await connectSSH()
         case .s3: return await connectS3()
-        case .webdav:
-            state = .failed(message: CoreL10n.string("core.connect.webdavNotYetAvailable"), field: nil)
-            return nil
+        case .webdav: return await connectWebDAV()
         }
     }
 
@@ -391,6 +393,55 @@ public final class ConnectionViewModel {
             }
         }
         return nil
+    }
+
+    /// The WebDAV connect path (M21/T9). Mirrors `connectS3()`: validate,
+    /// build the runtime config, dispatch through the SAME `connector` seam
+    /// with `.webdav(config)` -- the certificate decider defaults to
+    /// refusing (`BackendConnector.connect`'s own default), so this path
+    /// never silently trusts an unknown server certificate; wiring an actual
+    /// user-facing decider is a later task's job.
+    private func connectWebDAV() async -> (any RemoteFileSystem)? {
+        if shouldSaveSession,
+           saveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            state = .failed(
+                message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName)
+            return nil
+        }
+        let config: WebDAVConnectionConfig
+        do {
+            config = try makeWebDAVConfig()
+        } catch {
+            state = .failed(message: CoreL10n.string("core.connect.webdavFieldRequired"), field: nil)
+            return nil
+        }
+        state = .connecting
+        do {
+            // WebDAV has no host-key prompt (no TOFU, it authenticates over
+            // TLS) -- same "decider passed through but never consulted"
+            // shape as S3's own connect path above.
+            let fs = try await connector(.webdav(config)) { _ in false }
+            state = .idle
+            return fs
+        } catch {
+            state = Self.failedState(for: error)
+            return nil
+        }
+    }
+
+    /// Builds the runtime WebDAV config from the form fields. Trimmed the same
+    /// way the SSH and S3 builders trim theirs — a URL pasted from a browser
+    /// address bar routinely carries trailing whitespace.
+    public func makeWebDAVConfig() throws -> WebDAVConnectionConfig {
+        let baseURL = webdavBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !baseURL.isEmpty else {
+            throw RemoteFSError.connectionFailed(reason: "Enter the server URL")
+        }
+        return WebDAVConnectionConfig(
+            baseURL: baseURL,
+            username: username.trimmingCharacters(in: .whitespacesAndNewlines),
+            useNextcloudPath: webdavUseNextcloudPath,
+            password: password)
     }
 
     /// Decider side: publishes the prompt and suspends on a continuation
@@ -536,6 +587,21 @@ public final class ConnectionViewModel {
             s3UsePathStyle = false
         }
         s3SecretAccessKey = ""
+        // WebDAV fields (M21/T9): same defensive/sticky-toggle shape as the
+        // S3 block above. Unlike S3, the real username lives on
+        // `stored.webdav.username` (the shared `username` field above was
+        // just set to `stored.username`, the "unused" S3-style placeholder
+        // for a WebDAV session) -- so this branch OVERRIDES it back to the
+        // real value. The password is never loaded from the keychain here
+        // either (`password` was already reset to "" above).
+        if stored.kind == .webdav, let webdav = stored.webdav {
+            webdavBaseURL = webdav.baseURL
+            username = webdav.username
+            webdavUseNextcloudPath = webdav.useNextcloudPath
+        } else {
+            webdavBaseURL = ""
+            webdavUseNextcloudPath = false
+        }
         // A referenced login set (M10b/T3) puts the form straight into Set
         // mode with that set preselected; a manual session goes to Manual
         // exactly as before — see the doc comment on `loginMode`.
@@ -608,9 +674,10 @@ public final class ConnectionViewModel {
     /// so a stale "on" from a previous edit must not survive into whatever
     /// the caller (teardown/connectStored/import) fills in next.
     ///
-    /// `kind`/S3 fields reset here too (M12/T7a, same lesson): `kind` is
-    /// itself a MODE switch, so a stale `.s3` from a previous edit must not
-    /// survive into whatever the caller fills in next.
+    /// `kind`/S3/WebDAV fields reset here too (M12/T7a, M21/T9, same
+    /// lesson): `kind` is itself a MODE switch, so a stale `.s3`/`.webdav`
+    /// from a previous edit must not survive into whatever the caller fills
+    /// in next.
     public func exitEditMode() {
         mode = .new
         selectedGroupID = nil
@@ -626,6 +693,8 @@ public final class ConnectionViewModel {
         s3AccessKeyID = ""
         s3SecretAccessKey = ""
         s3UsePathStyle = false
+        webdavBaseURL = ""
+        webdavUseNextcloudPath = false
     }
 
     /// Resets every jump-related field to its blank "no jump" state: the
@@ -668,20 +737,14 @@ public final class ConnectionViewModel {
     /// new, separate `validateForEditSaveS3(sessionID:)` -- same
     /// byte-identical-SSH-path rationale as the `connect()` split above.
     ///
-    /// `.webdav` (M21/T8) is unreachable in practice: `connect()`'s own
-    /// placeholder above never succeeds, so no WebDAV session can be saved
-    /// (and thus later edited) before Task 9 lands. Kept exhaustive with the
-    /// same `.failed` placeholder shape as `connect()` rather than a
-    /// `default:` -- a future case added to `ConnectionKind` must force a
-    /// decision here too.
+    /// `.webdav` (M21/T9) runs `validateForEditSaveWebDAV(sessionID:)` --
+    /// same byte-identical-SSH-path rationale as the `connect()` split above.
     public func validateForEditSave() -> StoredSession? {
         guard case .edit(let sessionID) = mode else { return nil }
         switch kind {
         case .ssh: return validateForEditSaveSSH(sessionID: sessionID)
         case .s3: return validateForEditSaveS3(sessionID: sessionID)
-        case .webdav:
-            state = .failed(message: CoreL10n.string("core.connect.webdavNotYetAvailable"), field: nil)
-            return nil
+        case .webdav: return validateForEditSaveWebDAV(sessionID: sessionID)
         }
     }
 
@@ -776,6 +839,41 @@ public final class ConnectionViewModel {
                 endpoint: s3Endpoint.trimmingCharacters(in: .whitespacesAndNewlines),
                 bucket: s3Bucket.trimmingCharacters(in: .whitespacesAndNewlines),
                 usePathStyle: s3UsePathStyle))
+    }
+
+    /// The WebDAV edit-save path (M21/T9): mirrors `validateForEditSaveS3`
+    /// above -- saveName is still required, the password is NOT (edit mode
+    /// leaves it empty to mean "unchanged", same rule as `password`/
+    /// `s3SecretAccessKey`), and the built `StoredSession` carries a
+    /// secret-free `StoredWebDAVConfig` instead of host/port/auth. `host` is
+    /// set to the established "unused" placeholder (see
+    /// `validateForEditSaveS3`'s own doc comment); `username` is ALSO
+    /// "unused" here -- unlike S3, WebDAV's real username lives on
+    /// `StoredWebDAVConfig.username`, not on `StoredSession.username`, since
+    /// the form field it comes from (`username`) is shared with SSH.
+    private func validateForEditSaveWebDAV(sessionID: UUID) -> StoredSession? {
+        let trimmedName = saveName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            state = .failed(message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName)
+            return nil
+        }
+        let trimmedBaseURL = webdavBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedBaseURL.isEmpty else {
+            state = .failed(message: CoreL10n.string("core.connect.webdavFieldRequired"), field: nil)
+            return nil
+        }
+        state = .idle
+        return StoredSession(
+            id: sessionID,
+            name: trimmedName,
+            host: "unused",
+            username: "unused",
+            groupID: selectedGroupID,
+            kind: .webdav,
+            webdav: StoredWebDAVConfig(
+                baseURL: trimmedBaseURL,
+                username: username.trimmingCharacters(in: .whitespacesAndNewlines),
+                useNextcloudPath: webdavUseNextcloudPath))
     }
 
     /// Validates the optional jump block (M10c/T3, spec §3) when
