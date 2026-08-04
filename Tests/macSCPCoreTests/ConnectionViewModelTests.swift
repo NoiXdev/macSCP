@@ -779,6 +779,92 @@ struct ConnectionViewModelTests {
         #expect(vm.s3UsePathStyle == true)
         #expect(vm.s3SecretAccessKey.isEmpty)
     }
+
+    // MARK: - WebDAV kind (M21/T9, tests added in the bug-fix round)
+
+    @Test func connectWithWebDAVKindBuildsWebDAVConfigFromEnteredFields() async {
+        let vm = makeVM(connector: { config, _ in
+            guard case .webdav(let webdav) = config else {
+                Issue.record("expected .webdav config")
+                throw RemoteFSError.protocolError(reason: "expected .webdav config")
+            }
+            #expect(webdav.baseURL == "https://dav.example.com/dav")
+            #expect(webdav.username == "dave")
+            #expect(webdav.useNextcloudPath == true)
+            #expect(webdav.password == "shh-secret")
+            return MockRemoteFileSystem(tree: ["/": []])
+        })
+        vm.kind = .webdav
+        vm.webdavBaseURL = "https://dav.example.com/dav"
+        vm.username = "dave"
+        vm.webdavUseNextcloudPath = true
+        vm.password = "shh-secret"
+
+        let fs = await vm.connect()
+
+        #expect(fs != nil)
+        #expect(vm.state == .idle)
+    }
+
+    @Test func connectWithWebDAVKindAndMissingBaseURLFailsBeforeConnecting() async {
+        let vm = makeVM(connector: { _, _ in
+            Issue.record("Connector must not be called with a missing required WebDAV field")
+            throw RemoteFSError.connectionFailed(reason: "unreachable")
+        })
+        vm.kind = .webdav
+        vm.webdavBaseURL = ""
+        vm.username = "dave"
+        vm.password = "shh-secret"
+
+        let fs = await vm.connect()
+
+        #expect(fs == nil)
+        #expect(vm.state == .failed(
+            message: CoreL10n.string("core.connect.webdavFieldRequired"), field: nil))
+    }
+
+    @Test @MainActor func validateForEditSaveWithWebDAVKindBuildsStoredSessionWithSecretFreeConfig() {
+        let vm = makeVM()
+        let stored = StoredSession(name: "dav-prod", host: "unused", username: "unused", kind: .webdav)
+        vm.beginEditing(stored)
+        vm.kind = .webdav
+        vm.webdavBaseURL = "https://dav.example.com/dav"
+        vm.username = "dave"
+        vm.webdavUseNextcloudPath = true
+        // Deliberately left empty -- edit mode never requires the secret
+        // (mirrors the SSH/S3 password's "leave unchanged" rule).
+        vm.password = ""
+
+        let saved = vm.validateForEditSave()
+
+        #expect(saved?.kind == .webdav)
+        #expect(saved?.webdav == StoredWebDAVConfig(
+            baseURL: "https://dav.example.com/dav", username: "dave", useNextcloudPath: true))
+    }
+
+    /// Pins the statement-order dependency the reviewer flagged in
+    /// `beginEditing`: the shared `username` field is set from
+    /// `stored.username` (the "unused" placeholder every WebDAV session
+    /// carries there, same as S3) FIRST, and only OVERRIDDEN by
+    /// `stored.webdav.username` inside the `.webdav` branch. Using two
+    /// different names for `stored.username` and `stored.webdav.username`
+    /// here means this test would fail if a future refactor reordered or
+    /// merged the S3/WebDAV blocks and dropped the override.
+    @Test @MainActor func beginEditingWithWebDAVStoredSessionPopulatesFieldsWithoutTheSecret() {
+        let vm = makeVM()
+        let webdavConfig = StoredWebDAVConfig(
+            baseURL: "https://dav.example.com/dav", username: "dave", useNextcloudPath: true)
+        let stored = StoredSession(
+            name: "dav-prod", host: "unused", username: "unused", kind: .webdav, webdav: webdavConfig)
+
+        vm.beginEditing(stored)
+
+        #expect(vm.kind == .webdav)
+        #expect(vm.webdavBaseURL == "https://dav.example.com/dav")
+        #expect(vm.username == "dave")
+        #expect(vm.webdavUseNextcloudPath == true)
+        #expect(vm.password.isEmpty)
+    }
 }
 
 private actor CallCounter {

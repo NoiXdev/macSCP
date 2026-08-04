@@ -2135,6 +2135,29 @@ struct ContentView: View {
                         bucket: form.s3Bucket.trimmingCharacters(in: .whitespacesAndNewlines),
                         usePathStyle: form.s3UsePathStyle)
                 )
+            } else if form.kind == .webdav {
+                // WebDAV (M21/T9 bug-fix round): mirrors the S3 branch above
+                // -- no host/port/auth/jump concepts apply, so `host`/
+                // `username` get the SAME "unused" placeholder
+                // `ConnectionViewModel.validateForEditSaveWebDAV` uses for
+                // the edit path, and the password rides the existing
+                // `password:` slot (no separate WebDAV secret path). Before
+                // this fix this branch never existed -- a WebDAV connection
+                // fell through to the `else` below and was saved as a
+                // broken `.ssh` session with `baseURL`/`useNextcloudPath`
+                // silently discarded.
+                stored = sessionListViewModel.save(
+                    name: form.saveName.trimmingCharacters(in: .whitespacesAndNewlines),
+                    host: "unused", port: 22, username: "unused",
+                    password: form.password,
+                    groupID: form.selectedGroupID,
+                    loginSetID: nil,
+                    kind: .webdav,
+                    webdav: StoredWebDAVConfig(
+                        baseURL: form.webdavBaseURL.trimmingCharacters(in: .whitespacesAndNewlines),
+                        username: form.username.trimmingCharacters(in: .whitespacesAndNewlines),
+                        useNextcloudPath: form.webdavUseNextcloudPath)
+                )
             } else {
                 stored = sessionListViewModel.save(
                     name: form.saveName.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -2265,6 +2288,25 @@ struct ContentView: View {
                         "The stored login for this connection was not found. Choose a login or enter credentials."))
                     return
                 }
+                form.clearJumpFields()
+            } else if stored.kind == .webdav {
+                // WebDAV (M21/T9 bug-fix round): mirrors the S3 fill above
+                // and `ConnectionViewModel.beginEditing`'s own WebDAV block
+                // -- no login sets, no jump, no host-key TOFU. The real
+                // username lives on `stored.webdav.username`, not on
+                // `stored.username` (that field holds the "unused"
+                // placeholder for a WebDAV session, same as S3's own
+                // host/username) -- same override-after-the-fact shape
+                // `beginEditing` uses. The password is resolved from the
+                // Keychain the same way the SSH password is, since WebDAV
+                // has no login-set indirection to go through.
+                form.kind = .webdav
+                form.webdavBaseURL = stored.webdav?.baseURL ?? ""
+                form.username = stored.webdav?.username ?? ""
+                form.webdavUseNextcloudPath = stored.webdav?.useNextcloudPath ?? false
+                form.password = sessionListViewModel.password(for: stored) ?? ""
+                form.loginMode = .manual
+                form.selectedLoginSetID = nil
                 form.clearJumpFields()
             } else {
                 form.kind = .ssh

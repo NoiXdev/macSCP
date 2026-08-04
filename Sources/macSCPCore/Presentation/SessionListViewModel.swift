@@ -73,13 +73,20 @@ public final class SessionListViewModel {
     /// key — it rides the SAME keychain slot (`secrets.savePassword(_:for:
     /// session.id)` below) as the SSH password; there is no separate S3
     /// secret path.
+    /// `webdav` (M21, bug-fix round after Task 9): same idea as `s3` above —
+    /// for a `.webdav` session `password` carries the WebDAV password on the
+    /// same keychain slot, and `webdav` carries the secret-free
+    /// `StoredWebDAVConfig`. Without this parameter the caller had no way to
+    /// persist `baseURL`/`useNextcloudPath` at all, which is exactly the bug
+    /// this round fixes (see `ContentView.startSession`).
     @discardableResult
     public func save(
         name: String, host: String, port: Int, username: String, password: String,
         authKind: StoredSession.AuthKind = .password, keyPath: String? = nil,
         groupID: UUID? = nil, loginSetID: UUID? = nil,
         jump: StoredSession.JumpSpec? = nil, jumpSecret: String? = nil,
-        kind: ConnectionKind = .ssh, s3: StoredS3Config? = nil
+        kind: ConnectionKind = .ssh, s3: StoredS3Config? = nil,
+        webdav: StoredWebDAVConfig? = nil
     ) -> StoredSession? {
         let session: StoredSession
         var previousJump: StoredSession.JumpSpec?
@@ -96,12 +103,13 @@ public final class SessionListViewModel {
             updated.jump = jump
             updated.kind = kind
             updated.s3 = s3
+            updated.webdav = webdav
             session = updated
         } else {
             session = StoredSession(name: name, host: host, port: port,
                                     username: username, authKind: authKind, keyPath: keyPath,
                                     groupID: groupID, loginSetID: loginSetID, jump: jump,
-                                    kind: kind, s3: s3)
+                                    kind: kind, s3: s3, webdav: webdav)
         }
         do {
             try store.upsert(session)
