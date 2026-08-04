@@ -53,15 +53,31 @@ public enum WebDAVPropfindParser {
         var isCollection = false
         var contentLength: UInt64?
         var lastModified: Date?
-        /// The status of the propstat currently being read. Properties from a
-        /// non-2xx propstat are ignored, but the ENTRY survives — Nextcloud
-        /// reports 404 for properties it does not carry.
-        var currentPropstatIsOK = true
+    }
+
+    /// Properties parsed from the propstat currently being read, held back
+    /// until `</propstat>` closes and its status is therefore known.
+    /// Properties from a non-2xx propstat are discarded, but the ENTRY
+    /// survives — Nextcloud reports 404 for properties it does not carry.
+    ///
+    /// `<prop>` and `<status>` are buffered rather than applied straight to
+    /// the entry because their document order is the server's choice: RFC
+    /// 4918's own examples (and every real server) put `<prop>` before
+    /// `<status>`, but nothing in the spec forbids the reverse. Applying
+    /// properties directly to the entry as they are read would make the gate
+    /// depend on `<status>` having already been seen — true only for one of
+    /// the two orders.
+    private struct PendingPropstat {
+        var isCollection = false
+        var contentLength: UInt64?
+        var lastModified: Date?
+        var statusIsOK = true
     }
 
     private final class Delegate: NSObject, XMLParserDelegate {
         var entries: [Entry] = []
         private var current: Entry?
+        private var pending = PendingPropstat()
         private var text = ""
 
         /// RFC 1123, the format `getlastmodified` is specified to use.
@@ -79,8 +95,8 @@ public enum WebDAVPropfindParser {
             text = ""
             switch elementName {
             case "response": current = Entry()
-            case "propstat": current?.currentPropstatIsOK = true
-            case "collection": current?.isCollection = true
+            case "propstat": pending = PendingPropstat()
+            case "collection": pending.isCollection = true
             default: break
             }
         }
@@ -97,13 +113,19 @@ public enum WebDAVPropfindParser {
                 if current?.href == nil { current?.href = value }
             case "status":
                 // "HTTP/1.1 404 Not Found" -> properties in THIS propstat are
-                // absent. The entry itself stays.
-                current?.currentPropstatIsOK = value.contains(" 2")
+                // absent. The entry itself stays. Buffered, not applied yet:
+                // <prop> may still be read after this if the server emits
+                // <status> first.
+                pending.statusIsOK = Self.isSuccessStatus(value)
             case "getcontentlength":
-                if current?.currentPropstatIsOK == true { current?.contentLength = UInt64(value) }
+                pending.contentLength = UInt64(value)
             case "getlastmodified":
-                if current?.currentPropstatIsOK == true {
-                    current?.lastModified = httpDate.date(from: value)
+                pending.lastModified = httpDate.date(from: value)
+            case "propstat":
+                if pending.statusIsOK {
+                    if pending.isCollection { current?.isCollection = true }
+                    if let length = pending.contentLength { current?.contentLength = length }
+                    if let modified = pending.lastModified { current?.lastModified = modified }
                 }
             case "response":
                 if let entry = current { entries.append(entry) }
@@ -111,6 +133,15 @@ public enum WebDAVPropfindParser {
             default: break
             }
             text = ""
+        }
+
+        /// Parses the 3-digit status code out of a status line such as
+        /// "HTTP/1.1 200 OK" and reports whether it is in the 2xx range.
+        /// A status line that cannot be parsed is treated as non-OK.
+        private static func isSuccessStatus(_ statusLine: String) -> Bool {
+            let components = statusLine.split(separator: " ", omittingEmptySubsequences: true)
+            guard components.count >= 2, let code = Int(components[1]) else { return false }
+            return (200...299).contains(code)
         }
     }
 }

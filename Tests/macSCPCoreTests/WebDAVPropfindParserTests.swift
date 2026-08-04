@@ -142,6 +142,56 @@ struct WebDAVPropfindParserTests {
         #expect(items.first?.name == "x.bin")
     }
 
+    /// The 404 propstat in the fixture above carries only `<d:getetag/>`, a
+    /// property the parser never tracks, so it passes even if the status gate
+    /// is a no-op. This test uses a TRACKED property (`getcontentlength`) so a
+    /// broken gate actually changes the observed value.
+    @Test func trackedPropertyFromNonOKPropstatIsExcluded() throws {
+        let items = try WebDAVPropfindParser.parse(
+            Data("""
+            <?xml version="1.0"?>
+            <d:multistatus xmlns:d="DAV:">
+              <d:response>
+                <d:href>/dav/x.bin</d:href>
+                <d:propstat><d:prop><d:resourcetype/><d:getcontentlength>999</d:getcontentlength></d:prop>
+                  <d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+                <d:propstat><d:prop><d:getcontentlength>42</d:getcontentlength></d:prop>
+                  <d:status>HTTP/1.1 404 Not Found</d:status></d:propstat>
+              </d:response>
+            </d:multistatus>
+            """.utf8), base: base, requestedPath: "/")
+
+        #expect(items.count == 1)
+        #expect(items.first?.size == 999)
+    }
+
+    /// Document order within a propstat is the server's choice: RFC 4918's own
+    /// examples put `<prop>` before `<status>`, but nothing forbids the
+    /// reverse. The gate must not silently depend on `<status>` being read
+    /// last.
+    @Test func statusBeforePropWithinPropstatStillGatesProperties() throws {
+        let items = try WebDAVPropfindParser.parse(
+            Data("""
+            <?xml version="1.0"?>
+            <d:multistatus xmlns:d="DAV:">
+              <d:response>
+                <d:href>/dav/x.bin</d:href>
+                <d:propstat>
+                  <d:status>HTTP/1.1 200 OK</d:status>
+                  <d:prop><d:resourcetype/><d:getcontentlength>999</d:getcontentlength></d:prop>
+                </d:propstat>
+                <d:propstat>
+                  <d:status>HTTP/1.1 404 Not Found</d:status>
+                  <d:prop><d:getcontentlength>42</d:getcontentlength></d:prop>
+                </d:propstat>
+              </d:response>
+            </d:multistatus>
+            """.utf8), base: base, requestedPath: "/")
+
+        #expect(items.count == 1)
+        #expect(items.first?.size == 999)
+    }
+
     @Test func emptyCollectionYieldsNoEntries() throws {
         let items = try WebDAVPropfindParser.parse(
             Data("""
