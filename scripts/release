@@ -75,7 +75,11 @@ codesign --verify --strict "$APP/Contents/MacOS/macscp-cli"
 codesign --force --options runtime --timestamp \
     --sign "$IDENTITY" "$APP"
 codesign --verify --deep --strict "$APP"
-echo "signed: $(codesign -dv "$APP" 2>&1 | grep '^Authority=Developer ID Application')"
+# `-dvv`, not `-dv`: codesign prints `Authority=` lines only at verbosity 2.
+# At verbosity 1 this grep matched nothing and the line printed a bare
+# "signed:" — harmless here, fatal in the `case` guard further down, which is
+# why both sites use the same verbosity.
+echo "signed: $(codesign -dvv "$APP" 2>&1 | grep '^Authority=Developer ID Application')"
 
 # --- notarize the app, staple it -------------------------------------------
 ZIP="dist/macSCP-${VERSION}.zip"
@@ -114,8 +118,11 @@ spctl --assess --type execute -v "$APP"
 # The shipped CLI must have survived stapling with an intact Developer ID
 # signature — that stable signature is what a keychain "Always Allow" grant
 # is bound to, so a broken one here would silently re-prompt on every run.
-codesign --verify --strict "$APP/Contents/MacOS/macscp-cli"
-CLI_SIGNATURE="$(codesign -dv "$APP/Contents/MacOS/macscp-cli" 2>&1 || true)"
+# `--deep` on the bundle, not just the nested binary: stapling writes into
+# the app and a copy step could break the seal over Contents/MacOS, which a
+# check of the CLI alone would not notice.
+codesign --verify --deep --strict "$APP"
+CLI_SIGNATURE="$(codesign -dvv "$APP/Contents/MacOS/macscp-cli" 2>&1 || true)"
 case "$CLI_SIGNATURE" in
     *"Authority=Developer ID Application"*) ;;
     *) echo "error: shipped macscp-cli is not Developer ID signed" >&2; exit 1 ;;
