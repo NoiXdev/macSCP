@@ -36,7 +36,7 @@ enum SFTPAttributeMapper {
         let (owner, group) = ownerGroup(longname: longname, uidgid: uidgid)
         return RemoteFileItem(
             name: name,
-            path: RemotePath.join(directory, name),
+            path: path(directory: directory, name: name),
             kind: kind(fromPermissions: permissions),
             size: size,
             modifiedAt: modifiedAt,
@@ -44,6 +44,18 @@ enum SFTPAttributeMapper {
             owner: owner,
             group: group
         )
+    }
+
+    /// The root is the ONE entry whose basename is the path itself, so
+    /// `CitadelFileSystem.stat("/")` hands us "/" as BOTH `name` and
+    /// `directory` (`RemotePath.parent(of: "/")` is "/"). Joining those
+    /// would yield "//", and because `RemoteFileItem.id` IS the path, that
+    /// doubled slash would travel on into navigation, breadcrumbs and
+    /// error messages. Every other entry composes normally — `join`
+    /// already handles the trailing slash of a root `directory`.
+    private static func path(directory: String, name: String) -> String {
+        guard name != "/" else { return "/" }
+        return RemotePath.join(directory, name)
     }
 
     /// The precedence rule itself (M11m design): a successfully parsed
