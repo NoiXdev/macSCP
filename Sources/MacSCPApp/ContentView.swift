@@ -355,7 +355,7 @@ struct ContentView: View {
             initial: Self.makeTab(settingsStore: settingsStore, limiter: bandwidthLimiter)))
         _sessionListViewModel = State(initialValue: SessionListViewModel(
             store: SessionStore(directory: SessionStore.defaultDirectory),
-            secrets: KeychainSecretStore.production(),
+            secrets: KeychainSecretStore(),
             auditStore: auditStore
         ))
     }
@@ -557,9 +557,6 @@ struct ContentView: View {
         .navigationTitle(activeTab.titleName.map { "macSCP — \($0)" } ?? "macSCP")
         .background(WindowAccessor { window = $0 })
         .task {
-            // NO keychain migration runs here — see the note above
-            // `KeychainMigration` for why running one today would DESTROY
-            // the user's saved secrets.
             // Full inventory, read once (M11f/T2) — `refreshImportedHosts()`
             // below (and every later hide/unhide) re-splits THIS instead of
             // re-parsing the config file.
@@ -1904,7 +1901,7 @@ struct ContentView: View {
             return try ManagedKeyPassphrase.hasStoredPassphrase(
                 keyPath: form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
                 store: ManagedKeyStore(directory: SessionStore.defaultDirectory),
-                secrets: KeychainSecretStore.production())
+                secrets: KeychainSecretStore())
         } catch {
             return true
         }
@@ -2243,7 +2240,7 @@ struct ContentView: View {
                             keyPath: form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
                             typed: form.password,
                             store: ManagedKeyStore(directory: SessionStore.defaultDirectory),
-                            secrets: KeychainSecretStore.production())
+                            secrets: KeychainSecretStore())
                     }
                     form.loginMode = stored.loginSetID != nil ? .set : .manual
                     form.selectedLoginSetID = stored.loginSetID
