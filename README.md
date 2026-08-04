@@ -71,15 +71,20 @@ SSH test rig from `docker/test-server/` (`MACSCP_ITEST=1`).
 
 ## Command line
 
-The same build also produces `macscp-cli`, a small command-line companion
-built alongside the app; it is not part of the DMG, and no packaging or
-release step publishes it anywhere — the only way to get it today is to
-build it yourself: `swift build -c release`, then run
-`.build/release/macscp-cli`. A release built with `scripts/release` signs
-both the app and the CLI into the same keychain access group, so the CLI
-can read passwords and passphrases the app already saved instead of
-asking for them again. A CLI built directly with `swift build` has no
-such group and falls back to asking for each secret on its own.
+`macscp-cli` is a small command-line companion. It ships **inside the app
+bundle**, so installing macSCP installs it too:
+
+```sh
+/Applications/macSCP.app/Contents/MacOS/macscp-cli ls prod:/var/www
+```
+
+For everyday use, put it on your `PATH` once — for example:
+
+```sh
+ln -s /Applications/macSCP.app/Contents/MacOS/macscp-cli /usr/local/bin/macscp-cli
+```
+
+Building from source also produces it, at `.build/release/macscp-cli`.
 
 The CLI works only with sessions already saved by the app — there is no
 way to pass a host and password directly on the command line. Point it at
@@ -106,6 +111,19 @@ environment variable (`MACSCP_PASSWORD` for an SSH session,
 `AWS_SECRET_ACCESS_KEY` for an S3 one); the keychain, same as the app
 itself uses. A session authenticating through an SSH agent needs none of
 these — the agent supplies the key.
+
+**The keychain prompt.** The CLI reads the very same keychain items the
+app writes, and macOS asks your permission per item the first time a
+*different* program wants one. Choose **Always Allow** and the CLI is
+added to that item's access list for good — every later run reads it
+without a prompt, which is what makes unattended use (a cron job, a CI
+runner) possible at all. **Deny** or **Allow Once** leaves the prompt in
+place for the next run, which will simply fail where no one can answer
+it. That standing permission is tied to the CLI's code signature, so it
+holds for the signed copy shipped inside the app bundle; a `macscp-cli`
+you rebuilt yourself is a different signature and has to be confirmed
+again. For a machine that must never prompt, use `--password-command` or
+an environment variable instead and skip the keychain entirely.
 
 **Host keys.** The same first-connect trust-on-first-use rule as the app
 applies: an unknown host key is refused unless the CLI can either ask
