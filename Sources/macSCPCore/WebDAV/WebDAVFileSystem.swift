@@ -187,24 +187,155 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
 
     // MARK: - Writes (Task 7)
 
+    /// Streaming PUT.
+    ///
+    /// The body is fed through a bound stream pair rather than buffered: a
+    /// multi-gigabyte upload must not be held in memory. `httpBodyStream` is
+    /// also what lets URLSession replay the body after an auth challenge —
+    /// it asks the delegate for a fresh stream via `needNewBodyStream`.
     public func write(path: String, mode: WriteMode,
                       contents: AsyncThrowingStream<Data, Error>) async throws {
-        throw RemoteFSError.protocolError(reason: "not implemented yet")
+        guard mode == .overwrite else {
+            // WebDAV has no partial PUT. Treating .append as .overwrite would
+            // silently destroy the bytes already transferred.
+            throw RemoteFSError.protocolError(
+                reason: "WebDAV cannot append to a file; resume is not supported")
+        }
+
+        var request = URLRequest(url: base.url(forPath: path, isDirectory: false))
+        request.httpMethod = "PUT"
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+
+        var input: InputStream?
+        var output: OutputStream?
+        Stream.getBoundStreams(withBufferSize: TransferChunk.size,
+                               inputStream: &input, outputStream: &output)
+        guard let input, let output else {
+            throw RemoteFSError.protocolError(reason: "Could not create the upload stream")
+        }
+        request.httpBodyStream = input
+
+        // Feeds the bound pair while the request is in flight, so a
+        // multi-gigabyte upload is never held in memory. Runs detached so
+        // the transport can start reading immediately — the pair has a
+        // single chunk of buffer, so the pump has to wait for the reader to
+        // drain it before it can write more.
+        //
+        // That "wait" is deliberately a poll on `hasSpaceAvailable` plus a
+        // cancellable `Task.sleep`, never a direct blocking `write` into a
+        // full buffer: `OutputStream.write` is a synchronous Foundation call
+        // that parks the underlying thread until space frees up, and
+        // nothing we can do from outside — not `Task.cancel()`, not closing
+        // the stream's peer — interrupts a call already parked inside it
+        // (verified empirically: a thread blocked in `write()` on a full,
+        // unread buffer stays blocked even after the paired `InputStream` is
+        // closed). If the request fails before ever reading the body — a
+        // connection error, or a fast 4xx — polling is what lets
+        // `pump.cancel()` actually stop the pump instead of leaking a
+        // permanently parked thread.
+        let pump = Task.detached {
+            output.open()
+            defer { output.close() }
+            for try await chunk in contents {
+                try Task.checkCancellation()
+                var written = 0
+                while written < chunk.count {
+                    while !output.hasSpaceAvailable {
+                        try Task.checkCancellation()
+                        try await Task.sleep(nanoseconds: 5_000_000)
+                    }
+                    try Task.checkCancellation()
+                    let n = chunk.withUnsafeBytes { raw -> Int in
+                        output.write(
+                            raw.baseAddress!.advanced(by: written)
+                                .assumingMemoryBound(to: UInt8.self),
+                            maxLength: chunk.count - written)
+                    }
+                    guard n > 0 else {
+                        throw RemoteFSError.connectionFailed(
+                            reason: "The upload stream closed early")
+                    }
+                    written += n
+                }
+            }
+        }
+
+        do {
+            let (_, response) = try await transport.send(request)
+            try await pump.value
+            try Self.mapStatus(response.statusCode, path: path, method: "PUT")
+        } catch {
+            pump.cancel()
+            // If the pump had ALSO failed on its own — e.g. the SOURCE
+            // stream threw a read error — that is the real cause and wins
+            // over a transport-level failure, which at this point is
+            // usually just a downstream symptom of the aborted body (or, if
+            // we're the one who just cancelled it, carries no information
+            // at all).
+            if let pumpError = await pumpFailure(pump) {
+                throw pumpError
+            }
+            throw error
+        }
     }
+
+    /// Awaits `pump`'s outcome without throwing, so `write` can decide which
+    /// of two failures — the pump's or the transport's — is the more useful
+    /// one to report. `nil` means the pump succeeded, or its only failure was
+    /// our own cancellation of it (which carries no information).
+    private func pumpFailure(_ pump: Task<Void, Error>) async -> Error? {
+        do {
+            try await pump.value
+            return nil
+        } catch is CancellationError {
+            return nil
+        } catch {
+            return error
+        }
+    }
+
     public func delete(path: String) async throws {
-        throw RemoteFSError.protocolError(reason: "not implemented yet")
+        try await simple(method: "DELETE", path: path, isDirectory: false)
     }
+
     public func createDirectory(at path: String) async throws {
-        throw RemoteFSError.protocolError(reason: "not implemented yet")
+        try await simple(method: "MKCOL", path: path, isDirectory: true)
     }
+
+    /// MOVE is atomic server-side — unlike S3, where rename is copy-then-delete
+    /// and an interrupted call leaves both or neither.
+    ///
+    /// `Overwrite: F` is not optional: without it a server silently replaces
+    /// an existing destination, which is the one outcome the conflict rules
+    /// everywhere else in this app are built to prevent.
     public func rename(from: String, to: String) async throws {
-        throw RemoteFSError.protocolError(reason: "not implemented yet")
+        var request = URLRequest(url: base.url(forPath: from, isDirectory: false))
+        request.httpMethod = "MOVE"
+        request.setValue(base.url(forPath: to, isDirectory: false).absoluteString,
+                         forHTTPHeaderField: "Destination")
+        request.setValue("F", forHTTPHeaderField: "Overwrite")
+        let (_, response) = try await transport.send(request)
+        try Self.mapStatus(response.statusCode, path: from, method: "MOVE")
     }
-    public func setPermissions(path: String, permissions: UInt32) async throws {
-        throw RemoteFSError.protocolError(reason: "not implemented yet")
-    }
+
+    /// One call. WebDAV deletes a collection recursively server-side; the S3
+    /// backend needs a recursive listing and batched DeleteObjects for this.
     public func deleteTree(at path: String) async throws {
-        throw RemoteFSError.protocolError(reason: "not implemented yet")
+        try await simple(method: "DELETE", path: path, isDirectory: true)
+    }
+
+    /// `permissionModel` is `.none`. Failing loudly beats reporting a success
+    /// the server never performed.
+    public func setPermissions(path: String, permissions: UInt32) async throws {
+        throw RemoteFSError.protocolError(
+            reason: "WebDAV has no permission model")
+    }
+
+    private func simple(method: String, path: String, isDirectory: Bool) async throws {
+        var request = URLRequest(url: base.url(forPath: path, isDirectory: isDirectory))
+        request.httpMethod = method
+        let (_, response) = try await transport.send(request)
+        try Self.mapStatus(response.statusCode, path: path, method: method)
     }
 
     // MARK: - Error mapping
