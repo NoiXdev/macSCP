@@ -65,24 +65,35 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
     }
 
     public func stat(path: String) async throws -> RemoteFileItem {
-        // A collection and a file differ in URL shape, and a server may answer
-        // the wrong one with a redirect. Ask for the collection form first for
-        // the root (which is always a collection), the plain form otherwise,
-        // and fall back once — but only when the FIRST shape's PROPFIND came
-        // back successful yet didn't contain the addressed entry (a shape
-        // mismatch). A definitive HTTP-level error (404, 401, ...) from
-        // `propfind` is not shape-ambiguous and must not trigger a second,
-        // unstubbed network round trip — it is the caller's answer already.
+        // A collection and a file differ in URL shape, and servers disagree
+        // about what happens when you address a collection without its
+        // trailing slash: some redirect, some answer 2xx with no matching
+        // entry, and some flatly 404 it. Ask for the collection form first
+        // for the root (which is always a collection), the plain form
+        // otherwise, and fall back once — on a successful PROPFIND that
+        // didn't contain the addressed entry (a shape mismatch), AND on a
+        // 404 from the first attempt for a non-root path, since that is
+        // exactly the third server behaviour above and not distinguishable
+        // from a genuine miss without trying the other shape. A 404 from the
+        // SECOND attempt, or any non-404 error (401, 403, ...) from either
+        // attempt, is not shape-ambiguous and propagates immediately — it is
+        // the caller's answer already, and retrying would waste a round trip
+        // (or exhaust an unstubbed transport).
         let isRoot = (path == "/")
-        if let item = try await statOnce(path: path, isDirectory: isRoot) { return item }
+        do {
+            if let item = try await statOnce(path: path, isDirectory: isRoot) { return item }
+        } catch RemoteFSError.notFound where !isRoot {
+            // Shape-ambiguous: fall through to the second attempt below.
+        }
         if let item = try await statOnce(path: path, isDirectory: !isRoot) { return item }
         throw RemoteFSError.notFound(path: path)
     }
 
     /// Returns nil (rather than throwing `.notFound`) when the PROPFIND
     /// succeeded but the addressed entry was not among the results — that is
-    /// the signal for `stat` to retry with the opposite URL shape. Errors
-    /// `propfind` itself throws (mapped HTTP statuses) propagate unchanged.
+    /// one signal for `stat` to retry with the opposite URL shape. Errors
+    /// `propfind` itself throws (mapped HTTP statuses) propagate unchanged;
+    /// `stat` decides for itself which of those are worth a retry.
     private func statOnce(path: String, isDirectory: Bool) async throws -> RemoteFileItem? {
         let data = try await propfind(path: path, depth: "0", isDirectory: isDirectory)
         // Depth 0 reports exactly the addressed resource, which the listing
@@ -201,10 +212,7 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
     static func mapStatus(_ status: Int, path: String, method: String) throws {
         switch status {
         case 200...299: return
-        case 401, 403 where method == "PROPFIND":
-            throw status == 401
-                ? RemoteFSError.authenticationFailed
-                : RemoteFSError.permissionDenied(path: path)
+        case 401: throw RemoteFSError.authenticationFailed
         case 403: throw RemoteFSError.permissionDenied(path: path)
         case 404: throw RemoteFSError.notFound(path: path)
         case 405 where method == "MKCOL":
