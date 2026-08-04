@@ -44,6 +44,47 @@ else
     NOTARY_AUTH=(--keychain-profile "$PROFILE")
 fi
 
+# --- entitlements: expand $(TeamIdentifierPrefix) --------------------------
+# `$(TeamIdentifierPrefix)` is an XCODE BUILD-SETTING placeholder — Xcode's
+# build system substitutes it, but this script signs directly with
+# `codesign --entitlements <plist>`, which performs NO substitution at all.
+# Left unexpanded, the literal string "$(TeamIdentifierPrefix)dev.noix.macscp"
+# would be embedded as the access-group identifier: a syntactically invalid
+# group with no real team prefix, which becomes the DEFAULT group for new
+# keychain items (the first entry of keychain-access-groups), so a shipped
+# build would fail `SecItemAdd` with `errSecMissingEntitlement` and silently
+# stop saving passwords (M20 final-review finding). So the placeholder is
+# expanded here, into temporary copies of the entitlements plists, BEFORE
+# either binary is signed.
+#
+# The team identifier is derived from $IDENTITY itself — its Common Name
+# always ends in "(TEAMID)" — rather than hardcoded a second time; there is
+# then exactly one place in this script that names the team, and the two can
+# never drift apart.
+TEAM_ID="$(sed -E 's/.*\(([A-Z0-9]+)\)$/\1/' <<<"$IDENTITY")"
+[[ "$TEAM_ID" =~ ^[A-Z0-9]+$ ]] || {
+    echo "error: could not derive a team id from signing identity: $IDENTITY" >&2
+    exit 1; }
+
+ENTITLEMENTS_DIR="$(mktemp -d -t macscp-entitlements)"
+trap 'rm -rf "$ENTITLEMENTS_DIR"' EXIT
+APP_ENTITLEMENTS="$ENTITLEMENTS_DIR/macSCP.entitlements"
+CLI_ENTITLEMENTS="$ENTITLEMENTS_DIR/macscp-cli.entitlements"
+# The Xcode-expanded form of $(TeamIdentifierPrefix) is the team id followed
+# by a literal period — e.g. "5V8ZCK434F." — which is why the replacement
+# below appends "." after $TEAM_ID rather than relying on a separator already
+# present in the plist.
+sed "s/\$(TeamIdentifierPrefix)/${TEAM_ID}./" Resources/macSCP.entitlements > "$APP_ENTITLEMENTS"
+sed "s/\$(TeamIdentifierPrefix)/${TEAM_ID}./" Resources/macscp-cli.entitlements > "$CLI_ENTITLEMENTS"
+plutil -lint "$APP_ENTITLEMENTS" "$CLI_ENTITLEMENTS"
+# Belt-and-suspenders: fail loudly instead of silently shipping a broken
+# keychain group if the substitution somehow didn't take (e.g. the source
+# plist's placeholder spelling changed and this sed pattern no longer
+# matches it).
+grep -q 'TeamIdentifierPrefix' "$APP_ENTITLEMENTS" "$CLI_ENTITLEMENTS" && {
+    echo "error: entitlements substitution left the placeholder in place" >&2
+    exit 1; }
+
 # --- build + sign ----------------------------------------------------------
 MACSCP_VERSION="$VERSION" scripts/package-app
 
@@ -52,7 +93,7 @@ codesign --force --timestamp --sign "$IDENTITY" \
     "$APP/Contents/Resources/macSCP_MacSCPApp.bundle" \
     "$APP/Contents/Resources/macSCP_macSCPCore.bundle"
 codesign --force --options runtime --timestamp \
-    --entitlements Resources/macSCP.entitlements \
+    --entitlements "$APP_ENTITLEMENTS" \
     --sign "$IDENTITY" "$APP"
 codesign --verify --deep --strict "$APP"
 echo "signed: $(codesign -dv "$APP" 2>&1 | grep '^Authority=Developer ID Application')"
@@ -72,7 +113,7 @@ echo "signed: $(codesign -dv "$APP" 2>&1 | grep '^Authority=Developer ID Applica
 for TRIPLE in arm64-apple-macosx x86_64-apple-macosx; do
     CLI_BIN="$(swift build -c release --triple "$TRIPLE" --show-bin-path)/macscp-cli"
     codesign --force --options runtime --timestamp \
-        --entitlements Resources/macscp-cli.entitlements \
+        --entitlements "$CLI_ENTITLEMENTS" \
         --sign "$IDENTITY" "$CLI_BIN"
     codesign --verify --strict "$CLI_BIN"
 done
