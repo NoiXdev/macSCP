@@ -29,11 +29,23 @@ import Foundation
 /// so `close()` is mandatory — a `defer` at the caller's top level, not a
 /// happy-path call.
 final class BoundStreamWriter: NSObject, StreamDelegate, @unchecked Sendable {
-    /// Why an outstanding write was abandoned. Distinct from a real stream
-    /// failure: the caller tore the writer down itself, so this carries no
-    /// information worth reporting.
+    /// Why an outstanding write was abandoned.
     enum Failure: Error {
+        /// The caller tore the writer down itself (`close()`, or task
+        /// cancellation). Carries no information worth reporting: the
+        /// caller already knows why.
         case tornDown
+        /// The stream's peer went away — `.errorOccurred` or
+        /// `.endEncountered` fired on the underlying `OutputStream` while a
+        /// write was outstanding. This is exactly what a failing
+        /// `URLSessionTask` does to its body stream when it tears itself
+        /// down, so on its own this case carries no more information than
+        /// `tornDown` does: `WebDAVFileSystem.pumpFailure` treats it the
+        /// same way, letting the transport's own error win. The one place
+        /// that is NOT true is a 2xx exit, where there is no transport
+        /// error to fall back to — there, this case IS the only
+        /// information available and must be allowed to propagate.
+        case readerGone
     }
 
     /// `perform(_:on:with:waitUntilDone:)` can only carry an object.
@@ -173,8 +185,7 @@ final class BoundStreamWriter: NSObject, StreamDelegate, @unchecked Sendable {
                              maxLength: pending.count - position)
             }
             guard written > 0 else {
-                complete(with: RemoteFSError.connectionFailed(
-                    reason: "The upload stream closed early"))
+                complete(with: Failure.readerGone)
                 return
             }
             position += written
@@ -205,8 +216,7 @@ final class BoundStreamWriter: NSObject, StreamDelegate, @unchecked Sendable {
         case .errorOccurred, .endEncountered:
             // The reader went away. Release the writer instead of leaving it
             // waiting for space that will never come.
-            complete(with: RemoteFSError.connectionFailed(
-                reason: "The upload stream closed early"))
+            complete(with: Failure.readerGone)
         default:
             break
         }

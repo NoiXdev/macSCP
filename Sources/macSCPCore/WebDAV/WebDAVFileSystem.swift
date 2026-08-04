@@ -200,9 +200,17 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// source it was fed from is a one-shot `AsyncThrowingStream` that has
     /// already been consumed; re-reading either is impossible, not merely
     /// unimplemented. `WebDAVSessionDelegate` therefore refuses the request
-    /// and records why. In practice this does not bite, because URLSession
-    /// only replays a body it has not begun sending, and the credential is
-    /// supplied on the challenge for the *first* attempt.
+    /// and records why.
+    ///
+    /// Whether this is ever actually asked for is unverified. The mitigation
+    /// we're relying on — the credential is cached from `connect`'s PROPFIND,
+    /// so URLSession should already be authenticated before the PUT body
+    /// starts streaming — is plausible but untested against a real server: a
+    /// stale Digest nonce mid-session is exactly the kind of case that would
+    /// provoke a fresh challenge, and therefore a replay, mid-upload. The
+    /// gated WebDAV-rig test that would exercise this against a real server
+    /// is a later task; until then, treat "does not bite in practice" as an
+    /// expectation, not a proven claim.
     public func write(path: String, mode: WriteMode,
                       contents: AsyncThrowingStream<Data, Error>) async throws {
         guard mode == .overwrite else {
@@ -242,6 +250,14 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         // single chunk of buffer, so the pump has to wait for the reader to
         // drain it before it can write more.
         let pump = Task.detached {
+            // Closes the write half so the reader (the transport, reading
+            // `input`) sees EOF once the source is exhausted. This looks
+            // redundant with the outer `defer` above, but it is not: on the
+            // success path nothing else ever calls `close()` before
+            // `transport.send` awaits the response, so without this the
+            // reader never observes EOF, `send` never returns, and `write`
+            // deadlocks. The outer `defer` only covers the failure/teardown
+            // paths that exit before the pump finishes on its own.
             defer { writer.close() }
             for try await chunk in contents {
                 try Task.checkCancellation()
@@ -298,8 +314,12 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// Awaits `pump`'s outcome without throwing, so `write` can decide which
     /// of two failures — the pump's or the transport's — is the more useful
     /// one to report. `nil` means the pump succeeded, or its only failure was
-    /// our own teardown of it (cancellation, or the writer being closed under
-    /// it), neither of which carries information.
+    /// uninformative on its own: our own teardown of it (cancellation, or the
+    /// writer being closed under it), or `BoundStreamWriter.Failure.readerGone`
+    /// — the write end observing the reader vanish, which at this call site is
+    /// always just a symptom of the transport tearing the body down and must
+    /// not be allowed to outrank the transport's own (usually far more
+    /// specific) error.
     ///
     /// Safe to await only after `pump.cancel()`: every suspension point in the
     /// pump — the source stream, and `BoundStreamWriter.write` — is

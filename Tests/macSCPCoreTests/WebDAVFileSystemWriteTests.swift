@@ -155,6 +155,45 @@ struct WebDAVFileSystemWriteTests {
         #expect(transport.bodies.first == payload)
     }
 
+    /// Review round 3, Finding 1: a transport-level failure (auth, TLS,
+    /// timeout — anything short of a mapped HTTP status) is the real cause
+    /// of an aborted upload. But tearing the request down also makes the
+    /// bound pair's reader vanish, which `BoundStreamWriter` reports as its
+    /// own failure. If that reader-vanished symptom is not recognisably
+    /// uninformative, it can win the race against the real cause and reach
+    /// the caller as a generic "the upload stream closed early" instead of
+    /// `.authenticationFailed`. `FakeHTTPTransport` reproduces the race
+    /// deterministically: it opens and closes the request's body stream
+    /// (exactly what a real `URLSessionTask` does to a body stream when it
+    /// tears itself down) and gives that event time to settle before
+    /// throwing, so the reader-vanished event is guaranteed to land at
+    /// `BoundStreamWriter` before `write`'s catch block ever calls
+    /// `pump.cancel()`.
+    @Test func transportErrorOutranksAVanishedReader() async throws {
+        let payload = Self.pattern(count: 768 * 1024)
+        let transport = FakeHTTPTransport(
+            replies: [],
+            drainsRequestBody: false,
+            transportError: RemoteFSError.authenticationFailed,
+            closesBodyStreamOnFailure: true)
+        let fs = WebDAVFileSystem(config: config, transport: transport)
+        let contents = chunked(payload, chunk: 40_000)
+
+        let outcome = await withDeadline(seconds: 5) { () -> WriteOutcome in
+            do {
+                try await fs.write(path: "/big.bin", mode: .overwrite, contents: contents)
+                return WriteOutcome()
+            } catch let error as RemoteFSError {
+                return WriteOutcome(thrown: error)
+            } catch {
+                return WriteOutcome(thrown: .protocolError(reason: "unexpected \(error)"))
+            }
+        }
+
+        let result = try #require(outcome, "write() never returned")
+        #expect(result.thrown == .authenticationFailed)
+    }
+
     /// A server that rejects a PUT early — 401 after a stale Digest nonce,
     /// 403, 507 — answers *without* reading the rest of the body. The
     /// response arrives normally, but nothing will ever drain the bound pair
