@@ -17,10 +17,25 @@ struct RmCommand: AsyncParsableCommand {
     @Flag(name: .shortAndLong, help: "Delete directories and their contents.")
     var recursive = false
 
+    /// The escape hatch for the one case `--recursive` alone must not allow:
+    /// deleting the session root. `SessionReference.parse` maps an empty
+    /// path to "/", so a truncated or unquoted argument (`rm -r prod:`
+    /// instead of `rm -r prod:/tmp/old`) would otherwise reach
+    /// `deleteTree(at: "/")` — for an S3 session, every object in the
+    /// bucket — with nothing standing in the way but the typo itself. A long,
+    /// deliberately spelled-out flag name is the point: it is not something
+    /// a mistyped path argument, or a second `-r`, could ever produce by
+    /// accident (M20 final-review Finding A).
+    @Flag(name: .long, help: "Required together with --recursive to delete a session root.")
+    var allowRootDelete = false
+
     func run() async throws {
         let reference = SessionReference.parse(target)
         try await withConnection(to: reference, options: options) { fs in
             if recursive {
+                let item = try await fs.stat(path: reference.path)
+                try TransferSourceGuard.checkDeletable(
+                    item, recursive: recursive, allowRoot: allowRootDelete)
                 try await fs.deleteTree(at: reference.path)
             } else {
                 // `delete(path:)` itself throws a raw `RemoteFSError

@@ -65,6 +65,9 @@ public enum CLIErrorMapping {
             switch error {
             case .isDirectory(let path):
                 return "Error: '\(path)' is a directory; pass --recursive to delete it and its contents"
+            case .isSessionRoot(let path):
+                return "Error: '\(path)' is the session root; pass --recursive --allow-root-delete "
+                    + "to delete everything under it"
             }
         case let error as TransferPlanError:
             switch error {
