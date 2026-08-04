@@ -59,4 +59,23 @@ struct TrustedCertificateStoreTests {
         try store.remove(host: "a.local", port: 5006)
         #expect(try store.allCertificates().map(\.host) == ["b.local"])
     }
+
+    /// Upsert and find work even when the target directory does not exist yet.
+    /// This is critical for first launch, before other stores have created
+    /// the application-support directory.
+    @Test func upsertWorksWhenDirectoryDoesNotExist() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macscp-certs-nonexistent-\(UUID().uuidString)")
+        // Ensure the directory does not exist
+        try? FileManager.default.removeItem(at: directory)
+        #expect(!FileManager.default.fileExists(atPath: directory.path(percentEncoded: false)))
+
+        let store = TrustedCertificateStore(directory: directory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        // Should succeed even though directory does not exist yet
+        try store.upsert(certificate())
+        let found = try #require(try store.find(host: "nas.local", port: 5006))
+        #expect(found.derBase64 == "QUJD")
+    }
 }
