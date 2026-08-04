@@ -81,7 +81,8 @@ bundle**, so installing macSCP installs it too:
 For everyday use, put it on your `PATH` once — for example:
 
 ```sh
-ln -s /Applications/macSCP.app/Contents/MacOS/macscp-cli /usr/local/bin/macscp-cli
+sudo mkdir -p /usr/local/bin
+sudo ln -s /Applications/macSCP.app/Contents/MacOS/macscp-cli /usr/local/bin/macscp-cli
 ```
 
 Building from source also produces it, at `.build/release/macscp-cli`.
@@ -117,7 +118,9 @@ app writes, and macOS asks your permission per item the first time a
 *different* program wants one. Choose **Always Allow** and the CLI is
 added to that item's access list for good — every later run reads it
 without a prompt, which is what makes unattended use (a cron job, a CI
-runner) possible at all. **Deny** or **Allow Once** leaves the prompt in
+runner) possible at all, provided the login keychain is unlocked. It is
+while you are logged in; a job on a logged-out machine, or one started
+over SSH, still cannot reach it. **Deny** or **Allow Once** leaves the prompt in
 place for the next run, which will simply fail where no one can answer
 it. That standing permission is tied to the CLI's code signature, so it
 holds for the signed copy shipped inside the app bundle; a `macscp-cli`
