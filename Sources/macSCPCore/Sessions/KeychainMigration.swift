@@ -9,11 +9,29 @@ import Foundation
 /// have made the two indistinguishable.
 public struct KeychainVerificationMismatch: Error, Equatable, Sendable {}
 
-/// Moves secrets from one store to another — in practice from "no access
+/// Moves secrets from one store to another — in principle from "no access
 /// group" to "shared access group", so the CLI can read what the app wrote
 /// (M20). The access group is an attribute set at creation time, so existing
 /// entries have to be rewritten; without this, the CLI would fail on exactly
 /// the sessions a user has had the longest.
+///
+/// - Warning: **This type has no production call site, and must not get one
+///   while `KeychainSecretStore` talks to the legacy file-based keychain.**
+///   On macOS, `kSecAttrAccessGroup` is honored only by the data-protection
+///   keychain, which a query opts into with `kSecUseDataProtectionKeychain`.
+///   `KeychainSecretStore.baseQuery` sets no such flag, so the group
+///   attribute is silently dropped and `KeychainSecretStore(accessGroup:)`
+///   and `KeychainSecretStore()` address the *same* item. `migrate` would
+///   then read that item, overwrite it in place, "verify" the value it just
+///   wrote, and delete it — destroying the secret rather than moving it.
+///   Reproduced against the real keychain during the M20 final review.
+///
+///   Making this meaningful takes more than a call site: the store must move
+///   to the data-protection keychain, which cannot see the existing
+///   file-based items at all, so the migration becomes a genuine
+///   cross-implementation copy whose delete is scoped to the legacy path and
+///   can never match the copy just written. Until then, the CLI reads the
+///   app's secrets through per-item keychain consent.
 public struct KeychainMigration: Sendable {
     private let source: any SecretStore
     private let target: any SecretStore
