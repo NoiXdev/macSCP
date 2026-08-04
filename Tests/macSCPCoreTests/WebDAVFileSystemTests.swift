@@ -29,9 +29,27 @@ final class FakeHTTPTransport: HTTPTransport, @unchecked Sendable {
     /// reproduce exactly that.
     private let drainsRequestBody: Bool
 
-    init(replies: [Reply], drainsRequestBody: Bool = true) {
+    /// When set, `send` throws this instead of consulting `replies` — a
+    /// transport-level failure (TLS, auth, timeout) rather than a mapped
+    /// HTTP status.
+    private let transportError: Error?
+
+    /// Only consulted when `transportError` is set. Simulates what a real
+    /// `URLSessionTask` does to its body stream when it tears itself down
+    /// after a transport failure: opens then closes the paired
+    /// `InputStream`, which delivers `.endEncountered` to the writer's
+    /// `OutputStream` — the reader-vanished event `BoundStreamWriter` reacts
+    /// to. Used to reproduce the precedence race in Finding 1 (fix round 3):
+    /// the reader-vanished event landing before `write`'s catch block even
+    /// gets to `pump.cancel()`.
+    private let closesBodyStreamOnFailure: Bool
+
+    init(replies: [Reply], drainsRequestBody: Bool = true,
+         transportError: Error? = nil, closesBodyStreamOnFailure: Bool = false) {
         self.replies = replies
         self.drainsRequestBody = drainsRequestBody
+        self.transportError = transportError
+        self.closesBodyStreamOnFailure = closesBodyStreamOnFailure
     }
 
     var requests: [URLRequest] {
@@ -49,6 +67,23 @@ final class FakeHTTPTransport: HTTPTransport, @unchecked Sendable {
         lock.lock()
         recordedRequests.append(request)
         lock.unlock()
+
+        if let transportError {
+            if closesBodyStreamOnFailure, let stream = request.httpBodyStream {
+                // Give the pump time to fill the bound pair's single buffer
+                // and park on it — the moment this race actually matters.
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                stream.open()
+                stream.close()
+                // Let the writer's dedicated thread process the resulting
+                // `.endEncountered` event and settle its terminal state
+                // BEFORE the transport error below is thrown, so the race
+                // this simulates is decided deterministically rather than by
+                // scheduling luck.
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+            throw transportError
+        }
 
         if drainsRequestBody, let stream = request.httpBodyStream {
             let body = try await Self.drain(stream)
