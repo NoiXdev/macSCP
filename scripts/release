@@ -44,79 +44,38 @@ else
     NOTARY_AUTH=(--keychain-profile "$PROFILE")
 fi
 
-# --- entitlements: expand $(TeamIdentifierPrefix) --------------------------
-# `$(TeamIdentifierPrefix)` is an XCODE BUILD-SETTING placeholder — Xcode's
-# build system substitutes it, but this script signs directly with
-# `codesign --entitlements <plist>`, which performs NO substitution at all.
-# Left unexpanded, the literal string "$(TeamIdentifierPrefix)dev.noix.macscp"
-# would be embedded as the access-group identifier: a syntactically invalid
-# group with no real team prefix, which becomes the DEFAULT group for new
-# keychain items (the first entry of keychain-access-groups), so a shipped
-# build would fail `SecItemAdd` with `errSecMissingEntitlement` and silently
-# stop saving passwords (M20 final-review finding). So the placeholder is
-# expanded here, into temporary copies of the entitlements plists, BEFORE
-# either binary is signed.
-#
-# The team identifier is derived from $IDENTITY itself — its Common Name
-# always ends in "(TEAMID)" — rather than hardcoded a second time; there is
-# then exactly one place in this script that names the team, and the two can
-# never drift apart.
-TEAM_ID="$(sed -E 's/.*\(([A-Z0-9]+)\)$/\1/' <<<"$IDENTITY")"
-[[ "$TEAM_ID" =~ ^[A-Z0-9]+$ ]] || {
-    echo "error: could not derive a team id from signing identity: $IDENTITY" >&2
-    exit 1; }
-
-ENTITLEMENTS_DIR="$(mktemp -d -t macscp-entitlements)"
-trap 'rm -rf "$ENTITLEMENTS_DIR"' EXIT
-APP_ENTITLEMENTS="$ENTITLEMENTS_DIR/macSCP.entitlements"
-CLI_ENTITLEMENTS="$ENTITLEMENTS_DIR/macscp-cli.entitlements"
-# The Xcode-expanded form of $(TeamIdentifierPrefix) is the team id followed
-# by a literal period — e.g. "5V8ZCK434F." — which is why the replacement
-# below appends "." after $TEAM_ID rather than relying on a separator already
-# present in the plist.
-sed "s/\$(TeamIdentifierPrefix)/${TEAM_ID}./" Resources/macSCP.entitlements > "$APP_ENTITLEMENTS"
-sed "s/\$(TeamIdentifierPrefix)/${TEAM_ID}./" Resources/macscp-cli.entitlements > "$CLI_ENTITLEMENTS"
-plutil -lint "$APP_ENTITLEMENTS" "$CLI_ENTITLEMENTS"
-# Belt-and-suspenders: fail loudly instead of silently shipping a broken
-# keychain group if the substitution somehow didn't take (e.g. the source
-# plist's placeholder spelling changed and this sed pattern no longer
-# matches it).
-grep -q 'TeamIdentifierPrefix' "$APP_ENTITLEMENTS" "$CLI_ENTITLEMENTS" && {
-    echo "error: entitlements substitution left the placeholder in place" >&2
-    exit 1; }
-
 # --- build + sign ----------------------------------------------------------
+# No entitlements are passed to `codesign`: the app is not sandboxed, and the
+# only entitlement either binary ever carried was a keychain access group
+# that macOS silently ignored (`kSecAttrAccessGroup` is honored solely by the
+# data-protection keychain, which a query opts into with
+# `kSecUseDataProtectionKeychain` — nothing here does). The CLI reads the
+# app's keychain items through per-item consent instead; see the README.
+# Hardened runtime stays on via `--options runtime`, which is a codesign
+# option, not an entitlement.
 MACSCP_VERSION="$VERSION" scripts/package-app
 
-# Resource bundles first (inside-out), then the app with hardened runtime.
+# Inside-out signing order, and it matters: every nested piece of code must
+# be signed BEFORE the enclosing bundle, or the app's signature seals stale
+# hashes and `codesign --verify --deep` rejects it.
+#   1. resource bundles
+#   2. macscp-cli — a second executable in Contents/MacOS/, shipped inside
+#      the bundle so it is covered by the app's signature and its
+#      notarization ticket (scripts/package-app puts it there). Hardened
+#      runtime on it too: notarization requires it of every executable.
+#      `lipo` already merged both architecture slices into this one file, so
+#      signing it once covers arm64 and x86_64.
+#   3. the app itself
 codesign --force --timestamp --sign "$IDENTITY" \
     "$APP/Contents/Resources/macSCP_MacSCPApp.bundle" \
     "$APP/Contents/Resources/macSCP_macSCPCore.bundle"
 codesign --force --options runtime --timestamp \
-    --entitlements "$APP_ENTITLEMENTS" \
+    --sign "$IDENTITY" "$APP/Contents/MacOS/macscp-cli"
+codesign --verify --strict "$APP/Contents/MacOS/macscp-cli"
+codesign --force --options runtime --timestamp \
     --sign "$IDENTITY" "$APP"
 codesign --verify --deep --strict "$APP"
 echo "signed: $(codesign -dv "$APP" 2>&1 | grep '^Authority=Developer ID Application')"
-
-# The CLI must carry the SAME keychain access group as the app, otherwise it
-# cannot read the secrets the app stored (M20). Ad-hoc dev builds have no team
-# identifier and therefore no group — that path falls back to per-item consent
-# (scripts/package-app, which this script calls above, is untouched by this).
-#
-# Both architecture slices are signed, not just arm64: package-app already
-# cross-builds macscp-cli for arm64-apple-macosx and x86_64-apple-macosx as a
-# side effect of assembling the universal app (it does the same two `swift
-# build --triple` calls and lipos the app binary from them). Signing only one
-# slice here would leave the other architecture's CLI silently without the
-# access group — a gap that would only show up as an unexplained fallback to
-# per-item keychain consent on whichever architecture was skipped.
-for TRIPLE in arm64-apple-macosx x86_64-apple-macosx; do
-    CLI_BIN="$(swift build -c release --triple "$TRIPLE" --show-bin-path)/macscp-cli"
-    codesign --force --options runtime --timestamp \
-        --entitlements "$CLI_ENTITLEMENTS" \
-        --sign "$IDENTITY" "$CLI_BIN"
-    codesign --verify --strict "$CLI_BIN"
-done
 
 # --- notarize the app, staple it -------------------------------------------
 ZIP="dist/macSCP-${VERSION}.zip"
@@ -152,6 +111,15 @@ xcrun stapler staple "$DMG"
 
 # --- final proof -----------------------------------------------------------
 spctl --assess --type execute -v "$APP"
+# The shipped CLI must have survived stapling with an intact Developer ID
+# signature — that stable signature is what a keychain "Always Allow" grant
+# is bound to, so a broken one here would silently re-prompt on every run.
+codesign --verify --strict "$APP/Contents/MacOS/macscp-cli"
+CLI_SIGNATURE="$(codesign -dv "$APP/Contents/MacOS/macscp-cli" 2>&1 || true)"
+case "$CLI_SIGNATURE" in
+    *"Authority=Developer ID Application"*) ;;
+    *) echo "error: shipped macscp-cli is not Developer ID signed" >&2; exit 1 ;;
+esac
 spctl --assess --type open --context context:primary-signature -v "$DMG"
 xcrun stapler validate "$APP"
 xcrun stapler validate "$DMG"

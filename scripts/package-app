@@ -29,6 +29,17 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 lipo -create "$ARM_BIN/macSCP" "$X86_BIN/macSCP" \
     -output "$APP/Contents/MacOS/macSCP"
+# The command-line companion ships INSIDE the bundle, next to the app
+# binary. Two reasons it lives here rather than beside the .app in the DMG:
+# `codesign` seals everything under Contents/ into the app's own signature,
+# so the CLI is covered by the release signature and by the app's
+# notarization ticket with no extra submission; and installing the app to
+# /Applications gives the CLI one stable, documentable path
+# (/Applications/macSCP.app/Contents/MacOS/macscp-cli) instead of a copy
+# the user has to place somewhere by hand. That stable signature is what
+# makes a keychain "Always Allow" decision stick across invocations.
+lipo -create "$ARM_BIN/macscp-cli" "$X86_BIN/macscp-cli" \
+    -output "$APP/Contents/MacOS/macscp-cli"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # Resource bundles are architecture-independent — take the arm64 build's.
 cp -R "$ARM_BIN/macSCP_MacSCPApp.bundle" "$APP/Contents/Resources/"
@@ -100,9 +111,12 @@ PLIST
 
 plutil -lint "$APP/Contents/Info.plist"
 test -x "$APP/Contents/MacOS/macSCP"
+test -x "$APP/Contents/MacOS/macscp-cli"
 # Both architectures must be present (Intel Macs run macOS 15 too).
-lipo -archs "$APP/Contents/MacOS/macSCP" | grep -q x86_64
-lipo -archs "$APP/Contents/MacOS/macSCP" | grep -q arm64
+for BIN in macSCP macscp-cli; do
+    lipo -archs "$APP/Contents/MacOS/$BIN" | grep -q x86_64
+    lipo -archs "$APP/Contents/MacOS/$BIN" | grep -q arm64
+done
 test -d "$APP/Contents/Resources/macSCP_MacSCPApp.bundle"
 test -d "$APP/Contents/Resources/macSCP_macSCPCore.bundle"
 test -d "$APP/Contents/Resources/en.lproj" -a -d "$APP/Contents/Resources/de.lproj" \
