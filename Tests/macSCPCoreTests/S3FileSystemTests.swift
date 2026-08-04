@@ -5,10 +5,10 @@ import Testing
 /// Canned-response transport (M12/T5): returns the next queued
 /// `(Data, HTTPURLResponse)` pair for each `send`, in order, and records
 /// every request it was asked to send. An `actor` because the queue is
-/// mutated across concurrent `await`s — `S3HTTPTransport` requires
+/// mutated across concurrent `await`s — `HTTPTransport` requires
 /// `Sendable`, and this is the simplest way to satisfy that honestly for a
 /// stateful fake (no `@unchecked` needed).
-actor FakeS3Transport: S3HTTPTransport {
+actor FakeS3Transport: HTTPTransport {
     private var responses: [(Data, HTTPURLResponse)]
     private(set) var requests: [URLRequest] = []
 
@@ -53,7 +53,7 @@ actor FakeS3Transport: S3HTTPTransport {
 /// exercise `S3FileSystem`'s network-failure → `.connectionFailed` mapping
 /// (`fetchPage`'s `catch` clause), which `FakeS3Transport` cannot reach since
 /// it only ever returns canned responses or a `RemoteFSError` of its own.
-struct ThrowingS3Transport: S3HTTPTransport {
+struct ThrowingS3Transport: HTTPTransport {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         throw URLError(.cannotConnectToHost)
     }
@@ -380,7 +380,7 @@ struct S3FileSystemTests {
 
     /// Proves `FakeS3Transport.sendStreaming` chunks a canned body into
     /// `TransferChunk.size` pieces (so `S3FileSystem.readStream`, wired in
-    /// T3, sees the same chunking the real `URLSessionS3Transport` would
+    /// T3, sees the same chunking the real `URLSessionHTTPTransport` would
     /// produce) and still returns the canned response. Deliberately
     /// independent of `S3FileSystem` — this only exercises the transport seam.
     @Test func fakeTransportSendStreamingChunksTheCannedBody() async throws {

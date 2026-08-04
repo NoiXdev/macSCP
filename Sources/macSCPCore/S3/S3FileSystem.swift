@@ -12,13 +12,13 @@ import Foundation
 ///
 /// `Sendable` by construction rather than `@unchecked`: both stored
 /// properties are immutable and themselves `Sendable` (`S3ConnectionConfig`
-/// is a `Sendable` struct; `any S3HTTPTransport` requires `Sendable`), so
+/// is a `Sendable` struct; `any HTTPTransport` requires `Sendable`), so
 /// there is no shared mutable state to race on.
 public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     private let config: S3ConnectionConfig
-    private let transport: any S3HTTPTransport
+    private let transport: any HTTPTransport
 
-    private init(config: S3ConnectionConfig, transport: any S3HTTPTransport) {
+    private init(config: S3ConnectionConfig, transport: any HTTPTransport) {
         self.config = config
         self.transport = transport
     }
@@ -27,7 +27,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// root (prefix `""`). Maps HTTP 403 → `.authenticationFailed`, 404 →
     /// `.notFound`, and any transport/network failure → `.connectionFailed`.
     public static func connect(
-        _ config: S3ConnectionConfig, transport: any S3HTTPTransport = URLSessionS3Transport()
+        _ config: S3ConnectionConfig, transport: any HTTPTransport = URLSessionHTTPTransport()
     ) async throws -> S3FileSystem {
         let fs = S3FileSystem(config: config, transport: transport)
         _ = try await fs.fetchPage(prefix: "", continuationToken: nil)
