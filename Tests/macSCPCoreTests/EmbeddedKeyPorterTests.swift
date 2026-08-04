@@ -120,7 +120,17 @@ struct EmbeddedKeyPorterTests {
 
         let outcome = TestBox<Result<EmbeddedKey?, any Error>?>(nil)
         let finished = DispatchSemaphore(value: 0)
-        DispatchQueue.global().async {
+        // A dedicated thread, not `DispatchQueue.global()`: this test blocks a
+        // thread on `finished.wait` while Swift Testing runs the rest of the
+        // suite in parallel, and on a CPU-poor CI runner the pool can leave a
+        // newly submitted block unscheduled for longer than the watchdog below
+        // allows. That failed the test for a reason that has nothing to do with
+        // the invariant — observed on CI, where BOTH waits below timed out,
+        // which is only possible if the work never ran at all (had `embed`
+        // really blocked on the FIFO, the O_WRONLY open would have released it
+        // and the second wait would have returned at once). `Thread` is
+        // scheduled on its own and cannot be starved by pool work.
+        Thread.detachNewThread {
             outcome.value = Result {
                 try EmbeddedKeyPorter.embed(
                     keyPath: fifoPath, includePassphrase: true, store: store, secrets: secrets)
