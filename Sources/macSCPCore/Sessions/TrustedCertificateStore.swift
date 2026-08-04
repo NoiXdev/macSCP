@@ -50,10 +50,14 @@ public struct TrustedCertificate: Codable, Equatable, Sendable {
 /// JSON persistence of trusted server certificates. Same pattern as
 /// `KnownHostsStore`: stateless, atomic writes, single-app assumption.
 public struct TrustedCertificateStore: Sendable {
-    private let fileURL: URL
+    private let directory: URL
 
     public init(directory: URL) {
-        self.fileURL = directory.appendingPathComponent("trusted-certificates.json")
+        self.directory = directory
+    }
+
+    private var fileURL: URL {
+        directory.appendingPathComponent("trusted-certificates.json")
     }
 
     public func find(host: String, port: Int) throws -> TrustedCertificate? {
@@ -86,6 +90,7 @@ public struct TrustedCertificateStore: Sendable {
     }
 
     private func write(_ certificates: [TrustedCertificate]) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
