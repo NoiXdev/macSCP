@@ -7,7 +7,10 @@ struct ConnectionKindTests {
     @Test func kindRawValues() {
         #expect(ConnectionKind.ssh.rawValue == "ssh")
         #expect(ConnectionKind.s3.rawValue == "s3")
-        #expect(ConnectionKind.allCases.count == 2)
+        #expect(ConnectionKind.webdav.rawValue == "webdav")
+        // Pinned count (M21/T8 added `.webdav`): a change here should be a
+        // deliberate decision, not a silent side effect of adding a case.
+        #expect(ConnectionKind.allCases.count == 3)
     }
 
     @Test func configReportsKind() {

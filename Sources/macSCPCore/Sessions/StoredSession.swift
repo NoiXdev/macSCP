@@ -90,6 +90,10 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
     /// for SSH sessions and on legacy JSON. The secret access key is NOT here
     /// (Keychain only) — this is `StoredS3Config`, not the runtime config.
     public var s3: StoredS3Config? = nil
+    /// Persisted, SECRET-FREE WebDAV parameters when `kind == .webdav` (M21).
+    /// `nil` for SSH/S3 sessions and on legacy JSON. The password is NOT here
+    /// (Keychain only) -- this is `StoredWebDAVConfig`, not the runtime config.
+    public var webdav: StoredWebDAVConfig? = nil
 
     public init(
         id: UUID = UUID(),
@@ -103,7 +107,8 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         loginSetID: UUID? = nil,
         jump: JumpSpec? = nil,
         kind: ConnectionKind = .ssh,
-        s3: StoredS3Config? = nil
+        s3: StoredS3Config? = nil,
+        webdav: StoredWebDAVConfig? = nil
     ) {
         self.id = id
         self.name = name
@@ -117,10 +122,11 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         self.jump = jump
         self.kind = kind
         self.s3 = s3
+        self.webdav = webdav
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, host, port, username, authKind, keyPath, groupID, loginSetID, jump, kind, s3
+        case id, name, host, port, username, authKind, keyPath, groupID, loginSetID, jump, kind, s3, webdav
     }
 
     public init(from decoder: Decoder) throws {
@@ -137,6 +143,7 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         jump = try c.decodeIfPresent(JumpSpec.self, forKey: .jump)
         kind = try c.decodeIfPresent(ConnectionKind.self, forKey: .kind) ?? .ssh
         s3 = try c.decodeIfPresent(StoredS3Config.self, forKey: .s3)
+        webdav = try c.decodeIfPresent(StoredWebDAVConfig.self, forKey: .webdav)
     }
 
 }

@@ -107,6 +107,8 @@ public enum CLIErrorMapping {
                     + "which the CLI does not resolve yet"
             case .missingS3Configuration:
                 return "Error: the stored session is missing its S3 configuration"
+            case .missingWebDAVConfiguration:
+                return "Error: the stored session is missing its WebDAV configuration"
             case .secretRequired:
                 return "Error: no secret available (checked --password-command, "
                     + "the environment, and the keychain)"

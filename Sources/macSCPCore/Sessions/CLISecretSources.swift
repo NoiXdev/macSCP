@@ -180,7 +180,7 @@ public func secretSources(
     passwordCommand: String?,
     keychainStore: any SecretStore = KeychainSecretStore()
 ) -> [any SecretSource] {
-    let needsSecret = session.kind == .s3
+    let needsSecret = session.kind == .s3 || session.kind == .webdav
         || (session.kind == .ssh && session.authKind != .agent)
     guard needsSecret else { return [] }
 
@@ -193,6 +193,12 @@ public func secretSources(
         sources.append(EnvironmentSecretSource(variableName: "MACSCP_PASSWORD"))
     case .s3:
         sources.append(EnvironmentSecretSource(variableName: "AWS_SECRET_ACCESS_KEY"))
+    case .webdav:
+        // No S3-style conventional variable name exists for WebDAV -- it
+        // authenticates with a plain password (or a Nextcloud-style "app
+        // password"), the same shape as SSH password auth, so this reuses
+        // the SSH variable name rather than inventing a third one.
+        sources.append(EnvironmentSecretSource(variableName: "MACSCP_PASSWORD"))
     }
     // Last resort, and the comfortable one at a workstation: the very same
     // keychain items the app writes. macOS asks the user for consent the

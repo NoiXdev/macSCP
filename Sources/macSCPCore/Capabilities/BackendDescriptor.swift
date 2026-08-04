@@ -14,6 +14,7 @@ public struct BackendDescriptor: Sendable, Equatable {
         switch kind {
         case .ssh: return .sshDescriptor
         case .s3: return .s3Descriptor
+        case .webdav: return .webdavDescriptor
         }
     }
 
@@ -54,4 +55,39 @@ public struct BackendDescriptor: Sendable, Equatable {
         fileActions: [
             FileActionContribution(id: "s3.presignedURL", titleKey: "browser.action.presignedURL", titleDefault: "Share Link…"),
         ], connectionActions: [])
+
+    /// The two capability axes that deliberately flip against S3 (M21): real
+    /// directories and atomic rename, the exact two WebDAV actually has and
+    /// S3 does not. Everything else mirrors S3 -- no shell, no POSIX
+    /// permissions, no symlinks, range-GET resume, no presigned URLs, and
+    /// optional TLS (WebDAV is commonly run over plain HTTP on a home NAS).
+    static let webdavDescriptor = BackendDescriptor(
+        kind: .webdav,
+        capabilities: ProtocolCapabilities(
+            supportsShell: false, permissionModel: .none, supportsSymlinks: false,
+            atomicRename: true, directoriesAreReal: true, resumeMode: .rangeGet,
+            supportsPresignedURL: false, transport: .optionalTLS),
+        fieldSchema: ConnectionFieldSchema(
+            fields: [
+                ConnectionField(id: "baseURL", labelKey: "connection.webdav.baseURL",
+                                labelDefault: "Server URL", kind: .text),
+                ConnectionField(id: "username", labelKey: "connection.webdav.username",
+                                labelDefault: "User name", kind: .text),
+                ConnectionField(id: "password", labelKey: "connection.webdav.password",
+                                labelDefault: "Password", kind: .secret),
+                ConnectionField(id: "useNextcloudPath", labelKey: "connection.webdav.nextcloudPath",
+                                labelDefault: "Append Nextcloud path", kind: .toggle),
+            ],
+            presets: [
+                // Sets only the toggle: the server origin is the user's, and a
+                // preset that guessed at it would be wrong for everyone.
+                ConnectionPreset(id: "nextcloud", nameKey: "connection.webdav.preset.nextcloud",
+                                 nameDefault: "Nextcloud / ownCloud",
+                                 values: ["useNextcloudPath": "true"]),
+                ConnectionPreset(id: "custom", nameKey: "connection.webdav.preset.custom",
+                                 nameDefault: "Custom",
+                                 values: ["useNextcloudPath": "false"]),
+            ]),
+        badgeLabelKey: "connection.badge.webdav", badgeLabelDefault: "WebDAV",
+        fileActions: [], connectionActions: [])
 }

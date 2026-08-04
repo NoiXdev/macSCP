@@ -242,12 +242,23 @@ public final class ConnectionViewModel {
     /// an `if kind == .s3` branch through the existing body -- is what
     /// makes "SSH connect path byte-identical" a structural guarantee
     /// instead of a hopeful claim.
+    ///
+    /// `.webdav` (M21/T8) is a PLACEHOLDER: the form fields
+    /// (`webdavBaseURL`/`webdavUseNextcloudPath`) and the real
+    /// `connectWebDAV()` body are Task 9's job (same split this file
+    /// already uses for S3). This case exists only so the switch compiles
+    /// now that `ConnectionKind` has a third case -- it cannot "read the
+    /// descriptor" the way the brief asks for other seams, because there is
+    /// no typed field to read yet.
     public func connect() async -> (any RemoteFileSystem)? {
         guard state != .connecting else { return nil }
         defer { hostKeyPrompt = nil }
         switch kind {
         case .ssh: return await connectSSH()
         case .s3: return await connectS3()
+        case .webdav:
+            state = .failed(message: CoreL10n.string("core.connect.webdavNotYetAvailable"), field: nil)
+            return nil
         }
     }
 
@@ -656,11 +667,21 @@ public final class ConnectionViewModel {
     /// unchanged (`validateForEditSaveSSH(sessionID:)`); `.s3` runs the
     /// new, separate `validateForEditSaveS3(sessionID:)` -- same
     /// byte-identical-SSH-path rationale as the `connect()` split above.
+    ///
+    /// `.webdav` (M21/T8) is unreachable in practice: `connect()`'s own
+    /// placeholder above never succeeds, so no WebDAV session can be saved
+    /// (and thus later edited) before Task 9 lands. Kept exhaustive with the
+    /// same `.failed` placeholder shape as `connect()` rather than a
+    /// `default:` -- a future case added to `ConnectionKind` must force a
+    /// decision here too.
     public func validateForEditSave() -> StoredSession? {
         guard case .edit(let sessionID) = mode else { return nil }
         switch kind {
         case .ssh: return validateForEditSaveSSH(sessionID: sessionID)
         case .s3: return validateForEditSaveS3(sessionID: sessionID)
+        case .webdav:
+            state = .failed(message: CoreL10n.string("core.connect.webdavNotYetAvailable"), field: nil)
+            return nil
         }
     }
 

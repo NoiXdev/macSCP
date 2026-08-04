@@ -16,6 +16,8 @@ public enum StoredSessionConnectionError: Error, Equatable, Sendable {
     case jumpSessionsNotSupported
     /// `kind == .s3` but `s3` is `nil` — inconsistent stored data.
     case missingS3Configuration
+    /// `kind == .webdav` but `webdav` is `nil` — inconsistent stored data.
+    case missingWebDAVConfiguration
     /// The session needs an actual secret (password, key passphrase, or S3
     /// secret access key) and none of the staged sources produced one.
     case secretRequired
@@ -47,6 +49,8 @@ public enum StoredSessionConnectionConfig {
             return .ssh(try buildSSH(for: session, secret: secret))
         case .s3:
             return .s3(try buildS3(for: session, secret: secret))
+        case .webdav:
+            return .webdav(try buildWebDAV(for: session, secret: secret))
         }
     }
 
@@ -89,5 +93,17 @@ public enum StoredSessionConnectionConfig {
             throw StoredSessionConnectionError.secretRequired
         }
         return S3ConnectionConfig(stored: stored, secretAccessKey: secret)
+    }
+
+    private static func buildWebDAV(
+        for session: StoredSession, secret: String?
+    ) throws -> WebDAVConnectionConfig {
+        guard let stored = session.webdav else {
+            throw StoredSessionConnectionError.missingWebDAVConfiguration
+        }
+        guard let secret, !secret.isEmpty else {
+            throw StoredSessionConnectionError.secretRequired
+        }
+        return WebDAVConnectionConfig(stored: stored, password: secret)
     }
 }
