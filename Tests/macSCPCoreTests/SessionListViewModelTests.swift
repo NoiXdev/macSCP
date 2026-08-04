@@ -124,6 +124,35 @@ struct SessionListViewModelTests {
         #expect(!raw.contains("SECRET"))
     }
 
+    /// Review fix (bug-fix round after Task 9): mirrors
+    /// `saveWithS3KindPersistsConfigAndKeepsSecretInKeychainOnly` above for
+    /// WebDAV. Before this fix, `save(...)` had no `webdav:` parameter at
+    /// all, so `ContentView.startSession`'s "Save & connect" path could not
+    /// carry a WebDAV session's `baseURL`/`useNextcloudPath` through --
+    /// it silently fell back to `kind: .ssh, s3: nil`, producing a stored
+    /// session that can never connect again. This proves the fixed `save()`
+    /// persists `kind == .webdav` and a populated, secret-free
+    /// `StoredWebDAVConfig`, with the password in the Keychain only.
+    @Test func saveWithWebDAVKindPersistsConfigAndKeepsSecretInKeychainOnly() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let webdav = StoredWebDAVConfig(
+            baseURL: "https://dav.example.com/dav", username: "dave", useNextcloudPath: true)
+        let stored = vm.save(
+            name: "dav-prod", host: "unused", port: 22, username: "unused", password: "SECRET",
+            kind: .webdav, webdav: webdav)
+
+        #expect(stored != nil)
+        #expect(stored?.kind == .webdav)
+        #expect(stored?.webdav == webdav)
+        #expect(vm.sessions.first?.kind == .webdav)
+        #expect(vm.sessions.first?.webdav == webdav)
+        #expect(try secrets.password(for: stored!.id) == "SECRET")
+
+        let raw = try String(contentsOf: dir.appendingPathComponent("sessions.json"), encoding: .utf8)
+        #expect(!raw.contains("SECRET"))
+    }
+
     @Test func saveWithFailingSecretsStillReloadsFromDisk() {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-slvm-fail-\(UUID().uuidString)")
