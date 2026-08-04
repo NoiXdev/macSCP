@@ -54,8 +54,11 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
             known = try trustStore.find(host: candidate.host, port: candidate.port)
         } catch {
             // Store unreadable → fail closed. Treating it as "unknown" would
-            // silently re-TOFU and overwrite a remembered certificate.
-            setError(.rejectedByUser)
+            // silently re-TOFU and overwrite a remembered certificate. This
+            // is not a user refusal — keep the two distinguishable so
+            // whatever surfaces the error doesn't misreport a corrupt store
+            // as a certificate the user declined.
+            setError(.trustStoreUnreadable(reason: "trust store read failed"))
             return false
         }
 

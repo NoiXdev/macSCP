@@ -43,6 +43,12 @@ public enum ServerCertificateFingerprint {
 public enum ServerCertificateError: Error, Equatable, Sendable {
     case mismatch(host: String, expected: String, presented: String)
     case rejectedByUser
+    /// The trust store could not be read (missing permissions, corrupt
+    /// JSON, etc.) — distinct from `.rejectedByUser` so callers never
+    /// report a user refusal that never happened. `reason` is a short
+    /// failure category only; it must never carry file contents or other
+    /// secrets.
+    case trustStoreUnreadable(reason: String)
 }
 
 /// Pure, testable TOFU decision logic for server certificates. Mirrors
