@@ -463,6 +463,7 @@
 /* Menu Sessions (M10a/T2, M10b/T3) */
 "menu.sessions" = "Sessions";
 "menu.knownHosts" = "Hôtes connus…";
+"menu.serverCertificates" = "Certificats serveur…";
 "menu.logins" = "Logins…";
 "menu.sshKeys" = "Clés SSH…";
 "menu.hiddenImports" = "Imports masqués…";

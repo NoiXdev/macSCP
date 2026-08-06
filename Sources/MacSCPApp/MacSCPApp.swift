@@ -18,6 +18,11 @@ final class TabCommands {
     /// M9a handlers (`exportSheetItem`/`showImportFileImporter`) — the
     /// sidebar's own "Export All…"/"Import…" entries are untouched.
     var showKnownHosts: (() -> Void)?
+    /// "Server Certificates…" — same bridge shape/key-window guard as
+    /// `showKnownHosts` above, opens the server-certificate management sheet.
+    /// Its own entry rather than a section inside the known-hosts sheet; see
+    /// `ServerCertificatesSheet`'s doc comment.
+    var showServerCertificates: (() -> Void)?
     /// "Logins…" (M10b/T3) — same bridge shape/key-window guard as
     /// `showKnownHosts` above, opens the login-sets management sheet.
     var showLogins: (() -> Void)?
@@ -223,6 +228,12 @@ struct MacSCPApp: App {
                     tabCommands.showKnownHosts?()
                 }
                 .keyboardShortcut("k", modifiers: [.command, .shift])
+                // "Server Certificates…": no shortcut — ⇧⌘K and ⇧⌘L are
+                // taken, and "SSH Keys…"/"Hidden Imports…" set the precedent
+                // that a management sheet does not need one.
+                Button(L10n.string("menu.serverCertificates", "Server Certificates…")) {
+                    tabCommands.showServerCertificates?()
+                }
                 Button(L10n.string("menu.logins", "Logins…")) {
                     tabCommands.showLogins?()
                 }

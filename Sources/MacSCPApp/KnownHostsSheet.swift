@@ -11,14 +11,6 @@ private struct KnownHostRow: Identifiable {
     var id: String { "\(key.host):\(key.port)" }
 }
 
-/// Wraps a `TrustedCertificate` the same way `KnownHostRow` wraps a
-/// `KnownHostKey` (M21/T10) — host+port is its natural key too, matching
-/// `TrustedCertificateStore.remove(host:port:)`.
-private struct TrustedCertificateRow: Identifiable {
-    let certificate: TrustedCertificate
-    var id: String { "\(certificate.host):\(certificate.port)" }
-}
-
 /// Known-hosts management sheet (M10a/T2, mockup section 1): lists every
 /// remembered TOFU host key (`KnownHostsStore.allKeys()`), with search over
 /// host+fingerprint, multi-selection "Remove…" (forgets the host — the next
@@ -27,12 +19,13 @@ private struct TrustedCertificateRow: Identifiable {
 /// `AuditLogSheet` (`Table` + caption footer + destructive
 /// `confirmationDialog`) for consistency across the app's management sheets.
 ///
-/// A second section (M21/T10) lists every remembered TOFU server
-/// certificate (`TrustedCertificateStore.allCertificates()`) the exact same
-/// way — host keys and certificates are the same kind of trust decision for
-/// two different transports, so this sheet is where BOTH get managed rather
-/// than growing a second window. The search field above applies to both
-/// sections at once.
+/// Server certificates used to live here too, as a second section appended
+/// below (M21/T10). They now have their own overlay
+/// (`ServerCertificatesSheet`, reachable from the Sessions menu): stacking
+/// two unrelated tables in one 700 pt sheet left a large dead band between
+/// them and squeezed the certificate table's five columns until the
+/// fingerprint ran off the right edge. The two sheets are siblings now, the
+/// way `LoginSetsSheet` and `HiddenImportsSheet` are.
 ///
 /// `Table` with `Set<String>` selection (not `List`): the mockup's five
 /// fixed columns (Host/Port/Key type/Fingerprint/Added) map directly onto
@@ -41,25 +34,14 @@ private struct TrustedCertificateRow: Identifiable {
 /// `EditButton`/selection-mode dance for the same behavior.
 struct KnownHostsSheet: View {
     let store: KnownHostsStore
-    /// Defaults to the same directory `store` above uses in every existing
-    /// call site (M21/T10) — both call sites (`ConnectionFormView`,
-    /// `ContentView`) construct `KnownHostsSheet` with
-    /// `KnownHostsStore(directory: SessionStore.defaultDirectory)`, so a
-    /// matching default here needed no changes at either site.
-    var certificateStore: TrustedCertificateStore = TrustedCertificateStore(
-        directory: SessionStore.defaultDirectory)
 
     @Environment(\.dismiss) private var dismiss
     @State private var rows: [KnownHostRow] = []
     @State private var selection: Set<String> = []
-    @State private var certificateRows: [TrustedCertificateRow] = []
-    @State private var certificateSelection: Set<String> = []
     @State private var searchText = ""
     @State private var searchIsRegex = false
     @State private var errorMessage: String?
-    @State private var certificateErrorMessage: String?
     @State private var isShowingRemoveConfirm = false
-    @State private var isShowingRemoveCertConfirm = false
 
     /// `dd.MM.yyyy` (spec) — `en_US_POSIX` pins the literal pattern so it
     /// renders identically regardless of the user's locale, same rationale
@@ -76,24 +58,10 @@ struct KnownHostsSheet: View {
         return rows.filter { predicate.matches("\($0.key.host) \($0.key.fingerprintSHA256)") }
     }
 
-    /// Same predicate as `filteredRows` above, applied to the certificate
-    /// rows — the search field is shared (M21/T10), so both sections filter
-    /// off the identical `searchText`/`searchIsRegex` state.
-    private var filteredCertificateRows: [TrustedCertificateRow] {
-        let (predicate, _) = sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)
-        return certificateRows.filter {
-            predicate.matches("\($0.certificate.host) \($0.certificate.fingerprintSHA256)")
-        }
-    }
-
     private var isUnfiltered: Bool { searchText.isEmpty }
 
     private var selectedRows: [KnownHostRow] {
         filteredRows.filter { selection.contains($0.id) }
-    }
-
-    private var selectedCertificateRows: [TrustedCertificateRow] {
-        filteredCertificateRows.filter { certificateSelection.contains($0.id) }
     }
 
     var body: some View {
@@ -113,12 +81,13 @@ struct KnownHostsSheet: View {
             // A non-empty `rows` with an empty `filteredRows` means the
             // search matched nothing, not that the store is empty (M18/T2).
             if filteredRows.isEmpty && errorMessage == nil {
+                Spacer(minLength: 0)
                 Text(rows.isEmpty
                     ? L10n.string("knownHosts.empty", "No known hosts yet.")
                     : L10n.string("knownHosts.noMatches", "No matches."))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .frame(minHeight: 60)
+                Spacer(minLength: 0)
             } else {
                 Table(filteredRows, selection: $selection) {
                     TableColumn(L10n.string("knownHosts.column.host", "Host")) { row in
@@ -130,7 +99,7 @@ struct KnownHostsSheet: View {
                     }
                     .width(min: 50, ideal: 60, max: 70)
                     TableColumn(L10n.string("knownHosts.column.keyType", "Key type")) { row in
-                        typeBadge(row.key.keyType)
+                        keyTypeBadge(row.key.keyType)
                     }
                     .width(min: 70, ideal: 90, max: 110)
                     TableColumn(L10n.string("knownHosts.column.fingerprint", "Fingerprint")) { row in
@@ -144,7 +113,6 @@ struct KnownHostsSheet: View {
                     }
                     .width(min: 90, ideal: 100, max: 120)
                 }
-                .frame(minHeight: 140, maxHeight: 200)
             }
 
             HStack {
@@ -162,75 +130,14 @@ struct KnownHostsSheet: View {
                 }
                 .buttonStyle(.polished)
                 .disabled(selectedRows.isEmpty)
-            }
-
-            Divider()
-
-            // Second section (M21/T10): remembered server certificates,
-            // mirroring the host-key section above row for row.
-            Text(L10n.string("knownHosts.section.certificates", "Server certificates"))
-                .font(.headline)
-
-            if let certificateErrorMessage {
-                Text(certificateErrorMessage).font(.caption).foregroundStyle(.red).lineLimit(2)
-            }
-
-            if filteredCertificateRows.isEmpty && certificateErrorMessage == nil {
-                Text(certificateRows.isEmpty
-                    ? L10n.string("knownHosts.cert.empty", "No trusted certificates yet.")
-                    : L10n.string("knownHosts.cert.noMatches", "No matches."))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .frame(minHeight: 60)
-            } else {
-                Table(filteredCertificateRows, selection: $certificateSelection) {
-                    TableColumn(L10n.string("knownHosts.cert.column.host", "Host")) { row in
-                        Text(row.certificate.host)
-                    }
-                    .width(min: 140, ideal: 200)
-                    TableColumn(L10n.string("knownHosts.cert.column.port", "Port")) { row in
-                        Text(String(row.certificate.port))
-                    }
-                    .width(min: 50, ideal: 60, max: 70)
-                    TableColumn(L10n.string("knownHosts.cert.column.subject", "Subject")) { row in
-                        Text(row.certificate.subject)
-                    }
-                    .width(min: 120, ideal: 180)
-                    TableColumn(L10n.string("knownHosts.cert.column.fingerprint", "Fingerprint")) { row in
-                        Text(row.certificate.fingerprintSHA256)
-                            .font(.system(size: 11.5, design: .monospaced))
-                            .foregroundStyle(DesignTokens.inkSecondary)
-                    }
-                    .width(min: 180, ideal: 220)
-                    TableColumn(L10n.string("knownHosts.cert.column.expires", "Expires")) { row in
-                        Text(dateText(row.certificate.notAfter))
-                    }
-                    .width(min: 90, ideal: 100, max: 120)
-                }
-                .frame(minHeight: 140, maxHeight: 200)
-            }
-
-            HStack {
-                Text(certificateFooterText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button(L10n.string("knownHosts.cert.remove", "Remove…"), role: .destructive) {
-                    isShowingRemoveCertConfirm = true
-                }
-                .buttonStyle(.polished)
-                .disabled(selectedCertificateRows.isEmpty)
                 Button(L10n.string("common.close", "Close")) { dismiss() }
                     .buttonStyle(.polishedProminent)
                     .keyboardShortcut(.defaultAction)
             }
         }
         .padding(20)
-        .frame(width: 720, height: 700)
-        .onAppear {
-            load()
-            loadCertificates()
-        }
+        .frame(width: 720, height: 460)
+        .onAppear { load() }
         .confirmationDialog(
             L10n.string("knownHosts.remove.title", "Remove known host?"),
             isPresented: $isShowingRemoveConfirm,
@@ -243,23 +150,11 @@ struct KnownHostsSheet: View {
         } message: {
             Text(removeConfirmMessage)
         }
-        .confirmationDialog(
-            L10n.string("knownHosts.cert.remove.title", "Remove trusted certificate?"),
-            isPresented: $isShowingRemoveCertConfirm,
-            titleVisibility: .visible
-        ) {
-            Button(L10n.string("knownHosts.cert.remove.confirm", "Remove"), role: .destructive) {
-                removeSelectedCertificates()
-            }
-            Button(L10n.string("common.cancel", "Cancel"), role: .cancel) {}
-        } message: {
-            Text(removeCertConfirmMessage)
-        }
     }
 
     @ViewBuilder
-    private func typeBadge(_ label: String) -> some View {
-        Text(label.uppercased())
+    private func keyTypeBadge(_ keyType: String) -> some View {
+        Text(keyType.uppercased())
             .font(.system(size: 10, weight: .semibold))
             .padding(.horizontal, 7)
             .padding(.vertical, 2)
@@ -282,16 +177,6 @@ struct KnownHostsSheet: View {
             filteredRows.count, total)
     }
 
-    private var certificateFooterText: String {
-        let total = certificateRows.count
-        if isUnfiltered {
-            return String(format: L10n.string("knownHosts.cert.count %lld", "%lld certificates"), total)
-        }
-        return String(
-            format: L10n.string("knownHosts.cert.countFiltered %lld %lld", "%lld of %lld"),
-            filteredCertificateRows.count, total)
-    }
-
     private var removeConfirmMessage: String {
         if selectedRows.count > 1 {
             return String(
@@ -305,19 +190,6 @@ struct KnownHostsSheet: View {
             "The host will be treated as unknown on the next connect (new trust prompt).")
     }
 
-    private var removeCertConfirmMessage: String {
-        if selectedCertificateRows.count > 1 {
-            return String(
-                format: L10n.string(
-                    "knownHosts.cert.remove.messageMany %lld",
-                    "%lld certificates will be treated as unknown on the next connect (new trust prompts)."),
-                selectedCertificateRows.count)
-        }
-        return L10n.string(
-            "knownHosts.cert.remove.message",
-            "The certificate will be treated as unknown on the next connect (new trust prompt).")
-    }
-
     private func load() {
         do {
             rows = try store.allKeys().map(KnownHostRow.init)
@@ -326,19 +198,6 @@ struct KnownHostsSheet: View {
             rows = []
             errorMessage = String(
                 format: L10n.string("knownHosts.loadError %@", "Could not load known hosts: %@"),
-                String(describing: error))
-        }
-    }
-
-    private func loadCertificates() {
-        do {
-            certificateRows = try certificateStore.allCertificates().map(TrustedCertificateRow.init)
-            certificateErrorMessage = nil
-        } catch {
-            certificateRows = []
-            certificateErrorMessage = String(
-                format: L10n.string(
-                    "knownHosts.cert.loadError %@", "Could not load trusted certificates: %@"),
                 String(describing: error))
         }
     }
@@ -374,26 +233,6 @@ struct KnownHostsSheet: View {
         load()
         if let removeError {
             errorMessage = removeError
-        }
-    }
-
-    /// Mirrors `removeSelected()` above, for the certificate section.
-    private func removeSelectedCertificates() {
-        var removeError: String?
-        for row in selectedCertificateRows {
-            do {
-                try certificateStore.remove(host: row.certificate.host, port: row.certificate.port)
-            } catch {
-                removeError = String(
-                    format: L10n.string(
-                        "knownHosts.cert.removeError %@", "Could not remove the certificate: %@"),
-                    String(describing: error))
-            }
-        }
-        certificateSelection = []
-        loadCertificates()
-        if let removeError {
-            certificateErrorMessage = removeError
         }
     }
 }
