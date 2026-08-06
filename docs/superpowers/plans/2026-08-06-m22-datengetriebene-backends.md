@@ -302,6 +302,47 @@ struct FieldVisibilityTests {
         #expect(FieldVisibility.isVisible(field, in: values, namespace: "VField"))
         #expect(!FieldVisibility.isVisible(field, in: values, namespace: "OtherBackendField"))
     }
+
+    /// Which fields a form should render is a pure function of the schema and
+    /// the current values. It lives in Core so it is provable without a view —
+    /// the renderer in Task 7 does nothing but walk this list.
+    @Test func visibleFieldsFiltersByCondition() {
+        let schema = ConnectionFieldSchema(
+            fields: [
+                ConnectionField(id: VField.authKind.rawValue, labelKey: "a",
+                                labelDefault: "Auth", kind: .text),
+                keyPathField(condition: FieldCondition(
+                    field: VField.authKind.rawValue, equals: "privateKey")),
+            ],
+            presets: [])
+
+        var values = FieldValues()
+        values[VField.authKind] = "password"
+        #expect(schema.visibleFields(in: values, namespace: "VField").map(\.id)
+            == [VField.authKind.rawValue])
+
+        values[VField.authKind] = "privateKey"
+        #expect(schema.visibleFields(in: values, namespace: "VField").map(\.id)
+            == [VField.authKind.rawValue, VField.keyPath.rawValue])
+    }
+
+    /// A group's own leaves are filtered too, and the group survives even when
+    /// some of its leaves do not.
+    @Test func visibleLeavesFilterIndependentlyOfTheGroup() {
+        let leaves = [
+            LeafField(id: "always", labelKey: "a", labelDefault: "A", kind: .text),
+            LeafField(id: "conditional", labelKey: "c", labelDefault: "C", kind: .text,
+                      visibleWhen: FieldCondition(
+                        field: VField.authKind.rawValue, equals: "privateKey")),
+        ]
+        let group = ConnectionField(id: "grp", labelKey: "g", labelDefault: "G",
+                                    kind: .group(leaves))
+        var values = FieldValues()
+        values[VField.authKind] = "password"
+        #expect(ConnectionFieldSchema.visibleLeaves(of: group, in: values,
+                                                    namespace: "VField").map(\.id)
+            == ["always"])
+    }
 }
 ```
 
@@ -445,6 +486,48 @@ public struct ConnectionField: Sendable, Equatable, Identifiable {
 ```
 
 The existing S3 and WebDAV descriptors already call `ConnectionField(id:labelKey:labelDefault:kind:)` — the new parameter has a default, so they keep compiling unchanged.
+
+Then add the filter, so "which fields does this form show right now" is a pure function in Core rather than logic buried in a view:
+
+```swift
+extension ConnectionFieldSchema {
+    /// The fields a form should render for these values. Pure, so the rule is
+    /// provable without a view — the renderer walks this and nothing else.
+    public func visibleFields(in values: FieldValues, namespace: String) -> [ConnectionField] {
+        fields.filter { FieldVisibility.isVisible($0, in: values, namespace: namespace) }
+    }
+
+    /// A group's visible leaves. A leaf's condition is evaluated the same way
+    /// as a top-level field's, so a group can show and hide its own members.
+    public static func visibleLeaves(
+        of field: ConnectionField, in values: FieldValues, namespace: String
+    ) -> [LeafField] {
+        guard case .group(let leaves) = field.kind else { return [] }
+        return leaves.filter { FieldVisibility.isVisible($0, in: values, namespace: namespace) }
+    }
+}
+```
+
+And give `ConnectionField.Kind` its leaf twin as an **optional** computed property, so the one impossible case cannot silently yield a wrong value:
+
+```swift
+extension ConnectionField.Kind {
+    /// The `LeafField.Kind` this maps to, or nil for `.group` — which has no
+    /// leaf equivalent by construction. Returning an Optional rather than a
+    /// stand-in means a caller that forgets the group case fails to compile
+    /// instead of quietly rendering a text field.
+    public var asLeafKind: LeafField.Kind? {
+        switch self {
+        case .text: return .text
+        case .number: return .number
+        case .secret: return .secret
+        case .toggle: return .toggle
+        case .picker(let source): return .picker(source)
+        case .group: return nil
+        }
+    }
+}
+```
 
 - [ ] **Step 5: Run the tests and the full suite**
 
@@ -1418,50 +1501,15 @@ One renderer for all three backends. The App contributes exactly one thing: a re
 **Files:**
 - Create: `Sources/MacSCPApp/SchemaFormView.swift`
 - Modify: `Sources/MacSCPApp/ConnectionFormView.swift`
-- Test: `Tests/macSCPCoreTests/OptionResolverTests.swift`
+- Test: none new — see the note below
 
 **Interfaces:**
 - Consumes: Tasks 1–6
 - Produces: `struct SchemaFormView: View` — `init(schema: ConnectionFieldSchema, values: Binding<FieldValues>, namespace: String, isEditMode: Bool, resolve: @escaping (OptionSource) -> [FieldOption])`
 
-- [ ] **Step 1: Write the failing test for the resolver contract**
+**No new tests in this task, and that is deliberate.** Every rule this view obeys was already made testable and tested elsewhere: which fields are visible is `ConnectionFieldSchema.visibleFields` (Task 2), which fields exist at all is the conformance check (Tasks 4–6). What remains here is SwiftUI wiring, which this project does not unit-test — consistent with every prior App-layer task. Do not invent a test that asserts an enum pattern-matches itself in order to have one; the verification for this task is the build, the full suite staying green, and the L10n key-set guard.
 
-The renderer itself is SwiftUI and has no test target here (consistent with SSH and S3), but the option resolution is pure and must be pinned.
-
-`Tests/macSCPCoreTests/OptionResolverTests.swift`:
-
-```swift
-import Foundation
-import Testing
-@testable import macSCPCore
-
-@Suite("OptionSource")
-struct OptionResolverTests {
-    /// A fixed source carries its options; the App must not have to special
-    /// case it.
-    @Test func fixedSourceCarriesItsOwnOptions() {
-        let options = [FieldOption(id: "a", labelKey: "k", labelDefault: "A")]
-        guard case .fixed(let carried) = OptionSource.fixed(options) else {
-            Issue.record("expected .fixed")
-            return
-        }
-        #expect(carried == options)
-    }
-
-    /// The login-set source names which backend's sets it wants, so a WebDAV
-    /// form cannot be offered SSH sets.
-    @Test func loginSetSourceNamesItsKind() {
-        #expect(OptionSource.loginSets(kind: .webdav) != .loginSets(kind: .ssh))
-    }
-}
-```
-
-- [ ] **Step 2: Run test to verify it fails, then passes**
-
-Run: `swift test --filter "OptionSource"`
-Expected: FAIL first if `FieldOption`/`OptionSource` are not yet visible from the test target; after Task 2 they are, so this may pass immediately — in that case say so in your report rather than inventing a failure.
-
-- [ ] **Step 3: Build the renderer**
+- [ ] **Step 1: Build the renderer**
 
 `FormRow` is currently `private struct FormRow` at `ConnectionFormView.swift:1091`. Drop the `private` so the new file can use it — the label column width of 110 and the `firstTextBaseline` alignment are the house rhythm every form in the app already follows, and reimplementing them would drift.
 
@@ -1492,47 +1540,33 @@ struct SchemaFormView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if !schema.presets.isEmpty { presetPicker }
-            ForEach(schema.fields) { field in
-                if FieldVisibility.isVisible(field, in: values, namespace: namespace) {
-                    row(for: field)
-                }
+            // The filter is Core's, and tested there — this view walks the
+            // result and renders it, holding no visibility rules of its own.
+            ForEach(schema.visibleFields(in: values, namespace: namespace)) { field in
+                row(for: field)
             }
         }
     }
 
     @ViewBuilder
     private func row(for field: ConnectionField) -> some View {
-        switch field.kind {
-        case .group(let leaves):
+        if let leafKind = field.kind.asLeafKind {
+            FormRow(label: L10n.string(field.labelKey, field.labelDefault)) {
+                control(kind: leafKind, binding: binding(field.id))
+            }
+        } else {
+            // nil asLeafKind means `.group` — the only case without a leaf twin.
             GroupBox(label: Text(L10n.string(field.labelKey, field.labelDefault))) {
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach(leaves) { leaf in
-                        if FieldVisibility.isVisible(leaf, in: values, namespace: namespace) {
-                            FormRow(label: L10n.string(leaf.labelKey, leaf.labelDefault)) {
-                                control(kind: leaf.kind, binding: binding(field.id, leaf.id))
-                            }
+                    ForEach(ConnectionFieldSchema.visibleLeaves(
+                        of: field, in: values, namespace: namespace)) { leaf in
+                        FormRow(label: L10n.string(leaf.labelKey, leaf.labelDefault)) {
+                            control(kind: leaf.kind, binding: binding(field.id, leaf.id))
                         }
                     }
                 }
                 .padding(.vertical, 4)
             }
-        default:
-            FormRow(label: L10n.string(field.labelKey, field.labelDefault)) {
-                control(kind: leafKind(of: field), binding: binding(field.id))
-            }
-        }
-    }
-
-    /// A non-group `ConnectionField.Kind` always has a `LeafField.Kind` twin;
-    /// the group case is handled above and cannot reach here.
-    private func leafKind(of field: ConnectionField) -> LeafField.Kind {
-        switch field.kind {
-        case .text: return .text
-        case .number: return .number
-        case .secret: return .secret
-        case .toggle: return .toggle
-        case .picker(let source): return .picker(source)
-        case .group: return .text  // unreachable: handled by `row(for:)`
         }
     }
 
@@ -1610,7 +1644,7 @@ This needs one addition to `FieldValues` (Task 1's type) — a raw setter, so th
 
 Add it in this task, not Task 1 — it exists only because the renderer exists, and a setter with no reader is exactly the kind of speculative API the design asks us not to write.
 
-- [ ] **Step 4: Replace the S3 and WebDAV sections**
+- [ ] **Step 2: Replace the S3 and WebDAV sections**
 
 In `ConnectionFormView.swift`, delete `s3Section`, `s3FieldRow`, `s3TextBinding`, `applyS3Preset`, `webdavSection`, `webdavFieldRow`, `webdavTextBinding`, `applyWebDAVPreset` and the `s3CredentialFieldIDs` set. Render instead:
 
@@ -1627,19 +1661,19 @@ SchemaFormView(
 
 Leave the SSH section in place for now — Task 8 moves it.
 
-- [ ] **Step 5: Localize the new keys**
+- [ ] **Step 3: Localize the new keys**
 
 `connection.preset` and `connection.secret.unchanged` are new. Add both to **all four** catalogs (`en`/`de`/`fr`/`pl`) — the key-set guard test fails otherwise, and French uses the typographic apostrophe (U+2019). Check first whether the existing S3/WebDAV sections already carry equivalents under other names; reuse beats a duplicate key.
 
-- [ ] **Step 6: Run the full suite and check the build**
+- [ ] **Step 4: Run the full suite and check the build**
 
 Run: `swift test` → PASS, including the catalog key-set guard
 Run: `swift build 2>&1 | grep warning | grep -E "SchemaFormView|ConnectionFormView"` → prints nothing
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/MacSCPApp Tests/macSCPCoreTests/OptionResolverTests.swift
+git add Sources/MacSCPApp Sources/macSCPCore
 git commit -m "feat: render connection forms from the schema
 
 One renderer for every backend. The App contributes exactly one thing --
@@ -2006,7 +2040,9 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Consumes: Tasks 1–10
 - Produces: no new API — the sidebar, tab title and audit trail read `descriptor.displaySummary(values)`
 
-- [ ] **Step 1: Write the failing test**
+**This task has no red phase, and the report must say so plainly.** `displaySummary` was built and tested in Tasks 4–6; the work here is replacing three call sites that build `user@host` by hand. The test below is a characterization test that pins the property those call sites must preserve — it is expected to pass the moment it is written. Do not manufacture a failure to satisfy the red→green habit; state in the report that this task's verification is the call-site diff plus the suite.
+
+- [ ] **Step 1: Write the characterization test**
 
 ```swift
 import Foundation
@@ -2038,7 +2074,7 @@ struct DisplaySummaryTests {
 
 - [ ] **Step 2: Run it, then wire the call sites**
 
-Run: `swift test --filter "displaySummary"` — expected to pass once Tasks 4–6 landed; the work here is replacing the three call sites that build `user@host` by hand, and removing the `"unused"` placeholders from the audit recorder.
+Run: `swift test --filter "displaySummary"` → PASS immediately, as stated above. Then replace the three call sites that build `user@host` by hand, and remove the `"unused"` placeholders from the audit recorder. Re-run afterwards to confirm the rewiring did not break the property.
 
 - [ ] **Step 3: Run the full suite and commit**
 
