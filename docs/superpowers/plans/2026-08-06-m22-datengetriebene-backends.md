@@ -555,11 +555,21 @@ extension ConnectionFieldSchema {
 
     /// A group's visible leaves. A leaf's condition is evaluated the same way
     /// as a top-level field's, so a group can show and hide its own members.
+    ///
+    /// Takes the **owner's** namespace and qualifies it here, rather than
+    /// letting the caller pass the group-qualified string. A leaf's values
+    /// live under `owner.group.leaf`, so a caller passing the bare owner
+    /// namespace would resolve a leaf's condition against the *target's*
+    /// field of the same name — an SSH jump would show its key path based on
+    /// the target's auth kind. Since every leaf today is unconditional, that
+    /// mistake compiles, runs, and passes every test in the repo. Building
+    /// the qualified namespace in here means the caller cannot make it.
     public static func visibleLeaves(
-        of field: ConnectionField, in values: FieldValues, namespace: String
+        of field: ConnectionField, in values: FieldValues, owner: String
     ) -> [LeafField] {
         guard case .group(let leaves) = field.kind else { return [] }
-        return leaves.filter { FieldVisibility.isVisible($0, in: values, namespace: namespace) }
+        let qualified = "\(owner).\(field.id)"
+        return leaves.filter { FieldVisibility.isVisible($0, in: values, namespace: qualified) }
     }
 }
 ```
@@ -1594,7 +1604,17 @@ import macSCPCore
 /// `OptionSource` into options — because managed keys and login sets live in
 /// stores Core cannot see.
 struct SchemaFormView: View {
-    let schema: ConnectionFieldSchema
+    /// Every schema this form collects — connection **and** credential.
+    ///
+    /// A list rather than one schema, because taking one is how the form
+    /// broke in the first place: once Tasks 4–5 moved credentials into
+    /// `credentialSchema`, a view reading only `connectionSchema` silently
+    /// stopped rendering the access key and password rows, and no test
+    /// noticed because the schemas themselves were still correct.
+    /// `SchemaConformance` cannot catch it either — it checks the *union* of
+    /// both schemas, which stays right however many the form actually reads.
+    /// Taking a list makes "only one schema" unexpressible at the call site.
+    let schemas: [ConnectionFieldSchema]
     @Binding var values: FieldValues
     /// The backend field enum's type name, so a condition resolves against
     /// the owning backend and not a same-named field in another.
