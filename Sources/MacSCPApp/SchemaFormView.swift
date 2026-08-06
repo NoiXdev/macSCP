@@ -51,6 +51,19 @@ struct SchemaFormView: View {
     /// the task that makes it renderable) and the form draws it by hand until
     /// then.
     var skipping: Set<String> = []
+    /// Lets the form OWN a write instead of letting it land in `values`
+    /// directly; returns true when it handled the edit.
+    ///
+    /// One field needs it today: SSH's auth kind. Switching it is not a plain
+    /// value change but a command — `ConnectionViewModel.selectAuthChoice`
+    /// clears the secret so a password does not carry over into the passphrase
+    /// slot, which the hand-written picker routed through and this view's
+    /// direct binding silently bypassed (M22/T8 fix round 1). A hook that
+    /// intercepts BEFORE the write is what keeps that rule in the view model:
+    /// a post-hoc `.onChange` fires when `values` already holds the new value,
+    /// so the command's own "did this actually change?" guard can no longer
+    /// see that it did.
+    var interceptEdit: ((_ key: String, _ newValue: String) -> Bool)?
 
     /// The provider preset currently shown. Real state, mirroring the M12 S3
     /// picker: without it the field would snap back to blank after each pick.
@@ -138,6 +151,7 @@ struct SchemaFormView: View {
                 Toggle(label, isOn: boolBinding(binding))
             }
         case .picker(let source):
+            let options = resolve(source)
             FormRow(label: label) {
                 Picker(label, selection: binding) {
                     // The "unset" row the preset picker already carries, for
@@ -147,8 +161,17 @@ struct SchemaFormView: View {
                     // seeded -- renders the popup BLANK, with no row to pick
                     // and therefore no way back. "—" is a pure symbol,
                     // identical in every locale, so it stays a literal.
-                    Text(verbatim: "—").tag("")
-                    ForEach(resolve(source)) { option in
+                    //
+                    // Gated on the value actually matching nothing (fix round
+                    // 1): an unconditional row let the user pick "no auth
+                    // kind", which hides every credential row while
+                    // `authChoice` still falls back to `.password` -- so a
+                    // rejected connect outlines a password field that is not
+                    // on screen and offers nowhere to type.
+                    if !options.contains(where: { $0.id == binding.wrappedValue }) {
+                        Text(verbatim: "—").tag("")
+                    }
+                    ForEach(options) { option in
                         Text(optionLabel(option)).tag(option.id)
                     }
                 }
@@ -211,9 +234,15 @@ struct SchemaFormView: View {
     /// and a config factory driven by enum cases meet in the middle.
     private func binding(_ fieldID: String, _ leafID: String? = nil) -> Binding<String> {
         let key = key(fieldID, leafID)
+        let intercept = interceptEdit
         return Binding(
             get: { values.raw[key] ?? "" },
-            set: { values.setRaw(key, to: $0) })
+            set: { newValue in
+                // The hook runs BEFORE the write, so a view-model command it
+                // delegates to still sees the OLD value -- see `interceptEdit`.
+                guard intercept?(key, newValue) != true else { return }
+                values.setRaw(key, to: newValue)
+            })
     }
 
     /// The full namespaced key a field's value is stored under -- the one
