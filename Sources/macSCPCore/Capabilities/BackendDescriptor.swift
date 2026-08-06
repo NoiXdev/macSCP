@@ -54,14 +54,23 @@ public struct BackendDescriptor: Sendable {
             supportsShell: true, permissionModel: .posixMode, supportsSymlinks: true,
             atomicRename: true, directoriesAreReal: true, resumeMode: .append,
             supportsPresignedURL: false, transport: .alwaysEncrypted),
-        // SSH keeps its bespoke form sections (Task 7), so its schema is empty.
-        connectionSchema: ConnectionFieldSchema(fields: [], presets: []),
-        credentialSchema: ConnectionFieldSchema(fields: [], presets: []),
-        makeConfig: { _, _ in throw RemoteFSError.protocolError(reason: "not migrated yet") },
-        displaySummary: { _ in "" },
-        connect: { _, _, _ in throw RemoteFSError.protocolError(reason: "not migrated yet") },
+        connectionSchema: SSHFieldSchema.connection,
+        credentialSchema: SSHFieldSchema.credential,
+        makeConfig: { values, secret in try SSHFieldSchema.makeConfig(values, secret) },
+        displaySummary: { values in SSHFieldSchema.displaySummary(values) },
+        connect: { config, decider, _ in
+            guard case .ssh(let ssh) = config else {
+                throw RemoteFSError.protocolError(reason: "wrong config for the SSH backend")
+            }
+            return try await CitadelFileSystem.connect(
+                config: ssh,
+                knownHosts: KnownHostsStore(directory: SessionStore.defaultDirectory),
+                onUnknownHostKey: decider)
+        },
         badgeLabelKey: "connection.badge.ssh", badgeLabelDefault: "SSH",
-        secretEnvironmentVariable: nil, requiresSecret: false,
+        // `requiresSecret` is true even though `.agent` needs none: the agent
+        // case is handled by the factory, not by refusing to ask.
+        secretEnvironmentVariable: "MACSCP_PASSWORD", requiresSecret: true,
         fileActions: [], connectionActions: [])
 
     static let s3Descriptor = BackendDescriptor(
