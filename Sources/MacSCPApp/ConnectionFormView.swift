@@ -753,9 +753,12 @@ struct ConnectionFormView: View {
 
     /// Turns a schema-declared `OptionSource` into the options a picker shows
     /// (M22). The ONE thing the App contributes to the generic renderer:
-    /// managed keys and login sets live in stores Core cannot see, so the
-    /// schema names the source and this resolves it. Three cases, one switch,
-    /// one place -- not the per-backend dispatcher M22 is removing.
+    /// managed keys live in a store Core cannot see, so the schema names the
+    /// source and this resolves it. Two cases, one switch, one place -- not
+    /// the per-backend dispatcher M22 is removing.
+    ///
+    /// Login sets are NOT one of them: choosing a set substitutes the whole
+    /// credential schema, which `FormBlock.loginSetPicker` places below.
     private func resolveOptions(_ source: OptionSource) -> [FieldOption] {
         switch source {
         case .fixed(let options):
@@ -768,12 +771,6 @@ struct ConnectionFormView: View {
                 FieldOption(
                     id: key.id.uuidString, labelKey: "",
                     labelDefault: "\(key.name) — \(Self.shortFingerprint(key.fingerprint))")
-            }
-        case .loginSets(let kind):
-            // A login set's display text is user data, so it carries no
-            // catalog key (see `SchemaFormView.optionLabel`).
-            return sessionList.loginSets.filter { $0.kind == kind }.map { set in
-                FieldOption(id: set.id.uuidString, labelKey: "", labelDefault: set.name)
             }
         }
     }

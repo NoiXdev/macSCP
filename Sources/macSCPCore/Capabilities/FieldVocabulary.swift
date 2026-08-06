@@ -13,14 +13,19 @@ public struct FieldOption: Sendable, Equatable, Identifiable {
 
 /// Where a picker's options come from (M22).
 ///
-/// A closed set on purpose. `managedKeys` and `loginSets` cannot be resolved
-/// in Core — those stores live in the App — so the form is handed a resolver
-/// that turns a source into options. Three cases means one `switch`, in one
-/// place; an open-ended "options provider" would be the dispatcher we are
-/// removing, wearing a different hat.
+/// A closed set on purpose. `managedKeys` cannot be resolved in Core — that
+/// store lives in the App — so the form is handed a resolver that turns a
+/// source into options. Two cases means one `switch`, in one place; an
+/// open-ended "options provider" would be the dispatcher we are removing,
+/// wearing a different hat.
+///
+/// There is deliberately no `loginSets` case. Picking a login SET is not a
+/// field: it substitutes the whole credential schema, which is what
+/// `FormBlock.loginSetPicker` expresses. A case for it shipped unused through
+/// M22 and was removed in the milestone's final review — two mechanisms for
+/// one job, one of them dead.
 public enum OptionSource: Sendable, Equatable {
     case managedKeys
-    case loginSets(kind: ConnectionKind)
     case fixed([FieldOption])
 }
 
