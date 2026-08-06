@@ -1584,7 +1584,66 @@ One renderer for all three backends. The App contributes exactly one thing: a re
 - Consumes: Tasks 1–6
 - Produces: `struct SchemaFormView: View` — `init(schema: ConnectionFieldSchema, values: Binding<FieldValues>, namespace: String, isEditMode: Bool, resolve: @escaping (OptionSource) -> [FieldOption])`
 
-**No new tests in this task, and that is deliberate.** Every rule this view obeys was already made testable and tested elsewhere: which fields are visible is `ConnectionFieldSchema.visibleFields` (Task 2), which fields exist at all is the conformance check (Tasks 4–6). What remains here is SwiftUI wiring, which this project does not unit-test — consistent with every prior App-layer task. Do not invent a test that asserts an enum pattern-matches itself in order to have one; the verification for this task is the build, the full suite staying green, and the L10n key-set guard.
+**The form's block order lives in Core, and that is what makes the guard real.**
+
+Taking `schemas: [ConnectionFieldSchema]` documents the invariant but does not enforce it: S3's login-mode switcher must sit *between* the connection and credential blocks, so S3 renders two views with one schema each. Whether N views collectively cover the descriptor is not a fact the type system sees — a later edit can drop the credential view and the suite stays green, which is exactly how the rows vanished the first time.
+
+So the order becomes data too:
+
+```swift
+/// One block of a backend's connection form (M22).
+///
+/// The order is data because the alternative — hand-placing views per
+/// backend — is what let S3's credential block go missing silently. A Core
+/// test can assert that a mode's blocks cover the descriptor's schemas; it
+/// cannot assert anything about views someone forgot to write.
+public enum FormBlock: Sendable, Equatable {
+    case schema(ConnectionFieldSchema)
+    /// Where the Manual / login-set switcher goes.
+    case loginModeSwitcher
+    /// Substitutes the credential schema once a login set is chosen — the
+    /// set supplies those values, so asking for them again would be wrong.
+    case loginSetPicker
+}
+
+extension BackendDescriptor {
+    public func formBlocks(usingLoginSet: Bool) -> [FormBlock] {
+        [.schema(connectionSchema),
+         .loginModeSwitcher,
+         usingLoginSet ? .loginSetPicker : .schema(credentialSchema)]
+    }
+}
+```
+
+The guard, in Core, for every backend:
+
+```swift
+@Test func manualModeRendersEveryFieldExactlyOnce() {
+    for kind in ConnectionKind.allCases {
+        let descriptor = BackendDescriptor.descriptor(for: kind)
+        let rendered = descriptor.formBlocks(usingLoginSet: false).compactMap {
+            if case .schema(let s) = $0 { return s } else { return nil }
+        }
+        #expect(rendered == [descriptor.connectionSchema, descriptor.credentialSchema])
+    }
+}
+
+/// With a login set chosen the credential schema is deliberately absent —
+/// the set supplies it. The connection schema must still be there.
+@Test func loginSetModeSubstitutesTheCredentialSchema() {
+    for kind in ConnectionKind.allCases {
+        let descriptor = BackendDescriptor.descriptor(for: kind)
+        let blocks = descriptor.formBlocks(usingLoginSet: true)
+        #expect(blocks.contains(.schema(descriptor.connectionSchema)))
+        #expect(!blocks.contains(.schema(descriptor.credentialSchema)))
+        #expect(blocks.contains(.loginSetPicker))
+    }
+}
+```
+
+The sections then render the blocks in order rather than hand-placing views. Dropping a schema now means editing Core, where a test fails.
+
+**No other new tests in this task, and that is deliberate.** Every rule this view obeys was already made testable and tested elsewhere: which fields are visible is `ConnectionFieldSchema.visibleFields` (Task 2), which fields exist at all is the conformance check (Tasks 4–6). What remains here is SwiftUI wiring, which this project does not unit-test — consistent with every prior App-layer task. Do not invent a test that asserts an enum pattern-matches itself in order to have one; the verification for this task is the build, the full suite staying green, and the L10n key-set guard.
 
 - [ ] **Step 1: Build the renderer**
 
