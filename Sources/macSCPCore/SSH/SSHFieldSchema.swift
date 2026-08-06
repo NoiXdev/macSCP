@@ -9,9 +9,16 @@ public enum SSHField: String, CaseIterable, BackendFieldID {
 }
 
 /// The jump host's own login (M10c). A separate enum because a `.group` holds
-/// `LeafField`, which cannot nest further — one level is all SSH needs — and
-/// because its own namespace is what keeps the jump's `host` from overwriting
-/// the target's in the flat `FieldValues` map.
+/// `LeafField`, which cannot nest further — one level is all SSH needs.
+///
+/// What keeps the jump's `host` from overwriting the target's is the `jump.`
+/// path segment, NOT this namespace: `FieldValues` stores a group member under
+/// `"\(G.namespace).\(group).\(leaf)"` — the OWNER's namespace — so
+/// `SSHJumpField.namespace` is never used for storage at all. It exists
+/// because `BackendFieldID` requires it. Reading a jump field through the
+/// one-argument subscript (`values[SSHJumpField.host]`) would therefore
+/// address `SSHJumpField.host`, a key nothing ever writes; always subscript
+/// with the pair (`values[SSHField.jump, SSHJumpField.host]`).
 public enum SSHJumpField: String, CaseIterable, BackendFieldID {
     case host, port, username, authKind, keyPath, managedKeyID, password
 
@@ -158,9 +165,14 @@ public enum SSHFieldSchema {
             case .managedKeyID:
                 break  // a picker that writes `keyPath`; nothing of its own to build
             case .jump:
-                // Not built here: a jump host has its OWN secret (its own
-                // Keychain slot), and this factory takes exactly one. The
-                // caller that can resolve both assembles the jump.
+                // Deliberately NOT built here, and the returned config's
+                // `jump` is therefore always nil: a jump host has its own
+                // secret in a separate Keychain entry (`JumpSpec.secretID`)
+                // and this factory takes exactly one secret, so it
+                // structurally cannot resolve the second. The caller that can
+                // attaches the jump after resolution. Pinned by
+                // `makeConfigLeavesTheJumpToTheCaller` so a config that
+                // silently bypassed a required bastion cannot slip in.
                 break
             }
         }

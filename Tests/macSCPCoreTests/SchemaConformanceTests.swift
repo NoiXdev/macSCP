@@ -24,7 +24,7 @@ struct SchemaConformanceTests {
             displaySummary: { _ in "" },
             connect: { _, _, _ in throw RemoteFSError.protocolError(reason: "unused") },
             badgeLabelKey: "b", badgeLabelDefault: "B",
-            secretEnvironmentVariable: nil, requiresSecret: false,
+            secretEnvironmentVariable: nil, requiresSecret: { _ in false },
             fileActions: [], connectionActions: [])
     }
 
