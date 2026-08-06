@@ -1,12 +1,42 @@
 /// The static, connection-free description of a protocol (M12): its
 /// capabilities, its connection-form schema/presets, a badge label, and its
 /// (currently empty) contribution lists. One per `ConnectionKind`.
-public struct BackendDescriptor: Sendable, Equatable {
+public struct BackendDescriptor: Sendable {
     public let kind: ConnectionKind
     public let capabilities: ProtocolCapabilities
-    public let fieldSchema: ConnectionFieldSchema
+    public let connectionSchema: ConnectionFieldSchema
+    public let credentialSchema: ConnectionFieldSchema
+
+    /// Turns collected form values plus the resolved secret into a runtime
+    /// config. The backend switches over its OWN field enum inside here, so
+    /// the compiler checks that a newly added field is handled.
+    public let makeConfig: @Sendable (FieldValues, String) throws -> ConnectionConfig
+
+    /// A human label for the sidebar, the tab title and the audit trail.
+    /// Before M22 those built `user@host` from fields S3 and WebDAV never
+    /// fill, which is why the audit log carried `host: "unused"`.
+    public let displaySummary: @Sendable (FieldValues) -> String
+
+    /// Opens a connection. Living here rather than in a central dispatcher
+    /// is what lets `BackendConnector` disappear (Task 10).
+    public let connect: @Sendable (
+        ConnectionConfig,
+        @escaping ConnectionViewModel.HostKeyDecider,
+        @escaping WebDAVSessionDelegate.CertificateDecider
+    ) async throws -> any RemoteFileSystem
+
     public let badgeLabelKey: String
     public let badgeLabelDefault: String
+
+    /// The environment variable the CLI reads this backend's secret from.
+    /// S3 uses the AWS-conventional name so existing pipelines need not
+    /// relearn one; nil means the backend needs no secret.
+    public let secretEnvironmentVariable: String?
+
+    /// Whether connecting needs a secret at all. SSH with agent auth does
+    /// not, which is why this is a value and not derived from the schema.
+    public let requiresSecret: Bool
+
     public let fileActions: [FileActionContribution]
     public let connectionActions: [ConnectionActionContribution]
 
@@ -25,8 +55,13 @@ public struct BackendDescriptor: Sendable, Equatable {
             atomicRename: true, directoriesAreReal: true, resumeMode: .append,
             supportsPresignedURL: false, transport: .alwaysEncrypted),
         // SSH keeps its bespoke form sections (Task 7), so its schema is empty.
-        fieldSchema: ConnectionFieldSchema(fields: [], presets: []),
+        connectionSchema: ConnectionFieldSchema(fields: [], presets: []),
+        credentialSchema: ConnectionFieldSchema(fields: [], presets: []),
+        makeConfig: { _, _ in throw RemoteFSError.protocolError(reason: "not migrated yet") },
+        displaySummary: { _ in "" },
+        connect: { _, _, _ in throw RemoteFSError.protocolError(reason: "not migrated yet") },
         badgeLabelKey: "connection.badge.ssh", badgeLabelDefault: "SSH",
+        secretEnvironmentVariable: nil, requiresSecret: false,
         fileActions: [], connectionActions: [])
 
     static let s3Descriptor = BackendDescriptor(
@@ -35,7 +70,7 @@ public struct BackendDescriptor: Sendable, Equatable {
             supportsShell: false, permissionModel: .none, supportsSymlinks: false,
             atomicRename: false, directoriesAreReal: false, resumeMode: .rangeGet,
             supportsPresignedURL: true, transport: .optionalTLS),
-        fieldSchema: ConnectionFieldSchema(
+        connectionSchema: ConnectionFieldSchema(
             fields: [
                 ConnectionField(id: "endpoint", labelKey: "connection.s3.endpoint", labelDefault: "Endpoint", kind: .text),
                 ConnectionField(id: "region", labelKey: "connection.s3.region", labelDefault: "Region", kind: .text),
@@ -51,7 +86,12 @@ public struct BackendDescriptor: Sendable, Equatable {
                     values: ["endpoint": "https://fsn1.your-objectstorage.com", "usePathStyle": "true"]),
                 ConnectionPreset(id: "custom", nameKey: "connection.s3.preset.custom", nameDefault: "Custom", values: [:]),
             ]),
+        credentialSchema: ConnectionFieldSchema(fields: [], presets: []),
+        makeConfig: { _, _ in throw RemoteFSError.protocolError(reason: "not migrated yet") },
+        displaySummary: { _ in "" },
+        connect: { _, _, _ in throw RemoteFSError.protocolError(reason: "not migrated yet") },
         badgeLabelKey: "connection.badge.s3", badgeLabelDefault: "S3",
+        secretEnvironmentVariable: nil, requiresSecret: false,
         fileActions: [
             FileActionContribution(id: "s3.presignedURL", titleKey: "browser.action.presignedURL", titleDefault: "Share Link…"),
         ], connectionActions: [])
@@ -67,7 +107,7 @@ public struct BackendDescriptor: Sendable, Equatable {
             supportsShell: false, permissionModel: .none, supportsSymlinks: false,
             atomicRename: true, directoriesAreReal: true, resumeMode: .rangeGet,
             supportsPresignedURL: false, transport: .optionalTLS),
-        fieldSchema: ConnectionFieldSchema(
+        connectionSchema: ConnectionFieldSchema(
             fields: [
                 ConnectionField(id: "baseURL", labelKey: "connection.webdav.baseURL",
                                 labelDefault: "Server URL", kind: .text),
@@ -88,6 +128,11 @@ public struct BackendDescriptor: Sendable, Equatable {
                                  nameDefault: "Custom",
                                  values: ["useNextcloudPath": "false"]),
             ]),
+        credentialSchema: ConnectionFieldSchema(fields: [], presets: []),
+        makeConfig: { _, _ in throw RemoteFSError.protocolError(reason: "not migrated yet") },
+        displaySummary: { _ in "" },
+        connect: { _, _, _ in throw RemoteFSError.protocolError(reason: "not migrated yet") },
         badgeLabelKey: "connection.badge.webdav", badgeLabelDefault: "WebDAV",
+        secretEnvironmentVariable: nil, requiresSecret: false,
         fileActions: [], connectionActions: [])
 }
