@@ -3,11 +3,30 @@ import Testing
 @testable import macSCPCore
 
 private enum TestField: String, CaseIterable, BackendFieldID {
+    static let namespace = "TestField"
     case alpha, beta, flag
 }
 
 private enum OtherField: String, CaseIterable, BackendFieldID {
+    static let namespace = "OtherField"
     case alpha
+}
+
+/// Two backends that each nest their field enum under the same short name.
+/// This is the shape that a name derived from the type would collide on:
+/// Swift interpolates both metatypes as the bare string "Field".
+private enum FirstBackend {
+    enum Field: String, CaseIterable, BackendFieldID {
+        static let namespace = "FirstBackend.Field"
+        case username
+    }
+}
+
+private enum SecondBackend {
+    enum Field: String, CaseIterable, BackendFieldID {
+        static let namespace = "SecondBackend.Field"
+        case username
+    }
 }
 
 @Suite("FieldValues")
@@ -59,9 +78,28 @@ struct FieldValuesTests {
         #expect(values[TestField.alpha] == "")
     }
 
-    @Test func rawStorageIsInspectableForPersistence() {
+    /// The nested-enum collision the namespace exists to prevent. Deriving
+    /// the prefix from the type name would make both of these `"Field.username"`
+    /// — verified: Swift interpolates a metatype unqualified, so
+    /// `"\(FirstBackend.Field.self)"` and `"\(SecondBackend.Field.self)"` are
+    /// both the bare string "Field".
+    @Test func nestedEnumsWithTheSameShortNameDoNotCollide() {
+        var values = FieldValues()
+        values[FirstBackend.Field.username] = "from-first"
+        values[SecondBackend.Field.username] = "from-second"
+        #expect(values[FirstBackend.Field.username] == "from-first")
+        #expect(values[SecondBackend.Field.username] == "from-second")
+        #expect(values.raw.count == 2)
+    }
+
+    /// Pins the on-disk key shape, not merely that some value landed
+    /// somewhere. The persistence adapters read `raw` directly, so the exact
+    /// key is part of the contract — a change here changes saved files.
+    @Test func rawStorageUsesTheNamespacedKey() {
         var values = FieldValues()
         values[TestField.alpha] = "one"
-        #expect(values.raw.values.contains("one"))
+        values[TestField.alpha, OtherField.alpha] = "nested"
+        #expect(values.raw["TestField.alpha"] == "one")
+        #expect(values.raw["TestField.alpha.alpha"] == "nested")
     }
 }

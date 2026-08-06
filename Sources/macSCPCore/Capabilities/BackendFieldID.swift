@@ -9,14 +9,28 @@ import Foundation
 /// forgotten by the factory — the last one because the factory switches over
 /// this enum and the compiler checks exhaustiveness.
 public protocol BackendFieldID: RawRepresentable, CaseIterable, Hashable, Sendable
-where RawValue == String {}
+where RawValue == String {
+    /// The stable prefix this backend's stored keys carry.
+    ///
+    /// Declared explicitly rather than derived from the type name, for two
+    /// reasons. Swift's `"\(F.self)"` yields the UNQUALIFIED name, so two
+    /// backends that each nest their enum as `Backend.Field` would both
+    /// produce `"Field"` and silently share storage — verified, not assumed.
+    /// And a derived name would make renaming the enum a silent format
+    /// change, breaking every session already on disk.
+    static var namespace: String { get }
+}
 
 /// The values a form collected, keyed by field.
 ///
-/// Storage is flat and namespaced by the field enum's type name, so two
-/// backends may both call a field `username` without colliding. Group members
-/// live in the same flat map under `group.leaf`, which keeps persistence a
-/// plain string map rather than a tree.
+/// Storage is flat and prefixed with the field enum's declared `namespace`,
+/// so two backends may both call a field `username` without colliding. Group
+/// members live in the same flat map under `namespace.group.leaf`, which
+/// keeps persistence a plain string map rather than a tree.
+///
+/// Keys are joined with `.`, so a field's raw value must not contain one.
+/// Swift derives raw values from the case names, which cannot — only an
+/// explicit `case foo = "a.b"` could, and no backend writes one.
 public struct FieldValues: Equatable, Sendable {
     private var storage: [String: String]
 
@@ -28,13 +42,13 @@ public struct FieldValues: Equatable, Sendable {
     public var raw: [String: String] { storage }
 
     private static func key<F: BackendFieldID>(_ field: F) -> String {
-        "\(F.self).\(field.rawValue)"
+        "\(F.namespace).\(field.rawValue)"
     }
 
     private static func key<G: BackendFieldID, L: BackendFieldID>(
         _ group: G, _ leaf: L
     ) -> String {
-        "\(G.self).\(group.rawValue).\(leaf.rawValue)"
+        "\(G.namespace).\(group.rawValue).\(leaf.rawValue)"
     }
 
     /// An unset field reads as the empty string — absence and "cleared by the
