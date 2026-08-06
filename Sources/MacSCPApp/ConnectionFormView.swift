@@ -439,12 +439,7 @@ struct ConnectionFormView: View {
                     Button(L10n.string("common.save", "Save")) {
                         guard resolveLoginSetForSubmit() else { return }
                         if let session = viewModel.validateForEditSave() {
-                            // The S3 secret lives in `s3SecretAccessKey`, not
-                            // `password` (which `beginEditing` always clears
-                            // for S3 sessions) — pick the field by kind so an
-                            // edited Secret Access Key isn't silently dropped.
-                            let secret = viewModel.kind == .s3 ? viewModel.s3SecretAccessKey : viewModel.password
-                            onSaveEdited(session, secret.isEmpty ? nil : secret)
+                            onSaveEdited(session, editedSecret)
                         } else if case .failed(let message, _) = viewModel.state {
                             alertMessage = message
                         }
@@ -454,8 +449,7 @@ struct ConnectionFormView: View {
                     Button(L10n.string("connection.saveAndConnect", "Save & connect")) {
                         guard resolveLoginSetForSubmit() else { return }
                         if let session = viewModel.validateForEditSave() {
-                            let secret = viewModel.kind == .s3 ? viewModel.s3SecretAccessKey : viewModel.password
-                            onSaveEdited(session, secret.isEmpty ? nil : secret)
+                            onSaveEdited(session, editedSecret)
                             onConnectEdited(session)
                         } else if case .failed(let message, _) = viewModel.state {
                             alertMessage = message
@@ -492,6 +486,30 @@ struct ConnectionFormView: View {
                     .buttonStyle(.polishedProminent)
                 }
             }
+    }
+
+    /// The secret the edit-mode Save path should write, or `nil` for "leave
+    /// the stored one alone".
+    ///
+    /// Whichever field the backend's credential schema shows RIGHT NOW — the
+    /// same question `LoginResolver.credentials`,
+    /// `LoginSetEditorView.secret` and `ContentView.maybeCreateNewLoginSet`
+    /// already ask `visibleSecretField`. A hardcoded
+    /// `kind == .s3 ? s3SecretAccessKey : password` answered it until M22's
+    /// final review: a fourth backend with its own secret field would leave
+    /// `viewModel.password` empty, `nil` would go out, and the secret the
+    /// user just typed would be silently discarded — exactly the failure the
+    /// S3 special case was added to prevent.
+    ///
+    /// No visible secret row (an SSH agent login) resolves to `nil` too,
+    /// which is the same "nothing to write" the empty-field case means.
+    private var editedSecret: String? {
+        let descriptor = BackendDescriptor.descriptor(for: viewModel.kind)
+        guard let field = descriptor.credentialSchema.visibleSecretField(
+            in: viewModel.values, namespace: descriptor.fieldNamespace)
+        else { return nil }
+        let secret = viewModel.values.raw["\(descriptor.fieldNamespace).\(field.id)"] ?? ""
+        return secret.isEmpty ? nil : secret
     }
 
     /// The connection form for whichever backend is selected (M22/T8): the
