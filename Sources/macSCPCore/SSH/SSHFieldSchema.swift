@@ -3,7 +3,7 @@ import Foundation
 /// SSH's field identifiers — the single source for its two schemas, its
 /// config factory and its persistence adapter (M22).
 public enum SSHField: String, CaseIterable, BackendFieldID {
-    case host, port, username, authKind, keyPath, managedKeyID, password, jump
+    case host, port, username, authKind, keyPath, managedKeyID, password, passphrase, jump
 
     public static let namespace = "SSHField"
 }
@@ -37,6 +37,10 @@ public enum SSHFieldSchema {
     private static let onPrivateKey = FieldCondition(
         field: SSHField.authKind.rawValue,
         equals: StoredSession.AuthKind.privateKey.rawValue)
+
+    private static let onPassword = FieldCondition(
+        field: SSHField.authKind.rawValue,
+        equals: StoredSession.AuthKind.password.rawValue)
 
     /// The jump host's login. Its leaves carry NO condition: a leaf's
     /// condition is resolved against `"\(namespace).\(condition.field)"`, so
@@ -98,12 +102,12 @@ public enum SSHFieldSchema {
     /// What a login set carries: the credentials, not the host. Rendered by
     /// the login-set editor with the same generic code as the form.
     ///
-    /// `password` is the ONE secret slot, and it holds a password or a key
-    /// passphrase depending on the auth kind (never both; never anything for
-    /// `.agent`). It carries no visibility condition on purpose: the
-    /// condition vocabulary can say "equals" and nothing else, so
-    /// "visible unless agent" is not expressible — and conditioning it on
-    /// `password` would make a key passphrase impossible to enter at all.
+    /// The secret is two DIFFERENT fields, not one slot with two meanings —
+    /// which is what the login-set editor has rendered since M10d: a
+    /// "Password" row under `.password`, a "Passphrase (optional)" row under
+    /// `.privateKey`, and NO secret row at all under `.agent` (spec §5.2).
+    /// Two conditional fields describe that exactly; one unconditional field
+    /// would grow a meaningless secret box for agent logins.
     public static let credential = ConnectionFieldSchema(
         fields: [
             ConnectionField(id: SSHField.username.rawValue,
@@ -115,7 +119,12 @@ public enum SSHFieldSchema {
                             kind: .picker(.fixed(authOptions))),
             ConnectionField(id: SSHField.password.rawValue,
                             labelKey: "connection.auth.password",
-                            labelDefault: "Password", kind: .secret),
+                            labelDefault: "Password", kind: .secret,
+                            visibleWhen: onPassword),
+            ConnectionField(id: SSHField.passphrase.rawValue,
+                            labelKey: "connection.field.passphrase",
+                            labelDefault: "Passphrase (optional)", kind: .secret,
+                            visibleWhen: onPrivateKey),
             ConnectionField(id: SSHField.keyPath.rawValue,
                             labelKey: "connection.field.keyPath",
                             labelDefault: "Key path", kind: .text,
@@ -142,8 +151,10 @@ public enum SSHFieldSchema {
                 break  // validated by SSHConnectionConfig.init below
             case .authKind:
                 break  // selects the auth branch below
-            case .password:
-                break  // never read from values: the secret arrives as a parameter
+            case .password, .passphrase:
+                // Never read from values: the resolved secret arrives as the
+                // parameter, and `authKind` below decides what it means.
+                break
             case .managedKeyID:
                 break  // a picker that writes `keyPath`; nothing of its own to build
             case .jump:
@@ -188,7 +199,8 @@ public enum SSHFieldSchema {
     /// The on-disk format is unchanged; this translates in both directions.
     ///
     /// Deliberately covers the flat connection fields only:
-    /// * `password` lives in the Keychain, never in `StoredSession`.
+    /// * `password` and `passphrase` live in the Keychain, never in
+    ///   `StoredSession`.
     /// * `managedKeyID` has no persisted home — picking a managed key writes
     ///   its file path into `keyPath`, which is the only thing stored.
     /// * `jump` is a second login with its own Keychain slot and its own
