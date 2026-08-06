@@ -280,6 +280,37 @@ struct SSHFieldSchemaTests {
         #expect(SSHFieldSchema.displaySummary(passwordValues()) == "tim@server.example.com")
     }
 
+    /// Fix round 1 (M22/T11 review): two sessions to the same host on
+    /// different ports — a bastion with a forwarded port, e.g.
+    /// `admin@homelab:22` vs `admin@homelab:2222` — used to render an
+    /// identical sidebar tooltip once the port was dropped. The port must
+    /// come back for a non-default value.
+    @Test func displaySummaryAppendsANonDefaultPort() {
+        var values = passwordValues()
+        values[SSHField.port] = "2222"
+        #expect(SSHFieldSchema.displaySummary(values) == "tim@server.example.com:2222")
+    }
+
+    /// The default port stays suppressed — this is what keeps `:22` out of
+    /// every ordinary tab title.
+    @Test func displaySummarySuppressesTheDefaultPort() {
+        var values = passwordValues()
+        values[SSHField.port] = "22"
+        #expect(SSHFieldSchema.displaySummary(values) == "tim@server.example.com")
+    }
+
+    /// An empty/unparsable port field (a hand-built `FieldValues` a test
+    /// might construct — `sessionValues` always writes `String(session.port)`,
+    /// so production values are never empty here) must fall back to the
+    /// default rather than leaving a dangling trailing `:`.
+    @Test func displaySummaryTreatsAnEmptyPortAsTheDefault() {
+        var values = passwordValues()
+        values[SSHField.port] = ""
+        let summary = SSHFieldSchema.displaySummary(values)
+        #expect(summary == "tim@server.example.com")
+        #expect(!summary.hasSuffix(":"))
+    }
+
     /// The descriptor points at this schema — before M22 it threw
     /// "not migrated yet" for every call.
     @Test func theDescriptorIsWiredToTheSchema() throws {

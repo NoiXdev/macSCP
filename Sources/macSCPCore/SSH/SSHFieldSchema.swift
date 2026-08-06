@@ -216,8 +216,21 @@ public enum SSHFieldSchema {
     }
 
     /// User name and host — what identifies an SSH connection to a human.
+    ///
+    /// The port is appended only when it differs from the default 22
+    /// (M22/T11 fix round 1): the port is what tells apart two sessions to
+    /// the SAME host on different ports — a bastion with a forwarded port is
+    /// the ordinary case, e.g. `admin@homelab:22` next to
+    /// `admin@homelab:2222` in the sidebar — while suppressing the default
+    /// keeps a bare `:22` out of every ordinary tab title. Parsed the same
+    /// way `makeConfig` parses the port (trimmed, falling back to 22), so an
+    /// empty or unparsable port field — a hand-built `FieldValues` in a test,
+    /// never `sessionValues`, which always writes `String(session.port)` —
+    /// is treated as the default and never leaves a dangling trailing `:`.
     public static func displaySummary(_ values: FieldValues) -> String {
-        "\(values[SSHField.username])@\(values[SSHField.host])"
+        let base = "\(values[SSHField.username])@\(values[SSHField.host])"
+        let port = Int(values[SSHField.port].trimmingCharacters(in: .whitespaces)) ?? 22
+        return port == 22 ? base : "\(base):\(port)"
     }
 
     // MARK: - Persistence adapter
