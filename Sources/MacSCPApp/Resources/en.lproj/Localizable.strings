@@ -83,6 +83,17 @@
 "connection.hostkey.trust" = "Trust & connect";
 "connection.connect" = "Connect";
 
+/* Server-certificate trust prompt (M21/T10) — WebDAV/S3's TLS twin of the host-key prompt above. */
+"certificate.prompt.title" = "Trust this server's certificate?";
+"certificate.prompt.fingerprint" = "Fingerprint";
+"certificate.prompt.issuer" = "Issuer";
+"certificate.prompt.expires" = "Expires";
+"certificate.prompt.trust" = "Trust";
+
+/* Plaintext-transport confirmation (M21/T10, spec "Klartext-HTTP") */
+"transport.plaintext.title" = "Send credentials unencrypted?";
+"transport.plaintext.body" = "This connection uses http://, so the password travels in the clear. Use https:// where the server offers it.";
+
 /* Connection type switcher + S3 form section (M12/T7b) */
 "connection.type.label" = "Connection type";
 "connection.badge.ssh" = "SSH";
@@ -444,6 +455,7 @@
 "audit.kind.newFolder" = "New folder";
 "audit.kind.newFile" = "New file";
 "audit.kind.editUpload" = "Editor upload";
+"audit.kind.plaintextConfirmed" = "Connected without encryption";
 
 /* Sessions menu (M10a/T2, M10b/T3) */
 "menu.sessions" = "Sessions";
@@ -478,6 +490,25 @@
 "knownHosts.noMatches" = "No matches.";
 "knownHosts.loadError %@" = "Could not load known hosts: %@";
 "knownHosts.removeError %@" = "Could not remove the host key: %@";
+
+/* Known hosts sheet — trusted server certificates section (M21/T10) */
+"knownHosts.section.certificates" = "Server certificates";
+"knownHosts.cert.column.host" = "Host";
+"knownHosts.cert.column.port" = "Port";
+"knownHosts.cert.column.subject" = "Subject";
+"knownHosts.cert.column.fingerprint" = "Fingerprint";
+"knownHosts.cert.column.expires" = "Expires";
+"knownHosts.cert.count %lld" = "%lld certificates";
+"knownHosts.cert.countFiltered %lld %lld" = "%lld of %lld";
+"knownHosts.cert.remove" = "Remove…";
+"knownHosts.cert.remove.title" = "Remove trusted certificate?";
+"knownHosts.cert.remove.message" = "The certificate will be treated as unknown on the next connect (new trust prompt).";
+"knownHosts.cert.remove.messageMany %lld" = "%lld certificates will be treated as unknown on the next connect (new trust prompts).";
+"knownHosts.cert.remove.confirm" = "Remove";
+"knownHosts.cert.empty" = "No trusted certificates yet.";
+"knownHosts.cert.noMatches" = "No matches.";
+"knownHosts.cert.loadError %@" = "Could not load trusted certificates: %@";
+"knownHosts.cert.removeError %@" = "Could not remove the certificate: %@";
 
 /* Hidden imports sheet (M11f/T2) */
 "hiddenImports.title" = "Hidden Imports";

@@ -73,6 +73,11 @@
 "core.hostkey.mismatch %@ %@ %@" = "OSTRZEŻENIE: Klucz hosta dla %1$@ uległ zmianie! Oczekiwano %2$@, otrzymano %3$@. Możliwy atak typu man-in-the-middle — połączenie przerwane.";
 "core.hostkey.rejected" = "Połączenie przerwane — klucz hosta nie został potwierdzony.";
 
+/* TOFU certyfikatu serwera (M21/T10) — lustrzane odbicie przypadku klucza hosta: ta sama waga, ta sama zasada „bez wyjątków". */
+"core.certificate.mismatch %@ %@ %@" = "OSTRZEŻENIE: Certyfikat dla %1$@ uległ zmianie! Oczekiwano %2$@, otrzymano %3$@. Możliwy atak typu man-in-the-middle — połączenie odrzucone.";
+"core.certificate.rejected" = "Połączenie odrzucone — certyfikat nie został potwierdzony.";
+"core.certificate.trustStoreUnreadable" = "Połączenie odrzucone — nie można było odczytać magazynu zaufanych certyfikatów.";
+
 /* TerminalPanelViewModel */
 "core.terminal.shellEnded %@" = "Powłoka zakończona: %@";
 "core.terminal.openFailed %@" = "Nie udało się otworzyć powłoki: %@";

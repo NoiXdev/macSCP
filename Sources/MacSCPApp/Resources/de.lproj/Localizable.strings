@@ -83,6 +83,17 @@
 "connection.hostkey.trust" = "Vertrauen & verbinden";
 "connection.connect" = "Verbinden";
 
+/* Server-Zertifikat-Vertrauensabfrage (M21/T10) — das TLS-Gegenstück zur Host-Key-Abfrage oben, für WebDAV/S3. */
+"certificate.prompt.title" = "Dem Zertifikat dieses Servers vertrauen?";
+"certificate.prompt.fingerprint" = "Fingerabdruck";
+"certificate.prompt.issuer" = "Aussteller";
+"certificate.prompt.expires" = "Gültig bis";
+"certificate.prompt.trust" = "Vertrauen";
+
+/* Klartext-Transport-Bestätigung (M21/T10, Spec „Klartext-HTTP") */
+"transport.plaintext.title" = "Anmeldedaten unverschlüsselt senden?";
+"transport.plaintext.body" = "Diese Verbindung nutzt http://, das Passwort wird also im Klartext übertragen. Nutze https://, wenn der Server das anbietet.";
+
 /* Verbindungstyp-Umschalter + S3-Formularabschnitt (M12/T7b) */
 "connection.type.label" = "Verbindungstyp";
 "connection.badge.ssh" = "SSH";
@@ -445,6 +456,7 @@
 "audit.kind.newFolder" = "Neuer Ordner";
 "audit.kind.newFile" = "Neue Datei";
 "audit.kind.editUpload" = "Editor-Upload";
+"audit.kind.plaintextConfirmed" = "Unverschlüsselt verbunden";
 
 /* Sessions-Menü (M10a/T2, M10b/T3) */
 "menu.sessions" = "Sessions";
@@ -479,6 +491,25 @@
 "knownHosts.noMatches" = "Keine Treffer.";
 "knownHosts.loadError %@" = "Bekannte Hosts konnten nicht geladen werden: %@";
 "knownHosts.removeError %@" = "Der Host-Schlüssel konnte nicht entfernt werden: %@";
+
+/* Bekannte-Hosts-Sheet — Abschnitt „vertrauenswürdige Server-Zertifikate" (M21/T10) */
+"knownHosts.section.certificates" = "Server-Zertifikate";
+"knownHosts.cert.column.host" = "Host";
+"knownHosts.cert.column.port" = "Port";
+"knownHosts.cert.column.subject" = "Betreff";
+"knownHosts.cert.column.fingerprint" = "Fingerabdruck";
+"knownHosts.cert.column.expires" = "Gültig bis";
+"knownHosts.cert.count %lld" = "%lld Zertifikate";
+"knownHosts.cert.countFiltered %lld %lld" = "%lld von %lld";
+"knownHosts.cert.remove" = "Entfernen…";
+"knownHosts.cert.remove.title" = "Vertrauenswürdiges Zertifikat entfernen?";
+"knownHosts.cert.remove.message" = "Das Zertifikat wird bei der nächsten Verbindung als unbekannt behandelt (neue Vertrauensabfrage).";
+"knownHosts.cert.remove.messageMany %lld" = "%lld Zertifikate werden bei der nächsten Verbindung als unbekannt behandelt (neue Vertrauensabfragen).";
+"knownHosts.cert.remove.confirm" = "Entfernen";
+"knownHosts.cert.empty" = "Noch keine vertrauenswürdigen Zertifikate.";
+"knownHosts.cert.noMatches" = "Keine Treffer.";
+"knownHosts.cert.loadError %@" = "Vertrauenswürdige Zertifikate konnten nicht geladen werden: %@";
+"knownHosts.cert.removeError %@" = "Das Zertifikat konnte nicht entfernt werden: %@";
 
 /* Sheet für ausgeblendete Importe (M11f/T2) */
 "hiddenImports.title" = "Ausgeblendete Importe";

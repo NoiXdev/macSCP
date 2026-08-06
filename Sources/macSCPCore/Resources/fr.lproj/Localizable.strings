@@ -73,6 +73,11 @@
 "core.hostkey.mismatch %@ %@ %@" = "ATTENTION : la clé d'hôte de %1$@ a changé ! Attendue %2$@, présentée %3$@. Attaque de l'homme du milieu possible — connexion abandonnée.";
 "core.hostkey.rejected" = "Connexion abandonnée — clé d'hôte non confirmée.";
 
+/* TOFU du certificat serveur (M21/T10) — reflète le cas de la clé d'hôte à l'identique : même sévérité, même principe « aucune exception ». */
+"core.certificate.mismatch %@ %@ %@" = "ATTENTION : le certificat de %1$@ a changé ! Attendu %2$@, présenté %3$@. Attaque de l'homme du milieu possible — connexion refusée.";
+"core.certificate.rejected" = "Connexion refusée — certificat non confirmé.";
+"core.certificate.trustStoreUnreadable" = "Connexion refusée — le magasin des certificats de confiance n'a pas pu être lu.";
+
 /* TerminalPanelViewModel */
 "core.terminal.shellEnded %@" = "Shell terminé : %@";
 "core.terminal.openFailed %@" = "Échec de l'ouverture du shell : %@";
