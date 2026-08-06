@@ -1239,6 +1239,12 @@ The hard one. SSH has three auth kinds, a managed-key picker whose options come 
 
 **If the jump group turns out not to fit the one-level vocabulary, stop and report NEEDS_CONTEXT rather than widening the vocabulary on your own.** The spec names this as the first place the implementation should pause and ask.
 
+To be precise about what "widening" means, because the two are easy to confuse: the **vocabulary** is `ConnectionField.Kind`, `LeafField.Kind`, `OptionSource` and `FieldCondition` — those are frozen, and needing a new case in any of them is a design question to escalate. A **backend's own field enum** is not the vocabulary; adding a case to `SSHField` is ordinary modelling and needs no permission.
+
+**Why SSH has both `password` and `passphrase`, sharing one keychain slot.** SSH stores exactly one secret per login, but it means two different things: a password under `.password` auth, a key passphrase under `.privateKey`, and nothing at all under `.agent`. The shipped login-set editor already renders them as two differently-labelled rows (`connection.auth.password` vs `connection.field.passphrase`, the latter marked optional) and shows neither for agent logins — a deliberate M10d decision, commented in `LoginSetsSheet.swift` as "only Name + Username apply".
+
+One unconditional field could not reproduce that: it would either make passphrases unenterable (if conditioned on `.password`) or grow a meaningless secret row on agent logins (if left unconditional), regressing shipped behaviour. Two conditional fields describe what the UI already is, and keep `FieldCondition` at "equals". Both map to the same Keychain entry — `makeConfig` never reads either, because the resolved secret arrives as its second parameter and `authKind` decides what it means.
+
 - [ ] **Step 1: Write the failing tests**
 
 `Tests/macSCPCoreTests/SSHFieldSchemaTests.swift`:
@@ -1378,7 +1384,7 @@ Expected: FAIL — `cannot find 'SSHField' in scope`
 import Foundation
 
 public enum SSHField: String, CaseIterable, BackendFieldID {
-    case host, port, username, authKind, keyPath, managedKeyID, password, jump
+    case host, port, username, authKind, keyPath, managedKeyID, password, passphrase, jump
 }
 
 /// The jump host's own login. A separate enum because a `.group` holds
