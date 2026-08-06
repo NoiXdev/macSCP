@@ -69,3 +69,41 @@ services:
       echo 'hello a' | mc pipe local/macscp-seed/a.txt &&
       echo 'hello b' | mc pipe local/macscp-seed/sub/b.txt
       "
+
+  # Apache/mod_dav rig (M21/Task 11) backing WebDAVFileSystemIntegrationTests:
+  # three vhosts, one per auth mode the WebDAV backend has to handle. Host
+  # ports are non-standard 180xx/18443, same "high, unlikely to clash" spirit
+  # as the sshd/minio mappings above; verified free with `lsof -i` before
+  # settling on them.
+  #   18080 -> 8080  Basic auth,  plain HTTP
+  #   18081 -> 8081  Digest auth, plain HTTP
+  #   18443 -> 8443  Basic auth,  TLS (certificate generated at container
+  #                  start by entrypoint.sh -- never committed, exactly like
+  #                  the SSH test keys)
+  webdav:
+    image: httpd:2.4
+    container_name: macscp-test-webdav
+    ports:
+      - "18080:8080"
+      - "18081:8081"
+      - "18443:8443"
+    volumes:
+      - ./webdav/httpd-webdav.conf:/usr/local/apache2/conf/extra/webdav.conf:ro
+      - ./webdav/entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+
+  # Nextcloud (M21/Task 11): exists ONLY to produce one real PROPFIND
+  # response to compare against the fixture in WebDAVPropfindParserTests --
+  # not part of the gated CRUD suite. Behind a compose profile so the normal
+  # `up -d` (and therefore MACSCP_ITEST=1 swift test) stays fast; bring it up
+  # explicitly with `docker compose --profile nextcloud up -d nextcloud`.
+  nextcloud:
+    image: nextcloud:29-apache
+    container_name: macscp-test-nextcloud
+    profiles: ["nextcloud"]
+    ports:
+      - "18090:80"
+    environment:
+      - SQLITE_DATABASE=nextcloud
+      - NEXTCLOUD_ADMIN_USER=testuser
+      - NEXTCLOUD_ADMIN_PASSWORD=testpass
