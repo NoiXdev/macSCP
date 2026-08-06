@@ -1077,6 +1077,124 @@ struct SessionListViewModelTests {
         #expect(exported.s3AccessKeyID == "AKIAOWN")
     }
 
+    // MARK: - Connection kind + WebDAV (M23 fix)
+
+    /// End-to-end twin of `s3SessionSurvivesExportImportRoundtrip`: a
+    /// `.webdav` session must come back out of a full export -> encode ->
+    /// decode -> plan -> applyImport round trip with its base URL, user name
+    /// and Nextcloud flag intact. Before the fix the export carried no WebDAV
+    /// columns at all, so the imported session had `kind == .webdav` and
+    /// `webdav == nil` — the server was simply gone.
+    @Test func webdavSessionSurvivesExportImportRoundtrip() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let store = SessionStore(directory: dir)
+        let webdavConfig = StoredWebDAVConfig(
+            baseURL: "https://dav.example.com/dav", username: "alice", useNextcloudPath: true)
+        let original = StoredSession(
+            name: "nextcloud", host: "unused", username: "unused", kind: .webdav,
+            webdav: webdavConfig)
+        try store.upsert(original)
+        try secrets.savePassword("dav-secret", for: original.id)
+
+        let vm = SessionListViewModel(
+            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+        let (payload, missingPasswordCount) = vm.exportPayload(
+            for: .single(original), includeGroups: false, includePasswords: true)
+        #expect(missingPasswordCount == 0)
+        let exported = payload.sessions.first!
+        #expect(exported.kind == .webdav)
+        #expect(exported.webdavBaseURL == "https://dav.example.com/dav")
+        #expect(exported.webdavUsername == "alice")
+        #expect(exported.webdavUseNextcloudPath == true)
+        // WebDAV's secret travels in the shared `password` slot (M21) — the
+        // export never grew a WebDAV secret column, and must not.
+        #expect(exported.password == "dav-secret")
+
+        let data = try SessionExportCodec.encode(payload, password: "export-pw")
+        let decoded = try SessionExportCodec.decode(data, password: "export-pw")
+
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: decoded,
+            arbiter: ImportConflictArbiter { _ in Issue.record("decider must not be asked"); return nil })
+        let importedVM = SessionListViewModel(
+            store: SessionStore(directory: dir.appendingPathComponent("import-target")),
+            secrets: InMemorySecretStore())
+        let result = importedVM.applyImport(plan)
+        #expect(result.imported == 1)
+        #expect(result.passwordsImported == 1)
+
+        let imported = importedVM.sessions.first!
+        #expect(imported.kind == .webdav)
+        #expect(imported.webdav?.baseURL == "https://dav.example.com/dav")
+        #expect(imported.webdav?.username == "alice")
+        #expect(imported.webdav?.useNextcloudPath == true)
+        #expect(imported.webdav == webdavConfig)
+        #expect(imported.id != original.id) // fresh id (M9a import rule)
+        #expect(importedVM.password(for: imported) == "dav-secret")
+    }
+
+    /// The optional path, same round trip for a session that has NO WebDAV
+    /// block: nothing may be invented on the way through, and the secret-free
+    /// export must stay secret-free.
+    @Test func sessionWithoutWebDAVBlockSurvivesRoundtripWithNilConfig() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SessionStore(directory: dir)
+        let original = StoredSession(name: "web", host: "web-01", username: "root")
+        try store.upsert(original)
+
+        let vm = SessionListViewModel(
+            store: store, secrets: InMemorySecretStore(),
+            loginSetStore: LoginSetStore(directory: dir))
+        let (payload, _) = vm.exportPayload(
+            for: .single(original), includeGroups: false, includePasswords: false)
+        let exported = payload.sessions.first!
+        #expect(exported.webdavBaseURL == nil)
+        #expect(exported.webdavUsername == nil)
+        #expect(exported.webdavUseNextcloudPath == nil)
+
+        let data = try SessionExportCodec.encode(payload, password: nil)
+        let decoded = try SessionExportCodec.decode(data, password: nil)
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: decoded,
+            arbiter: ImportConflictArbiter { _ in Issue.record("decider must not be asked"); return nil })
+        let importedVM = SessionListViewModel(
+            store: SessionStore(directory: dir.appendingPathComponent("import-target")),
+            secrets: InMemorySecretStore())
+        #expect(importedVM.applyImport(plan).imported == 1)
+        let imported = importedVM.sessions.first!
+        #expect(imported.kind == .ssh)
+        #expect(imported.webdav == nil)
+    }
+
+    /// A `.macscp` file written BEFORE this fix: a `.webdav` session with no
+    /// `webdav*` columns. It must still import — the missing columns decode as
+    /// `nil`, exactly the way the `s3*` columns already do.
+    @Test func preFixExportFileStillImports() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let raw = Data("""
+        {"format":"macscp-sessions","version":1,"encrypted":false,"payload":{"includesSecrets":false,\
+        "groups":[],"sessions":[{"id":"\(UUID().uuidString)","name":"nextcloud","host":"unused",\
+        "port":22,"username":"unused","authKind":"password","kind":"webdav"}]}}
+        """.utf8)
+        let decoded = try SessionExportCodec.decode(raw, password: nil)
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: decoded,
+            arbiter: ImportConflictArbiter { _ in Issue.record("decider must not be asked"); return nil })
+        let importedVM = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: InMemorySecretStore())
+        #expect(importedVM.applyImport(plan).imported == 1)
+        let imported = importedVM.sessions.first!
+        #expect(imported.kind == .webdav)
+        #expect(imported.webdav == nil)
+    }
+
     // MARK: - Agent auth (M10d/T3)
 
     @Test func saveSwitchingTargetToAgentDeletesSessionSecret() throws {

@@ -68,6 +68,19 @@ public struct ExportedSession: Codable, Equatable, Sendable {
     /// channel as `jumpPassword`, only ever populated in the encrypted
     /// export path.
     public var s3SecretAccessKey: String?
+    /// WebDAV parameters (M21), present only when `kind == .webdav`. Flat
+    /// mirror of `StoredWebDAVConfig`, laid out exactly like the `s3*` block
+    /// above and Optional for the same reason: a file written before these
+    /// columns existed simply has no such keys and decodes them as `nil`.
+    ///
+    /// There is deliberately no WebDAV secret column. Unlike S3 -- whose
+    /// secret access key needed `s3SecretAccessKey` because the plain
+    /// `password` slot is the SSH password's -- a WebDAV session's password
+    /// already travels in `password` (same Keychain slot, see
+    /// `SessionListViewModel.exportPayload`), so nothing secret is added here.
+    public var webdavBaseURL: String?
+    public var webdavUsername: String?
+    public var webdavUseNextcloudPath: Bool?
 
     public init(
         id: UUID, name: String, host: String, port: Int, username: String,
@@ -78,7 +91,9 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         jumpPassword: String? = nil,
         kind: ConnectionKind? = nil,
         s3AccessKeyID: String? = nil, s3Region: String? = nil, s3Endpoint: String? = nil,
-        s3Bucket: String? = nil, s3UsePathStyle: Bool? = nil, s3SecretAccessKey: String? = nil
+        s3Bucket: String? = nil, s3UsePathStyle: Bool? = nil, s3SecretAccessKey: String? = nil,
+        webdavBaseURL: String? = nil, webdavUsername: String? = nil,
+        webdavUseNextcloudPath: Bool? = nil
     ) {
         self.id = id
         self.name = name
@@ -102,6 +117,9 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         self.s3Bucket = s3Bucket
         self.s3UsePathStyle = s3UsePathStyle
         self.s3SecretAccessKey = s3SecretAccessKey
+        self.webdavBaseURL = webdavBaseURL
+        self.webdavUsername = webdavUsername
+        self.webdavUseNextcloudPath = webdavUseNextcloudPath
     }
 }
 

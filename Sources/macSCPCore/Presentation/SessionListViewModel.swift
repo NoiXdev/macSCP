@@ -750,6 +750,24 @@ public final class SessionListViewModel {
                 }
             }
 
+            // WebDAV fields (M21): the exact counterpart of the S3 block
+            // above, minus a secret column -- a WebDAV session's password
+            // rides the plain `password` slot (the `session.kind != .s3` gate
+            // above lets `.webdav` through on purpose), so it is already
+            // fetched and counted there. Nothing secret is read here.
+            var webdavBaseURL: String?
+            var webdavUsername: String?
+            var webdavUseNextcloudPath: Bool?
+            if session.kind == .webdav, let webdav = session.webdav {
+                webdavBaseURL = webdav.baseURL
+                // Always the session's own value: a WebDAV login set supplies
+                // the user name at CONNECT time, and resolving it into the
+                // export would silently rewrite the stored config -- the same
+                // line `s3AccessKeyID` above holds.
+                webdavUsername = webdav.username
+                webdavUseNextcloudPath = webdav.useNextcloudPath
+            }
+
             // Jump fields (M10c, extended M11a): always the RESOLVED values
             // -- a set reference becomes the set's own values, a session
             // reference becomes the REFERENCED session's host/port/login; a
@@ -789,7 +807,9 @@ public final class SessionListViewModel {
                 kind: session.kind,
                 s3AccessKeyID: s3AccessKeyID, s3Region: s3Region, s3Endpoint: s3Endpoint,
                 s3Bucket: s3Bucket, s3UsePathStyle: s3UsePathStyle,
-                s3SecretAccessKey: s3SecretAccessKey)
+                s3SecretAccessKey: s3SecretAccessKey,
+                webdavBaseURL: webdavBaseURL, webdavUsername: webdavUsername,
+                webdavUseNextcloudPath: webdavUseNextcloudPath)
         }
 
         var exportedGroups: [ExportedGroup] = []
