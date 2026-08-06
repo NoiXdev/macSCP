@@ -21,7 +21,11 @@
 - **Never commit key material or secrets.** Secrets live exclusively in the macOS Keychain; JSON stores never contain them.
 - **A secret's value must never be printed, logged, or embedded in an error.**
 - **The on-disk format does not change.** `StoredSession`, `StoredS3Config`, `StoredWebDAVConfig` keep their shape. `LoginSet` may only gain *optional* new properties, so old files decode as `nil`.
-- **The existing SSH and S3 tests are the safety net.** They must not be edited to fit a new implementation. If one goes red, the implementation is wrong.
+- **The existing SSH and S3 tests are the safety net.** They must not be edited to fit a new implementation. If one goes red, the implementation is wrong — with exactly one carve-out, named here so nobody has to guess:
+
+  A test that asserts a **secret field lives in the connection schema** is asserting the M12 arrangement this milestone deliberately inverts. Moving credentials into `credentialSchema` is the change that makes login sets work for every backend without per-protocol UI; a test pinning the old location is not a safety net, it is the old design. Such a test is **relocated, never deleted**: it must still assert the secret is present and reachable, now in `credentialSchema`, and be renamed to say so. `BackendDescriptorTests.s3SchemaHasProviderPresetsAndSecretField` is the known instance.
+
+  Every other red test means the implementation is wrong. Stop and report rather than editing.
 - Conventional Commits; footer on every commit: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
 - **Commit locally only. Do NOT push.**
 - A full `swift build 2>&1 | grep -c warning` currently reports **66**, all from the Citadel/NIOSSH dependencies. No warning line may name a file you touched.
