@@ -251,6 +251,18 @@ public enum SessionImportPlanner {
                 accessKeyID: accessKeyID, region: region, endpoint: endpoint,
                 bucket: bucket, usePathStyle: fileSession.s3UsePathStyle ?? false)
         }
+        // WebDAV (M21): the same shape as the `s3` block above -- the
+        // persisted config is only built when the file actually carries the
+        // columns, so a `.webdav` entry from a pre-M21-export build (which had
+        // none) still imports, just without a server. `useNextcloudPath`
+        // defaults to false the way `s3UsePathStyle` does.
+        var webdav: StoredWebDAVConfig?
+        if kind == .webdav, let baseURL = fileSession.webdavBaseURL,
+           let webdavUsername = fileSession.webdavUsername {
+            webdav = StoredWebDAVConfig(
+                baseURL: baseURL, username: webdavUsername,
+                useNextcloudPath: fileSession.webdavUseNextcloudPath ?? false)
+        }
         let session = StoredSession(
             id: id,
             name: name,
@@ -262,11 +274,14 @@ public enum SessionImportPlanner {
             groupID: groupID,
             jump: jump,
             kind: kind,
-            s3: s3)
+            s3: s3,
+            webdav: webdav)
         // The kind's single secret always travels in the same
         // `password` slot -- for `.ssh` this is the SSH password, for
-        // `.s3` it's the secret access key (both stored in the Keychain
-        // under the session's own id at apply time).
+        // `.webdav` the WebDAV password, and for `.s3` the secret access
+        // key (all stored in the Keychain under the session's own id at
+        // apply time). Only `.s3` needs a column of its own, because its
+        // export writes `password` as nil.
         let secret = kind == .s3 ? fileSession.s3SecretAccessKey : fileSession.password
         return PlannedSession(
             session: session, password: secret,

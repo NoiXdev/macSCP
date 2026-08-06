@@ -250,5 +250,51 @@ struct SessionExportCodecTests {
         #expect(session.s3Bucket == nil)
         #expect(session.s3UsePathStyle == nil)
         #expect(session.s3SecretAccessKey == nil)
+        // Same story for the WebDAV columns (M21/M23): a pre-fix file has no
+        // `webdav*` keys at all and must still decode, as `nil`.
+        #expect(session.webdavBaseURL == nil)
+        #expect(session.webdavUsername == nil)
+        #expect(session.webdavUseNextcloudPath == nil)
+    }
+
+    // MARK: - WebDAV fields (M23 fix — the export dropped them entirely)
+
+    @Test func webdavSessionWithKindAndFieldsRoundtripsThroughEncodeDecode() throws {
+        let payload = SessionExportPayload(
+            includesSecrets: true,
+            groups: [],
+            sessions: [ExportedSession(
+                id: UUID(), name: "nextcloud", host: "unused", port: 22, username: "unused",
+                authKind: .password, keyPath: nil, groupID: nil, password: "dav-secret",
+                kind: .webdav,
+                webdavBaseURL: "https://dav.example.com/dav", webdavUsername: "alice",
+                webdavUseNextcloudPath: true)])
+        let data = try SessionExportCodec.encode(payload, password: "pw")
+        let decoded = try SessionExportCodec.decode(data, password: "pw")
+        #expect(decoded == payload)
+        let session = decoded.sessions.first!
+        #expect(session.kind == .webdav)
+        #expect(session.webdavBaseURL == "https://dav.example.com/dav")
+        #expect(session.webdavUsername == "alice")
+        #expect(session.webdavUseNextcloudPath == true)
+        // WebDAV has no secret column of its own: the password travels in the
+        // shared `password` slot, exactly as `StoredWebDAVConfig` has no
+        // secret field. Nothing must have been added beside it.
+        #expect(session.password == "dav-secret")
+    }
+
+    /// The optional path: a session with NO WebDAV block must not gain any
+    /// `webdav*` key in the written file — that is what keeps a file written
+    /// after this fix readable by an older build, and what keeps the golden
+    /// byte-compatibility fixture in `ExportEnvelopeCodecTests` valid.
+    @Test func sessionWithoutWebDAVBlockWritesNoWebDAVKeysAndDecodesNil() throws {
+        let payload = samplePayload()
+        let data = try SessionExportCodec.encode(payload, password: nil)
+        let json = String(decoding: data, as: UTF8.self)
+        #expect(!json.contains("webdav"))
+        let session = try SessionExportCodec.decode(data, password: nil).sessions.first!
+        #expect(session.webdavBaseURL == nil)
+        #expect(session.webdavUsername == nil)
+        #expect(session.webdavUseNextcloudPath == nil)
     }
 }

@@ -502,5 +502,70 @@ struct SessionImportPlannerTests {
         let planned = plan.sessionsToImport[0]
         #expect(planned.session.kind == .ssh)
         #expect(planned.session.s3 == nil)
+        // The same for WebDAV: no `webdav*` columns in the file means no
+        // `StoredWebDAVConfig` on the planned session.
+        #expect(planned.session.webdav == nil)
+    }
+
+    // MARK: - WebDAV (M23 fix — the planner never built a StoredWebDAVConfig)
+
+    @Test func webdavFileSessionBuildsStoredWebDAVConfigAndCarriesSecretAsPassword() async {
+        let file = ExportedSession(
+            id: UUID(), name: "nextcloud", host: "unused", port: 22, username: "unused",
+            authKind: .password, keyPath: nil, groupID: nil, password: "dav-secret",
+            kind: .webdav,
+            webdavBaseURL: "https://dav.example.com", webdavUsername: "alice",
+            webdavUseNextcloudPath: true)
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
+
+        let planned = plan.sessionsToImport[0]
+        #expect(planned.session.kind == .webdav)
+        #expect(planned.session.webdav == StoredWebDAVConfig(
+            baseURL: "https://dav.example.com", username: "alice", useNextcloudPath: true))
+        // WebDAV's secret uses the shared `password` slot, like SSH's — there
+        // is no separate WebDAV secret column, and none may be added.
+        #expect(planned.password == "dav-secret")
+    }
+
+    /// A `.webdav` file entry from a PRE-FIX export carries no `webdav*`
+    /// columns at all. It must still plan (kind preserved, no config), rather
+    /// than crash or be silently retyped.
+    @Test func webdavFileSessionWithoutColumnsKeepsKindAndHasNoConfig() async {
+        let file = ExportedSession(
+            id: UUID(), name: "nextcloud", host: "unused", port: 22, username: "unused",
+            authKind: .password, keyPath: nil, groupID: nil, password: nil,
+            kind: .webdav)
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
+
+        let planned = plan.sessionsToImport[0]
+        #expect(planned.session.kind == .webdav)
+        #expect(planned.session.webdav == nil)
+    }
+
+    /// The replace path (M19) goes through the same `makePlanned` builder, so
+    /// an overwritten record must land with its WebDAV config too — the field
+    /// must not be dropped on one branch and carried on another.
+    @Test func replacedWebDAVSessionKeepsItsConfig() async {
+        let existing = StoredSession(
+            name: "old", host: "unused", username: "unused", kind: .webdav,
+            webdav: StoredWebDAVConfig(
+                baseURL: "https://old.example.com", username: "bob", useNextcloudPath: false))
+        let file = ExportedSession(
+            id: UUID(), name: "new", host: "unused", port: 22, username: "unused",
+            authKind: .password, keyPath: nil, groupID: nil, password: nil,
+            kind: .webdav,
+            webdavBaseURL: "https://dav.example.com", webdavUsername: "alice",
+            webdavUseNextcloudPath: true)
+        let plan = await SessionImportPlanner.plan(
+            existing: [existing], existingGroups: [], incoming: incoming([file]),
+            arbiter: ImportConflictArbiter { _ in (.replace, false) })
+
+        let planned = plan.sessionsToImport[0]
+        #expect(planned.replacesExisting)
+        #expect(planned.session.id == existing.id)
+        #expect(planned.session.webdav == StoredWebDAVConfig(
+            baseURL: "https://dav.example.com", username: "alice", useNextcloudPath: true))
     }
 }
