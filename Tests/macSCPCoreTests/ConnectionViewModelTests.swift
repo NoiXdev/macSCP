@@ -191,7 +191,14 @@ struct ConnectionViewModelTests {
         })
 
         async let first = vm.connect()
-        try? await Task.sleep(for: .milliseconds(80))
+        // Same shape as the host-key tests below: a fixed sleep would let the
+        // second connect() run BEFORE the first one reached `state =
+        // .connecting`, so it would not be rejected — it would enter the
+        // connector itself and park on the stream, and the
+        // `continuation.finish()` that releases it sits AFTER this line.
+        await waitUntil("first connect() must reach the connector") {
+            await counter.value == 1
+        }
 
         let second = await vm.connect()
         #expect(second == nil)
@@ -213,7 +220,7 @@ struct ConnectionViewModelTests {
         })
 
         async let result = vm.connect()
-        try? await Task.sleep(for: .milliseconds(80))
+        await waitUntil("the host-key prompt must be published") { vm.hostKeyPrompt != nil }
         #expect(vm.hostKeyPrompt?.candidate == candidate)
 
         vm.resolveHostKeyPrompt(trust: true)
@@ -234,7 +241,7 @@ struct ConnectionViewModelTests {
         })
 
         async let result = vm.connect()
-        try? await Task.sleep(for: .milliseconds(80))
+        await waitUntil("the host-key prompt must be published") { vm.hostKeyPrompt != nil }
         vm.resolveHostKeyPrompt(trust: false)
         let fs = await result
 
@@ -257,10 +264,7 @@ struct ConnectionViewModelTests {
 
         let connectTask = Task { await vm.connect() }
         // Wait until the prompt is up.
-        for _ in 0..<200 where vm.hostKeyPrompt == nil {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        #expect(vm.hostKeyPrompt != nil)
+        await waitUntil("the host-key prompt must be published") { vm.hostKeyPrompt != nil }
 
         connectTask.cancel()
 
@@ -910,6 +914,40 @@ struct ConnectionViewModelTests {
 private actor CallCounter {
     private(set) var value = 0
     func increment() { value += 1 }
+}
+
+/// Polls `condition` until it holds, and fails the test with `description`
+/// once `timeout` is up instead of letting the run hang.
+///
+/// This suite and `ConnectionViewModel` are both `@MainActor`, so every
+/// `async let`/`Task` started here queues behind all other main-actor work in
+/// the process. A fixed `Task.sleep` is therefore NOT a wait for the child to
+/// have run — under a full parallel suite it often has not, and the test then
+/// answers a prompt that does not exist yet: `resolveHostKeyPrompt` takes its
+/// `guard let continuation … else { return }` no-op, the child afterwards
+/// registers a continuation nobody will ever resume, and the awaiting test
+/// parks forever (0% CPU, `swift test` has no per-test timeout, so the whole
+/// run never reports). Polling ties the wait to the state the test actually
+/// depends on rather than to a wall clock.
+///
+/// The timeout is deliberately generous: it is an emergency exit that turns a
+/// future regression into a red test, not a performance assertion. The
+/// success path never waits for it — the loop leaves as soon as `condition`
+/// holds.
+@MainActor
+private func waitUntil(
+    _ description: Comment,
+    timeout: Duration = .seconds(30),
+    sourceLocation: SourceLocation = #_sourceLocation,
+    _ condition: () async -> Bool
+) async {
+    let deadline = ContinuousClock.now + timeout
+    var satisfied = await condition()
+    while !satisfied, ContinuousClock.now < deadline {
+        try? await Task.sleep(for: .milliseconds(5))
+        satisfied = await condition()
+    }
+    #expect(satisfied, description, sourceLocation: sourceLocation)
 }
 
 /// Reports whether `task` returned at all — the assertion the cancellation
