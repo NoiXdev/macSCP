@@ -99,12 +99,86 @@ public final class ConnectionViewModel {
     /// changes what session (if any) is actually active.
     public private(set) var lastConnectedConfig: SSHConnectionConfig?
 
-    public var host: String = ""
-    public var port: String = "22"
-    public var username: String = ""
-    public var password: String = ""
-    public var authChoice: AuthChoice = .password
-    public var keyPath: String = ""
+    /// Everything the form collected, keyed by the ACTIVE backend's fields
+    /// (M22/T8). The single source of truth: every `host`/`port`/`s3Bucket`/…
+    /// property below reads and writes through here rather than holding a
+    /// second copy, so the generic renderer (which binds to this map) and the
+    /// connect/save paths (which read the properties) cannot drift apart —
+    /// the drift no compiler can catch is exactly what this milestone removes.
+    public var values = BackendDescriptor.descriptor(for: .ssh).defaultValues
+
+    // MARK: - SSH fields, read through `values`
+    //
+    // These stay as named properties because they are the vocabulary the App
+    // layer, the CLI and ~40 tests already speak; what changed is that they
+    // are now views ONTO `values` instead of storage beside it.
+
+    public var host: String {
+        get { values[SSHField.host] }
+        set { values[SSHField.host] = newValue }
+    }
+
+    public var port: String {
+        get { values[SSHField.port] }
+        set { values[SSHField.port] = newValue }
+    }
+
+    /// WebDAV's user name is its OWN field, not the SSH one: the two forms
+    /// render different schemas now, and the WebDAV row writes
+    /// `WebDAVField.username`. Everything else keeps using SSH's — S3 has no
+    /// user name at all and only ever parks the `"unused"` placeholder here.
+    public var username: String {
+        get { kind == .webdav ? values[WebDAVField.username] : values[SSHField.username] }
+        set {
+            if kind == .webdav {
+                values[WebDAVField.username] = newValue
+            } else {
+                values[SSHField.username] = newValue
+            }
+        }
+    }
+
+    /// The form's one secret slot, mapped onto whichever field the active
+    /// backend and auth kind actually mean by it.
+    ///
+    /// SSH declares password and passphrase as two DIFFERENT fields (only one
+    /// of them is ever visible, per auth kind), so the getter picks by auth
+    /// kind while the SETTER writes both. Writing both is what keeps a
+    /// programmatic fill — a login set's secret, a Keychain passphrase — from
+    /// evaporating when the auth kind is switched afterwards, which is the
+    /// asymmetry `userSwitchClearsSecretButProgrammaticSetDoesNot` pins.
+    public var password: String {
+        get {
+            switch kind {
+            case .webdav: return values[WebDAVField.password]
+            case .ssh, .s3:
+                return authChoice == .privateKey
+                    ? values[SSHField.passphrase] : values[SSHField.password]
+            }
+        }
+        set {
+            switch kind {
+            case .webdav: values[WebDAVField.password] = newValue
+            case .ssh, .s3:
+                values[SSHField.password] = newValue
+                values[SSHField.passphrase] = newValue
+            }
+        }
+    }
+
+    /// `AuthChoice` and `StoredSession.AuthKind` share their raw values, which
+    /// is why the schema's picker options are addressed by the PERSISTED raw
+    /// value and no mapping table sits in between (see `SSHFieldSchema`).
+    public var authChoice: AuthChoice {
+        get { AuthChoice(rawValue: values[SSHField.authKind]) ?? .password }
+        set { values[SSHField.authKind] = newValue.rawValue }
+    }
+
+    public var keyPath: String {
+        get { values[SSHField.keyPath] }
+        set { values[SSHField.keyPath] = newValue }
+    }
+
     /// Save the session after a successful connect (store + keychain)?
     public var shouldSaveSession: Bool = false
     public var saveName: String = ""
@@ -132,15 +206,46 @@ public final class ConnectionViewModel {
     /// Jump host block (M10c/T3, mockup section 2): an optional intermediate
     /// hop the connection tunnels through. Off by default -- a brand-new
     /// form connects directly, exactly as before this feature existed.
+    ///
+    /// The toggle itself is form bookkeeping rather than a backend field, so
+    /// it stays stored here; the jump's own host/port/login below live in
+    /// `values` under the schema's `jump` group, addressed with the PAIR
+    /// subscript so they cannot collide with the target's same-named fields.
     public var jumpEnabled: Bool = false
-    public var jumpHost: String = ""
-    public var jumpPort: String = "22"
-    public var jumpUsername: String = ""
+
+    public var jumpHost: String {
+        get { values[SSHField.jump, SSHJumpField.host] }
+        set { values[SSHField.jump, SSHJumpField.host] = newValue }
+    }
+
+    public var jumpPort: String {
+        get { values[SSHField.jump, SSHJumpField.port] }
+        set { values[SSHField.jump, SSHJumpField.port] = newValue }
+    }
+
+    public var jumpUsername: String {
+        get { values[SSHField.jump, SSHJumpField.username] }
+        set { values[SSHField.jump, SSHJumpField.username] = newValue }
+    }
+
     /// Password (or key passphrase, in `.privateKey` mode) for the jump's
-    /// OWN manual credentials -- same dual role as `password` above.
-    public var jumpPassword: String = ""
-    public var jumpKeyPath: String = ""
-    public var jumpAuthChoice: AuthChoice = .password
+    /// OWN manual credentials -- same dual role as `password` above. One
+    /// field, not two: a nested login has no credential schema of its own to
+    /// split it across (see `SSHFieldSchema.jumpLeaves`).
+    public var jumpPassword: String {
+        get { values[SSHField.jump, SSHJumpField.password] }
+        set { values[SSHField.jump, SSHJumpField.password] = newValue }
+    }
+
+    public var jumpKeyPath: String {
+        get { values[SSHField.jump, SSHJumpField.keyPath] }
+        set { values[SSHField.jump, SSHJumpField.keyPath] = newValue }
+    }
+
+    public var jumpAuthChoice: AuthChoice {
+        get { AuthChoice(rawValue: values[SSHField.jump, SSHJumpField.authKind]) ?? .password }
+        set { values[SSHField.jump, SSHJumpField.authKind] = newValue.rawValue }
+    }
     /// The jump's own three-way login switcher (M10c/T3): the SAME building
     /// blocks the target uses (`loginMode`/`selectedLoginSetID`), reused for
     /// the jump's login instead of duplicating the mechanism. Unlike the
@@ -158,31 +263,69 @@ public final class ConnectionViewModel {
 
     /// The protocol this form builds a connection for (M12/T7a). Default
     /// `.ssh` — a brand-new form behaves exactly as before this feature
-    /// existed. The App layer's type switcher (a separate task) flips this;
+    /// existed. The App layer's type switcher flips this;
     /// `connect()`/`validateForEditSave()`/`beginEditing()` all branch on it.
-    public var kind: ConnectionKind = .ssh
-    /// S3 form fields (M12/T7a). Field identities match
-    /// `BackendDescriptor.descriptor(for: .s3).connectionSchema` ids
-    /// (endpoint/region/bucket/accessKeyID/secretAccessKey/usePathStyle) —
-    /// the App form binds to these directly.
-    public var s3Endpoint: String = ""
-    public var s3Region: String = ""
-    public var s3Bucket: String = ""
-    public var s3AccessKeyID: String = ""
+    ///
+    /// Changing it resets `values` to the new backend's defaults (M22/T8).
+    /// The namespaced storage already makes an S3 endpoint unable to leak
+    /// into a WebDAV form, but the user must not be shown a stale one either
+    /// — and the reset replaces the per-protocol field clearing `beginEditing`
+    /// and `exitEditMode` used to spell out by hand.
+    ///
+    /// Guarded on an ACTUAL change: `exitEditMode()` assigns `.ssh`
+    /// unconditionally and is documented to keep the field values for its
+    /// callers, which an unguarded reset would wipe.
+    public var kind: ConnectionKind = .ssh {
+        didSet {
+            guard oldValue != kind else { return }
+            values = BackendDescriptor.descriptor(for: kind).defaultValues
+        }
+    }
+
+    // MARK: - S3 and WebDAV fields, read through `values`
+
+    public var s3Endpoint: String {
+        get { values[S3Field.endpoint] }
+        set { values[S3Field.endpoint] = newValue }
+    }
+
+    public var s3Region: String {
+        get { values[S3Field.region] }
+        set { values[S3Field.region] = newValue }
+    }
+
+    public var s3Bucket: String {
+        get { values[S3Field.bucket] }
+        set { values[S3Field.bucket] = newValue }
+    }
+
+    public var s3AccessKeyID: String {
+        get { values[S3Field.accessKeyID] }
+        set { values[S3Field.accessKeyID] = newValue }
+    }
+
     /// Never persisted — same "leave unchanged in edit mode" rule as the
     /// SSH `password`/jump `jumpPassword` above; the App layer resolves the
     /// actual secret from the Keychain at connect time.
-    public var s3SecretAccessKey: String = ""
-    public var s3UsePathStyle: Bool = false
+    public var s3SecretAccessKey: String {
+        get { values[S3Field.secretAccessKey] }
+        set { values[S3Field.secretAccessKey] = newValue }
+    }
 
-    /// WebDAV form fields (M21/T9). Field identities match
-    /// `BackendDescriptor.descriptor(for: .webdav).connectionSchema` ids
-    /// (baseURL/useNextcloudPath) — `username`/`password` are deliberately
-    /// the SAME shared fields the SSH form uses, not separate `webdav*`
-    /// properties: WebDAV has no jump/agent/key-file concepts to conflict
-    /// with, so there is nothing to disambiguate.
-    public var webdavBaseURL: String = ""
-    public var webdavUseNextcloudPath: Bool = false
+    public var s3UsePathStyle: Bool {
+        get { values[bool: S3Field.usePathStyle] }
+        set { values[bool: S3Field.usePathStyle] = newValue }
+    }
+
+    public var webdavBaseURL: String {
+        get { values[WebDAVField.baseURL] }
+        set { values[WebDAVField.baseURL] = newValue }
+    }
+
+    public var webdavUseNextcloudPath: Bool {
+        get { values[bool: WebDAVField.useNextcloudPath] }
+        set { values[bool: WebDAVField.useNextcloudPath] = newValue }
+    }
 
     /// The jump's existing MANUAL keychain slot when editing a session that
     /// already had one (M10c/T3), remembered by `beginEditing` so
@@ -210,6 +353,20 @@ public final class ConnectionViewModel {
 
     public init(connector: @escaping Connector) {
         self.connector = connector
+    }
+
+    /// Builds the runtime config for the selected backend (M22/T8). The
+    /// `switch` over `kind` that used to build three different configs here
+    /// is now the descriptor's own factory, which switches over its backend's
+    /// FIELD enum instead — so a field added later fails to compile until it
+    /// is handled, rather than being silently dropped.
+    ///
+    /// For SSH the returned config carries NO jump: the factory takes exactly
+    /// one secret and a jump host has its own, in a separate Keychain entry,
+    /// so it structurally cannot resolve the second one. `connectSSH()`
+    /// attaches the jump afterwards — see the comment there.
+    public func makeConfig(secret: String) throws -> ConnectionConfig {
+        try BackendDescriptor.descriptor(for: kind).makeConfig(values, secret)
     }
 
     /// Maps the form's `AuthChoice` to the persisted `StoredSession.AuthKind`
@@ -294,24 +451,21 @@ public final class ConnectionViewModel {
             return nil
         }
         do {
-            let auth: SSHConnectionConfig.AuthMethod
-            switch authChoice {
-            case .password:
-                auth = .password(password)
-            case .privateKey:
-                auth = .privateKey(
-                    keyPath: keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
-                    passphrase: password.isEmpty ? nil : password)
-            case .agent:
-                auth = .agent
+            // The auth branch, the trimming and the port fallback all live in
+            // `SSHFieldSchema.makeConfig` now (M22/T8); `password` carries
+            // whichever secret the chosen auth kind means, exactly as the
+            // factory's one `secret` parameter expects.
+            guard case .ssh(let target) = try makeConfig(secret: password) else {
+                throw RemoteFSError.protocolError(reason: "expected an SSH config")
             }
+            // The jump is deliberately NOT built by the factory (pinned by
+            // `SSHFieldSchema.makeConfigLeavesTheJumpToTheCaller`): it needs a
+            // SECOND secret out of its own Keychain slot, which a one-secret
+            // factory cannot resolve. Attaching it here is what keeps a
+            // bastion-only session from quietly dialling its target directly.
             let config = try SSHConnectionConfig(
-                host: host.trimmingCharacters(in: .whitespacesAndNewlines),
-                port: portNumber,
-                username: username.trimmingCharacters(in: .whitespacesAndNewlines),
-                auth: auth,
-                jump: buildJumpConfig()
-            )
+                host: target.host, port: portNumber, username: target.username,
+                auth: target.auth, jump: buildJumpConfig())
             state = .connecting
             let fs = try await connector(.ssh(config)) { [weak self] candidate in
                 await self?.presentHostKeyPrompt(for: candidate) ?? false
@@ -346,21 +500,25 @@ public final class ConnectionViewModel {
             state = failure
             return nil
         }
-        let config = S3ConnectionConfig(
-            accessKeyID: s3AccessKeyID.trimmingCharacters(in: .whitespacesAndNewlines),
-            secretAccessKey: s3SecretAccessKey.trimmingCharacters(in: .whitespacesAndNewlines),
-            region: s3Region.trimmingCharacters(in: .whitespacesAndNewlines),
-            endpoint: s3Endpoint.trimmingCharacters(in: .whitespacesAndNewlines),
-            bucket: s3Bucket.trimmingCharacters(in: .whitespacesAndNewlines),
-            usePathStyle: s3UsePathStyle,
-            sessionToken: nil)
+        let config: ConnectionConfig
+        do {
+            config = try makeConfig(
+                secret: s3SecretAccessKey.trimmingCharacters(in: .whitespacesAndNewlines))
+        } catch {
+            // `validateS3Fields` above has already reported every empty
+            // required field with its localized message; anything the factory
+            // still rejects gets the same text rather than its unlocalized
+            // `reason:`.
+            state = .failed(message: CoreL10n.string("core.connect.s3FieldRequired"), field: nil)
+            return nil
+        }
         state = .connecting
         do {
             // S3 has no host-key prompt (no TOFU) -- the decider is passed
             // through unconditionally by the `Connector` typealias (every
             // backend gets one), but S3 simply never consults it, so a
             // decider that always answers `false` is never actually asked.
-            let fs = try await connector(.s3(config)) { _ in false }
+            let fs = try await connector(config) { _ in false }
             state = .idle
             return fs
         } catch {
@@ -408,9 +566,9 @@ public final class ConnectionViewModel {
                 message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName)
             return nil
         }
-        let config: WebDAVConnectionConfig
+        let config: ConnectionConfig
         do {
-            config = try makeWebDAVConfig()
+            config = try makeConfig(secret: values[WebDAVField.password])
         } catch {
             state = .failed(message: CoreL10n.string("core.connect.webdavFieldRequired"), field: nil)
             return nil
@@ -420,7 +578,7 @@ public final class ConnectionViewModel {
             // WebDAV has no host-key prompt (no TOFU, it authenticates over
             // TLS) -- same "decider passed through but never consulted"
             // shape as S3's own connect path above.
-            let fs = try await connector(.webdav(config)) { _ in false }
+            let fs = try await connector(config) { _ in false }
             state = .idle
             return fs
         } catch {
@@ -429,19 +587,17 @@ public final class ConnectionViewModel {
         }
     }
 
-    /// Builds the runtime WebDAV config from the form fields. Trimmed the same
-    /// way the SSH and S3 builders trim theirs — a URL pasted from a browser
-    /// address bar routinely carries trailing whitespace.
+    /// Builds the runtime WebDAV config from the form fields. Since M22/T8 a
+    /// thin typed wrapper over `WebDAVFieldSchema.makeConfig` — the trimming
+    /// and the empty-URL rejection live there, one place for the form, the
+    /// CLI and this method.
     public func makeWebDAVConfig() throws -> WebDAVConnectionConfig {
-        let baseURL = webdavBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !baseURL.isEmpty else {
-            throw RemoteFSError.connectionFailed(reason: "Enter the server URL")
+        let config = try BackendDescriptor.descriptor(for: .webdav)
+            .makeConfig(values, values[WebDAVField.password])
+        guard case .webdav(let webdav) = config else {
+            throw RemoteFSError.protocolError(reason: "expected a WebDAV config")
         }
-        return WebDAVConnectionConfig(
-            baseURL: baseURL,
-            username: username.trimmingCharacters(in: .whitespacesAndNewlines),
-            useNextcloudPath: webdavUseNextcloudPath,
-            password: password)
+        return webdav
     }
 
     /// Decider side: publishes the prompt and suspends on a continuation
@@ -485,8 +641,15 @@ public final class ConnectionViewModel {
     }
 
     /// Removes the plaintext password from the state (e.g. after disconnecting).
+    ///
+    /// Clears every secret slot the form owns, not just the one the current
+    /// `kind`/auth kind happens to read (M22/T8): a secret typed under one
+    /// auth kind and abandoned by switching to another would otherwise sit in
+    /// `values` unreachable but still in memory.
     public func clearPassword() {
-        password = ""
+        values[SSHField.password] = ""
+        values[SSHField.passphrase] = ""
+        values[WebDAVField.password] = ""
     }
 
     /// Full disconnect-time scrub (review finding, M11d fix round 1): clears
@@ -649,12 +812,11 @@ public final class ConnectionViewModel {
     /// the two used to duplicate the mode handling (M6a).
     public func endEditing() {
         exitEditMode()
-        host = ""
-        port = "22"
-        username = ""
-        password = ""
-        authChoice = .password
-        keyPath = ""
+        // One reset instead of six assignments (M22/T8): `exitEditMode()` has
+        // just put `kind` back to `.ssh`, so the descriptor's defaults are the
+        // blank SSH form — host/username/secret empty, port 22, auth
+        // `password` — plus a blank jump block.
+        values = BackendDescriptor.descriptor(for: kind).defaultValues
         shouldSaveSession = false
         saveName = ""
         saveAsNewLoginSet = false
@@ -686,15 +848,11 @@ public final class ConnectionViewModel {
         saveAsNewLoginSet = false
         newLoginSetName = ""
         clearJumpFields()
+        // Setting `kind` resets `values` to the SSH defaults whenever it
+        // actually changes (M22/T8), which is what the per-protocol field
+        // clearing spelled out by hand here used to do. An unchanged `.ssh`
+        // deliberately keeps its fields — see this method's own contract.
         kind = .ssh
-        s3Endpoint = ""
-        s3Region = ""
-        s3Bucket = ""
-        s3AccessKeyID = ""
-        s3SecretAccessKey = ""
-        s3UsePathStyle = false
-        webdavBaseURL = ""
-        webdavUseNextcloudPath = false
     }
 
     /// Resets every jump-related field to its blank "no jump" state: the

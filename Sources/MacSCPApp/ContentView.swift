@@ -2350,22 +2350,29 @@ struct ContentView: View {
             // session down first, never anyone else's.
             if tab.isConnected { await teardown(tab) }
             let form = tab.connectionViewModel
+            // BEFORE any field is written (M22/T8): assigning `kind` resets
+            // `values` to that backend's defaults, so a fill that ran first
+            // would be wiped by the protocol switch. The three branches below
+            // used to set it themselves, each after its own fields — which
+            // now only works by accident for S3/WebDAV (they overwrite
+            // everything afterwards) and not at all for SSH, whose host and
+            // port are assigned here.
+            form.kind = stored.kind
             form.host = stored.host
             form.port = String(stored.port)
             form.saveName = stored.name
             form.shouldSaveSession = false
 
             // S3 (M12/T7b): a much shorter fill — no login sets, no jump,
-            // no host-key TOFU. `kind` is reset explicitly on BOTH branches
-            // (sticky-toggle lesson, same as `clearJumpFields()`'s own doc
-            // comment): the tab's `ConnectionViewModel` outlives any single
-            // connect, so a PREVIOUS S3 fill in this same tab must not
-            // survive into an SSH session's fill, or vice versa. The secret
+            // no host-key TOFU. The `kind` assignment above is what keeps a
+            // PREVIOUS S3 fill in this same tab from surviving into an SSH
+            // session's fill, or vice versa (sticky-toggle lesson, same as
+            // `clearJumpFields()`'s own doc comment) — the tab's
+            // `ConnectionViewModel` outlives any single connect. The secret
             // access key is resolved from the Keychain the same way the SSH
             // password is (`password(for:)`) — same slot, addressed by
             // session id regardless of kind.
             if stored.kind == .s3 {
-                form.kind = .s3
                 form.s3Endpoint = stored.s3?.endpoint ?? ""
                 form.s3Region = stored.s3?.region ?? ""
                 form.s3Bucket = stored.s3?.bucket ?? ""
@@ -2405,7 +2412,6 @@ struct ContentView: View {
                 // `beginEditing` uses. The password is resolved from the
                 // Keychain the same way the SSH password is, since WebDAV
                 // has no login-set indirection to go through.
-                form.kind = .webdav
                 form.webdavBaseURL = stored.webdav?.baseURL ?? ""
                 form.username = stored.webdav?.username ?? ""
                 form.webdavUseNextcloudPath = stored.webdav?.useNextcloudPath ?? false
@@ -2414,7 +2420,6 @@ struct ContentView: View {
                 form.selectedLoginSetID = nil
                 form.clearJumpFields()
             } else {
-                form.kind = .ssh
                 // Resolve what this session should actually connect with (M10b/T3):
                 // its own data for a manual session, or its set's credentials —
                 // a dangling `loginSetID` throws rather than silently falling

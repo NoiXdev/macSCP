@@ -98,8 +98,18 @@ struct SSHFieldSchemaTests {
 
     /// The key path is only shown for private-key auth. That rule lives in the
     /// schema, so the form does not have to know it.
+    ///
+    /// Relocated in M22/T8 from the connection schema to the credential one.
+    /// A key path is part of the LOGIN — a login set carries it — and the form
+    /// renders both schemas now, so a field named by both would draw two rows
+    /// and would keep being asked for in login-set mode, where the chosen set
+    /// already supplies it. The visibility rule itself is unchanged.
     @Test func theKeyPathFieldIsConditionalOnTheAuthKind() throws {
-        let schema = BackendDescriptor.descriptor(for: .ssh).connectionSchema
+        let descriptor = BackendDescriptor.descriptor(for: .ssh)
+        #expect(!descriptor.connectionSchema.fields.contains {
+            $0.id == SSHField.keyPath.rawValue
+        })
+        let schema = descriptor.credentialSchema
         let keyPath = try #require(schema.fields.first { $0.id == SSHField.keyPath.rawValue })
         let condition = try #require(keyPath.visibleWhen)
         #expect(condition.field == SSHField.authKind.rawValue)
@@ -113,8 +123,15 @@ struct SSHFieldSchemaTests {
 
     /// The managed-key picker's options come from a store the Core cannot
     /// reach, so the schema names the source and the App resolves it.
+    ///
+    /// Relocated in M22/T8 for the same reason as the key path above: picking
+    /// a key IS picking a login, and a login set supplies it.
     @Test func theManagedKeyFieldIsAPickerOverManagedKeys() throws {
-        let schema = BackendDescriptor.descriptor(for: .ssh).connectionSchema
+        let descriptor = BackendDescriptor.descriptor(for: .ssh)
+        #expect(!descriptor.connectionSchema.fields.contains {
+            $0.id == SSHField.managedKeyID.rawValue
+        })
+        let schema = descriptor.credentialSchema
         let field = try #require(schema.fields.first { $0.id == SSHField.managedKeyID.rawValue })
         guard case .picker(let source) = field.kind else {
             Issue.record("expected a picker, got \(field.kind)")

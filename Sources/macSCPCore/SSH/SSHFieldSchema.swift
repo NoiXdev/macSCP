@@ -75,6 +75,17 @@ public enum SSHFieldSchema {
                   labelDefault: "Managed key", kind: .picker(.managedKeys)),
     ]
 
+    /// What the connection itself owns: where to dial, and the optional hop
+    /// to dial it through. Everything that identifies the LOGIN — user name,
+    /// auth kind, key path, managed key, both secrets — lives in `credential`
+    /// below, the same split S3 (M22/T4) and WebDAV (M22/T5) got.
+    ///
+    /// M22/T8 completed that split for SSH. Until the form rendered both
+    /// schemas the overlap was invisible; once `formBlocks` concatenates them
+    /// (connection, then the credential schema or the login-set picker that
+    /// substitutes it), a field named by both draws TWO rows — and in
+    /// login-set mode the connection copy would keep asking for credentials
+    /// the chosen set already supplies.
     public static let connection = ConnectionFieldSchema(
         fields: [
             ConnectionField(id: SSHField.host.rawValue,
@@ -83,30 +94,31 @@ public enum SSHFieldSchema {
             ConnectionField(id: SSHField.port.rawValue,
                             labelKey: "connection.field.port",
                             labelDefault: "Port", kind: .number),
-            ConnectionField(id: SSHField.username.rawValue,
-                            labelKey: "connection.field.username",
-                            labelDefault: "Username", kind: .text),
-            ConnectionField(id: SSHField.authKind.rawValue,
-                            labelKey: "connection.field.authMethod",
-                            labelDefault: "Authentication",
-                            kind: .picker(.fixed(authOptions))),
-            ConnectionField(id: SSHField.keyPath.rawValue,
-                            labelKey: "connection.field.keyPath",
-                            labelDefault: "Key path", kind: .text,
-                            visibleWhen: onPrivateKey),
-            // The options come from `ManagedKeyStore`, which lives in the App;
-            // the schema names the source and the App resolves it.
-            ConnectionField(id: SSHField.managedKeyID.rawValue,
-                            labelKey: "keys.picker.managed",
-                            labelDefault: "Managed key",
-                            kind: .picker(.managedKeys), visibleWhen: onPrivateKey),
             ConnectionField(id: SSHField.jump.rawValue, labelKey: "form.jump.label",
                             labelDefault: "Jump host", kind: .group(jumpLeaves)),
         ],
         presets: [])
 
+    /// What a brand-new SSH form starts with. A port field the user has to
+    /// fill in by hand would be a regression against every version since M2a,
+    /// and an empty auth kind renders the picker blank with nothing selected.
+    public static let defaults: FieldValues = {
+        var values = FieldValues()
+        values[SSHField.port] = "22"
+        values[SSHField.authKind] = StoredSession.AuthKind.password.rawValue
+        values[SSHField.jump, SSHJumpField.port] = "22"
+        values[SSHField.jump, SSHJumpField.authKind] =
+            StoredSession.AuthKind.password.rawValue
+        return values
+    }()
+
     /// What a login set carries: the credentials, not the host. Rendered by
-    /// the login-set editor with the same generic code as the form.
+    /// the login-set editor — and, since M22/T8, by the connection form too,
+    /// as the block `formBlocks` places after the login-mode switcher. That
+    /// is why `username`/`authKind`/`keyPath`/`managedKeyID` live HERE and
+    /// only here: choosing a login set substitutes this whole block, and a
+    /// second copy in `connection` would keep asking for what the set
+    /// already supplies.
     ///
     /// The secret is two DIFFERENT fields, not one slot with two meanings —
     /// which is what the login-set editor has rendered since M10d: a
@@ -194,7 +206,9 @@ public enum SSHFieldSchema {
         }
         return .ssh(try SSHConnectionConfig(
             host: values[SSHField.host].trimmingCharacters(in: .whitespacesAndNewlines),
-            port: Int(values[SSHField.port]) ?? 22,
+            // Trimmed like every other field here: a padded port used to fall
+            // through to the 22 default and silently dial the wrong port.
+            port: Int(values[SSHField.port].trimmingCharacters(in: .whitespaces)) ?? 22,
             username: values[SSHField.username]
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             auth: auth))
