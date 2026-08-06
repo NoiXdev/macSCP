@@ -32,6 +32,27 @@ public struct AuditRecorder: Sendable {
         store.append(AuditEvent(kind: .connected, detail: detail), for: sessionID)
     }
 
+    /// Logs a successful connect using the backend's own `displaySummary`
+    /// (M22/T11) — the same label the sidebar and tab title show — instead of
+    /// the `host`/`username` pair above, which only SSH ever fills. Before
+    /// this existed, a stored S3 or WebDAV session's `host`/`username`
+    /// columns carried the `"unused"` placeholder (see
+    /// `ContentView.attachAuditRecorder`'s call sites), so the audit trail
+    /// read "connected to unused as unused" for every non-SSH connect.
+    ///
+    /// Kept alongside `recordConnected(host:username:viaJumpHost:)` rather
+    /// than replacing it: that sibling's exact detail text
+    /// ("connected to HOST as USERNAME") is pinned by existing tests and
+    /// remains a valid, independently useful shape for a caller that already
+    /// has a real host/username pair in hand.
+    public func recordConnected(summary: String, viaJumpHost: String? = nil) {
+        var detail = "connected to \(summary)"
+        if let viaJumpHost {
+            detail += " via \(viaJumpHost)"
+        }
+        store.append(AuditEvent(kind: .connected, detail: detail), for: sessionID)
+    }
+
     /// Logs a teardown/disconnect. The App layer calls this from the tab's
     /// teardown flow, before the recorder itself is released.
     public func recordDisconnected() {
