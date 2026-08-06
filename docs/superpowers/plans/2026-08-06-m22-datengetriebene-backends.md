@@ -72,11 +72,30 @@ import Testing
 @testable import macSCPCore
 
 private enum TestField: String, CaseIterable, BackendFieldID {
+    static let namespace = "TestField"
     case alpha, beta, flag
 }
 
 private enum OtherField: String, CaseIterable, BackendFieldID {
+    static let namespace = "OtherField"
     case alpha
+}
+
+/// Two backends that each nest their field enum under the same short name.
+/// This is the shape that a name derived from the type would collide on:
+/// Swift interpolates both metatypes as the bare string "Field".
+private enum FirstBackend {
+    enum Field: String, CaseIterable, BackendFieldID {
+        static let namespace = "FirstBackend.Field"
+        case username
+    }
+}
+
+private enum SecondBackend {
+    enum Field: String, CaseIterable, BackendFieldID {
+        static let namespace = "SecondBackend.Field"
+        case username
+    }
 }
 
 @Suite("FieldValues")
@@ -128,10 +147,29 @@ struct FieldValuesTests {
         #expect(values[TestField.alpha] == "")
     }
 
-    @Test func rawStorageIsInspectableForPersistence() {
+    /// The nested-enum collision the namespace exists to prevent. Deriving
+    /// the prefix from the type name would make both of these `"Field.username"`
+    /// — verified: Swift interpolates a metatype unqualified, so
+    /// `"\(FirstBackend.Field.self)"` and `"\(SecondBackend.Field.self)"` are
+    /// both the bare string "Field".
+    @Test func nestedEnumsWithTheSameShortNameDoNotCollide() {
+        var values = FieldValues()
+        values[FirstBackend.Field.username] = "from-first"
+        values[SecondBackend.Field.username] = "from-second"
+        #expect(values[FirstBackend.Field.username] == "from-first")
+        #expect(values[SecondBackend.Field.username] == "from-second")
+        #expect(values.raw.count == 2)
+    }
+
+    /// Pins the on-disk key shape, not merely that some value landed
+    /// somewhere. The persistence adapters read `raw` directly, so the exact
+    /// key is part of the contract — a change here changes saved files.
+    @Test func rawStorageUsesTheNamespacedKey() {
         var values = FieldValues()
         values[TestField.alpha] = "one"
-        #expect(values.raw.values.contains("one"))
+        values[TestField.alpha, OtherField.alpha] = "nested"
+        #expect(values.raw["TestField.alpha"] == "one")
+        #expect(values.raw["TestField.alpha.alpha"] == "nested")
     }
 }
 ```
@@ -157,14 +195,28 @@ import Foundation
 /// forgotten by the factory — the last one because the factory switches over
 /// this enum and the compiler checks exhaustiveness.
 public protocol BackendFieldID: RawRepresentable, CaseIterable, Hashable, Sendable
-where RawValue == String {}
+where RawValue == String {
+    /// The stable prefix this backend's stored keys carry.
+    ///
+    /// Declared explicitly rather than derived from the type name, for two
+    /// reasons. Swift's `"\(F.self)"` yields the UNQUALIFIED name, so two
+    /// backends that each nest their enum as `Backend.Field` would both
+    /// produce `"Field"` and silently share storage — verified, not assumed.
+    /// And a derived name would make renaming the enum a silent format
+    /// change, breaking every session already on disk.
+    static var namespace: String { get }
+}
 
 /// The values a form collected, keyed by field.
 ///
-/// Storage is flat and namespaced by the field enum's type name, so two
-/// backends may both call a field `username` without colliding. Group members
-/// live in the same flat map under `group.leaf`, which keeps persistence a
-/// plain string map rather than a tree.
+/// Storage is flat and prefixed with the field enum's declared `namespace`,
+/// so two backends may both call a field `username` without colliding. Group
+/// members live in the same flat map under `namespace.group.leaf`, which
+/// keeps persistence a plain string map rather than a tree.
+///
+/// Keys are joined with `.`, so a field's raw value must not contain one.
+/// Swift derives raw values from the case names, which cannot — only an
+/// explicit `case foo = "a.b"` could, and no backend writes one.
 public struct FieldValues: Equatable, Sendable {
     private var storage: [String: String]
 
@@ -176,13 +228,13 @@ public struct FieldValues: Equatable, Sendable {
     public var raw: [String: String] { storage }
 
     private static func key<F: BackendFieldID>(_ field: F) -> String {
-        "\(F.self).\(field.rawValue)"
+        "\(F.namespace).\(field.rawValue)"
     }
 
     private static func key<G: BackendFieldID, L: BackendFieldID>(
         _ group: G, _ leaf: L
     ) -> String {
-        "\(G.self).\(group.rawValue).\(leaf.rawValue)"
+        "\(G.namespace).\(group.rawValue).\(leaf.rawValue)"
     }
 
     /// An unset field reads as the empty string — absence and "cleared by the
