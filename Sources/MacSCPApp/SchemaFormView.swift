@@ -29,6 +29,28 @@ struct SchemaFormView: View {
     let namespace: String
     let isEditMode: Bool
     let resolve: (OptionSource) -> [FieldOption]
+    /// The full namespaced key of the field whose validation failed, or nil.
+    /// Each row compares it against its OWN key and outlines itself in red --
+    /// the seam the hand-written SSH section had as 14 literal
+    /// `.errorHighlight(failedField == …)` calls (M22/T8). Without it, moving
+    /// the app's most-used form onto this view would have silently dropped the
+    /// only feedback a rejected connection gives the user about WHICH field is
+    /// wrong. A key, not a `ConnectionViewModel.Field`, because this view
+    /// knows fields by id and no backend but SSH has a `Field` case at all.
+    var failedFieldID: String?
+    /// Fields this view must NOT render because the caller draws them itself.
+    ///
+    /// Exactly one field uses it today: SSH's `jump` group. Its source
+    /// switcher (a saved connection versus manual credentials), the picker
+    /// over eligible sessions, the resolved-target summary and its own
+    /// login-set mode cannot be expressed with today's vocabulary --
+    /// `FieldCondition` has no conjunction and `OptionSource` has no "saved
+    /// sessions" case -- so rendering the group generically would silently
+    /// drop ProxyJump-by-reference (M11a) and the jump's login-set mode
+    /// (M10c). The group stays DECLARED (schema conformance, persistence, and
+    /// the task that makes it renderable) and the form draws it by hand until
+    /// then.
+    var skipping: Set<String> = []
 
     /// The provider preset currently shown. Real state, mirroring the M12 S3
     /// picker: without it the field would snap back to blank after each pick.
@@ -48,7 +70,7 @@ struct SchemaFormView: View {
             // The filter is Core's, and tested there.
             ForEach(Array(schemas.enumerated()), id: \.offset) { _, schema in
                 ForEach(schema.visibleFields(in: values, namespace: namespace)) { field in
-                    row(for: field)
+                    if !skipping.contains(field.id) { row(for: field) }
                 }
             }
         }
@@ -59,6 +81,7 @@ struct SchemaFormView: View {
         if let leafKind = field.kind.asLeafKind {
             leafRow(label: L10n.string(field.labelKey, field.labelDefault),
                     kind: leafKind, binding: binding(field.id))
+                .errorHighlight(failedFieldID == key(field.id))
         } else {
             // A nil `asLeafKind` means `.group` -- the one kind without a leaf
             // twin, and the only one that nests.
@@ -72,6 +95,7 @@ struct SchemaFormView: View {
                         of: field, in: values, owner: namespace)) { leaf in
                         leafRow(label: L10n.string(leaf.labelKey, leaf.labelDefault),
                                 kind: leaf.kind, binding: binding(field.id, leaf.id))
+                            .errorHighlight(failedFieldID == key(field.id, leaf.id))
                     }
                 }
                 .padding(.vertical, 4)
@@ -116,6 +140,14 @@ struct SchemaFormView: View {
         case .picker(let source):
             FormRow(label: label) {
                 Picker(label, selection: binding) {
+                    // The "unset" row the preset picker already carries, for
+                    // the same reason: a selection that matches no option --
+                    // an empty managed-key id, a login set that was deleted,
+                    // a value from a schema whose defaults were never
+                    // seeded -- renders the popup BLANK, with no row to pick
+                    // and therefore no way back. "—" is a pure symbol,
+                    // identical in every locale, so it stays a literal.
+                    Text(verbatim: "—").tag("")
                     ForEach(resolve(source)) { option in
                         Text(optionLabel(option)).tag(option.id)
                     }
@@ -178,10 +210,16 @@ struct SchemaFormView: View {
     /// typed subscripts build, which is what lets a form driven by id strings
     /// and a config factory driven by enum cases meet in the middle.
     private func binding(_ fieldID: String, _ leafID: String? = nil) -> Binding<String> {
-        let key = leafID.map { "\(namespace).\(fieldID).\($0)" }
-            ?? "\(namespace).\(fieldID)"
+        let key = key(fieldID, leafID)
         return Binding(
             get: { values.raw[key] ?? "" },
             set: { values.setRaw(key, to: $0) })
+    }
+
+    /// The full namespaced key a field's value is stored under -- the one
+    /// `FieldValues`'s typed subscripts build, so `failedFieldID` can be
+    /// expressed in the same vocabulary.
+    private func key(_ fieldID: String, _ leafID: String? = nil) -> String {
+        leafID.map { "\(namespace).\(fieldID).\($0)" } ?? "\(namespace).\(fieldID)"
     }
 }

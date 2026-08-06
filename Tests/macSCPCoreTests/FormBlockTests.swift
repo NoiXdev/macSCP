@@ -19,6 +19,21 @@ struct FormBlockTests {
         }
     }
 
+    /// A field named by BOTH schemas draws two rows in manual mode — the block
+    /// list concatenates them — and in login-set mode the connection copy
+    /// keeps asking for what the chosen set already supplies. SSH carried four
+    /// such overlaps (user name, auth kind, key path, managed key) until
+    /// M22/T8 made the form render both schemas and the duplication visible.
+    @Test func aFieldBelongsToExactlyOneSchema() {
+        for kind in ConnectionKind.allCases {
+            let descriptor = BackendDescriptor.descriptor(for: kind)
+            let connection = Set(descriptor.connectionSchema.fields.map(\.id))
+            let credential = Set(descriptor.credentialSchema.fields.map(\.id))
+            let both = connection.intersection(credential).sorted()
+            #expect(both.isEmpty, "\(kind) names \(both) in both schemas")
+        }
+    }
+
     /// With a login set chosen the credential schema is deliberately absent —
     /// the set supplies it. The connection schema must still be there.
     @Test func loginSetModeSubstitutesTheCredentialSchema() {

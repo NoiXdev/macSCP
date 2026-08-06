@@ -118,6 +118,44 @@ struct ConnectionFormView: View {
         return nil
     }
 
+    /// `failedField` as the namespaced key `SchemaFormView` matches its rows
+    /// against (M22/T8) — the seam that keeps the red outline alive now that
+    /// the rows are rendered generically.
+    ///
+    /// Only SSH has `Field` cases at all; S3 and WebDAV report their failures
+    /// with `field: nil`. The cases returning nil here are NOT unhighlighted:
+    /// the session-name row and the whole jump block are drawn by hand below
+    /// and carry their own `.errorHighlight`.
+    private var failedFieldID: String? {
+        guard let failedField else { return nil }
+        let ssh = SSHField.namespace
+        switch failedField {
+        case .host: return "\(ssh).\(SSHField.host.rawValue)"
+        case .port: return "\(ssh).\(SSHField.port.rawValue)"
+        case .username: return "\(ssh).\(SSHField.username.rawValue)"
+        case .keyPath: return "\(ssh).\(SSHField.keyPath.rawValue)"
+        case .password:
+            // The schema splits the one `.password` failure across two rows,
+            // and only one of them is on screen: a passphrase error must
+            // outline the passphrase row, not an invisible password row.
+            return viewModel.authChoice == .privateKey
+                ? "\(ssh).\(SSHField.passphrase.rawValue)"
+                : "\(ssh).\(SSHField.password.rawValue)"
+        case .saveName, .jumpSession, .jumpHost, .jumpPort, .jumpUsername,
+             .jumpPassword, .jumpKeyPath:
+            return nil
+        }
+    }
+
+    /// Fields the generic renderer must skip because this view draws them —
+    /// see `sshJumpSection` for why the jump is the one and only member, and
+    /// what would let it join the others.
+    private static let customRenderedFields: Set<String> = [SSHField.jump.rawValue]
+
+    /// The stored key of the managed-key picker, watched below.
+    private static let managedKeyKey =
+        "\(SSHField.namespace).\(SSHField.managedKeyID.rawValue)"
+
     // MARK: - Jump source: saved connection (M11a/T3)
 
     /// The session currently being edited, or `nil` for a brand-new
@@ -275,6 +313,19 @@ struct ConnectionFormView: View {
                 alertMessage = message
             }
         }
+        // Picking a managed key fills the key path (M17/T5). The schema can
+        // declare the picker but not its EFFECT: the option ids are key ids,
+        // while everything downstream — connect, save, `SSHCommandBuilder` —
+        // reads `keyPath`. Without this the picker would look like it worked
+        // and change nothing. Choosing the "—" row clears the id and
+        // deliberately leaves the typed path alone.
+        .onChange(of: viewModel.values.raw[Self.managedKeyKey] ?? "") { _, newID in
+            guard !newID.isEmpty,
+                  let key = Self.connectableManagedKeys()
+                      .first(where: { $0.id.uuidString == newID })
+            else { return }
+            viewModel.keyPath = Self.managedKeyPath(for: key)
+        }
     }
 
     @ViewBuilder
@@ -305,13 +356,7 @@ struct ConnectionFormView: View {
                     .disabled(isEditMode)
                 }
 
-                if viewModel.kind == .ssh {
-                    sshSections
-                } else if viewModel.kind == .s3 {
-                    s3Section
-                } else {
-                    webdavSection
-                }
+                backendSection
 
                 if !isEditMode {
                     FormRow(label: "") {
@@ -418,180 +463,82 @@ struct ConnectionFormView: View {
             }
     }
 
-    /// The bespoke SSH sections (host/login/auth/jump), unchanged from
-    /// before the M12 type switcher — extracted into their own
-    /// `@ViewBuilder` so `formContent` above can gate them on
-    /// `viewModel.kind == .ssh` without duplicating this whole block.
+    /// The connection form for whichever backend is selected (M22/T8): the
+    /// blocks Core declares, in Core's order, plus the two things no schema
+    /// can express yet.
+    ///
+    /// The ORDER is `BackendDescriptor.formBlocks` — connection schema, login
+    /// switcher, then either the credential schema or the login-set picker
+    /// that substitutes it. Hand-placing those per backend is exactly what let
+    /// S3's credential block go missing silently, and no App test could have
+    /// caught it because there is no App test target.
     @ViewBuilder
-    private var sshSections: some View {
-                let hostLabel = L10n.string("connection.field.host", "Host")
-                FormRow(label: hostLabel) {
-                    TextField(
-                        hostLabel, text: $viewModel.host,
-                        prompt: Text(L10n.string("connection.field.host.placeholder", "server.example.com"))
-                    )
-                }
-                .errorHighlight(failedField == .host)
+    private var backendSection: some View {
+        let descriptor = BackendDescriptor.descriptor(for: viewModel.kind)
+        ForEach(
+            Array(descriptor.formBlocks(
+                usingLoginSet: viewModel.loginMode == .set).enumerated()),
+            id: \.offset
+        ) { _, block in
+            formBlock(block, kind: descriptor.kind, namespace: descriptor.fieldNamespace)
+        }
+        // WebDAV is deliberately excluded: `ContentView.maybeCreateNewLoginSet`
+        // would build a `.ssh`-kind set from a WebDAV form — a set that would
+        // then never appear in the WebDAV picker that filters by kind.
+        if viewModel.kind != .webdav && viewModel.loginMode == .manual {
+            saveAsNewLoginSetRows
+        }
+        if viewModel.kind == .ssh {
+            sshKeyFileRow
+            sshJumpSection
+        }
+    }
 
+    /// Browse-for-a-key-file and "Manage keys…", the two affordances that sit
+    /// beside the schema-rendered `keyPath` row (M17/T5, M18/T5).
+    ///
+    /// A row of its own rather than part of the generic renderer: both open
+    /// App-only UI (an `NSOpenPanel` and a sheet) that no schema vocabulary
+    /// describes. Shown under exactly the condition that makes the key path
+    /// visible — private-key auth, and Manual mode, since a chosen login set
+    /// brings its own key path.
+    @ViewBuilder
+    private var sshKeyFileRow: some View {
+        if viewModel.loginMode == .manual && viewModel.authChoice == .privateKey {
+            FormRow(label: "") {
+                HStack(spacing: 10) {
+                    // "…" is a pure symbol (ellipsis "browse" affordance), not
+                    // natural-language text — identical in every locale, so it
+                    // stays a literal rather than a catalog key.
+                    Button("…") { showKeyImporter = true }
+                        .buttonStyle(.polished)
+                        .help(L10n.string("connection.field.keyPath.browseHelp", "Choose key file"))
+                    Button(L10n.string("keys.picker.manage", "Manage keys…")) {
+                        showSSHKeysSheet = true
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundStyle(DesignTokens.inkTertiary)
+                }
+            }
+        }
+    }
+
+    /// The jump host block (M10c/T3, M11a/T3), still drawn by hand.
+    ///
+    /// The schema declares the jump as a `.group`, and `SchemaFormView` is
+    /// told to skip it (see `SchemaFormView.skipping`): the source switcher,
+    /// the picker over eligible saved connections, the resolved-target summary
+    /// and the jump's own login-set mode have no expression in today's
+    /// vocabulary — `FieldCondition` has no conjunction, `OptionSource` has no
+    /// "saved sessions" case. Rendering the group generically would drop all
+    /// four, including the `.jumpSession` error highlight. The fields it binds
+    /// to are the SAME `values` entries the group declares, so the two halves
+    /// cannot drift.
+    @ViewBuilder
+    private var sshJumpSection: some View {
                 let portLabel = L10n.string("connection.field.port", "Port")
-                FormRow(label: portLabel) {
-                    // Empty prompts: outside a Form the title parameter would
-                    // surface as an in-field placeholder and duplicate the
-                    // FormRow label — the titles stay for accessibility only.
-                    TextField(
-                        portLabel, text: $viewModel.port,
-                        prompt: Text(verbatim: ""))
-                }
-                .errorHighlight(failedField == .port)
-
-                // Three-way login switcher (M10b/T3, mockup section 3): sits
-                // above the auth block it replaces/wraps. Set mode shows a
-                // login-set picker instead of Username/Auth/Password/Key;
-                // Manual mode is today's block, with the "save as new set"
-                // toggle appended.
                 let loginModeLabel = L10n.string("form.loginMode.label", "Login")
-                FormRow(label: loginModeLabel) {
-                    Picker(loginModeLabel, selection: $viewModel.loginMode) {
-                        Text(L10n.string("form.loginMode.set", "Login set"))
-                            .tag(ConnectionViewModel.LoginMode.set)
-                        Text(L10n.string("form.loginMode.manual", "Manual"))
-                            .tag(ConnectionViewModel.LoginMode.manual)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                }
-
-                if viewModel.loginMode == .set {
-                    FormRow(label: "") {
-                        HStack(spacing: 10) {
-                            Picker(loginModeLabel, selection: $viewModel.selectedLoginSetID) {
-                                Text(L10n.string("form.selectLogin", "Select a login")).tag(UUID?.none)
-                                ForEach(sessionList.loginSets) { set in
-                                    Text("\(set.name) — \(set.username)").tag(UUID?.some(set.id))
-                                }
-                            }
-                            .labelsHidden()
-                            Button(L10n.string("form.manageLogins", "Manage logins…")) {
-                                showLoginSetsSheet = true
-                            }
-                            .buttonStyle(.plain)
-                            .font(.caption)
-                            .foregroundStyle(DesignTokens.inkTertiary)
-                        }
-                    }
-                } else {
-                    let usernameLabel = L10n.string("connection.field.username", "Username")
-                    FormRow(label: usernameLabel) {
-                        TextField(
-                            usernameLabel, text: $viewModel.username,
-                            prompt: Text(verbatim: ""))
-                    }
-                    .errorHighlight(failedField == .username)
-
-                    let authMethodLabel = L10n.string("connection.field.authMethod", "Authentication")
-                    FormRow(label: authMethodLabel) {
-                        Picker(authMethodLabel, selection: Binding(
-                            get: { viewModel.authChoice },
-                            set: { viewModel.selectAuthChoice($0) }
-                        )) {
-                            Text(L10n.string("connection.auth.password", "Password"))
-                                .tag(ConnectionViewModel.AuthChoice.password)
-                            Text(L10n.string("connection.auth.privateKey", "SSH key"))
-                                .tag(ConnectionViewModel.AuthChoice.privateKey)
-                            Text(L10n.string("connection.auth.agent", "Agent"))
-                                .tag(ConnectionViewModel.AuthChoice.agent)
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                    }
-
-                    if viewModel.authChoice == .password {
-                        let passwordLabel = L10n.string("connection.auth.password", "Password")
-                        FormRow(label: passwordLabel) {
-                            SecureField(
-                                passwordLabel, text: $viewModel.password,
-                                prompt: isEditMode
-                                    ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
-                                    : Text(verbatim: "")
-                            )
-                        }
-                        .errorHighlight(failedField == .password)
-                    } else if viewModel.authChoice == .privateKey {
-                        let keyPathLabel = L10n.string("connection.field.keyPath", "Key path")
-                        // Managed keys eligible to fill `keyPath` (M17/T5) — only
-                        // ed25519 (`KeyType.isConnectable`); RSA/ECDSA never show up
-                        // here since `SSHPrivateKeyLoader` can't load them anyway.
-                        let connectableKeys = Self.connectableManagedKeys()
-                        FormRow(label: keyPathLabel) {
-                            HStack(spacing: 6) {
-                                TextField(
-                                    keyPathLabel, text: $viewModel.keyPath,
-                                    prompt: Text(L10n.string(
-                                        "connection.field.keyPath.placeholder", "~/.ssh/id_ed25519"))
-                                )
-                                // "…" is a pure symbol (ellipsis "browse" affordance), not
-                                // natural-language text — identical in every locale, so it
-                                // stays a literal rather than a catalog key.
-                                Button("…") { showKeyImporter = true }
-                                    .buttonStyle(.polished)
-                                    .help(L10n.string("connection.field.keyPath.browseHelp", "Choose key file"))
-                                // Additive (M17/T5): only appears when at least one
-                                // managed key can be used to connect — no empty menu.
-                                if !connectableKeys.isEmpty {
-                                    Menu(L10n.string("keys.picker.managed", "Managed key")) {
-                                        ForEach(connectableKeys) { key in
-                                            Button("\(key.name) — \(Self.shortFingerprint(key.fingerprint))") {
-                                                viewModel.keyPath = Self.managedKeyPath(for: key)
-                                            }
-                                        }
-                                    }
-                                    .fixedSize()
-                                }
-                            }
-                        }
-                        .errorHighlight(failedField == .keyPath)
-
-                        FormRow(label: "") {
-                            Button(L10n.string("keys.picker.manage", "Manage keys…")) {
-                                showSSHKeysSheet = true
-                            }
-                            .buttonStyle(.plain)
-                            .font(.caption)
-                            .foregroundStyle(DesignTokens.inkTertiary)
-                        }
-
-                        let passphraseLabel = L10n.string("connection.field.passphrase", "Passphrase (optional)")
-                        FormRow(label: passphraseLabel) {
-                            SecureField(
-                                passphraseLabel,
-                                text: $viewModel.password,
-                                prompt: isEditMode
-                                    ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
-                                    : Text(verbatim: "")
-                            )
-                        }
-                        .errorHighlight(failedField == .password)
-                    }
-                    // .agent (M10d/T4): neither a secret nor a key path is
-                    // needed — the private key never leaves the running
-                    // ssh-agent — so no row shows here at all.
-
-                    FormRow(label: "") {
-                        Toggle(
-                            L10n.string("form.saveAsSet", "Save as new login set"),
-                            isOn: $viewModel.saveAsNewLoginSet)
-                    }
-
-                    if viewModel.saveAsNewLoginSet {
-                        let setNameLabel = L10n.string("form.saveAsSet.name", "Login set name")
-                        FormRow(label: setNameLabel) {
-                            TextField(
-                                setNameLabel, text: $viewModel.newLoginSetName,
-                                prompt: Text(sessionList.suggestedSetName(forUsername: viewModel.username)))
-                        }
-                    }
-                }
-
                 // Jump host block (M10c/T3, mockup section 2): a toggle below
                 // the target's own auth block; enabled, it reuses the SAME
                 // three-way login building blocks above (Set picker with
@@ -781,76 +728,27 @@ struct ConnectionFormView: View {
         }
     }
 
-    /// Bridges the renderer's `FieldValues` onto the typed `viewModel.s3*`
-    /// properties that still own the form's state.
-    ///
-    /// Transitional (M22/T7): Task 8 moves the view model itself onto
-    /// `FieldValues` and this disappears with it. A bridge rather than a
-    /// second copy of the state, so `connect()`/`validateForEditSave()` keep
-    /// reading the one source of truth they already validate against.
-    private var s3Values: Binding<FieldValues> {
-        Binding(
-            get: {
-                var values = FieldValues()
-                values[S3Field.endpoint] = viewModel.s3Endpoint
-                values[S3Field.region] = viewModel.s3Region
-                values[S3Field.bucket] = viewModel.s3Bucket
-                values[S3Field.accessKeyID] = viewModel.s3AccessKeyID
-                // The typed secret the user just entered, never a value read
-                // back out of the Keychain -- edit mode starts it empty and an
-                // empty one means "keep the stored secret".
-                values[S3Field.secretAccessKey] = viewModel.s3SecretAccessKey
-                values[bool: S3Field.usePathStyle] = viewModel.s3UsePathStyle
-                return values
-            },
-            set: { edited in
-                viewModel.s3Endpoint = edited[S3Field.endpoint]
-                viewModel.s3Region = edited[S3Field.region]
-                viewModel.s3Bucket = edited[S3Field.bucket]
-                viewModel.s3AccessKeyID = edited[S3Field.accessKeyID]
-                viewModel.s3SecretAccessKey = edited[S3Field.secretAccessKey]
-                viewModel.s3UsePathStyle = edited[bool: S3Field.usePathStyle]
-            })
-    }
-
-    /// The WebDAV counterpart of `s3Values` above. `username`/`password` map
-    /// to the SHARED `viewModel` fields the SSH form also uses (see
-    /// `ConnectionViewModel.webdavBaseURL`'s own doc comment), which is
-    /// exactly the mapping the hand-written section performed.
-    private var webdavValues: Binding<FieldValues> {
-        Binding(
-            get: {
-                var values = FieldValues()
-                values[WebDAVField.baseURL] = viewModel.webdavBaseURL
-                values[WebDAVField.username] = viewModel.username
-                values[WebDAVField.password] = viewModel.password
-                values[bool: WebDAVField.useNextcloudPath] = viewModel.webdavUseNextcloudPath
-                return values
-            },
-            set: { edited in
-                viewModel.webdavBaseURL = edited[WebDAVField.baseURL]
-                viewModel.username = edited[WebDAVField.username]
-                viewModel.password = edited[WebDAVField.password]
-                viewModel.webdavUseNextcloudPath = edited[bool: WebDAVField.useNextcloudPath]
-            })
-    }
-
     /// Renders one `FormBlock` (M22/T7). The ORDER comes from Core
     /// (`BackendDescriptor.formBlocks`), not from this file: hand-placing the
     /// blocks per backend is exactly what let S3's credential block go missing
     /// silently, and no App test could have caught it because there is no App
     /// test target. Dropping a schema now means editing Core, where
     /// `FormBlockTests` fails.
+    ///
+    /// Binds straight to `viewModel.values` (M22/T8): the transitional
+    /// `s3Values`/`webdavValues` adapters that mapped typed view-model
+    /// properties into a `FieldValues` are gone with the typed storage they
+    /// adapted.
     @ViewBuilder
     private func formBlock(
-        _ block: FormBlock, kind: ConnectionKind, namespace: String,
-        values: Binding<FieldValues>
+        _ block: FormBlock, kind: ConnectionKind, namespace: String
     ) -> some View {
         switch block {
         case .schema(let schema):
             SchemaFormView(
-                schemas: [schema], values: values, namespace: namespace,
-                isEditMode: isEditMode, resolve: resolveOptions)
+                schemas: [schema], values: $viewModel.values, namespace: namespace,
+                isEditMode: isEditMode, resolve: resolveOptions,
+                failedFieldID: failedFieldID, skipping: Self.customRenderedFields)
         case .loginModeSwitcher:
             loginModeSwitcher
         case .loginSetPicker:
@@ -921,41 +819,8 @@ struct ConnectionFormView: View {
             FormRow(label: setNameLabel) {
                 TextField(
                     setNameLabel, text: $viewModel.newLoginSetName,
-                    prompt: Text(verbatim: ""))
+                    prompt: Text(sessionList.suggestedSetName(forUsername: viewModel.username)))
             }
-        }
-    }
-
-    /// The S3 section (M22/T7): Core's block order, rendered as-is. Task 4
-    /// moved accessKeyID/secretAccessKey out of `connectionSchema` and into
-    /// `credentialSchema`; a form that read only the former showed no
-    /// credential rows at all, which is the regression this replaces.
-    private var s3Section: some View {
-        let descriptor = BackendDescriptor.descriptor(for: .s3)
-        return Group {
-            ForEach(
-                Array(descriptor.formBlocks(
-                    usingLoginSet: viewModel.loginMode == .set).enumerated()),
-                id: \.offset
-            ) { _, block in
-                formBlock(block, kind: .s3, namespace: S3Field.namespace, values: s3Values)
-            }
-            if viewModel.loginMode == .manual { saveAsNewLoginSetRows }
-        }
-    }
-
-    /// The WebDAV section (M22/T7): the same Core block order as S3. Its
-    /// credentials live in `credentialSchema` since Task 5 and would not
-    /// render at all if only the connection schema were walked.
-    private var webdavSection: some View {
-        let descriptor = BackendDescriptor.descriptor(for: .webdav)
-        return ForEach(
-            Array(descriptor.formBlocks(
-                usingLoginSet: viewModel.loginMode == .set).enumerated()),
-            id: \.offset
-        ) { _, block in
-            formBlock(block, kind: .webdav, namespace: WebDAVField.namespace,
-                      values: webdavValues)
         }
     }
 
@@ -1060,7 +925,7 @@ struct FormRow<Content: View>: View {
     }
 }
 
-private extension View {
+extension View {
     /// Red outline for the form row whose validation failed. The stroke
     /// wraps label AND field, sitting 10pt horizontally / 5pt vertically
     /// outside the row's bounds so the content keeps breathing room.

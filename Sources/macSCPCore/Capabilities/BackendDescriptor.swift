@@ -53,6 +53,32 @@ public struct BackendDescriptor: Sendable {
         }
     }
 
+    /// The prefix this backend's field values are stored under — its field
+    /// enum's own `namespace`, which the generic form renderer needs to build
+    /// a key from a field id (M22/T8).
+    public var fieldNamespace: String {
+        switch kind {
+        case .ssh: return SSHField.namespace
+        case .s3: return S3Field.namespace
+        case .webdav: return WebDAVField.namespace
+        }
+    }
+
+    /// The values a brand-new form for this backend starts with (M22/T8) —
+    /// SSH's port 22 and its `password` auth kind, the two toggles S3 and
+    /// WebDAV render.
+    ///
+    /// A computed property rather than a stored member: adding one to the
+    /// memberwise initializer would force every synthetic descriptor a test
+    /// builds to name it, for a value only the form ever reads.
+    public var defaultValues: FieldValues {
+        switch kind {
+        case .ssh: return SSHFieldSchema.defaults
+        case .s3: return S3FieldSchema.defaults
+        case .webdav: return WebDAVFieldSchema.defaults
+        }
+    }
+
     static let sshDescriptor = BackendDescriptor(
         kind: .ssh,
         capabilities: ProtocolCapabilities(

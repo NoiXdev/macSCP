@@ -39,6 +39,15 @@ public enum S3FieldSchema {
                              nameDefault: "Custom", values: [:]),
         ])
 
+    /// What a brand-new S3 form starts with (M22/T8). The toggle is written
+    /// out rather than left absent so the checkbox reads "off" from a real
+    /// value instead of from `FieldValues`'s absent-means-false rule.
+    public static let defaults: FieldValues = {
+        var values = FieldValues()
+        values[bool: S3Field.usePathStyle] = false
+        return values
+    }()
+
     /// What a login set carries: the credentials, not the endpoint. Rendered
     /// by the login-set editor with the same generic code as the form.
     public static let credential = ConnectionFieldSchema(

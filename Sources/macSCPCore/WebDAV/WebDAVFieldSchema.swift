@@ -32,6 +32,14 @@ public enum WebDAVFieldSchema {
                              values: [WebDAVField.useNextcloudPath.rawValue: "false"]),
         ])
 
+    /// What a brand-new WebDAV form starts with (M22/T8) — see
+    /// `S3FieldSchema.defaults` for why the toggle is written out.
+    public static let defaults: FieldValues = {
+        var values = FieldValues()
+        values[bool: WebDAVField.useNextcloudPath] = false
+        return values
+    }()
+
     /// What a login set carries: the credentials, not the server. Rendered
     /// by the login-set editor with the same generic code as the form.
     public static let credential = ConnectionFieldSchema(
