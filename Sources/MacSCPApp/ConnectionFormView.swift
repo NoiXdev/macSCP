@@ -156,6 +156,33 @@ struct ConnectionFormView: View {
     private static let managedKeyKey =
         "\(SSHField.namespace).\(SSHField.managedKeyID.rawValue)"
 
+    /// The stored key of the auth-kind picker, intercepted below.
+    private static let authKindKey =
+        "\(SSHField.namespace).\(SSHField.authKind.rawValue)"
+
+    /// Sends the auth-kind picker's write through `selectAuthChoice` instead
+    /// of letting it land in `values` (M22/T8 fix round 1).
+    ///
+    /// Switching the auth kind is a COMMAND, not a value change: the view
+    /// model clears the secret so the password typed for `.password` does not
+    /// reappear prefilled in the passphrase row — from where "Save as session"
+    /// or "Save as new login set" would write the user's account password into
+    /// the Keychain as a key passphrase. The hand-written picker routed
+    /// through this; binding the generic picker straight to the field silently
+    /// bypassed it and left `selectAuthChoice` with no production caller at
+    /// all.
+    ///
+    /// Returns false for every other field, which is then written normally.
+    /// A value that names no auth kind — the "—" row — is deliberately NOT
+    /// treated as a switch; it is written raw, exactly as before.
+    private func interceptEdit(_ key: String, _ newValue: String) -> Bool {
+        guard key == Self.authKindKey,
+              let choice = ConnectionViewModel.AuthChoice(rawValue: newValue)
+        else { return false }
+        viewModel.selectAuthChoice(choice)
+        return true
+    }
+
     // MARK: - Jump source: saved connection (M11a/T3)
 
     /// The session currently being edited, or `nil` for a brand-new
@@ -482,16 +509,16 @@ struct ConnectionFormView: View {
         ) { _, block in
             formBlock(block, kind: descriptor.kind, namespace: descriptor.fieldNamespace)
         }
+        // Immediately after the credential block — the last one Core emits, and
+        // the one carrying the key-path row these two buttons fill.
+        if viewModel.kind == .ssh { sshKeyFileRow }
         // WebDAV is deliberately excluded: `ContentView.maybeCreateNewLoginSet`
         // would build a `.ssh`-kind set from a WebDAV form — a set that would
         // then never appear in the WebDAV picker that filters by kind.
         if viewModel.kind != .webdav && viewModel.loginMode == .manual {
             saveAsNewLoginSetRows
         }
-        if viewModel.kind == .ssh {
-            sshKeyFileRow
-            sshJumpSection
-        }
+        if viewModel.kind == .ssh { sshJumpSection }
     }
 
     /// Browse-for-a-key-file and "Manage keys…", the two affordances that sit
@@ -748,7 +775,8 @@ struct ConnectionFormView: View {
             SchemaFormView(
                 schemas: [schema], values: $viewModel.values, namespace: namespace,
                 isEditMode: isEditMode, resolve: resolveOptions,
-                failedFieldID: failedFieldID, skipping: Self.customRenderedFields)
+                failedFieldID: failedFieldID, skipping: Self.customRenderedFields,
+                interceptEdit: interceptEdit)
         case .loginModeSwitcher:
             loginModeSwitcher
         case .loginSetPicker:

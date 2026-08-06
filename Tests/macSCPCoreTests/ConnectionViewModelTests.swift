@@ -143,11 +143,21 @@ struct ConnectionViewModelTests {
             field: .password))
     }
 
+    /// `selectAuthChoice` is what the auth-kind PICKER goes through — the form
+    /// intercepts that field's write and calls this instead of storing the new
+    /// value (`ConnectionFormView.interceptEdit`, M22/T8 fix round 1). Both
+    /// storage slots are asserted, not just `password`'s current reading: the
+    /// slot the user is switching AWAY from is the one that would otherwise
+    /// resurface prefilled in the other mode's row, and from there be written
+    /// to the Keychain by "Save as session" as a secret the user never typed
+    /// for that purpose.
     @Test func userSwitchClearsSecretButProgrammaticSetDoesNot() async {
         let vm = makeVM()
         vm.password = "geheim"
         vm.selectAuthChoice(.privateKey)
         #expect(vm.password.isEmpty)
+        #expect(vm.values[SSHField.password].isEmpty)
+        #expect(vm.values[SSHField.passphrase].isEmpty)
 
         vm.password = "aus-dem-schluesselbund"
         vm.authChoice = .password   // programmatic (connectStored path)
