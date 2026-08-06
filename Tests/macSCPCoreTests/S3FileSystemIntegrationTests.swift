@@ -35,12 +35,14 @@ struct S3FileSystemIntegrationTests {
             name: "rig-session", host: "unused", username: "unused",
             loginSetID: set.id, kind: .s3)
 
+        // M22/T9: one resolver for every backend, returning the same
+        // `FieldValues` the form produces.
         let resolved = try #require(
-            try LoginResolver.resolveS3(session: session, sets: [set], secrets: secrets))
+            try LoginResolver.resolve(session: session, sets: [set], secrets: secrets))
 
         let config = S3ConnectionConfig(
-            accessKeyID: resolved.accessKeyID,
-            secretAccessKey: resolved.secretAccessKey ?? "",
+            accessKeyID: resolved[S3Field.accessKeyID],
+            secretAccessKey: resolved[S3Field.secretAccessKey],
             region: "us-east-1", endpoint: "http://127.0.0.1:19000",
             bucket: "macscp-seed", usePathStyle: true, sessionToken: nil)
 

@@ -203,6 +203,24 @@ public final class ConnectionViewModel {
     /// falls back to `SessionListViewModel.suggestedSetName(forUsername:)`.
     public var newLoginSetName: String = ""
 
+    /// Fills the credential block from a resolved login set (M22/T9) — the
+    /// values `LoginResolver.resolve` returns, in the active backend's own
+    /// field vocabulary.
+    ///
+    /// Clears the backend's credential fields FIRST. A tab's form outlives
+    /// any single connect, and a set that carries NO secret at all — an agent
+    /// login (M10d) — resolves to values with no secret field in them, so a
+    /// plain merge would leave the PREVIOUS fill's password sitting in the
+    /// form. Only the credential block is touched: the connection fields
+    /// (host, port, endpoint, server URL) are the session's, not the set's.
+    public func applyResolvedCredentials(_ resolved: FieldValues) {
+        let descriptor = BackendDescriptor.descriptor(for: kind)
+        for field in descriptor.credentialSchema.fields {
+            values.setRaw("\(descriptor.fieldNamespace).\(field.id)", to: "")
+        }
+        values.merge(resolved)
+    }
+
     /// Jump host block (M10c/T3, mockup section 2): an optional intermediate
     /// hop the connection tunnels through. Off by default -- a brand-new
     /// form connects directly, exactly as before this feature existed.
@@ -990,6 +1008,12 @@ public final class ConnectionViewModel {
             host: "unused",
             username: "unused",
             groupID: selectedGroupID,
+            // Same rule as `validateForEditSaveSSH` (M22/T9): an edit-save
+            // must carry the login-set reference forward. Dropping it — which
+            // this path did from M15 until now — silently unbound a set-backed
+            // S3 session the first time anything else about it was edited, and
+            // WebDAV would have inherited that the moment it gained sets.
+            loginSetID: loginMode == .set ? selectedLoginSetID : nil,
             kind: .s3,
             s3: StoredS3Config(
                 accessKeyID: s3AccessKeyID.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1027,6 +1051,8 @@ public final class ConnectionViewModel {
             host: "unused",
             username: "unused",
             groupID: selectedGroupID,
+            // See `validateForEditSaveS3` — the same carry-forward.
+            loginSetID: loginMode == .set ? selectedLoginSetID : nil,
             kind: .webdav,
             webdav: StoredWebDAVConfig(
                 baseURL: trimmedBaseURL,

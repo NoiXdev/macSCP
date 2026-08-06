@@ -46,7 +46,8 @@ public enum WebDAVFieldSchema {
         fields: [
             ConnectionField(id: WebDAVField.username.rawValue,
                             labelKey: "connection.webdav.username",
-                            labelDefault: "User name", kind: .text),
+                            labelDefault: "User name", kind: .text,
+                            isRequired: true),
             ConnectionField(id: WebDAVField.password.rawValue,
                             labelKey: "connection.webdav.password",
                             labelDefault: "Password", kind: .secret),
@@ -90,6 +91,32 @@ public enum WebDAVFieldSchema {
         values[bool: WebDAVField.useNextcloudPath] = stored.useNextcloudPath
         // password deliberately absent: it lives in the Keychain.
         return values
+    }
+
+    /// A login set's credentials in schema shape (M22/T9) — see
+    /// `SSHFieldSchema.values(from:)`.
+    ///
+    /// `LoginSet` needs no WebDAV column of its own: a WebDAV login is a user
+    /// name plus a password, and those are exactly the shared `username`
+    /// column and the shared Keychain slot every other backend already uses.
+    /// `baseURL`/`useNextcloudPath` belong to the CONNECTION schema, i.e. to
+    /// the session — a login set that carried a server URL would be a
+    /// connection, not a login.
+    public static func values(from set: LoginSet) -> FieldValues {
+        var values = FieldValues()
+        values[WebDAVField.username] = set.username
+        return values
+    }
+
+    /// The set a filled-in credential form describes. `authKind` is SSH's
+    /// column; `.password` is the only value that means anything for WebDAV
+    /// and is what the row badge and the export format already read.
+    public static func loginSet(id: UUID, name: String, from values: FieldValues) -> LoginSet {
+        LoginSet(
+            id: id, name: name,
+            username: values[WebDAVField.username]
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            authKind: .password, keyPath: nil, kind: .webdav)
     }
 
     public static func stored(from values: FieldValues) -> StoredWebDAVConfig {

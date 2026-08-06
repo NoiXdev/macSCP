@@ -1850,26 +1850,12 @@ struct ContentView: View {
     /// `StoredSession` carrying that id is enough for `password(for:)` to
     /// find it, no separate lookup API needed on `SessionListViewModel`.
     private func fillForm(_ form: ConnectionViewModel, from set: LoginSet) {
-        if set.kind == .s3 {
-            form.s3AccessKeyID = set.accessKeyID ?? ""
-            let synthetic = StoredSession(
-                id: set.id, name: set.name, host: "", username: "")
-            form.s3SecretAccessKey = sessionListViewModel.password(for: synthetic) ?? ""
-            return
-        }
-        form.username = set.username
-        form.authChoice = ConnectionViewModel.authChoice(for: set.authKind)
-        form.keyPath = set.keyPath ?? ""
-        // Agent sets carry no secret (M10d/T4) — skip the keychain lookup
-        // entirely rather than looking up a slot that was never written.
-        guard set.authKind != .agent else {
-            form.password = ""
-            return
-        }
-        let synthetic = StoredSession(
-            id: set.id, name: set.name, host: "", username: set.username,
-            authKind: set.authKind, keyPath: set.keyPath)
-        form.password = sessionListViewModel.password(for: synthetic) ?? ""
+        // One path for every protocol since M22/T9. The `if set.kind == .s3`
+        // branch this replaces had no WebDAV counterpart, and the fall-through
+        // wrote SSH-shaped fields; asking the set's own backend for its
+        // credential values (secret included, and NO keychain read at all for
+        // an agent set — M10d/T4) is the same question for every kind.
+        form.applyResolvedCredentials(sessionListViewModel.credentials(of: set))
     }
 
     /// `ConnectionFormView.resolveLoginSetForSubmit` implementation:
@@ -2082,41 +2068,42 @@ struct ContentView: View {
     ) -> UUID? {
         guard form.loginMode == .manual, form.saveAsNewLoginSet else { return nil }
 
-        if form.kind == .s3 {
-            let accessKeyID = form.s3AccessKeyID.trimmingCharacters(in: .whitespacesAndNewlines)
-            let trimmedName = form.newLoginSetName.trimmingCharacters(in: .whitespacesAndNewlines)
-            let name = trimmedName.isEmpty
-                ? sessionListViewModel.suggestedSetName(forUsername: accessKeyID)
-                : trimmedName
-            let newSet = LoginSet(name: name, username: "", authKind: .password,
-                                  kind: .s3, accessKeyID: accessKeyID)
-            let secret = form.s3SecretAccessKey.isEmpty ? nil : form.s3SecretAccessKey
-            sessionListViewModel.saveLoginSet(newSet, secret: secret)
-            return newSet.id
-        }
-
-        let username = form.username.trimmingCharacters(in: .whitespacesAndNewlines)
+        // One path for every protocol (M22/T9). The `if form.kind == .s3`
+        // branch this replaces was the only kind-aware one: everything else
+        // fell through to a generic branch building
+        // `LoginSet(name:username:authKind:keyPath:)`, whose `kind` DEFAULTS
+        // to `.ssh` — so a WebDAV form would have written WebDAV credentials
+        // into an SSH-kind set, invisible in the kind-filtered picker that
+        // would then have to offer it. M22/T7 kept this control S3-only to
+        // keep that unreachable; asking the descriptor to build the set is
+        // what makes it correct instead of merely unreachable.
+        let descriptor = BackendDescriptor.descriptor(for: form.kind)
         let trimmedName = form.newLoginSetName.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The suggested name is the login's own identity: whichever field the
+        // backend marks as identifying it (`username`, `accessKeyID`) — read
+        // back off the set the descriptor just built, so this needs no branch.
+        let draft = descriptor.loginSet(id: UUID(), name: "", from: form.values)
         let name = trimmedName.isEmpty
-            ? sessionListViewModel.suggestedSetName(forUsername: username)
+            ? sessionListViewModel.suggestedSetName(
+                forUsername: draft.accessKeyID ?? draft.username)
             : trimmedName
-        // Three-way mapping (M10d/T4): reuses the Core helper instead of a
-        // two-way ternary, which would silently save an agent-mode form as
-        // a `.password` set.
-        let authKind = ConnectionViewModel.storedAuthKind(for: form.authChoice)
-        let keyPath = authKind == .privateKey
-            ? form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
-            : nil
-        let newSet = LoginSet(name: name, username: username, authKind: authKind, keyPath: keyPath)
-        // Agent sets never carry a secret (M10d/T4) — `saveLoginSet` already
-        // refuses to write one for `.agent`, but skip the (then-discarded)
-        // keychain lookup for the edited session's OWN secret too, rather
-        // than reading a value that will never be used.
-        let carried: String? = authKind == .agent ? nil
+        let newSet = descriptor.loginSet(id: draft.id, name: name, from: form.values)
+
+        // The secret is whichever field the backend's credential schema shows
+        // right now — SSH's password row under password auth, its passphrase
+        // row under private-key auth, and NOTHING for an agent login, whose
+        // set never carries a secret (M10d/T4). `saveLoginSet` already refuses
+        // to write one for `.agent`; resolving to "no secret field" here also
+        // skips the (then-discarded) keychain lookup for the edited session's
+        // own secret.
+        let typed = descriptor.credentialSchema.visibleSecretField(
+            in: form.values, namespace: descriptor.fieldNamespace)
+            .map { form.values.raw["\(descriptor.fieldNamespace).\($0.id)"] ?? "" }
+        let carried: String? = typed == nil ? nil
             : isManagedKeyWithStoredPassphrase(form) ? ""
-            : (form.password.isEmpty
+            : ((typed ?? "").isEmpty
                 ? (editedSession.flatMap { sessionListViewModel.password(for: $0) })
-                : form.password)
+                : typed)
         sessionListViewModel.saveLoginSet(newSet, secret: carried)
         return newSet.id
     }
@@ -2256,7 +2243,11 @@ struct ContentView: View {
                     host: "unused", port: 22, username: "unused",
                     password: form.password,
                     groupID: form.selectedGroupID,
-                    loginSetID: nil,
+                    // M22/T9: a WebDAV session can reference a login set now,
+                    // exactly like the S3 branch above — the hardcoded `nil`
+                    // this replaces dated from when `LoginSet` could not model
+                    // a WebDAV login at all.
+                    loginSetID: form.loginMode == .set ? form.selectedLoginSetID : newSetID,
                     kind: .webdav,
                     webdav: StoredWebDAVConfig(
                         baseURL: form.webdavBaseURL.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -2381,9 +2372,8 @@ struct ContentView: View {
                 // session's own (M15). A dangling/kind-mismatched set does
                 // NOT connect — same loginSets.missingSet path as SSH.
                 do {
-                    if let resolved = try sessionListViewModel.resolvedS3Login(for: stored) {
-                        form.s3AccessKeyID = resolved.accessKeyID
-                        form.s3SecretAccessKey = resolved.secretAccessKey ?? ""
+                    if let resolved = try sessionListViewModel.resolvedCredentials(for: stored) {
+                        form.applyResolvedCredentials(resolved)
                     } else {
                         form.s3AccessKeyID = stored.s3?.accessKeyID ?? ""
                         form.s3SecretAccessKey = sessionListViewModel.password(for: stored) ?? ""
@@ -2402,22 +2392,36 @@ struct ContentView: View {
                 }
                 form.clearJumpFields()
             } else if stored.kind == .webdav {
-                // WebDAV (M21/T9 bug-fix round): mirrors the S3 fill above
-                // and `ConnectionViewModel.beginEditing`'s own WebDAV block
-                // -- no login sets, no jump, no host-key TOFU. The real
-                // username lives on `stored.webdav.username`, not on
-                // `stored.username` (that field holds the "unused"
-                // placeholder for a WebDAV session, same as S3's own
-                // host/username) -- same override-after-the-fact shape
-                // `beginEditing` uses. The password is resolved from the
-                // Keychain the same way the SSH password is, since WebDAV
-                // has no login-set indirection to go through.
+                // WebDAV (M21/T9 bug-fix round): mirrors the S3 fill above --
+                // no jump, no host-key TOFU. The real username lives on
+                // `stored.webdav.username`, not on `stored.username` (that
+                // field holds the "unused" placeholder for a WebDAV session,
+                // same as S3's own host/username).
+                //
+                // M22/T9: a WebDAV session CAN be bound to a login set now, so
+                // this branch resolves one exactly like the two beside it,
+                // including the dangling-set hard stop.
                 form.webdavBaseURL = stored.webdav?.baseURL ?? ""
-                form.username = stored.webdav?.username ?? ""
                 form.webdavUseNextcloudPath = stored.webdav?.useNextcloudPath ?? false
-                form.password = sessionListViewModel.password(for: stored) ?? ""
-                form.loginMode = .manual
-                form.selectedLoginSetID = nil
+                do {
+                    if let resolved = try sessionListViewModel.resolvedCredentials(for: stored) {
+                        form.applyResolvedCredentials(resolved)
+                    } else {
+                        form.username = stored.webdav?.username ?? ""
+                        form.password = sessionListViewModel.password(for: stored) ?? ""
+                    }
+                    form.loginMode = stored.loginSetID != nil ? .set : .manual
+                    form.selectedLoginSetID = stored.loginSetID
+                } catch is LoginResolveError {
+                    form.username = stored.webdav?.username ?? ""
+                    form.password = ""
+                    form.loginMode = .manual
+                    form.selectedLoginSetID = nil
+                    form.showFailure(message: L10n.string(
+                        "loginSets.missingSet",
+                        "The stored login for this connection was not found. Choose a login or enter credentials."))
+                    return
+                }
                 form.clearJumpFields()
             } else {
                 // Resolve what this session should actually connect with (M10b/T3):
@@ -2425,11 +2429,8 @@ struct ContentView: View {
                 // a dangling `loginSetID` throws rather than silently falling
                 // back (`LoginResolver`'s doc comment).
                 do {
-                    if let resolved = try sessionListViewModel.resolvedLogin(for: stored) {
-                        form.username = resolved.username
-                        form.authChoice = ConnectionViewModel.authChoice(for: resolved.authKind)
-                        form.keyPath = resolved.keyPath ?? ""
-                        form.password = resolved.secret ?? ""
+                    if let resolved = try sessionListViewModel.resolvedCredentials(for: stored) {
+                        form.applyResolvedCredentials(resolved)
                     } else {
                         form.username = stored.username
                         form.authChoice = ConnectionViewModel.authChoice(for: stored.authKind)

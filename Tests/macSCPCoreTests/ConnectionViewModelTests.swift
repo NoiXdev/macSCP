@@ -875,6 +875,36 @@ struct ConnectionViewModelTests {
         #expect(vm.webdavUseNextcloudPath == true)
         #expect(vm.password.isEmpty)
     }
+
+    /// M22/T9: an edit-save must carry the login-set reference forward for
+    /// EVERY kind. The S3 and WebDAV paths dropped it — `beginEditing` put the
+    /// form into Set mode with the set preselected, and the rebuilt
+    /// `StoredSession` then came back with `loginSetID == nil`, so saving a
+    /// renamed bucket silently unbound its credentials.
+    @Test @MainActor func editSaveKeepsTheLoginSetBindingForEveryKind() {
+        let setID = UUID()
+        for kind in ConnectionKind.allCases {
+            let vm = makeVM()
+            let stored = StoredSession(
+                id: UUID(), name: "n", host: "h", username: "u",
+                loginSetID: setID, kind: kind,
+                s3: kind == .s3
+                    ? StoredS3Config(
+                        accessKeyID: "AKIA", region: "r",
+                        endpoint: "https://e.example.com", bucket: "b", usePathStyle: true)
+                    : nil,
+                webdav: kind == .webdav
+                    ? StoredWebDAVConfig(
+                        baseURL: "https://dav.example.com", username: "dave",
+                        useNextcloudPath: false)
+                    : nil)
+            vm.beginEditing(stored)
+            #expect(vm.loginMode == .set)
+
+            let saved = vm.validateForEditSave()
+            #expect(saved?.loginSetID == setID, "\(kind) dropped its login-set binding on save")
+        }
+    }
 }
 
 private actor CallCounter {

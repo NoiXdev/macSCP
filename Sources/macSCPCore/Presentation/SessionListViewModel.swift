@@ -207,8 +207,7 @@ public final class SessionListViewModel {
         // `resolvedLogin(for:)` would: nil for a manual session (use its own
         // fields + own keychain secret below), a set's values otherwise. An
         // agent session/set reads no keychain at all (M10d rule).
-        let resolvedBastionLogin = (try? LoginResolver.resolve(
-            session: session, sets: loginSets, secrets: secrets)) ?? nil
+        let resolvedBastionLogin = resolvedSSHLogin(for: session)
         let bastionUsername = resolvedBastionLogin?.username ?? session.username
         let bastionAuthKind = resolvedBastionLogin?.authKind ?? session.authKind
         let bastionKeyPath = resolvedBastionLogin?.keyPath ?? session.keyPath
@@ -620,18 +619,33 @@ public final class SessionListViewModel {
     }
 
     /// Resolves what a session should actually connect with: its own data
-    /// for a manual session, or its set's credentials. A dangling
-    /// `loginSetID` throws rather than silently falling back (spec §2).
-    public func resolvedLogin(for session: StoredSession) throws -> ResolvedLogin? {
+    /// for a manual session, or its set's credentials in the backend's own
+    /// field vocabulary. A dangling `loginSetID` throws rather than silently
+    /// falling back (spec §2).
+    ///
+    /// One method for every protocol since M22/T9 — it replaced the SSH-only
+    /// `resolvedLogin(for:)` and the S3-only `resolvedS3Login(for:)`, which
+    /// is why a WebDAV session can be bound to a login set at all.
+    public func resolvedCredentials(for session: StoredSession) throws -> FieldValues? {
         try LoginResolver.resolve(session: session, sets: loginSets, secrets: secrets)
     }
 
-    /// S3 counterpart of `resolvedLogin(for:)` (M15): resolves an S3
-    /// session's access key + secret from its bound set, or nil for a manual
-    /// S3 session. Throws on a dangling/kind-mismatched set, same as its SSH
-    /// sibling.
-    public func resolvedS3Login(for session: StoredSession) throws -> ResolvedS3Login? {
-        try LoginResolver.resolveS3(session: session, sets: loginSets, secrets: secrets)
+    /// The credential values a login set supplies, secret included (M22/T9) —
+    /// the same shape `resolvedCredentials(for:)` returns, for the form's
+    /// fill-before-submit path, where the user picked the set directly and
+    /// there is no session to resolve THROUGH yet.
+    public func credentials(of set: LoginSet) -> FieldValues {
+        LoginResolver.credentials(of: set, secrets: secrets)
+    }
+
+    /// The SSH-shaped login of a session's set, for the two internal paths
+    /// that speak username/authKind/keyPath/secret and nothing else (jump
+    /// restoration on delete, and the session export format). `nil` for a
+    /// manual session AND for a dangling or kind-mismatched reference —
+    /// neither path may abort, they fall back to the session's own values.
+    private func resolvedSSHLogin(for session: StoredSession) -> ResolvedLogin? {
+        (try? LoginResolver.sshLogin(
+            session: session, sets: loginSets, secrets: secrets)) ?? nil
     }
 
     /// Resolves what a session's jump host should actually connect with
@@ -688,7 +702,7 @@ public final class SessionListViewModel {
             // keyPath (and, with includePasswords, the SET's secret) instead
             // of its own — a missing/dangling set just falls back to the
             // session's own (possibly empty) values; export never aborts.
-            let resolved = (try? resolvedLogin(for: session)) ?? nil
+            let resolved = resolvedSSHLogin(for: session)
             let username = resolved?.username ?? session.username
             let authKind = resolved?.authKind ?? session.authKind
             let keyPath = resolved?.keyPath ?? session.keyPath

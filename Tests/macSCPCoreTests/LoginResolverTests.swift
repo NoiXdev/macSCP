@@ -16,8 +16,16 @@ struct LoginResolverTests {
         try secrets.savePassword("pp", for: set.id)
         let session = StoredSession(name: "web", host: "example.com", username: "unused", loginSetID: set.id)
 
-        let resolved = try LoginResolver.resolve(session: session, sets: [set], secrets: secrets)
-        #expect(resolved == ResolvedLogin(username: "deploy", authKind: .privateKey, keyPath: "/k", secret: "pp"))
+        // M22/T9: `resolve` returns the backend's own credential values now,
+        // so the same four assertions are made field by field. `passphrase`,
+        // not `password`: a private-key set's secret goes into the field the
+        // schema shows for private-key auth.
+        let resolved = try #require(
+            try LoginResolver.resolve(session: session, sets: [set], secrets: secrets))
+        #expect(resolved[SSHField.username] == "deploy")
+        #expect(resolved[SSHField.authKind] == StoredSession.AuthKind.privateKey.rawValue)
+        #expect(resolved[SSHField.keyPath] == "/k")
+        #expect(resolved[SSHField.passphrase] == "pp")
     }
 
     @Test func missingSecretResolvesNilSecret() throws {
@@ -25,8 +33,12 @@ struct LoginResolverTests {
         let secrets = InMemorySecretStore()
         let session = StoredSession(name: "web", host: "example.com", username: "unused", loginSetID: set.id)
 
-        let resolved = try LoginResolver.resolve(session: session, sets: [set], secrets: secrets)
-        #expect(resolved == ResolvedLogin(username: "deploy", authKind: .password, keyPath: nil, secret: nil))
+        let resolved = try #require(
+            try LoginResolver.resolve(session: session, sets: [set], secrets: secrets))
+        #expect(resolved[SSHField.username] == "deploy")
+        #expect(resolved[SSHField.authKind] == StoredSession.AuthKind.password.rawValue)
+        #expect(resolved[SSHField.keyPath] == "")
+        #expect(resolved[SSHField.password] == "")
     }
 
     @Test func missingSetThrows() throws {
@@ -122,8 +134,11 @@ struct LoginResolverTests {
         let set = LoginSet(name: "Agent", username: "deploy", authKind: .agent)
         let session = StoredSession(name: "web", host: "example.com", username: "unused", loginSetID: set.id)
 
-        let resolved = try LoginResolver.resolve(session: session, sets: [set], secrets: NoReadAllowedSecretStore())
-        #expect(resolved == ResolvedLogin(username: "deploy", authKind: .agent, keyPath: nil, secret: nil))
+        let resolved = try #require(try LoginResolver.resolve(
+            session: session, sets: [set], secrets: NoReadAllowedSecretStore()))
+        #expect(resolved[SSHField.username] == "deploy")
+        #expect(resolved[SSHField.authKind] == StoredSession.AuthKind.agent.rawValue)
+        #expect(resolved[SSHField.keyPath] == "")
     }
 
     @Test func resolveJumpManualAgentDoesNotReadKeychain() throws {
@@ -276,11 +291,11 @@ struct LoginResolverTests {
         #expect(reloaded.first?.jump == jump)
     }
 
-    // MARK: - resolveS3 (M15)
+    // MARK: - S3 through the collapsed resolver (M15, collapsed in M22/T9)
 
     @Test func resolveS3ManualSessionResolvesNil() throws {
         let session = StoredSession(name: "bucket", host: "unused", username: "unused", kind: .s3)
-        let resolved = try LoginResolver.resolveS3(
+        let resolved = try LoginResolver.resolve(
             session: session, sets: [], secrets: InMemorySecretStore())
         #expect(resolved == nil)
     }
@@ -292,8 +307,10 @@ struct LoginResolverTests {
         let session = StoredSession(
             name: "bucket", host: "unused", username: "unused", loginSetID: set.id, kind: .s3)
 
-        let resolved = try LoginResolver.resolveS3(session: session, sets: [set], secrets: secrets)
-        #expect(resolved == ResolvedS3Login(accessKeyID: "AKIAEXAMPLE", secretAccessKey: "s3cr3t"))
+        let resolved = try #require(
+            try LoginResolver.resolve(session: session, sets: [set], secrets: secrets))
+        #expect(resolved[S3Field.accessKeyID] == "AKIAEXAMPLE")
+        #expect(resolved[S3Field.secretAccessKey] == "s3cr3t")
     }
 
     @Test func resolveS3MissingSecretResolvesNilSecret() throws {
@@ -301,9 +318,10 @@ struct LoginResolverTests {
         let session = StoredSession(
             name: "bucket", host: "unused", username: "unused", loginSetID: set.id, kind: .s3)
 
-        let resolved = try LoginResolver.resolveS3(
-            session: session, sets: [set], secrets: InMemorySecretStore())
-        #expect(resolved == ResolvedS3Login(accessKeyID: "AKIAEXAMPLE", secretAccessKey: nil))
+        let resolved = try #require(try LoginResolver.resolve(
+            session: session, sets: [set], secrets: InMemorySecretStore()))
+        #expect(resolved[S3Field.accessKeyID] == "AKIAEXAMPLE")
+        #expect(resolved[S3Field.secretAccessKey] == "")
     }
 
     @Test func resolveS3KindMismatchBetweenS3SessionAndSSHSetThrows() throws {
@@ -311,7 +329,7 @@ struct LoginResolverTests {
         let session = StoredSession(
             name: "bucket", host: "unused", username: "unused", loginSetID: set.id, kind: .s3)
         #expect(throws: LoginResolveError.kindMismatch) {
-            try LoginResolver.resolveS3(session: session, sets: [set], secrets: InMemorySecretStore())
+            try LoginResolver.resolve(session: session, sets: [set], secrets: InMemorySecretStore())
         }
     }
 
@@ -319,7 +337,7 @@ struct LoginResolverTests {
         let session = StoredSession(
             name: "bucket", host: "unused", username: "unused", loginSetID: UUID(), kind: .s3)
         #expect(throws: LoginResolveError.missingSet) {
-            try LoginResolver.resolveS3(session: session, sets: [], secrets: InMemorySecretStore())
+            try LoginResolver.resolve(session: session, sets: [], secrets: InMemorySecretStore())
         }
     }
 }

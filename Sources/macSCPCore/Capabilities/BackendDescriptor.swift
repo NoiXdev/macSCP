@@ -1,3 +1,5 @@
+import Foundation
+
 /// The static, connection-free description of a protocol (M12): its
 /// capabilities, its connection-form schema/presets, a badge label, and its
 /// (currently empty) contribution lists. One per `ConnectionKind`.
@@ -76,6 +78,46 @@ public struct BackendDescriptor: Sendable {
         case .ssh: return SSHFieldSchema.defaults
         case .s3: return S3FieldSchema.defaults
         case .webdav: return WebDAVFieldSchema.defaults
+        }
+    }
+
+    /// Field ids the generic form renderer must NOT draw because the App
+    /// draws them itself (`SchemaFormView.skipping`).
+    ///
+    /// Declared here rather than in the view so it can be GUARDED: the App has
+    /// no test target, and `skipping` is matched against top-level ids by
+    /// string, so a renamed or restructured field would turn a skip into a
+    /// silent no-op — or, worse, keep skipping a field nobody draws any more,
+    /// which removes a row from the form with nothing failing anywhere.
+    /// `BackendDescriptorTests` pins that every id in here is a real declared
+    /// field AND a `.group`, the one shape today's vocabulary cannot express
+    /// (see `SchemaFormView.skipping` for what would let the jump join the
+    /// generically rendered fields).
+    public static let customRenderedFieldIDs: Set<String> = [SSHField.jump.rawValue]
+
+    /// The credential values a login set carries, in this backend's own field
+    /// vocabulary (M22/T9) — the shape the credential schema renders and
+    /// `LoginResolver.resolve` returns.
+    ///
+    /// A computed member for the same reason as `defaultValues`: adding it to
+    /// the memberwise initializer would force every synthetic descriptor a
+    /// test builds to name it.
+    public func loginSetValues(_ set: LoginSet) -> FieldValues {
+        switch kind {
+        case .ssh: return SSHFieldSchema.values(from: set)
+        case .s3: return S3FieldSchema.values(from: set)
+        case .webdav: return WebDAVFieldSchema.values(from: set)
+        }
+    }
+
+    /// The inverse: the set a filled-in credential form describes. This is
+    /// what lets the login-set editor save a set of ANY kind without knowing
+    /// one — including the WebDAV kind it refused to build before M22/T9.
+    public func loginSet(id: UUID, name: String, from values: FieldValues) -> LoginSet {
+        switch kind {
+        case .ssh: return SSHFieldSchema.loginSet(id: id, name: name, from: values)
+        case .s3: return S3FieldSchema.loginSet(id: id, name: name, from: values)
+        case .webdav: return WebDAVFieldSchema.loginSet(id: id, name: name, from: values)
         }
     }
 
