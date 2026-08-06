@@ -187,7 +187,13 @@ struct SecretSourcesCompositionTests {
         let session = makeSession(kind: .ssh, authKind: .agent)
         let sources = secretSources(
             for: session, passwordCommand: "echo x", keychainStore: InMemorySecretStore())
-        #expect(sources.isEmpty)
+        // Asserted on `label`, never on the sources themselves: a failing
+        // `#expect` renders the whole expression into the message, and an
+        // `EnvironmentSecretSource` carries `ProcessInfo.processInfo.environment`
+        // by default -- so `#expect(sources.isEmpty)` would print the machine's
+        // AWS_SECRET_ACCESS_KEY into an archived public CI log the one time it
+        // ever goes red. `label` is structurally incapable of carrying a value.
+        #expect(sources.map(\.label).isEmpty)
     }
 
     /// The guard is keyed on `kind`/`authKind`, not merely "is agent set
@@ -199,6 +205,7 @@ struct SecretSourcesCompositionTests {
         let session = makeSession(kind: .s3, authKind: .agent)
         let sources = secretSources(
             for: session, passwordCommand: nil, keychainStore: InMemorySecretStore())
-        #expect(!sources.isEmpty)
+        // Same reason as above: `label`, never the sources themselves.
+        #expect(!sources.map(\.label).isEmpty)
     }
 }
