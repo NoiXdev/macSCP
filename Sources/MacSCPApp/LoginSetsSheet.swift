@@ -987,8 +987,7 @@ private struct LoginSetEditorView: View {
     }
 
     /// The App's half of the generic renderer's contract: managed keys live
-    /// in a store Core cannot see. `.loginSets` cannot occur here — a
-    /// credential schema describes ONE login and never picks another.
+    /// in a store Core cannot see.
     private func resolveOptions(_ source: OptionSource) -> [FieldOption] {
         switch source {
         case .fixed(let options):
@@ -999,8 +998,6 @@ private struct LoginSetEditorView: View {
                     id: key.id.uuidString, labelKey: "",
                     labelDefault: "\(key.name) — \(Self.shortFingerprint(key.fingerprint))")
             }
-        case .loginSets:
-            return []
         }
     }
 }
