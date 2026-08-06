@@ -88,7 +88,6 @@
 /* Potwierdzenie zaufania do certyfikatu serwera (M21/T10) — odpowiednik monitu o klucz hosta dla TLS, dla WebDAV/S3. */
 "certificate.prompt.title" = "Zaufać certyfikatowi tego serwera?";
 "certificate.prompt.fingerprint" = "Odcisk";
-"certificate.prompt.issuer" = "Wystawca";
 "certificate.prompt.expires" = "Ważny do";
 "certificate.prompt.trust" = "Zaufaj";
 

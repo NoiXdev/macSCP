@@ -36,8 +36,28 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         let delegate = WebDAVSessionDelegate(
             username: config.username, password: config.password,
             trustStore: trustStore, decider: decider)
+        let configuration = URLSessionConfiguration.ephemeral
+        // The server-trust challenge is answered INSIDE this request's
+        // lifetime, by `decider`, which for an unknown certificate suspends
+        // until a human compares a SHA-256 fingerprint against, say, a NAS
+        // admin page they have to go open first. The default 60s
+        // `timeoutIntervalForRequest` races that: reading and comparing a
+        // fingerprint routinely takes over a minute, and a `stat("/")` that
+        // times out while the user is still looking surfaces as a generic
+        // `NSURLErrorTimedOut` with no indication that the certificate was
+        // in fact accepted (it gets written to the trust store regardless,
+        // so the NEXT attempt silently works — which makes the timeout look
+        // like a flake rather than what it is). Five minutes comfortably
+        // outlasts that reading time without masking a genuinely dead
+        // connection for an unreasonable while. Do not "simplify" this back
+        // to the default — that reintroduces exactly this race.
+        configuration.timeoutIntervalForRequest = 300
+        // `timeoutIntervalForResource` (the cap on a single request's total
+        // duration, including a slow upload) is left at its default, which
+        // is already 7 days — ample for even a very large, very slow
+        // transfer, so there is nothing to raise here.
         let session = URLSession(
-            configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+            configuration: configuration, delegate: delegate, delegateQueue: nil)
         let base = WebDAVURL(
             baseURL: url, nextcloudUser: config.useNextcloudPath ? config.username : nil)
         let fs = WebDAVFileSystem(

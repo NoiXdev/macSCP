@@ -88,7 +88,6 @@
 /* Confirmation de confiance pour le certificat serveur (M21/T10) — le pendant TLS de l'invite de clé d'hôte ci-dessus, pour WebDAV/S3. */
 "certificate.prompt.title" = "Faire confiance au certificat de ce serveur ?";
 "certificate.prompt.fingerprint" = "Empreinte";
-"certificate.prompt.issuer" = "Émetteur";
 "certificate.prompt.expires" = "Expire le";
 "certificate.prompt.trust" = "Faire confiance";
 

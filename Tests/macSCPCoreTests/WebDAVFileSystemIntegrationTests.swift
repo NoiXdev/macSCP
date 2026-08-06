@@ -123,6 +123,16 @@ struct WebDAVFileSystemIntegrationTests {
         let dir = "/m21-crud-basic-\(UUID().uuidString)"
         let originalName = "note.txt"
         let renamedName = "renamed.txt"
+        // Space, `&`, and `#` in one name: `&` survives `WebDAVURL.encode`
+        // unescaped (it is a sub-delim, not a segment separator), while the
+        // space and `#` must be percent-encoded or the request breaks (a
+        // literal space in a URL) or silently truncates (`#` starts a
+        // fragment). `WebDAVURL` exists specifically because this is where
+        // silent bugs live; nothing before this test pinned it against a
+        // real server.
+        let percentEncodedName = "a b & c#1.txt"
+        let subDirName = "sub"
+        let renamedSubDirName = "sub-renamed"
         let body = Data("round trip over basic auth".utf8)
 
         var caught: Error?
@@ -140,12 +150,44 @@ struct WebDAVFileSystemIntegrationTests {
             let readBack = try await drain(try await fs.readStream(path: "\(dir)/\(originalName)"))
             #expect(readBack == body)
 
+            try await writeOnce(fs, path: "\(dir)/\(percentEncodedName)", content: body)
+            let percentEncodedReadBack = try await drain(
+                try await fs.readStream(path: "\(dir)/\(percentEncodedName)"))
+            #expect(percentEncodedReadBack == body)
+
             try await fs.rename(from: "\(dir)/\(originalName)", to: "\(dir)/\(renamedName)")
             let afterRename = try await fs.list(path: dir)
             #expect(!afterRename.contains { $0.name == originalName })
             #expect(afterRename.contains { $0.name == renamedName })
 
+            // Directory rename: `RemoteBrowserViewModel` passes a folder's
+            // `item.path` through `rename` the same as a file's, and
+            // `WebDAVFileSystem.rename` addresses BOTH endpoints with
+            // `isDirectory: false` -- this is where that shape actually
+            // meets a real server rather than a stubbed transport.
+            try await fs.createDirectory(at: "\(dir)/\(subDirName)")
+            try await fs.rename(
+                from: "\(dir)/\(subDirName)", to: "\(dir)/\(renamedSubDirName)")
+            let afterSubRename = try await fs.list(path: dir)
+            #expect(!afterSubRename.contains { $0.name == subDirName })
+            #expect(afterSubRename.contains {
+                $0.name == renamedSubDirName && $0.kind == .directory
+            })
+
+            // `stat` on an existing directory: the path-bar navigation and
+            // `macscp rm` (without `--recursive`) both do this before
+            // acting on the result.
+            let subStat = try await fs.stat(path: "\(dir)/\(renamedSubDirName)")
+            #expect(subStat.kind == .directory)
+
+            // `delete` (not `deleteTree`) on an empty collection: what
+            // `macscp rm` sends without `--recursive`.
+            try await fs.delete(path: "\(dir)/\(renamedSubDirName)")
+            let afterSubDelete = try await fs.list(path: dir)
+            #expect(!afterSubDelete.contains { $0.name == renamedSubDirName })
+
             try await fs.delete(path: "\(dir)/\(renamedName)")
+            try await fs.delete(path: "\(dir)/\(percentEncodedName)")
             let afterDelete = try await fs.list(path: dir)
             #expect(afterDelete.isEmpty)
         } catch {

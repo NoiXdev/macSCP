@@ -86,7 +86,6 @@
 /* Server-certificate trust prompt (M21/T10) — WebDAV/S3's TLS twin of the host-key prompt above. */
 "certificate.prompt.title" = "Trust this server's certificate?";
 "certificate.prompt.fingerprint" = "Fingerprint";
-"certificate.prompt.issuer" = "Issuer";
 "certificate.prompt.expires" = "Expires";
 "certificate.prompt.trust" = "Trust";
 
