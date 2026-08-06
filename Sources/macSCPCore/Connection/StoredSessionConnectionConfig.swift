@@ -14,10 +14,11 @@ public enum StoredSessionConnectionError: Error, Equatable, Sendable {
     /// resolving a jump's own login (manual, set-bound, or "session" mode)
     /// needs machinery the CLI does not yet wire up.
     case jumpSessionsNotSupported
-    /// `kind == .s3` but `s3` is `nil` — inconsistent stored data.
-    case missingS3Configuration
-    /// `kind == .webdav` but `webdav` is `nil` — inconsistent stored data.
-    case missingWebDAVConfiguration
+    /// The session's `kind` says one protocol but the matching stored
+    /// configuration block is `nil` — inconsistent stored data. One case for
+    /// every backend (M22/T10), carrying the kind rather than one case per
+    /// protocol, so a fourth protocol adds none.
+    case missingBackendConfiguration(kind: ConnectionKind)
     /// The session needs an actual secret (password, key passphrase, or S3
     /// secret access key) and none of the staged sources produced one.
     case secretRequired
@@ -87,7 +88,7 @@ public enum StoredSessionConnectionConfig {
 
     private static func buildS3(for session: StoredSession, secret: String?) throws -> S3ConnectionConfig {
         guard let stored = session.s3 else {
-            throw StoredSessionConnectionError.missingS3Configuration
+            throw StoredSessionConnectionError.missingBackendConfiguration(kind: .s3)
         }
         guard let secret, !secret.isEmpty else {
             throw StoredSessionConnectionError.secretRequired
@@ -99,7 +100,7 @@ public enum StoredSessionConnectionConfig {
         for session: StoredSession, secret: String?
     ) throws -> WebDAVConnectionConfig {
         guard let stored = session.webdav else {
-            throw StoredSessionConnectionError.missingWebDAVConfiguration
+            throw StoredSessionConnectionError.missingBackendConfiguration(kind: .webdav)
         }
         guard let secret, !secret.isEmpty else {
             throw StoredSessionConnectionError.secretRequired

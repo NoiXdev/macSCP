@@ -112,7 +112,7 @@ struct StoredSessionConnectionConfigTests {
     }
 
     @Test func s3WithoutStoredConfigurationThrows() {
-        #expect(throws: StoredSessionConnectionError.missingS3Configuration) {
+        #expect(throws: StoredSessionConnectionError.missingBackendConfiguration(kind: .s3)) {
             try StoredSessionConnectionConfig.build(for: s3Session(withConfig: false), secret: "secretkey")
         }
     }

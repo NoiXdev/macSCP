@@ -105,10 +105,12 @@ public enum CLIErrorMapping {
             case .jumpSessionsNotSupported:
                 return "Error: this session dials through a jump host, "
                     + "which the CLI does not resolve yet"
-            case .missingS3Configuration:
-                return "Error: the stored session is missing its S3 configuration"
-            case .missingWebDAVConfiguration:
-                return "Error: the stored session is missing its WebDAV configuration"
+            case .missingBackendConfiguration(let kind):
+                // Names the protocol exactly as the two per-protocol messages
+                // this replaced did (M22/T10) — the descriptor's badge label
+                // is the one English name each backend already carries.
+                return "Error: the stored session is missing its "
+                    + "\(BackendDescriptor.descriptor(for: kind).badgeLabelDefault) configuration"
             case .secretRequired:
                 return "Error: no secret available (checked --password-command, "
                     + "the environment, and the keychain)"
