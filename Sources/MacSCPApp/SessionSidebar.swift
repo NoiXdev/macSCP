@@ -418,6 +418,16 @@ private struct SessionRow: View {
         return L10n.string(descriptor.badgeLabelKey, descriptor.badgeLabelDefault)
     }
 
+    /// The backend's own `displaySummary` (M22/T11) — NOT the old hand-rolled
+    /// "\(session.username)@\(session.host):\(session.port)", which read
+    /// SSH-shaped fields S3 and WebDAV never fill (`session.host`/
+    /// `.username` carry the `"unused"` placeholder for both, so the tooltip
+    /// used to read "unused@unused:22").
+    private var connectionSummary: String {
+        let descriptor = BackendDescriptor.descriptor(for: session.kind)
+        return descriptor.displaySummary(descriptor.sessionValues(session))
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             Circle()
@@ -489,8 +499,9 @@ private struct SessionRow: View {
                 onRequestDelete()
             }
         }
-        // Pure data interpolation (user@host:port) — no natural-language
-        // words to translate, identical in every locale.
-        .help("\(session.username)@\(session.host):\(String(session.port))")
+        // Pure data interpolation, backend-specific (user@host for SSH,
+        // bucket @ endpoint-host for S3, user @ host for WebDAV) — no
+        // natural-language words to translate, identical in every locale.
+        .help(connectionSummary)
     }
 }

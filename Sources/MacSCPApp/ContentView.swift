@@ -1388,12 +1388,12 @@ struct ContentView: View {
     /// resolves to `nil`, which `AuditRecorder.recordTransfer` renders as
     /// "unknown session".
     private func attachAuditRecorder(
-        to tab: SessionTab, sessionID: UUID, host: String, username: String,
+        to tab: SessionTab, sessionID: UUID, summary: String,
         viaJumpHost: String? = nil
     ) {
         let recorder = AuditRecorder(sessionID: sessionID, store: auditStore)
         tab.auditRecorder = recorder
-        recorder.recordConnected(host: host, username: username, viaJumpHost: viaJumpHost)
+        recorder.recordConnected(summary: summary, viaJumpHost: viaJumpHost)
         // Plaintext-transport audit trail (M21/T10): the connector closure
         // set this right after the user confirmed connecting over
         // `http://`; this is the first point afterward where a `sessionID`
@@ -2308,19 +2308,31 @@ struct ContentView: View {
             // construction; `form.jumpHost` is the one field guaranteed to
             // be current in both connect paths.
             if let stored {
+                // `displaySummary` (M22/T11), not `stored.host`/`stored.username`
+                // directly: those two carry the `"unused"` placeholder for a
+                // freshly saved S3 or WebDAV session (see `startSession`'s own
+                // `"unused"` comments a few lines above), which is exactly what
+                // used to leave "connected to unused as unused" in the audit
+                // trail for anything but SSH.
+                let descriptor = BackendDescriptor.descriptor(for: stored.kind)
                 attachAuditRecorder(
-                    to: tab, sessionID: stored.id, host: stored.host, username: stored.username,
+                    to: tab, sessionID: stored.id,
+                    summary: descriptor.displaySummary(descriptor.sessionValues(stored)),
                     viaJumpHost: form.jumpEnabled ? form.jumpHost : nil)
             }
         }
 
         // Tab/window title: a stored session's name when this connection is
         // actually backed by one (just saved above, or passed in by
-        // `connect(in:stored:)`), otherwise "user@host". Window chrome (proper
+        // `connect(in:stored:)`), otherwise the backend's own `displaySummary`
+        // (M22/T11) — NOT the old hand-rolled "\(form.username)@\(form.host)",
+        // which read SSH-only fields and left a WebDAV tab titled "tim@" (its
+        // real user name lives on `WebDAVField.username`, its host on
+        // `SSHField.host` was simply never written). Window chrome (proper
         // name + user data), deliberately not localized (no catalog key).
         tab.titleName = titleName?.isEmpty == false
             ? titleName!
-            : "\(form.username)@\(form.host)"
+            : BackendDescriptor.descriptor(for: form.kind).displaySummary(form.values)
     }
 
     /// Sidebar click: pick the target tab per the tab rule — the active tab
@@ -2609,8 +2621,13 @@ struct ContentView: View {
                 // fresh above (`resolvedJump(for:)`/the manual fallback) and
                 // is correct by construction; `jumpEnabled` gates it to `nil`
                 // when there is no jump at all.
+                // `displaySummary` (M22/T11), not `stored.host`/`stored.username`
+                // directly — see the "Save & connect" call site's comment above
+                // for why those two are the `"unused"` placeholder outside SSH.
+                let descriptor = BackendDescriptor.descriptor(for: stored.kind)
                 attachAuditRecorder(
-                    to: tab, sessionID: stored.id, host: stored.host, username: stored.username,
+                    to: tab, sessionID: stored.id,
+                    summary: descriptor.displaySummary(descriptor.sessionValues(stored)),
                     viaJumpHost: form.jumpEnabled ? form.jumpHost : nil)
             }
         }

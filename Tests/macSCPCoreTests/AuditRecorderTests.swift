@@ -203,6 +203,41 @@ struct AuditRecorderTests {
         #expect(!afterVia.contains(" as "))
     }
 
+    /// M22/T11: the `summary`-based overload is what the App layer now calls
+    /// for every backend, routing through `BackendDescriptor.displaySummary`
+    /// instead of the SSH-shaped `host`/`username` pair above -- that pair
+    /// stayed "unused" for a stored S3 or WebDAV session, which is why the
+    /// audit trail used to read "connected to unused as unused" for anything
+    /// but SSH.
+    @Test func recordConnectedWithSummaryIncludesTheWholeSummary() {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sessionID = UUID()
+        let recorder = AuditRecorder(sessionID: sessionID, store: store)
+
+        recorder.recordConnected(summary: "backups @ minio.local")
+
+        let events = store.events(for: sessionID)
+        #expect(events.count == 1)
+        #expect(events[0].kind == .connected)
+        #expect(events[0].detail == "connected to backups @ minio.local")
+    }
+
+    /// Mirrors `connectedWithJumpNamesTheHop` for the summary overload: the
+    /// jump hop's host is the only extra detail, appended the same way.
+    @Test func recordConnectedWithSummaryAndJumpNamesTheHop() {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sessionID = UUID()
+        let recorder = AuditRecorder(sessionID: sessionID, store: store)
+
+        recorder.recordConnected(summary: "alice@example.com", viaJumpHost: "bastion")
+
+        let events = store.events(for: sessionID)
+        #expect(events.count == 1)
+        #expect(events[0].detail == "connected to alice@example.com via bastion")
+    }
+
     @Test func recordDisconnectedRecordsDisconnectedKind() {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
