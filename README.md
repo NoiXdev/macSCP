@@ -129,7 +129,7 @@ overwritten unless asked).
 **Secrets.** A session's password or key passphrase is looked up in this
 order, stopping at the first one that answers: an explicit
 `--password-command <cmd>` (the command's own stdout, trimmed); an
-environment variable (`MACSCP_PASSWORD` for an SSH session,
+environment variable (`MACSCP_PASSWORD` for an SSH or WebDAV session,
 `AWS_SECRET_ACCESS_KEY` for an S3 one); the keychain, same as the app
 itself uses. A session authenticating through an SSH agent needs none of
 these — the agent supplies the key.

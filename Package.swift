@@ -57,6 +57,11 @@ let package = Package(
                 "macSCPCore",
                 .product(name: "Crypto", package: "swift-crypto"),
             ],
+            // `LegacyStoreCompatibilityTests` copies these into a temporary
+            // directory and loads them through the real stores, addressing
+            // them by `#filePath` — so they must NOT be bundled as resources.
+            // Declaring them keeps SwiftPM from warning about unhandled files.
+            exclude: ["Fixtures"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
     ]

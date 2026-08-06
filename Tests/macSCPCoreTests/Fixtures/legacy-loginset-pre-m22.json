@@ -1,0 +1,23 @@
+{
+  "ignoredMergeGroups" : [
+
+  ],
+  "sets" : [
+    {
+      "authKind" : "privateKey",
+      "id" : "77777777-7777-4777-8777-777777777777",
+      "keyPath" : "~\/.ssh\/id_ed25519",
+      "kind" : "ssh",
+      "name" : "Homelab login",
+      "username" : "tim"
+    },
+    {
+      "accessKeyID" : "AKIA",
+      "authKind" : "password",
+      "id" : "66666666-6666-4666-8666-666666666666",
+      "kind" : "s3",
+      "name" : "Object storage keys",
+      "username" : ""
+    }
+  ]
+}
