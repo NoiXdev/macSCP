@@ -66,6 +66,16 @@ public struct FieldValues: Equatable, Sendable {
         set { storage[Self.key(group, leaf)] = newValue }
     }
 
+    /// Writes by full namespaced key. The generic form renderer needs this
+    /// because it holds an id string, not a statically-typed field case; the
+    /// key it builds is the same one the typed subscripts above produce.
+    ///
+    /// Named `setRaw` rather than `raw`: `raw` is already the property this
+    /// writes into, and Swift will not let a method share that base name.
+    public mutating func setRaw(_ key: String, to value: String) {
+        storage[key] = value
+    }
+
     /// Toggles. Only the exact string "true" is true: a half-written or
     /// hand-edited file must not be able to flip a toggle on by accident.
     public subscript<F: BackendFieldID>(bool field: F) -> Bool {
