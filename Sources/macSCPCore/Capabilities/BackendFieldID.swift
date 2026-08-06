@@ -76,6 +76,17 @@ public struct FieldValues: Equatable, Sendable {
         storage[key] = value
     }
 
+    /// Copies every key `other` carries over this one's, leaving keys it does
+    /// not mention untouched.
+    ///
+    /// What a resolved login set needs (M22/T9): a set supplies exactly its
+    /// backend's CREDENTIAL fields, and they have to land in a form that
+    /// already holds the connection ones. Assigning the whole map instead
+    /// would wipe the host the user just typed.
+    public mutating func merge(_ other: FieldValues) {
+        storage.merge(other.storage) { _, incoming in incoming }
+    }
+
     /// Toggles. Only the exact string "true" is true: a half-written or
     /// hand-edited file must not be able to flip a toggle on by accident.
     public subscript<F: BackendFieldID>(bool field: F) -> Bool {

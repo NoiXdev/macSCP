@@ -345,11 +345,16 @@ struct LoginSetsSheet: View {
     @ViewBuilder
     private func row(_ set: LoginSet) -> some View {
         HStack(spacing: 10) {
-            if set.kind == .s3 {
-                badge(label: L10n.string("loginSets.badge.s3", "S3"),
-                      soft: DesignTokens.s3Soft, ink: DesignTokens.s3Violet)
-            } else {
+            // SSH is the only kind whose badge says something: its three auth
+            // kinds are a real choice the user made. Every other protocol
+            // authenticates one way, so its badge names the PROTOCOL — taken
+            // from the backend descriptor (M22/T9), not hand-picked here, so a
+            // fourth backend needs no edit at this site.
+            if set.kind == .ssh {
                 authKindBadge(set.authKind)
+            } else {
+                badge(label: Self.kindLabel(set.kind),
+                      soft: DesignTokens.s3Soft, ink: DesignTokens.s3Violet)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(set.name).font(.system(size: 13))
@@ -432,11 +437,22 @@ struct LoginSetsSheet: View {
         }
     }
 
+    /// A protocol's own name, from its backend descriptor — the same source
+    /// the sidebar and the tab strip already use for their kind badges.
+    static func kindLabel(_ kind: ConnectionKind) -> String {
+        let descriptor = BackendDescriptor.descriptor(for: kind)
+        return L10n.string(descriptor.badgeLabelKey, descriptor.badgeLabelDefault)
+    }
+
     private func subtitle(for set: LoginSet) -> String {
-        if set.kind == .s3 {
+        if set.kind != .ssh {
+            // "<identity> · <protocol>". The identity is whichever column the
+            // set actually carries: S3 sets hold an access key and an empty
+            // user name, WebDAV the reverse. Reading the optional first needs
+            // no branch on `kind` (same idiom as `loginSetLabel`).
             return String(
-                format: L10n.string("loginSets.subtitle.s3 %@", "%@ · S3"),
-                set.accessKeyID ?? "")
+                format: L10n.string("loginSets.subtitle.kind %@ %@", "%@ · %@"),
+                set.accessKeyID ?? set.username, Self.kindLabel(set.kind))
         }
         switch set.authKind {
         case .privateKey:
@@ -768,25 +784,30 @@ struct LoginSetsSheet: View {
     }
 }
 
-/// New/Edit sub-sheet (spec §1-2): name, username, Password|SSH-key segments
-/// — the same field pattern `ConnectionFormView`'s auth block uses (SecureField
-/// with a "leave empty to keep" prompt while editing, key path + "Choose…"
-/// fileImporter, optional passphrase). Purely local state; `existing == nil`
-/// for "New…" builds a fresh `LoginSet` on save, `existing != nil` for
-/// "Edit…" keeps that set's id.
+/// New/Edit sub-sheet (spec §1-2), schema-driven since M22/T9: a name, a
+/// protocol picker over EVERY `ConnectionKind`, and the chosen backend's
+/// `credentialSchema` rendered by the same `SchemaFormView` the connection
+/// form uses.
+///
+/// The hand-written version this replaces enumerated SSH and S3 in its
+/// picker, spelled out their rows by hand, gated Save on a `switch` that
+/// returned "always disabled" for `.webdav`, and carried a
+/// `preconditionFailure` for `.webdav` on the save path. That is why a
+/// WebDAV login set could not be created at all — and why the WebDAV
+/// connection form's login-set picker was always empty. Nothing in here
+/// names a protocol any more, so the next backend arrives with its schema
+/// and no edit to this file.
 private struct LoginSetEditorView: View {
     let existing: LoginSet?
     let onSave: (LoginSet, String?) -> Void
     let onCancel: () -> Void
 
     @State private var name: String
-    @State private var username: String
-    @State private var authChoice: ConnectionViewModel.AuthChoice
-    @State private var keyPath: String
-    @State private var secret: String = ""
-    @State private var showKeyImporter = false
     @State private var kind: ConnectionKind
-    @State private var accessKeyID: String
+    /// Every credential field the chosen backend declares, in the same shape
+    /// `LoginResolver.resolve` returns and `ConnectionViewModel` binds to.
+    @State private var values: FieldValues
+    @State private var showKeyImporter = false
     /// Drives the SSH-keys management sheet's "Manage keys…" link (M18/T5) —
     /// same locally opened sheet pattern `ConnectionFormView` uses, in place
     /// of the M17 `SettingsLink` to the Settings tab.
@@ -796,39 +817,66 @@ private struct LoginSetEditorView: View {
         self.existing = existing
         self.onSave = onSave
         self.onCancel = onCancel
+        let kind = existing?.kind ?? .ssh
         _name = State(initialValue: existing?.name ?? "")
-        _username = State(initialValue: existing?.username ?? "")
-        // Three-way mapping (M10d/T4): reuses the SAME Core helper
-        // `ConnectionViewModel.authChoice(for:)` the target/jump prefill
-        // paths use, instead of a two-way ternary that would silently
-        // misdisplay `.agent` as Password.
-        _authChoice = State(initialValue: ConnectionViewModel.authChoice(for: existing?.authKind ?? .password))
-        _keyPath = State(initialValue: existing?.keyPath ?? "")
-        _kind = State(initialValue: existing?.kind ?? .ssh)
-        _accessKeyID = State(initialValue: existing?.accessKeyID ?? "")
+        _kind = State(initialValue: kind)
+        _values = State(initialValue: Self.initialValues(for: kind, existing: existing))
+    }
+
+    /// A brand-new set starts at the backend's own defaults — SSH's
+    /// `password` auth kind among them, so its picker is not blank — and an
+    /// existing set writes its stored values over those.
+    ///
+    /// Never the secret: it stays in the Keychain, and an empty secret row
+    /// means "keep the stored one", which is what the row's placeholder says.
+    private static func initialValues(
+        for kind: ConnectionKind, existing: LoginSet?
+    ) -> FieldValues {
+        let descriptor = BackendDescriptor.descriptor(for: kind)
+        var values = descriptor.defaultValues
+        // Only when the set IS of this kind: switching the picker away and
+        // back must not carry an SSH set's user name into an S3 access key.
+        if let existing, existing.kind == kind {
+            values.merge(descriptor.loginSetValues(existing))
+        }
+        return values
     }
 
     private var isEditing: Bool { existing != nil }
+    private var descriptor: BackendDescriptor { .descriptor(for: kind) }
 
-    /// Save disabled until the required fields for the chosen kind are
-    /// non-empty, trimmed (M15). SSH: name + username. S3: name + access
-    /// key ID (the secret is optional on edit — "leave empty to keep").
-    /// `.webdav` (M21/T8): login sets don't model WebDAV at all -- `LoginSet`
-    /// has no `baseURL`/`useNextcloudPath` fields, and the type picker below
-    /// only ever offers `.ssh`/`.s3` tags, so this state is unreachable
-    /// through this editor. Kept exhaustive (Save stays disabled) rather
-    /// than a `default:`, matching the same reasoning as the placeholder
-    /// switches in `ConnectionViewModel`.
+    /// Save stays disabled until the set has a name and every field the
+    /// schema currently marks required is filled (M15: trimmed, so a row of
+    /// spaces does not count).
+    ///
+    /// A query against the schema instead of the `switch` over
+    /// `ConnectionKind` this replaces. That switch is where `.webdav`
+    /// returned `true` unconditionally, which disabled Save for a protocol
+    /// the picker did not even offer — a dead end that no compiler and no
+    /// test could see, because "disabled" is a perfectly valid answer.
     private var isSaveDisabled: Bool {
-        let nameEmpty = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        switch kind {
-        case .ssh:
-            return nameEmpty || username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .s3:
-            return nameEmpty || accessKeyID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .webdav:
-            return true
-        }
+        if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
+        return !descriptor.credentialSchema.missingRequiredFields(
+            in: values, namespace: descriptor.fieldNamespace).isEmpty
+    }
+
+    /// Whatever the schema says the secret row IS right now — SSH's
+    /// "Password" under password auth, its "Passphrase (optional)" under
+    /// private-key auth, and nothing at all for an agent login, whose set
+    /// carries no secret (M10d). Reading a FIXED field instead would save an
+    /// agent set's stale password, or file a passphrase under the password
+    /// slot.
+    private var secret: String {
+        guard let field = descriptor.credentialSchema.visibleSecretField(
+            in: values, namespace: descriptor.fieldNamespace)
+        else { return "" }
+        return values.raw["\(descriptor.fieldNamespace).\(field.id)"] ?? ""
+    }
+
+    /// True while the SSH key-path row is on screen — the one place this
+    /// editor still adds affordances of its own (see `sshKeyFileRow`).
+    private var showsKeyFileAffordances: Bool {
+        kind == .ssh && values[SSHField.authKind] == StoredSession.AuthKind.privateKey.rawValue
     }
 
     var body: some View {
@@ -839,152 +887,42 @@ private struct LoginSetEditorView: View {
                 .font(.title3.bold())
 
             let nameLabel = L10n.string("loginSets.editor.name", "Name")
-            EditorRow(label: nameLabel) {
+            FormRow(label: nameLabel) {
                 TextField(nameLabel, text: $name, prompt: Text(verbatim: ""))
             }
 
+            // Every kind, from `ConnectionKind.allCases` with the descriptor's
+            // own badge label — the same source the sidebar, the tab strip and
+            // the connection form's type switcher already use. The
+            // hand-enumerated two-tag picker this replaces is what made
+            // `.webdav` unreachable.
             let kindLabel = L10n.string("loginSets.editor.kind", "Type")
-            EditorRow(label: kindLabel) {
+            FormRow(label: kindLabel) {
                 Picker(kindLabel, selection: $kind) {
-                    Text(L10n.string("loginSets.kind.ssh", "SSH")).tag(ConnectionKind.ssh)
-                    Text(L10n.string("loginSets.kind.s3", "S3")).tag(ConnectionKind.s3)
+                    ForEach(ConnectionKind.allCases, id: \.self) { kind in
+                        Text(LoginSetsSheet.kindLabel(kind)).tag(kind)
+                    }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
             }
 
-            if kind == .ssh {
-                let usernameLabel = L10n.string("loginSets.editor.username", "Username")
-                EditorRow(label: usernameLabel) {
-                    TextField(usernameLabel, text: $username, prompt: Text(verbatim: ""))
-                }
+            SchemaFormView(
+                schemas: [descriptor.credentialSchema], values: $values,
+                namespace: descriptor.fieldNamespace, isEditMode: isEditing,
+                resolve: resolveOptions)
 
-                let authLabel = L10n.string("connection.field.authMethod", "Authentication")
-                EditorRow(label: authLabel) {
-                    Picker(authLabel, selection: $authChoice) {
-                        Text(L10n.string("connection.auth.password", "Password"))
-                            .tag(ConnectionViewModel.AuthChoice.password)
-                        Text(L10n.string("connection.auth.privateKey", "SSH key"))
-                            .tag(ConnectionViewModel.AuthChoice.privateKey)
-                        Text(L10n.string("connection.auth.agent", "Agent"))
-                            .tag(ConnectionViewModel.AuthChoice.agent)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                }
-
-                if authChoice == .password {
-                    let passwordLabel = L10n.string("connection.auth.password", "Password")
-                    EditorRow(label: passwordLabel) {
-                        SecureField(
-                            passwordLabel, text: $secret,
-                            prompt: isEditing
-                                ? Text(L10n.string("loginSets.editor.keepSecret", "leave empty to keep"))
-                                : Text(verbatim: ""))
-                    }
-                } else if authChoice == .privateKey {
-                    let keyPathLabel = L10n.string("connection.field.keyPath", "Key path")
-                    // Managed keys eligible to fill `keyPath` (M17/T5) — only
-                    // ed25519 (`KeyType.isConnectable`); RSA/ECDSA never show up
-                    // here since `SSHPrivateKeyLoader` can't load them anyway.
-                    let connectableKeys = Self.connectableManagedKeys()
-                    EditorRow(label: keyPathLabel) {
-                        HStack(spacing: 6) {
-                            TextField(
-                                keyPathLabel, text: $keyPath,
-                                prompt: Text(L10n.string(
-                                    "connection.field.keyPath.placeholder", "~/.ssh/id_ed25519")))
-                            Button("…") { showKeyImporter = true }
-                                .buttonStyle(.polished)
-                                .help(L10n.string("connection.field.keyPath.browseHelp", "Choose key file"))
-                            // Additive (M17/T5): only appears when at least one
-                            // managed key can be used to connect — no empty menu.
-                            if !connectableKeys.isEmpty {
-                                Menu(L10n.string("keys.picker.managed", "Managed key")) {
-                                    ForEach(connectableKeys) { key in
-                                        Button("\(key.name) — \(Self.shortFingerprint(key.fingerprint))") {
-                                            keyPath = Self.managedKeyPath(for: key)
-                                        }
-                                    }
-                                }
-                                .fixedSize()
-                            }
-                        }
-                    }
-                    EditorRow(label: "") {
-                        Button(L10n.string("keys.picker.manage", "Manage keys…")) {
-                            showSSHKeysSheet = true
-                        }
-                        .buttonStyle(.plain)
-                        .font(.caption)
-                        .foregroundStyle(DesignTokens.inkTertiary)
-                    }
-                    let passphraseLabel = L10n.string("connection.field.passphrase", "Passphrase (optional)")
-                    EditorRow(label: passphraseLabel) {
-                        SecureField(
-                            passphraseLabel, text: $secret,
-                            prompt: isEditing
-                                ? Text(L10n.string("loginSets.editor.keepSecret", "leave empty to keep"))
-                                : Text(verbatim: ""))
-                    }
-                }
-                // .agent (M10d/T4): only Name + Username apply (spec §5.2) — no
-                // secret/key row, and Save-gating below stays name+username only.
-            } else {
-                let accessKeyLabel = L10n.string("loginSets.editor.accessKeyID", "Access Key ID")
-                EditorRow(label: accessKeyLabel) {
-                    TextField(accessKeyLabel, text: $accessKeyID, prompt: Text(verbatim: ""))
-                }
-                let secretLabel = L10n.string("loginSets.editor.secretAccessKey", "Secret Access Key")
-                EditorRow(label: secretLabel) {
-                    SecureField(
-                        secretLabel, text: $secret,
-                        prompt: isEditing
-                            ? Text(L10n.string("loginSets.editor.keepSecret", "leave empty to keep"))
-                            : Text(verbatim: ""))
-                }
-            }
+            if showsKeyFileAffordances { sshKeyFileRow }
 
             HStack {
                 Spacer()
                 Button(L10n.string("common.cancel", "Cancel")) { onCancel() }
                     .buttonStyle(.polished)
                 Button(L10n.string("common.save", "Save")) {
-                    let set: LoginSet
-                    switch kind {
-                    case .ssh:
-                        set = LoginSet(
-                            id: existing?.id ?? UUID(),
-                            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-                            username: username.trimmingCharacters(in: .whitespacesAndNewlines),
-                            // Three-way mapping (M10d/T4): same Core helper as
-                            // the initializer above — a two-way ternary here
-                            // would silently save an agent-mode set as `.password`.
-                            authKind: ConnectionViewModel.storedAuthKind(for: authChoice),
-                            keyPath: authChoice == .privateKey
-                                ? keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
-                                : nil)
-                    case .s3:
-                        set = LoginSet(
-                            id: existing?.id ?? UUID(),
-                            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-                            username: "",
-                            authKind: .password,
-                            keyPath: nil,
-                            kind: .s3,
-                            accessKeyID: accessKeyID.trimmingCharacters(in: .whitespacesAndNewlines))
-                    case .webdav:
-                        // Unreachable (M21/T8): `isSaveDisabled` returns
-                        // `true` for `.webdav` and the type picker above
-                        // never offers this tag, so this button is disabled
-                        // whenever `kind == .webdav`. A loud failure here is
-                        // preferable to silently building a meaningless
-                        // `LoginSet` -- `LoginSet` has no WebDAV fields at
-                        // all, so there is nothing correct to construct.
-                        preconditionFailure(
-                            "LoginSetEditorView.kind == .webdav is unreachable: "
-                                + "isSaveDisabled always returns true for this case")
-                    }
+                    let set = descriptor.loginSet(
+                        id: existing?.id ?? UUID(),
+                        name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                        from: values)
                     onSave(set, secret.isEmpty ? nil : secret)
                 }
                 .buttonStyle(.polishedProminent)
@@ -993,11 +931,27 @@ private struct LoginSetEditorView: View {
             }
         }
         .padding(20)
-        .frame(width: 380)
+        .frame(width: 460)
         .textFieldStyle(.roundedBorder)
+        // Switching the protocol starts that backend's form clean, the same
+        // rule `ConnectionViewModel.kind` follows: the namespaced storage
+        // already keeps an S3 access key out of a WebDAV set, but a stale row
+        // must not be shown either.
+        .onChange(of: kind) { _, newKind in
+            values = Self.initialValues(for: newKind, existing: existing)
+        }
+        // The managed-key picker writes an id; `keyPath` is what is stored, so
+        // the pick is translated here exactly as `ConnectionFormView` does.
+        .onChange(of: values.raw[Self.managedKeyKey] ?? "") { _, newID in
+            guard !newID.isEmpty,
+                  let key = Self.connectableManagedKeys()
+                      .first(where: { $0.id.uuidString == newID })
+            else { return }
+            values[SSHField.keyPath] = Self.managedKeyPath(for: key)
+        }
         .fileImporter(isPresented: $showKeyImporter, allowedContentTypes: [.item]) { result in
             if case .success(let url) = result {
-                keyPath = url.path(percentEncoded: false)
+                values[SSHField.keyPath] = url.path(percentEncoded: false)
             }
         }
         // "Manage keys…" (M18/T5): a third sheet layer on top of this
@@ -1009,9 +963,55 @@ private struct LoginSetEditorView: View {
             SSHKeysSheet()
         }
     }
+
+    /// Browse-for-a-key-file and "Manage keys…" — the same two affordances
+    /// `ConnectionFormView` places beside its schema-rendered `keyPath` row,
+    /// for the same reason: both open App-only UI (an `NSOpenPanel` and a
+    /// sheet) that no schema vocabulary describes.
+    private var sshKeyFileRow: some View {
+        FormRow(label: "") {
+            HStack(spacing: 6) {
+                // "…" is a pure symbol (ellipsis "browse" affordance), not
+                // natural-language text — identical in every locale.
+                Button("…") { showKeyImporter = true }
+                    .buttonStyle(.polished)
+                    .help(L10n.string("connection.field.keyPath.browseHelp", "Choose key file"))
+                Button(L10n.string("keys.picker.manage", "Manage keys…")) {
+                    showSSHKeysSheet = true
+                }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .foregroundStyle(DesignTokens.inkTertiary)
+            }
+        }
+    }
+
+    /// The App's half of the generic renderer's contract: managed keys live
+    /// in a store Core cannot see. `.loginSets` cannot occur here — a
+    /// credential schema describes ONE login and never picks another.
+    private func resolveOptions(_ source: OptionSource) -> [FieldOption] {
+        switch source {
+        case .fixed(let options):
+            return options
+        case .managedKeys:
+            return Self.connectableManagedKeys().map { key in
+                FieldOption(
+                    id: key.id.uuidString, labelKey: "",
+                    labelDefault: "\(key.name) — \(Self.shortFingerprint(key.fingerprint))")
+            }
+        case .loginSets:
+            return []
+        }
+    }
 }
 
 private extension LoginSetEditorView {
+    /// The stored key of the managed-key picker, watched above — the same
+    /// namespaced key `FieldValues`'s typed subscripts build.
+    static var managedKeyKey: String {
+        "\(SSHField.namespace).\(SSHField.managedKeyID.rawValue)"
+    }
+
     /// Managed ed25519 keys available to fill `keyPath` from (M17/T5).
     /// Filters on `KeyType.isConnectable` — `SSHPrivateKeyLoader` can only
     /// load ed25519, so rsa/ecdsa keys never appear in the picker menu.
@@ -1038,22 +1038,5 @@ private extension LoginSetEditorView {
     static func shortFingerprint(_ fingerprint: String) -> String {
         guard let range = fingerprint.range(of: "SHA256:") else { return fingerprint }
         return String(fingerprint[range.upperBound...].prefix(12))
-    }
-}
-
-/// Narrower cousin of `ConnectionFormView`'s private `FormRow` (90pt label
-/// column instead of 110pt, to fit this sheet's 380pt editor width).
-private struct EditorRow<Content: View>: View {
-    let label: String
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(label)
-                .font(.system(size: 12.5))
-                .foregroundStyle(DesignTokens.inkSecondary)
-                .frame(width: 90, alignment: .trailing)
-            content
-        }
     }
 }

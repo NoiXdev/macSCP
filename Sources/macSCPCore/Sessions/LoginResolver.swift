@@ -52,28 +52,21 @@ public struct ResolvedJump: Equatable, Sendable {
     }
 }
 
-/// S3 credentials resolved from a login set (M15). Parallel to
-/// `ResolvedLogin`; the connect path knows the `kind` up front and calls the
-/// matching resolver, so S3 gets its own shape rather than an optional field
-/// bolted onto the SSH type. `secretAccessKey` is the set's keychain entry
-/// (under `set.id`), nil when none is stored.
-public struct ResolvedS3Login: Equatable, Sendable {
-    public var accessKeyID: String
-    public var secretAccessKey: String?
-
-    public init(accessKeyID: String, secretAccessKey: String?) {
-        self.accessKeyID = accessKeyID
-        self.secretAccessKey = secretAccessKey
-    }
-}
-
 public enum LoginResolver {
-    /// Resolves a session's login: `nil` for manual sessions
-    /// (loginSetID == nil — the caller uses the session's own data),
-    /// the set's credentials otherwise. A dangling reference throws.
+    /// Resolves a session's login into the SAME `FieldValues` shape the
+    /// connection form produces (M22/T9): `nil` for a manual session
+    /// (loginSetID == nil — the caller uses the session's own data), the
+    /// set's credentials otherwise. A dangling reference throws.
+    ///
+    /// One function for every protocol. It replaced `resolve` (SSH-shaped)
+    /// and `resolveS3` (S3-shaped), which is what made a WebDAV login set
+    /// impossible to resolve without a third copy — and what makes a fourth
+    /// backend need none at all: the values come from the backend's own
+    /// adapter, and the secret goes into whichever field the backend's
+    /// credential schema says is visible.
     public static func resolve(
         session: StoredSession, sets: [LoginSet], secrets: any SecretStore
-    ) throws -> ResolvedLogin? {
+    ) throws -> FieldValues? {
         guard let setID = session.loginSetID else { return nil }
         guard let set = sets.first(where: { $0.id == setID }) else {
             throw LoginResolveError.missingSet
@@ -84,6 +77,60 @@ public enum LoginResolver {
         guard set.kind == session.kind else {
             throw LoginResolveError.kindMismatch
         }
+        return credentials(of: set, secrets: secrets)
+    }
+
+    /// A set's credential values plus its Keychain secret, keyed by the
+    /// backend's own fields.
+    ///
+    /// The agent short-circuit (M10d: "agent sets carry no secret and no key
+    /// path, the keychain is never read for them") survives here as a
+    /// STRUCTURAL property rather than an `if`: SSH's credential schema shows
+    /// neither `password` nor `passphrase` when the auth kind is `.agent`, so
+    /// `visibleSecretField` returns nil and the `guard` below exits before
+    /// `secrets` is ever touched. `agentSetResolvesWithoutKeychainRead` pins
+    /// it with a store that fails the test on any read.
+    static func credentials(
+        of set: LoginSet, secrets: any SecretStore
+    ) -> FieldValues {
+        let descriptor = BackendDescriptor.descriptor(for: set.kind)
+        var values = descriptor.loginSetValues(set)
+        guard let secretField = descriptor.credentialSchema.visibleSecretField(
+            in: values, namespace: descriptor.fieldNamespace)
+        else { return values }
+        guard let secret = (try? secrets.password(for: set.id)) ?? nil else { return values }
+        values.setRaw("\(descriptor.fieldNamespace).\(secretField.id)", to: secret)
+        return values
+    }
+
+    /// The SSH-shaped login a session's set supplies, or `nil` for a manual
+    /// session (M22/T9). Same guards as `resolve`.
+    ///
+    /// Kept beside the generic resolver for the paths that speak
+    /// username/authKind/keyPath/secret and nothing else: restoring a deleted
+    /// bastion's login onto the sessions that jumped through it, and the
+    /// session export format, whose `ExportedSession` has carried exactly
+    /// those four columns since M9a.
+    public static func sshLogin(
+        session: StoredSession, sets: [LoginSet], secrets: any SecretStore
+    ) throws -> ResolvedLogin? {
+        guard let setID = session.loginSetID else { return nil }
+        guard let set = sets.first(where: { $0.id == setID }) else {
+            throw LoginResolveError.missingSet
+        }
+        guard set.kind == session.kind else {
+            throw LoginResolveError.kindMismatch
+        }
+        return sshLogin(from: set, secrets: secrets)
+    }
+
+    /// The SSH-shaped view of a set, for the JUMP path only (M22/T9).
+    ///
+    /// A jump host is an SSH concept — it has a host, a port and one login,
+    /// and no other backend has anything to say about it — so `resolveJump`
+    /// keeps returning `ResolvedLogin` and this stays a typed read of the
+    /// set's SSH columns rather than a `FieldValues`.
+    private static func sshLogin(from set: LoginSet, secrets: any SecretStore) -> ResolvedLogin {
         // Agent sets carry no secret and no key path (M10d) -- the keychain
         // is never read for them.
         guard set.authKind != .agent else {
@@ -93,26 +140,6 @@ public enum LoginResolver {
         return ResolvedLogin(
             username: set.username, authKind: set.authKind,
             keyPath: set.keyPath, secret: secret)
-    }
-
-    /// Resolves a session's S3 login (M15): `nil` for a manual S3 session
-    /// (loginSetID == nil — the caller uses the session's own access key),
-    /// the set's access key + keychain secret otherwise. Mirrors `resolve`
-    /// above: a dangling reference throws `.missingSet`, and binding a set of
-    /// a different protocol (an S3 session referencing an SSH set) throws
-    /// `.kindMismatch` — a hard stop, never a fallback to wrong-kind creds.
-    public static func resolveS3(
-        session: StoredSession, sets: [LoginSet], secrets: any SecretStore
-    ) throws -> ResolvedS3Login? {
-        guard let setID = session.loginSetID else { return nil }
-        guard let set = sets.first(where: { $0.id == setID }) else {
-            throw LoginResolveError.missingSet
-        }
-        guard set.kind == session.kind else {
-            throw LoginResolveError.kindMismatch
-        }
-        let secret = (try? secrets.password(for: set.id)) ?? nil
-        return ResolvedS3Login(accessKeyID: set.accessKeyID ?? "", secretAccessKey: secret)
     }
 
     /// Resolves a jump host's login (M10c): unlike `resolve`, this is ALWAYS
@@ -137,13 +164,7 @@ public enum LoginResolver {
         guard let set = sets.first(where: { $0.id == setID }) else {
             throw LoginResolveError.missingSet
         }
-        guard set.authKind != .agent else {
-            return ResolvedLogin(username: set.username, authKind: .agent, keyPath: nil, secret: nil)
-        }
-        let secret = (try? secrets.password(for: set.id)) ?? nil
-        return ResolvedLogin(
-            username: set.username, authKind: set.authKind,
-            keyPath: set.keyPath, secret: secret)
+        return sshLogin(from: set, secrets: secrets)
     }
 
     /// Resolves a jump host fully, including host/port (M11a): when
@@ -155,8 +176,8 @@ public enum LoginResolver {
     /// - referencing itself, or a session that itself has a jump (chains
     ///   are not supported — one hop only) -> `.jumpChainNotSupported`
     /// - otherwise the referenced session's login is resolved through the
-    ///   existing `resolve(session:sets:secrets:)`, which already covers
-    ///   its set/manual/agent cases; `resolve` returns `nil` for a manual
+    ///   existing `sshLogin(session:sets:secrets:)`, which already covers
+    ///   its set/manual/agent cases; it returns `nil` for a manual
     ///   session, in which case the session's own fields plus its keychain
     ///   secret are used directly (agent sessions read no keychain at all).
     public static func resolveJump(
@@ -175,7 +196,7 @@ public enum LoginResolver {
         }
 
         let login: ResolvedLogin
-        if let resolved = try resolve(session: referenced, sets: sets, secrets: secrets) {
+        if let resolved = try sshLogin(session: referenced, sets: sets, secrets: secrets) {
             login = resolved
         } else if referenced.authKind == .agent {
             // Agent sessions carry no secret and never touch the keychain

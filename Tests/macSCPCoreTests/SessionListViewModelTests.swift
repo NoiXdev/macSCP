@@ -777,7 +777,7 @@ struct SessionListViewModelTests {
                              password: "", loginSetID: UUID())!
 
         #expect(throws: LoginResolveError.missingSet) {
-            try vm.resolvedLogin(for: stored)
+            try vm.resolvedCredentials(for: stored)
         }
     }
 
@@ -1275,8 +1275,15 @@ struct SessionListViewModelTests {
         let stored = vm.save(name: "web", host: "h", port: 22, username: "ignored",
                              password: "", loginSetID: set.id)!
 
-        let resolved = try vm.resolvedLogin(for: stored)
-        #expect(resolved == ResolvedLogin(username: "deploy", authKind: .agent, keyPath: nil, secret: nil))
+        // M22/T9: `resolvedLogin` collapsed into `resolvedCredentials`, which
+        // returns the backend's own field values. An agent set has no visible
+        // secret field at all, so neither secret row carries anything.
+        let resolved = try #require(try vm.resolvedCredentials(for: stored))
+        #expect(resolved[SSHField.username] == "deploy")
+        #expect(resolved[SSHField.authKind] == StoredSession.AuthKind.agent.rawValue)
+        #expect(resolved[SSHField.keyPath] == "")
+        #expect(resolved[SSHField.password] == "")
+        #expect(resolved[SSHField.passphrase] == "")
     }
 
     // MARK: - C-1 regression: editing a set to .agent must not keep/transfer a stale secret

@@ -54,7 +54,8 @@ public enum S3FieldSchema {
         fields: [
             ConnectionField(id: S3Field.accessKeyID.rawValue,
                             labelKey: "connection.s3.accessKey",
-                            labelDefault: "Access Key ID", kind: .text),
+                            labelDefault: "Access Key ID", kind: .text,
+                            isRequired: true),
             ConnectionField(id: S3Field.secretAccessKey.rawValue,
                             labelKey: "connection.s3.secretKey",
                             labelDefault: "Secret Access Key", kind: .secret),
@@ -106,6 +107,25 @@ public enum S3FieldSchema {
         values[bool: S3Field.usePathStyle] = stored.usePathStyle
         // secretAccessKey deliberately absent: it lives in the Keychain.
         return values
+    }
+
+    /// A login set's credentials in schema shape (M22/T9) — see
+    /// `SSHFieldSchema.values(from:)`. The secret access key is absent for the
+    /// same reason an SSH password is: it lives in the Keychain under the
+    /// set's id.
+    public static func values(from set: LoginSet) -> FieldValues {
+        var values = FieldValues()
+        values[S3Field.accessKeyID] = set.accessKeyID ?? ""
+        return values
+    }
+
+    /// The set a filled-in credential form describes. `username`/`authKind`/
+    /// `keyPath` are SSH's columns and stay at their neutral values here.
+    public static func loginSet(id: UUID, name: String, from values: FieldValues) -> LoginSet {
+        LoginSet(
+            id: id, name: name, username: "", authKind: .password, keyPath: nil, kind: .s3,
+            accessKeyID: values[S3Field.accessKeyID]
+                .trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     public static func stored(from values: FieldValues) -> StoredS3Config {

@@ -130,7 +130,8 @@ public enum SSHFieldSchema {
         fields: [
             ConnectionField(id: SSHField.username.rawValue,
                             labelKey: "connection.field.username",
-                            labelDefault: "Username", kind: .text),
+                            labelDefault: "Username", kind: .text,
+                            isRequired: true),
             ConnectionField(id: SSHField.authKind.rawValue,
                             labelKey: "connection.field.authMethod",
                             labelDefault: "Authentication",
@@ -238,6 +239,41 @@ public enum SSHFieldSchema {
         values[SSHField.authKind] = session.authKind.rawValue
         values[SSHField.keyPath] = session.keyPath ?? ""
         return values
+    }
+
+    /// A login set's credentials in schema shape (M22/T9): exactly the fields
+    /// `credential` renders, so the login-set editor, the connection form and
+    /// the resolver all speak one vocabulary and a WebDAV set needs no code of
+    /// its own anywhere.
+    ///
+    /// The SECRET is deliberately absent — it lives in the Keychain under the
+    /// set's id, and `LoginResolver.resolve` writes it into whichever secret
+    /// field the schema says is visible. `managedKeyID` has no persisted home
+    /// either: picking a managed key writes its file path into `keyPath`.
+    public static func values(from set: LoginSet) -> FieldValues {
+        var values = FieldValues()
+        values[SSHField.username] = set.username
+        values[SSHField.authKind] = set.authKind.rawValue
+        values[SSHField.keyPath] = set.keyPath ?? ""
+        return values
+    }
+
+    /// The set a filled-in credential form describes. `id` and `name` are the
+    /// editor's own bookkeeping rather than schema fields, so they come in
+    /// from the caller.
+    public static func loginSet(id: UUID, name: String, from values: FieldValues) -> LoginSet {
+        let authKind = StoredSession.AuthKind(rawValue: values[SSHField.authKind]) ?? .password
+        let keyPath = values[SSHField.keyPath].trimmingCharacters(in: .whitespacesAndNewlines)
+        return LoginSet(
+            id: id, name: name,
+            username: values[SSHField.username]
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            authKind: authKind,
+            // Same rule as `apply(_:to:)`: a key path belongs to private-key
+            // auth, so switching away from it must clear the path rather than
+            // leave a stale one on disk.
+            keyPath: (authKind == .privateKey && !keyPath.isEmpty) ? keyPath : nil,
+            kind: .ssh)
     }
 
     /// Writes ONLY the fields `SSHField` covers. `StoredSession` carries far

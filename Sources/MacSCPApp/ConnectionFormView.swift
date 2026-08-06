@@ -150,7 +150,11 @@ struct ConnectionFormView: View {
     /// Fields the generic renderer must skip because this view draws them —
     /// see `sshJumpSection` for why the jump is the one and only member, and
     /// what would let it join the others.
-    private static let customRenderedFields: Set<String> = [SSHField.jump.rawValue]
+    ///
+    /// The LIST lives in Core (M22/T9) so a Core test can guard it: matched by
+    /// string against top-level ids, a stale entry here silently removes a row
+    /// from the form and nothing fails.
+    private static let customRenderedFields = BackendDescriptor.customRenderedFieldIDs
 
     /// The stored key of the managed-key picker, watched below.
     private static let managedKeyKey =
@@ -512,10 +516,11 @@ struct ConnectionFormView: View {
         // Immediately after the credential block — the last one Core emits, and
         // the one carrying the key-path row these two buttons fill.
         if viewModel.kind == .ssh { sshKeyFileRow }
-        // WebDAV is deliberately excluded: `ContentView.maybeCreateNewLoginSet`
-        // would build a `.ssh`-kind set from a WebDAV form — a set that would
-        // then never appear in the WebDAV picker that filters by kind.
-        if viewModel.kind != .webdav && viewModel.loginMode == .manual {
+        // Every backend (M22/T9): `ContentView.maybeCreateNewLoginSet` now
+        // asks the descriptor to build the set, so it carries the form's own
+        // kind instead of `LoginSet.init`'s `.ssh` default — the latent bug
+        // that kept this control S3-and-SSH-only.
+        if viewModel.loginMode == .manual {
             saveAsNewLoginSetRows
         }
         if viewModel.kind == .ssh { sshJumpSection }
@@ -831,10 +836,8 @@ struct ConnectionFormView: View {
     }
 
     /// "Save as new login set" (M15). Deliberately NOT a `FormBlock`: it is
-    /// session bookkeeping rather than a schema, and it is S3-only because
-    /// `ContentView.maybeCreateNewLoginSet` would build a `.ssh`-kind set from
-    /// a WebDAV form -- a set that would then never appear in the WebDAV
-    /// picker that filters by kind.
+    /// session bookkeeping rather than a schema. Shown for every backend since
+    /// M22/T9 -- see `backendSection` for what had to be fixed first.
     @ViewBuilder
     private var saveAsNewLoginSetRows: some View {
         FormRow(label: "") {
