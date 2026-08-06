@@ -27,11 +27,17 @@ struct BackendDescriptorTests {
         #expect(c.transport == .optionalTLS)
     }
 
-    @Test func s3SchemaHasProviderPresetsAndSecretField() {
-        let schema = BackendDescriptor.descriptor(for: .s3).connectionSchema
+    /// The secret access key lives in `credentialSchema`, not
+    /// `connectionSchema` (M22): a secret belongs to the login, not the
+    /// server, and that split is what lets one generic editor serve every
+    /// backend's login sets instead of each protocol growing its own.
+    @Test func s3ConnectionSchemaHasProviderPresetsAndTheSecretLivesInTheCredentialSchema() {
+        let descriptor = BackendDescriptor.descriptor(for: .s3)
+        let schema = descriptor.connectionSchema
         #expect(schema.presets.contains { $0.id == "aws" })
         #expect(schema.presets.contains { $0.id == "hetzner" })
         #expect(schema.presets.contains { $0.id == "custom" })
-        #expect(schema.fields.contains { $0.isSecret })   // secret access key
+        #expect(descriptor.credentialSchema.fields.contains { $0.isSecret })
+        #expect(!schema.fields.contains { $0.isSecret })
     }
 }
