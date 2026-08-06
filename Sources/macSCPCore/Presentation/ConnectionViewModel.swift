@@ -162,7 +162,7 @@ public final class ConnectionViewModel {
     /// `connect()`/`validateForEditSave()`/`beginEditing()` all branch on it.
     public var kind: ConnectionKind = .ssh
     /// S3 form fields (M12/T7a). Field identities match
-    /// `BackendDescriptor.descriptor(for: .s3).fieldSchema` ids
+    /// `BackendDescriptor.descriptor(for: .s3).connectionSchema` ids
     /// (endpoint/region/bucket/accessKeyID/secretAccessKey/usePathStyle) —
     /// the App form binds to these directly.
     public var s3Endpoint: String = ""
@@ -176,7 +176,7 @@ public final class ConnectionViewModel {
     public var s3UsePathStyle: Bool = false
 
     /// WebDAV form fields (M21/T9). Field identities match
-    /// `BackendDescriptor.descriptor(for: .webdav).fieldSchema` ids
+    /// `BackendDescriptor.descriptor(for: .webdav).connectionSchema` ids
     /// (baseURL/useNextcloudPath) — `username`/`password` are deliberately
     /// the SAME shared fields the SSH form uses, not separate `webdav*`
     /// properties: WebDAV has no jump/agent/key-file concepts to conflict

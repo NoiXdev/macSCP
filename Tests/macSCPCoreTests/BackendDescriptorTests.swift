@@ -28,7 +28,7 @@ struct BackendDescriptorTests {
     }
 
     @Test func s3SchemaHasProviderPresetsAndSecretField() {
-        let schema = BackendDescriptor.descriptor(for: .s3).fieldSchema
+        let schema = BackendDescriptor.descriptor(for: .s3).connectionSchema
         #expect(schema.presets.contains { $0.id == "aws" })
         #expect(schema.presets.contains { $0.id == "hetzner" })
         #expect(schema.presets.contains { $0.id == "custom" })

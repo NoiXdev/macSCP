@@ -764,7 +764,7 @@ struct ConnectionFormView: View {
 
     }
 
-    /// The S3 backend descriptor (M12/T7b) — its `fieldSchema` drives the
+    /// The S3 backend descriptor (M12/T7b) — its `connectionSchema` drives the
     /// section below instead of hand-rolling S3-specific rows, so a future
     /// backend with its own schema only needs a `BackendDescriptor`, not a
     /// new bespoke form section like `sshSections` above.
@@ -789,7 +789,7 @@ struct ConnectionFormView: View {
                         applyS3Preset(id)
                     }
                 )) {
-                    ForEach(s3Descriptor.fieldSchema.presets) { preset in
+                    ForEach(s3Descriptor.connectionSchema.presets) { preset in
                         Text(L10n.string(preset.nameKey, preset.nameDefault)).tag(preset.id)
                     }
                 }
@@ -798,7 +798,7 @@ struct ConnectionFormView: View {
 
             // Location fields (endpoint/region/bucket/usePathStyle) belong to
             // the session, not the login set (M15 decision 1) — always shown.
-            ForEach(s3Descriptor.fieldSchema.fields.filter { !Self.s3CredentialFieldIDs.contains($0.id) }) { field in
+            ForEach(s3Descriptor.connectionSchema.fields.filter { !Self.s3CredentialFieldIDs.contains($0.id) }) { field in
                 s3FieldRow(field)
             }
 
@@ -836,7 +836,7 @@ struct ConnectionFormView: View {
                     }
                 }
             } else {
-                ForEach(s3Descriptor.fieldSchema.fields.filter { Self.s3CredentialFieldIDs.contains($0.id) }) { field in
+                ForEach(s3Descriptor.connectionSchema.fields.filter { Self.s3CredentialFieldIDs.contains($0.id) }) { field in
                     s3FieldRow(field)
                 }
                 FormRow(label: "") {
@@ -912,7 +912,7 @@ struct ConnectionFormView: View {
     /// exactly as the user left them); "Custom" carries `values: [:]` and is
     /// therefore a pure no-op.
     private func applyS3Preset(_ id: String) {
-        guard let preset = s3Descriptor.fieldSchema.presets.first(where: { $0.id == id }) else { return }
+        guard let preset = s3Descriptor.connectionSchema.presets.first(where: { $0.id == id }) else { return }
         for (fieldID, value) in preset.values {
             switch fieldID {
             case "endpoint": viewModel.s3Endpoint = value
@@ -926,7 +926,7 @@ struct ConnectionFormView: View {
     }
 
     /// The WebDAV backend descriptor (M21/T9) — mirrors `s3Descriptor`
-    /// above; its `fieldSchema` drives `webdavSection` below.
+    /// above; its `connectionSchema` drives `webdavSection` below.
     private var webdavDescriptor: BackendDescriptor { .descriptor(for: .webdav) }
 
     /// The schema-driven WebDAV section (M21/T9): a provider-preset picker
@@ -944,14 +944,14 @@ struct ConnectionFormView: View {
                         applyWebDAVPreset(id)
                     }
                 )) {
-                    ForEach(webdavDescriptor.fieldSchema.presets) { preset in
+                    ForEach(webdavDescriptor.connectionSchema.presets) { preset in
                         Text(L10n.string(preset.nameKey, preset.nameDefault)).tag(preset.id)
                     }
                 }
                 .labelsHidden()
             }
 
-            ForEach(webdavDescriptor.fieldSchema.fields) { field in
+            ForEach(webdavDescriptor.connectionSchema.fields) { field in
                 webdavFieldRow(field)
             }
         }
@@ -1008,7 +1008,7 @@ struct ConnectionFormView: View {
     /// comment): the server origin is the user's own, and a preset that
     /// guessed at it would be wrong for everyone.
     private func applyWebDAVPreset(_ id: String) {
-        guard let preset = webdavDescriptor.fieldSchema.presets.first(where: { $0.id == id }) else { return }
+        guard let preset = webdavDescriptor.connectionSchema.presets.first(where: { $0.id == id }) else { return }
         for (fieldID, value) in preset.values {
             switch fieldID {
             case "useNextcloudPath": viewModel.webdavUseNextcloudPath = (value == "true")

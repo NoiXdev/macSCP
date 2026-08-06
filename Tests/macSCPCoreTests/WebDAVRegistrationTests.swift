@@ -37,7 +37,7 @@ struct WebDAVRegistrationTests {
     }
 
     @Test func fieldSchemaCarriesTheFourFieldsAndTheNextcloudPreset() {
-        let schema = BackendDescriptor.descriptor(for: .webdav).fieldSchema
+        let schema = BackendDescriptor.descriptor(for: .webdav).connectionSchema
         #expect(schema.fields.map(\.id) == ["baseURL", "username", "password", "useNextcloudPath"])
         #expect(schema.fields.first { $0.id == "password" }?.isSecret == true)
         let nextcloud = schema.presets.first { $0.id == "nextcloud" }
