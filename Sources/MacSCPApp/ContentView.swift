@@ -218,6 +218,14 @@ struct ContentView: View {
     /// window-wide store.
     @State private var showKnownHostsSheet = false
 
+    // MARK: - Server certificates
+
+    /// Drives the server-certificate management sheet — opened from the
+    /// Sessions menu. Same no-item-payload shape as `showKnownHostsSheet`
+    /// above; the certificate list used to be a second section inside that
+    /// sheet and is now its own overlay (see `ServerCertificatesSheet`).
+    @State private var showServerCertificatesSheet = false
+
     // MARK: - Login sets (M10b/T3)
 
     /// Drives the login-sets management sheet — opened from the Sessions
@@ -639,6 +647,13 @@ struct ContentView: View {
         // TOFU state the connect flow reads from.
         .sheet(isPresented: $showKnownHostsSheet) {
             KnownHostsSheet(store: KnownHostsStore(directory: SessionStore.defaultDirectory))
+        }
+        // Server-certificate sheet — same directory the WebDAV connector's
+        // `TrustedCertificateStore` uses, so it reflects the same TOFU state
+        // the connect flow reads from.
+        .sheet(isPresented: $showServerCertificatesSheet) {
+            ServerCertificatesSheet(
+                store: TrustedCertificateStore(directory: SessionStore.defaultDirectory))
         }
         // Login-sets sheet (M10b/T3) — shares `sessionListViewModel` (not a
         // fresh store) so the Sessions-menu/sidebar entry point and the
@@ -1557,6 +1572,12 @@ struct ContentView: View {
         tabCommands.showKnownHosts = {
             guard window?.isKeyWindow == true else { return }
             showKnownHostsSheet = true
+        }
+        // "Server Certificates…" — same key-window guard, opens the
+        // server-certificate management sheet.
+        tabCommands.showServerCertificates = {
+            guard window?.isKeyWindow == true else { return }
+            showServerCertificatesSheet = true
         }
         // "Logins…" (M10b/T3) — same key-window guard, opens the
         // login-sets management sheet.
