@@ -196,8 +196,16 @@ struct ConnectionViewModelTests {
         // .connecting`, so it would not be rejected — it would enter the
         // connector itself and park on the stream, and the
         // `continuation.finish()` that releases it sits AFTER this line.
-        await waitUntil("first connect() must reach the connector") {
+        guard await waitUntil("first connect() must reach the connector", {
             await counter.value == 1
+        }) else {
+            // The failure is recorded; leaving here is what keeps it readable.
+            // Falling through would run the second connect() into the stream
+            // and park on it. Release the connector first so the implicit
+            // await of `first` at scope exit cannot park either.
+            continuation.finish()
+            _ = await first
+            return
         }
 
         let second = await vm.connect()
@@ -220,7 +228,14 @@ struct ConnectionViewModelTests {
         })
 
         async let result = vm.connect()
-        await waitUntil("the host-key prompt must be published") { vm.hostKeyPrompt != nil }
+        // Leaving on a timeout is what keeps the recorded failure readable:
+        // `await result` below would never return, because the prompt this
+        // test is about to answer was never published. `result` is implicitly
+        // cancelled and awaited at scope exit, which connect() survives — the
+        // two cancellation tests below pin exactly that.
+        guard await waitUntil("the host-key prompt must be published", {
+            vm.hostKeyPrompt != nil
+        }) else { return }
         #expect(vm.hostKeyPrompt?.candidate == candidate)
 
         vm.resolveHostKeyPrompt(trust: true)
@@ -241,7 +256,11 @@ struct ConnectionViewModelTests {
         })
 
         async let result = vm.connect()
-        await waitUntil("the host-key prompt must be published") { vm.hostKeyPrompt != nil }
+        // Same as above: without this guard the timeout path falls into
+        // `await result`, which cannot return, and parks the run.
+        guard await waitUntil("the host-key prompt must be published", {
+            vm.hostKeyPrompt != nil
+        }) else { return }
         vm.resolveHostKeyPrompt(trust: false)
         let fs = await result
 
@@ -263,7 +282,13 @@ struct ConnectionViewModelTests {
         })
 
         let connectTask = Task { await vm.connect() }
-        // Wait until the prompt is up.
+        // Wait until the prompt is up. The one site that deliberately does NOT
+        // guard on the result: what follows is `completesWithoutHanging`, which
+        // never awaits `connectTask` directly — it races the task against its
+        // own watchdog and returns `false` when the task does not finish. A
+        // timeout here therefore lands in the same red-and-return outcome the
+        // guards produce elsewhere, and cannot park the run. Both failures are
+        // reported, which is more than an early return would say.
         await waitUntil("the host-key prompt must be published") { vm.hostKeyPrompt != nil }
 
         connectTask.cancel()
@@ -934,13 +959,24 @@ private actor CallCounter {
 /// future regression into a red test, not a performance assertion. The
 /// success path never waits for it — the loop leaves as soon as `condition`
 /// holds.
-@MainActor
+///
+/// Recording the failure is only half the job: at three of the four call
+/// sites the very next statement is an `await` that cannot complete when the
+/// wait timed out (the connect child never published what the test is about
+/// to answer, or never reached the state that would make the following call
+/// return). Falling through would print the message and THEN park at 0% CPU —
+/// the exact failure this helper exists to prevent, just with a diagnosis
+/// nobody gets to read, because `swift test` prints no summary for a run that
+/// never ends. Hence the `Bool`: callers whose next step can park must
+/// `guard` on it and leave the test instead. `@discardableResult` for the one
+/// site that provably cannot park.
+@MainActor @discardableResult
 private func waitUntil(
     _ description: Comment,
     timeout: Duration = .seconds(30),
     sourceLocation: SourceLocation = #_sourceLocation,
     _ condition: () async -> Bool
-) async {
+) async -> Bool {
     let deadline = ContinuousClock.now + timeout
     var satisfied = await condition()
     while !satisfied, ContinuousClock.now < deadline {
@@ -948,6 +984,7 @@ private func waitUntil(
         satisfied = await condition()
     }
     #expect(satisfied, description, sourceLocation: sourceLocation)
+    return satisfied
 }
 
 /// Reports whether `task` returned at all — the assertion the cancellation
