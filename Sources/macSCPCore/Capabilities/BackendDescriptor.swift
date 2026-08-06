@@ -97,32 +97,20 @@ public struct BackendDescriptor: Sendable {
             supportsShell: false, permissionModel: .none, supportsSymlinks: false,
             atomicRename: true, directoriesAreReal: true, resumeMode: .rangeGet,
             supportsPresignedURL: false, transport: .optionalTLS),
-        connectionSchema: ConnectionFieldSchema(
-            fields: [
-                ConnectionField(id: "baseURL", labelKey: "connection.webdav.baseURL",
-                                labelDefault: "Server URL", kind: .text),
-                ConnectionField(id: "username", labelKey: "connection.webdav.username",
-                                labelDefault: "User name", kind: .text),
-                ConnectionField(id: "password", labelKey: "connection.webdav.password",
-                                labelDefault: "Password", kind: .secret),
-                ConnectionField(id: "useNextcloudPath", labelKey: "connection.webdav.nextcloudPath",
-                                labelDefault: "Append Nextcloud path", kind: .toggle),
-            ],
-            presets: [
-                // Sets only the toggle: the server origin is the user's, and a
-                // preset that guessed at it would be wrong for everyone.
-                ConnectionPreset(id: "nextcloud", nameKey: "connection.webdav.preset.nextcloud",
-                                 nameDefault: "Nextcloud / ownCloud",
-                                 values: ["useNextcloudPath": "true"]),
-                ConnectionPreset(id: "custom", nameKey: "connection.webdav.preset.custom",
-                                 nameDefault: "Custom",
-                                 values: ["useNextcloudPath": "false"]),
-            ]),
-        credentialSchema: ConnectionFieldSchema(fields: [], presets: []),
-        makeConfig: { _, _ in throw RemoteFSError.protocolError(reason: "not migrated yet") },
-        displaySummary: { _ in "" },
-        connect: { _, _, _ in throw RemoteFSError.protocolError(reason: "not migrated yet") },
+        connectionSchema: WebDAVFieldSchema.connection,
+        credentialSchema: WebDAVFieldSchema.credential,
+        makeConfig: { values, secret in try WebDAVFieldSchema.makeConfig(values, secret) },
+        displaySummary: { values in WebDAVFieldSchema.displaySummary(values) },
+        connect: { config, _, certificateDecider in
+            guard case .webdav(let webdav) = config else {
+                throw RemoteFSError.protocolError(reason: "wrong config for the WebDAV backend")
+            }
+            return try await WebDAVFileSystem.connect(
+                webdav,
+                trustStore: TrustedCertificateStore(directory: SessionStore.defaultDirectory),
+                decider: certificateDecider)
+        },
         badgeLabelKey: "connection.badge.webdav", badgeLabelDefault: "WebDAV",
-        secretEnvironmentVariable: nil, requiresSecret: false,
+        secretEnvironmentVariable: "MACSCP_PASSWORD", requiresSecret: true,
         fileActions: [], connectionActions: [])
 }
