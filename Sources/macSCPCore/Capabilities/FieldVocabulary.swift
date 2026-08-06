@@ -55,6 +55,18 @@ public struct LeafField: Sendable, Equatable, Identifiable {
     public let labelKey: String
     public let labelDefault: String
     public let kind: Kind
+    /// Shown only when this holds; nil means always.
+    ///
+    /// DELIBERATELY untested-but-kept. No leaf carries a condition today —
+    /// M22's final review kept this while deleting the milestone's other
+    /// unused vocabulary, because it is load-bearing for a rule that has no
+    /// other home: `ConnectionFieldSchema.visibleLeaves` qualifies the
+    /// namespace with the GROUP's id precisely so a leaf's condition resolves
+    /// against its SIBLING leaf and not against the top-level field of the
+    /// same name. Without this property that rule has nothing to attach to,
+    /// and the first leaf condition somebody adds would key an SSH jump's key
+    /// path off the TARGET's auth kind — a mistake nothing in the suite could
+    /// catch, since there is no leaf condition for a test to get wrong.
     public let visibleWhen: FieldCondition?
 
     public init(id: String, labelKey: String, labelDefault: String,
