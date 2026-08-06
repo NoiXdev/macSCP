@@ -75,16 +75,6 @@ struct ConnectionFormView: View {
     /// replaces the M17 `SettingsLink` to the Settings tab with a locally
     /// opened sheet, same pattern as `showLoginSetsSheet` above.
     @State private var showSSHKeysSheet = false
-    /// The provider-preset picker's current selection (M12/T7b) — purely a
-    /// UI convenience for `applyS3Preset(_:)` below, not a source of truth:
-    /// the actual S3 fields live on `viewModel` and stay independently
-    /// editable after a preset fills them. Defaults to "custom" (the
-    /// schema's own no-op preset, `values: [:]`) so a fresh or reopened S3
-    /// form never silently re-applies a stale provider's values.
-    @State private var selectedS3PresetID: String = "custom"
-    /// Same idea as `selectedS3PresetID` above, for the WebDAV provider
-    /// preset picker (M21/T9) -- defaults to the schema's own no-op preset.
-    @State private var selectedWebDAVPresetID: String = "custom"
 
     private var isConnecting: Bool { viewModel.state == .connecting }
 
@@ -764,47 +754,106 @@ struct ConnectionFormView: View {
 
     }
 
-    /// The S3 backend descriptor (M12/T7b) — its `connectionSchema` drives the
-    /// section below instead of hand-rolling S3-specific rows, so a future
-    /// backend with its own schema only needs a `BackendDescriptor`, not a
-    /// new bespoke form section like `sshSections` above.
-    private var s3Descriptor: BackendDescriptor { .descriptor(for: .s3) }
+    /// Turns a schema-declared `OptionSource` into the options a picker shows
+    /// (M22). The ONE thing the App contributes to the generic renderer:
+    /// managed keys and login sets live in stores Core cannot see, so the
+    /// schema names the source and this resolves it. Three cases, one switch,
+    /// one place -- not the per-backend dispatcher M22 is removing.
+    private func resolveOptions(_ source: OptionSource) -> [FieldOption] {
+        switch source {
+        case .fixed(let options):
+            // Declared in the schema, catalog keys and all -- nothing to look up.
+            return options
+        case .managedKeys:
+            // Same filter the hand-written SSH key picker uses: only ed25519
+            // keys with a resolvable file are offerable.
+            return Self.connectableManagedKeys().map { key in
+                FieldOption(
+                    id: key.id.uuidString, labelKey: "",
+                    labelDefault: "\(key.name) — \(Self.shortFingerprint(key.fingerprint))")
+            }
+        case .loginSets(let kind):
+            // A login set's display text is user data, so it carries no
+            // catalog key (see `SchemaFormView.optionLabel`).
+            return sessionList.loginSets.filter { $0.kind == kind }.map { set in
+                FieldOption(id: set.id.uuidString, labelKey: "", labelDefault: set.name)
+            }
+        }
+    }
 
-    /// The schema-driven S3 section (M12/T7b, login-set mode M15/T3): a
-    /// provider-preset picker, the location fields (endpoint/region/bucket/
-    /// usePathStyle) which are always shown, then the login switcher — Set
-    /// mode swaps the credential fields (accessKeyID/secretAccessKey) for a
-    /// `.s3`-filtered login-set picker, Manual mode keeps them plus "save as
-    /// new set". Deliberately simple/static — no derived layout, no nested
-    /// state machine — per the M11n lesson that new GUI here must not risk
-    /// an AttributeGraph cycle.
+    /// Bridges the renderer's `FieldValues` onto the typed `viewModel.s3*`
+    /// properties that still own the form's state.
+    ///
+    /// Transitional (M22/T7): Task 8 moves the view model itself onto
+    /// `FieldValues` and this disappears with it. A bridge rather than a
+    /// second copy of the state, so `connect()`/`validateForEditSave()` keep
+    /// reading the one source of truth they already validate against.
+    private var s3Values: Binding<FieldValues> {
+        Binding(
+            get: {
+                var values = FieldValues()
+                values[S3Field.endpoint] = viewModel.s3Endpoint
+                values[S3Field.region] = viewModel.s3Region
+                values[S3Field.bucket] = viewModel.s3Bucket
+                values[S3Field.accessKeyID] = viewModel.s3AccessKeyID
+                // The typed secret the user just entered, never a value read
+                // back out of the Keychain -- edit mode starts it empty and an
+                // empty one means "keep the stored secret".
+                values[S3Field.secretAccessKey] = viewModel.s3SecretAccessKey
+                values[bool: S3Field.usePathStyle] = viewModel.s3UsePathStyle
+                return values
+            },
+            set: { edited in
+                viewModel.s3Endpoint = edited[S3Field.endpoint]
+                viewModel.s3Region = edited[S3Field.region]
+                viewModel.s3Bucket = edited[S3Field.bucket]
+                viewModel.s3AccessKeyID = edited[S3Field.accessKeyID]
+                viewModel.s3SecretAccessKey = edited[S3Field.secretAccessKey]
+                viewModel.s3UsePathStyle = edited[bool: S3Field.usePathStyle]
+            })
+    }
+
+    /// The WebDAV counterpart of `s3Values` above. `username`/`password` map
+    /// to the SHARED `viewModel` fields the SSH form also uses (see
+    /// `ConnectionViewModel.webdavBaseURL`'s own doc comment), which is
+    /// exactly the mapping the hand-written section performed.
+    private var webdavValues: Binding<FieldValues> {
+        Binding(
+            get: {
+                var values = FieldValues()
+                values[WebDAVField.baseURL] = viewModel.webdavBaseURL
+                values[WebDAVField.username] = viewModel.username
+                values[WebDAVField.password] = viewModel.password
+                values[bool: WebDAVField.useNextcloudPath] = viewModel.webdavUseNextcloudPath
+                return values
+            },
+            set: { edited in
+                viewModel.webdavBaseURL = edited[WebDAVField.baseURL]
+                viewModel.username = edited[WebDAVField.username]
+                viewModel.password = edited[WebDAVField.password]
+                viewModel.webdavUseNextcloudPath = edited[bool: WebDAVField.useNextcloudPath]
+            })
+    }
+
+    /// The S3 section (M22/T7): the connection schema (provider presets plus
+    /// the location fields, which belong to the session rather than the login
+    /// -- M15 decision 1), then the login switcher, then EITHER a
+    /// `.s3`-filtered login-set picker OR the credential schema plus "save as
+    /// new set".
+    ///
+    /// Both schemas are rendered. Task 4 moved accessKeyID/secretAccessKey out
+    /// of `connectionSchema` and into `credentialSchema`; a form that read only
+    /// the former showed no credential rows at all, which is the regression
+    /// this replaces.
     private var s3Section: some View {
-        let presetLabel = L10n.string("connection.s3.preset.label", "Provider preset")
+        let descriptor = BackendDescriptor.descriptor(for: .s3)
         return Group {
-            FormRow(label: presetLabel) {
-                Picker(presetLabel, selection: Binding(
-                    get: { selectedS3PresetID },
-                    set: { id in
-                        selectedS3PresetID = id
-                        applyS3Preset(id)
-                    }
-                )) {
-                    ForEach(s3Descriptor.connectionSchema.presets) { preset in
-                        Text(L10n.string(preset.nameKey, preset.nameDefault)).tag(preset.id)
-                    }
-                }
-                .labelsHidden()
-            }
+            SchemaFormView(
+                schema: descriptor.connectionSchema, values: s3Values,
+                namespace: S3Field.namespace, isEditMode: isEditMode,
+                resolve: resolveOptions)
 
-            // Location fields (endpoint/region/bucket/usePathStyle) belong to
-            // the session, not the login set (M15 decision 1) — always shown.
-            ForEach(s3Descriptor.connectionSchema.fields.filter { !Self.s3CredentialFieldIDs.contains($0.id) }) { field in
-                s3FieldRow(field)
-            }
-
-            // Login switcher (M15): parity with the SSH block. Set mode swaps
-            // the access-key/secret fields for a kind-filtered picker; manual
-            // mode keeps today's fields plus "save as new set".
+            // Login switcher (M15): parity with the SSH block.
             let loginModeLabel = L10n.string("form.loginMode.label", "Login")
             FormRow(label: loginModeLabel) {
                 Picker(loginModeLabel, selection: $viewModel.loginMode) {
@@ -836,9 +885,10 @@ struct ConnectionFormView: View {
                     }
                 }
             } else {
-                ForEach(s3Descriptor.connectionSchema.fields.filter { Self.s3CredentialFieldIDs.contains($0.id) }) { field in
-                    s3FieldRow(field)
-                }
+                SchemaFormView(
+                    schema: descriptor.credentialSchema, values: s3Values,
+                    namespace: S3Field.namespace, isEditMode: isEditMode,
+                    resolve: resolveOptions)
                 FormRow(label: "") {
                     Toggle(
                         L10n.string("form.saveAsSet", "Save as new login set"),
@@ -856,164 +906,22 @@ struct ConnectionFormView: View {
         }
     }
 
-    /// The two S3 schema fields that constitute the "login" (M15): swapped
-    /// for the set picker in Set mode. Everything else (endpoint/region/
-    /// bucket/usePathStyle) is session-owned and always visible.
-    private static let s3CredentialFieldIDs: Set<String> = ["accessKeyID", "secretAccessKey"]
-
-    /// One form row for a single S3 `ConnectionField`, rendered by its
-    /// `kind` and bound to the matching `viewModel.s3*` property BY FIELD
-    /// ID (`s3TextBinding(for:)` below) — `.secret`/`.toggle` bind directly
-    /// since there is exactly one field of each in the current schema.
-    @ViewBuilder
-    private func s3FieldRow(_ field: ConnectionField) -> some View {
-        let label = L10n.string(field.labelKey, field.labelDefault)
-        switch field.kind {
-        case .toggle:
-            FormRow(label: "") {
-                Toggle(label, isOn: $viewModel.s3UsePathStyle)
-            }
-        case .secret:
-            FormRow(label: label) {
-                SecureField(
-                    label, text: $viewModel.s3SecretAccessKey,
-                    prompt: isEditMode
-                        ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
-                        : Text(verbatim: ""))
-            }
-        case .text, .number:
-            FormRow(label: label) {
-                TextField(label, text: s3TextBinding(for: field.id), prompt: Text(verbatim: ""))
-            }
-        case .picker, .group:
-            // Not yet produced by the S3 descriptor (M22 vocabulary is wired
-            // up by a later task); nothing to render until then.
-            EmptyView()
-        }
-    }
-
-    /// Maps a schema field id to the matching `viewModel.s3*` text property
-    /// (M12/T7b) — the ids are fixed by `BackendDescriptor.s3Descriptor`
-    /// (endpoint/region/bucket/accessKeyID); `secretAccessKey`/`usePathStyle`
-    /// are handled directly in `s3FieldRow` above, never routed through here.
-    private func s3TextBinding(for fieldID: String) -> Binding<String> {
-        switch fieldID {
-        case "endpoint": return $viewModel.s3Endpoint
-        case "region": return $viewModel.s3Region
-        case "bucket": return $viewModel.s3Bucket
-        case "accessKeyID": return $viewModel.s3AccessKeyID
-        default: return .constant("")
-        }
-    }
-
-    /// Fills the S3 fields from the selected preset's `values` (M12/T7b) —
-    /// only the ids present in `values` are touched (e.g. the "aws" preset
-    /// sets `endpoint`/`usePathStyle` and leaves region/bucket/accessKeyID
-    /// exactly as the user left them); "Custom" carries `values: [:]` and is
-    /// therefore a pure no-op.
-    private func applyS3Preset(_ id: String) {
-        guard let preset = s3Descriptor.connectionSchema.presets.first(where: { $0.id == id }) else { return }
-        for (fieldID, value) in preset.values {
-            switch fieldID {
-            case "endpoint": viewModel.s3Endpoint = value
-            case "region": viewModel.s3Region = value
-            case "bucket": viewModel.s3Bucket = value
-            case "accessKeyID": viewModel.s3AccessKeyID = value
-            case "usePathStyle": viewModel.s3UsePathStyle = (value == "true")
-            default: break
-            }
-        }
-    }
-
-    /// The WebDAV backend descriptor (M21/T9) — mirrors `s3Descriptor`
-    /// above; its `connectionSchema` drives `webdavSection` below.
-    private var webdavDescriptor: BackendDescriptor { .descriptor(for: .webdav) }
-
-    /// The schema-driven WebDAV section (M21/T9): a provider-preset picker
-    /// followed by every schema field, mirroring `s3Section` above but
-    /// simpler — WebDAV has no login-set switcher (spec: out of scope for
-    /// this milestone), so every field is always shown and bound directly.
+    /// The WebDAV section (M22/T7): both schemas back to back. WebDAV has no
+    /// login-set switcher (spec: out of scope for M21), so the credentials are
+    /// always shown -- and, as with S3, they live in `credentialSchema` since
+    /// Task 5 and would not render at all if only the connection schema were
+    /// walked.
     private var webdavSection: some View {
-        let presetLabel = L10n.string("connection.s3.preset.label", "Provider preset")
+        let descriptor = BackendDescriptor.descriptor(for: .webdav)
         return Group {
-            FormRow(label: presetLabel) {
-                Picker(presetLabel, selection: Binding(
-                    get: { selectedWebDAVPresetID },
-                    set: { id in
-                        selectedWebDAVPresetID = id
-                        applyWebDAVPreset(id)
-                    }
-                )) {
-                    ForEach(webdavDescriptor.connectionSchema.presets) { preset in
-                        Text(L10n.string(preset.nameKey, preset.nameDefault)).tag(preset.id)
-                    }
-                }
-                .labelsHidden()
-            }
-
-            ForEach(webdavDescriptor.connectionSchema.fields) { field in
-                webdavFieldRow(field)
-            }
-        }
-    }
-
-    /// One form row for a single WebDAV `ConnectionField`, rendered by its
-    /// `kind` and bound BY FIELD ID (`webdavTextBinding(for:)` below) — same
-    /// shape as `s3FieldRow` above. `username`/`password` are deliberately
-    /// the SAME shared `viewModel` fields the SSH section uses (see
-    /// `ConnectionViewModel.webdavBaseURL`'s own doc comment), not separate
-    /// `.secret`/text bindings of their own.
-    @ViewBuilder
-    private func webdavFieldRow(_ field: ConnectionField) -> some View {
-        let label = L10n.string(field.labelKey, field.labelDefault)
-        switch field.kind {
-        case .toggle:
-            FormRow(label: "") {
-                Toggle(label, isOn: $viewModel.webdavUseNextcloudPath)
-            }
-        case .secret:
-            FormRow(label: label) {
-                SecureField(
-                    label, text: $viewModel.password,
-                    prompt: isEditMode
-                        ? Text(L10n.string("connection.field.password.unchanged", "unchanged"))
-                        : Text(verbatim: ""))
-            }
-        case .text, .number:
-            FormRow(label: label) {
-                TextField(label, text: webdavTextBinding(for: field.id), prompt: Text(verbatim: ""))
-            }
-        case .picker, .group:
-            // Not yet produced by the WebDAV descriptor (M22 vocabulary is
-            // wired up by a later task); nothing to render until then.
-            EmptyView()
-        }
-    }
-
-    /// Maps a schema field id to the matching `viewModel` text property
-    /// (M21/T9) — the ids are fixed by `BackendDescriptor.webdavDescriptor`
-    /// (baseURL/username); `password`/`useNextcloudPath` are handled
-    /// directly in `webdavFieldRow` above, never routed through here.
-    private func webdavTextBinding(for fieldID: String) -> Binding<String> {
-        switch fieldID {
-        case "baseURL": return $viewModel.webdavBaseURL
-        case "username": return $viewModel.username
-        default: return .constant("")
-        }
-    }
-
-    /// Fills the WebDAV fields from the selected preset's `values` (M21/T9)
-    /// — mirrors `applyS3Preset` above. Only `useNextcloudPath` is ever set
-    /// by a preset (see `BackendDescriptor.webdavDescriptor`'s own doc
-    /// comment): the server origin is the user's own, and a preset that
-    /// guessed at it would be wrong for everyone.
-    private func applyWebDAVPreset(_ id: String) {
-        guard let preset = webdavDescriptor.connectionSchema.presets.first(where: { $0.id == id }) else { return }
-        for (fieldID, value) in preset.values {
-            switch fieldID {
-            case "useNextcloudPath": viewModel.webdavUseNextcloudPath = (value == "true")
-            default: break
-            }
+            SchemaFormView(
+                schema: descriptor.connectionSchema, values: webdavValues,
+                namespace: WebDAVField.namespace, isEditMode: isEditMode,
+                resolve: resolveOptions)
+            SchemaFormView(
+                schema: descriptor.credentialSchema, values: webdavValues,
+                namespace: WebDAVField.namespace, isEditMode: isEditMode,
+                resolve: resolveOptions)
         }
     }
 
@@ -1060,12 +968,6 @@ struct ConnectionFormView: View {
     }
 }
 
-/// Mockup form row (M5k): fixed 110pt right-aligned label column in
-/// inkSecondary, 10pt gap to the field. The visible label lives here;
-/// the wrapped controls keep their own label parameters for accessibility —
-/// which is why the visible label is hidden from VoiceOver (M6a): without
-/// that, every row is announced twice. The label also dims with the row's
-/// enabled state, matching the system Form behavior the grid replaced.
 private extension ConnectionFormView {
     /// Managed ed25519 keys available to fill `keyPath` from (M17/T5).
     /// Filters on `KeyType.isConnectable` — `SSHPrivateKeyLoader` can only
@@ -1096,7 +998,17 @@ private extension ConnectionFormView {
     }
 }
 
-private struct FormRow<Content: View>: View {
+/// Mockup form row (M5k): fixed 110pt right-aligned label column in
+/// inkSecondary, 10pt gap to the field. The visible label lives here;
+/// the wrapped controls keep their own label parameters for accessibility —
+/// which is why the visible label is hidden from VoiceOver (M6a): without
+/// that, every row is announced twice. The label also dims with the row's
+/// enabled state, matching the system Form behavior the grid replaced.
+///
+/// Internal rather than private (M22/T7): `SchemaFormView` renders its rows
+/// with the same 110pt column and `firstTextBaseline` rhythm every form in
+/// the app follows, and reimplementing them there would drift.
+struct FormRow<Content: View>: View {
     let label: String
     @ViewBuilder let content: Content
     @Environment(\.isEnabled) private var isEnabled

@@ -95,4 +95,47 @@ struct FieldVisibilityTests {
                                                     namespace: "VField").map(\.id)
             == ["always"])
     }
+
+    /// A group's leaves must be resolved against the GROUP-QUALIFIED namespace
+    /// (`SSHField.jump`), never the owner's (`SSHField`) — a leaf's condition
+    /// names a sibling leaf, and `FieldValues` stores those under
+    /// `owner.group.leaf`.
+    ///
+    /// This is the contract the generic renderer has to honour, and the one
+    /// mistake nothing else can catch: every jump leaf is unconditional today,
+    /// so a renderer passing the plain owner namespace would pass the entire
+    /// suite while silently keying the jump's rows off the TARGET's fields.
+    /// Both directions are asserted, so the test fails if the wrong namespace
+    /// ever starts producing the right answer by accident.
+    @Test func aLeafConditionFollowsTheJumpNotTheTarget() {
+        let leaves = [
+            LeafField(id: SSHJumpField.host.rawValue, labelKey: "h",
+                      labelDefault: "Host", kind: .text),
+            LeafField(id: SSHJumpField.keyPath.rawValue, labelKey: "k",
+                      labelDefault: "Key path", kind: .text,
+                      visibleWhen: FieldCondition(
+                        field: SSHJumpField.authKind.rawValue,
+                        equals: StoredSession.AuthKind.privateKey.rawValue)),
+        ]
+        let jump = ConnectionField(id: SSHField.jump.rawValue, labelKey: "j",
+                                   labelDefault: "Jump host", kind: .group(leaves))
+
+        // The target authenticates with a key, the jump with a password — so
+        // the jump's key-path row must stay hidden.
+        var values = FieldValues()
+        values[SSHField.authKind] = StoredSession.AuthKind.privateKey.rawValue
+        values[SSHField.jump, SSHJumpField.authKind] = StoredSession.AuthKind.password.rawValue
+
+        let qualified = "\(SSHField.namespace).\(SSHField.jump.rawValue)"
+        #expect(
+            ConnectionFieldSchema.visibleLeaves(of: jump, in: values, namespace: qualified)
+                .map(\.id) == [SSHJumpField.host.rawValue])
+
+        // The owner's plain namespace reads the TARGET's auth kind instead and
+        // wrongly shows the row — pinned here so the difference is visible.
+        #expect(
+            ConnectionFieldSchema.visibleLeaves(of: jump, in: values,
+                                                namespace: SSHField.namespace)
+                .map(\.id) == [SSHJumpField.host.rawValue, SSHJumpField.keyPath.rawValue])
+    }
 }
