@@ -4,7 +4,7 @@ import macSCPCore
 /// Holds the continuation for the WebDAV/S3 certificate-trust decider
 /// (M21/T10) — the certificate twin of `ConnectionViewModel.hostKeyPrompt`'s
 /// own continuation, but living here (App layer) rather than on the view
-/// model: `BackendConnector.connect`'s `certificateDecider` is supplied
+/// model: the descriptor's `connect` closure takes its `certificateDecider`
 /// directly by `ContentView.makeTab`'s connector closure, one level below the
 /// `ConnectionViewModel.Connector` seam the host-key decider is threaded
 /// through — see that closure's own comment.
@@ -31,7 +31,7 @@ final class CertificatePromptBridge {
     init() {}
 
     /// Decider side: awaited by the `certificateDecider` closure handed to
-    /// `BackendConnector.connect`. Cancellation-safe — if the connecting task
+    /// the descriptor's `connect`. Cancellation-safe — if the connecting task
     /// is cancelled while the prompt is open, it resolves `false` (refuse)
     /// instead of hanging.
     func ask(_ candidate: ServerCertificateCandidate) async -> Bool {

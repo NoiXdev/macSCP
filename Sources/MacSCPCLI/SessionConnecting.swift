@@ -45,8 +45,13 @@ func connect(
         OutputFormatter.note("secret source: \(secret.sourceLabel)")
     }
     let config = try StoredSessionConnectionConfig.build(for: session, secret: secret?.value)
-    return try await BackendConnector.connect(
-        config, decider: makeDecider(policy: options.hostKeyPolicy))
+    // Since M22/T10 the backend opens its OWN connection (no central
+    // dispatcher): SSH keeps its TOFU host-key decider, and the certificate
+    // decider refuses by default — the CLI has no interactive certificate
+    // prompt, and an unknown server certificate must never be trusted
+    // silently.
+    return try await BackendDescriptor.descriptor(for: config.kind).connect(
+        config, makeDecider(policy: options.hostKeyPolicy), { _ in false })
 }
 
 /// Connects to `reference`, runs `body`, and awaits `fs.disconnect()` on

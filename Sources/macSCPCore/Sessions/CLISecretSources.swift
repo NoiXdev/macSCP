@@ -157,8 +157,10 @@ public struct KeychainSecretSource: SecretSource {
 /// name the M1 driver already used); the Keychain is the workstation
 /// default, last in line. `SecretResolver` is what actually enforces "empty
 /// means did not deliver" and "a throwing source aborts the whole attempt"
-/// — this function only has to get the order, the variable names, and the
-/// agent-auth guard right.
+/// — this function only has to get the ORDER right; WHICH variable and
+/// WHETHER a secret is needed at all are the backend's own answers since
+/// M22/T10 (`secretEnvironmentVariable`, `requiresSecret`), so a fourth
+/// protocol needs no edit here.
 ///
 /// This used to live in the CLI target as `secretSources(options:kind:)`
 /// (`Sources/MacSCPCLI/SessionConnecting.swift`) — a target with NO test
@@ -180,25 +182,19 @@ public func secretSources(
     passwordCommand: String?,
     keychainStore: any SecretStore = KeychainSecretStore()
 ) -> [any SecretSource] {
-    let needsSecret = session.kind == .s3 || session.kind == .webdav
-        || (session.kind == .ssh && session.authKind != .agent)
-    guard needsSecret else { return [] }
+    let descriptor = BackendDescriptor.descriptor(for: session.kind)
+    // Read through the BACKEND'S OWN adapter, never a shared one: SSH's
+    // answer depends on `authKind`, a column S3 and WebDAV sessions do not
+    // fill meaningfully, so asking the wrong adapter is how the agent-auth
+    // guard would silently invert for them.
+    guard descriptor.requiresSecret(descriptor.sessionValues(session)) else { return [] }
 
     var sources: [any SecretSource] = []
     if let command = passwordCommand {
         sources.append(PasswordCommandSecretSource(command: command))
     }
-    switch session.kind {
-    case .ssh:
-        sources.append(EnvironmentSecretSource(variableName: "MACSCP_PASSWORD"))
-    case .s3:
-        sources.append(EnvironmentSecretSource(variableName: "AWS_SECRET_ACCESS_KEY"))
-    case .webdav:
-        // No S3-style conventional variable name exists for WebDAV -- it
-        // authenticates with a plain password (or a Nextcloud-style "app
-        // password"), the same shape as SSH password auth, so this reuses
-        // the SSH variable name rather than inventing a third one.
-        sources.append(EnvironmentSecretSource(variableName: "MACSCP_PASSWORD"))
+    if let variableName = descriptor.secretEnvironmentVariable {
+        sources.append(EnvironmentSecretSource(variableName: variableName))
     }
     // Last resort, and the comfortable one at a workstation: the very same
     // keychain items the app writes. macOS asks the user for consent the

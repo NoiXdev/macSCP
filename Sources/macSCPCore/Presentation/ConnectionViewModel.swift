@@ -574,7 +574,7 @@ public final class ConnectionViewModel {
     /// The WebDAV connect path (M21/T9). Mirrors `connectS3()`: validate,
     /// build the runtime config, dispatch through the SAME `connector` seam
     /// with `.webdav(config)` -- the certificate decider defaults to
-    /// refusing (`BackendConnector.connect`'s own default), so this path
+    /// refusing unless the caller supplies one, so this path
     /// never silently trusts an unknown server certificate; wiring an actual
     /// user-facing decider is a later task's job.
     private func connectWebDAV() async -> (any RemoteFileSystem)? {

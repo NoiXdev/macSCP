@@ -1345,8 +1345,8 @@ struct ContentView: View {
                 }
                 // Certificate decider (M21/T10): unknown WebDAV/S3
                 // certificates now reach `CertificatePromptView` instead of
-                // being refused outright (`BackendConnector.connect`'s own
-                // default). A MISMATCH never reaches `certificateBridge.ask`
+                // being refused outright (the CLI's own default). A MISMATCH
+                // never reaches `certificateBridge.ask`
                 // in the first place — `WebDAVSessionDelegate
                 // .decideCertificate` refuses it before ever consulting the
                 // decider — and surfaces instead as a thrown
@@ -1354,9 +1354,12 @@ struct ContentView: View {
                 // `ConnectionViewModel.failedState(for:)` already maps to its
                 // own honest, localized alert text (mirrors `HostKeyError`
                 // case for case): nothing to intercept here.
-                return try await BackendConnector.connect(
-                    config, decider: decider,
-                    certificateDecider: { candidate in await certificateBridge.ask(candidate) })
+                // Since M22/T10 each backend opens its own connection: the
+                // descriptor's `connect` closure is what carries SSH's
+                // known-hosts store and WebDAV's trust store, so there is no
+                // central dispatcher left to route through.
+                return try await BackendDescriptor.descriptor(for: config.kind).connect(
+                    config, decider, { candidate in await certificateBridge.ask(candidate) })
             }),
             certificateBridge: certificateBridge,
             limiter: limiter,

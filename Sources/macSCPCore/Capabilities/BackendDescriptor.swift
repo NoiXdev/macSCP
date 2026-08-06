@@ -19,8 +19,12 @@ public struct BackendDescriptor: Sendable {
     /// fill, which is why the audit log carried `host: "unused"`.
     public let displaySummary: @Sendable (FieldValues) -> String
 
-    /// Opens a connection. Living here rather than in a central dispatcher
-    /// is what lets `BackendConnector` disappear (Task 10).
+    /// Opens a connection. Living here rather than in a central dispatcher is
+    /// what dissolved the last `ConnectionKind` switch on the connect path
+    /// (M22/T10): each backend brings its own trust store -- SSH its
+    /// known-hosts store, WebDAV its trusted-certificate store -- and a
+    /// mismatch in either is a hard stop the deciders below never get asked
+    /// about.
     public let connect: @Sendable (
         ConnectionConfig,
         @escaping ConnectionViewModel.HostKeyDecider,
@@ -107,6 +111,25 @@ public struct BackendDescriptor: Sendable {
         case .ssh: return SSHFieldSchema.values(from: set)
         case .s3: return S3FieldSchema.values(from: set)
         case .webdav: return WebDAVFieldSchema.values(from: set)
+        }
+    }
+
+    /// A STORED session in this backend's own field vocabulary (M22/T10) —
+    /// the shape `requiresSecret` reads, so the CLI can ask "does this session
+    /// need a secret at all" without a `kind` branch of its own.
+    ///
+    /// Only the connection fields the backend persists are filled; the secret
+    /// never is (it lives in the Keychain). A session whose `kind` says one
+    /// thing but whose stored configuration block is missing yields the empty
+    /// bag rather than trapping — reporting that inconsistency is
+    /// `StoredSessionConnectionConfig.build`'s job
+    /// (`missingBackendConfiguration`), not this adapter's.
+    public func sessionValues(_ session: StoredSession) -> FieldValues {
+        switch kind {
+        case .ssh: return SSHFieldSchema.values(from: session)
+        case .s3: return session.s3.map { S3FieldSchema.values(from: $0) } ?? FieldValues()
+        case .webdav:
+            return session.webdav.map { WebDAVFieldSchema.values(from: $0) } ?? FieldValues()
         }
     }
 
@@ -197,6 +220,10 @@ public struct BackendDescriptor: Sendable {
                 decider: certificateDecider)
         },
         badgeLabelKey: "connection.badge.webdav", badgeLabelDefault: "WebDAV",
+        // No S3-style conventional variable name exists for WebDAV -- it
+        // authenticates with a plain password (or a Nextcloud-style "app
+        // password"), the same shape as SSH password auth, so this reuses the
+        // SSH variable name rather than inventing a third one.
         secretEnvironmentVariable: "MACSCP_PASSWORD", requiresSecret: { _ in true },
         fileActions: [], connectionActions: [])
 }
