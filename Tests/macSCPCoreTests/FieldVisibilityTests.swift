@@ -89,24 +89,32 @@ struct FieldVisibilityTests {
         ]
         let group = ConnectionField(id: "grp", labelKey: "g", labelDefault: "G",
                                     kind: .group(leaves))
+        // A leaf's condition names a SIBLING leaf, so the controlling value is
+        // stored under `owner.group.leaf` -- written by hand here because "grp"
+        // is not a `BackendFieldID` case.
         var values = FieldValues()
-        values[VField.authKind] = "password"
+        values.setRaw("VField.grp.\(VField.authKind.rawValue)", to: "password")
         #expect(ConnectionFieldSchema.visibleLeaves(of: group, in: values,
-                                                    namespace: "VField").map(\.id)
+                                                    owner: "VField").map(\.id)
             == ["always"])
+
+        values.setRaw("VField.grp.\(VField.authKind.rawValue)", to: "privateKey")
+        #expect(ConnectionFieldSchema.visibleLeaves(of: group, in: values,
+                                                    owner: "VField").map(\.id)
+            == ["always", "conditional"])
     }
 
-    /// A group's leaves must be resolved against the GROUP-QUALIFIED namespace
+    /// A group's leaves resolve against the GROUP-QUALIFIED namespace
     /// (`SSHField.jump`), never the owner's (`SSHField`) — a leaf's condition
     /// names a sibling leaf, and `FieldValues` stores those under
     /// `owner.group.leaf`.
     ///
-    /// This is the contract the generic renderer has to honour, and the one
-    /// mistake nothing else can catch: every jump leaf is unconditional today,
-    /// so a renderer passing the plain owner namespace would pass the entire
-    /// suite while silently keying the jump's rows off the TARGET's fields.
-    /// Both directions are asserted, so the test fails if the wrong namespace
-    /// ever starts producing the right answer by accident.
+    /// `visibleLeaves` builds that qualification itself, so a caller can no
+    /// longer get it wrong. This pins the behaviour from both sides: the
+    /// qualified lookup hides the jump's key path, and the plain owner
+    /// namespace — the mistake, now unexpressible through `visibleLeaves` —
+    /// would have shown it by reading the TARGET's auth kind. Every jump leaf
+    /// is unconditional today, so nothing else in the suite exercises this.
     @Test func aLeafConditionFollowsTheJumpNotTheTarget() {
         let leaves = [
             LeafField(id: SSHJumpField.host.rawValue, labelKey: "h",
@@ -126,16 +134,16 @@ struct FieldVisibilityTests {
         values[SSHField.authKind] = StoredSession.AuthKind.privateKey.rawValue
         values[SSHField.jump, SSHJumpField.authKind] = StoredSession.AuthKind.password.rawValue
 
-        let qualified = "\(SSHField.namespace).\(SSHField.jump.rawValue)"
-        #expect(
-            ConnectionFieldSchema.visibleLeaves(of: jump, in: values, namespace: qualified)
-                .map(\.id) == [SSHJumpField.host.rawValue])
-
-        // The owner's plain namespace reads the TARGET's auth kind instead and
-        // wrongly shows the row — pinned here so the difference is visible.
         #expect(
             ConnectionFieldSchema.visibleLeaves(of: jump, in: values,
-                                                namespace: SSHField.namespace)
-                .map(\.id) == [SSHJumpField.host.rawValue, SSHJumpField.keyPath.rawValue])
+                                                owner: SSHField.namespace)
+                .map(\.id) == [SSHJumpField.host.rawValue])
+
+        // The other direction: evaluating the SAME leaf against the plain owner
+        // namespace reads the TARGET's auth kind and wrongly shows the row.
+        // That is what `visibleLeaves` now makes impossible to ask for; kept
+        // here so the difference stays visible rather than merely asserted.
+        #expect(FieldVisibility.isVisible(
+            leaves[1], in: values, namespace: SSHField.namespace))
     }
 }

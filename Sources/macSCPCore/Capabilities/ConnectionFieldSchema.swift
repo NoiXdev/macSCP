@@ -55,10 +55,21 @@ extension ConnectionFieldSchema {
 
     /// A group's visible leaves. A leaf's condition is evaluated the same way
     /// as a top-level field's, so a group can show and hide its own members.
+    ///
+    /// Takes the OWNER's namespace and qualifies it with the group's own id
+    /// here, rather than asking the caller for the qualified string. A leaf's
+    /// condition names a SIBLING leaf, and `FieldValues` stores those under
+    /// `owner.group.leaf` — so a caller that built the namespace itself could
+    /// pass the plain owner one and silently key the group's rows off the
+    /// TOP-LEVEL field of the same name (the SSH jump's key path following the
+    /// TARGET's auth kind). Nothing would fail: no leaf carries a condition
+    /// today, so the mistake would pass the whole suite. Doing it in here makes
+    /// it unexpressible instead of merely tested.
     public static func visibleLeaves(
-        of field: ConnectionField, in values: FieldValues, namespace: String
+        of field: ConnectionField, in values: FieldValues, owner: String
     ) -> [LeafField] {
         guard case .group(let leaves) = field.kind else { return [] }
+        let namespace = "\(owner).\(field.id)"
         return leaves.filter { FieldVisibility.isVisible($0, in: values, namespace: namespace) }
     }
 }
