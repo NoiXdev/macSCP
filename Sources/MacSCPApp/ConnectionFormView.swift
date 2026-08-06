@@ -835,94 +835,128 @@ struct ConnectionFormView: View {
             })
     }
 
-    /// The S3 section (M22/T7): the connection schema (provider presets plus
-    /// the location fields, which belong to the session rather than the login
-    /// -- M15 decision 1), then the login switcher, then EITHER a
-    /// `.s3`-filtered login-set picker OR the credential schema plus "save as
-    /// new set".
-    ///
-    /// Both schemas are rendered. Task 4 moved accessKeyID/secretAccessKey out
-    /// of `connectionSchema` and into `credentialSchema`; a form that read only
-    /// the former showed no credential rows at all, which is the regression
-    /// this replaces.
-    ///
-    /// S3 is the one backend that cannot hand both schemas to a single
-    /// `SchemaFormView`: the login switcher has to sit BETWEEN them, because
-    /// Set mode replaces the credential block with a login-set picker. The two
-    /// views below therefore partition `descriptor`'s schemas — each is
-    /// rendered exactly once, neither is dropped.
-    private var s3Section: some View {
-        let descriptor = BackendDescriptor.descriptor(for: .s3)
-        return Group {
+    /// Renders one `FormBlock` (M22/T7). The ORDER comes from Core
+    /// (`BackendDescriptor.formBlocks`), not from this file: hand-placing the
+    /// blocks per backend is exactly what let S3's credential block go missing
+    /// silently, and no App test could have caught it because there is no App
+    /// test target. Dropping a schema now means editing Core, where
+    /// `FormBlockTests` fails.
+    @ViewBuilder
+    private func formBlock(
+        _ block: FormBlock, kind: ConnectionKind, namespace: String,
+        values: Binding<FieldValues>
+    ) -> some View {
+        switch block {
+        case .schema(let schema):
             SchemaFormView(
-                schemas: [descriptor.connectionSchema], values: s3Values,
-                namespace: S3Field.namespace, isEditMode: isEditMode,
-                resolve: resolveOptions)
+                schemas: [schema], values: values, namespace: namespace,
+                isEditMode: isEditMode, resolve: resolveOptions)
+        case .loginModeSwitcher:
+            loginModeSwitcher
+        case .loginSetPicker:
+            loginSetPicker(for: kind)
+        }
+    }
 
-            // Login switcher (M15): parity with the SSH block.
-            let loginModeLabel = L10n.string("form.loginMode.label", "Login")
-            FormRow(label: loginModeLabel) {
-                Picker(loginModeLabel, selection: $viewModel.loginMode) {
-                    Text(L10n.string("form.loginMode.set", "Login set"))
-                        .tag(ConnectionViewModel.LoginMode.set)
-                    Text(L10n.string("form.loginMode.manual", "Manual"))
-                        .tag(ConnectionViewModel.LoginMode.manual)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+    /// The Manual / login-set switcher (M15), placed by
+    /// `FormBlock.loginModeSwitcher`.
+    private var loginModeSwitcher: some View {
+        let loginModeLabel = L10n.string("form.loginMode.label", "Login")
+        return FormRow(label: loginModeLabel) {
+            Picker(loginModeLabel, selection: $viewModel.loginMode) {
+                Text(L10n.string("form.loginMode.set", "Login set"))
+                    .tag(ConnectionViewModel.LoginMode.set)
+                Text(L10n.string("form.loginMode.manual", "Manual"))
+                    .tag(ConnectionViewModel.LoginMode.manual)
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        }
+    }
 
-            if viewModel.loginMode == .set {
-                FormRow(label: "") {
-                    HStack(spacing: 10) {
-                        Picker(loginModeLabel, selection: $viewModel.selectedLoginSetID) {
-                            Text(L10n.string("form.selectLogin", "Select a login")).tag(UUID?.none)
-                            ForEach(sessionList.loginSets.filter { $0.kind == .s3 }) { set in
-                                Text("\(set.name) — \(set.accessKeyID ?? "")").tag(UUID?.some(set.id))
-                            }
-                        }
-                        .labelsHidden()
-                        Button(L10n.string("form.manageLogins", "Manage logins…")) {
-                            showLoginSetsSheet = true
-                        }
-                        .buttonStyle(.plain)
-                        .font(.caption)
-                        .foregroundStyle(DesignTokens.inkTertiary)
+    /// The kind-filtered login-set picker that substitutes the credential
+    /// schema in Set mode, placed by `FormBlock.loginSetPicker`.
+    private func loginSetPicker(for kind: ConnectionKind) -> some View {
+        let loginModeLabel = L10n.string("form.loginMode.label", "Login")
+        return FormRow(label: "") {
+            HStack(spacing: 10) {
+                Picker(loginModeLabel, selection: $viewModel.selectedLoginSetID) {
+                    Text(L10n.string("form.selectLogin", "Select a login")).tag(UUID?.none)
+                    ForEach(sessionList.loginSets.filter { $0.kind == kind }) { set in
+                        Text(Self.loginSetLabel(set)).tag(UUID?.some(set.id))
                     }
                 }
-            } else {
-                SchemaFormView(
-                    schemas: [descriptor.credentialSchema], values: s3Values,
-                    namespace: S3Field.namespace, isEditMode: isEditMode,
-                    resolve: resolveOptions)
-                FormRow(label: "") {
-                    Toggle(
-                        L10n.string("form.saveAsSet", "Save as new login set"),
-                        isOn: $viewModel.saveAsNewLoginSet)
+                .labelsHidden()
+                Button(L10n.string("form.manageLogins", "Manage logins…")) {
+                    showLoginSetsSheet = true
                 }
-                if viewModel.saveAsNewLoginSet {
-                    let setNameLabel = L10n.string("form.saveAsSet.name", "Login set name")
-                    FormRow(label: setNameLabel) {
-                        TextField(
-                            setNameLabel, text: $viewModel.newLoginSetName,
-                            prompt: Text(verbatim: ""))
-                    }
-                }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .foregroundStyle(DesignTokens.inkTertiary)
             }
         }
     }
 
-    /// The WebDAV section (M22/T7): every schema the descriptor declares, in
-    /// one view. WebDAV has no login-set switcher (spec: out of scope for M21),
-    /// so nothing has to sit between the two blocks -- and, as with S3, the
-    /// credentials live in `credentialSchema` since Task 5 and would not render
-    /// at all if only the connection schema were walked.
+    /// "name — identity", where the identity is whichever one the set carries:
+    /// S3 sets hold an access key and an empty user name, everything else the
+    /// reverse. Reading the optional first needs no branch on `kind`.
+    private static func loginSetLabel(_ set: LoginSet) -> String {
+        "\(set.name) — \(set.accessKeyID ?? set.username)"
+    }
+
+    /// "Save as new login set" (M15). Deliberately NOT a `FormBlock`: it is
+    /// session bookkeeping rather than a schema, and it is S3-only because
+    /// `ContentView.maybeCreateNewLoginSet` would build a `.ssh`-kind set from
+    /// a WebDAV form -- a set that would then never appear in the WebDAV
+    /// picker that filters by kind.
+    @ViewBuilder
+    private var saveAsNewLoginSetRows: some View {
+        FormRow(label: "") {
+            Toggle(
+                L10n.string("form.saveAsSet", "Save as new login set"),
+                isOn: $viewModel.saveAsNewLoginSet)
+        }
+        if viewModel.saveAsNewLoginSet {
+            let setNameLabel = L10n.string("form.saveAsSet.name", "Login set name")
+            FormRow(label: setNameLabel) {
+                TextField(
+                    setNameLabel, text: $viewModel.newLoginSetName,
+                    prompt: Text(verbatim: ""))
+            }
+        }
+    }
+
+    /// The S3 section (M22/T7): Core's block order, rendered as-is. Task 4
+    /// moved accessKeyID/secretAccessKey out of `connectionSchema` and into
+    /// `credentialSchema`; a form that read only the former showed no
+    /// credential rows at all, which is the regression this replaces.
+    private var s3Section: some View {
+        let descriptor = BackendDescriptor.descriptor(for: .s3)
+        return Group {
+            ForEach(
+                Array(descriptor.formBlocks(
+                    usingLoginSet: viewModel.loginMode == .set).enumerated()),
+                id: \.offset
+            ) { _, block in
+                formBlock(block, kind: .s3, namespace: S3Field.namespace, values: s3Values)
+            }
+            if viewModel.loginMode == .manual { saveAsNewLoginSetRows }
+        }
+    }
+
+    /// The WebDAV section (M22/T7): the same Core block order as S3. Its
+    /// credentials live in `credentialSchema` since Task 5 and would not
+    /// render at all if only the connection schema were walked.
     private var webdavSection: some View {
         let descriptor = BackendDescriptor.descriptor(for: .webdav)
-        return SchemaFormView(
-            schemas: [descriptor.connectionSchema, descriptor.credentialSchema],
-            values: webdavValues, namespace: WebDAVField.namespace,
-            isEditMode: isEditMode, resolve: resolveOptions)
+        return ForEach(
+            Array(descriptor.formBlocks(
+                usingLoginSet: viewModel.loginMode == .set).enumerated()),
+            id: \.offset
+        ) { _, block in
+            formBlock(block, kind: .webdav, namespace: WebDAVField.namespace,
+                      values: webdavValues)
+        }
     }
 
     /// Full-pane trust decision for an unknown host key (M3c). Presentation
