@@ -9,6 +9,10 @@ and move files between them with drag and drop, buttons, or the Finder.
 
 ## Features
 
+- **Three server protocols** — SFTP over SSH, S3-compatible object storage,
+  and WebDAV (Basic, Digest, and TLS auth; a one-click Nextcloud/ownCloud
+  preset). Mix and match freely, including transfers between two different
+  protocols in the same window.
 - **Two-pane browser** — local and remote side by side, folder navigation
   by double-click, drag & drop in both directions (including dragging
   remote files straight into the Finder).
@@ -67,7 +71,24 @@ produces a note with a link. Turn the automatic check off under
 macSCP is a Swift package: `swift build -c release` builds the binary,
 `swift test` runs the test suite, and `scripts/package-app` assembles a
 runnable `macSCP.app` under `dist/`. Integration tests expect the Docker
-SSH test rig from `docker/test-server/` (`MACSCP_ITEST=1`).
+test rig from `docker/test-server/` (`MACSCP_ITEST=1`):
+
+```sh
+docker compose -f docker/test-server/compose.yml up -d
+MACSCP_ITEST=1 swift test
+```
+
+That brings up SSH (two servers, for remote-to-remote transfers), MinIO
+(S3), and an Apache/mod_dav WebDAV server with a Basic, a Digest, and a
+TLS vhost — the TLS certificate is generated fresh at container start and
+never committed. A Nextcloud container sits behind a compose profile,
+since it exists only to produce one real PROPFIND response the WebDAV
+parser's test fixture is checked against — it stays out of the normal
+`up -d` so that command remains fast:
+
+```sh
+docker compose -f docker/test-server/compose.yml --profile nextcloud up -d nextcloud
+```
 
 ## Command line
 
