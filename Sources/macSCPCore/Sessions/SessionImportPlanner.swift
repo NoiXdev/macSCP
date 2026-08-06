@@ -111,12 +111,14 @@ public enum SessionImportPlanner {
             }
         }
 
-        // Then sessions, in file order. The duplicate key is still
-        // (host.lowercased(), port, username) — unchanged since M9a —
-        // checked against both the existing store and the triples already
-        // accepted earlier in this same file. Only the HANDLING changed in
-        // M19: a duplicate is put to the arbiter instead of being dropped.
-        var seenKeys = Set(existing.map { duplicateKey(host: $0.host, port: $0.port, username: $0.username) })
+        // Then sessions, in file order. The duplicate key is per BACKEND (see
+        // `duplicateKey`): the endpoint triple for `.ssh` as since M9a, and
+        // the connection's own identifying fields for `.s3`/`.webdav`, which
+        // have no meaningful triple. Checked against both the existing store
+        // and the keys already accepted earlier in this same file. Only the
+        // HANDLING changed in M19: a duplicate is put to the arbiter instead
+        // of being dropped.
+        var seenKeys = Set(existing.map { duplicateKey(for: $0) })
         // Names are NOT the duplicate key and the store never enforces them
         // unique, but a rename still has to land on a name nothing else uses.
         // Seeded with the store's names and grown with every name this run
@@ -136,7 +138,7 @@ public enum SessionImportPlanner {
         var renamed: [String] = []
 
         for fileSession in incoming.sessions {
-            let key = duplicateKey(host: fileSession.host, port: fileSession.port, username: fileSession.username)
+            let key = duplicateKey(for: fileSession)
             // The connection form trims on save, so import must not be the
             // one path that stores a name with surrounding whitespace — and
             // the summary arrays below report exactly what was stored.
@@ -166,8 +168,7 @@ public enum SessionImportPlanner {
 
             case .replace:
                 if let match = existing.first(where: {
-                    duplicateKey(host: $0.host, port: $0.port, username: $0.username) == key
-                        && !replacedExistingIDs.contains($0.id)
+                    duplicateKey(for: $0) == key && !replacedExistingIDs.contains($0.id)
                 }) {
                     replacedExistingIDs.insert(match.id)
                     takenNames.insert(normalizedName(trimmedName))
@@ -289,8 +290,67 @@ public enum SessionImportPlanner {
             replacesExisting: replacesExisting)
     }
 
-    private static func duplicateKey(host: String, port: Int, username: String) -> String {
-        "\(host.lowercased())|\(port)|\(username)"
+    /// What makes two sessions "the same connection" for import purposes,
+    /// per backend.
+    ///
+    /// `.ssh` keeps the original endpoint triple, byte for byte — SSH import
+    /// semantics must not shift.
+    ///
+    /// `.s3` and `.webdav` need their own key because they do not HAVE an
+    /// endpoint triple: every such session stores the literal placeholder
+    /// `host: "unused", port: 22, username: "unused"`. Keyed on the triple,
+    /// every non-SSH session in the world was one and the same duplicate —
+    /// three distinct WebDAV servers in one file collapsed to one import plus
+    /// two silent drops, and an incoming WebDAV session could `Replace` an
+    /// unrelated stored S3 one, taking over its id and destroying it.
+    ///
+    /// The keys are prefixed with the kind, so a `.s3` and a `.webdav` session
+    /// can never share a key even if their remaining parts were to match.
+    /// Values are taken verbatim (no case folding): unlike a host name, a URL
+    /// path and a bucket name are case-sensitive, and the access key ID is an
+    /// opaque credential.
+    ///
+    /// Known limit, unchanged from before this fix: a `.macscp` written by a
+    /// build whose export did not yet carry the `webdav*`/`s3*` columns has
+    /// nothing to key on, so its non-SSH entries all fall back to a constant
+    /// (`"webdav||"`) and still self-collide within that file. That is exactly
+    /// today's behaviour for those old files, not a regression, and it cannot
+    /// be fixed on the import side — the data simply is not in the file.
+    private static func duplicateKey(for session: StoredSession) -> String {
+        duplicateKey(
+            kind: session.kind, host: session.host, port: session.port,
+            username: session.username,
+            s3Endpoint: session.s3?.endpoint, s3Bucket: session.s3?.bucket,
+            s3AccessKeyID: session.s3?.accessKeyID,
+            webdavBaseURL: session.webdav?.baseURL, webdavUsername: session.webdav?.username)
+    }
+
+    /// The file-side counterpart of `duplicateKey(for: StoredSession)`. Both
+    /// sides must derive the SAME key from the same connection, so they share
+    /// one implementation. A legacy payload without `kind` is `.ssh`, exactly
+    /// as `makePlanned` maps it.
+    private static func duplicateKey(for fileSession: ExportedSession) -> String {
+        duplicateKey(
+            kind: fileSession.kind ?? .ssh, host: fileSession.host, port: fileSession.port,
+            username: fileSession.username,
+            s3Endpoint: fileSession.s3Endpoint, s3Bucket: fileSession.s3Bucket,
+            s3AccessKeyID: fileSession.s3AccessKeyID,
+            webdavBaseURL: fileSession.webdavBaseURL, webdavUsername: fileSession.webdavUsername)
+    }
+
+    private static func duplicateKey(
+        kind: ConnectionKind, host: String, port: Int, username: String,
+        s3Endpoint: String?, s3Bucket: String?, s3AccessKeyID: String?,
+        webdavBaseURL: String?, webdavUsername: String?
+    ) -> String {
+        switch kind {
+        case .ssh:
+            return "\(host.lowercased())|\(port)|\(username)"
+        case .s3:
+            return "s3|\(s3Endpoint ?? "")|\(s3Bucket ?? "")|\(s3AccessKeyID ?? "")"
+        case .webdav:
+            return "webdav|\(webdavBaseURL ?? "")|\(webdavUsername ?? "")"
+        }
     }
 
     private static func normalizedName(_ name: String) -> String {

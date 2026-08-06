@@ -547,11 +547,21 @@ struct SessionImportPlannerTests {
     /// The replace path (M19) goes through the same `makePlanned` builder, so
     /// an overwritten record must land with its WebDAV config too — the field
     /// must not be dropped on one branch and carried on another.
+    ///
+    /// The two sessions are GENUINE duplicates: same `baseURL`, same WebDAV
+    /// username. The fixture used to rely on both carrying the `"unused"`
+    /// host/port/username placeholder, which made every non-SSH session in the
+    /// world one duplicate key — the collision this test now avoids depending
+    /// on. What it pins is unchanged: the replace branch carries `webdav`
+    /// through `makePlanned`. The incoming entry differs in
+    /// `useNextcloudPath`, so a dropped config could not pass as the stored
+    /// one.
     @Test func replacedWebDAVSessionKeepsItsConfig() async {
         let existing = StoredSession(
             name: "old", host: "unused", username: "unused", kind: .webdav,
             webdav: StoredWebDAVConfig(
-                baseURL: "https://old.example.com", username: "bob", useNextcloudPath: false))
+                baseURL: "https://dav.example.com", username: "alice",
+                useNextcloudPath: false))
         let file = ExportedSession(
             id: UUID(), name: "new", host: "unused", port: 22, username: "unused",
             authKind: .password, keyPath: nil, groupID: nil, password: nil,
@@ -567,5 +577,96 @@ struct SessionImportPlannerTests {
         #expect(planned.session.id == existing.id)
         #expect(planned.session.webdav == StoredWebDAVConfig(
             baseURL: "https://dav.example.com", username: "alice", useNextcloudPath: true))
+    }
+
+    // MARK: - Kind-aware duplicate key
+
+    /// Every S3 and WebDAV session stores the literal placeholder
+    /// `host: "unused", port: 22, username: "unused"`, so an endpoint-triple
+    /// key made all of them ONE duplicate. Three distinct WebDAV servers in a
+    /// file used to arrive as one import plus two "skipped as duplicates".
+    @Test func differentWebDAVServersAreNotDuplicates() async {
+        let baseURLs: [String] = [
+            "https://a.example.com", "https://b.example.com", "https://c.example.com",
+        ]
+        let files = baseURLs
+            .map { baseURL in
+                ExportedSession(
+                    id: UUID(), name: "dav-\(baseURL)", host: "unused", port: 22,
+                    username: "unused", authKind: .password, keyPath: nil, groupID: nil,
+                    password: nil, kind: .webdav,
+                    webdavBaseURL: baseURL, webdavUsername: "alice",
+                    webdavUseNextcloudPath: false)
+            }
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming(files), arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.count == 3)
+        #expect(plan.skipped.isEmpty)
+    }
+
+    /// The cross-backend case, and the destructive one: a stored S3 session
+    /// and an incoming WebDAV session share nothing but the placeholders. A
+    /// `Replace` here used to hand the S3 record's id to the WebDAV session —
+    /// `upsert` overwrote it in place and the applier then dropped the S3
+    /// secret under that reused id, destroying an unrelated connection.
+    @Test func s3AndWebDAVSessionsDoNotCollide() async {
+        let existing = StoredSession(
+            name: "s3-prod", host: "unused", username: "unused", kind: .s3,
+            s3: StoredS3Config(
+                accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
+                endpoint: "https://s3.eu-central-1.amazonaws.com", bucket: "my-bucket",
+                usePathStyle: false))
+        let file = ExportedSession(
+            id: UUID(), name: "nextcloud", host: "unused", port: 22, username: "unused",
+            authKind: .password, keyPath: nil, groupID: nil, password: nil,
+            kind: .webdav,
+            webdavBaseURL: "https://dav.example.com", webdavUsername: "alice",
+            webdavUseNextcloudPath: false)
+        let plan = await SessionImportPlanner.plan(
+            existing: [existing], existingGroups: [], incoming: incoming([file]),
+            arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.count == 1)
+        #expect(plan.sessionsToImport.first?.replacesExisting == false)
+        #expect(plan.sessionsToImport.first?.session.id != existing.id)
+    }
+
+    /// Two S3 sessions are the same connection when endpoint, bucket AND
+    /// access key match — the positive half of the S3 key, so the fix cannot
+    /// be "never collide".
+    @Test func identicalS3EndpointBucketAndKeyStillCollide() async {
+        let existing = StoredSession(
+            name: "s3-prod", host: "unused", username: "unused", kind: .s3,
+            s3: StoredS3Config(
+                accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
+                endpoint: "https://s3.eu-central-1.amazonaws.com", bucket: "my-bucket",
+                usePathStyle: false))
+        let file = ExportedSession(
+            id: UUID(), name: "s3-prod-copy", host: "unused", port: 22, username: "unused",
+            authKind: .password, keyPath: nil, groupID: nil, password: nil,
+            kind: .s3,
+            s3AccessKeyID: "AKIAEXAMPLE", s3Region: "us-east-1",  // region is not part of the key
+            s3Endpoint: "https://s3.eu-central-1.amazonaws.com", s3Bucket: "my-bucket",
+            s3UsePathStyle: true)
+        let plan = await SessionImportPlanner.plan(
+            existing: [existing], existingGroups: [], incoming: incoming([file]),
+            arbiter: skipEverything)
+
+        #expect(plan.sessionsToImport.isEmpty)
+        #expect(plan.skipped.count == 1)
+    }
+
+    /// SSH semantics must not shift: the endpoint triple still is the key,
+    /// against the store and within one file.
+    @Test func identicalSSHEndpointsStillCollide() async {
+        let existing = [StoredSession(name: "web", host: "web-01", username: "root")]
+        let plan = await SessionImportPlanner.plan(
+            existing: existing, existingGroups: [],
+            incoming: incoming([exported(name: "web-copy"), exported(name: "web-copy-2")]),
+            arbiter: skipEverything)
+
+        #expect(plan.sessionsToImport.isEmpty)
+        #expect(plan.skipped.count == 2)
     }
 }
