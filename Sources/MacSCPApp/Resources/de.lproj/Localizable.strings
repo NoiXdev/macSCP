@@ -86,7 +86,6 @@
 /* Server-Zertifikat-Vertrauensabfrage (M21/T10) — das TLS-Gegenstück zur Host-Key-Abfrage oben, für WebDAV/S3. */
 "certificate.prompt.title" = "Dem Zertifikat dieses Servers vertrauen?";
 "certificate.prompt.fingerprint" = "Fingerabdruck";
-"certificate.prompt.issuer" = "Aussteller";
 "certificate.prompt.expires" = "Gültig bis";
 "certificate.prompt.trust" = "Vertrauen";
 

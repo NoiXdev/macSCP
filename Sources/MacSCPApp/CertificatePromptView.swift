@@ -103,7 +103,6 @@ struct CertificatePromptView: View {
                 .font(.callout)
                 .textSelection(.enabled)
 
-            detailRow(L10n.string("certificate.prompt.issuer", "Issuer"), candidate.issuer)
             detailRow(L10n.string("certificate.prompt.expires", "Expires"), expiryText)
 
             Text(L10n.string("certificate.prompt.fingerprint", "Fingerprint"))
