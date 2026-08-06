@@ -19,15 +19,3 @@ public struct FileActionContribution: Sendable, Equatable, Identifiable {
         self.id = id; self.titleKey = titleKey; self.titleDefault = titleDefault
     }
 }
-
-/// A CONNECTION-level action a backend contributes to the session/tab context
-/// menu (M12 seam; empty now — diagnostics ping/traceroute/speedtest land in a
-/// later milestone).
-public struct ConnectionActionContribution: Sendable, Equatable, Identifiable {
-    public let id: String
-    public let titleKey: String
-    public let titleDefault: String
-    public init(id: String, titleKey: String, titleDefault: String) {
-        self.id = id; self.titleKey = titleKey; self.titleDefault = titleDefault
-    }
-}
