@@ -1,0 +1,59 @@
+{
+  "groups" : [
+    {
+      "id" : "11111111-1111-4111-8111-111111111111",
+      "name" : "Homelab"
+    }
+  ],
+  "sessions" : [
+    {
+      "authKind" : "privateKey",
+      "groupID" : "11111111-1111-4111-8111-111111111111",
+      "host" : "server.example.com",
+      "id" : "22222222-2222-4222-8222-222222222222",
+      "jump" : {
+        "authKind" : "agent",
+        "host" : "bastion.example.com",
+        "port" : 22,
+        "secretID" : "33333333-3333-4333-8333-333333333333",
+        "username" : "tim"
+      },
+      "keyPath" : "~\/.ssh\/id_ed25519",
+      "kind" : "ssh",
+      "name" : "Homelab shell",
+      "port" : 2222,
+      "username" : "tim"
+    },
+    {
+      "authKind" : "password",
+      "host" : "unused",
+      "id" : "44444444-4444-4444-8444-444444444444",
+      "kind" : "s3",
+      "loginSetID" : "66666666-6666-4666-8666-666666666666",
+      "name" : "Object storage",
+      "port" : 22,
+      "s3" : {
+        "accessKeyID" : "AKIA",
+        "bucket" : "backups",
+        "endpoint" : "https:\/\/s3.example.com",
+        "region" : "eu-central-1",
+        "usePathStyle" : true
+      },
+      "username" : "unused"
+    },
+    {
+      "authKind" : "password",
+      "host" : "unused",
+      "id" : "55555555-5555-4555-8555-555555555555",
+      "kind" : "webdav",
+      "name" : "Nextcloud files",
+      "port" : 22,
+      "username" : "unused",
+      "webdav" : {
+        "baseURL" : "https:\/\/dav.example.com",
+        "useNextcloudPath" : true,
+        "username" : "tim"
+      }
+    }
+  ]
+}
