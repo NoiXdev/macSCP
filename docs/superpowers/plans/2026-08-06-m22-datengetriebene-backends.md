@@ -715,9 +715,14 @@ In `Sources/macSCPCore/Capabilities/BackendDescriptor.swift`, replace `fieldSche
     /// relearn one; nil means the backend needs no secret.
     public let secretEnvironmentVariable: String?
 
-    /// Whether connecting needs a secret at all. SSH with agent auth does
-    /// not, which is why this is a value and not derived from the schema.
-    public let requiresSecret: Bool
+    /// Whether connecting needs a secret at all.
+    ///
+    /// A closure, not a `Bool`, because for SSH the answer depends on the
+    /// chosen auth kind: agent authentication needs none. A static `true`
+    /// would make the CLI refuse an agent-auth connection for a missing
+    /// `MACSCP_PASSWORD` that ssh-agent never wanted — which is exactly the
+    /// guard `CLISecretSources` carries today and Task 10 must preserve.
+    public let requiresSecret: @Sendable (FieldValues) -> Bool
 ```
 
 Update the initializer accordingly and adjust the three existing descriptors to pass `connectionSchema:` where they passed `fieldSchema:`, `credentialSchema: ConnectionFieldSchema(fields: [], presets: [])` for now, and placeholder closures that throw `RemoteFSError.protocolError(reason: "not migrated yet")`. Tasks 4–6 replace those per backend.
@@ -2044,9 +2049,24 @@ struct CLISecretSourcesSchemaTests {
             == "MACSCP_PASSWORD")
     }
 
-    @Test func everyBackendDeclaresWhetherItNeedsASecret() {
-        for kind in ConnectionKind.allCases {
-            #expect(BackendDescriptor.descriptor(for: kind).requiresSecret == true)
+    /// The guard `CLISecretSources` carries today, now expressed as a
+    /// descriptor property. An agent-auth SSH session needs no secret; asking
+    /// for one would make the CLI refuse a connection ssh-agent could serve.
+    @Test func sshNeedsNoSecretForAgentAuth() {
+        let ssh = BackendDescriptor.descriptor(for: .ssh)
+        var values = FieldValues()
+        values[SSHField.authKind] = "agent"
+        #expect(!ssh.requiresSecret(values))
+        values[SSHField.authKind] = "password"
+        #expect(ssh.requiresSecret(values))
+        values[SSHField.authKind] = "privateKey"
+        #expect(ssh.requiresSecret(values))
+    }
+
+    /// S3 and WebDAV always need one, whatever the values say.
+    @Test func theOtherBackendsAlwaysNeedASecret() {
+        for kind in [ConnectionKind.s3, .webdav] {
+            #expect(BackendDescriptor.descriptor(for: kind).requiresSecret(FieldValues()))
         }
     }
 
@@ -2066,7 +2086,9 @@ Expected: FAIL — `type 'BackendDescriptor' has no member 'secretEnvironmentVar
 
 - [ ] **Step 3: Implement**
 
-Replace `CLISecretSources`'s `switch` with `descriptor.secretEnvironmentVariable` and its `needsSecret` chain with `descriptor.requiresSecret`. Replace the two per-protocol error cases with `.missingBackendConfiguration(kind:)` and update `CLIErrorMapping` to one message that names the protocol. Delete `BackendConnector.swift` and route its call sites through `BackendDescriptor.descriptor(for: config.kind).connect(...)`.
+Replace `CLISecretSources`'s `switch` with `descriptor.secretEnvironmentVariable`, and its `needsSecret` chain with `descriptor.requiresSecret(values)` — converting the `StoredSession` to `FieldValues` first via the backend's own adapter.
+
+**Do not flatten that call into a constant.** `CLISecretSources.swift:183` currently reads `session.kind == .s3 || session.kind == .webdav || (session.kind == .ssh && session.authKind != .agent)`, with a doc comment above it warning what breaks if the agent-auth guard is dropped. That guard is the whole reason `requiresSecret` is a closure. An agent-auth SSH session must still resolve to "no secret needed" after this task, and the existing `CLISecretSources` tests are the proof — they must stay green unchanged. Replace the two per-protocol error cases with `.missingBackendConfiguration(kind:)` and update `CLIErrorMapping` to one message that names the protocol. Delete `BackendConnector.swift` and route its call sites through `BackendDescriptor.descriptor(for: config.kind).connect(...)`.
 
 - [ ] **Step 4: Run the full suite and the gated CLI suite**
 
