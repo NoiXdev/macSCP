@@ -1191,6 +1191,26 @@ public final class ConnectionViewModel {
                 field: nil)
         case HostKeyError.rejectedByUser:
             return .failed(message: CoreL10n.string("core.hostkey.rejected"), field: nil)
+        // Server-certificate TOFU (M21/T10): mirrors the two `HostKeyError`
+        // cases immediately above, case for case. `.mismatch` is a hard stop
+        // that already never reached the App's certificate decider
+        // (`WebDAVSessionDelegate.decideCertificate` refuses before
+        // consulting it) -- this is only the message the user sees once the
+        // refusal has already happened, never a question. `.rejectedByUser`
+        // is the plain "you clicked Cancel" case. `.trustStoreUnreadable`
+        // has no `HostKeyError` analogue (the known-hosts store has always
+        // failed closed silently); it gets its own honest text rather than
+        // falling into the generic `default:` unexpected-error case below.
+        case ServerCertificateError.mismatch(let host, let expected, let presented):
+            return .failed(
+                message: String(
+                    format: CoreL10n.string("core.certificate.mismatch %@ %@ %@"),
+                    host, expected, presented),
+                field: nil)
+        case ServerCertificateError.rejectedByUser:
+            return .failed(message: CoreL10n.string("core.certificate.rejected"), field: nil)
+        case ServerCertificateError.trustStoreUnreadable:
+            return .failed(message: CoreL10n.string("core.certificate.trustStoreUnreadable"), field: nil)
         default:
             return .failed(
                 message: String(format: CoreL10n.string("core.error.unexpected %@"), String(describing: error)),

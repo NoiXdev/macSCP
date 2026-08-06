@@ -71,6 +71,11 @@
 "core.hostkey.mismatch %@ %@ %@" = "ACHTUNG: Der Host-Key von %1$@ hat sich geändert! Erwartet %2$@, präsentiert %3$@. Möglicher Man-in-the-Middle — Verbindung abgebrochen.";
 "core.hostkey.rejected" = "Verbindung abgebrochen — Host-Key nicht bestätigt.";
 
+/* Server-Zertifikat-TOFU (M21/T10) — spiegelt den Host-Key-Fall 1:1: gleicher Schweregrad, gleiches „keine Ausnahme"-Prinzip. */
+"core.certificate.mismatch %@ %@ %@" = "ACHTUNG: Das Zertifikat von %1$@ hat sich geändert! Erwartet %2$@, präsentiert %3$@. Möglicher Man-in-the-Middle — Verbindung verweigert.";
+"core.certificate.rejected" = "Verbindung verweigert — Zertifikat nicht bestätigt.";
+"core.certificate.trustStoreUnreadable" = "Verbindung verweigert — der Speicher für vertrauenswürdige Zertifikate konnte nicht gelesen werden.";
+
 /* TerminalPanelViewModel */
 "core.terminal.shellEnded %@" = "Shell beendet: %@";
 "core.terminal.openFailed %@" = "Shell konnte nicht geöffnet werden: %@";

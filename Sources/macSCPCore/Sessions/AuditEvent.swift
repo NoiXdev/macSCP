@@ -56,5 +56,11 @@ public struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
         case newFile
         case editUpload
         case crossSessionTransfer
+        /// The user confirmed connecting over an unencrypted (`http://`)
+        /// endpoint despite `PlaintextTransportGate.requiresConfirmation`
+        /// (M21/T10) — recorded once the connect succeeds, at the same spot
+        /// `.connected` is recorded, so the audit trail shows exactly when a
+        /// session ran with credentials in the clear.
+        case plaintextConfirmed
     }
 }

@@ -1159,6 +1159,22 @@ struct ContentView: View {
                     }
                 }
                 .transferConflictSheet(bridge: bridge)
+            } else if let candidate = tab.certificateBridge.currentCandidate {
+                // Certificate trust prompt (M21/T10): the same "form is
+                // hidden entirely while the trust decision is pending" shape
+                // `ConnectionFormView.hostKeyPromptView` uses for the SSH
+                // case, just driven by `tab.certificateBridge` instead of
+                // `viewModel.hostKeyPrompt` — see that bridge's own doc
+                // comment for why this state lives on the tab rather than on
+                // `tab.connectionViewModel`.
+                CertificatePromptView(
+                    candidate: candidate,
+                    onTrust: { tab.certificateBridge.resolve(trust: true) },
+                    onCancel: { tab.certificateBridge.resolve(trust: false) }
+                )
+                .padding(24)
+                .frame(minWidth: 420, maxWidth: 460)
+                .frame(maxHeight: .infinity, alignment: .top)
             } else {
                 // Align the form to the top instead of centering it vertically
                 // (user feedback 2026-07-10, M5c/T0) — otherwise the compact
@@ -1241,6 +1257,33 @@ struct ContentView: View {
                     startSession(in: tab, with: fs, startPath: home)
                 }
                 .frame(maxHeight: .infinity, alignment: .top)
+                // Plaintext-transport confirmation (M21/T10): asked by the
+                // connector closure (`ContentView.makeTab`) before it ever
+                // dispatches a connect whose transport is `.optionalTLS` and
+                // whose endpoint is `http://`. Declining resolves the
+                // waiting `confirmPlaintext()` call with `false`, which
+                // throws `RemoteFSError.connectionFailed` — the connect
+                // never happens (see that closure's own comment).
+                .confirmationDialog(
+                    L10n.string("transport.plaintext.title", "Send credentials unencrypted?"),
+                    isPresented: Binding(
+                        get: { tab.plaintextConfirmationPending },
+                        set: { _ in /* answered exclusively through the buttons below */ }
+                    ),
+                    titleVisibility: .visible
+                ) {
+                    Button(L10n.string("common.cancel", "Cancel"), role: .cancel) {
+                        tab.resolvePlaintextConfirmation(confirmed: false)
+                    }
+                    Button(L10n.string("connection.connect", "Connect"), role: .destructive) {
+                        tab.resolvePlaintextConfirmation(confirmed: true)
+                    }
+                } message: {
+                    Text(L10n.string(
+                        "transport.plaintext.body",
+                        "This connection uses http://, so the password travels in the clear. "
+                            + "Use https:// where the server offers it."))
+                }
             }
         }
         // Load-bearing identity (M8a/T3 review): forces this whole per-tab
@@ -1257,6 +1300,26 @@ struct ContentView: View {
 
     // MARK: - Tab lifecycle
 
+    /// Mutable box carrying the `SessionTab` a connector closure belongs to —
+    /// filled in immediately after that tab is constructed, in `makeTab`
+    /// below. Needed because the closure is built and handed to
+    /// `ConnectionViewModel.init` BEFORE the `SessionTab` that will own it
+    /// exists, so it cannot simply capture the tab the way
+    /// `ConnectionViewModel.connectSSH()` captures its OWN `self` to build
+    /// the host-key decider (see `CertificatePromptBridge`'s own doc
+    /// comment).
+    ///
+    /// `@unchecked Sendable`: `tab` is written exactly once, synchronously,
+    /// right after `SessionTab.init` returns and before `makeTab` returns —
+    /// by the time the connector closure can actually run (the earliest is a
+    /// later, user-triggered `connect()`), the box is already stable. Every
+    /// read of `tab` funnels straight into `SessionTab`'s own
+    /// `@MainActor`-isolated interface (`await`ed methods), never touching
+    /// its state directly from here.
+    private final class SessionTabBox: @unchecked Sendable {
+        var tab: SessionTab!
+    }
+
     /// Builds a fresh form tab: own connection view model, own queue (wired
     /// once here to the shared limiter, the settings concurrency and the
     /// tab's OWN conflict bridge). Static so `init` can seed `tabsModel`
@@ -1264,13 +1327,43 @@ struct ContentView: View {
     private static func makeTab(
         settingsStore: SettingsStore, limiter: BandwidthLimiter
     ) -> SessionTab {
-        SessionTab(
+        let certificateBridge = CertificatePromptBridge()
+        let box = SessionTabBox()
+        let tab = SessionTab(
             connectionViewModel: ConnectionViewModel(connector: { config, decider in
-                try await BackendConnector.connect(config, decider: decider)
+                // Plaintext confirmation (M21/T10): asked BEFORE dispatching
+                // anything, so a refusal never opens a connection at all.
+                // Reset first (see `pendingPlaintextConfirmation`'s own doc
+                // comment on why), then set only on an actual confirm.
+                await box.tab.resetPendingPlaintextConfirmation()
+                if PlaintextTransportGate.requiresConfirmation(for: config) {
+                    guard await box.tab.confirmPlaintext() else {
+                        throw RemoteFSError.connectionFailed(
+                            reason: "the user declined to send credentials over an unencrypted connection")
+                    }
+                    await box.tab.markPlaintextConfirmed()
+                }
+                // Certificate decider (M21/T10): unknown WebDAV/S3
+                // certificates now reach `CertificatePromptView` instead of
+                // being refused outright (`BackendConnector.connect`'s own
+                // default). A MISMATCH never reaches `certificateBridge.ask`
+                // in the first place — `WebDAVSessionDelegate
+                // .decideCertificate` refuses it before ever consulting the
+                // decider — and surfaces instead as a thrown
+                // `ServerCertificateError.mismatch`, which
+                // `ConnectionViewModel.failedState(for:)` already maps to its
+                // own honest, localized alert text (mirrors `HostKeyError`
+                // case for case): nothing to intercept here.
+                return try await BackendConnector.connect(
+                    config, decider: decider,
+                    certificateDecider: { candidate in await certificateBridge.ask(candidate) })
             }),
+            certificateBridge: certificateBridge,
             limiter: limiter,
             maxConcurrent: settingsStore.maxConcurrentTransfers
         )
+        box.tab = tab
+        return tab
     }
 
     private func makeTab() -> SessionTab {
@@ -1298,6 +1391,18 @@ struct ContentView: View {
         let recorder = AuditRecorder(sessionID: sessionID, store: auditStore)
         tab.auditRecorder = recorder
         recorder.recordConnected(host: host, username: username, viaJumpHost: viaJumpHost)
+        // Plaintext-transport audit trail (M21/T10): the connector closure
+        // set this right after the user confirmed connecting over
+        // `http://`; this is the first point afterward where a `sessionID`
+        // (and with it, a recorder) exists to log it against. See
+        // `SessionTab.pendingPlaintextConfirmation`'s own doc comment for
+        // why it is safe to consume unconditionally here.
+        if tab.pendingPlaintextConfirmation {
+            recorder.recordAction(AuditEvent(
+                kind: .plaintextConfirmed,
+                detail: "connected without TLS after an explicit confirmation"))
+            tab.pendingPlaintextConfirmation = false
+        }
         // `[weak tabsModel]` (M9b/T4 review, finding 5): `TabsViewModel` is a
         // class, and this sink is retained by `tab.transferQueue` for the
         // tab's whole lifetime — a plain (implicit `self`) capture would
