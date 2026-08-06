@@ -885,6 +885,10 @@ struct ConnectionFormView: View {
             FormRow(label: label) {
                 TextField(label, text: s3TextBinding(for: field.id), prompt: Text(verbatim: ""))
             }
+        case .picker, .group:
+            // Not yet produced by the S3 descriptor (M22 vocabulary is wired
+            // up by a later task); nothing to render until then.
+            EmptyView()
         }
     }
 
@@ -979,6 +983,10 @@ struct ConnectionFormView: View {
             FormRow(label: label) {
                 TextField(label, text: webdavTextBinding(for: field.id), prompt: Text(verbatim: ""))
             }
+        case .picker, .group:
+            // Not yet produced by the WebDAV descriptor (M22 vocabulary is
+            // wired up by a later task); nothing to render until then.
+            EmptyView()
         }
     }
 
