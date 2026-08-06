@@ -70,28 +70,18 @@ public struct BackendDescriptor: Sendable {
             supportsShell: false, permissionModel: .none, supportsSymlinks: false,
             atomicRename: false, directoriesAreReal: false, resumeMode: .rangeGet,
             supportsPresignedURL: true, transport: .optionalTLS),
-        connectionSchema: ConnectionFieldSchema(
-            fields: [
-                ConnectionField(id: "endpoint", labelKey: "connection.s3.endpoint", labelDefault: "Endpoint", kind: .text),
-                ConnectionField(id: "region", labelKey: "connection.s3.region", labelDefault: "Region", kind: .text),
-                ConnectionField(id: "bucket", labelKey: "connection.s3.bucket", labelDefault: "Bucket", kind: .text),
-                ConnectionField(id: "accessKeyID", labelKey: "connection.s3.accessKey", labelDefault: "Access Key ID", kind: .text),
-                ConnectionField(id: "secretAccessKey", labelKey: "connection.s3.secretKey", labelDefault: "Secret Access Key", kind: .secret),
-                ConnectionField(id: "usePathStyle", labelKey: "connection.s3.pathStyle", labelDefault: "Use path-style URLs", kind: .toggle),
-            ],
-            presets: [
-                ConnectionPreset(id: "aws", nameKey: "connection.s3.preset.aws", nameDefault: "Amazon S3",
-                    values: ["endpoint": "https://s3.amazonaws.com", "usePathStyle": "false"]),
-                ConnectionPreset(id: "hetzner", nameKey: "connection.s3.preset.hetzner", nameDefault: "Hetzner Object Storage",
-                    values: ["endpoint": "https://fsn1.your-objectstorage.com", "usePathStyle": "true"]),
-                ConnectionPreset(id: "custom", nameKey: "connection.s3.preset.custom", nameDefault: "Custom", values: [:]),
-            ]),
-        credentialSchema: ConnectionFieldSchema(fields: [], presets: []),
-        makeConfig: { _, _ in throw RemoteFSError.protocolError(reason: "not migrated yet") },
-        displaySummary: { _ in "" },
-        connect: { _, _, _ in throw RemoteFSError.protocolError(reason: "not migrated yet") },
+        connectionSchema: S3FieldSchema.connection,
+        credentialSchema: S3FieldSchema.credential,
+        makeConfig: { values, secret in try S3FieldSchema.makeConfig(values, secret) },
+        displaySummary: { values in S3FieldSchema.displaySummary(values) },
+        connect: { config, _, _ in
+            guard case .s3(let s3) = config else {
+                throw RemoteFSError.protocolError(reason: "wrong config for the S3 backend")
+            }
+            return try await S3FileSystem.connect(s3)
+        },
         badgeLabelKey: "connection.badge.s3", badgeLabelDefault: "S3",
-        secretEnvironmentVariable: nil, requiresSecret: false,
+        secretEnvironmentVariable: "AWS_SECRET_ACCESS_KEY", requiresSecret: true,
         fileActions: [
             FileActionContribution(id: "s3.presignedURL", titleKey: "browser.action.presignedURL", titleDefault: "Share Link…"),
         ], connectionActions: [])
