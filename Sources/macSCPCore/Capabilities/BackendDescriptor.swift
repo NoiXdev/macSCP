@@ -1,8 +1,13 @@
 import Foundation
 
 /// The static, connection-free description of a protocol (M12): its
-/// capabilities, its connection-form schema/presets, a badge label, and its
-/// (currently empty) contribution lists. One per `ConnectionKind`.
+/// capabilities, its connection-form schema/presets, a badge label, and the
+/// file actions it contributes to the context menu. One per `ConnectionKind`.
+///
+/// There is no connection-level action list: one shipped empty in M12 and was
+/// still empty ten milestones later, so M22's final review removed it rather
+/// than let an unused seam ossify. Diagnostics actions, if they ever land,
+/// will be designed against a real caller.
 public struct BackendDescriptor: Sendable {
     public let kind: ConnectionKind
     public let capabilities: ProtocolCapabilities
@@ -49,7 +54,6 @@ public struct BackendDescriptor: Sendable {
     public let requiresSecret: @Sendable (FieldValues) -> Bool
 
     public let fileActions: [FileActionContribution]
-    public let connectionActions: [ConnectionActionContribution]
 
     public static func descriptor(for kind: ConnectionKind) -> BackendDescriptor {
         switch kind {
@@ -171,7 +175,7 @@ public struct BackendDescriptor: Sendable {
         requiresSecret: { values in
             values[SSHField.authKind] != StoredSession.AuthKind.agent.rawValue
         },
-        fileActions: [], connectionActions: [])
+        fileActions: [])
 
     static let s3Descriptor = BackendDescriptor(
         kind: .s3,
@@ -193,7 +197,7 @@ public struct BackendDescriptor: Sendable {
         secretEnvironmentVariable: "AWS_SECRET_ACCESS_KEY", requiresSecret: { _ in true },
         fileActions: [
             FileActionContribution(id: "s3.presignedURL", titleKey: "browser.action.presignedURL", titleDefault: "Share Link…"),
-        ], connectionActions: [])
+        ])
 
     /// The two capability axes that deliberately flip against S3 (M21): real
     /// directories and atomic rename, the exact two WebDAV actually has and
@@ -225,5 +229,5 @@ public struct BackendDescriptor: Sendable {
         // password"), the same shape as SSH password auth, so this reuses the
         // SSH variable name rather than inventing a third one.
         secretEnvironmentVariable: "MACSCP_PASSWORD", requiresSecret: { _ in true },
-        fileActions: [], connectionActions: [])
+        fileActions: [])
 }

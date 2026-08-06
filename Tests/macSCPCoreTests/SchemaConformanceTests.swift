@@ -25,7 +25,7 @@ struct SchemaConformanceTests {
             connect: { _, _, _ in throw RemoteFSError.protocolError(reason: "unused") },
             badgeLabelKey: "b", badgeLabelDefault: "B",
             secretEnvironmentVariable: nil, requiresSecret: { _ in false },
-            fileActions: [], connectionActions: [])
+            fileActions: [])
     }
 
     /// The gap the compiler cannot see: a field the enum declares, that the
