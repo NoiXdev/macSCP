@@ -660,13 +660,26 @@ public final class ConnectionViewModel {
 
     /// Removes the plaintext password from the state (e.g. after disconnecting).
     ///
-    /// Clears every secret slot the form owns, not just the one the current
-    /// `kind`/auth kind happens to read (M22/T8): a secret typed under one
-    /// auth kind and abandoned by switching to another would otherwise sit in
-    /// `values` unreachable but still in memory.
+    /// Clears every secret slot of the TARGET's own login, not just the one
+    /// the current `kind`/auth kind happens to read (M22/T8): a secret typed
+    /// under one auth kind and abandoned by switching to another would
+    /// otherwise sit in `values` unreachable but still in memory. That is why
+    /// all four of SSH's password, SSH's passphrase, S3's secret access key
+    /// and WebDAV's password go, regardless of the active `kind`.
+    ///
+    /// `SSHField.jump`'s password is deliberately NOT cleared here: it is a
+    /// SECOND login, with its own Keychain entry (`JumpSpec.secretID`) and its
+    /// own auth switcher. `selectAuthChoice(_:)` calls this whenever the user
+    /// flips the TARGET's auth picker — clearing the jump's slot from there
+    /// would silently discard a bastion password the user already typed, on a
+    /// picker flip that has nothing to do with the jump. The jump's own
+    /// clearing paths (`selectJumpAuthChoice`, `selectJumpSourceMode`,
+    /// `clearJumpFields`) cover it, and `clearJumpFields()` is what
+    /// disconnect-time teardown reaches through.
     public func clearPassword() {
         values[SSHField.password] = ""
         values[SSHField.passphrase] = ""
+        values[S3Field.secretAccessKey] = ""
         values[WebDAVField.password] = ""
     }
 
