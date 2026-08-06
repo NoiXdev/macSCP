@@ -49,13 +49,12 @@ public enum SSHFieldSchema {
         field: SSHField.authKind.rawValue,
         equals: StoredSession.AuthKind.password.rawValue)
 
-    /// The jump host's login. Its leaves carry NO condition: a leaf's
-    /// condition is resolved against `"\(namespace).\(condition.field)"`, so
-    /// hiding the jump's key path behind the jump's OWN auth kind would
-    /// require the renderer to address the group-qualified namespace
-    /// (`SSHField.jump`). That contract does not exist yet (Task 7), and a
-    /// condition resolved against the plain namespace would silently key off
-    /// the TARGET's auth kind — worse than showing one row too many.
+    /// The jump host's login. Its leaves carry no condition today — but not
+    /// because they may not: since M22/T7 a leaf's condition resolves against
+    /// the GROUP-QUALIFIED namespace (`SSHField.jump`), which
+    /// `ConnectionFieldSchema.visibleLeaves` builds from the owner rather than
+    /// taking from its caller. A condition added here therefore keys off the
+    /// JUMP's own field, never the target's. Nothing has needed one yet.
     private static let jumpLeaves: [LeafField] = [
         LeafField(id: SSHJumpField.host.rawValue, labelKey: "connection.field.host",
                   labelDefault: "Host", kind: .text),

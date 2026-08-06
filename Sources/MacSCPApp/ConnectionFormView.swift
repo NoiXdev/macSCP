@@ -845,11 +845,17 @@ struct ConnectionFormView: View {
     /// of `connectionSchema` and into `credentialSchema`; a form that read only
     /// the former showed no credential rows at all, which is the regression
     /// this replaces.
+    ///
+    /// S3 is the one backend that cannot hand both schemas to a single
+    /// `SchemaFormView`: the login switcher has to sit BETWEEN them, because
+    /// Set mode replaces the credential block with a login-set picker. The two
+    /// views below therefore partition `descriptor`'s schemas — each is
+    /// rendered exactly once, neither is dropped.
     private var s3Section: some View {
         let descriptor = BackendDescriptor.descriptor(for: .s3)
         return Group {
             SchemaFormView(
-                schema: descriptor.connectionSchema, values: s3Values,
+                schemas: [descriptor.connectionSchema], values: s3Values,
                 namespace: S3Field.namespace, isEditMode: isEditMode,
                 resolve: resolveOptions)
 
@@ -886,7 +892,7 @@ struct ConnectionFormView: View {
                 }
             } else {
                 SchemaFormView(
-                    schema: descriptor.credentialSchema, values: s3Values,
+                    schemas: [descriptor.credentialSchema], values: s3Values,
                     namespace: S3Field.namespace, isEditMode: isEditMode,
                     resolve: resolveOptions)
                 FormRow(label: "") {
@@ -906,23 +912,17 @@ struct ConnectionFormView: View {
         }
     }
 
-    /// The WebDAV section (M22/T7): both schemas back to back. WebDAV has no
-    /// login-set switcher (spec: out of scope for M21), so the credentials are
-    /// always shown -- and, as with S3, they live in `credentialSchema` since
-    /// Task 5 and would not render at all if only the connection schema were
-    /// walked.
+    /// The WebDAV section (M22/T7): every schema the descriptor declares, in
+    /// one view. WebDAV has no login-set switcher (spec: out of scope for M21),
+    /// so nothing has to sit between the two blocks -- and, as with S3, the
+    /// credentials live in `credentialSchema` since Task 5 and would not render
+    /// at all if only the connection schema were walked.
     private var webdavSection: some View {
         let descriptor = BackendDescriptor.descriptor(for: .webdav)
-        return Group {
-            SchemaFormView(
-                schema: descriptor.connectionSchema, values: webdavValues,
-                namespace: WebDAVField.namespace, isEditMode: isEditMode,
-                resolve: resolveOptions)
-            SchemaFormView(
-                schema: descriptor.credentialSchema, values: webdavValues,
-                namespace: WebDAVField.namespace, isEditMode: isEditMode,
-                resolve: resolveOptions)
-        }
+        return SchemaFormView(
+            schemas: [descriptor.connectionSchema, descriptor.credentialSchema],
+            values: webdavValues, namespace: WebDAVField.namespace,
+            isEditMode: isEditMode, resolve: resolveOptions)
     }
 
     /// Full-pane trust decision for an unknown host key (M3c). Presentation

@@ -11,12 +11,18 @@ import macSCPCore
 /// are visible right now, what they are called) belongs to the schema and is
 /// tested in Core; this view walks the result and holds no rules of its own.
 ///
-/// A schema is rendered ONE at a time, and a backend has two of them
-/// (`connectionSchema` and `credentialSchema`). The form therefore instantiates
-/// this view once per schema -- which is also what lets the login switcher sit
-/// between them and swap the credential block for a login-set picker.
+/// Takes a LIST of schemas, never one. A backend declares two
+/// (`connectionSchema` and `credentialSchema`), and taking a single one is
+/// exactly how the credential rows vanished: once M22/T4-T5 moved S3's and
+/// WebDAV's credentials into `credentialSchema`, a view reading only
+/// `connectionSchema` silently stopped rendering them, and no new S3 or WebDAV
+/// connection could be created at all. `SchemaConformance` cannot catch that --
+/// it checks the UNION of a descriptor's schemas, which stays correct however
+/// many the form actually reads -- and there is no App test target to catch it
+/// either. A list makes "only one schema" unexpressible at the call site.
 struct SchemaFormView: View {
-    let schema: ConnectionFieldSchema
+    /// Rendered in order, each schema's presets first (see `presets`).
+    let schemas: [ConnectionFieldSchema]
     @Binding var values: FieldValues
     /// The backend field enum's declared `namespace`, so a condition resolves
     /// against the owning backend and not a same-named field in another.
@@ -31,12 +37,19 @@ struct SchemaFormView: View {
     /// whichever provider happens to be listed first.
     @State private var selectedPresetID: String = ""
 
+    /// Every collected schema's presets. Only one schema in a backend carries
+    /// any today, which is why a single `selectedPresetID` suffices; pooling
+    /// them keeps that an observation rather than an assumption.
+    private var presets: [ConnectionPreset] { schemas.flatMap(\.presets) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if !schema.presets.isEmpty { presetPicker }
+            if !presets.isEmpty { presetPicker }
             // The filter is Core's, and tested there.
-            ForEach(schema.visibleFields(in: values, namespace: namespace)) { field in
-                row(for: field)
+            ForEach(Array(schemas.enumerated()), id: \.offset) { _, schema in
+                ForEach(schema.visibleFields(in: values, namespace: namespace)) { field in
+                    row(for: field)
+                }
             }
         }
     }
@@ -51,18 +64,12 @@ struct SchemaFormView: View {
             // twin, and the only one that nests.
             GroupBox(label: Text(L10n.string(field.labelKey, field.labelDefault))) {
                 VStack(alignment: .leading, spacing: 10) {
-                    // GROUP-QUALIFIED namespace, deliberately not `namespace`:
-                    // a leaf's condition names a SIBLING leaf, and `FieldValues`
-                    // stores those under `owner.group.leaf`. Passing the plain
-                    // owner namespace would resolve the condition against the
-                    // top-level field of the same name -- e.g. the SSH jump's
-                    // key path would follow the TARGET's auth kind. No leaf
-                    // carries a condition today, so that mistake would pass
-                    // every test in the repo; `visibleLeaves` is pinned against
-                    // it in `FieldVisibilityTests` instead.
-                    let groupNamespace = "\(namespace).\(field.id)"
+                    // `owner:`, not a namespace this view builds: Core
+                    // qualifies it with the group's id, so a leaf's condition
+                    // cannot be resolved against the top-level field of the
+                    // same name from here. See `visibleLeaves`.
                     ForEach(ConnectionFieldSchema.visibleLeaves(
-                        of: field, in: values, namespace: groupNamespace)) { leaf in
+                        of: field, in: values, owner: namespace)) { leaf in
                         leafRow(label: L10n.string(leaf.labelKey, leaf.labelDefault),
                                 kind: leaf.kind, binding: binding(field.id, leaf.id))
                     }
@@ -130,7 +137,7 @@ struct SchemaFormView: View {
                 get: { selectedPresetID },
                 set: { id in
                     selectedPresetID = id
-                    guard let preset = schema.presets.first(where: { $0.id == id })
+                    guard let preset = presets.first(where: { $0.id == id })
                     else { return }
                     for (fieldID, value) in preset.values {
                         values.setRaw("\(namespace).\(fieldID)", to: value)
@@ -141,7 +148,7 @@ struct SchemaFormView: View {
                 // every locale, so it stays a literal rather than a catalog
                 // key -- the same rule the "…" browse button follows.
                 Text(verbatim: "—").tag("")
-                ForEach(schema.presets) { preset in
+                ForEach(presets) { preset in
                     Text(L10n.string(preset.nameKey, preset.nameDefault)).tag(preset.id)
                 }
             }
