@@ -40,4 +40,25 @@ struct BackendDescriptorTests {
         #expect(descriptor.credentialSchema.fields.contains { $0.isSecret })
         #expect(!schema.fields.contains { $0.isSecret })
     }
+
+    /// The guard `CLISecretSources` carries today, now expressed as a
+    /// descriptor property. An agent-auth SSH session needs no secret; asking
+    /// for one would make the CLI refuse a connection ssh-agent could serve.
+    @Test func sshNeedsNoSecretForAgentAuth() {
+        let ssh = BackendDescriptor.descriptor(for: .ssh)
+        var values = FieldValues()
+        values[SSHField.authKind] = "agent"
+        #expect(!ssh.requiresSecret(values))
+        values[SSHField.authKind] = "password"
+        #expect(ssh.requiresSecret(values))
+        values[SSHField.authKind] = "privateKey"
+        #expect(ssh.requiresSecret(values))
+    }
+
+    /// S3 and WebDAV always need one, whatever the values say.
+    @Test func theOtherBackendsAlwaysNeedASecret() {
+        for kind in [ConnectionKind.s3, .webdav] {
+            #expect(BackendDescriptor.descriptor(for: kind).requiresSecret(FieldValues()))
+        }
+    }
 }

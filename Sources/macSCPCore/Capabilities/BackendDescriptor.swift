@@ -33,9 +33,14 @@ public struct BackendDescriptor: Sendable {
     /// relearn one; nil means the backend needs no secret.
     public let secretEnvironmentVariable: String?
 
-    /// Whether connecting needs a secret at all. SSH with agent auth does
-    /// not, which is why this is a value and not derived from the schema.
-    public let requiresSecret: Bool
+    /// Whether connecting needs a secret at all.
+    ///
+    /// A closure, not a `Bool`, because for SSH the answer depends on the
+    /// chosen auth kind: agent authentication needs none. A static `true`
+    /// would make the CLI refuse an agent-auth connection for a missing
+    /// `MACSCP_PASSWORD` that ssh-agent never wanted — which is exactly the
+    /// guard `CLISecretSources` carries today and Task 10 must preserve.
+    public let requiresSecret: @Sendable (FieldValues) -> Bool
 
     public let fileActions: [FileActionContribution]
     public let connectionActions: [ConnectionActionContribution]
@@ -68,9 +73,13 @@ public struct BackendDescriptor: Sendable {
                 onUnknownHostKey: decider)
         },
         badgeLabelKey: "connection.badge.ssh", badgeLabelDefault: "SSH",
-        // `requiresSecret` is true even though `.agent` needs none: the agent
-        // case is handled by the factory, not by refusing to ask.
-        secretEnvironmentVariable: "MACSCP_PASSWORD", requiresSecret: true,
+        secretEnvironmentVariable: "MACSCP_PASSWORD",
+        // The one backend whose answer depends on the values: ssh-agent holds
+        // the key material, so nothing may be asked of the user or the
+        // environment for it.
+        requiresSecret: { values in
+            values[SSHField.authKind] != StoredSession.AuthKind.agent.rawValue
+        },
         fileActions: [], connectionActions: [])
 
     static let s3Descriptor = BackendDescriptor(
@@ -90,7 +99,7 @@ public struct BackendDescriptor: Sendable {
             return try await S3FileSystem.connect(s3)
         },
         badgeLabelKey: "connection.badge.s3", badgeLabelDefault: "S3",
-        secretEnvironmentVariable: "AWS_SECRET_ACCESS_KEY", requiresSecret: true,
+        secretEnvironmentVariable: "AWS_SECRET_ACCESS_KEY", requiresSecret: { _ in true },
         fileActions: [
             FileActionContribution(id: "s3.presignedURL", titleKey: "browser.action.presignedURL", titleDefault: "Share Link…"),
         ], connectionActions: [])
@@ -120,6 +129,6 @@ public struct BackendDescriptor: Sendable {
                 decider: certificateDecider)
         },
         badgeLabelKey: "connection.badge.webdav", badgeLabelDefault: "WebDAV",
-        secretEnvironmentVariable: "MACSCP_PASSWORD", requiresSecret: true,
+        secretEnvironmentVariable: "MACSCP_PASSWORD", requiresSecret: { _ in true },
         fileActions: [], connectionActions: [])
 }

@@ -18,9 +18,10 @@ struct SSHFieldSchemaTests {
             BackendDescriptor.descriptor(for: .ssh), fields: SSHField.self).isEmpty)
     }
 
-    /// Both enums declare their own namespace, so the jump host's `host`
-    /// cannot overwrite the target's.
-    @Test func theTwoFieldEnumsDoNotShareStorage() {
+    /// The jump host's `host` cannot overwrite the target's — because of the
+    /// `jump.` path segment, not because of `SSHJumpField.namespace`, which
+    /// storage never uses (the OWNER's namespace prefixes a group member).
+    @Test func theJumpPathSegmentKeepsTheTwoLoginsApart() {
         #expect(SSHField.namespace == "SSHField")
         #expect(SSHJumpField.namespace == "SSHJumpField")
 
@@ -28,6 +29,9 @@ struct SSHFieldSchemaTests {
         values[SSHField.jump, SSHJumpField.host] = "bastion.example.com"
         #expect(values[SSHField.host] == "server.example.com")
         #expect(values[SSHField.jump, SSHJumpField.host] == "bastion.example.com")
+        // The stored key is owner-namespaced and carries the group segment.
+        #expect(values.raw["SSHField.jump.host"] == "bastion.example.com")
+        #expect(values.raw["SSHJumpField.host"] == nil)
     }
 
     @Test func makeConfigBuildsPasswordAuth() throws {
@@ -119,6 +123,25 @@ struct SSHFieldSchemaTests {
         #expect(source == .managedKeys)
     }
 
+    /// The factory cannot resolve a jump host's secret — it takes exactly one
+    /// secret and a jump has its own Keychain entry — so it must not build a
+    /// jump at all. Silently dropping it here would let a bastion-only
+    /// session dial its target directly: a timeout at best, a connection that
+    /// bypasses a required bastion at worst. The caller attaches it.
+    @Test func makeConfigLeavesTheJumpToTheCaller() throws {
+        var values = passwordValues()
+        values[SSHField.jump, SSHJumpField.host] = "bastion.example.com"
+        values[SSHField.jump, SSHJumpField.port] = "2222"
+        values[SSHField.jump, SSHJumpField.username] = "ops"
+        values[SSHField.jump, SSHJumpField.authKind] = "password"
+        let config = try SSHFieldSchema.makeConfig(values, "hunter2")
+        guard case .ssh(let ssh) = config else {
+            Issue.record("expected .ssh")
+            return
+        }
+        #expect(ssh.jump == nil)
+    }
+
     /// The jump host is one group, exactly one level deep.
     @Test func theJumpFieldIsAGroupOfLeafFields() throws {
         let schema = BackendDescriptor.descriptor(for: .ssh).connectionSchema
@@ -143,6 +166,26 @@ struct SSHFieldSchemaTests {
                 $0.id == secret.rawValue
             })
         }
+    }
+
+    /// The jump's `password` leaf is the ONLY `.secret` in any connection
+    /// schema in the codebase, and it is there because a nested login has no
+    /// credential schema of its own. `ConnectionField.isSecret` cannot see
+    /// leaves (`LeafField` has none), so nothing else would catch a second
+    /// one — and a save path persisting connection-schema values would write
+    /// it into the session JSON in plaintext. This pins both halves: no
+    /// top-level secret at all, and exactly one deliberate leaf exception.
+    @Test func theOnlySecretInTheConnectionSchemaIsTheJumpsOwnPassword() throws {
+        let schema = BackendDescriptor.descriptor(for: .ssh).connectionSchema
+        #expect(!schema.fields.contains { $0.isSecret })
+
+        let jump = try #require(schema.fields.first { $0.id == SSHField.jump.rawValue })
+        guard case .group(let leaves) = jump.kind else {
+            Issue.record("expected a group, got \(jump.kind)")
+            return
+        }
+        #expect(leaves.filter { $0.kind == .secret }.map(\.id)
+            == [SSHJumpField.password.rawValue])
     }
 
     /// The secret is two DIFFERENT fields, not one slot with two meanings —
@@ -227,7 +270,7 @@ struct SSHFieldSchemaTests {
         #expect(descriptor.connectionSchema == SSHFieldSchema.connection)
         #expect(descriptor.credentialSchema == SSHFieldSchema.credential)
         #expect(descriptor.displaySummary(passwordValues()) == "tim@server.example.com")
-        #expect(descriptor.requiresSecret)
+        #expect(descriptor.requiresSecret(passwordValues()))
         #expect(descriptor.secretEnvironmentVariable == "MACSCP_PASSWORD")
 
         let config = try descriptor.makeConfig(passwordValues(), "hunter2")
