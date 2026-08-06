@@ -36,12 +36,21 @@ struct WebDAVRegistrationTests {
         #expect(config.kind == .webdav)
     }
 
-    @Test func fieldSchemaCarriesTheFourFieldsAndTheNextcloudPreset() {
-        let schema = BackendDescriptor.descriptor(for: .webdav).connectionSchema
-        #expect(schema.fields.map(\.id) == ["baseURL", "username", "password", "useNextcloudPath"])
-        #expect(schema.fields.first { $0.id == "password" }?.isSecret == true)
+    /// Username and password moved into `credentialSchema` (M22): a login
+    /// belongs to the credential, not the server, and that split is what
+    /// lets one generic editor serve WebDAV login sets. This test used to
+    /// pin them inside `connectionSchema`; it now pins the opposite, so a
+    /// field duplicated into both schemas would fail it.
+    @Test func connectionSchemaCarriesTheServerFieldsAndTheNextcloudPresetWhileCredentialsLiveInTheCredentialSchema() {
+        let descriptor = BackendDescriptor.descriptor(for: .webdav)
+        let schema = descriptor.connectionSchema
+        #expect(schema.fields.map(\.id) == ["baseURL", "useNextcloudPath"])
         let nextcloud = schema.presets.first { $0.id == "nextcloud" }
         #expect(nextcloud?.values["useNextcloudPath"] == "true")
+
+        #expect(descriptor.credentialSchema.fields.map(\.id) == ["username", "password"])
+        #expect(descriptor.credentialSchema.fields.first { $0.id == "password" }?.isSecret == true)
+        #expect(!schema.fields.contains { $0.id == "username" || $0.id == "password" })
     }
 
     /// A stored WebDAV session must build a runtime config from the Keychain
