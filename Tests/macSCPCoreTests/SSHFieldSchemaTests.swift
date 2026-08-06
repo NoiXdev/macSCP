@@ -130,17 +130,41 @@ struct SSHFieldSchemaTests {
         #expect(Set(leaves.map(\.id)) == Set(SSHJumpField.allCases.map(\.rawValue)))
     }
 
-    /// The secret belongs to the credential schema — the same split S3 and
+    /// Both secrets belong to the credential schema — the same split S3 and
     /// WebDAV got. The jump's own password leaf is not covered by this: a
     /// nested login has no second credential schema to live in.
-    @Test func theSecretLivesInTheCredentialSchemaOnly() {
+    @Test func theSecretsLiveInTheCredentialSchemaOnly() {
         let descriptor = BackendDescriptor.descriptor(for: .ssh)
-        #expect(descriptor.credentialSchema.fields.contains {
-            $0.id == SSHField.password.rawValue && $0.isSecret
-        })
-        #expect(!descriptor.connectionSchema.fields.contains {
-            $0.id == SSHField.password.rawValue
-        })
+        for secret in [SSHField.password, SSHField.passphrase] {
+            #expect(descriptor.credentialSchema.fields.contains {
+                $0.id == secret.rawValue && $0.isSecret
+            })
+            #expect(!descriptor.connectionSchema.fields.contains {
+                $0.id == secret.rawValue
+            })
+        }
+    }
+
+    /// The secret is two DIFFERENT fields, not one slot with two meanings —
+    /// which is what the login-set editor has rendered since M10d: a password
+    /// row, a passphrase row, and under `.agent` no secret row at all
+    /// (spec §5.2). Exercised through the real visibility filter.
+    @Test(arguments: [
+        (StoredSession.AuthKind.password, [SSHField.password]),
+        (.privateKey, [SSHField.passphrase]),
+        (.agent, []),
+    ])
+    func theCredentialSchemaShowsTheRightSecretPerAuthKind(
+        kind: StoredSession.AuthKind, expected: [SSHField]
+    ) {
+        var values = FieldValues()
+        values[SSHField.authKind] = kind.rawValue
+        let visible = SSHFieldSchema.credential
+            .visibleFields(in: values, namespace: SSHField.namespace)
+        let secrets = visible.filter(\.isSecret).map(\.id)
+        #expect(secrets == expected.map(\.rawValue))
+        // The auth kind itself is always askable, whatever it is.
+        #expect(visible.contains { $0.id == SSHField.authKind.rawValue })
     }
 
     @Test func valuesRoundTripThroughTheStoredSession() {
