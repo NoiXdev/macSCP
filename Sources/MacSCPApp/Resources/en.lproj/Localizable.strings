@@ -554,11 +554,7 @@
 "loginSets.editor.titleNew" = "New login";
 "loginSets.editor.titleEdit" = "Edit login";
 "loginSets.editor.name" = "Name";
-"loginSets.editor.username" = "Username";
 "loginSets.editor.kind" = "Type";
-"loginSets.editor.accessKeyID" = "Access Key ID";
-"loginSets.editor.secretAccessKey" = "Secret Access Key";
-"loginSets.editor.keepSecret" = "leave empty to keep";
 "loginSets.missingSet" = "The stored login for this connection was not found. Choose a login or enter credentials.";
 "loginSets.badge.key" = "KEY";
 "loginSets.badge.pass" = "PASS";

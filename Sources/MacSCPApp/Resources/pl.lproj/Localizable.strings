@@ -557,11 +557,7 @@
 "loginSets.editor.titleNew" = "Nowy login";
 "loginSets.editor.titleEdit" = "Edytuj login";
 "loginSets.editor.name" = "Nazwa";
-"loginSets.editor.username" = "Nazwa użytkownika";
 "loginSets.editor.kind" = "Typ";
-"loginSets.editor.accessKeyID" = "Access Key ID";
-"loginSets.editor.secretAccessKey" = "Tajny klucz dostępu";
-"loginSets.editor.keepSecret" = "pozostaw puste, aby zachować";
 "loginSets.missingSet" = "Nie znaleziono zapisanego loginu dla tego połączenia. Wybierz login lub wprowadź dane uwierzytelniające.";
 "loginSets.badge.key" = "KLUCZ";
 "loginSets.badge.pass" = "HASŁO";
