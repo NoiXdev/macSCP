@@ -153,4 +153,12 @@ public enum S3FieldSchema {
             endpoint: values[S3Field.endpoint], bucket: values[S3Field.bucket],
             usePathStyle: values[bool: S3Field.usePathStyle])
     }
+
+    /// Writes ONLY the fields `S3Field` covers, mirroring
+    /// `SSHFieldSchema.apply(_:to:)`. `StoredSession` carries group, login-set
+    /// binding and the other backends' blocks; rebuilding it from these values
+    /// would silently drop them.
+    public static func apply(_ values: FieldValues, to session: inout StoredSession) {
+        session.s3 = stored(from: values)
+    }
 }

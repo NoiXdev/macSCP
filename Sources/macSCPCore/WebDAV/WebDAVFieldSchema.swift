@@ -139,4 +139,10 @@ public enum WebDAVFieldSchema {
             baseURL: values[WebDAVField.baseURL], username: values[WebDAVField.username],
             useNextcloudPath: values[bool: WebDAVField.useNextcloudPath])
     }
+
+    /// Writes ONLY the fields `WebDAVField` covers — same contract as
+    /// `SSHFieldSchema.apply(_:to:)` and `S3FieldSchema.apply(_:to:)`.
+    public static func apply(_ values: FieldValues, to session: inout StoredSession) {
+        session.webdav = stored(from: values)
+    }
 }
