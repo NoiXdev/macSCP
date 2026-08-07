@@ -753,7 +753,19 @@ public final class SessionListViewModel {
             // An `.s3` session's secret travels via `s3SecretAccessKey`
             // below instead (same keychain slot, different export field) --
             // skip here so it isn't fetched/counted twice.
-            if includePasswords, authKind != .agent, session.kind != .s3 {
+            // `session.kind != .s3` and `session.kind != .webdav ||
+            // session.webdav != nil` guard the same hazard from two sides:
+            // an `.s3` session's secret is fetched below instead (never
+            // here), and a BLOCKLESS `.webdav` session names no server, so
+            // fetching a secret for it would count it in the user-visible
+            // "N passwords missing" total and, on import, leave an orphan
+            // Keychain slot for a session with no WebDAV block at all --
+            // exactly the hazard the `.s3` guard below was restored to
+            // prevent (M23/P3 fix round 1). An `.ssh`/set-bound session with
+            // no resolved login still falls through to a real lookup, same
+            // as before.
+            if includePasswords, authKind != .agent, session.kind != .s3,
+                session.kind != .webdav || session.webdav != nil {
                 password = resolved != nil ? resolved?.secret : self.password(for: session)
                 if password == nil {
                     missingPasswordCount += 1
@@ -777,10 +789,10 @@ public final class SessionListViewModel {
             // unreported side effect of collapsing the columns; it is restored
             // deliberately.
             //
-            // The `password` branch above has no matching `session.webdav !=
-            // nil` check, so a blockless `.webdav` session is still fetched and
-            // counted. That asymmetry predates this milestone and is left
-            // alone here rather than widened by a drive-by change.
+            // The `password` branch above carries the matching
+            // `session.webdav != nil` guard for the same reason, so a
+            // blockless `.webdav` session is no longer fetched or counted
+            // either -- the two backends are symmetric here.
             if session.kind == .s3, session.s3 != nil, includePasswords {
                 s3SecretAccessKey = resolved != nil ? resolved?.secret : self.password(for: session)
                 if s3SecretAccessKey == nil {
