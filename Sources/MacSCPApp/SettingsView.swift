@@ -14,6 +14,7 @@ enum SettingsSection: Hashable {
     case terminal
     case shortcuts
     case cli
+    case manageData
     case ssh
     case s3
 
@@ -26,6 +27,7 @@ enum SettingsSection: Hashable {
         case .terminal: return L10n.string("settings.tab.terminal", "Terminal")
         case .shortcuts: return L10n.string("settings.tab.shortcuts", "Shortcuts")
         case .cli: return L10n.string("settings.section.cli", "Command Line")
+        case .manageData: return L10n.string("settings.section.manageData", "Manage Data")
         case .ssh: return L10n.string("settings.section.ssh", "SSH")
         case .s3: return L10n.string("settings.section.s3", "S3")
         }
@@ -40,6 +42,7 @@ enum SettingsSection: Hashable {
         case .terminal: return "terminal"
         case .shortcuts: return "keyboard"
         case .cli: return "chevron.left.forwardslash.chevron.right"
+        case .manageData: return "archivebox"
         case .ssh: return "key"
         case .s3: return "cloud"
         }
@@ -54,12 +57,14 @@ enum SettingsSection: Hashable {
 /// `struct`: "General" (M7a/T4, split from the former "General" tab in
 /// M18/T7), "View" (the other half of that split), "Transfers", "Open with"
 /// (M5e/T2), "Terminal" (M9d), a read-only "Shortcuts" overview (M11q),
-/// "Command Line" (the `macscp-cli` shortcut installer), and two
-/// protocol-specific sections grouped under "Protocols" — "SSH" and "S3"
-/// (M18/T7). The former tab-bar layout and its "SSH Keys" tab (M17/T4) are
-/// gone; key management now lives entirely in the standalone `SSHKeysSheet`
-/// (M18/T5), reachable from the Sessions menu, the connection form's "Manage
-/// keys…" link, and this window's "SSH" section.
+/// "Command Line" (the `macscp-cli` shortcut installer), "Manage Data" (the
+/// five management overlays in one list), and two protocol-specific sections
+/// grouped under "Protocols" — "SSH" and "S3" (M18/T7). The former tab-bar
+/// layout and its "SSH Keys" tab (M17/T4) are gone; key management now lives
+/// entirely in the standalone `SSHKeysSheet` (M18/T5), reachable from the
+/// Sessions menu, the connection form's "Manage keys…" link, and this
+/// window's "Manage Data" section (it left the "SSH" section when that
+/// section was created).
 struct SettingsView: View {
     var store: SettingsStore
     /// App-global update-check state (M11h/T2) — same `UpdateCheckModel`
@@ -73,6 +78,11 @@ struct SettingsView: View {
     /// compares it against the live `store.selectedLanguage` to decide
     /// whether to show the relaunch button.
     var launchLanguage: AppLanguage
+    /// Command bridge to the main window (M8a/T4), threaded through for the
+    /// "Manage Data" section only: two of its five entries must reach the
+    /// sheets the main window already presents rather than open a second
+    /// copy here (see `ManageDataSettingsSection`).
+    var tabCommands: TabCommands
 
     @State private var selection: SettingsSection? = .general
 
@@ -82,7 +92,7 @@ struct SettingsView: View {
                 ForEach(
                     [
                         SettingsSection.general, .appearance, .transfers,
-                        .openWith, .terminal, .shortcuts, .cli,
+                        .openWith, .terminal, .shortcuts, .cli, .manageData,
                     ], id: \.self
                 ) { section in
                     Label(section.title, systemImage: section.systemImage)
@@ -119,6 +129,8 @@ struct SettingsView: View {
                     ShortcutsSettingsTab()
                 case .cli:
                     CLISettingsSection()
+                case .manageData:
+                    ManageDataSettingsSection(tabCommands: tabCommands)
                 case .ssh:
                     SSHSettingsSection(store: store)
                 case .s3:
@@ -753,21 +765,20 @@ private struct ShortcutsSettingsTab: View {
 }
 
 /// The "SSH" protocol section (M18/T7): the external-terminal target picker
-/// (moved out of the former "Terminal" tab) plus a link into managed-key
-/// administration. The "Manage keys…" button opens `SSHKeysSheet` as a
-/// locally presented sheet — the same pattern `ConnectionFormView`'s
-/// "Manage keys…" link uses (`@State` flag + `.sheet(isPresented:)`;
-/// `SSHKeysSheet` needs no injected `store`, it builds its own
-/// `ManagedKeyStore` internally).
+/// (moved out of the former "Terminal" tab).
+///
+/// It used to carry a second, one-button section linking to `SSHKeysSheet`;
+/// that link moved to "Manage Data", which gathers all five management
+/// overlays in one list. What is left here is a single setting — worth
+/// knowing before adding to it, since a one-setting section under
+/// "Protocols" is thin, and the section would be empty if that setting ever
+/// moved too.
 private struct SSHSettingsSection: View {
     @Bindable var store: SettingsStore
     /// Drives the custom-terminal-app picker (M11d/T2) — same
     /// `.fileImporter` pattern as `OpenWithSettingsTab`'s default-editor
     /// picker.
     @State private var showCustomAppPicker = false
-    /// Drives the SSH-keys management sheet — same pattern as
-    /// `ConnectionFormView.showSSHKeysSheet`.
-    @State private var showSSHKeysSheet = false
 
     /// Display name for `store.customTerminalAppPath`, or a placeholder when
     /// none is chosen yet — same idea as `OpenWithSettingsTab.appDisplayName`
@@ -834,16 +845,6 @@ private struct SSHSettingsSection: View {
                 }
                 .foregroundStyle(.secondary)
             }
-
-            // Key management (M18/T7): opens the standalone `SSHKeysSheet`
-            // (M18/T5) — the same sheet reachable from the Sessions menu and
-            // the connection form's "Manage keys…" link, so there is exactly
-            // one place key administration lives.
-            Section {
-                Button(L10n.string("keys.picker.manage", "Manage keys…")) {
-                    showSSHKeysSheet = true
-                }
-            }
         }
         .formStyle(.grouped)
         .padding()
@@ -854,8 +855,104 @@ private struct SSHSettingsSection: View {
             guard case .success(let url) = result else { return }
             store.customTerminalAppPath = url.path(percentEncoded: false)
         }
+    }
+}
+
+/// The "Manage Data" section: one list of shortcuts to the five management
+/// overlays, which were previously split between the Sessions menu (all
+/// five) and the "SSH" section (keys only). The Sessions menu keeps every
+/// entry it had, ⇧⌘K/⇧⌘L included — this is a second door, not a
+/// replacement.
+///
+/// Three of the five open HERE, as sheets on the Settings window, the way
+/// `SSHKeysSheet` already did from the "SSH" section: `SSHKeysSheet`,
+/// `KnownHostsSheet` and `ServerCertificatesSheet` each build their own
+/// store over a fixed directory and the main window derives no displayed
+/// state from any of them, so a copy in this window cannot leave the other
+/// one stale.
+///
+/// The other two — logins and hidden imports — are NOT presented here. They
+/// edit state the main window's sidebar is a live view of, and a sheet in
+/// this window is modal only to this window, so the main window would stay
+/// clickable next to a stale sidebar. Both route through `TabCommands` to the
+/// main window's own presentation of the same sheet instead, which keeps the
+/// existing view model and refresh wiring intact; see
+/// `ContentView.presentLoginSetsFromSettings()` for the full reasoning.
+///
+/// The per-session audit log is deliberately absent: `AuditLogSheet` takes a
+/// `StoredSession` and is opened from that session's sidebar row. There is no
+/// all-sessions audit view for a global list to link to, and inventing a
+/// session picker here would be a new feature, not a shortcut.
+private struct ManageDataSettingsSection: View {
+    var tabCommands: TabCommands
+    /// The three self-contained overlays this window presents itself — same
+    /// `@State` flag + `.sheet(isPresented:)` pattern the "SSH" section used
+    /// for keys before this section existed.
+    @State private var showSSHKeysSheet = false
+    @State private var showKnownHostsSheet = false
+    @State private var showServerCertificatesSheet = false
+
+    var body: some View {
+        Form {
+            Section {
+                Button {
+                    showSSHKeysSheet = true
+                } label: {
+                    Label(L10n.string("menu.sshKeys", "SSH Keys…"), systemImage: "key")
+                }
+                Button {
+                    tabCommands.showLoginsFromSettings?()
+                } label: {
+                    Label(
+                        L10n.string("menu.logins", "Logins…"),
+                        systemImage: "person.badge.key")
+                }
+                Button {
+                    showKnownHostsSheet = true
+                } label: {
+                    Label(
+                        L10n.string("menu.knownHosts", "Known Hosts…"),
+                        systemImage: "lock.shield")
+                }
+                Button {
+                    showServerCertificatesSheet = true
+                } label: {
+                    Label(
+                        L10n.string("menu.serverCertificates", "Server Certificates…"),
+                        systemImage: "checkmark.seal")
+                }
+                Button {
+                    tabCommands.showHiddenImportsFromSettings?()
+                } label: {
+                    // Same count-suffixed title as the Sessions-menu entry,
+                    // from the same helper — the count is the only signal
+                    // that anything is hidden at all.
+                    Label(
+                        hiddenImportsMenuTitle(count: tabCommands.hiddenImportsCount),
+                        systemImage: "eye.slash")
+                }
+            } footer: {
+                // Says where the last two land BEFORE the window changes
+                // under the user, which is the one surprising thing about
+                // this list.
+                Text(L10n.string(
+                    "settings.manageData.footer",
+                    "Logins and hidden imports open in the main window — the session list "
+                        + "there is a live view of them."))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
         .sheet(isPresented: $showSSHKeysSheet) {
             SSHKeysSheet()
+        }
+        .sheet(isPresented: $showKnownHostsSheet) {
+            KnownHostsSheet(store: KnownHostsStore(directory: SessionStore.defaultDirectory))
+        }
+        .sheet(isPresented: $showServerCertificatesSheet) {
+            ServerCertificatesSheet(
+                store: TrustedCertificateStore(directory: SessionStore.defaultDirectory))
         }
     }
 }

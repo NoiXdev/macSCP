@@ -34,6 +34,18 @@ final class TabCommands {
     /// `showKnownHosts`/`showLogins`/`showHiddenImports` above, opens the
     /// SSH-key management sheet (replaces the M17 Settings tab).
     var showSSHKeys: (() -> Void)?
+    /// Settings-window route to the login-sets sheet ("Manage Data" section).
+    ///
+    /// Deliberately a SEPARATE closure from `showLogins` above, and the only
+    /// pair in this bridge whose `ContentView` end carries NO key-window
+    /// guard: the Settings window is the key window when this fires, so the
+    /// guard would turn it into a no-op. It exists at all because Settings
+    /// must not present its own copy of `LoginSetsSheet` — see the wiring
+    /// comment in `ContentView.performWindowSetup()` for the exact hazard.
+    var showLoginsFromSettings: (() -> Void)?
+    /// Settings-window route to the hidden-imports sheet — same shape and
+    /// same reason as `showLoginsFromSettings` above.
+    var showHiddenImportsFromSettings: (() -> Void)?
     /// Mirrors `ContentView`'s `hiddenImportAliases.count` (M11f/T2, same
     /// rationale as `isActiveTabConnected` below): the "Hidden Imports…"
     /// menu title's count suffix needs this observed value since `MacSCPApp`
@@ -287,10 +299,13 @@ struct MacSCPApp: App {
         // `updateModel` passed through (M11h/T2) so the General tab's "Check
         // Now" button can drive the SAME `UpdateCheckModel` instance as the
         // app-menu item above — one shared `isChecking`/`presentedResult`,
-        // not a second check path.
+        // not a second check path. `tabCommands` passed through for the
+        // "Manage Data" section's two window-scoped entries (logins, hidden
+        // imports), which reach the main window's sheets instead of opening
+        // a second copy of their own.
         Settings {
             SettingsView(store: settingsStore, updateModel: updateModel,
-                         launchLanguage: launchLanguage)
+                         launchLanguage: launchLanguage, tabCommands: tabCommands)
                 .tint(DesignTokens.remoteBlue)
         }
 

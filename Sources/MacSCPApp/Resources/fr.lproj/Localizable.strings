@@ -16,6 +16,8 @@
 /* Réglages — Titres des sections de la barre latérale (M18/T7) */
 "settings.section.appearance" = "Affichage";
 "settings.section.protocols" = "Protocoles";
+"settings.section.manageData" = "Gérer les données";
+"settings.manageData.footer" = "Les logins et les imports masqués s’ouvrent dans la fenêtre principale — la liste des sessions y est mise à jour en direct.";
 "settings.section.ssh" = "SSH";
 "settings.section.s3" = "S3";
 
