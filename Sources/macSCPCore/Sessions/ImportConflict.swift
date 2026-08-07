@@ -27,10 +27,17 @@ public struct ImportConflict: Equatable, Sendable {
     /// produces which case.
     public var reason: Reason
 
-    /// Defaults to `.name` so call sites that only exercise the arbiter's
-    /// own mechanics (asking, stickiness, cancellation — none of which reads
-    /// `reason`) do not have to spell one out.
-    public init(itemName: String, kindLabel: String, reason: Reason = .name) {
+    /// No default — a caller must decide which it is, the same rule
+    /// `ConnectionFieldSchema.firstViolation(in:namespace:requireSecrets:)`
+    /// already settles in this layer. A default would silently answer the
+    /// exact question this type exists to make explicit, and `.name` — the
+    /// only value that could plausibly serve as one — is the WRONG answer
+    /// for `SessionImportPlanner`'s conflicts: the shape of the very defect
+    /// this type fixes. Call sites that only exercise arbiter mechanics
+    /// (asking, stickiness, cancellation) and never read `reason` still
+    /// pass one; the compiler cannot otherwise tell them apart from a real
+    /// conflict.
+    public init(itemName: String, kindLabel: String, reason: Reason) {
         self.itemName = itemName
         self.kindLabel = kindLabel
         self.reason = reason

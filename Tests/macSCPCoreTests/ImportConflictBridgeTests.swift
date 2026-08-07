@@ -185,13 +185,13 @@ struct ImportConflictBridgeTests {
     @Test func aSecondAskResolvesTheStrandedFirstContinuation() async {
         let bridge = ImportConflictBridge()
         let first = Task {
-            await bridge.ask(ImportConflict(itemName: "first", kindLabel: "session"))
+            await bridge.ask(ImportConflict(itemName: "first", kindLabel: "session", reason: .name))
         }
         _ = await awaitPrompt(bridge)
         #expect(bridge.currentPrompt?.conflict.itemName == "first")
 
         let second = Task {
-            await bridge.ask(ImportConflict(itemName: "second", kindLabel: "session"))
+            await bridge.ask(ImportConflict(itemName: "second", kindLabel: "session", reason: .name))
         }
         // Let the second `ask` run far enough to strand-resolve the first
         // and install its own prompt.

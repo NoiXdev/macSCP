@@ -118,15 +118,20 @@ public enum SessionImportPlanner {
         // and the keys already accepted earlier in this same file. Only the
         // HANDLING changed in M19: a duplicate is put to the arbiter instead
         // of being dropped.
-        var seenKeys = Set(existing.map { duplicateKey(for: $0) })
-        // Parallel to `seenKeys`, and grown at the exact same site below: the
-        // display summary of whichever session — stored, or the first
-        // incoming one accepted under a given key — established that key.
-        // Feeds a `.sameConnection` conflict's `existing` string (M23/P3 T3)
-        // without a second lookup. Ties within `existing` itself (two stored
-        // sessions that already share a connection identity) keep the first
-        // one encountered; which of two identical connections gets named is
-        // not a decision this planner needs to make well, only reproducibly.
+        // ONE map doing the job `seenKeys: Set<String>` used to do alone: its
+        // keys are membership (what `seenKeys.contains` used to answer), its
+        // values are the display summary of whichever session — stored, or
+        // the first incoming one accepted under a given key — established
+        // that key. Merged into one collection, rather than a `Set` plus a
+        // parallel `[String: String]`, so a `.sameConnection` conflict's
+        // `existing` string (M23/P3 T3) comes out of the SAME lookup that
+        // proves the collision, and cannot be missing by construction: there
+        // is no second collection to fall out of sync with the first, so no
+        // fallback value is needed below. Ties within `existing` itself (two
+        // stored sessions that already share a connection identity) keep the
+        // first one encountered; which of two identical connections gets
+        // named is not a decision this planner needs to make well, only
+        // reproducibly.
         var summaryByKey: [String: String] = Dictionary(
             existing.map { (duplicateKey(for: $0), displaySummary(for: $0)) },
             uniquingKeysWith: { first, _ in first })
@@ -156,8 +161,7 @@ public enum SessionImportPlanner {
             let trimmedName = fileSession.name.trimmingCharacters(in: .whitespacesAndNewlines)
             let resolvedGroupID = fileSession.groupID.flatMap { groupIDMap[$0] }
 
-            guard seenKeys.contains(key) else {
-                seenKeys.insert(key)
+            guard let collidingSummary = summaryByKey[key] else {
                 summaryByKey[key] = displaySummary(for: fileSession)
                 takenNames.insert(normalizedName(trimmedName))
                 sessionsToImport.append(makePlanned(
@@ -167,17 +171,17 @@ public enum SessionImportPlanner {
 
             guard let resolution = await arbiter.resolve(
                 // A session collides on the CONNECTION, not the name — unlike
-                // a login set. `existing` names whatever established `key`
-                // (a stored session, or an earlier session from this same
-                // file), so the user can tell which of their connections is
-                // about to be replaced, never the incoming item's own name
-                // (M23/P3 T3). `key` is always in `summaryByKey`: the two
-                // collections grow at the one site above and nowhere else,
-                // so the fallback below is unreachable defensive code, not a
-                // real second story.
+                // a login set. `collidingSummary` — bound by the `guard let`
+                // above, the same lookup that proves `key` already collides —
+                // names whatever established it: a stored session, or an
+                // earlier session from this same file. So the user can tell
+                // which of their connections is about to be replaced, never
+                // the incoming item's own name (M23/P3 T3). No fallback
+                // value is possible here, let alone needed: this branch only
+                // runs when the lookup above already succeeded.
                 ImportConflict(
                     itemName: trimmedName, kindLabel: kindLabel,
-                    reason: .sameConnection(existing: summaryByKey[key] ?? displaySummary(for: fileSession)))
+                    reason: .sameConnection(existing: collidingSummary))
             ) else {
                 // Cancellation applies nothing at all — not the items already
                 // accepted earlier in this run, and therefore no groups
