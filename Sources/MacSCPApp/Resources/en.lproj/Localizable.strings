@@ -15,7 +15,8 @@
 "settings.section.appearance" = "View";
 "settings.section.protocols" = "Protocols";
 "settings.section.manageData" = "Manage Data";
-"settings.manageData.footer" = "Logins and hidden imports open in the main window — the session list there is a live view of them.";
+"settings.manageData.footer" = "Logins, server certificates and hidden imports open in the main window, where the state they change belongs.";
+"settings.manageData.needsMainWindow" = "They are unavailable while no main window is open.";
 "settings.section.ssh" = "SSH";
 "settings.section.s3" = "S3";
 

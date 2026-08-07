@@ -17,7 +17,8 @@
 "settings.section.appearance" = "Affichage";
 "settings.section.protocols" = "Protocoles";
 "settings.section.manageData" = "Gérer les données";
-"settings.manageData.footer" = "Les logins et les imports masqués s’ouvrent dans la fenêtre principale — la liste des sessions y est mise à jour en direct.";
+"settings.manageData.footer" = "Les logins, les certificats serveur et les imports masqués s’ouvrent dans la fenêtre principale, où réside l’état qu’ils modifient.";
+"settings.manageData.needsMainWindow" = "Ils sont indisponibles tant qu’aucune fenêtre principale n’est ouverte.";
 "settings.section.ssh" = "SSH";
 "settings.section.s3" = "S3";
 

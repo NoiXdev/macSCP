@@ -15,7 +15,8 @@
 "settings.section.appearance" = "Ansicht";
 "settings.section.protocols" = "Protokolle";
 "settings.section.manageData" = "Daten verwalten";
-"settings.manageData.footer" = "Logins und ausgeblendete Importe öffnen sich im Hauptfenster — die Sitzungsliste dort zeigt sie live an.";
+"settings.manageData.footer" = "Logins, Server-Zertifikate und ausgeblendete Importe öffnen sich im Hauptfenster — dort gehört der Zustand hin, den sie ändern.";
+"settings.manageData.needsMainWindow" = "Sie sind nicht verfügbar, solange kein Hauptfenster geöffnet ist.";
 "settings.section.ssh" = "SSH";
 "settings.section.s3" = "S3";
 

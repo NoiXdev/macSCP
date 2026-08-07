@@ -17,7 +17,8 @@
 "settings.section.appearance" = "Widok";
 "settings.section.protocols" = "Protokoły";
 "settings.section.manageData" = "Zarządzaj danymi";
-"settings.manageData.footer" = "Loginy i ukryte importy otwierają się w oknie głównym — lista sesji pokazuje je na bieżąco.";
+"settings.manageData.footer" = "Loginy, certyfikaty serwera i ukryte importy otwierają się w oknie głównym — tam należy stan, który zmieniają.";
+"settings.manageData.needsMainWindow" = "Są niedostępne, dopóki nie jest otwarte okno główne.";
 "settings.section.ssh" = "SSH";
 "settings.section.s3" = "S3";
 

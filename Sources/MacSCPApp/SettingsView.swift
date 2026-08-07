@@ -864,20 +864,32 @@ private struct SSHSettingsSection: View {
 /// entry it had, ⇧⌘K/⇧⌘L included — this is a second door, not a
 /// replacement.
 ///
-/// Three of the five open HERE, as sheets on the Settings window, the way
-/// `SSHKeysSheet` already did from the "SSH" section: `SSHKeysSheet`,
-/// `KnownHostsSheet` and `ServerCertificatesSheet` each build their own
-/// store over a fixed directory and the main window derives no displayed
-/// state from any of them, so a copy in this window cannot leave the other
-/// one stale.
+/// Two of the five open HERE, as sheets on the Settings window, the way
+/// `SSHKeysSheet` already did from the "SSH" section. `KnownHostsSheet`
+/// builds its own `KnownHostsStore` over a fixed directory — a stateless
+/// read-modify-write struct addressed by `(host, port)`, rebuilt on every
+/// connect — and the main window shows nothing derived from it, so a copy
+/// here cannot leave the other window stale. `SSHKeysSheet` is presented
+/// here because it always has been (this section only inherited it from the
+/// "SSH" section); note that the connection form's key picker
+/// (`ConnectionFormView.connectableManagedKeys()`) IS derived state, so
+/// deleting a key here can leave an open form holding a dead
+/// `managedKeyID` — pre-existing behaviour, unchanged by this section.
 ///
-/// The other two — logins and hidden imports — are NOT presented here. They
-/// edit state the main window's sidebar is a live view of, and a sheet in
-/// this window is modal only to this window, so the main window would stay
-/// clickable next to a stale sidebar. Both route through `TabCommands` to the
-/// main window's own presentation of the same sheet instead, which keeps the
-/// existing view model and refresh wiring intact; see
-/// `ContentView.presentLoginSetsFromSettings()` for the full reasoning.
+/// The other three — logins, server certificates and hidden imports — are
+/// NOT presented here; they route through `TabCommands` to the main window's
+/// own presentation of the same sheet, which keeps the existing view model
+/// and refresh wiring intact. Logins and hidden imports edit state the main
+/// window's sidebar is a live view of, and a sheet in THIS window is modal
+/// only to THIS window, so the main window would stay clickable next to a
+/// stale sidebar. Server certificates are routed for the trust decision
+/// rather than the data. See `ContentView.presentLoginSetsFromSettings()`
+/// and `presentServerCertificatesFromSettings()` for the full reasoning.
+///
+/// Those three are `.disabled` while no main window is on screen
+/// (`TabCommands.hasMainWindow`): they have nowhere to go then, and a row
+/// that swallows a click is worse here than in the Sessions menu, where the
+/// user is at least standing in a window.
 ///
 /// The per-session audit log is deliberately absent: `AuditLogSheet` takes a
 /// `StoredSession` and is opened from that session's sidebar row. There is no
@@ -885,12 +897,11 @@ private struct SSHSettingsSection: View {
 /// session picker here would be a new feature, not a shortcut.
 private struct ManageDataSettingsSection: View {
     var tabCommands: TabCommands
-    /// The three self-contained overlays this window presents itself — same
-    /// `@State` flag + `.sheet(isPresented:)` pattern the "SSH" section used
-    /// for keys before this section existed.
+    /// The two overlays this window presents itself — same `@State` flag +
+    /// `.sheet(isPresented:)` pattern the "SSH" section used for keys before
+    /// this section existed.
     @State private var showSSHKeysSheet = false
     @State private var showKnownHostsSheet = false
-    @State private var showServerCertificatesSheet = false
 
     var body: some View {
         Form {
@@ -907,6 +918,7 @@ private struct ManageDataSettingsSection: View {
                         L10n.string("menu.logins", "Logins…"),
                         systemImage: "person.badge.key")
                 }
+                .disabled(!tabCommands.hasMainWindow)
                 Button {
                     showKnownHostsSheet = true
                 } label: {
@@ -915,12 +927,13 @@ private struct ManageDataSettingsSection: View {
                         systemImage: "lock.shield")
                 }
                 Button {
-                    showServerCertificatesSheet = true
+                    tabCommands.showServerCertificatesFromSettings?()
                 } label: {
                     Label(
                         L10n.string("menu.serverCertificates", "Server Certificates…"),
                         systemImage: "checkmark.seal")
                 }
+                .disabled(!tabCommands.hasMainWindow)
                 Button {
                     tabCommands.showHiddenImportsFromSettings?()
                 } label: {
@@ -931,15 +944,25 @@ private struct ManageDataSettingsSection: View {
                         hiddenImportsMenuTitle(count: tabCommands.hiddenImportsCount),
                         systemImage: "eye.slash")
                 }
+                .disabled(!tabCommands.hasMainWindow)
             } footer: {
-                // Says where the last two land BEFORE the window changes
-                // under the user, which is the one surprising thing about
-                // this list.
-                Text(L10n.string(
-                    "settings.manageData.footer",
-                    "Logins and hidden imports open in the main window — the session list "
-                        + "there is a live view of them."))
-                    .foregroundStyle(.secondary)
+                // Two lines, the second only when it applies: where the
+                // routed entries land, said BEFORE the window changes under
+                // the user, and — when they are greyed out — why. A disabled
+                // row shows no tooltip, so this footer is the only place that
+                // explanation can live.
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(L10n.string(
+                        "settings.manageData.footer",
+                        "Logins, server certificates and hidden imports open in the main "
+                            + "window, where the state they change belongs."))
+                    if !tabCommands.hasMainWindow {
+                        Text(L10n.string(
+                            "settings.manageData.needsMainWindow",
+                            "They are unavailable while no main window is open."))
+                    }
+                }
+                .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -949,10 +972,6 @@ private struct ManageDataSettingsSection: View {
         }
         .sheet(isPresented: $showKnownHostsSheet) {
             KnownHostsSheet(store: KnownHostsStore(directory: SessionStore.defaultDirectory))
-        }
-        .sheet(isPresented: $showServerCertificatesSheet) {
-            ServerCertificatesSheet(
-                store: TrustedCertificateStore(directory: SessionStore.defaultDirectory))
         }
     }
 }
