@@ -148,6 +148,19 @@ public struct BackendDescriptor: Sendable {
         }
     }
 
+    /// The first rule these values break across BOTH of this backend's
+    /// schemas (M23) — connection fields first, then credentials, which is the
+    /// order the form renders them in, so the reported field is the topmost
+    /// offending row rather than an arbitrary one.
+    public func firstViolation(
+        in values: FieldValues, requireSecrets: Bool
+    ) -> (messageKey: String, fieldKey: String)? {
+        connectionSchema.firstViolation(
+            in: values, namespace: fieldNamespace, requireSecrets: requireSecrets)
+            ?? credentialSchema.firstViolation(
+                in: values, namespace: fieldNamespace, requireSecrets: requireSecrets)
+    }
+
     static let sshDescriptor = BackendDescriptor(
         kind: .ssh,
         capabilities: ProtocolCapabilities(
