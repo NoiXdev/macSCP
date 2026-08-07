@@ -78,6 +78,20 @@ public struct LeafField: Sendable, Equatable, Identifiable {
 
 /// Evaluates a field's visibility condition. Pure, so the rule is provable
 /// without a view.
+///
+/// `namespace` is the owning backend's enum type name — the same qualifier
+/// `FieldValues` stores keys under. Both production call sites
+/// (`ConnectionFieldSchema.visibleFields` and `.visibleLeaves`) always pass
+/// one; the default exists for a schema evaluated standalone, and only
+/// `FieldVisibilityTests` takes it today.
+///
+/// PRECONDITION on the nil case: at most ONE key in `values` may end in the
+/// condition's field name. Two backends' same-named fields sharing one
+/// `FieldValues` make the suffix match pick whichever the dictionary yields
+/// first, and `Dictionary` iteration order is unspecified — the answer is
+/// then arbitrary, not merely surprising. The default is kept rather than
+/// deleted because the standalone case is real and the constraint holds
+/// wherever it is used; no type can express it, so it is stated here instead.
 public enum FieldVisibility {
     public static func isVisible(
         _ field: ConnectionField, in values: FieldValues, namespace: String? = nil
@@ -102,8 +116,9 @@ public enum FieldVisibility {
             actual = values.raw["\(namespace).\(condition.field)"]
         } else {
             // No namespace given — match the one key ending in this field
-            // name. Callers inside a backend always pass the namespace; this
-            // branch exists for tests and for a schema rendered standalone.
+            // name, which is only well defined while the type-level
+            // precondition holds (see `FieldVisibility`'s own doc comment):
+            // with two matches this picks an arbitrary one.
             actual = values.raw.first { $0.key.hasSuffix(".\(condition.field)") }?.value
         }
         return actual == condition.equals
