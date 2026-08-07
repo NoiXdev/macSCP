@@ -296,76 +296,87 @@ public enum SessionImportPlanner {
             replacesExisting: replacesExisting)
     }
 
-    /// What makes two sessions "the same connection" for import purposes,
-    /// per backend.
+    /// What makes two sessions "the same connection" for import purposes.
+    ///
+    /// WHICH fields answer that is DECLARED by each backend since M23/P3
+    /// (`ConnectionField.identity`, collected by
+    /// `BackendDescriptor.identifyingFields`), not decided here. This function
+    /// used to hold a `switch kind` of its own — the last compile-forcing
+    /// `ConnectionKind` site outside the backend registry — and every rule
+    /// below is now carried by a declaration next to the field it is about,
+    /// rather than by an arm somebody has to remember to add.
+    ///
+    /// The rules the old switch recorded, and where each one now lives:
     ///
     /// `.ssh` keeps the original endpoint triple, byte for byte — SSH import
-    /// semantics must not shift.
+    /// semantics must not shift. `SSHFieldSchema` marks exactly `host`, `port`
+    /// and `username` identifying, and `host` alone as `.caseInsensitive`,
+    /// which is the one case fold this key has ever performed (DNS is
+    /// case-insensitive; a POSIX user name is not).
     ///
-    /// `.s3` and `.webdav` need their own key because they do not HAVE an
-    /// endpoint triple: a session written before M23 stored the literal
-    /// placeholder `host: "unused", port: 22, username: "unused"` there, and
-    /// one written since simply leaves host and user name empty — either way
-    /// the triple carries no identity. Keyed on it,
-    /// every non-SSH session in the world was one and the same duplicate —
-    /// three distinct WebDAV servers in one file collapsed to one import plus
-    /// two silent drops, and an incoming WebDAV session could `Replace` an
-    /// unrelated stored S3 one, taking over its id and destroying it.
+    /// `.s3` and `.webdav` need their own identifying fields because they do
+    /// not HAVE an endpoint triple: a session written before M23 stored the
+    /// literal placeholder `host: "unused", port: 22, username: "unused"`
+    /// there, and one written since simply leaves host and user name empty —
+    /// either way the triple carries no identity. Keyed on it, every non-SSH
+    /// session in the world was one and the same duplicate: three distinct
+    /// WebDAV servers in one file collapsed to one import plus two silent
+    /// drops, and an incoming WebDAV session could `Replace` an unrelated
+    /// stored S3 one, taking over its id and destroying it.
     ///
-    /// The keys are prefixed with the kind, so a `.s3` and a `.webdav` session
-    /// can never share a key even if their remaining parts were to match.
-    /// Values are taken verbatim (no case folding): unlike a host name, a URL
-    /// path and a bucket name are case-sensitive, and the access key ID is an
-    /// opaque credential.
+    /// Keys are prefixed with the kind, so a `.s3` and a `.webdav` session can
+    /// never share one even if their remaining parts were to match.
     ///
-    /// Known limit, unchanged from before this fix: a `.macscp` written by a
-    /// build whose export did not yet carry the `webdav*`/`s3*` columns has
-    /// nothing to key on, so its non-SSH entries all fall back to a constant
-    /// (`"webdav||"`) and still self-collide within that file. That is exactly
-    /// today's behaviour for those old files, not a regression, and it cannot
-    /// be fixed on the import side — the data simply is not in the file.
+    /// Values are taken verbatim, with `host` the single declared exception:
+    /// a URL path and a bucket name are case-sensitive, and an access key ID
+    /// is an opaque credential. Identity is a declared SUBSET of the fields,
+    /// never all of them — S3's `region` and `usePathStyle` are excluded on
+    /// purpose, because two sessions differing only in those are one
+    /// connection reached two ways.
+    ///
+    /// No secret ever enters a key; `BackendDescriptorTests` fails the build
+    /// for a backend that marks one identifying, or that marks none at all.
+    ///
+    /// Known limit, unchanged since before the M23 fix: a `.macscp` written by
+    /// a build whose export did not yet carry the `webdav*`/`s3*` columns has
+    /// nothing to key on, so its non-SSH entries all fall back to the same
+    /// constant (`"webdav||"`) and still self-collide within that file. That is
+    /// exactly today's behaviour for those old files, not a regression, and it
+    /// cannot be fixed on the import side — the data simply is not in the file.
+    private static func duplicateKey(kind: ConnectionKind, values: FieldValues) -> String {
+        let descriptor = BackendDescriptor.descriptor(for: kind)
+        let namespace = descriptor.fieldNamespace
+        var parts: [String] = [kind.rawValue]
+        for field in descriptor.identifyingFields {
+            let raw: String = values.raw["\(namespace).\(field.id)"] ?? ""
+            let identity: FieldIdentity = field.identity ?? .verbatim
+            parts.append(identity.normalized(raw))
+        }
+        return parts.joined(separator: "|")
+    }
+
     private static func duplicateKey(for session: StoredSession) -> String {
-        duplicateKey(
-            kind: session.kind, host: session.host, port: session.port,
-            username: session.username,
-            s3Endpoint: session.s3?.endpoint, s3Bucket: session.s3?.bucket,
-            s3AccessKeyID: session.s3?.accessKeyID,
-            webdavBaseURL: session.webdav?.baseURL, webdavUsername: session.webdav?.username)
+        let kind = session.kind
+        let values = BackendDescriptor.descriptor(for: kind).sessionValues(session)
+        return duplicateKey(kind: kind, values: values)
     }
 
     /// The file-side counterpart of `duplicateKey(for: StoredSession)`. Both
     /// sides must derive the SAME key from the same connection, so they share
-    /// one implementation. A legacy payload without `kind` is `.ssh`, exactly
-    /// as `makePlanned` maps it.
+    /// one implementation — and, since M23/P3, one field vocabulary too: the
+    /// store side arrives through `sessionValues`, the file side through the
+    /// bag the export wrote (a v1 file's columns having been folded into that
+    /// same bag by `decode`). A legacy payload without `kind` is `.ssh`,
+    /// exactly as `makePlanned` maps it.
+    ///
+    /// One deliberate difference from the pre-M23/P3 key: the port is no
+    /// longer re-parsed through `Int` on the way in, so a `.ssh` entry whose
+    /// bag carries NO port at all keys on `""` rather than on the default 22.
+    /// No exporter and no v1 upgrade produces such an entry — both always
+    /// write a canonical port string — and an entry that carries no host
+    /// either is precisely the "nothing to key on" case documented above.
     private static func duplicateKey(for fileSession: ExportedSession) -> String {
-        // Read out of the field bag since M23/P3. `FieldValues` answers an
-        // absent key with "", which is exactly what the `?? ""` on the
-        // column-shaped optionals did, so the derived key is unchanged for
-        // every file — including a v1 one, whose columns `decode` folded into
-        // this same bag.
-        let values = FieldValues(raw: fileSession.fields)
-        return duplicateKey(
-            kind: fileSession.kind ?? .ssh, host: values[SSHField.host],
-            port: Int(values[SSHField.port]) ?? 22, username: values[SSHField.username],
-            s3Endpoint: values[S3Field.endpoint], s3Bucket: values[S3Field.bucket],
-            s3AccessKeyID: values[S3Field.accessKeyID],
-            webdavBaseURL: values[WebDAVField.baseURL],
-            webdavUsername: values[WebDAVField.username])
-    }
-
-    private static func duplicateKey(
-        kind: ConnectionKind, host: String, port: Int, username: String,
-        s3Endpoint: String?, s3Bucket: String?, s3AccessKeyID: String?,
-        webdavBaseURL: String?, webdavUsername: String?
-    ) -> String {
-        switch kind {
-        case .ssh:
-            return "\(host.lowercased())|\(port)|\(username)"
-        case .s3:
-            return "s3|\(s3Endpoint ?? "")|\(s3Bucket ?? "")|\(s3AccessKeyID ?? "")"
-        case .webdav:
-            return "webdav|\(webdavBaseURL ?? "")|\(webdavUsername ?? "")"
-        }
+        duplicateKey(kind: fileSession.kind ?? .ssh, values: FieldValues(raw: fileSession.fields))
     }
 
     private static func normalizedName(_ name: String) -> String {

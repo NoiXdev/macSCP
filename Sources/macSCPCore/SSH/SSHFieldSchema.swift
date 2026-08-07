@@ -88,16 +88,25 @@ public enum SSHFieldSchema {
     /// the chosen set already supplies.
     public static let connection = ConnectionFieldSchema(
         fields: [
+            // `host` and `port` here, plus `username` in the credential
+            // schema, are the endpoint triple the session importer has keyed
+            // duplicates on since M9a — M23/P3 turned that from a `switch
+            // kind` inside `SessionImportPlanner` into this declaration. The
+            // host is the ONE case-folded identity anywhere: DNS is
+            // case-insensitive, so `WEB-01` and `web-01` are one machine.
             ConnectionField(id: SSHField.host.rawValue,
                             labelKey: "connection.field.host",
                             labelDefault: "Host", kind: .text,
                             isRequired: true,
-                            invalidMessageKey: "core.connect.emptyHost"),
+                            invalidMessageKey: "core.connect.emptyHost",
+                            identity: .caseInsensitive),
+            // A bastion reached on 2222 is not the box on 22.
             ConnectionField(id: SSHField.port.rawValue,
                             labelKey: "connection.field.port",
                             labelDefault: "Port", kind: .number,
                             format: .numeric,
-                            invalidMessageKey: "core.connect.portNumeric"),
+                            invalidMessageKey: "core.connect.portNumeric",
+                            identity: .verbatim),
             ConnectionField(id: SSHField.jump.rawValue, labelKey: "form.jump.label",
                             labelDefault: "Jump host", kind: .group(jumpLeaves)),
         ],
@@ -132,11 +141,14 @@ public enum SSHFieldSchema {
     /// would grow a meaningless secret box for agent logins.
     public static let credential = ConnectionFieldSchema(
         fields: [
+            // The third of the endpoint triple. VERBATIM, unlike the host:
+            // POSIX user names are case-sensitive, and `root` is not `Root`.
             ConnectionField(id: SSHField.username.rawValue,
                             labelKey: "connection.field.username",
                             labelDefault: "Username", kind: .text,
                             isRequired: true,
-                            invalidMessageKey: "core.connect.emptyUsername"),
+                            invalidMessageKey: "core.connect.emptyUsername",
+                            identity: .verbatim),
             ConnectionField(id: SSHField.authKind.rawValue,
                             labelKey: "connection.field.authMethod",
                             labelDefault: "Authentication",

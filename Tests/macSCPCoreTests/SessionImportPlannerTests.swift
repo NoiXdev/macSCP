@@ -669,6 +669,141 @@ struct SessionImportPlannerTests {
         #expect(plan.skipped.count == 2)
     }
 
+    // MARK: - The identity rule, once it is DECLARED (M23/P3 T2)
+    //
+    // `duplicateKey` used to answer "which fields make a connection distinct"
+    // with a `switch kind` of its own — the last compile-forcing
+    // `ConnectionKind` site outside `BackendDescriptor`. The answer now comes
+    // from `ConnectionField.identity`, so each backend states it once, next to
+    // the field it is about.
+    //
+    // These five pin the rules the old switch's doc comment recorded, one test
+    // each. They are CHARACTERIZATION tests: every one of them passes against
+    // the old switch too, and that is the point — the rules must survive the
+    // move. What they catch is the plausible ways a declaration-driven key can
+    // get the answer wrong, each verified by mutating the implementation and
+    // watching exactly the named test go red:
+    //
+    //   mark every field identifying      -> pathStyle case fails
+    //   fold case on every field          -> bucket-case case fails
+    //   drop the kind prefix              -> S3-vs-WebDAV case fails
+    //   drop `port` from SSH's identity   -> different-port case fails
+    //   fold no case at all               -> same-SSH-endpoint case fails
+    //
+    // `duplicateKey` is private, so all of them go through `plan(...)`.
+
+    /// The positive half for SSH, and the one that must not shift: the name is
+    /// not the key, the endpoint triple is. Sharper than
+    /// `identicalSSHEndpointsStillCollide` above in two respects — it pins that
+    /// exactly the SECOND entry is the one put to the user, by the name it was
+    /// asked about, and it varies the host's CASE, so a key that stopped
+    /// folding the host would fail here.
+    @Test func twoSessionsToTheSameSSHEndpointCollide() async {
+        let log = DeciderCallLog()
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [],
+            incoming: incoming([
+                exported(name: "web", host: "web-01", port: 22, username: "root"),
+                exported(name: "web-again", host: "WEB-01", port: 22, username: "root"),
+            ]),
+            arbiter: ImportConflictArbiter(decider: fixedDecider(.skip, log: log)))
+
+        #expect(plan.sessionsToImport.map(\.session.name) == ["web"])
+        #expect(plan.skipped.map(\.name) == ["web-again"])
+        #expect(await log.names == ["web-again"])
+    }
+
+    /// The port is part of SSH's identity, not decoration: a bastion reached
+    /// on 2222 is a different connection from the box on 22, even under the
+    /// same host and user name.
+    @Test func aDifferentPortIsADifferentConnection() async {
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [],
+            incoming: incoming([
+                exported(name: "direct", host: "web-01", port: 22, username: "root"),
+                exported(name: "forwarded", host: "web-01", port: 2222, username: "root"),
+            ]),
+            arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.map(\.session.name) == ["direct", "forwarded"])
+        #expect(plan.skipped.isEmpty)
+    }
+
+    /// Keys are KIND-PREFIXED, so two backends can never share one.
+    ///
+    /// The values are contrived so that the two renderings would be
+    /// character-for-character IDENTICAL without that prefix: S3 contributes
+    /// endpoint + bucket + access key, WebDAV contributes base URL + user
+    /// name, and a `|` inside the WebDAV user name lines the two up exactly.
+    /// Contrived, but deliberately so — with ordinary values this test would
+    /// pass whether or not the prefix existed, which is the kind of test that
+    /// proves nothing.
+    @Test func anS3AndAWebDAVSessionNeverShareAKey() async {
+        let sharedURL = "https://shared.example.com"
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [],
+            incoming: incoming([
+                ExportedSession(
+                    id: UUID(), name: "s3", kind: .s3,
+                    fields: s3ExportFields(
+                        accessKeyID: "AKIAEXAMPLE", endpoint: sharedURL, bucket: "alice")),
+                ExportedSession(
+                    id: UUID(), name: "dav", kind: .webdav,
+                    fields: webdavExportFields(
+                        baseURL: sharedURL, username: "alice|AKIAEXAMPLE")),
+            ]),
+            arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.map(\.session.name) == ["s3", "dav"])
+        #expect(plan.skipped.isEmpty)
+    }
+
+    /// Identifying values go into the key VERBATIM, with the single exception
+    /// the test above pins. A bucket name and a URL path are case-SENSITIVE,
+    /// and so is an access key ID; folding them would merge two genuinely
+    /// different buckets into one import plus one silent duplicate.
+    @Test func caseIsNotFoldedInABucketNameOrAURLPath() async {
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [],
+            incoming: incoming([
+                ExportedSession(
+                    id: UUID(), name: "lower", kind: .s3,
+                    fields: s3ExportFields(bucket: "archive")),
+                ExportedSession(
+                    id: UUID(), name: "upper", kind: .s3,
+                    fields: s3ExportFields(bucket: "Archive")),
+            ]),
+            arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.map(\.session.name) == ["lower", "upper"])
+        #expect(plan.skipped.isEmpty)
+    }
+
+    /// Identity is a DECLARED subset of the fields, not all of them.
+    /// `usePathStyle` is how a client addresses the bucket, not which bucket
+    /// it is — two sessions differing only in it are one connection reached
+    /// two ways, and the user must be asked rather than handed a silent second
+    /// copy. `identicalS3EndpointBucketAndKeyStillCollide` above varies the
+    /// region alongside it; this one isolates the toggle, so a key built from
+    /// every field is caught here even if `region` were ever added to the
+    /// identity.
+    @Test func twoS3SessionsDifferingOnlyInPathStyleCollide() async {
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [],
+            incoming: incoming([
+                ExportedSession(
+                    id: UUID(), name: "virtual-host", kind: .s3,
+                    fields: s3ExportFields(usePathStyle: false)),
+                ExportedSession(
+                    id: UUID(), name: "path-style", kind: .s3,
+                    fields: s3ExportFields(usePathStyle: true)),
+            ]),
+            arbiter: skipEverything)
+
+        #expect(plan.sessionsToImport.map(\.session.name) == ["virtual-host"])
+        #expect(plan.skipped.map(\.name) == ["path-style"])
+    }
+
     // MARK: - What a v1 import does DIFFERENTLY since the bag (M23/P3)
     //
     // Two behaviour changes fall out of routing v1's columns through

@@ -189,6 +189,32 @@ public struct BackendDescriptor: Sendable {
         return fields.first { "\(fieldNamespace).\($0.id)" == key }?.labelDefault ?? key
     }
 
+    /// The fields that make a connection of this backend DISTINCT (M23/P3) —
+    /// what `SessionImportPlanner` builds its duplicate key from, in this
+    /// order. Each one carries its own `identity`, saying how its value is
+    /// compared.
+    ///
+    /// Both schemas are walked, connection first, because identity spans them:
+    /// SSH's `username` and S3's `accessKeyID` live in the CREDENTIAL schema,
+    /// and two logins to the same server are two connections, not one. Schema
+    /// declaration order is the key's field order, so the rendering is stable
+    /// without anyone maintaining a second list that could fall out of step
+    /// with the schemas.
+    ///
+    /// Top-level fields only: a `.group` is a second login with its own
+    /// Keychain slot (SSH's jump), and which bastion a connection is dialled
+    /// through does not change WHICH connection it is.
+    public var identifyingFields: [ConnectionField] {
+        var result: [ConnectionField] = []
+        for field in connectionSchema.fields where field.identity != nil {
+            result.append(field)
+        }
+        for field in credentialSchema.fields where field.identity != nil {
+            result.append(field)
+        }
+        return result
+    }
+
     /// The inverse: the set a filled-in credential form describes. This is
     /// what lets the login-set editor save a set of ANY kind without knowing
     /// one — including the WebDAV kind it refused to build before M22/T9.
