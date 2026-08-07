@@ -46,11 +46,21 @@ public struct ImportConflict: Equatable, Sendable {
     public enum Reason: Equatable, Sendable {
         /// The incoming item's name is already taken.
         case name
-        /// A stored item already points at the same place. `existing`
-        /// identifies it the way the sidebar does (`BackendDescriptor.
-        /// displaySummary`), so the user can tell which of their connections
-        /// is about to be replaced — never the incoming item's own name,
-        /// which is what made the old shared message misleading.
+        /// Something already established this connection identity: either a
+        /// STORED item, or an EARLIER entry accepted from this same import
+        /// file (`SessionImportPlanner.plan` records the display summary of
+        /// whichever one it was the moment the key is first claimed, so
+        /// `existing` never has to guess). `existing` names that one the way
+        /// the sidebar does (`BackendDescriptor.displaySummary`) — never the
+        /// incoming item's own name, which is what made the old shared
+        /// message misleading.
+        ///
+        /// Choosing Replace does NOT always overwrite what `existing` names:
+        /// it only overwrites a genuine stored record. When `existing` names
+        /// an earlier file entry instead — nothing on record shares this
+        /// connection — Replace falls through to a fresh id under a unique
+        /// name, same as Rename. `existing` says what the incoming item
+        /// collides with, not what is "about to be replaced".
         case sameConnection(existing: String)
     }
 }
