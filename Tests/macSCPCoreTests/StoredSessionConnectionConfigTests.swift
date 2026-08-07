@@ -133,6 +133,36 @@ struct StoredSessionConnectionConfigTests {
         }
     }
 
+    /// PINS A WIDENING, not a pre-existing rule (M23/P2). The deleted
+    /// `buildS3` validated nothing — it copied the stored fields straight into
+    /// the config — so a blank region used to build and connect. Routing
+    /// through the factory means `firstViolation` now walks S3's connection
+    /// schema, where `region` is `isRequired`, and refuses first.
+    ///
+    /// Whether that is right is OPEN and belongs to the maintainer:
+    /// `S3FieldSchema.makeConfig`'s own comment says region is optional
+    /// against non-AWS endpoints, and a probe against the rig's MinIO confirms
+    /// an empty region lists the seeded bucket fine (MinIO ignores the scope's
+    /// region entirely — a nonsense region works too). Against real AWS the
+    /// empty scope segment `…/19700101//s3/aws4_request` is rejected. The GUI
+    /// cannot produce a blank region, but `SessionImportPlanner` presence-
+    /// checks `s3Region` without checking emptiness, and a hand-edited
+    /// `sessions-v2.json` may carry `"region": ""`.
+    ///
+    /// This test exists so the behaviour is pinned rather than incidental. If
+    /// the maintainer decides a blank region is legitimate, `region`'s
+    /// `isRequired` changes and this test inverts with it.
+    @Test func s3WithABlankRegionIsRefusedByTheSchema() {
+        let session = s3Session(
+            name: "bucket",
+            config: StoredS3Config(
+                accessKeyID: "AKID", region: "", endpoint: "https://minio.example.com",
+                bucket: "my-bucket", usePathStyle: true))
+        #expect(throws: StoredSessionConnectionError.incompleteConfiguration(field: "Region")) {
+            try StoredSessionConnectionConfig.build(for: session, secret: "secretkey")
+        }
+    }
+
     /// A `.ssh` session with no stored block is representable on disk — the
     /// decoder accepts it deliberately, so one bad record cannot fail the whole
     /// file. Before M23/P2 only S3 and WebDAV reported that honestly; SSH fell

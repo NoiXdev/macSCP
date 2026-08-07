@@ -67,12 +67,47 @@ public enum StoredSessionConnectionConfig {
         // failing here says which field is wrong, while failing at the server
         // says "access denied" with nothing pointing at the cause.
         //
-        // `secretIsMandatory` is what keeps this from being a protocol branch
-        // -- it already answers "can this backend build a config without a
-        // secret at all", including SSH's agent case (no secret exists) and
-        // its unencrypted-key case (a passphrase is looked for but not
-        // demanded), where refusing would be wrong.
-        if descriptor.secretIsMandatory(for: values), secret?.isEmpty != false {
+        // The secret guard asks the SCHEMA, not `requiresSecret`. The two are
+        // different questions and only the schema answers this one:
+        // `requiresSecret` means "should the CLI go LOOKING for a secret",
+        // which is true under private-key auth (an encrypted key's passphrase
+        // sits in the Keychain) where refusing without one would reject every
+        // UNENCRYPTED key. Its three other callers all ask it the lookup way.
+        //
+        // The schema's `isRequired` on the currently visible secret field
+        // answers all five configurations without a `kind` branch:
+        //   ssh password   -> `password`, required     -> refuse
+        //   ssh privateKey -> `passphrase`, optional   -> allow (unencrypted key)
+        //   ssh agent      -> no secret field visible  -> allow
+        //   s3             -> `secretAccessKey`, req.  -> refuse
+        //   webdav         -> `password`, optional     -> allow (anonymous share)
+        //
+        // The last one CHANGED behaviour in M23/P2 and is deliberate: an
+        // anonymous WebDAV share answers 200 with no `Authorization` header,
+        // so the old refusal was a false negative on a configuration the
+        // maintainer explicitly chose to support (see `WebDAVFieldSchema`'s
+        // `credential`), and one the CLI could not reach at all. When auth IS
+        // required and absent, the server answers 401, which `CLIErrorMapping`
+        // already renders as "authentication failed" -- legible without a
+        // local guard. S3 is the opposite and keeps its refusal: an empty
+        // secret still produces a syntactically valid SigV4 signature, so the
+        // server cannot tell "no credentials" from "wrong credentials" and
+        // answers `SignatureDoesNotMatch`; there is no anonymous shape
+        // `S3ConnectionConfig` can express at all.
+        //
+        // THE COST, stated so it is found rather than discovered: a WebDAV
+        // session whose Keychain entry has gone missing now silently
+        // downgrades to anonymous instead of being refused. The 401 covers an
+        // auth-required share; it does NOT cover a public-read /
+        // authenticated-write share, where the lost password surfaces as a 403
+        // part-way through a transfer rather than as a refusal up front.
+        //
+        // `credentialSchema` rather than both schemas: every backend declares
+        // its secret there, and it is the same schema `LoginResolver` asks
+        // when deciding which Keychain slot a login means.
+        let secretField = descriptor.credentialSchema.visibleSecretField(
+            in: values, namespace: descriptor.fieldNamespace)
+        if secretField?.isRequired == true, secret?.isEmpty != false {
             throw StoredSessionConnectionError.secretRequired
         }
         // `requireSecrets: false` because the secret is not IN `values` -- it

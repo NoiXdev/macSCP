@@ -72,15 +72,37 @@ struct WebDAVRegistrationTests {
         #expect(webdav.password == "app-password")
     }
 
-    @Test func storedWebDAVSessionWithoutASecretFails() {
+    /// INVERTED in M23/P2: this used to expect `secretRequired`.
+    ///
+    /// A secret-less WebDAV session now builds an ANONYMOUS config. The old
+    /// refusal was a false negative on a working deployment — a public share
+    /// answers 200 with no `Authorization` header, and `WebDAVField.password`
+    /// is deliberately not `isRequired` for exactly that reason
+    /// (`WebDAVFieldSchema.credential`), so the form permitted a configuration
+    /// the CLI then refused to open. When authentication IS required and
+    /// absent, the server answers 401, which the CLI already renders as
+    /// "authentication failed" — legible without a local guard, unlike S3,
+    /// where an empty secret yields a valid-looking SigV4 signature and an
+    /// opaque `SignatureDoesNotMatch`.
+    ///
+    /// The cost this accepts: a session whose Keychain entry has gone missing
+    /// downgrades to anonymous rather than being refused, so on a
+    /// public-read/authenticated-write share a lost password becomes a 403
+    /// mid-transfer instead of an error up front.
+    @Test func storedWebDAVSessionWithoutASecretBuildsAnAnonymousConfig() throws {
         let session = webdavSession(
             name: "cloud",
             config: StoredWebDAVConfig(
                 baseURL: "https://cloud.example.com", username: "tim", useNextcloudPath: true))
 
-        #expect(throws: StoredSessionConnectionError.secretRequired) {
-            _ = try StoredSessionConnectionConfig.build(for: session, secret: nil)
+        let config = try StoredSessionConnectionConfig.build(for: session, secret: nil)
+
+        guard case .webdav(let webdav) = config else {
+            Issue.record("expected .webdav, got \(config)")
+            return
         }
+        #expect(webdav.username == "tim")
+        #expect(webdav.password.isEmpty)
     }
 
     /// A secret-free stored config must round-trip — it lands in the session
