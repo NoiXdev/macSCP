@@ -251,6 +251,19 @@ public enum SessionImportPlanner {
         // whose block is nil, and what a pre-M21 export left for a WebDAV
         // entry. Applying it would invent a server the file never named, so
         // the session keeps no block at all — as before the bag.
+        //
+        // The guard earns its place ONLY for `.s3`/`.webdav`, where it
+        // preserves v1's all-columns-required gate. Removing it fails exactly
+        // two tests, both WebDAV-empty-block ones
+        // (`webdavFileSessionWithoutColumnsKeepsKindAndHasNoConfig`,
+        // `preFixExportFileStillImports`) — measured by mutation, not assumed.
+        // It does NOT hold up the bag round trip, which stays green without
+        // it, and its `.ssh` arm is unreachable through any real file: v1's
+        // `host` column was non-optional, so every v1 `.ssh` entry yields five
+        // keys, and a stored `.ssh` session with `ssh == nil` still exports
+        // five because `sessionValues` reads the computed accessors. Only a
+        // hand-built `ExportedSession` or a hand-edited `"fields": {}` reaches
+        // it.
         var session = StoredSession(id: id, name: name, groupID: groupID, kind: kind)
         if !fileSession.fields.isEmpty {
             var values = FieldValues()
