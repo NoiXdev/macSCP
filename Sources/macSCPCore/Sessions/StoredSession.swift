@@ -137,30 +137,43 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
     // that is a caller that should be asking the descriptor's `displaySummary`
     // or `sessionValues` instead.
 
-    /// The SSH host, or "" for a session that has no SSH block.
+    /// Read-only conveniences over `ssh` (M23), so callers that read SSH's
+    /// fields off a session read one property instead of unwrapping. The six
+    /// fall into two very different groups.
     ///
-    /// Read-only conveniences over `ssh` (M23), kept so the callers that read
-    /// SSH's fields off a session read one property instead of unwrapping.
-    /// The real ones, verified rather than assumed (fix round 1): the three
-    /// SSH-only branches of `StoredSessionConnectionConfig.build`,
-    /// `SSHFieldSchema.values(from:)` — the descriptor's own read adapter, and
-    /// the one every other reader should be routed through —
-    /// `SessionImportPlanner.duplicateKey`'s `.ssh` case, `LoginMergePlanner`,
-    /// and `SessionListViewModel`'s export and jump-restoration paths.
+    /// `keyPath` and `jump` return Optionals and stay `public`: `nil` is an
+    /// honest answer for a session with no SSH block, and every one of their
+    /// roughly 18 readers across `macSCPCore`, `MacSCPApp` and `MacSCPCLI` is
+    /// a legitimate `guard let` / `if let` / `??` unwrap — there is no
+    /// endorsed-vs-defect split to draw here.
     ///
-    /// Note what is NOT on that list: the sidebar and the audit trail already
-    /// go through `descriptor.displaySummary(descriptor.sessionValues(...))`,
-    /// and `SSHCommandBuilder` takes an `SSHConnectionConfig`. An earlier
-    /// draft of this comment named those three, which would have justified a
-    /// `""`-returning accessor with an empty set of beneficiaries.
+    /// `host`, `port`, `username` and `authKind` are the opposite case, which
+    /// is why they are narrowed to internal (Item 3, same commit): they
+    /// return `""` / `22` / `""` / `.password` for a session with no SSH
+    /// block — the pre-M23 `"unused"` placeholder, in a new spelling, not a
+    /// meaningful value. Their SOLE SANCTIONED reader is
+    /// `SSHFieldSchema.values(from:)`, the descriptor's own read adapter,
+    /// which every other caller should be routed through instead of reading
+    /// these four directly.
     ///
-    /// Anything that WRITES must go through `ssh` directly, so that writing to
-    /// a session with no SSH block is a compile error rather than a silent
-    /// no-op.
-    public var host: String { ssh?.host ?? "" }
-    public var port: Int { ssh?.port ?? 22 }
-    public var username: String { ssh?.username ?? "" }
-    public var authKind: AuthKind { ssh?.authKind ?? .password }
+    /// The direct readers that remain besides that one — `LoginResolver.
+    /// resolveJump`, `LoginMergePlanner.candidates`, and
+    /// `SessionListViewModel.delete` — are NOT endorsed callers. They are
+    /// KNOWN DEFECTS awaiting a kind guard: none of the three filters out
+    /// `.s3`/`.webdav` sessions before reading these SSH-only fields off
+    /// them, so a non-SSH session silently reads back `""`/`22`/`.password`
+    /// instead of being excluded (`LoginMergePlanner` grouping S3/WebDAV
+    /// sessions into an `.ssh` login set, and `JumpSessionEligibility` not
+    /// filtering by kind, are the tracked follow-ups — each needs its own
+    /// design decision and test, not a fix folded into this comment).
+    ///
+    /// Anything that WRITES must go through `ssh` directly, so that writing
+    /// to a session with no SSH block is a compile error rather than a
+    /// silent no-op.
+    var host: String { ssh?.host ?? "" }
+    var port: Int { ssh?.port ?? 22 }
+    var username: String { ssh?.username ?? "" }
+    var authKind: AuthKind { ssh?.authKind ?? .password }
     public var keyPath: String? { ssh?.keyPath }
     public var jump: JumpSpec? { ssh?.jump }
 }
