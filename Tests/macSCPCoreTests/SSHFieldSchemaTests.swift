@@ -228,7 +228,7 @@ struct SSHFieldSchemaTests {
     }
 
     @Test func valuesRoundTripThroughTheStoredSession() {
-        var session = StoredSession(
+        var session = sshSession(
             name: "prod", host: "server.example.com", port: 22, username: "tim")
         SSHFieldSchema.apply(passwordValues(), to: &session)
         let back = SSHFieldSchema.values(from: session)
@@ -245,7 +245,7 @@ struct SSHFieldSchemaTests {
         let groupID = UUID()
         let loginSetID = UUID()
         let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "ops")
-        var session = StoredSession(
+        var session = sshSession(
             id: UUID(), name: "prod", host: "old.example.com", port: 2200,
             username: "old", authKind: .agent, keyPath: nil, groupID: groupID,
             loginSetID: loginSetID, jump: jump)
@@ -269,7 +269,7 @@ struct SSHFieldSchemaTests {
     /// A key path belongs to private-key auth only: switching to a password
     /// must clear it rather than leave a stale path on disk.
     @Test func applyClearsTheKeyPathWhenAuthIsNotAPrivateKey() {
-        var session = StoredSession(
+        var session = sshSession(
             name: "prod", host: "server.example.com", username: "tim",
             authKind: .privateKey, keyPath: "/Users/tim/.ssh/id_ed25519")
         SSHFieldSchema.apply(passwordValues(), to: &session)

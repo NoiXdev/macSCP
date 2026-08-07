@@ -34,7 +34,7 @@ struct CLIRoundtripITests {
         let localDirectory = try Self.makeTempDirectory(prefix: "macscp-cli-roundtrip-local")
         defer { try? FileManager.default.removeItem(at: localDirectory) }
 
-        let session = StoredSession(
+        let session = sshSession(
             name: "m20-roundtrip", host: Self.rigHost, port: Self.rigPort,
             username: Self.rigUsername, authKind: .password)
         try SessionStore(directory: storageDirectory).upsert(session)
@@ -125,7 +125,7 @@ struct CLIRoundtripITests {
         let storageDirectory = try Self.makeTempDirectory(prefix: "macscp-cli-refusal-storage")
         defer { try? FileManager.default.removeItem(at: storageDirectory) }
 
-        let session = StoredSession(
+        let session = sshSession(
             name: "m20-refusal", host: Self.rigHost, port: Self.rigPort,
             username: Self.rigUsername, authKind: .password)
         try SessionStore(directory: storageDirectory).upsert(session)
@@ -170,7 +170,7 @@ struct CLIRoundtripITests {
         let localDirectory = try Self.makeTempDirectory(prefix: "macscp-cli-conflict-local")
         defer { try? FileManager.default.removeItem(at: localDirectory) }
 
-        let session = StoredSession(
+        let session = sshSession(
             name: "m20-conflict", host: Self.rigHost, port: Self.rigPort,
             username: Self.rigUsername, authKind: .password)
         try SessionStore(directory: storageDirectory).upsert(session)

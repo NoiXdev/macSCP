@@ -47,7 +47,7 @@ struct LoginResolverSchemaTests {
         let set = LoginSet(
             name: "deploy", username: "deploy", authKind: .privateKey, keyPath: "/k")
         try secrets.savePassword("pp", for: set.id)
-        let session = StoredSession(
+        let session = sshSession(
             name: "s", host: "h", username: "unused", loginSetID: set.id)
 
         let values = try #require(
@@ -62,7 +62,7 @@ struct LoginResolverSchemaTests {
         let secrets = InMemorySecretStore()
         let set = LoginSet(name: "deploy", username: "deploy", authKind: .password)
         try secrets.savePassword("hunter2", for: set.id)
-        let session = StoredSession(
+        let session = sshSession(
             name: "s", host: "h", username: "unused", loginSetID: set.id)
 
         let values = try #require(
@@ -76,7 +76,7 @@ struct LoginResolverSchemaTests {
     /// on any read.
     @Test func anAgentSetResolvesWithoutReadingTheKeychain() throws {
         let set = LoginSet(name: "agent", username: "deploy", authKind: .agent)
-        let session = StoredSession(
+        let session = sshSession(
             name: "s", host: "h", username: "unused", loginSetID: set.id)
 
         let values = try #require(try LoginResolver.resolve(
@@ -88,13 +88,13 @@ struct LoginResolverSchemaTests {
     }
 
     @Test func aSessionWithoutASetResolvesToNil() throws {
-        let session = StoredSession(name: "s", host: "h", port: 22, username: "u")
+        let session = sshSession(name: "s", host: "h", port: 22, username: "u")
         #expect(try LoginResolver.resolve(
             session: session, sets: [], secrets: InMemorySecretStore()) == nil)
     }
 
     @Test func aMissingSetIsAnError() {
-        let session = StoredSession(
+        let session = sshSession(
             name: "s", host: "h", port: 22, username: "u", loginSetID: UUID())
         #expect(throws: LoginResolveError.missingSet) {
             _ = try LoginResolver.resolve(
