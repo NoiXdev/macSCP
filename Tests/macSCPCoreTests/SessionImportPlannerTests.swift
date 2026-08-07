@@ -28,6 +28,14 @@ private actor CapturedConflict {
     func record(_ value: ImportConflict) { self.value = value }
 }
 
+/// The plural sibling of `CapturedConflict`: every conflict a decider was
+/// handed, in order — needed when a single run raises more than one
+/// conflict and a test must pin what EACH one named, not just the last.
+private actor CapturedConflicts {
+    private(set) var values: [ImportConflict] = []
+    func record(_ value: ImportConflict) { values.append(value) }
+}
+
 @Suite("SessionImportPlanner")
 struct SessionImportPlannerTests {
     private func incoming(_ sessions: [ExportedSession], groups: [ExportedGroup] = []) -> SessionExportPayload {
@@ -744,6 +752,65 @@ struct SessionImportPlannerTests {
         #expect(plan.sessionsToImport.map(\.session.name) == ["web"])
         #expect(plan.skipped.map(\.name) == ["web-again"])
         #expect(await log.names == ["web-again"])
+    }
+
+    /// THREE entries colliding on one key in a single run — what
+    /// `twoSessionsToTheSameSSHEndpointCollide` cannot exercise with only
+    /// two. `summaryByKey` is meant to be written ONCE per key, the moment
+    /// the first entry claims it (`SessionImportPlanner.plan`'s `guard let
+    /// collidingSummary = summaryByKey[key] else { summaryByKey[key] = ... }`
+    /// branch) — a skipped duplicate must never overwrite it. Pins that BOTH
+    /// the second and the third conflict name the FIRST entry ("first"), not
+    /// whichever entry was seen most recently: a planner that wrote
+    /// `summaryByKey[key]` on every accepted-OR-skipped entry (not only the
+    /// first) would still pass `twoSessionsToTheSameSSHEndpointCollide` —
+    /// there is no third entry there to observe the drift — but would make
+    /// the third conflict here name "second" instead of "first". That is
+    /// exactly the mutation a full run of this suite left undetected before
+    /// this test existed.
+    ///
+    /// The host's case is varied per entry (`web-01` / `WEB-01` / `Web-01`,
+    /// same trick as the two-session test above) so the three entries'
+    /// display summaries — `SSHFieldSchema.displaySummary`, built from the
+    /// VERBATIM host — are textually distinct from each other even though
+    /// their case-folded identity key is the same. Without that, all three
+    /// summaries would read identically and the test could not tell "names
+    /// the first entry" apart from "names the second entry" at all.
+    @Test func threeSessionsToTheSameSSHEndpointCollideAllNameTheFirst() async {
+        let conflicts = CapturedConflicts()
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [],
+            incoming: incoming([
+                exported(name: "first", host: "web-01", port: 22, username: "root"),
+                exported(name: "second", host: "WEB-01", port: 22, username: "root"),
+                exported(name: "third", host: "Web-01", port: 22, username: "root"),
+            ]),
+            arbiter: ImportConflictArbiter { conflict in
+                await conflicts.record(conflict)
+                return (.skip, false)
+            })
+
+        #expect(plan.sessionsToImport.map(\.session.name) == ["first"])
+        #expect(plan.skipped.map(\.name) == ["second", "third"])
+
+        // The first entry's own display summary -- verbatim host, so it is
+        // "root@web-01", never "root@WEB-01" or "root@Web-01".
+        let firstEntrysSummary = "root@web-01"
+        #expect(
+            await conflicts.values
+                == [
+                    ImportConflict(
+                        itemName: "second", kindLabel: SessionImportPlanner.kindLabel,
+                        reason: .sameConnection(existing: firstEntrysSummary)),
+                    // The intended answer: still the FIRST entry, not
+                    // "second" -- "second" was skipped, so it never claimed
+                    // `summaryByKey`, and the connection this third entry
+                    // collides with is, and has only ever been, the first
+                    // one accepted.
+                    ImportConflict(
+                        itemName: "third", kindLabel: SessionImportPlanner.kindLabel,
+                        reason: .sameConnection(existing: firstEntrysSummary)),
+                ])
     }
 
     /// The port is part of SSH's identity, not decoration: a bastion reached
