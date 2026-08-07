@@ -81,6 +81,26 @@ struct IconTooltipLintTests {
         DecorativeIcon(
             file: "SettingsView.swift", symbol: "section.systemImage",
             reason: "Settings sidebar rows; each `Label` shows the section title next to the glyph and macOS gives list rows no tooltip."),
+        // The five "Manage Data" rows. Each glyph sits inside the `Label` of
+        // the button it decorates, whose visible title IS the name of the
+        // sheet that button opens ("SSH Keys…", "Logins…", …) — a hint could
+        // only repeat it. Listed one per symbol rather than routed through a
+        // variable, so adding a sixth row still trips this scan.
+        DecorativeIcon(
+            file: "SettingsView.swift", symbol: "key",
+            reason: "Inside the \"SSH Keys…\" button's `Label` in the Manage Data list; the button's own title names the sheet."),
+        DecorativeIcon(
+            file: "SettingsView.swift", symbol: "person.badge.key",
+            reason: "Inside the \"Logins…\" button's `Label` in the Manage Data list; the button's own title names the sheet."),
+        DecorativeIcon(
+            file: "SettingsView.swift", symbol: "lock.shield",
+            reason: "Inside the \"Known Hosts…\" button's `Label` in the Manage Data list; the button's own title names the sheet."),
+        DecorativeIcon(
+            file: "SettingsView.swift", symbol: "checkmark.seal",
+            reason: "Inside the \"Server Certificates…\" button's `Label` in the Manage Data list; the button's own title names the sheet."),
+        DecorativeIcon(
+            file: "SettingsView.swift", symbol: "eye.slash",
+            reason: "Inside the \"Hidden Imports…\" button's `Label` in the Manage Data list; the button's own title names the sheet (with its count)."),
         DecorativeIcon(
             file: "MenuBarController.swift", symbol: "circle.fill",
             reason: "Colour-coded status dot on a menu ITEM, whose own title already spells the state out in words (Connected/Connecting…/Failed/Ready); `NSMenuItem.image` takes no tooltip of its own."),

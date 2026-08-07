@@ -14,6 +14,8 @@
 /* Settings — sidebar section titles (M18/T7) */
 "settings.section.appearance" = "View";
 "settings.section.protocols" = "Protocols";
+"settings.section.manageData" = "Manage Data";
+"settings.manageData.footer" = "Logins and hidden imports open in the main window — the session list there is a live view of them.";
 "settings.section.ssh" = "SSH";
 "settings.section.s3" = "S3";
 

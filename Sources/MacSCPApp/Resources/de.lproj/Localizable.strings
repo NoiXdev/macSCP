@@ -14,6 +14,8 @@
 /* Einstellungen — Sidebar-Bereichstitel (M18/T7) */
 "settings.section.appearance" = "Ansicht";
 "settings.section.protocols" = "Protokolle";
+"settings.section.manageData" = "Daten verwalten";
+"settings.manageData.footer" = "Logins und ausgeblendete Importe öffnen sich im Hauptfenster — die Sitzungsliste dort zeigt sie live an.";
 "settings.section.ssh" = "SSH";
 "settings.section.s3" = "S3";
 

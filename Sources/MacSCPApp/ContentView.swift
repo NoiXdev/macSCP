@@ -1605,6 +1605,12 @@ struct ContentView: View {
             guard window?.isKeyWindow == true else { return }
             showSSHKeysSheet = true
         }
+        // Settings "Manage Data" bridge — the two entries that must NOT get
+        // their own copy of the sheet in the Settings window. Extracted into
+        // methods rather than inlined closures for the same type-checker
+        // reason as `handleCloseActiveTabCommand` above.
+        tabCommands.showLoginsFromSettings = presentLoginSetsFromSettings
+        tabCommands.showHiddenImportsFromSettings = presentHiddenImportsFromSettings
         tabCommands.exportAllSessions = {
             guard window?.isKeyWindow == true else { return }
             exportSheetItem = ExportSheetItem(scope: .all)
@@ -1694,6 +1700,53 @@ struct ContentView: View {
         } else {
             requestClose(tab)
         }
+    }
+
+    /// Settings "Manage Data" → "Logins…": raises THIS window and opens the
+    /// login-sets sheet that already lives here, instead of letting the
+    /// Settings window present a second copy.
+    ///
+    /// Why the detour. `LoginSetsSheet` does not only edit login sets — via
+    /// `SessionListViewModel.deleteLoginSet`/`applyMerge`/
+    /// `applyLoginSetImport` it rewrites the SESSIONS that reference a set
+    /// (username/authKind/keyPath restored onto them, `loginSetID` cleared).
+    /// A Settings-side copy would need a second `SessionListViewModel` — and
+    /// the view model is window scope by design, so the copy in this window
+    /// would keep serving the pre-rewrite records to the sidebar. That is not
+    /// only a display problem: a sheet in the Settings window is modal to
+    /// THAT window only, so this window's sidebar stays clickable while it is
+    /// open, and one drag onto a group (`updateSession`, which upserts the
+    /// stale record) would put the dangling `loginSetID` straight back on
+    /// disk. A refresh-on-dismiss cannot close that hole, because the damage
+    /// is reachable before the dismissal. Routing here sidesteps all of it:
+    /// one view model, and the sheet is modal to the window whose state it
+    /// edits.
+    ///
+    /// No key-window guard (unlike `tabCommands.showLogins`): Settings is key
+    /// when this fires, which is the whole point. The `isVisible` check is
+    /// what stands in for it — with no main window on screen there is nothing
+    /// to raise, and the entry does nothing, exactly as the Sessions-menu
+    /// entries already do in that state.
+    private func presentLoginSetsFromSettings() {
+        guard let window, window.isVisible else { return }
+        window.makeKeyAndOrderFront(nil)
+        loginSetsSheetStartsImport = false
+        showLoginSetsSheet = true
+    }
+
+    /// Settings "Manage Data" → "Hidden Imports…": same detour, same reasons
+    /// as `presentLoginSetsFromSettings()` above, one store lower in the
+    /// stack. `HiddenImportsSheet` is handed this window's `fullImportedHosts`
+    /// snapshot and calls back into `refreshImportedHosts()` after every
+    /// unhide, which is what keeps the sidebar's IMPORTED section and the
+    /// Sessions-menu count live WHILE the sheet is open. A Settings-side copy
+    /// would have neither end of that wire, and both lists would drift — in
+    /// both directions, since this window's own "Hide" context menu stays
+    /// reachable behind a sheet that is modal to Settings.
+    private func presentHiddenImportsFromSettings() {
+        guard let window, window.isVisible else { return }
+        window.makeKeyAndOrderFront(nil)
+        showHiddenImportsSheet = true
     }
 
     /// Tab close entry point (strip ✕, ⌘W): a tab with active transfers OF
