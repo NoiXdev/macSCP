@@ -390,6 +390,8 @@
    here, not the raw value itself. */
 "import.conflict.title" = "Name Already Exists";
 "import.conflict.message" = "“%@” already exists.";
+"import.conflict.connection.title" = "Connection Already Exists";
+"import.conflict.connection.message" = "“%@” points at the same server as “%@”.";
 "import.conflict.kind.loginSet" = "login set";
 "import.conflict.kind.session" = "session";
 "import.conflict.kind.other" = "item";

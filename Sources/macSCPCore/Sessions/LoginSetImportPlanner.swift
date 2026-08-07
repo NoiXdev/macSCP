@@ -98,7 +98,10 @@ public enum LoginSetImportPlanner {
             }
 
             guard let resolution = await arbiter.resolve(
-                ImportConflict(itemName: trimmedName, kindLabel: kindLabel)
+                // Login sets collide on the NAME (the `key` above IS the
+                // name, normalized) — `.name` is the true reason here, not
+                // the `ImportConflict` default (M23/P3 T3).
+                ImportConflict(itemName: trimmedName, kindLabel: kindLabel, reason: .name)
             ) else {
                 // Cancellation applies nothing at all — discard whatever was
                 // accumulated so far in this run, not just the remainder.

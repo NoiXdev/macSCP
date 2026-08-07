@@ -119,6 +119,17 @@ public enum SessionImportPlanner {
         // HANDLING changed in M19: a duplicate is put to the arbiter instead
         // of being dropped.
         var seenKeys = Set(existing.map { duplicateKey(for: $0) })
+        // Parallel to `seenKeys`, and grown at the exact same site below: the
+        // display summary of whichever session — stored, or the first
+        // incoming one accepted under a given key — established that key.
+        // Feeds a `.sameConnection` conflict's `existing` string (M23/P3 T3)
+        // without a second lookup. Ties within `existing` itself (two stored
+        // sessions that already share a connection identity) keep the first
+        // one encountered; which of two identical connections gets named is
+        // not a decision this planner needs to make well, only reproducibly.
+        var summaryByKey: [String: String] = Dictionary(
+            existing.map { (duplicateKey(for: $0), displaySummary(for: $0)) },
+            uniquingKeysWith: { first, _ in first })
         // Names are NOT the duplicate key and the store never enforces them
         // unique, but a rename still has to land on a name nothing else uses.
         // Seeded with the store's names and grown with every name this run
@@ -147,6 +158,7 @@ public enum SessionImportPlanner {
 
             guard seenKeys.contains(key) else {
                 seenKeys.insert(key)
+                summaryByKey[key] = displaySummary(for: fileSession)
                 takenNames.insert(normalizedName(trimmedName))
                 sessionsToImport.append(makePlanned(
                     from: fileSession, id: UUID(), name: trimmedName, groupID: resolvedGroupID))
@@ -154,7 +166,18 @@ public enum SessionImportPlanner {
             }
 
             guard let resolution = await arbiter.resolve(
-                ImportConflict(itemName: trimmedName, kindLabel: kindLabel)
+                // A session collides on the CONNECTION, not the name — unlike
+                // a login set. `existing` names whatever established `key`
+                // (a stored session, or an earlier session from this same
+                // file), so the user can tell which of their connections is
+                // about to be replaced, never the incoming item's own name
+                // (M23/P3 T3). `key` is always in `summaryByKey`: the two
+                // collections grow at the one site above and nowhere else,
+                // so the fallback below is unreachable defensive code, not a
+                // real second story.
+                ImportConflict(
+                    itemName: trimmedName, kindLabel: kindLabel,
+                    reason: .sameConnection(existing: summaryByKey[key] ?? displaySummary(for: fileSession)))
             ) else {
                 // Cancellation applies nothing at all — not the items already
                 // accepted earlier in this run, and therefore no groups
@@ -359,6 +382,26 @@ public enum SessionImportPlanner {
         let kind = session.kind
         let values = BackendDescriptor.descriptor(for: kind).sessionValues(session)
         return duplicateKey(kind: kind, values: values)
+    }
+
+    /// The connection identity shown to the user on a `.sameConnection`
+    /// conflict — the SAME one-line summary the sidebar and the audit trail
+    /// already use (`BackendDescriptor.displaySummary`), so this planner
+    /// invents no format of its own.
+    private static func displaySummary(for session: StoredSession) -> String {
+        let descriptor = BackendDescriptor.descriptor(for: session.kind)
+        return descriptor.displaySummary(descriptor.sessionValues(session))
+    }
+
+    /// The file-side counterpart: the same summary computed from an incoming
+    /// entry's own field bag, for the case where what a later duplicate in
+    /// this same file collided with is that earlier entry, not anything on
+    /// record. A legacy payload without `kind` is `.ssh`, exactly as
+    /// `makePlanned` maps it.
+    private static func displaySummary(for fileSession: ExportedSession) -> String {
+        let kind = fileSession.kind ?? .ssh
+        let descriptor = BackendDescriptor.descriptor(for: kind)
+        return descriptor.displaySummary(FieldValues(raw: fileSession.fields))
     }
 
     /// The file-side counterpart of `duplicateKey(for: StoredSession)`. Both

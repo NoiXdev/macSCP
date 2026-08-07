@@ -7,18 +7,44 @@ public enum ImportConflictResolution: Equatable, Sendable {
     case skip, replace, rename
 }
 
-/// Describes a concrete naming collision for the `ImportConflictDecider`:
-/// an incoming item's name already matches something in the existing store.
+/// Describes a concrete collision for the `ImportConflictDecider`. Two
+/// planners share this type and collide on DIFFERENT things:
+/// `LoginSetImportPlanner` keys on the incoming item's NAME (M19);
+/// `SessionImportPlanner` keys on the CONNECTION — the identifying fields
+/// `BackendDescriptor` declares for that session's kind, the host/port/
+/// username triple for `.ssh`, other fields for `.s3`/`.webdav` (M23/P3).
+/// `reason` says which applies to a given conflict, so a caller (the sheet,
+/// a test) never has to assume one story fits both — a single "name already
+/// exists" message told the name story for both and was itself the defect
+/// this type now guards against (M23/P3 T3).
 public struct ImportConflict: Equatable, Sendable {
     public var itemName: String
     /// A stable identifier for what kind of item collided (e.g. "session",
     /// "login set", "group") — NOT display text. Core does not know the UI
     /// language; the app maps this to a localized string.
     public var kindLabel: String
+    /// What made this a collision. See the type doc above for which planner
+    /// produces which case.
+    public var reason: Reason
 
-    public init(itemName: String, kindLabel: String) {
+    /// Defaults to `.name` so call sites that only exercise the arbiter's
+    /// own mechanics (asking, stickiness, cancellation — none of which reads
+    /// `reason`) do not have to spell one out.
+    public init(itemName: String, kindLabel: String, reason: Reason = .name) {
         self.itemName = itemName
         self.kindLabel = kindLabel
+        self.reason = reason
+    }
+
+    public enum Reason: Equatable, Sendable {
+        /// The incoming item's name is already taken.
+        case name
+        /// A stored item already points at the same place. `existing`
+        /// identifies it the way the sidebar does (`BackendDescriptor.
+        /// displaySummary`), so the user can tell which of their connections
+        /// is about to be replaced — never the incoming item's own name,
+        /// which is what made the old shared message misleading.
+        case sameConnection(existing: String)
     }
 }
 

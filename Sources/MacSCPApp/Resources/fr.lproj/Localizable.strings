@@ -394,6 +394,8 @@
    stable, ici mappé vers un texte affiché, jamais la valeur brute. */
 "import.conflict.title" = "Nom déjà existant";
 "import.conflict.message" = "« %@ » existe déjà.";
+"import.conflict.connection.title" = "Connexion déjà existante";
+"import.conflict.connection.message" = "« %@ » pointe vers le même serveur que « %@ ».";
 "import.conflict.kind.loginSet" = "jeu d’identifiants";
 "import.conflict.kind.session" = "connexion";
 "import.conflict.kind.other" = "élément";
