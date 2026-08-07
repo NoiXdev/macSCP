@@ -1373,7 +1373,9 @@ struct ContentView: View {
                 }
                 // Certificate decider (M21/T10): unknown WebDAV/S3
                 // certificates now reach `CertificatePromptView` instead of
-                // being refused outright (the CLI's own default). A MISMATCH
+                // being refused outright, which is what the command-line
+                // driver still does for want of an interactive prompt (see
+                // `MacSCPCLI/SessionConnecting.swift`). A MISMATCH
                 // never reaches `certificateBridge.ask`
                 // in the first place — `WebDAVSessionDelegate
                 // .decideCertificate` refuses it before ever consulting the

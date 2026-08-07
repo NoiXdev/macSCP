@@ -6,10 +6,13 @@ import macSCPCore
 /// why adding WebDAV in M21 meant touching six switch statements.
 ///
 /// The App contributes exactly one thing -- `resolve`, which turns an
-/// `OptionSource` into options -- because managed keys and login sets live in
-/// stores Core cannot see. Everything else (which fields exist, which of them
-/// are visible right now, what they are called) belongs to the schema and is
-/// tested in Core; this view walks the result and holds no rules of its own.
+/// `OptionSource` into options -- because managed keys live in a store Core
+/// cannot see. Login sets were the second half of that reason until M22/T9:
+/// `OptionSource.loginSets` is gone and the login-set picker is a `FormBlock`
+/// the caller draws itself, so `.managedKeys` is the only source left to
+/// resolve. Everything else (which fields exist, which of them are visible
+/// right now, what they are called) belongs to the schema and is tested in
+/// Core; this view walks the result and holds no rules of its own.
 ///
 /// Takes a LIST of schemas, never one. A backend declares two
 /// (`connectionSchema` and `credentialSchema`), and taking a single one is

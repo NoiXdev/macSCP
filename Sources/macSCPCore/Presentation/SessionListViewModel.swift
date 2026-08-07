@@ -185,7 +185,7 @@ public final class SessionListViewModel {
     /// as someone else's jump host (M11a): every session whose `jump.
     /// sessionID` points at the one being deleted gets the deleted session's
     /// EFFECTIVE login (its own data, or its login set's, exactly like
-    /// `resolvedLogin` would report it) copied into concrete `JumpSpec`
+    /// `resolvedSSHLogin(for:)` reports it) copied into concrete `JumpSpec`
     /// fields, its resolved secret copied into the jump's OWN `secretID`
     /// slot, and both `sessionID` and `loginSetID` nilled -- the restored
     /// jump carries no reference of any kind, only values. A keychain
@@ -203,9 +203,9 @@ public final class SessionListViewModel {
     @discardableResult
     public func delete(_ session: StoredSession) -> JumpRestoreResult {
         let affected = sessionsUsingAsJump(session.id)
-        // The deleted session's effective login, resolved exactly like
-        // `resolvedLogin(for:)` would: nil for a manual session (use its own
-        // fields + own keychain secret below), a set's values otherwise. An
+        // The deleted session's effective login, via `resolvedSSHLogin(for:)`:
+        // nil for a manual session (use its own fields + own keychain secret
+        // below), a set's values otherwise. An
         // agent session/set reads no keychain at all (M10d rule).
         let resolvedBastionLogin = resolvedSSHLogin(for: session)
         let bastionUsername = resolvedBastionLogin?.username ?? session.username
@@ -650,7 +650,7 @@ public final class SessionListViewModel {
 
     /// Resolves what a session's jump host should actually connect with
     /// (M10c). `nil` when the session has no jump; a dangling `loginSetID`
-    /// on the jump throws, same as `resolvedLogin` (spec §2).
+    /// on the jump throws, same as `resolvedCredentials(for:)` (spec §2).
     public func resolvedJumpLogin(for session: StoredSession) throws -> ResolvedLogin? {
         guard let jump = session.jump else { return nil }
         return try LoginResolver.resolveJump(spec: jump, sets: loginSets, secrets: secrets)
