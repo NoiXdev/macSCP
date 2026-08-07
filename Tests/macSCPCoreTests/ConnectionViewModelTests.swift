@@ -1091,6 +1091,39 @@ struct ConnectionViewModelTests {
         #expect(vm.buildJumpSpec() == nil)
     }
 
+    /// The login switcher is a MODE switch too, and a stale selection here is
+    /// worse than a stale jump: the picker filters its options by kind
+    /// (`ConnectionFormView.loginSetPicker`), so an SSH set selected before a
+    /// switch to S3 becomes INVISIBLE rather than cleared, while the submit gate
+    /// only checks that something is selected and `resolveSelectedLoginSet`
+    /// looks the id up without a kind check. The session would be stored with
+    /// `kind == .s3` bound to an SSH set, and every later connect would throw
+    /// `LoginResolveError.kindMismatch` — a permanently unopenable session.
+    @Test @MainActor func switchingProtocolClearsTheLoginSetSelection() {
+        let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
+        vm.loginMode = .set
+        vm.selectedLoginSetID = UUID()
+
+        vm.kind = .s3
+
+        #expect(vm.loginMode == .manual)
+        #expect(vm.selectedLoginSetID == nil)
+    }
+
+    /// The counterpart to the reset above: "Save as new login set" is NOT a
+    /// stale-reference risk and deliberately survives the switch. See the
+    /// `kind` setter's own doc comment for the reasoning.
+    @Test @MainActor func switchingProtocolKeepsTheSaveAsNewLoginSetIntent() {
+        let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
+        vm.saveAsNewLoginSet = true
+        vm.newLoginSetName = "Work"
+
+        vm.kind = .webdav
+
+        #expect(vm.saveAsNewLoginSet)
+        #expect(vm.newLoginSetName == "Work")
+    }
+
     /// A prefill must never park the `"unused"` placeholder a legacy non-SSH
     /// session still carries in `host`/`username` into the form — the S3 form
     /// does not render those rows, but a later switch to the SSH type would

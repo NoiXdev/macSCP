@@ -158,10 +158,20 @@ public enum S3FieldSchema {
                 .trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    /// Every text field is TRIMMED on the way in (M23/T7 fix round 1), for the
+    /// same reason as `SSHFieldSchema.apply` and matching what `makeConfig`
+    /// already does for the CONNECT direction: without it the same typed value
+    /// connected fine and persisted with whitespace. The App's S3 save branch
+    /// trimmed all four before building this config; collapsing it onto the
+    /// descriptor moved the responsibility here. The secret access key is not
+    /// among them because it is not stored here at all.
     public static func stored(from values: FieldValues) -> StoredS3Config {
         StoredS3Config(
-            accessKeyID: values[S3Field.accessKeyID], region: values[S3Field.region],
-            endpoint: values[S3Field.endpoint], bucket: values[S3Field.bucket],
+            accessKeyID: values[S3Field.accessKeyID]
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            region: values[S3Field.region].trimmingCharacters(in: .whitespacesAndNewlines),
+            endpoint: values[S3Field.endpoint].trimmingCharacters(in: .whitespacesAndNewlines),
+            bucket: values[S3Field.bucket].trimmingCharacters(in: .whitespacesAndNewlines),
             usePathStyle: values[bool: S3Field.usePathStyle])
     }
 

@@ -138,9 +138,16 @@ public enum WebDAVFieldSchema {
             authKind: .password, keyPath: nil, kind: .webdav)
     }
 
+    /// Both text fields are TRIMMED on the way in (M23/T7 fix round 1) — the
+    /// App's WebDAV save branch trimmed them before building this config; see
+    /// `S3FieldSchema.stored(from:)` for the full reasoning. The password is
+    /// not among them because it is not stored here at all.
     public static func stored(from values: FieldValues) -> StoredWebDAVConfig {
         StoredWebDAVConfig(
-            baseURL: values[WebDAVField.baseURL], username: values[WebDAVField.username],
+            baseURL: values[WebDAVField.baseURL]
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            username: values[WebDAVField.username]
+                .trimmingCharacters(in: .whitespacesAndNewlines),
             useNextcloudPath: values[bool: WebDAVField.useNextcloudPath])
     }
 

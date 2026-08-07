@@ -297,8 +297,10 @@ public enum SessionImportPlanner {
     /// semantics must not shift.
     ///
     /// `.s3` and `.webdav` need their own key because they do not HAVE an
-    /// endpoint triple: every such session stores the literal placeholder
-    /// `host: "unused", port: 22, username: "unused"`. Keyed on the triple,
+    /// endpoint triple: a session written before M23 stored the literal
+    /// placeholder `host: "unused", port: 22, username: "unused"` there, and
+    /// one written since simply leaves host and user name empty — either way
+    /// the triple carries no identity. Keyed on it,
     /// every non-SSH session in the world was one and the same duplicate —
     /// three distinct WebDAV servers in one file collapsed to one import plus
     /// two silent drops, and an incoming WebDAV session could `Replace` an

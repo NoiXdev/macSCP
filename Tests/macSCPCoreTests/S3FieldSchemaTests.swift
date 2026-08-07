@@ -66,6 +66,25 @@ struct S3FieldSchemaTests {
         #expect(back[S3Field.secretAccessKey] == "")
     }
 
+    /// Trimming on write (M23/T7 fix round 1), for the same reason as
+    /// `SSHFieldSchema.apply`: the App's S3 save branch trimmed all four of
+    /// these before building the config, and collapsing it onto the adapter
+    /// moved that responsibility here. `makeConfig` already trims for the
+    /// CONNECT direction, so leaving `stored(from:)` raw meant the same value
+    /// connected fine and persisted with whitespace.
+    @Test func theStoredConfigTrimsEveryTextField() {
+        var values = filledValues()
+        values[S3Field.endpoint] = "  https://minio.local:9000 "
+        values[S3Field.region] = " us-east-1 "
+        values[S3Field.bucket] = " backups\n"
+        values[S3Field.accessKeyID] = "\tAKIA "
+        let stored = S3FieldSchema.stored(from: values)
+        #expect(stored.endpoint == "https://minio.local:9000")
+        #expect(stored.region == "us-east-1")
+        #expect(stored.bucket == "backups")
+        #expect(stored.accessKeyID == "AKIA")
+    }
+
     @Test func displaySummaryNamesTheBucketAndEndpointHost() {
         #expect(S3FieldSchema.displaySummary(filledValues()) == "backups @ minio.local")
     }

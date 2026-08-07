@@ -234,6 +234,63 @@ struct SessionListViewModelTests {
         #expect(try secrets.password(for: switched.id) == nil)
     }
 
+    /// `save` matches an EXISTING session by name, so a "Save & connect" whose
+    /// name collides with a session of a DIFFERENT kind changes that session's
+    /// protocol. Mutating rather than rebuilding is what carries group and
+    /// login-set binding forward (M23/T6) — but it must not carry the previous
+    /// backend's own block forward, or an `.ssh` session keeps a populated `s3`
+    /// block (endpoint, bucket, access key id) that reaches `sessions.json`,
+    /// the export codec and `SessionImportPlanner.duplicateKey`.
+    @Test func savingOverAnExistingNameOfAnotherKindClearsTheOldBackendBlock() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let s3 = StoredS3Config(
+            accessKeyID: "AKIA", region: "eu-central-1",
+            endpoint: "https://s3.example.com", bucket: "backups", usePathStyle: true)
+        _ = vm.save(
+            name: "shared", values: S3FieldSchema.values(from: s3),
+            password: "SECRET", kind: .s3)
+
+        let asSSH = vm.save(
+            name: "shared",
+            values: sshValues(host: "h.example.com", port: 2222, username: "tim"),
+            password: "pw")!
+
+        #expect(asSSH.kind == .ssh)
+        #expect(asSSH.s3 == nil)
+        #expect(asSSH.host == "h.example.com")
+        let raw = try String(contentsOf: dir.appendingPathComponent("sessions.json"), encoding: .utf8)
+        #expect(!raw.contains("backups"))
+    }
+
+    /// The same rule in the other direction: SSH's own fields are not a place
+    /// for an S3 session to keep a stale key path, auth kind or port.
+    @Test func savingOverAnSSHNameAsS3ClearsTheSSHOnlyFields() {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        _ = vm.save(
+            name: "shared",
+            values: sshValues(
+                host: "h.example.com", port: 2222, username: "tim",
+                authKind: .privateKey, keyPath: "/keys/id_ed25519"),
+            password: "pw")
+
+        let s3 = StoredS3Config(
+            accessKeyID: "AKIA", region: "eu-central-1",
+            endpoint: "https://s3.example.com", bucket: "backups", usePathStyle: false)
+        let asS3 = vm.save(
+            name: "shared", values: S3FieldSchema.values(from: s3),
+            password: "SECRET", kind: .s3)!
+
+        #expect(asS3.kind == .s3)
+        #expect(asS3.s3 == s3)
+        #expect(asS3.host == "")
+        #expect(asS3.username == "")
+        #expect(asS3.keyPath == nil)
+        #expect(asS3.authKind == .password)
+        #expect(asS3.port == 22)
+    }
+
     @Test func saveWithFailingSecretsStillReloadsFromDisk() {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-slvm-fail-\(UUID().uuidString)")

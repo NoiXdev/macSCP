@@ -98,6 +98,31 @@ public final class SessionListViewModel {
             session = StoredSession(id: UUID(), name: name, host: "", username: "", kind: kind)
         }
         session.name = name
+        // A name collision across KINDS is the one way this method changes an
+        // existing session's protocol (M23/T7 fix round 1) — "Save & connect"
+        // matches by name, so saving an SSH connection under a name an S3
+        // session already holds converts it. Mutating rather than rebuilding is
+        // what carries group and login-set binding forward, but the PREVIOUS
+        // backend's own storage must not come along: `apply` writes only the
+        // fields its own backend owns, so without this an `.ssh` session keeps
+        // a populated `s3` block (endpoint, bucket, access key id) and a `.s3`
+        // session keeps SSH's key path, auth kind and port. All of that reaches
+        // `sessions.json`, the export codec and
+        // `SessionImportPlanner.duplicateKey`.
+        //
+        // Guarded on an actual kind CHANGE so the ordinary same-kind re-save
+        // stays byte-identical. `validateForEditSave` needs no counterpart: the
+        // type picker is disabled in edit mode (`ConnectionFormView`,
+        // "connection type is fixed after creation"), so an edit cannot reach
+        // this case — and blanking `port` there would destroy the discriminator
+        // `editSaveMutatesTheOriginalInsteadOfRebuildingIt` relies on.
+        if session.kind != kind {
+            session.s3 = nil
+            session.webdav = nil
+            session.keyPath = nil
+            session.authKind = .password
+            session.port = 22
+        }
         session.kind = kind
         session.groupID = groupID
         session.loginSetID = loginSetID

@@ -317,10 +317,21 @@ public enum SSHFieldSchema {
     /// Writes ONLY the fields `SSHField` covers. `StoredSession` carries far
     /// more — group, login-set binding, jump spec, per-protocol configs — and
     /// rebuilding it from these values would silently drop them.
+    ///
+    /// Every text field is TRIMMED on the way in (M23/T7 fix round 1). The App
+    /// used to trim host and user name at its save call sites; collapsing those
+    /// onto this adapter moved the responsibility here, and `keyPath` below was
+    /// already trimmed, so leaving the other two raw made this function
+    /// inconsistent with itself. It is not cosmetic: `SessionImportPlanner`
+    /// keys `.ssh` duplicates on the host/port/user triple byte for byte, so a
+    /// trailing space turns a re-import into a silent duplicate instead of the
+    /// conflict the user should be offered. No secret is trimmed here because
+    /// none is written here — a `StoredSession` never holds one.
     public static func apply(_ values: FieldValues, to session: inout StoredSession) {
-        session.host = values[SSHField.host]
-        session.port = Int(values[SSHField.port]) ?? 22
+        session.host = values[SSHField.host].trimmingCharacters(in: .whitespacesAndNewlines)
+        session.port = Int(values[SSHField.port].trimmingCharacters(in: .whitespaces)) ?? 22
         session.username = values[SSHField.username]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         if let kind = StoredSession.AuthKind(rawValue: values[SSHField.authKind]) {
             session.authKind = kind
         }
