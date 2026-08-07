@@ -92,11 +92,11 @@ public enum S3FieldSchema {
                 // `region` is optional against non-AWS endpoints and
                 // `usePathStyle` is a toggle whose every value is valid. The
                 // two credential fields belong to the LOGIN, not the bucket:
-                // on the connect path `BackendDescriptor.firstViolation` checks
-                // them against the schema's own `isRequired` (M23), and
-                // `ConnectionViewModel.validateS3Fields` still does so for
-                // edit-save, which owns the rule that an empty secret means
-                // "unchanged" (until M23/T6 folds that in too).
+                // both `connect()` and `validateForEditSave()` check them
+                // against the schema's own `isRequired` via
+                // `BackendDescriptor.firstViolation` (M23/T6) -- the latter
+                // passes `requireSecrets: false`, which is what owns the rule
+                // that an empty secret means "unchanged" during an edit.
                 break
             }
         }
