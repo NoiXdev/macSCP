@@ -165,6 +165,28 @@ public struct BackendDescriptor: Sendable {
     /// schemas (M23) — connection fields first, then credentials, which is the
     /// order the form renders them in, so the reported field is the topmost
     /// offending row rather than an arbitrary one.
+    ///
+    /// CALL-ORDER CONTRACT (M23/T7). The credential schema is walked
+    /// unconditionally, including while the form is in login-set mode — where
+    /// the App SUBSTITUTES that whole block with a kind-filtered picker
+    /// (`FormBlock.loginSetPicker`). A violation reported against, say,
+    /// `SSHField.password` would then outline a row that is not on screen.
+    ///
+    /// That cannot happen only because the App fills the selected set's values
+    /// into the form BEFORE validating: `ConnectionFormView`'s Connect/Save
+    /// actions run `resolveLoginSetForSubmit` first and proceed only on `true`,
+    /// which reaches `ContentView.resolveSelectedLoginSet` ->
+    /// `ContentView.fillForm` -> `ConnectionViewModel.applyResolvedCredentials`
+    /// (a dangling set returns `false` and never reaches validation at all). By
+    /// the time `connect()`/`validateForEditSave()` call in here, the
+    /// credential fields hold the set's own values.
+    ///
+    /// So this is a call-ORDER guarantee, not a structural one, and nothing
+    /// tests the ordering. A future submit path that reaches `connect()` or
+    /// `validateForEditSave()` without going through `resolveLoginSetForSubmit`
+    /// reintroduces the off-screen highlight — as would a set that is itself
+    /// incomplete (the login-set editor disables Save while a required field is
+    /// empty, but an imported `logins.json` is not bound by that).
     public func firstViolation(
         in values: FieldValues, requireSecrets: Bool
     ) -> (messageKey: String, fieldKey: String)? {

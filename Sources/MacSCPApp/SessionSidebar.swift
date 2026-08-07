@@ -420,9 +420,10 @@ private struct SessionRow: View {
 
     /// The backend's own `displaySummary` (M22/T11) — NOT the old hand-rolled
     /// "\(session.username)@\(session.host):\(session.port)", which read
-    /// SSH-shaped fields S3 and WebDAV never fill (`session.host`/
-    /// `.username` carry the `"unused"` placeholder for both, so the tooltip
-    /// used to read "unused@unused:22").
+    /// SSH-shaped fields S3 and WebDAV never fill: a session written before M23
+    /// carried the `"unused"` placeholder in `session.host`/`.username` (so the
+    /// tooltip read "unused@unused:22"), and one written since leaves both
+    /// empty (so it would read "@:22"). Neither is a connection summary.
     private var connectionSummary: String {
         let descriptor = BackendDescriptor.descriptor(for: session.kind)
         return descriptor.displaySummary(descriptor.sessionValues(session))

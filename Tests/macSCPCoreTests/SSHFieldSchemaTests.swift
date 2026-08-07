@@ -266,6 +266,25 @@ struct SSHFieldSchemaTests {
         #expect(session.kind == .ssh)
     }
 
+    /// Trimming on write (M23/T7 fix round 1). The App used to trim host and
+    /// user name at its call sites; collapsing those onto `apply` moved the
+    /// responsibility here, and `keyPath` right below was already trimmed —
+    /// leaving the other two raw made the adapter inconsistent with itself.
+    /// It matters beyond tidiness: `SessionImportPlanner` keys `.ssh`
+    /// duplicates on the host/port/user triple byte for byte, so a trailing
+    /// space turns a re-import into a silent duplicate instead of a conflict.
+    /// Secrets are unaffected — `apply` never writes one, because a
+    /// `StoredSession` never holds one.
+    @Test func applyTrimsTheHostAndUserName() {
+        var session = sshSession(name: "prod", host: "old", username: "old")
+        var values = passwordValues()
+        values[SSHField.host] = "  server.example.com \n"
+        values[SSHField.username] = " tim  "
+        SSHFieldSchema.apply(values, to: &session)
+        #expect(session.host == "server.example.com")
+        #expect(session.username == "tim")
+    }
+
     /// A key path belongs to private-key auth only: switching to a password
     /// must clear it rather than leave a stale path on disk.
     @Test func applyClearsTheKeyPathWhenAuthIsNotAPrivateKey() {

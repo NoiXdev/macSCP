@@ -340,11 +340,32 @@ public final class ConnectionViewModel {
     /// then switched to S3 was invisible while still making `buildJumpSpec()`
     /// hand a hollow spec (empty host, freshly generated `secretID`) to a
     /// save path that no longer branches on `kind` to discard it.
+    ///
+    /// The TARGET's login switcher goes with it too (M23/T7 fix round 1), and
+    /// that one is worse than the jump: a login set belongs to exactly one
+    /// kind, the picker filters its options by kind
+    /// (`ConnectionFormView.loginSetPicker`), and the submit gate only checks
+    /// that SOMETHING is selected. So an SSH set picked before a switch to S3
+    /// went invisible rather than being cleared, and saved a `.s3` session
+    /// bound to an SSH set — which `LoginResolver.resolve` then rejects with
+    /// `kindMismatch` on every later connect, i.e. a session that can never be
+    /// opened again. `resolveSelectedLoginSet` looks the id up by id alone, so
+    /// nothing downstream catches it either.
+    ///
+    /// `saveAsNewLoginSet`/`newLoginSetName` deliberately do NOT reset here.
+    /// They are an intent ("also save this login"), not a reference to
+    /// something of the old kind: `maybeCreateNewLoginSet` builds the set from
+    /// the ACTIVE descriptor and the freshly reset `values`, so the toggle
+    /// simply produces a set of the new kind. The rows also stay visible in
+    /// manual mode for every backend, so a surviving tick is something the user
+    /// can see and undo — the opposite of the invisible selection above.
     public var kind: ConnectionKind = .ssh {
         didSet {
             guard oldValue != kind else { return }
             values = BackendDescriptor.descriptor(for: kind).defaultValues
             clearJumpFields()
+            loginMode = .manual
+            selectedLoginSetID = nil
         }
     }
 

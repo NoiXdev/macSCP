@@ -2025,6 +2025,11 @@ struct ContentView: View {
     /// right before Connect/Save whenever the form is in Set mode, so the
     /// EXISTING connect/save validators (which only know about
     /// username/authChoice/keyPath/password) see the set's current values.
+    ///
+    /// Running BEFORE validation is a contract, not a convenience: see
+    /// `BackendDescriptor.firstViolation`, which walks the credential schema
+    /// unconditionally and would otherwise outline a row the picker has
+    /// replaced on screen.
     /// The secret is read from the keychain under the SET's own id, exactly
     /// where `saveLoginSet`/`deleteLoginSet` keep it — a synthetic
     /// `StoredSession` carrying that id is enough for `password(for:)` to

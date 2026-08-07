@@ -70,6 +70,19 @@ struct WebDAVFieldSchemaTests {
         #expect(back[WebDAVField.password] == "")
     }
 
+    /// Trimming on write (M23/T7 fix round 1) — the App's WebDAV save branch
+    /// trimmed both of these; see `S3FieldSchemaTests.theStoredConfigTrimsEveryTextField`
+    /// for the full reasoning. `useNextcloudPath` is a Bool and has nothing to
+    /// trim.
+    @Test func theStoredConfigTrimsEveryTextField() {
+        var values = filledValues()
+        values[WebDAVField.baseURL] = " https://cloud.example.com \n"
+        values[WebDAVField.username] = "  tim "
+        let stored = WebDAVFieldSchema.stored(from: values)
+        #expect(stored.baseURL == "https://cloud.example.com")
+        #expect(stored.username == "tim")
+    }
+
     @Test func displaySummaryNamesTheUserAndHost() {
         #expect(WebDAVFieldSchema.displaySummary(filledValues()) == "tim @ cloud.example.com")
     }
