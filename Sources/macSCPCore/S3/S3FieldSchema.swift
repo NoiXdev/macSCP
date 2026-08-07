@@ -65,8 +65,12 @@ public enum S3FieldSchema {
     public static func makeConfig(
         _ values: FieldValues, _ secret: String
     ) throws -> ConnectionConfig {
-        // Switching over the field enum is what makes the compiler check that
-        // a newly added field was considered here.
+        // The switch is exhaustive, so a case added to `S3Field` cannot reach
+        // this factory without an arm here. That buys ACKNOWLEDGMENT, not
+        // correctness: appending the new case to the `break` arm below
+        // satisfies the compiler while deciding nothing. Which is why that
+        // arm says why each of its fields needs no check — a new case joining
+        // it has to fit the stated reason or move out.
         for field in S3Field.allCases {
             switch field {
             case .bucket:
@@ -76,6 +80,12 @@ public enum S3FieldSchema {
                 guard !values[S3Field.endpoint].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 else { throw RemoteFSError.connectionFailed(reason: "Enter the endpoint") }
             case .region, .accessKeyID, .secretAccessKey, .usePathStyle:
+                // `region` is optional against non-AWS endpoints and
+                // `usePathStyle` is a toggle whose every value is valid. The
+                // two credential fields belong to the LOGIN, not the bucket:
+                // `ConnectionViewModel.validateS3Fields` checks them, because
+                // it owns the edit-mode rule that an empty secret means
+                // "unchanged" and the localized message that goes with it.
                 break
             }
         }

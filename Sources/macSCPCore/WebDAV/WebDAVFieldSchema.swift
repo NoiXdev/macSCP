@@ -57,14 +57,24 @@ public enum WebDAVFieldSchema {
     public static func makeConfig(
         _ values: FieldValues, _ secret: String
     ) throws -> ConnectionConfig {
-        // Switching over the field enum is what makes the compiler check that
-        // a newly added field was considered here.
+        // The switch is exhaustive, so a case added to `WebDAVField` cannot
+        // reach this factory without an arm here. That buys ACKNOWLEDGMENT,
+        // not correctness: appending the new case to the `break` arm below
+        // satisfies the compiler while deciding nothing. Which is why that
+        // arm says why each of its fields needs no check — a new case joining
+        // it has to fit the stated reason or move out.
         for field in WebDAVField.allCases {
             switch field {
             case .baseURL:
                 guard !values[WebDAVField.baseURL].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 else { throw RemoteFSError.connectionFailed(reason: "Enter the server URL") }
             case .username, .password, .useNextcloudPath:
+                // `useNextcloudPath` is a toggle whose every value is valid.
+                // The other two belong to the LOGIN, not the server address,
+                // and the secret does not even come from `values` — it
+                // arrives as the parameter, resolved from the Keychain or a
+                // login set by the caller, so there is nothing here to check
+                // it against.
                 break
             }
         }

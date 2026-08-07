@@ -158,9 +158,14 @@ public enum SSHFieldSchema {
     public static func makeConfig(
         _ values: FieldValues, _ secret: String
     ) throws -> ConnectionConfig {
-        // Switching over the field enum is what makes the compiler check that
-        // a newly added field was considered here. Unlike S3 and WebDAV, SSH
-        // validates nothing in this loop: `SSHConnectionConfig.init` is the
+        // The switch is exhaustive, so a case added to `SSHField` cannot reach
+        // this factory without an arm here. That buys ACKNOWLEDGMENT, not
+        // correctness: appending the new case to an existing `break` arm
+        // satisfies the compiler while deciding nothing, which is why every
+        // arm below states what it decided rather than falling silent.
+        //
+        // Unlike S3 and WebDAV, SSH validates
+        // nothing in this loop: `SSHConnectionConfig.init` is the
         // ONE source of validation errors (its `ConfigError` cases are what
         // the App maps to localized messages), so re-checking here would
         // shadow those with an unlocalized reason.
