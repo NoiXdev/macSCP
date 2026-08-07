@@ -13,6 +13,7 @@ enum SettingsSection: Hashable {
     case openWith
     case terminal
     case shortcuts
+    case cli
     case ssh
     case s3
 
@@ -24,6 +25,7 @@ enum SettingsSection: Hashable {
         case .openWith: return L10n.string("settings.tab.openWith", "Open with")
         case .terminal: return L10n.string("settings.tab.terminal", "Terminal")
         case .shortcuts: return L10n.string("settings.tab.shortcuts", "Shortcuts")
+        case .cli: return L10n.string("settings.section.cli", "Command Line")
         case .ssh: return L10n.string("settings.section.ssh", "SSH")
         case .s3: return L10n.string("settings.section.s3", "S3")
         }
@@ -37,6 +39,7 @@ enum SettingsSection: Hashable {
         case .openWith: return "doc.badge.gearshape"
         case .terminal: return "terminal"
         case .shortcuts: return "keyboard"
+        case .cli: return "chevron.left.forwardslash.chevron.right"
         case .ssh: return "key"
         case .s3: return "cloud"
         }
@@ -50,8 +53,9 @@ enum SettingsSection: Hashable {
 /// `SettingsSection` and a detail column that renders the matching section
 /// `struct`: "General" (M7a/T4, split from the former "General" tab in
 /// M18/T7), "View" (the other half of that split), "Transfers", "Open with"
-/// (M5e/T2), "Terminal" (M9d), a read-only "Shortcuts" overview (M11q), and
-/// two protocol-specific sections grouped under "Protocols" — "SSH" and "S3"
+/// (M5e/T2), "Terminal" (M9d), a read-only "Shortcuts" overview (M11q),
+/// "Command Line" (the `macscp-cli` shortcut installer), and two
+/// protocol-specific sections grouped under "Protocols" — "SSH" and "S3"
 /// (M18/T7). The former tab-bar layout and its "SSH Keys" tab (M17/T4) are
 /// gone; key management now lives entirely in the standalone `SSHKeysSheet`
 /// (M18/T5), reachable from the Sessions menu, the connection form's "Manage
@@ -78,7 +82,7 @@ struct SettingsView: View {
                 ForEach(
                     [
                         SettingsSection.general, .appearance, .transfers,
-                        .openWith, .terminal, .shortcuts,
+                        .openWith, .terminal, .shortcuts, .cli,
                     ], id: \.self
                 ) { section in
                     Label(section.title, systemImage: section.systemImage)
@@ -113,6 +117,8 @@ struct SettingsView: View {
                     TerminalSettingsTab(store: store)
                 case .shortcuts:
                     ShortcutsSettingsTab()
+                case .cli:
+                    CLISettingsSection()
                 case .ssh:
                     SSHSettingsSection(store: store)
                 case .s3:
@@ -881,5 +887,208 @@ private struct S3SettingsSection: View {
         }
         .formStyle(.grouped)
         .padding()
+    }
+}
+
+/// The command-line companion's install section. Deliberately thin: every
+/// decision — does the shortcut exist, does it still point at THIS app copy,
+/// is the path occupied by something that must not be overwritten — is made by
+/// `CLIToolInstaller` in Core and covered by `CLIToolInstallerTests`. This view
+/// only renders the resulting state and calls `install()`.
+///
+/// **The app never escalates.** `install()` writes a symlink into the user's
+/// own `~/.local/bin`; nothing here runs a shell, invokes `sudo`, or asks for
+/// an authorization right. The `/usr/local/bin` alternative is offered as
+/// COPYABLE TEXT that the user runs themselves.
+///
+/// **No PATH check, on purpose.** `ProcessInfo.processInfo.environment["PATH"]`
+/// is the APP's `PATH` — a GUI process launched from Finder inherits a minimal
+/// `launchd` environment that has no relationship to the user's `.zshrc`, so
+/// deciding "not on your PATH" from it would be a confident falsehood shown to
+/// the user. The only accurate reading would come from starting a login shell,
+/// which can hang on a slow or broken profile and would freeze this window. So
+/// the requirement is stated plainly in the footer instead of pretended to be
+/// verified, and macSCP never edits a shell profile to "fix" it.
+private struct CLISettingsSection: View {
+    private let installer: CLIToolInstaller
+
+    @State private var state: CLIInstallState
+    @State private var errorMessage: String?
+
+    init() {
+        // `scripts/package-app` puts `macscp-cli` NEXT TO the app binary in
+        // `Contents/MacOS/`, so the running executable's own directory finds
+        // it without hardcoding `/Applications` — which keeps a copy run from
+        // `~/Downloads`, or a plain `swift run` build, honest about what it
+        // would be linking to.
+        let toolURL = (Bundle.main.executableURL
+            ?? URL(fileURLWithPath: CommandLine.arguments.first ?? "macSCP"))
+            .deletingLastPathComponent()
+            .appendingPathComponent(CLIToolInstaller.toolName)
+        let installer = CLIToolInstaller(toolURL: toolURL)
+        self.installer = installer
+        // Seeded synchronously so the section never flashes a wrong status
+        // for one frame before `onAppear` runs.
+        _state = State(initialValue: installer.state())
+    }
+
+    /// `~`-abbreviated for display; the full path stays selectable.
+    private func display(_ path: String) -> String {
+        (path as NSString).abbreviatingWithTildeInPath
+    }
+
+    private var linkPath: String {
+        display(installer.linkURL.path(percentEncoded: false))
+    }
+
+    private var statusTitle: String {
+        switch state {
+        case .notInstalled:
+            return L10n.string("settings.cli.status.notInstalled", "Not installed.")
+        case .installed:
+            return String(
+                format: L10n.string("settings.cli.status.installed %@", "Installed at %@"),
+                linkPath)
+        case .stale:
+            return L10n.string(
+                "settings.cli.status.stale",
+                "Installed, but pointing at a different copy of macSCP.")
+        case .occupied:
+            return String(
+                format: L10n.string(
+                    "settings.cli.status.occupied %@",
+                    "Something that is not a shortcut already exists at %@."),
+                linkPath)
+        }
+    }
+
+    private var statusDetail: String? {
+        switch state {
+        case .notInstalled, .installed:
+            return nil
+        case .stale(let target):
+            return String(
+                format: L10n.string("settings.cli.status.stale.detail %@", "Currently points at: %@"),
+                display(target))
+        case .occupied:
+            return L10n.string(
+                "settings.cli.status.occupied.detail",
+                "macSCP will not overwrite it. Move or remove it yourself, then install.")
+        }
+    }
+
+    /// Colour carries no information on its own here — the sentence above
+    /// says the same thing in words — so a colour-blind reader loses nothing.
+    private var statusColor: Color {
+        switch state {
+        case .installed: return .green
+        case .stale, .occupied: return .orange
+        case .notInstalled: return .primary
+        }
+    }
+
+    /// `nil` in the two states with nothing to do: already correct, or
+    /// blocked by a file only the user may remove.
+    private var actionTitle: String? {
+        switch state {
+        case .notInstalled: return L10n.string("settings.cli.install", "Install")
+        case .stale: return L10n.string("settings.cli.repair", "Repair")
+        case .installed, .occupied: return nil
+        }
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(statusTitle)
+                        .foregroundStyle(statusColor)
+                    if let statusDetail {
+                        Text(statusDetail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+
+                if let actionTitle {
+                    HStack {
+                        Spacer()
+                        Button(actionTitle) { install() }
+                    }
+                }
+            } header: {
+                Text(L10n.string("settings.cli.header", "Command-Line Tool"))
+            } footer: {
+                Text(
+                    L10n.string(
+                        "settings.cli.footer",
+                        "Creates a shortcut named macscp-cli in ~/.local/bin. Commands in that folder are only found if it is part of your shell's PATH — macSCP does not change your shell configuration."
+                    ))
+            }
+
+            Section {
+                Text(
+                    L10n.string(
+                        "settings.cli.systemWide.intro",
+                        "To install into /usr/local/bin instead, copy this command and run it in a terminal:"
+                    ))
+                .fixedSize(horizontal: false, vertical: true)
+
+                Text(installer.systemWideInstallCommand)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack {
+                    Spacer()
+                    Button(L10n.string("settings.cli.systemWide.copy", "Copy Command")) {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(
+                            installer.systemWideInstallCommand, forType: .string)
+                    }
+                }
+            } header: {
+                Text(L10n.string("settings.cli.systemWide.header", "System-Wide Installation"))
+            } footer: {
+                Text(
+                    L10n.string(
+                        "settings.cli.systemWide.footer",
+                        "That folder belongs to the system, so the command asks for your administrator password. macSCP never requests administrator rights itself."
+                    ))
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        // Re-read on every appearance: the shortcut can change while the app
+        // runs (the user moves the .app, or removes the link in a terminal).
+        .onAppear { state = installer.state() }
+        .alert(
+            L10n.string("settings.cli.error.title", "Installation failed"),
+            isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )
+        ) {
+            Button(L10n.string("common.ok", "OK"), role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "")
+        }
+    }
+
+    private func install() {
+        do {
+            try installer.install()
+        } catch CLIInstallError.pathOccupied {
+            // Unreachable from the button (it is hidden in `.occupied`), but
+            // the path could be taken between the last refresh and the click.
+            // The refreshed status below then explains it in place, so no
+            // alert is needed — the raw error would only repeat it worse.
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        state = installer.state()
     }
 }

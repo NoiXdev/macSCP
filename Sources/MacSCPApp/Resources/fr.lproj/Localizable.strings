@@ -753,3 +753,21 @@
 "keys.rename" = "Renommer…";
 "keys.rename.title" = "Renommer la clé";
 "keys.rename.error" = "Impossible de renommer la clé.";
+
+/* Réglages — Section « Ligne de commande » (raccourci macscp-cli) */
+"settings.section.cli" = "Ligne de commande";
+"settings.cli.header" = "Outil en ligne de commande";
+"settings.cli.status.notInstalled" = "Non installé.";
+"settings.cli.status.installed %@" = "Installé dans %@";
+"settings.cli.status.stale" = "Installé, mais pointant vers une autre copie de macSCP.";
+"settings.cli.status.stale.detail %@" = "Pointe actuellement vers : %@";
+"settings.cli.status.occupied %@" = "Un élément qui n’est pas un raccourci existe déjà dans %@.";
+"settings.cli.status.occupied.detail" = "macSCP ne l’écrasera pas. Déplacez-le ou supprimez-le vous-même, puis installez de nouveau.";
+"settings.cli.install" = "Installer";
+"settings.cli.repair" = "Réparer";
+"settings.cli.footer" = "Crée un raccourci nommé macscp-cli dans ~/.local/bin. Les commandes de ce dossier ne sont trouvées que s’il fait partie du PATH de votre shell — macSCP ne modifie pas la configuration de votre shell.";
+"settings.cli.error.title" = "Échec de l’installation";
+"settings.cli.systemWide.header" = "Installation à l’échelle du système";
+"settings.cli.systemWide.intro" = "Pour installer dans /usr/local/bin à la place, copiez cette commande et exécutez-la dans un terminal :";
+"settings.cli.systemWide.copy" = "Copier la commande";
+"settings.cli.systemWide.footer" = "Ce dossier appartient au système, la commande demande donc votre mot de passe administrateur. macSCP ne demande jamais de droits d’administrateur lui-même.";

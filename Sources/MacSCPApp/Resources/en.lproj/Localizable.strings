@@ -749,3 +749,21 @@
 "keys.rename" = "Rename…";
 "keys.rename.title" = "Rename Key";
 "keys.rename.error" = "Couldn't rename the key.";
+
+/* Settings — Command Line section (macscp-cli shortcut installer) */
+"settings.section.cli" = "Command Line";
+"settings.cli.header" = "Command-Line Tool";
+"settings.cli.status.notInstalled" = "Not installed.";
+"settings.cli.status.installed %@" = "Installed at %@";
+"settings.cli.status.stale" = "Installed, but pointing at a different copy of macSCP.";
+"settings.cli.status.stale.detail %@" = "Currently points at: %@";
+"settings.cli.status.occupied %@" = "Something that is not a shortcut already exists at %@.";
+"settings.cli.status.occupied.detail" = "macSCP will not overwrite it. Move or remove it yourself, then install.";
+"settings.cli.install" = "Install";
+"settings.cli.repair" = "Repair";
+"settings.cli.footer" = "Creates a shortcut named macscp-cli in ~/.local/bin. Commands in that folder are only found if it is part of your shell's PATH — macSCP does not change your shell configuration.";
+"settings.cli.error.title" = "Installation failed";
+"settings.cli.systemWide.header" = "System-Wide Installation";
+"settings.cli.systemWide.intro" = "To install into /usr/local/bin instead, copy this command and run it in a terminal:";
+"settings.cli.systemWide.copy" = "Copy Command";
+"settings.cli.systemWide.footer" = "That folder belongs to the system, so the command asks for your administrator password. macSCP never requests administrator rights itself.";
