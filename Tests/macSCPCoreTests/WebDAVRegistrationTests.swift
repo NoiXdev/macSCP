@@ -56,11 +56,10 @@ struct WebDAVRegistrationTests {
     /// A stored WebDAV session must build a runtime config from the Keychain
     /// secret — this is the path the CLI takes for `name:/path`.
     @Test func storedSessionBuildsARuntimeConfig() throws {
-        var session = StoredSession(
-            name: "cloud", host: "cloud.example.com", port: 443, username: "tim")
-        session.kind = .webdav
-        session.webdav = StoredWebDAVConfig(
-            baseURL: "https://cloud.example.com", username: "tim", useNextcloudPath: true)
+        let session = webdavSession(
+            name: "cloud",
+            config: StoredWebDAVConfig(
+                baseURL: "https://cloud.example.com", username: "tim", useNextcloudPath: true))
 
         let config = try StoredSessionConnectionConfig.build(for: session, secret: "app-password")
 
@@ -74,11 +73,10 @@ struct WebDAVRegistrationTests {
     }
 
     @Test func storedWebDAVSessionWithoutASecretFails() {
-        var session = StoredSession(
-            name: "cloud", host: "cloud.example.com", port: 443, username: "tim")
-        session.kind = .webdav
-        session.webdav = StoredWebDAVConfig(
-            baseURL: "https://cloud.example.com", username: "tim", useNextcloudPath: true)
+        let session = webdavSession(
+            name: "cloud",
+            config: StoredWebDAVConfig(
+                baseURL: "https://cloud.example.com", username: "tim", useNextcloudPath: true))
 
         #expect(throws: StoredSessionConnectionError.secretRequired) {
             _ = try StoredSessionConnectionConfig.build(for: session, secret: nil)

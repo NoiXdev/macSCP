@@ -31,9 +31,7 @@ struct S3FileSystemIntegrationTests {
             kind: .s3, accessKeyID: "macscp")
         let secrets = InMemorySecretStore()
         try secrets.savePassword("macscpsecretkey", for: set.id)
-        let session = StoredSession(
-            name: "rig-session", host: "unused", username: "unused",
-            loginSetID: set.id, kind: .s3)
+        let session = s3Session(name: "rig-session", loginSetID: set.id)
 
         // M22/T9: one resolver for every backend, returning the same
         // `FieldValues` the form produces.

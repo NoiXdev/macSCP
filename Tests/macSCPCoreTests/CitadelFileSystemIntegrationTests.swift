@@ -1505,7 +1505,7 @@ struct CitadelFileSystemIntegrationTests {
         let sessions = SessionStore(directory: sessionsDir)
         let secrets = InMemorySecretStore()
 
-        let bastion = StoredSession(
+        let bastion = sshSession(
             name: "Bastion", host: "127.0.0.1", port: 2222, username: "testuser", authKind: .password)
         try secrets.savePassword("testpass", for: bastion.id)
         try sessions.upsert(bastion)
@@ -1942,7 +1942,7 @@ struct JumpFromSavedSessionChainGuardTests {
         let secrets = InMemorySecretStore()
 
         let innerJump = StoredSession.JumpSpec(host: "inner", username: "inner")
-        let bastion = StoredSession(
+        let bastion = sshSession(
             name: "Bastion", host: "127.0.0.1", port: 2222, username: "testuser",
             authKind: .password, jump: innerJump)
         try secrets.savePassword("testpass", for: bastion.id)

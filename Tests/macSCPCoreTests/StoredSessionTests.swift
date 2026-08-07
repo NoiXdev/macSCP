@@ -14,10 +14,10 @@ struct StoredSessionTests {
     }
 
     @Test func s3SessionRoundtrips() throws {
-        var s = StoredSession(name: "obj", host: "", port: 0, username: "AK")
-        s.kind = .s3
-        s.s3 = StoredS3Config(accessKeyID: "AK", region: "us-east-1",
-            endpoint: "https://s3.amazonaws.com", bucket: "b", usePathStyle: false)
+        let s = s3Session(
+            name: "obj",
+            config: StoredS3Config(accessKeyID: "AK", region: "us-east-1",
+                endpoint: "https://s3.amazonaws.com", bucket: "b", usePathStyle: false))
         let data = try JSONEncoder().encode(s)
         let back = try JSONDecoder().decode(StoredSession.self, from: data)
         #expect(back.kind == .s3)
