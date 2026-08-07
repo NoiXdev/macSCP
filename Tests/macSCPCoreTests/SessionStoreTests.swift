@@ -19,7 +19,7 @@ struct SessionStoreTests {
     @Test func upsertPersistsAndRoundtrips() throws {
         let (store, dir) = makeTempStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let session = StoredSession(name: "web", host: "example.com", username: "tim")
+        let session = sshSession(name: "web", host: "example.com", username: "tim")
         try store.upsert(session)
         #expect(try store.all() == [session])
     }
@@ -27,7 +27,7 @@ struct SessionStoreTests {
     @Test func upsertReplacesById() throws {
         let (store, dir) = makeTempStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        var session = StoredSession(name: "web", host: "example.com", username: "tim")
+        var session = sshSession(name: "web", host: "example.com", username: "tim")
         try store.upsert(session)
         session.name = "web-neu"
         try store.upsert(session)
@@ -39,7 +39,7 @@ struct SessionStoreTests {
     @Test func deleteRemovesSession() throws {
         let (store, dir) = makeTempStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let session = StoredSession(name: "web", host: "example.com", username: "tim")
+        let session = sshSession(name: "web", host: "example.com", username: "tim")
         try store.upsert(session)
         try store.delete(id: session.id)
         #expect(try store.all() == [])
@@ -48,7 +48,7 @@ struct SessionStoreTests {
     @Test func deleteUnknownIdIsNoop() throws {
         let (store, dir) = makeTempStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let session = StoredSession(name: "web", host: "example.com", username: "tim")
+        let session = sshSession(name: "web", host: "example.com", username: "tim")
         try store.upsert(session)
         try store.delete(id: UUID())
         #expect(try store.all() == [session])
@@ -69,7 +69,7 @@ struct SessionStoreTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let group = StoredGroup(name: "Customers")
         try store.upsertGroup(group)
-        let session = StoredSession(name: "web", host: "h", username: "u", groupID: group.id)
+        let session = sshSession(name: "web", host: "h", username: "u", groupID: group.id)
         try store.upsert(session)
 
         #expect(try store.allGroups() == [group])
@@ -98,7 +98,7 @@ struct SessionStoreTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let group = StoredGroup(name: "Temp")
         try store.upsertGroup(group)
-        try store.upsert(StoredSession(name: "a", host: "h", username: "u", groupID: group.id))
+        try store.upsert(sshSession(name: "a", host: "h", username: "u", groupID: group.id))
         try store.dissolveGroup(id: group.id)
 
         #expect(try store.allGroups().isEmpty)
@@ -108,7 +108,7 @@ struct SessionStoreTests {
     @Test func orphanedGroupIDIsTreatedAsNilOnLoad() throws {
         let (store, dir) = makeTempStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        try store.upsert(StoredSession(name: "a", host: "h", username: "u", groupID: UUID()))
+        try store.upsert(sshSession(name: "a", host: "h", username: "u", groupID: UUID()))
         #expect(try store.all().first?.groupID == nil)
     }
 
