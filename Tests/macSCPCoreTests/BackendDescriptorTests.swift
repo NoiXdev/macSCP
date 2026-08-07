@@ -93,6 +93,70 @@ struct BackendDescriptorTests {
         #expect(orphans.isEmpty, "skipped ids that match no declared field, so they hide nothing")
     }
 
+    /// The guard for `ConnectionField.identity` (M23/P3): every backend must
+    /// name at least one field that makes a connection of its kind DISTINCT,
+    /// and none of them may be a secret.
+    ///
+    /// Both halves are load-bearing, and neither is a compile error. A backend
+    /// that declares nothing gets a key of just its kind — every session of
+    /// that protocol collapses into one duplicate, which is exactly the defect
+    /// the pre-M23 endpoint-triple key produced for S3 and WebDAV, only
+    /// reintroduced by omission rather than by design. And a secret in an
+    /// identity key would put a password into `SessionImportPlanner`'s
+    /// in-memory key set, where nothing about the surrounding code expects
+    /// one; an access key ID is an opaque credential but NOT a secret, which
+    /// is why it may be identifying and `secretAccessKey` may not.
+    @Test func everyBackendDeclaresANonSecretIdentity() {
+        for kind in ConnectionKind.allCases {
+            let descriptor = BackendDescriptor.descriptor(for: kind)
+            #expect(
+                !descriptor.identifyingFields.isEmpty,
+                Comment(rawValue: "\(kind) names no identifying field, so every session of "
+                    + "that kind would import as one and the same duplicate"))
+            for field in descriptor.identifyingFields {
+                #expect(
+                    !field.isSecret,
+                    Comment(rawValue: "\(kind).\(field.id) is a secret and must never enter "
+                        + "a duplicate key"))
+            }
+        }
+    }
+
+    /// What each backend actually declares, pinned as a whole. The guard above
+    /// says "at least one and no secret"; this says WHICH — so that adding a
+    /// field to an identity, or dropping one from it, is a decision somebody
+    /// made on purpose rather than a side effect of editing a schema. The
+    /// import consequences are pinned in `SessionImportPlannerTests`.
+    @Test func theDeclaredIdentitiesAreTheEndpointTripleAndItsTwoAnalogues() {
+        func identifyingIDs(_ kind: ConnectionKind) -> [String] {
+            BackendDescriptor.descriptor(for: kind).identifyingFields.map(\.id)
+        }
+        #expect(identifyingIDs(.ssh) == [
+            SSHField.host.rawValue, SSHField.port.rawValue, SSHField.username.rawValue,
+        ])
+        #expect(identifyingIDs(.s3) == [
+            S3Field.endpoint.rawValue, S3Field.bucket.rawValue, S3Field.accessKeyID.rawValue,
+        ])
+        #expect(identifyingIDs(.webdav) == [
+            WebDAVField.baseURL.rawValue, WebDAVField.username.rawValue,
+        ])
+    }
+
+    /// The host is the ONE case-folded field anywhere. DNS is case-insensitive,
+    /// so `WEB-01` and `web-01` are one machine; a bucket name, a URL path and
+    /// an access key ID are case-SENSITIVE, and folding them would merge
+    /// connections that are genuinely different.
+    @Test func onlyTheSSHHostIsCaseFolded() {
+        var folded: [String] = []
+        for kind in ConnectionKind.allCases {
+            for field in BackendDescriptor.descriptor(for: kind).identifyingFields
+            where field.identity == .caseInsensitive {
+                folded.append("\(kind.rawValue).\(field.id)")
+            }
+        }
+        #expect(folded == ["ssh.\(SSHField.host.rawValue)"])
+    }
+
     /// A group is the ONLY thing any backend hand-draws — pinned so a new
     /// group added to a schema is a deliberate decision about whether the
     /// generic renderer can handle it, not a silent one.

@@ -51,15 +51,34 @@ public struct ConnectionField: Sendable, Equatable, Identifiable {
     /// message rather than to silence.
     public let invalidMessageKey: String?
 
+    /// Whether this field makes a connection DISTINCT, and how its value is
+    /// compared (M23/P3). `nil` — the default — means it takes no part in the
+    /// connection's identity at all.
+    ///
+    /// Data, for the same reason `isRequired` is: `SessionImportPlanner`
+    /// answered this with a `switch` over `ConnectionKind`, which was the last
+    /// compile-forcing site outside `BackendDescriptor`. Declared per FIELD
+    /// rather than as a per-backend list, because identity is NOT "all fields":
+    /// S3's `region` and `usePathStyle` are excluded on purpose — two sessions
+    /// differing only in `usePathStyle` are one connection addressed two ways —
+    /// and the exclusion belongs next to the field it is about, where the next
+    /// person to add a field has to decide.
+    ///
+    /// A SECRET must never carry one. `BackendDescriptorTests`
+    /// (`everyBackendDeclaresANonSecretIdentity`) enforces both halves: at
+    /// least one identifying field per backend, and none of them secret.
+    public let identity: FieldIdentity?
+
     public var isSecret: Bool { kind == .secret }
 
     public init(id: String, labelKey: String, labelDefault: String,
                 kind: Kind, visibleWhen: FieldCondition? = nil,
                 isRequired: Bool = false, format: FieldFormat? = nil,
-                invalidMessageKey: String? = nil) {
+                invalidMessageKey: String? = nil, identity: FieldIdentity? = nil) {
         self.id = id; self.labelKey = labelKey; self.labelDefault = labelDefault
         self.kind = kind; self.visibleWhen = visibleWhen; self.isRequired = isRequired
         self.format = format; self.invalidMessageKey = invalidMessageKey
+        self.identity = identity
     }
 }
 

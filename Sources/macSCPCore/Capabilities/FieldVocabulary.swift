@@ -39,6 +39,35 @@ public enum FieldFormat: Sendable, Equatable {
     case numeric
 }
 
+/// How a field takes part in a connection's IDENTITY (M23/P3) — the answer to
+/// "are these two sessions the same connection?", which `SessionImportPlanner`
+/// asks of every entry in an import file.
+///
+/// Two cases, because there are two real behaviours and no third. A host name
+/// is case-insensitive (DNS says so, and SSH import has folded it since M9a);
+/// a bucket name, a URL path and an access key ID are not, and folding them
+/// would merge connections that are genuinely different. Which of the two a
+/// field wants is a property of the FIELD, not of the backend, which is why it
+/// is declared here rather than decided by whoever builds the key.
+///
+/// Trimming is deliberately NOT among the cases: an identity key is derived
+/// from raw stored/file values, and a value that needs trimming is trimmed by
+/// the backend's own `apply` long before it is ever stored.
+public enum FieldIdentity: Sendable, Equatable {
+    /// Byte for byte, exactly as the file or the store spells it.
+    case verbatim
+    /// Case-folded — the DNS rule, and only for what DNS actually governs.
+    case caseInsensitive
+
+    /// This field's raw value as it enters an identity key.
+    public func normalized(_ raw: String) -> String {
+        switch self {
+        case .verbatim: return raw
+        case .caseInsensitive: return raw.lowercased()
+        }
+    }
+}
+
 /// "Field X has value Y" — and deliberately nothing else. No and, no or, no
 /// negation. This covers the only real case (SSH shows the key path only for
 /// `authKind == privateKey`) and cannot grow into an expression language. A

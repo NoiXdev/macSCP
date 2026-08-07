@@ -13,11 +13,20 @@ public enum S3Field: String, CaseIterable, BackendFieldID {
 public enum S3FieldSchema {
     public static let connection = ConnectionFieldSchema(
         fields: [
+            // Endpoint and bucket here, plus `accessKeyID` in the credential
+            // schema, are what make an S3 connection distinct on import
+            // (M23/P3). VERBATIM throughout: unlike a host name, a URL path
+            // and a bucket name are case-sensitive.
             ConnectionField(id: S3Field.endpoint.rawValue,
                             labelKey: "connection.s3.endpoint", labelDefault: "Endpoint",
                             kind: .text,
                             isRequired: true,
-                            invalidMessageKey: "core.connect.s3FieldRequired"),
+                            invalidMessageKey: "core.connect.s3FieldRequired",
+                            identity: .verbatim),
+            // NOT identifying, though it is required: the region is part of
+            // the SigV4 credential scope, not of which bucket this is. Two
+            // sessions naming the same bucket under different regions are one
+            // connection, one of them misconfigured.
             ConnectionField(id: S3Field.region.rawValue,
                             labelKey: "connection.s3.region", labelDefault: "Region",
                             kind: .text,
@@ -27,7 +36,12 @@ public enum S3FieldSchema {
                             labelKey: "connection.s3.bucket", labelDefault: "Bucket",
                             kind: .text,
                             isRequired: true,
-                            invalidMessageKey: "core.connect.s3FieldRequired"),
+                            invalidMessageKey: "core.connect.s3FieldRequired",
+                            identity: .verbatim),
+            // NOT identifying: path-style versus virtual-host addressing is
+            // how a client reaches the bucket, not which bucket it reaches.
+            // Two sessions differing only here are the same connection, and
+            // the user must be asked rather than handed a silent second copy.
             ConnectionField(id: S3Field.usePathStyle.rawValue,
                             labelKey: "connection.s3.pathStyle",
                             labelDefault: "Use path-style URLs", kind: .toggle),
@@ -58,11 +72,17 @@ public enum S3FieldSchema {
     /// by the login-set editor with the same generic code as the form.
     public static let credential = ConnectionFieldSchema(
         fields: [
+            // Identifying, and legitimately so: two different keys against one
+            // bucket are two connections with different rights. It is an
+            // opaque credential but NOT a secret — the secret is
+            // `secretAccessKey` below, which carries no identity and never
+            // enters a key.
             ConnectionField(id: S3Field.accessKeyID.rawValue,
                             labelKey: "connection.s3.accessKey",
                             labelDefault: "Access Key ID", kind: .text,
                             isRequired: true,
-                            invalidMessageKey: "core.connect.s3FieldRequired"),
+                            invalidMessageKey: "core.connect.s3FieldRequired",
+                            identity: .verbatim),
             ConnectionField(id: S3Field.secretAccessKey.rawValue,
                             labelKey: "connection.s3.secretKey",
                             labelDefault: "Secret Access Key", kind: .secret,

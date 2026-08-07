@@ -14,11 +14,19 @@ public enum WebDAVField: String, CaseIterable, BackendFieldID {
 public enum WebDAVFieldSchema {
     public static let connection = ConnectionFieldSchema(
         fields: [
+            // The base URL here, plus `username` in the credential schema, are
+            // what make a WebDAV connection distinct on import (M23/P3).
+            // VERBATIM: the path segment of a DAV URL is case-sensitive even
+            // though its host is not, and folding the whole string would merge
+            // two different shares on one server.
             ConnectionField(id: WebDAVField.baseURL.rawValue,
                             labelKey: "connection.webdav.baseURL",
                             labelDefault: "Server URL", kind: .text,
                             isRequired: true,
-                            invalidMessageKey: "core.connect.webdavFieldRequired"),
+                            invalidMessageKey: "core.connect.webdavFieldRequired",
+                            identity: .verbatim),
+            // NOT identifying: whether the Nextcloud path is appended is how
+            // this client addresses the share, not which share it is.
             ConnectionField(id: WebDAVField.useNextcloudPath.rawValue,
                             labelKey: "connection.webdav.nextcloudPath",
                             labelDefault: "Append Nextcloud path", kind: .toggle),
@@ -54,9 +62,13 @@ public enum WebDAVFieldSchema {
     /// what a WebDAV connection is, and there is no sensible default for it.
     public static let credential = ConnectionFieldSchema(
         fields: [
+            // Identifying even though it is not required: two logins to one
+            // share are two connections, and an anonymous one (empty user
+            // name) is a third.
             ConnectionField(id: WebDAVField.username.rawValue,
                             labelKey: "connection.webdav.username",
-                            labelDefault: "User name", kind: .text),
+                            labelDefault: "User name", kind: .text,
+                            identity: .verbatim),
             ConnectionField(id: WebDAVField.password.rawValue,
                             labelKey: "connection.webdav.password",
                             labelDefault: "Password", kind: .secret),
