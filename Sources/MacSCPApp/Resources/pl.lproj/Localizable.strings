@@ -393,6 +393,8 @@
    tutaj mapowany na wyświetlany tekst, nigdy na surową wartość. */
 "import.conflict.title" = "Nazwa już istnieje";
 "import.conflict.message" = "„%@” już istnieje.";
+"import.conflict.connection.title" = "Połączenie już istnieje";
+"import.conflict.connection.message" = "„%@” wskazuje na ten sam serwer co „%@”.";
 "import.conflict.kind.loginSet" = "zestaw logowania";
 "import.conflict.kind.session" = "połączenie";
 "import.conflict.kind.other" = "element";

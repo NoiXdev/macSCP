@@ -19,6 +19,15 @@ private actor CapturedKindLabel {
     func record(_ value: String) { self.value = value }
 }
 
+/// Captures the whole `ImportConflict` a decider was handed, so a test can
+/// assert on its `reason` — the capturing-decider shape this file and
+/// `SessionImportPlannerTests.swift` already use for `DeciderCallLog`/
+/// `CapturedKindLabel`, reused here rather than invented anew (M23/P3 T3).
+private actor CapturedConflict {
+    private(set) var value: ImportConflict?
+    func record(_ value: ImportConflict) { self.value = value }
+}
+
 @Suite("LoginSetImportPlanner")
 struct LoginSetImportPlannerTests {
     private func fileSet(
@@ -84,6 +93,23 @@ struct LoginSetImportPlannerTests {
             existing: existing, incoming: payload([fileSet(name: "  Prod  ")]), arbiter: arbiter)
 
         #expect(await log.names == ["Prod"])
+    }
+
+    /// Unlike a session, which collides on the CONNECTION, a login set
+    /// collides on its NAME — the `key` above IS the normalized name. The
+    /// conflict must say so via `.name`, not the `.sameConnection` case a
+    /// session conflict reports.
+    @Test func aLoginSetConflictReportsTheName() async {
+        let existing = [LoginSet(name: "Prod", username: "root")]
+        let captured = CapturedConflict()
+        let arbiter = ImportConflictArbiter { conflict in
+            await captured.record(conflict)
+            return (.skip, false)
+        }
+        _ = await LoginSetImportPlanner.plan(
+            existing: existing, incoming: payload([fileSet(name: "Prod")]), arbiter: arbiter)
+
+        #expect(await captured.value?.reason == .name)
     }
 
     @Test func skipDropsTheIncomingSet() async {

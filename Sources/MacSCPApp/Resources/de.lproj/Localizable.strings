@@ -391,6 +391,8 @@
    Bezeichner, hier auf Anzeigetext abgebildet, nicht der Rohwert selbst. */
 "import.conflict.title" = "Name bereits vorhanden";
 "import.conflict.message" = "„%@“ ist bereits vorhanden.";
+"import.conflict.connection.title" = "Verbindung bereits vorhanden";
+"import.conflict.connection.message" = "„%@“ zeigt auf denselben Server wie „%@“.";
 "import.conflict.kind.loginSet" = "Login-Set";
 "import.conflict.kind.session" = "Verbindung";
 "import.conflict.kind.other" = "Eintrag";

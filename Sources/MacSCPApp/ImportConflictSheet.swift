@@ -58,10 +58,9 @@ private struct ImportConflictSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(L10n.string("import.conflict.title", "Name Already Exists"))
+            Text(titleText)
                 .font(.headline)
-            Text(String(format: L10n.string(
-                "import.conflict.message", "“%@” already exists."), conflict.itemName))
+            Text(messageText)
                 .foregroundStyle(.secondary)
             HStack(spacing: 6) {
                 Text(L10n.string("info.kind", "Kind"))
@@ -105,6 +104,37 @@ private struct ImportConflictSheet: View {
         // same reasoning `ConflictSheetView` documents for the M5b transfer
         // sheet. Resolution happens exclusively through the buttons above.
         .interactiveDismissDisabled(true)
+    }
+
+    /// `ImportConflict.reason` says which collision actually happened
+    /// (M23/P3 T3): a login set collides on its NAME, a session on its
+    /// CONNECTION, and those are different keys with different keys' worth
+    /// of copy — reusing `import.conflict.title`/`.message` for both would
+    /// reintroduce the exact defect this type exists to prevent (a session
+    /// conflict claiming a NAME is taken when what collided is the
+    /// endpoint).
+    private var titleText: String {
+        switch conflict.reason {
+        case .name:
+            return L10n.string("import.conflict.title", "Name Already Exists")
+        case .sameConnection:
+            return L10n.string("import.conflict.connection.title", "Connection Already Exists")
+        }
+    }
+
+    /// See `titleText` above. The `.sameConnection` message names the STORED
+    /// (or earlier-in-file) connection's own display summary, never the
+    /// incoming item's name — that is the whole point of the case.
+    private var messageText: String {
+        switch conflict.reason {
+        case .name:
+            return String(format: L10n.string(
+                "import.conflict.message", "“%@” already exists."), conflict.itemName)
+        case .sameConnection(let existing):
+            return String(format: L10n.string(
+                "import.conflict.connection.message",
+                "“%@” points at the same server as “%@”."), conflict.itemName, existing)
+        }
     }
 
     /// Maps Core's stable `kindLabel` identifier to localized display text.

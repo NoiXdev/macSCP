@@ -19,6 +19,15 @@ private actor CapturedKindLabel {
     func record(_ value: String) { self.value = value }
 }
 
+/// Captures the whole `ImportConflict` a decider was handed, so a test can
+/// assert on its `reason` — the capturing-decider shape this file and
+/// `LoginSetImportPlannerTests.swift` already use for `DeciderCallLog`/
+/// `CapturedKindLabel`, reused here rather than invented anew (M23/P3 T3).
+private actor CapturedConflict {
+    private(set) var value: ImportConflict?
+    func record(_ value: ImportConflict) { self.value = value }
+}
+
 @Suite("SessionImportPlanner")
 struct SessionImportPlannerTests {
     private func incoming(_ sessions: [ExportedSession], groups: [ExportedGroup] = []) -> SessionExportPayload {
@@ -199,6 +208,30 @@ struct SessionImportPlannerTests {
             arbiter: arbiter)
 
         #expect(await log.names == ["padded-name"])
+    }
+
+    /// The defect this milestone fixes: a session collides on the
+    /// CONNECTION, not the name (`SessionImportPlanner` keys on
+    /// `duplicateKey`, the endpoint) — unlike a login set, which collides on
+    /// its name. The conflict must say so via `.sameConnection`, naming the
+    /// STORED session's own display summary — the same one-line identity the
+    /// sidebar uses — rather than leaving the caller to assume, as the old
+    /// shared "name already exists" message did, that a name collided.
+    @Test func aSessionConflictReportsTheConnectionItCollidedWith() async {
+        let existing = [sshSession(name: "prod", host: "prod.example.com", port: 2222, username: "deploy")]
+        let captured = CapturedConflict()
+        let arbiter = ImportConflictArbiter { conflict in
+            await captured.record(conflict)
+            return (.skip, false)
+        }
+        _ = await SessionImportPlanner.plan(
+            existing: existing, existingGroups: [],
+            incoming: incoming([
+                exported(name: "Backup Server", host: "prod.example.com", port: 2222, username: "deploy"),
+            ]),
+            arbiter: arbiter)
+
+        #expect(await captured.value?.reason == .sameConnection(existing: "deploy@prod.example.com:2222"))
     }
 
     @Test func replaceKeepsTheExistingSessionID() async {
