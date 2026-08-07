@@ -1344,6 +1344,40 @@ struct SessionListViewModelTests {
         #expect(exported.fields["S3Field.accessKeyID"] == "AKIAOWN")
     }
 
+    /// An `.s3` session with NO stored block names no server, so the export
+    /// must not go looking for a secret for it — neither counting it in the
+    /// user-visible "N passwords missing" total nor carrying a key that, on
+    /// import, would claim a Keychain slot for a session with no S3 block at
+    /// all. Collapsing the per-protocol columns briefly dropped this guard
+    /// (M23/P3 fix round 1); this pins it so it cannot be dropped silently
+    /// again.
+    @Test func exportOfBlocklessS3SessionFetchesNoSecretAndCountsNothing() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let store = SessionStore(directory: dir)
+        // A secret DOES sit in the keychain under this id: the assertion below
+        // is that the export never reaches for it, not that there is nothing
+        // to reach for.
+        let session = StoredSession(name: "s3-blockless", kind: .s3)
+        try store.upsert(session)
+        try secrets.savePassword("shh-secret", for: session.id)
+
+        let vm = SessionListViewModel(
+            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+        let (payload, missingPasswordCount) = vm.exportPayload(
+            for: .single(session), includeGroups: false, includePasswords: true)
+
+        let exported = payload.sessions.first!
+        #expect(exported.s3SecretAccessKey == nil)
+        #expect(exported.password == nil)
+        #expect(missingPasswordCount == 0)
+        // And the bag stays empty, so the import side reads it back as "no
+        // block" rather than inventing a server the file never named.
+        #expect(exported.fields.isEmpty)
+    }
+
     // MARK: - Connection kind + WebDAV (M23 fix)
 
     /// End-to-end twin of `s3SessionSurvivesExportImportRoundtrip`: a

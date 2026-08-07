@@ -668,4 +668,83 @@ struct SessionImportPlannerTests {
         #expect(plan.sessionsToImport.isEmpty)
         #expect(plan.skipped.count == 2)
     }
+
+    // MARK: - What a v1 import does DIFFERENTLY since the bag (M23/P3)
+    //
+    // Two behaviour changes fall out of routing v1's columns through
+    // `SSHFieldSchema.apply` instead of copying them onto `StoredSSHConfig`
+    // verbatim. Both were judged correct and kept; these tests exist so that
+    // "kept" is a decision on record rather than something a later reader has
+    // to rediscover by diffing against `c692dc8`.
+
+    /// Decodes a v1 SSH entry written with the given raw column values —
+    /// the real file shape, so these tests exercise the whole
+    /// decode -> upgrade -> plan chain rather than `apply` alone.
+    private func planFromV1SSHEntry(
+        columns: String
+    ) async throws -> (bag: [String: String], session: StoredSession) {
+        let raw = Data("""
+        {"format":"macscp-sessions","version":1,"encrypted":false,"payload":\
+        {"includesSecrets":false,"groups":[],"sessions":[\
+        {"id":"\(UUID().uuidString)","name":"web",\(columns)}]}}
+        """.utf8)
+        let decoded = try SessionExportCodec.decode(raw)
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: decoded, arbiter: neverAsked)
+        return (decoded.sessions[0].fields, plan.sessionsToImport[0].session)
+    }
+
+    /// v1 took host and user name verbatim; the bag routes them through
+    /// `SSHFieldSchema.apply`, which trims. Kept deliberately: the planner
+    /// keys `.ssh` duplicates on the host/port/user triple byte for byte, so
+    /// an untrimmed host would re-import as a silent duplicate instead of
+    /// raising the conflict the user should be offered.
+    @Test func aV1PayloadsUntrimmedHostAndUsernameAreTrimmedOnImport() async throws {
+        let (bag, session) = try await planFromV1SSHEntry(columns: """
+        "host":"  h.example.com  ","port":22,"username":"  deploy  ",\
+        "authKind":"password"
+        """)
+
+        // The upgrade is FAITHFUL — it hands the columns over byte for byte,
+        // spaces and all. Asserting this first is what stops the two
+        // expectations below from passing vacuously against a value that was
+        // never untrimmed to begin with.
+        #expect(bag["SSHField.host"] == "  h.example.com  ")
+        #expect(bag["SSHField.username"] == "  deploy  ")
+
+        // The trim happens where every other write goes through it.
+        #expect(session.host == "h.example.com")
+        #expect(session.username == "deploy")
+    }
+
+    /// v1 copied `keyPath` across whatever the auth kind was; `apply` clears
+    /// it unless auth is `.privateKey`. Reachable for a session a pre-M23
+    /// build saved after switching from key to password auth without clearing
+    /// the stale path — the exact case `apply`'s doc comment describes. Kept:
+    /// the value is inert (only ever read under private-key auth), and
+    /// dropping it on import is the same cleanup a re-save would do.
+    @Test func aV1PayloadsStaleKeyPathIsDroppedUnderPasswordAuth() async throws {
+        let (bag, session) = try await planFromV1SSHEntry(columns: """
+        "host":"h","port":22,"username":"u","authKind":"password",\
+        "keyPath":"/legacy/key"
+        """)
+
+        // Again: the bag carries the path, so the drop below is `apply`'s
+        // doing and not a column the upgrade quietly failed to read.
+        #expect(bag["SSHField.keyPath"] == "/legacy/key")
+        #expect(session.authKind == .password)
+        #expect(session.keyPath == nil)
+    }
+
+    /// The other half of the pair: under private-key auth the very same
+    /// column still arrives intact, so the test above is pinning the auth-kind
+    /// rule and not a blanket "key paths are dropped".
+    @Test func aV1PayloadsKeyPathSurvivesUnderPrivateKeyAuth() async throws {
+        let (_, session) = try await planFromV1SSHEntry(columns: """
+        "host":"h","port":22,"username":"u","authKind":"privateKey",\
+        "keyPath":"/legacy/key"
+        """)
+
+        #expect(session.keyPath == "/legacy/key")
+    }
 }

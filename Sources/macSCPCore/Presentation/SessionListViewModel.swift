@@ -767,7 +767,21 @@ public final class SessionListViewModel {
             // missing-password accounting, same "only with includePasswords"
             // gate. It is a SECRET, so it never travels in `fields`.
             var s3SecretAccessKey: String?
-            if session.kind == .s3, includePasswords {
+            // `session.s3 != nil` is load-bearing, not leftover shape from the
+            // block this replaced (M23/P3 fix round 1). An `.s3` session with
+            // NO stored block names no server: fetching a secret for it would
+            // count it in the user-visible "N passwords missing" total, and on
+            // import the empty bag yields no S3 block while the carried secret
+            // still claims a Keychain slot — an orphan of exactly the kind the
+            // jump-password rule below avoids. Dropping this guard was an
+            // unreported side effect of collapsing the columns; it is restored
+            // deliberately.
+            //
+            // The `password` branch above has no matching `session.webdav !=
+            // nil` check, so a blockless `.webdav` session is still fetched and
+            // counted. That asymmetry predates this milestone and is left
+            // alone here rather than widened by a drive-by change.
+            if session.kind == .s3, session.s3 != nil, includePasswords {
                 s3SecretAccessKey = resolved != nil ? resolved?.secret : self.password(for: session)
                 if s3SecretAccessKey == nil {
                     missingPasswordCount += 1
