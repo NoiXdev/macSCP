@@ -114,8 +114,8 @@ public enum CLIErrorMapping {
             case .secretRequired:
                 return "Error: no secret available (checked --password-command, "
                     + "the environment, and the keychain)"
-            case .missingKeyPath:
-                return "Error: the stored session uses a private key but has no key path"
+            case .incompleteConfiguration(let field):
+                return "Error: the stored session's \(field) is missing or invalid"
             }
         case is PasswordCommandError:
             return "Error: --password-command failed: \(error)"

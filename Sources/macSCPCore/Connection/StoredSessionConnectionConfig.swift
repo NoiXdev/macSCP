@@ -22,8 +22,19 @@ public enum StoredSessionConnectionError: Error, Equatable, Sendable {
     /// The session needs an actual secret (password, key passphrase, or S3
     /// secret access key) and none of the staged sources produced one.
     case secretRequired
-    /// `authKind == .privateKey` but `keyPath` is empty or `nil`.
-    case missingKeyPath
+    /// A field the stored session needs is blank or unparsable — which field
+    /// is named by its ENGLISH label (`ConnectionField.labelDefault`), not a
+    /// localization key, because CLI output is not localized.
+    ///
+    /// Replaced the SSH-specific `missingKeyPath` in M23/P2: naming a field by
+    /// protocol meant an `authKind == .privateKey` branch inside a function
+    /// whose whole point is not to have one. The schema already knows which
+    /// fields are required and when, so this case carries the answer instead
+    /// of re-deriving it.
+    ///
+    /// Carries a LABEL, never a value — a secret's contents must never reach
+    /// an error message, a log line or the CLI's output.
+    case incompleteConfiguration(field: String)
 }
 
 /// Builds the RUNTIME `ConnectionConfig` for a stored session — the CLI's
@@ -45,66 +56,33 @@ public enum StoredSessionConnectionConfig {
         guard session.jump == nil else {
             throw StoredSessionConnectionError.jumpSessionsNotSupported
         }
-        switch session.kind {
-        case .ssh:
-            return .ssh(try buildSSH(for: session, secret: secret))
-        case .s3:
-            return .s3(try buildS3(for: session, secret: secret))
-        case .webdav:
-            return .webdav(try buildWebDAV(for: session, secret: secret))
-        }
-    }
 
-    private static func buildSSH(for session: StoredSession, secret: String?) throws -> SSHConnectionConfig {
-        let auth: SSHConnectionConfig.AuthMethod
-        switch session.authKind {
-        case .password:
-            guard let secret, !secret.isEmpty else {
-                throw StoredSessionConnectionError.secretRequired
-            }
-            auth = .password(secret)
-        case .privateKey:
-            // Trimmed the same way `ConnectionViewModel.connectSSH()` trims
-            // its own `keyPath` field before checking it -- a whitespace-only
-            // path must fail with OUR typed error, not fall through to
-            // `SSHConnectionConfig`'s own (differently-shaped) validation.
-            let keyPath = (session.keyPath ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !keyPath.isEmpty else {
-                throw StoredSessionConnectionError.missingKeyPath
-            }
-            // Empty/nil secret means an unencrypted key -- same convention
-            // `ConnectionViewModel.connectSSH()` uses for its own `password`
-            // field in `.privateKey` mode.
-            auth = .privateKey(keyPath: keyPath, passphrase: (secret?.isEmpty == false) ? secret : nil)
-        case .agent:
-            // Agent auth needs no secret at all -- the call site skips
-            // secret resolution entirely for this case (see `connect(to:
-            // options:)` in the CLI), so `secret` is ignored here too.
-            auth = .agent
+        let descriptor = BackendDescriptor.descriptor(for: session.kind)
+        guard descriptor.hasStoredConfiguration(session) else {
+            throw StoredSessionConnectionError.missingBackendConfiguration(kind: session.kind)
         }
-        return try SSHConnectionConfig(
-            host: session.host, port: session.port, username: session.username, auth: auth)
-    }
 
-    private static func buildS3(for session: StoredSession, secret: String?) throws -> S3ConnectionConfig {
-        guard let stored = session.s3 else {
-            throw StoredSessionConnectionError.missingBackendConfiguration(kind: .s3)
-        }
-        guard let secret, !secret.isEmpty else {
+        let values = descriptor.sessionValues(session)
+        // The guards stay even though the factory would build without them:
+        // failing here says which field is wrong, while failing at the server
+        // says "access denied" with nothing pointing at the cause.
+        //
+        // `secretIsMandatory` is what keeps this from being a protocol branch
+        // -- it already answers "can this backend build a config without a
+        // secret at all", including SSH's agent case (no secret exists) and
+        // its unencrypted-key case (a passphrase is looked for but not
+        // demanded), where refusing would be wrong.
+        if descriptor.secretIsMandatory(for: values), secret?.isEmpty != false {
             throw StoredSessionConnectionError.secretRequired
         }
-        return S3ConnectionConfig(stored: stored, secretAccessKey: secret)
-    }
-
-    private static func buildWebDAV(
-        for session: StoredSession, secret: String?
-    ) throws -> WebDAVConnectionConfig {
-        guard let stored = session.webdav else {
-            throw StoredSessionConnectionError.missingBackendConfiguration(kind: .webdav)
+        // `requireSecrets: false` because the secret is not IN `values` -- it
+        // arrives as the parameter and was just checked above. This call is
+        // for the non-secret fields: a private-key session with no key path, a
+        // blank host, an unparsable port.
+        if let violation = descriptor.firstViolation(in: values, requireSecrets: false) {
+            throw StoredSessionConnectionError.incompleteConfiguration(
+                field: descriptor.fieldLabel(forKey: violation.fieldKey))
         }
-        guard let secret, !secret.isEmpty else {
-            throw StoredSessionConnectionError.secretRequired
-        }
-        return WebDAVConnectionConfig(stored: stored, password: secret)
+        return try descriptor.makeConfig(values, secret ?? "")
     }
 }
