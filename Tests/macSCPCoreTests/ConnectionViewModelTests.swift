@@ -123,10 +123,15 @@ struct ConnectionViewModelTests {
             field: .schema("SSHField.keyPath")))
     }
 
-    /// Under private-key auth the passphrase row is the one on screen, so a
-    /// key-path failure must outline the key path — the case the App used to
-    /// special-case by reading `authChoice` inside `failedFieldID`.
-    @Test @MainActor func connectOutlinesTheVisibleSecretRow() async {
+    /// The key path is required only while it is VISIBLE, which under the
+    /// schema means only under private-key auth — so this covers the
+    /// `visibleWhen`-gated requirement reaching `connect()` through
+    /// `firstViolation`, and the namespaced key naming the row to outline.
+    ///
+    /// It does NOT cover the password/passphrase split; `keyPath` is a plain
+    /// text row, not a secret one. `keyErrorsMapToLocalizedMessages` is what
+    /// pins that a private-key-auth secret failure names `SSHField.passphrase`.
+    @Test @MainActor func emptyKeyPathUnderPrivateKeyAuthOutlinesTheKeyPathRow() async {
         let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
         vm.host = "example.com"
         vm.username = "tim"
@@ -475,6 +480,42 @@ struct ConnectionViewModelTests {
         #expect(fs == nil)
         #expect(vm.state == .failed(
             message: CoreL10n.string("core.connect.jumpHostEmpty"), field: .jumpHost))
+    }
+
+    /// M23/T5 fix round 1 (CRITICAL): `validateJump` checks only PRESENCE --
+    /// host non-empty, port parses as an `Int`, username non-empty -- while
+    /// `SSHConnectionConfig.init` additionally enforces the host/username
+    /// whitelists, the `1...65535` port range and a non-empty jump key path.
+    /// A jump rejected by the second but accepted by the first must fail the
+    /// connect, NOT silently drop the hop: swallowing the throw would dial the
+    /// target directly, with no error anywhere, for a session whose whole point
+    /// is that it may only be reached through the bastion.
+    ///
+    /// The connector guard is the load-bearing half of this test: asserting
+    /// only the `.failed` state would still pass if the dial happened first and
+    /// the error came from somewhere else.
+    @Test func jumpConfigRejectedByTheConfigInitNeverDials() async {
+        let vm = makeVM(connector: { _, _ in
+            Issue.record("Connector must not be called when the jump config is rejected")
+            throw RemoteFSError.connectionFailed(reason: "unreachable")
+        })
+        vm.jumpEnabled = true
+        vm.jumpHost = "bastion.example.com"
+        // Parses as an `Int` (so `validateJump` waves it through) but is
+        // outside the port range `SSHConnectionConfig.init` enforces.
+        vm.jumpPort = "70000"
+        vm.jumpUsername = "bastion-user"
+        vm.jumpPassword = "bastion-pass"
+
+        let fs = await vm.connect()
+
+        #expect(fs == nil)
+        #expect(vm.state == .failed(
+            message: String(
+                format: CoreL10n.string("core.connect.invalidJumpPort %@"), "70000"),
+            field: .jumpPort))
+        // The hop was never silently dropped into a direct connection.
+        #expect(vm.lastConnectedConfig == nil)
     }
 
     @Test @MainActor func jumpSetModeRequiresSelection() {

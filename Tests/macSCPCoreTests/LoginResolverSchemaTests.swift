@@ -159,11 +159,16 @@ struct LoginResolverSchemaTests {
         }
     }
 
-    /// Every backend marks exactly the field that IDENTIFIES its login as
-    /// required — which is what the login-set editor gates Save on since the
-    /// `switch` over `ConnectionKind` (that returned "always disabled" for
-    /// `.webdav`) is gone.
-    @Test(arguments: ConnectionKind.allCases)
+    /// SSH and S3 mark the field that IDENTIFIES their login as required —
+    /// which is what the login-set editor gates Save on since the `switch` over
+    /// `ConnectionKind` (that returned "always disabled" for `.webdav`) is
+    /// gone.
+    ///
+    /// `.webdav` is excluded deliberately (maintainer decision, M23/T5 fix
+    /// round 1): anonymous WebDAV is supported, so neither of its credential
+    /// fields is required and an empty WebDAV credential form is legitimately
+    /// complete — pinned by `anEmptyWebDAVCredentialFormIsComplete` below.
+    @Test(arguments: ConnectionKind.allCases.filter { $0 != .webdav })
     func anEmptyCredentialFormIsIncompleteForEveryBackend(kind: ConnectionKind) {
         let descriptor = BackendDescriptor.descriptor(for: kind)
         #expect(!descriptor.credentialSchema.missingRequiredFields(
@@ -171,28 +176,48 @@ struct LoginResolverSchemaTests {
             "\(kind) marks no credential field required, so its editor could save a nameless login")
     }
 
-    @Test func aFilledWebDAVCredentialFormIsComplete() {
+    /// Anonymous WebDAV (maintainer decision, M23/T5 fix round 1): a public
+    /// read-only share, or a LAN box with no auth, is a real deployment. Since
+    /// M23 `connect()` honours `isRequired`, so marking these required would
+    /// refuse such a server before the connect was even attempted.
+    @Test func anEmptyWebDAVCredentialFormIsComplete() {
         let descriptor = BackendDescriptor.descriptor(for: .webdav)
         var values = descriptor.defaultValues
-        values[WebDAVField.username] = "tim"
-        // M23 marks `password` required too — see WebDAVFieldSchema.credential.
-        values[WebDAVField.password] = "app-password"
+        values[WebDAVField.username] = ""
+        values[WebDAVField.password] = ""
+        #expect(descriptor.credentialSchema.missingRequiredFields(
+            in: values, namespace: descriptor.fieldNamespace).isEmpty)
+    }
+
+    /// Repointed from WebDAV to S3 (M23/T5 fix round 1): WebDAV no longer has a
+    /// required credential field, so it can no longer carry this assertion.
+    /// The mechanic under test is unchanged — a form with every required
+    /// credential filled reports nothing missing.
+    @Test func aFilledCredentialFormIsComplete() {
+        let descriptor = BackendDescriptor.descriptor(for: .s3)
+        var values = descriptor.defaultValues
+        values[S3Field.accessKeyID] = "AKIAEXAMPLE"
+        values[S3Field.secretAccessKey] = "shh-secret"
         #expect(descriptor.credentialSchema.missingRequiredFields(
             in: values, namespace: descriptor.fieldNamespace).isEmpty)
     }
 
     /// Whitespace is not a value (M15's trimming rule, now in the schema).
-    /// `password` is filled here so the assertion below isolates the
-    /// whitespace-username case rather than also catching M23's new
-    /// password requirement.
+    ///
+    /// Repointed from WebDAV to SSH (M23/T5 fix round 1) for the same reason as
+    /// the test above; SSH's `username` is the required credential field now
+    /// standing in as the subject. `password` is filled here so the assertion
+    /// below isolates the whitespace-username case rather than also catching
+    /// SSH's own password requirement, which is visible under the default
+    /// password auth kind.
     @Test func aBlankRequiredFieldStillCountsAsMissing() {
-        let descriptor = BackendDescriptor.descriptor(for: .webdav)
+        let descriptor = BackendDescriptor.descriptor(for: .ssh)
         var values = descriptor.defaultValues
-        values[WebDAVField.username] = "   "
-        values[WebDAVField.password] = "app-password"
+        values[SSHField.username] = "   "
+        values[SSHField.password] = "hunter2"
         #expect(descriptor.credentialSchema.missingRequiredFields(
             in: values, namespace: descriptor.fieldNamespace).map(\.id)
-            == [WebDAVField.username.rawValue])
+            == [SSHField.username.rawValue])
     }
 }
 
