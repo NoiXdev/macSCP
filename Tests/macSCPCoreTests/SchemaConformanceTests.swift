@@ -52,4 +52,35 @@ struct SchemaConformanceTests {
             fields: SampleField.self)
         #expect(complaints.contains { $0.contains("ghost") })
     }
+
+    /// Every field that can FAIL validation must say what to tell the user.
+    /// Without this the validator falls back to a generic message and a field
+    /// silently loses the specific text it used to have — the exact regression
+    /// "the port must be a number" flattening into "this field is required".
+    @Test func everyValidatableFieldDeclaresItsMessage() {
+        for kind in ConnectionKind.allCases {
+            let descriptor = BackendDescriptor.descriptor(for: kind)
+            for schema in [descriptor.connectionSchema, descriptor.credentialSchema] {
+                for field in schema.fields where field.isRequired || field.format != nil {
+                    #expect(
+                        field.invalidMessageKey != nil,
+                        "\(kind).\(field.id) can fail validation but declares no message key")
+                }
+            }
+        }
+    }
+
+    /// The port is the ONE numeric field in the app. Pinned so that adding a
+    /// second `.numeric` field is a deliberate act with a test to update, not a
+    /// drive-by.
+    @Test func onlyTheSSHPortIsNumeric() {
+        let numeric = ConnectionKind.allCases.flatMap { kind -> [String] in
+            let descriptor = BackendDescriptor.descriptor(for: kind)
+            return [descriptor.connectionSchema, descriptor.credentialSchema]
+                .flatMap(\.fields)
+                .filter { $0.format == .numeric }
+                .map { "\(kind).\($0.id)" }
+        }
+        #expect(numeric == ["ssh.port"])
+    }
 }

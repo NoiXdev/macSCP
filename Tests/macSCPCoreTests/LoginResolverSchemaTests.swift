@@ -175,15 +175,21 @@ struct LoginResolverSchemaTests {
         let descriptor = BackendDescriptor.descriptor(for: .webdav)
         var values = descriptor.defaultValues
         values[WebDAVField.username] = "tim"
+        // M23 marks `password` required too — see WebDAVFieldSchema.credential.
+        values[WebDAVField.password] = "app-password"
         #expect(descriptor.credentialSchema.missingRequiredFields(
             in: values, namespace: descriptor.fieldNamespace).isEmpty)
     }
 
     /// Whitespace is not a value (M15's trimming rule, now in the schema).
+    /// `password` is filled here so the assertion below isolates the
+    /// whitespace-username case rather than also catching M23's new
+    /// password requirement.
     @Test func aBlankRequiredFieldStillCountsAsMissing() {
         let descriptor = BackendDescriptor.descriptor(for: .webdav)
         var values = descriptor.defaultValues
         values[WebDAVField.username] = "   "
+        values[WebDAVField.password] = "app-password"
         #expect(descriptor.credentialSchema.missingRequiredFields(
             in: values, namespace: descriptor.fieldNamespace).map(\.id)
             == [WebDAVField.username.rawValue])

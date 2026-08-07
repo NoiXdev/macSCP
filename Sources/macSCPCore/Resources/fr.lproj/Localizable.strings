@@ -24,6 +24,7 @@
 "core.connect.passwordEmpty" = "Le mot de passe ne doit pas être vide.";
 "core.connect.keyPathEmpty" = "Saisissez le chemin de la clé SSH.";
 "core.connect.saveNameEmpty" = "Saisissez un nom pour la session enregistrée.";
+"core.connect.fieldRequired" = "Ce champ est obligatoire.";
 
 /* ConnectionViewModel jump-host form validation (M10c/T3) */
 "core.connect.jumpHostEmpty" = "L'hôte relais ne doit pas être vide.";
