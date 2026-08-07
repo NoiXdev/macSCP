@@ -105,4 +105,35 @@ import Testing
         #expect(violation?.messageKey == "core.connect.webdavFieldRequired")
         #expect(violation?.fieldKey == "WebDAVField.baseURL")
     }
+
+    /// The two validators must answer the same question the same way. A password
+    /// of spaces is a legal password — `firstViolation` has said so since M23/P1,
+    /// and the login-set editor said the opposite, so a set that connects fine
+    /// could not be saved.
+    @Test func bothValidatorsTreatASecretOfSpacesAsFilled() {
+        let descriptor = BackendDescriptor.descriptor(for: .ssh)
+        var values = descriptor.defaultValues
+        values[SSHField.host] = "example.com"
+        values[SSHField.username] = "tim"
+        values[SSHField.password] = "  "
+
+        #expect(descriptor.firstViolation(in: values, requireSecrets: true) == nil)
+        #expect(descriptor.credentialSchema.missingRequiredFields(
+            in: values, namespace: SSHField.namespace).isEmpty)
+    }
+
+    /// And an EMPTY secret is still missing on both — the fix must not turn the
+    /// trim off in a way that also stops catching a genuinely blank field.
+    @Test func bothValidatorsTreatAnEmptySecretAsMissing() {
+        let descriptor = BackendDescriptor.descriptor(for: .ssh)
+        var values = descriptor.defaultValues
+        values[SSHField.host] = "example.com"
+        values[SSHField.username] = "tim"
+        values[SSHField.password] = ""
+
+        #expect(descriptor.firstViolation(in: values, requireSecrets: true)?.fieldKey
+                == "SSHField.password")
+        #expect(descriptor.credentialSchema.missingRequiredFields(
+            in: values, namespace: SSHField.namespace).map(\.id) == [SSHField.password.rawValue])
+    }
 }

@@ -89,14 +89,24 @@ public enum S3FieldSchema {
                 guard !values[S3Field.endpoint].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 else { throw RemoteFSError.connectionFailed(reason: "Enter the endpoint") }
             case .region, .accessKeyID, .secretAccessKey, .usePathStyle:
-                // `region` is optional against non-AWS endpoints and
-                // `usePathStyle` is a toggle whose every value is valid. The
-                // two credential fields belong to the LOGIN, not the bucket:
-                // both `connect()` and `validateForEditSave()` check them
-                // against the schema's own `isRequired` via
-                // `BackendDescriptor.firstViolation` (M23/T6) -- the latter
-                // passes `requireSecrets: false`, which is what owns the rule
-                // that an empty secret means "unchanged" during an edit.
+                // `region` needs no check HERE, but it is not optional: the
+                // schema marks it `isRequired: true` above, and
+                // `BackendDescriptor.firstViolation` enforces that before this
+                // factory ever runs. Some S3-compatible servers (MinIO, probed
+                // against the Docker rig) never look at the value, which reads
+                // as "blank is fine" -- it is not. `region` is part of the
+                // SigV4 credential scope (`AK/date/REGION/s3/aws4_request`);
+                // an empty segment there is a scope real AWS rejects with an
+                // opaque `AuthorizationHeaderMalformed`. A server that ignores
+                // the field is not evidence the field is unneeded, only that
+                // it isn't the one enforcing it. `usePathStyle` is a toggle
+                // whose every value is valid. The two credential fields belong
+                // to the LOGIN, not the bucket: both `connect()` and
+                // `validateForEditSave()` check them against the schema's own
+                // `isRequired` via `BackendDescriptor.firstViolation` (M23/T6)
+                // -- the latter passes `requireSecrets: false`, which is what
+                // owns the rule that an empty secret means "unchanged" during
+                // an edit.
                 break
             }
         }
