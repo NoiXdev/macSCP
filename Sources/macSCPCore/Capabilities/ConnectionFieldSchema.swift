@@ -92,15 +92,19 @@ extension ConnectionFieldSchema {
     }
 
     /// The visible fields this schema requires a value for that these values
-    /// leave blank (M22/T9) — empty means "saveable". Trimmed, so a row of
-    /// spaces does not count as filled.
+    /// leave blank (M22/T9) — empty means "saveable". Blank-or-filled is
+    /// decided by the same secret-versus-everything-else split as
+    /// `firstViolation`: see that function's doc comment for why a secret is
+    /// compared verbatim instead of trimmed.
     public func missingRequiredFields(
         in values: FieldValues, namespace: String
     ) -> [ConnectionField] {
         visibleFields(in: values, namespace: namespace).filter { field in
             guard field.isRequired else { return false }
-            let value = values.raw["\(namespace).\(field.id)"] ?? ""
-            return value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let raw = values.raw["\(namespace).\(field.id)"] ?? ""
+            let value = field.isSecret
+                ? raw : raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            return value.isEmpty
         }
     }
 
