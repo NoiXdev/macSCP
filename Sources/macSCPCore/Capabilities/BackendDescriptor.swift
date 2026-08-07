@@ -178,39 +178,6 @@ public struct BackendDescriptor: Sendable {
         }
     }
 
-    /// Whether a secret is not merely worth LOOKING for (`requiresSecret`) but
-    /// MANDATORY — without one, no config can be built at all (M23/P2).
-    ///
-    /// A second question rather than a reuse of `requiresSecret`, because SSH
-    /// answers the two differently and must: a private-key login SHOULD be
-    /// searched for a passphrase (an encrypted key has one, and
-    /// `CLISecretSources` consults the Keychain for it) but MUST NOT be
-    /// refused without one (an unencrypted key has none). Collapsing them
-    /// refuses every unencrypted-key session in the CLI — which is exactly
-    /// what a first cut of this function did, caught by
-    /// `privateKeyAuthWithNoSecretMeansAnUnencryptedKey`.
-    ///
-    /// SSH derives its answer from the schema: the visible secret field under
-    /// password auth (`password`) is `isRequired`, the one under private-key
-    /// auth (`passphrase`) deliberately is not.
-    ///
-    /// S3 and WebDAV answer `requiresSecret` verbatim. S3's schema agrees;
-    /// WebDAV's does NOT — its `password` is deliberately not `isRequired` so
-    /// the FORM permits an anonymous share, while the CLI has always refused a
-    /// secret-less WebDAV session (`storedWebDAVSessionWithoutASecretFails`).
-    /// That disagreement predates this function and is preserved here
-    /// unchanged; reconciling the form's rule with the CLI's is M23/P2 Task 2.
-    public func secretIsMandatory(for values: FieldValues) -> Bool {
-        guard requiresSecret(values) else { return false }
-        switch kind {
-        case .ssh:
-            return credentialSchema
-                .visibleSecretField(in: values, namespace: fieldNamespace)?.isRequired ?? false
-        case .s3, .webdav:
-            return true
-        }
-    }
-
     /// The English label of the field a namespaced `FieldValues` key names, or
     /// the key itself when nothing matches (M23/P2).
     ///
