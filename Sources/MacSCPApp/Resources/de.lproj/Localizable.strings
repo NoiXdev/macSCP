@@ -555,11 +555,7 @@
 "loginSets.editor.titleNew" = "Neuer Login";
 "loginSets.editor.titleEdit" = "Login bearbeiten";
 "loginSets.editor.name" = "Name";
-"loginSets.editor.username" = "Benutzername";
 "loginSets.editor.kind" = "Typ";
-"loginSets.editor.accessKeyID" = "Access Key ID";
-"loginSets.editor.secretAccessKey" = "Secret Access Key";
-"loginSets.editor.keepSecret" = "leer lassen, um beizubehalten";
 "loginSets.missingSet" = "Das hinterlegte Login dieser Verbindung wurde nicht gefunden. Login wählen oder Zugangsdaten eingeben.";
 "loginSets.badge.key" = "KEY";
 "loginSets.badge.pass" = "PASS";

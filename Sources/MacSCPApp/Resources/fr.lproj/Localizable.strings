@@ -558,11 +558,7 @@
 "loginSets.editor.titleNew" = "Nouveau login";
 "loginSets.editor.titleEdit" = "Modifier le login";
 "loginSets.editor.name" = "Nom";
-"loginSets.editor.username" = "Nom d'utilisateur";
 "loginSets.editor.kind" = "Type";
-"loginSets.editor.accessKeyID" = "Access Key ID";
-"loginSets.editor.secretAccessKey" = "Clé d’accès secrète";
-"loginSets.editor.keepSecret" = "laisser vide pour conserver";
 "loginSets.missingSet" = "Le login enregistré pour cette connexion est introuvable. Choisissez un login ou saisissez des identifiants.";
 "loginSets.badge.key" = "CLÉ";
 "loginSets.badge.pass" = "PASS";
