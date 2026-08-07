@@ -768,3 +768,5 @@
 "settings.cli.systemWide.intro" = "Um stattdessen nach /usr/local/bin zu installieren, kopiere diesen Befehl und führe ihn im Terminal aus:";
 "settings.cli.systemWide.copy" = "Befehl kopieren";
 "settings.cli.systemWide.footer" = "Dieser Ordner gehört dem System, deshalb fragt der Befehl nach deinem Administratorkennwort. macSCP selbst fordert nie Administratorrechte an.";
+"settings.cli.status.translocated" = "macSCP läuft von einem temporären Ort.";
+"settings.cli.status.translocated.detail" = "macOS startet Apps, die von einem Image oder aus dem Ordner „Downloads“ geöffnet werden, aus einer temporären Kopie, die beim Beenden verschwindet. Verschiebe macSCP in deinen Programme-Ordner, öffne es von dort und installiere erneut.";

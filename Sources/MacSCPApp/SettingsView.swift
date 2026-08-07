@@ -959,6 +959,10 @@ private struct CLISettingsSection: View {
                     "settings.cli.status.occupied %@",
                     "Something that is not a shortcut already exists at %@."),
                 linkPath)
+        case .translocated:
+            return L10n.string(
+                "settings.cli.status.translocated",
+                "macSCP is running from a temporary location.")
         }
     }
 
@@ -967,13 +971,23 @@ private struct CLISettingsSection: View {
         case .notInstalled, .installed:
             return nil
         case .stale(let target):
-            return String(
-                format: L10n.string("settings.cli.status.stale.detail %@", "Currently points at: %@"),
-                display(target))
+            // `nil` when the link's destination could not be read at all —
+            // then the headline stands alone rather than naming a path we do
+            // not actually know.
+            return target.map {
+                String(
+                    format: L10n.string(
+                        "settings.cli.status.stale.detail %@", "Currently points at: %@"),
+                    display($0))
+            }
         case .occupied:
             return L10n.string(
                 "settings.cli.status.occupied.detail",
                 "macSCP will not overwrite it. Move or remove it yourself, then install.")
+        case .translocated:
+            return L10n.string(
+                "settings.cli.status.translocated.detail",
+                "macOS runs apps opened from a disk image or the Downloads folder from a temporary copy that disappears on quit. Move macSCP to your Applications folder, open it from there, and install again.")
         }
     }
 
@@ -982,7 +996,7 @@ private struct CLISettingsSection: View {
     private var statusColor: Color {
         switch state {
         case .installed: return .green
-        case .stale, .occupied: return .orange
+        case .stale, .occupied, .translocated: return .orange
         case .notInstalled: return .primary
         }
     }
@@ -993,7 +1007,10 @@ private struct CLISettingsSection: View {
         switch state {
         case .notInstalled: return L10n.string("settings.cli.install", "Install")
         case .stale: return L10n.string("settings.cli.repair", "Repair")
-        case .installed, .occupied: return nil
+        // `.translocated` joins them: the fix is to move the app, not to
+        // press a button here — offering one would only create a link into a
+        // mount that is about to disappear.
+        case .installed, .occupied, .translocated: return nil
         }
     }
 
@@ -1080,6 +1097,11 @@ private struct CLISettingsSection: View {
     private func install() {
         do {
             try installer.install()
+        } catch CLIInstallError.appIsTranslocated {
+            // Same reasoning as `pathOccupied` below: the button is not
+            // offered in that state, and the refreshed status explains the
+            // situation and the remedy better than an alert would.
+            errorMessage = nil
         } catch CLIInstallError.pathOccupied {
             // Unreachable from the button (it is hidden in `.occupied`), but
             // the path could be taken between the last refresh and the click.

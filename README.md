@@ -106,6 +106,11 @@ still points at the app you are running — handy after moving the app or
 installing a new version, when an old shortcut would silently keep
 starting the previous copy. Use **Repair** to point it at the current one.
 
+Move macSCP to your Applications folder before installing. An app opened
+straight from the disk image runs from a temporary copy that macOS discards
+when you quit, so a shortcut created there would stop working immediately —
+the section says so instead of installing one.
+
 `~/.local/bin` has to be part of your shell's `PATH` for the command to be
 found. macSCP does not edit your shell configuration; if the folder is not
 listed yet, add it yourself:

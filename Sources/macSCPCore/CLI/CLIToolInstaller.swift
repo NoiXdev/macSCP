@@ -15,18 +15,29 @@ public enum CLIInstallState: Equatable, Sendable {
     /// A symlink resolving to the running app's own `macscp-cli`.
     case installed
     /// A symlink resolving to something else. `target` is the absolute path
-    /// it points at (which may no longer exist), so the UI can name it.
-    case stale(target: String)
+    /// it points at (which may no longer exist), so the UI can name it — and
+    /// is `nil` in the one case where we genuinely do not know: a symlink
+    /// whose destination cannot be read at all. The UI must then say nothing
+    /// about a target rather than invent one.
+    case stale(target: String?)
     /// Something that is NOT a symlink sits at the shortcut path — a regular
     /// file, or a directory. Installing would destroy it, so it never
     /// happens; the user is told and decides.
     case occupied
+    /// The app is running TRANSLOCATED (see `isTranslocated`). Linking now
+    /// would produce a shortcut into a disk image or a randomised read-only
+    /// mount that disappears when the app quits — green in the UI, dead the
+    /// moment it matters. Nothing is installed; the user is told to move
+    /// macSCP to Applications and open it from there.
+    case translocated
 }
 
 public enum CLIInstallError: Error, Equatable, Sendable {
     /// `install()` refused because `state()` was `.occupied`. The associated
     /// value is the absolute shortcut path, for the message.
     case pathOccupied(String)
+    /// `install()` refused because the app is running translocated.
+    case appIsTranslocated
 }
 
 /// Creates and inspects the `macscp-cli` shortcut in a user-writable `bin`
@@ -73,7 +84,44 @@ public struct CLIToolInstaller: Sendable {
         binDirectory.appendingPathComponent(Self.toolName)
     }
 
+    /// Whether `url` sits inside an App Translocation mount.
+    ///
+    /// Gatekeeper runs a quarantined app — one opened straight off a mounted
+    /// DMG, or from `~/Downloads` without being moved in Finder — from a
+    /// randomised read-only copy at
+    /// `/private/var/folders/…/AppTranslocation/<UUID>/d/macSCP.app`. That
+    /// path is gone once the app quits. A shortcut created there is dead on
+    /// arrival, so `state()` reports it before anything else and `install()`
+    /// refuses.
+    ///
+    /// **Why the path marker and not `SecTranslocateIsTranslocatedURL`.**
+    /// That function is the official API and the symbol is present in
+    /// Security.framework (verified with `dlsym`) — but it is invisible to
+    /// Swift: `import Security` does not declare it, because `SecTranslocate.h`
+    /// is not in the framework's module map. Reaching it would mean adding a
+    /// C shim target to `Package.swift`, or a hand-written `@convention(c)`
+    /// cast over `dlsym` — an unchecked ABI declaration, retyped by hand, for
+    /// one Boolean. The marker below needs neither, and it is directly
+    /// testable, which matters more here than anywhere: the whole failure mode
+    /// being fixed is one that looks successful. Every translocated path
+    /// contains this component; the mount point is the mechanism, not an
+    /// incidental detail of it.
+    ///
+    /// The costs are lopsided in the marker's favour. A false positive needs a
+    /// directory literally named `AppTranslocation` on the app's own path, and
+    /// costs a refusal that names the reason — with the copyable
+    /// `/usr/local/bin` command still right there. A false negative is the
+    /// green lie.
+    public static func isTranslocated(_ url: URL) -> Bool {
+        url.standardizedFileURL.path(percentEncoded: false).contains("/AppTranslocation/")
+    }
+
     public func state() -> CLIInstallState {
+        // Checked FIRST, and it overrides every other verdict: while
+        // translocated, `toolURL` names a path that will not exist shortly.
+        // Comparing an existing, perfectly good shortcut against it would
+        // otherwise read `.stale` and invite a "Repair" that breaks it.
+        if Self.isTranslocated(toolURL) { return .translocated }
         let path = linkURL.path(percentEncoded: false)
         // `attributesOfItem` is an `lstat`, so it describes the SYMLINK
         // rather than whatever it points at — which is the whole point here:
@@ -87,10 +135,12 @@ public struct CLIToolInstaller: Sendable {
         guard
             let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: path)
         else {
-            // A symlink whose destination cannot be read at all. Reported as
-            // stale (naming the link itself, the only path we have) so the
-            // repair path applies: replacing a symlink destroys no user data.
-            return .stale(target: path)
+            // A symlink whose destination cannot be read at all. Stale, with
+            // NO target: the only path in hand is the link's own, and
+            // reporting that would render as "points at ~/.local/bin/macscp-cli"
+            // — a sentence that is never true. Repair still applies, since
+            // replacing a symlink destroys no user data.
+            return .stale(target: nil)
         }
         let resolved = absolute(destination)
         guard Self.canonical(resolved) == Self.canonical(toolURL) else {
@@ -105,13 +155,16 @@ public struct CLIToolInstaller: Sendable {
     ///
     /// Throws `CLIInstallError.pathOccupied` when something that is not a
     /// symlink sits at `linkURL` — the one case where writing would destroy
-    /// data the user owns.
+    /// data the user owns — and `CLIInstallError.appIsTranslocated` when the
+    /// running app would only be linkable to a mount that is about to vanish.
     public func install() throws {
         switch state() {
         case .installed:
             return
         case .occupied:
             throw CLIInstallError.pathOccupied(linkURL.path(percentEncoded: false))
+        case .translocated:
+            throw CLIInstallError.appIsTranslocated
         case .stale:
             // Only ever a symlink at this point (see `state()`), so removing
             // it discards a pointer, never content.
