@@ -30,14 +30,16 @@ struct ConnectionViewModelTests {
         vm.port = "abc"
         let fs = await vm.connect()
         #expect(fs == nil)
-        #expect(vm.state == .failed(message: CoreL10n.string("core.connect.portNumeric"), field: .port))
+        #expect(vm.state == .failed(
+            message: CoreL10n.string("core.connect.portNumeric"), field: .schema("SSHField.port")))
     }
 
     @Test func emptyHostFlagsHostField() async {
         let vm = makeVM()
         vm.host = ""
         _ = await vm.connect()
-        #expect(vm.state == .failed(message: CoreL10n.string("core.connect.emptyHost"), field: .host))
+        #expect(vm.state == .failed(
+            message: CoreL10n.string("core.connect.emptyHost"), field: .schema("SSHField.host")))
     }
 
     @Test func emptyPasswordFlagsPasswordFieldBeforeConnecting() async {
@@ -47,7 +49,9 @@ struct ConnectionViewModelTests {
         })
         vm.password = ""
         _ = await vm.connect()
-        #expect(vm.state == .failed(message: CoreL10n.string("core.connect.passwordEmpty"), field: .password))
+        #expect(vm.state == .failed(
+            message: CoreL10n.string("core.connect.passwordEmpty"),
+            field: .schema("SSHField.password")))
     }
 
     @Test func authFailureHasNoField() async {
@@ -114,7 +118,24 @@ struct ConnectionViewModelTests {
         vm.authChoice = .privateKey
         vm.keyPath = "  "
         _ = await vm.connect()
-        #expect(vm.state == .failed(message: CoreL10n.string("core.connect.keyPathEmpty"), field: .keyPath))
+        #expect(vm.state == .failed(
+            message: CoreL10n.string("core.connect.keyPathEmpty"),
+            field: .schema("SSHField.keyPath")))
+    }
+
+    /// Under private-key auth the passphrase row is the one on screen, so a
+    /// key-path failure must outline the key path — the case the App used to
+    /// special-case by reading `authChoice` inside `failedFieldID`.
+    @Test @MainActor func connectOutlinesTheVisibleSecretRow() async {
+        let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
+        vm.host = "example.com"
+        vm.username = "tim"
+        vm.authChoice = .privateKey
+        vm.keyPath = ""
+        #expect(await vm.connect() == nil)
+        #expect(vm.state == .failed(
+            message: CoreL10n.string("core.connect.keyPathEmpty"),
+            field: .schema("SSHField.keyPath")))
     }
 
     @Test func keyAuthAllowsEmptyPassphraseAndBuildsPrivateKeyAuth() async {
@@ -138,9 +159,13 @@ struct ConnectionViewModelTests {
         vm.authChoice = .privateKey
         vm.keyPath = "~/.ssh/id_ed25519"
         _ = await vm.connect()
+        // `SSHField.passphrase`, not `SSHField.password`: a key-passphrase
+        // error can only happen under private-key auth, and the passphrase row
+        // is the secret row visible there. This is what the App's old
+        // `failedFieldID` computed from `authChoice`; the key now says it.
         #expect(vm.state == .failed(
             message: CoreL10n.string("core.connect.keyPassphraseRequired"),
-            field: .password))
+            field: .schema("SSHField.passphrase")))
     }
 
     /// `selectAuthChoice` is what the auth-kind PICKER goes through — the form
@@ -382,7 +407,8 @@ struct ConnectionViewModelTests {
         vm.beginEditing(sshSession(name: "web", host: "h", username: "u"))
         vm.port = "abc"
         #expect(vm.validateForEditSave() == nil)
-        #expect(vm.state == .failed(message: CoreL10n.string("core.connect.portNumeric"), field: .port))
+        #expect(vm.state == .failed(
+            message: CoreL10n.string("core.connect.portNumeric"), field: .schema("SSHField.port")))
     }
 
     @Test @MainActor func endEditingReturnsToNewMode() {
@@ -774,7 +800,24 @@ struct ConnectionViewModelTests {
 
         #expect(fs == nil)
         #expect(vm.state == .failed(
-            message: CoreL10n.string("core.connect.s3FieldRequired"), field: nil))
+            message: CoreL10n.string("core.connect.s3FieldRequired"),
+            field: .schema("S3Field.bucket")))
+    }
+
+    /// The whole point of the collapse: one body, and S3/WebDAV now report WHICH
+    /// field failed instead of a bare `field: nil`.
+    @Test @MainActor func connectReportsTheOffendingS3Field() async {
+        let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
+        vm.kind = .s3
+        vm.s3Endpoint = "https://s3.example.com"
+        vm.s3Region = "eu-central-1"
+        vm.s3Bucket = ""
+        vm.s3AccessKeyID = "AKIA"
+        vm.s3SecretAccessKey = "secret"
+        #expect(await vm.connect() == nil)
+        #expect(vm.state == .failed(
+            message: CoreL10n.string("core.connect.s3FieldRequired"),
+            field: .schema("S3Field.bucket")))
     }
 
     @Test @MainActor func validateForEditSaveWithS3KindBuildsStoredSessionWithSecretFreeConfig() {
@@ -859,7 +902,20 @@ struct ConnectionViewModelTests {
 
         #expect(fs == nil)
         #expect(vm.state == .failed(
-            message: CoreL10n.string("core.connect.webdavFieldRequired"), field: nil))
+            message: CoreL10n.string("core.connect.webdavFieldRequired"),
+            field: .schema("WebDAVField.baseURL")))
+    }
+
+    @Test @MainActor func connectReportsTheOffendingWebDAVField() async {
+        let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
+        vm.kind = .webdav
+        vm.webdavBaseURL = ""
+        vm.username = "tim"
+        vm.password = "pw"
+        #expect(await vm.connect() == nil)
+        #expect(vm.state == .failed(
+            message: CoreL10n.string("core.connect.webdavFieldRequired"),
+            field: .schema("WebDAVField.baseURL")))
     }
 
     @Test @MainActor func validateForEditSaveWithWebDAVKindBuildsStoredSessionWithSecretFreeConfig() {
