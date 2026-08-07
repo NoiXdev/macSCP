@@ -21,7 +21,7 @@ struct ConnectionViewModelSchemaTests {
         model.values[SSHField.username] = "tim"
         model.values[SSHField.authKind] = "password"
 
-        let config = try model.makeConfig(secret: "hunter2")
+        let config = try BackendDescriptor.descriptor(for: model.kind).makeConfig(model.values, "hunter2")
         guard case .ssh(let ssh) = config else {
             Issue.record("expected .ssh")
             return
@@ -44,7 +44,8 @@ struct ConnectionViewModelSchemaTests {
         model.jumpHost = "bastion.example.com"
         model.jumpUsername = "ops"
 
-        guard case .ssh(let ssh) = try model.makeConfig(secret: "hunter2") else {
+        let config = try BackendDescriptor.descriptor(for: model.kind).makeConfig(model.values, "hunter2")
+        guard case .ssh(let ssh) = config else {
             Issue.record("expected .ssh")
             return
         }
@@ -82,7 +83,7 @@ struct ConnectionViewModelSchemaTests {
         model.values[WebDAVField.baseURL] = "https://cloud.example.com"
         model.values[WebDAVField.username] = "tim"
 
-        let config = try model.makeConfig(secret: "app-password")
+        let config = try BackendDescriptor.descriptor(for: model.kind).makeConfig(model.values, "app-password")
         guard case .webdav(let dav) = config else {
             Issue.record("expected .webdav")
             return
@@ -129,7 +130,9 @@ struct ConnectionViewModelSchemaTests {
     @Test func missingRequiredFieldSurfacesAsAFailure() {
         let model = makeModel()
         model.kind = .webdav
-        #expect(throws: (any Error).self) { _ = try model.makeConfig(secret: "p") }
+        #expect(throws: (any Error).self) {
+            _ = try BackendDescriptor.descriptor(for: model.kind).makeConfig(model.values, "p")
+        }
     }
 
     /// The typed properties are views onto `values`, not a second copy — the

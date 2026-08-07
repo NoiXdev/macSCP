@@ -36,11 +36,6 @@ public struct WebDAVConnectionConfig: Equatable, Sendable {
         self.password = password
     }
 
-    public init(stored: StoredWebDAVConfig, password: String) {
-        self.init(baseURL: stored.baseURL, username: stored.username,
-                  useNextcloudPath: stored.useNextcloudPath, password: password)
-    }
-
     /// True when credentials would travel in the clear under Basic auth. Read
     /// by the App to require an explicit confirmation (spec §Klartext-HTTP).
     public var isPlaintextTransport: Bool {

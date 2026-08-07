@@ -452,20 +452,6 @@ public final class ConnectionViewModel {
         self.connector = connector
     }
 
-    /// Builds the runtime config for the selected backend (M22/T8). The
-    /// `switch` over `kind` that used to build three different configs here
-    /// is now the descriptor's own factory, which switches over its backend's
-    /// FIELD enum instead — so a field added later fails to compile until it
-    /// is handled, rather than being silently dropped.
-    ///
-    /// For SSH the returned config carries NO jump: the factory takes exactly
-    /// one secret and a jump host has its own, in a separate Keychain entry,
-    /// so it structurally cannot resolve the second one. `connectSSH()`
-    /// attaches the jump afterwards — see the comment there.
-    public func makeConfig(secret: String) throws -> ConnectionConfig {
-        try BackendDescriptor.descriptor(for: kind).makeConfig(values, secret)
-    }
-
     /// Maps the form's `AuthChoice` to the persisted `StoredSession.AuthKind`
     /// (M10d/T3) -- the single place both the target's and the jump's
     /// choice-to-kind mapping go through, so a third auth kind only needs
@@ -644,19 +630,6 @@ public final class ConnectionViewModel {
         return .ssh(try SSHConnectionConfig(
             host: ssh.host, port: ssh.port, username: ssh.username,
             auth: ssh.auth, jump: jump))
-    }
-
-    /// Builds the runtime WebDAV config from the form fields. Since M22/T8 a
-    /// thin typed wrapper over `WebDAVFieldSchema.makeConfig` — the trimming
-    /// and the empty-URL rejection live there, one place for the form, the
-    /// CLI and this method.
-    public func makeWebDAVConfig() throws -> WebDAVConnectionConfig {
-        let config = try BackendDescriptor.descriptor(for: .webdav)
-            .makeConfig(values, values[WebDAVField.password])
-        guard case .webdav(let webdav) = config else {
-            throw RemoteFSError.protocolError(reason: "expected a WebDAV config")
-        }
-        return webdav
     }
 
     /// Decider side: publishes the prompt and suspends on a continuation
