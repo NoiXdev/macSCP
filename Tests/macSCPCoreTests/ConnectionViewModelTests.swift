@@ -1170,6 +1170,13 @@ struct ConnectionViewModelTests {
     /// The defect this milestone dissolves at its root: every non-SSH session
     /// stored the literal placeholder "unused" in host and username, which made
     /// them all share the import duplicate key `unused|22|unused`.
+    ///
+    /// Repointed at `ssh` in M23/T8 fix round 1. It used to assert
+    /// `host != "unused"`, which became a tautology the moment `host` was a
+    /// convenience returning "" for a block-less session — there is no longer
+    /// any value it COULD have returned that would fail. The placeholder is
+    /// now impossible by construction rather than merely absent, and the
+    /// assertion that says so is `ssh == nil`.
     @Test @MainActor func editSaveWritesNoPlaceholders() {
         let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
         vm.beginEditing(s3Session(name: "bucket"))
@@ -1179,8 +1186,7 @@ struct ConnectionViewModelTests {
         vm.s3Bucket = "archive"
         vm.s3AccessKeyID = "AKIA"
         let saved = vm.validateForEditSave()
-        #expect(saved?.host != "unused")
-        #expect(saved?.username != "unused")
+        #expect(saved?.ssh == nil)
         #expect(saved?.s3?.bucket == "archive")
     }
 

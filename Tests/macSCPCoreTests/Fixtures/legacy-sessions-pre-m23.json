@@ -22,9 +22,35 @@
       "username" : "deploy"
     },
     {
+      "authKind" : "privateKey",
+      "host" : "staging.example.com",
+      "id" : "77777777-7777-7777-7777-777777777777",
+      "jump" : {
+        "authKind" : "password",
+        "host" : "old-bastion.example.com",
+        "loginSetID" : "88888888-8888-8888-8888-888888888888",
+        "port" : 22,
+        "secretID" : "99999999-9999-9999-9999-999999999999",
+        "sessionID" : "22222222-2222-2222-2222-222222222222",
+        "username" : "carried"
+      },
+      "keyPath" : "/keys/staging",
+      "kind" : "ssh",
+      "name" : "Staging",
+      "port" : 22,
+      "username" : "deploy"
+    },
+    {
       "authKind" : "password",
       "host" : "unused",
       "id" : "44444444-4444-4444-4444-444444444444",
+      "jump" : {
+        "authKind" : "password",
+        "host" : "stray-bastion.example.com",
+        "port" : 22,
+        "secretID" : "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "username" : "stray"
+      },
       "kind" : "s3",
       "loginSetID" : "55555555-5555-5555-5555-555555555555",
       "name" : "Archive",
