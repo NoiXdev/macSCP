@@ -97,8 +97,10 @@ public enum S3FieldSchema {
                 // as "blank is fine" -- it is not. `region` is part of the
                 // SigV4 credential scope (`AK/date/REGION/s3/aws4_request`);
                 // an empty segment there is a scope real AWS rejects with an
-                // opaque `AuthorizationHeaderMalformed`. A server that ignores
-                // the field is not evidence the field is unneeded, only that
+                // opaque `AuthorizationHeaderMalformed` OR `SignatureDoesNotMatch`
+                // — which one depends on what else about the request is off,
+                // but both mean AWS rejected it. A server that ignores the
+                // field is not evidence the field is unneeded, only that
                 // it isn't the one enforcing it. `usePathStyle` is a toggle
                 // whose every value is valid. The two credential fields belong
                 // to the LOGIN, not the bucket: both `connect()` and
