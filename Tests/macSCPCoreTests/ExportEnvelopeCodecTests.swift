@@ -164,6 +164,12 @@ struct SessionExportCodecByteCompatibilityTests {
     }
     """#
 
+    /// What those v1 blobs decode to since M23/P3: the S3 block folded into
+    /// the field bag, and the flat SSH triple — `Web-01.example.COM`, port
+    /// 2222, `deploy`, a key path — DROPPED, because this session's kind is
+    /// `.s3` and that triple was never its connection. The jump, the group
+    /// reference and all three secrets survive untouched; they are not
+    /// backend fields.
     private func expectedPayload() -> SessionExportPayload {
         let groupID = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
         let sessionID = UUID(uuidString: "66666666-7777-8888-9999-AAAAAAAAAAAA")!
@@ -171,31 +177,56 @@ struct SessionExportCodecByteCompatibilityTests {
             includesSecrets: true,
             groups: [ExportedGroup(id: groupID, name: "Prod")],
             sessions: [ExportedSession(
-                id: sessionID, name: "wärter-01 🚀", host: "Web-01.example.COM",
-                port: 2222, username: "deploy", authKind: .privateKey,
-                keyPath: "/Users/x/.ssh/id_ed25519", groupID: groupID,
-                password: "geh€im🔑",
+                id: sessionID, name: "wärter-01 🚀", kind: .s3,
+                fields: s3ExportFields(
+                    accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
+                    endpoint: "https://s3.eu-central-1.amazonaws.com", bucket: "my-bucket",
+                    usePathStyle: true),
+                groupID: groupID, password: "geh€im🔑",
                 jumpHost: "bastion.example.com", jumpPort: 2222, jumpUsername: "jumper",
                 jumpAuthKind: .agent, jumpKeyPath: "/k", jumpPassword: "jp",
-                kind: .s3,
-                s3AccessKeyID: "AKIAEXAMPLE", s3Region: "eu-central-1",
-                s3Endpoint: "https://s3.eu-central-1.amazonaws.com", s3Bucket: "my-bucket",
-                s3UsePathStyle: true, s3SecretAccessKey: "shh-secret")])
+                s3SecretAccessKey: "shh-secret")])
     }
 
     @Test func clearFileWrittenBeforeTheGenericRefactorStillDecodes() throws {
         let data = Data(Self.goldenClear.utf8)
         #expect(try SessionExportCodec.probe(data) == false)
-        #expect(try SessionExportCodec.decode(data, password: nil) == expectedPayload())
+        #expect(try SessionExportCodec.decode(data) == expectedPayload())
     }
 
-    /// The load-bearing assertion: re-encoding the decoded payload has to
-    /// reproduce the original file byte for byte, so an export written today
-    /// is indistinguishable from one written before the refactor.
-    @Test func reEncodingProducesTheIdenticalClearFile() throws {
+    /// Re-encoding a decoded v1 file used to reproduce it byte for byte, which
+    /// is how M19 proved the generic envelope moved nothing. M23/P3 ends that
+    /// on purpose: the format takes a HARD CUT to version 2, so what comes back
+    /// out is a v2 file. What this pins now is that the cut is exactly as deep
+    /// as intended — the envelope itself is untouched (same format string,
+    /// same pretty-printed sorted-key encoding, same nested `payload`), and
+    /// every column-shaped key is gone from the session entry, replaced by the
+    /// bag. A v1 file whose columns leaked back into the written bytes would
+    /// fail here.
+    @Test func reEncodingAV1FileWritesAVersion2FileWithTheBag() throws {
         let golden = Data(Self.goldenClear.utf8)
-        let payload = try SessionExportCodec.decode(golden, password: nil)
-        #expect(try SessionExportCodec.encode(payload, password: nil) == golden)
+        let payload = try SessionExportCodec.decode(golden)
+        let written = try SessionExportCodec.encode(payload, password: nil)
+        let envelope = try #require(
+            try JSONSerialization.jsonObject(with: written) as? [String: Any])
+
+        #expect(envelope["format"] as? String == "macscp-sessions")
+        #expect(envelope["version"] as? Int == 2)
+        #expect(envelope["encrypted"] as? Bool == false)
+        // The envelope's own encoding is unchanged: pretty-printed with
+        // sorted keys and a nested payload object, exactly as the v1 blob
+        // above is laid out.
+        let text = String(decoding: written, as: UTF8.self)
+        #expect(text.hasPrefix("{\n  \"encrypted\" : false,\n  \"format\" : \"macscp-sessions\","))
+
+        for column in ["\"host\"", "\"port\"", "\"username\"", "\"authKind\"", "\"keyPath\"",
+                       "\"s3AccessKeyID\"", "\"s3Region\"", "\"s3Endpoint\"", "\"s3Bucket\"",
+                       "\"s3UsePathStyle\"", "\"webdavBaseURL\"", "\"webdavUsername\""] {
+            #expect(!text.contains(column), "v1 column \(column) leaked into a v2 file")
+        }
+        #expect(text.contains("\"S3Field.bucket\" : \"my-bucket\""))
+        // And it still round-trips: what was written decodes back unchanged.
+        #expect(try SessionExportCodec.decode(written) == payload)
     }
 
     @Test func encryptedFileWrittenBeforeTheGenericRefactorStillDecodes() throws {

@@ -240,50 +240,32 @@ public enum SessionImportPlanner {
                 keyPath: fileSession.jumpKeyPath)
         }
         // Kind (M12): absent on legacy payloads -> `.ssh`, same
-        // legacy-safe default as `StoredSession.kind` itself. An `.s3`
-        // session's persisted (secret-free) config is only built when
-        // the file actually carries S3 fields.
+        // legacy-safe default as `StoredSession.kind` itself.
         let kind = fileSession.kind ?? .ssh
-        var s3: StoredS3Config?
-        if kind == .s3, let accessKeyID = fileSession.s3AccessKeyID,
-           let region = fileSession.s3Region, let endpoint = fileSession.s3Endpoint,
-           let bucket = fileSession.s3Bucket {
-            s3 = StoredS3Config(
-                accessKeyID: accessKeyID, region: region, endpoint: endpoint,
-                bucket: bucket, usePathStyle: fileSession.s3UsePathStyle ?? false)
+        // The backend's own write adapter builds its block (M23/P3) — the
+        // same one the connection form saves through, so import and save
+        // cannot drift apart, and a fourth backend needs nothing here.
+        //
+        // An EMPTY bag means the file carried no block for this kind, which
+        // is what `sessionValues` writes for an `.s3`/`.webdav` session
+        // whose block is nil, and what a pre-M21 export left for a WebDAV
+        // entry. Applying it would invent a server the file never named, so
+        // the session keeps no block at all — as before the bag.
+        var session = StoredSession(id: id, name: name, groupID: groupID, kind: kind)
+        if !fileSession.fields.isEmpty {
+            var values = FieldValues()
+            for (key, value) in fileSession.fields { values.setRaw(key, to: value) }
+            BackendDescriptor.descriptor(for: kind).apply(values, &session)
         }
-        // WebDAV (M21): the same shape as the `s3` block above -- the
-        // persisted config is only built when the file actually carries the
-        // columns, so a `.webdav` entry from a pre-M21-export build (which had
-        // none) still imports, just without a server. `useNextcloudPath`
-        // defaults to false the way `s3UsePathStyle` does.
-        var webdav: StoredWebDAVConfig?
-        if kind == .webdav, let baseURL = fileSession.webdavBaseURL,
-           let webdavUsername = fileSession.webdavUsername {
-            webdav = StoredWebDAVConfig(
-                baseURL: baseURL, username: webdavUsername,
-                useNextcloudPath: fileSession.webdavUseNextcloudPath ?? false)
+        // The jump is attached afterwards: it is a second login with its own
+        // Keychain slot, which is why `apply` does not own it. It lands only
+        // on an `.ssh` session (M23/T8) — a hop nobody can dial is dead
+        // weight, and its password would be an orphan Keychain slot.
+        if kind == .ssh, let jump {
+            var ssh = session.ssh ?? StoredSSHConfig(host: "", username: "")
+            ssh.jump = jump
+            session.ssh = ssh
         }
-        // SSH's block only for an `.ssh` session (M23/T8). The export format
-        // still carries host/port/username as flat top-level columns —
-        // including the literal `"unused"` a pre-M23 export wrote for an S3 or
-        // WebDAV session — so building the block unconditionally would import
-        // exactly the placeholder this milestone removed.
-        var ssh: StoredSSHConfig?
-        if kind == .ssh {
-            ssh = StoredSSHConfig(
-                host: fileSession.host, port: fileSession.port,
-                username: fileSession.username, authKind: fileSession.authKind,
-                keyPath: fileSession.keyPath, jump: jump)
-        }
-        let session = StoredSession(
-            id: id,
-            name: name,
-            groupID: groupID,
-            kind: kind,
-            ssh: ssh,
-            s3: s3,
-            webdav: webdav)
         // The kind's single secret always travels in the same
         // `password` slot -- for `.ssh` this is the SSH password, for
         // `.webdav` the WebDAV password, and for `.s3` the secret access
@@ -297,7 +279,7 @@ public enum SessionImportPlanner {
             // one parsed out of the file: a non-SSH session keeps no jump
             // since M23/T8, and a password for a hop nobody dials is an
             // orphan Keychain slot.
-            jumpPassword: ssh?.jump != nil ? fileSession.jumpPassword : nil,
+            jumpPassword: session.ssh?.jump != nil ? fileSession.jumpPassword : nil,
             replacesExisting: replacesExisting)
     }
 
@@ -343,12 +325,19 @@ public enum SessionImportPlanner {
     /// one implementation. A legacy payload without `kind` is `.ssh`, exactly
     /// as `makePlanned` maps it.
     private static func duplicateKey(for fileSession: ExportedSession) -> String {
-        duplicateKey(
-            kind: fileSession.kind ?? .ssh, host: fileSession.host, port: fileSession.port,
-            username: fileSession.username,
-            s3Endpoint: fileSession.s3Endpoint, s3Bucket: fileSession.s3Bucket,
-            s3AccessKeyID: fileSession.s3AccessKeyID,
-            webdavBaseURL: fileSession.webdavBaseURL, webdavUsername: fileSession.webdavUsername)
+        // Read out of the field bag since M23/P3. `FieldValues` answers an
+        // absent key with "", which is exactly what the `?? ""` on the
+        // column-shaped optionals did, so the derived key is unchanged for
+        // every file — including a v1 one, whose columns `decode` folded into
+        // this same bag.
+        let values = FieldValues(raw: fileSession.fields)
+        return duplicateKey(
+            kind: fileSession.kind ?? .ssh, host: values[SSHField.host],
+            port: Int(values[SSHField.port]) ?? 22, username: values[SSHField.username],
+            s3Endpoint: values[S3Field.endpoint], s3Bucket: values[S3Field.bucket],
+            s3AccessKeyID: values[S3Field.accessKeyID],
+            webdavBaseURL: values[WebDAVField.baseURL],
+            webdavUsername: values[WebDAVField.username])
     }
 
     private static func duplicateKey(

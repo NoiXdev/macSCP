@@ -10,9 +10,11 @@ struct SessionExportCodecTests {
             includesSecrets: includesSecrets,
             groups: [ExportedGroup(id: groupID, name: "Prod")],
             sessions: [ExportedSession(
-                id: UUID(), name: "wärter-01 🚀", host: "Web-01.example.COM",
-                port: 2222, username: "deploy", authKind: .privateKey,
-                keyPath: "/Users/x/.ssh/id_ed25519", groupID: groupID,
+                id: UUID(), name: "wärter-01 🚀", kind: .ssh,
+                fields: sshExportFields(
+                    host: "Web-01.example.COM", port: 2222, username: "deploy",
+                    authKind: .privateKey, keyPath: "/Users/x/.ssh/id_ed25519"),
+                groupID: groupID,
                 password: includesSecrets ? "geh€im🔑" : nil)])
     }
 
@@ -175,8 +177,9 @@ struct SessionExportCodecTests {
             includesSecrets: true,
             groups: [ExportedGroup(id: groupID, name: "Prod")],
             sessions: [ExportedSession(
-                id: UUID(), name: "web", host: "h", port: 22, username: "u",
-                authKind: .password, keyPath: nil, groupID: groupID, password: "pw",
+                id: UUID(), name: "web", kind: .ssh,
+                fields: sshExportFields(host: "h", username: "u"),
+                groupID: groupID, password: "pw",
                 jumpHost: "bastion.example.com", jumpPort: 2222, jumpUsername: "jumper",
                 jumpAuthKind: .privateKey, jumpKeyPath: "/k", jumpPassword: "jp")])
         let data = try SessionExportCodec.encode(payload, password: nil)
@@ -194,14 +197,14 @@ struct SessionExportCodecTests {
             includesSecrets: false,
             groups: [],
             sessions: [ExportedSession(
-                id: UUID(), name: "web", host: "h", port: 22, username: "u",
-                authKind: .agent, keyPath: nil, groupID: nil, password: nil,
+                id: UUID(), name: "web", kind: .ssh,
+                fields: sshExportFields(host: "h", username: "u", authKind: .agent),
                 jumpHost: "bastion.example.com", jumpPort: 22, jumpUsername: "jumper",
-                jumpAuthKind: .agent, jumpKeyPath: nil, jumpPassword: nil)])
+                jumpAuthKind: .agent)])
         let data = try SessionExportCodec.encode(payload, password: nil)
         let decoded = try SessionExportCodec.decode(data, password: nil)
         #expect(decoded == payload)
-        #expect(decoded.sessions.first?.authKind == .agent)
+        #expect(decoded.sessions.first?.fields["SSHField.authKind"] == "agent")
         #expect(decoded.sessions.first?.jumpAuthKind == .agent)
     }
 
@@ -212,29 +215,30 @@ struct SessionExportCodecTests {
             includesSecrets: true,
             groups: [],
             sessions: [ExportedSession(
-                id: UUID(), name: "s3-prod", host: "unused", port: 22, username: "unused",
-                authKind: .password, keyPath: nil, groupID: nil, password: nil,
-                kind: .s3,
-                s3AccessKeyID: "AKIAEXAMPLE", s3Region: "eu-central-1",
-                s3Endpoint: "https://s3.eu-central-1.amazonaws.com", s3Bucket: "my-bucket",
-                s3UsePathStyle: true, s3SecretAccessKey: "shh-secret")])
+                id: UUID(), name: "s3-prod", kind: .s3,
+                fields: s3ExportFields(
+                    accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
+                    endpoint: "https://s3.eu-central-1.amazonaws.com", bucket: "my-bucket",
+                    usePathStyle: true),
+                s3SecretAccessKey: "shh-secret")])
         let data = try SessionExportCodec.encode(payload, password: "pw")
         let decoded = try SessionExportCodec.decode(data, password: "pw")
         #expect(decoded == payload)
         let session = decoded.sessions.first!
         #expect(session.kind == .s3)
-        #expect(session.s3AccessKeyID == "AKIAEXAMPLE")
-        #expect(session.s3Region == "eu-central-1")
-        #expect(session.s3Endpoint == "https://s3.eu-central-1.amazonaws.com")
-        #expect(session.s3Bucket == "my-bucket")
-        #expect(session.s3UsePathStyle == true)
+        #expect(session.fields["S3Field.accessKeyID"] == "AKIAEXAMPLE")
+        #expect(session.fields["S3Field.region"] == "eu-central-1")
+        #expect(session.fields["S3Field.endpoint"] == "https://s3.eu-central-1.amazonaws.com")
+        #expect(session.fields["S3Field.bucket"] == "my-bucket")
+        #expect(session.fields["S3Field.usePathStyle"] == "true")
+        // The secret is NOT a field: it keeps its own slot, outside the bag.
         #expect(session.s3SecretAccessKey == "shh-secret")
     }
 
-    /// A payload written before M12 has no `kind`/`s3*` keys at all --
-    /// synthesized `Codable` decodes those Optionals as `nil` (same pattern
-    /// as `groupID`/jump fields); the import planner maps `nil` kind to
-    /// `.ssh`.
+    /// A payload written before M12 has no `kind`/`s3*` keys at all. `kind`
+    /// decodes as `nil` (same pattern as `groupID`/jump fields) and the import
+    /// planner maps it to `.ssh` -- which is also why `decode` folds this
+    /// file's flat triple into the SSH keys of the bag, and into no others.
     @Test func legacyPayloadWithoutKindDecodesNilKind() throws {
         let raw = Data("""
         {"format":"macscp-sessions","version":1,"encrypted":false,"payload":{"includesSecrets":false,\
@@ -244,17 +248,20 @@ struct SessionExportCodecTests {
         let payload = try SessionExportCodec.decode(raw, password: nil)
         let session = payload.sessions.first!
         #expect(session.kind == nil)
-        #expect(session.s3AccessKeyID == nil)
-        #expect(session.s3Region == nil)
-        #expect(session.s3Endpoint == nil)
-        #expect(session.s3Bucket == nil)
-        #expect(session.s3UsePathStyle == nil)
+        #expect(session.fields["SSHField.host"] == "h")
+        #expect(session.fields["SSHField.port"] == "22")
+        #expect(session.fields["SSHField.username"] == "u")
+        #expect(session.fields["S3Field.accessKeyID"] == nil)
+        #expect(session.fields["S3Field.region"] == nil)
+        #expect(session.fields["S3Field.endpoint"] == nil)
+        #expect(session.fields["S3Field.bucket"] == nil)
+        #expect(session.fields["S3Field.usePathStyle"] == nil)
         #expect(session.s3SecretAccessKey == nil)
         // Same story for the WebDAV columns (M21/M23): a pre-fix file has no
-        // `webdav*` keys at all and must still decode, as `nil`.
-        #expect(session.webdavBaseURL == nil)
-        #expect(session.webdavUsername == nil)
-        #expect(session.webdavUseNextcloudPath == nil)
+        // `webdav*` keys at all and must still decode, adding nothing.
+        #expect(session.fields["WebDAVField.baseURL"] == nil)
+        #expect(session.fields["WebDAVField.username"] == nil)
+        #expect(session.fields["WebDAVField.useNextcloudPath"] == nil)
     }
 
     // MARK: - WebDAV fields (M23 fix — the export dropped them entirely)
@@ -264,37 +271,96 @@ struct SessionExportCodecTests {
             includesSecrets: true,
             groups: [],
             sessions: [ExportedSession(
-                id: UUID(), name: "nextcloud", host: "unused", port: 22, username: "unused",
-                authKind: .password, keyPath: nil, groupID: nil, password: "dav-secret",
-                kind: .webdav,
-                webdavBaseURL: "https://dav.example.com/dav", webdavUsername: "alice",
-                webdavUseNextcloudPath: true)])
+                id: UUID(), name: "nextcloud", kind: .webdav,
+                fields: webdavExportFields(
+                    baseURL: "https://dav.example.com/dav", username: "alice",
+                    useNextcloudPath: true),
+                password: "dav-secret")])
         let data = try SessionExportCodec.encode(payload, password: "pw")
         let decoded = try SessionExportCodec.decode(data, password: "pw")
         #expect(decoded == payload)
         let session = decoded.sessions.first!
         #expect(session.kind == .webdav)
-        #expect(session.webdavBaseURL == "https://dav.example.com/dav")
-        #expect(session.webdavUsername == "alice")
-        #expect(session.webdavUseNextcloudPath == true)
+        #expect(session.fields["WebDAVField.baseURL"] == "https://dav.example.com/dav")
+        #expect(session.fields["WebDAVField.username"] == "alice")
+        #expect(session.fields["WebDAVField.useNextcloudPath"] == "true")
         // WebDAV has no secret column of its own: the password travels in the
         // shared `password` slot, exactly as `StoredWebDAVConfig` has no
         // secret field. Nothing must have been added beside it.
         #expect(session.password == "dav-secret")
     }
 
-    /// The optional path: a session with NO WebDAV block must not gain any
-    /// `webdav*` key in the written file — that is what keeps a file written
-    /// after this fix readable by an older build, and what keeps the golden
-    /// byte-compatibility fixture in `ExportEnvelopeCodecTests` valid.
-    @Test func sessionWithoutWebDAVBlockWritesNoWebDAVKeysAndDecodesNil() throws {
+    /// A session with NO WebDAV block must not gain any WebDAV key in the
+    /// written file. The bag makes this structural rather than a rule the
+    /// exporter has to remember: an SSH session's `sessionValues` produces
+    /// SSH keys and nothing else, so no other backend can leak into its
+    /// entry.
+    @Test func sessionWithoutWebDAVBlockWritesNoWebDAVKeys() throws {
         let payload = samplePayload()
         let data = try SessionExportCodec.encode(payload, password: nil)
         let json = String(decoding: data, as: UTF8.self)
-        #expect(!json.contains("webdav"))
-        let session = try SessionExportCodec.decode(data, password: nil).sessions.first!
-        #expect(session.webdavBaseURL == nil)
-        #expect(session.webdavUsername == nil)
-        #expect(session.webdavUseNextcloudPath == nil)
+        #expect(!json.lowercased().contains("webdav"))
+        let session = try SessionExportCodec.decode(data).sessions.first!
+        #expect(session.fields["WebDAVField.baseURL"] == nil)
+        #expect(session.fields["WebDAVField.username"] == nil)
+        #expect(session.fields["WebDAVField.useNextcloudPath"] == nil)
+        #expect(session.fields.keys.allSatisfy { $0.hasPrefix("SSHField.") })
+    }
+
+    // MARK: - The field bag (M23/P3)
+
+    /// The one test that proves an export file somebody already has still
+    /// imports. Everything else about this phase is provable by argument; this
+    /// is a fact about bytes on disk.
+    @Test func aV1ExportStillDecodesIntoTheFieldBag() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/legacy-export-v1.macscp.json")
+        let payload = try SessionExportCodec.decode(try Data(contentsOf: url))
+
+        let prod = try #require(payload.sessions.first { $0.name == "Prod" })
+        #expect(prod.kind == .ssh)
+        #expect(prod.fields["SSHField.host"] == "prod.example.com")
+        #expect(prod.fields["SSHField.port"] == "2222")
+        #expect(prod.fields["SSHField.username"] == "deploy")
+
+        let archive = try #require(payload.sessions.first { $0.name == "Archive" })
+        #expect(archive.kind == .s3)
+        #expect(archive.fields["S3Field.bucket"] == "archive")
+        #expect(archive.fields["S3Field.usePathStyle"] == "true")
+        // The v1 file carried SSH's flat triple for every kind, holding the
+        // literal placeholder. It must NOT survive into the bag.
+        #expect(archive.fields["SSHField.host"] == nil)
+
+        let cloud = try #require(payload.sessions.first { $0.name == "Cloud" })
+        #expect(cloud.kind == .webdav)
+        #expect(cloud.fields["WebDAVField.baseURL"] == "https://cloud.example.com/remote.php/dav")
+    }
+
+    /// A v2 file round-trips through the bag with no column-shaped loss.
+    @Test(arguments: ConnectionKind.allCases)
+    func aSessionRoundTripsThroughTheBag(kind: ConnectionKind) throws {
+        let session: StoredSession
+        switch kind {
+        case .ssh: session = sshSession(
+            name: "s", host: "h.example.com", port: 2222, username: "u",
+            authKind: .privateKey, keyPath: "/k")
+        case .s3: session = s3Session(name: "s")
+        case .webdav: session = webdavSession(name: "s")
+        }
+
+        let descriptor = BackendDescriptor.descriptor(for: kind)
+        var exported = ExportedSession(
+            id: session.id, name: session.name, kind: kind,
+            fields: descriptor.sessionValues(session).raw)
+        exported.groupID = nil
+
+        var rebuilt = StoredSession(
+            id: session.id, name: session.name, kind: kind)
+        var values = FieldValues()
+        for (key, value) in exported.fields { values.setRaw(key, to: value) }
+        descriptor.apply(values, &rebuilt)
+
+        #expect(rebuilt == session)
     }
 }

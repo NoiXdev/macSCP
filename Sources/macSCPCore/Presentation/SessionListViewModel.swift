@@ -738,14 +738,14 @@ public final class SessionListViewModel {
 
         var missingPasswordCount = 0
         let exportedSessions: [ExportedSession] = scopedSessions.map { session in
-            // A set-backed session exports the SET's username/authKind/
-            // keyPath (and, with includePasswords, the SET's secret) instead
-            // of its own — a missing/dangling set just falls back to the
-            // session's own (possibly empty) values; export never aborts.
+            // A set-backed session exports the SET's credentials (and, with
+            // includePasswords, the SET's secret) instead of its own — a
+            // missing/dangling set just falls back to the session's own
+            // (possibly empty) values; export never aborts. The credential
+            // values land in `fields` below; here it decides only whether a
+            // secret has to be fetched at all.
             let resolved = resolvedSSHLogin(for: session)
-            let username = resolved?.username ?? session.username
             let authKind = resolved?.authKind ?? session.authKind
-            let keyPath = resolved?.keyPath ?? session.keyPath
 
             var password: String?
             // Agent entries (M10d) never carry a secret and are never
@@ -760,52 +760,40 @@ public final class SessionListViewModel {
                 }
             }
 
-            // S3 fields (M12): only populated for an `.s3` session. The
-            // secret access key mirrors `password` above -- prefer the
+            // The S3 secret access key mirrors `password` above -- prefer the
             // RESOLVED login set's secret (a set-bound S3 session stores
             // its secret under the SET's id, not the session's own id),
             // falling back to the session's own keychain slot; same
             // missing-password accounting, same "only with includePasswords"
-            // gate.
-            var s3AccessKeyID: String?
-            var s3Region: String?
-            var s3Endpoint: String?
-            var s3Bucket: String?
-            var s3UsePathStyle: Bool?
+            // gate. It is a SECRET, so it never travels in `fields`.
             var s3SecretAccessKey: String?
-            if session.kind == .s3, let s3 = session.s3 {
-                // Access-key-ID is always the session's own value: resolving
-                // a login set's access key ID is deferred to M13
-                // (`ResolvedLogin` has no accessKeyID field yet).
-                s3AccessKeyID = s3.accessKeyID
-                s3Region = s3.region
-                s3Endpoint = s3.endpoint
-                s3Bucket = s3.bucket
-                s3UsePathStyle = s3.usePathStyle
-                if includePasswords {
-                    s3SecretAccessKey = resolved != nil ? resolved?.secret : self.password(for: session)
-                    if s3SecretAccessKey == nil {
-                        missingPasswordCount += 1
-                    }
+            if session.kind == .s3, includePasswords {
+                s3SecretAccessKey = resolved != nil ? resolved?.secret : self.password(for: session)
+                if s3SecretAccessKey == nil {
+                    missingPasswordCount += 1
                 }
             }
 
-            // WebDAV fields (M21): the exact counterpart of the S3 block
-            // above, minus a secret column -- a WebDAV session's password
-            // rides the plain `password` slot (the `session.kind != .s3` gate
-            // above lets `.webdav` through on purpose), so it is already
-            // fetched and counted there. Nothing secret is read here.
-            var webdavBaseURL: String?
-            var webdavUsername: String?
-            var webdavUseNextcloudPath: Bool?
-            if session.kind == .webdav, let webdav = session.webdav {
-                webdavBaseURL = webdav.baseURL
-                // Always the session's own value: a WebDAV login set supplies
-                // the user name at CONNECT time, and resolving it into the
-                // export would silently rewrite the stored config -- the same
-                // line `s3AccessKeyID` above holds.
-                webdavUsername = webdav.username
-                webdavUseNextcloudPath = webdav.useNextcloudPath
+            // Every backend field in one bag (M23/P3), from the backend's own
+            // read adapter -- which is why there is no per-protocol block
+            // here any more, and why a fourth backend costs zero columns. An
+            // `.s3`/`.webdav` session with no stored block yields the EMPTY
+            // bag, and the import side reads that back as "no block".
+            let descriptor = BackendDescriptor.descriptor(for: session.kind)
+            var fields = descriptor.sessionValues(session)
+            // A set-bound SSH session exports the SET's credentials, not its
+            // own -- login sets are never exported, so the reference has to
+            // become values here or be lost. `sessionValues` cannot do this:
+            // it reads a `StoredSession`, which holds the binding, not the
+            // set. Deliberately SSH-only, matching what the columns did
+            // before the bag: an S3 session's access key ID stays its own
+            // (resolving a set's is deferred to M13, `ResolvedLogin` has no
+            // such field), and a WebDAV set supplies the user name at CONNECT
+            // time -- baking it in would silently rewrite the stored config.
+            if session.kind == .ssh, let resolved {
+                fields[SSHField.username] = resolved.username
+                fields[SSHField.authKind] = resolved.authKind.rawValue
+                fields[SSHField.keyPath] = resolved.keyPath ?? ""
             }
 
             // Jump fields (M10c, extended M11a): always the RESOLVED values
@@ -839,17 +827,11 @@ public final class SessionListViewModel {
             }
 
             return ExportedSession(
-                id: session.id, name: session.name, host: session.host, port: session.port,
-                username: username, authKind: authKind, keyPath: keyPath,
+                id: session.id, name: session.name, kind: session.kind, fields: fields.raw,
                 groupID: includeGroups ? session.groupID : nil, password: password,
                 jumpHost: jumpHost, jumpPort: jumpPort, jumpUsername: jumpUsername,
                 jumpAuthKind: jumpAuthKind, jumpKeyPath: jumpKeyPath, jumpPassword: jumpPassword,
-                kind: session.kind,
-                s3AccessKeyID: s3AccessKeyID, s3Region: s3Region, s3Endpoint: s3Endpoint,
-                s3Bucket: s3Bucket, s3UsePathStyle: s3UsePathStyle,
-                s3SecretAccessKey: s3SecretAccessKey,
-                webdavBaseURL: webdavBaseURL, webdavUsername: webdavUsername,
-                webdavUseNextcloudPath: webdavUseNextcloudPath)
+                s3SecretAccessKey: s3SecretAccessKey)
         }
 
         var exportedGroups: [ExportedGroup] = []

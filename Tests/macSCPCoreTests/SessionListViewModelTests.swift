@@ -455,8 +455,8 @@ struct SessionListViewModelTests {
             ],
             skipped: [
                 ExportedSession(
-                    id: UUID(), name: "dupe", host: "h1", port: 22, username: "root",
-                    authKind: .password, keyPath: nil, groupID: nil, password: nil),
+                    id: UUID(), name: "dupe", kind: .ssh,
+                    fields: sshExportFields(host: "h1", username: "root")),
             ])
 
         let result = vm.applyImport(plan)
@@ -985,14 +985,17 @@ struct SessionListViewModelTests {
             password: "",
             loginSetID: set.id)!
 
+        // The set's user name has to land in the BAG now that the flat
+        // `username` column is gone -- login sets are never exported, so a
+        // reference that is not resolved into values here is lost.
         let withSecret = vm.exportPayload(for: .single(stored), includeGroups: false, includePasswords: true)
-        #expect(withSecret.payload.sessions.first?.username == "deploy")
+        #expect(withSecret.payload.sessions.first?.fields["SSHField.username"] == "deploy")
         #expect(withSecret.payload.sessions.first?.password == "s")
         #expect(withSecret.missingPasswordCount == 0)
 
         try secrets.deletePassword(for: set.id)
         let withoutSecret = vm.exportPayload(for: .single(stored), includeGroups: false, includePasswords: true)
-        #expect(withoutSecret.payload.sessions.first?.username == "deploy")
+        #expect(withoutSecret.payload.sessions.first?.fields["SSHField.username"] == "deploy")
         #expect(withoutSecret.payload.sessions.first?.password == nil)
         #expect(withoutSecret.missingPasswordCount == 1)
     }
@@ -1271,11 +1274,11 @@ struct SessionListViewModelTests {
         #expect(missingPasswordCount == 0)
         let exported = payload.sessions.first!
         #expect(exported.kind == .s3)
-        #expect(exported.s3AccessKeyID == "AKIAEXAMPLE")
-        #expect(exported.s3Region == "eu-central-1")
-        #expect(exported.s3Endpoint == "https://s3.eu-central-1.amazonaws.com")
-        #expect(exported.s3Bucket == "my-bucket")
-        #expect(exported.s3UsePathStyle == true)
+        #expect(exported.fields["S3Field.accessKeyID"] == "AKIAEXAMPLE")
+        #expect(exported.fields["S3Field.region"] == "eu-central-1")
+        #expect(exported.fields["S3Field.endpoint"] == "https://s3.eu-central-1.amazonaws.com")
+        #expect(exported.fields["S3Field.bucket"] == "my-bucket")
+        #expect(exported.fields["S3Field.usePathStyle"] == "true")
         #expect(exported.s3SecretAccessKey == "shh-secret")
         // The plaintext SSH `password` field must stay empty for an S3
         // session -- the secret only travels via `s3SecretAccessKey`.
@@ -1338,7 +1341,7 @@ struct SessionListViewModelTests {
         #expect(missingPasswordCount == 0)
         // The access-key-ID still comes from the session's own config --
         // resolving a login set's access key ID is deferred to M13.
-        #expect(exported.s3AccessKeyID == "AKIAOWN")
+        #expect(exported.fields["S3Field.accessKeyID"] == "AKIAOWN")
     }
 
     // MARK: - Connection kind + WebDAV (M23 fix)
@@ -1368,9 +1371,9 @@ struct SessionListViewModelTests {
         #expect(missingPasswordCount == 0)
         let exported = payload.sessions.first!
         #expect(exported.kind == .webdav)
-        #expect(exported.webdavBaseURL == "https://dav.example.com/dav")
-        #expect(exported.webdavUsername == "alice")
-        #expect(exported.webdavUseNextcloudPath == true)
+        #expect(exported.fields["WebDAVField.baseURL"] == "https://dav.example.com/dav")
+        #expect(exported.fields["WebDAVField.username"] == "alice")
+        #expect(exported.fields["WebDAVField.useNextcloudPath"] == "true")
         // WebDAV's secret travels in the shared `password` slot (M21) — the
         // export never grew a WebDAV secret column, and must not.
         #expect(exported.password == "dav-secret")
@@ -1415,9 +1418,12 @@ struct SessionListViewModelTests {
         let (payload, _) = vm.exportPayload(
             for: .single(original), includeGroups: false, includePasswords: false)
         let exported = payload.sessions.first!
-        #expect(exported.webdavBaseURL == nil)
-        #expect(exported.webdavUsername == nil)
-        #expect(exported.webdavUseNextcloudPath == nil)
+        #expect(exported.fields["WebDAVField.baseURL"] == nil)
+        #expect(exported.fields["WebDAVField.username"] == nil)
+        #expect(exported.fields["WebDAVField.useNextcloudPath"] == nil)
+        // Structural since M23/P3: an SSH session's bag holds SSH keys and
+        // nothing else, so no other backend can leak into its entry.
+        #expect(exported.fields.keys.allSatisfy { $0.hasPrefix("SSHField.") })
 
         let data = try SessionExportCodec.encode(payload, password: nil)
         let decoded = try SessionExportCodec.decode(data, password: nil)
@@ -1644,7 +1650,7 @@ struct SessionListViewModelTests {
 
         let result = vm.exportPayload(for: .single(stored), includeGroups: false, includePasswords: true)
 
-        #expect(result.payload.sessions.first?.authKind == .agent)
+        #expect(result.payload.sessions.first?.fields["SSHField.authKind"] == "agent")
         #expect(result.payload.sessions.first?.password == nil)
         #expect(result.missingPasswordCount == 0)
     }
