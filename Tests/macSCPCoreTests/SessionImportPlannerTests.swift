@@ -30,8 +30,9 @@ struct SessionImportPlannerTests {
         username: String = "root", groupID: UUID? = nil, password: String? = nil
     ) -> ExportedSession {
         ExportedSession(
-            id: UUID(), name: name, host: host, port: port, username: username,
-            authKind: .password, keyPath: nil, groupID: groupID, password: password)
+            id: UUID(), name: name, kind: .ssh,
+            fields: sshExportFields(host: host, port: port, username: username),
+            groupID: groupID, password: password)
     }
 
     /// Restores the pre-M19 behaviour with a single click: every duplicate is
@@ -425,8 +426,8 @@ struct SessionImportPlannerTests {
 
     @Test func plannedSessionCarriesJumpFieldsWithFreshSecretID() async {
         let file = ExportedSession(
-            id: UUID(), name: "web", host: "h", port: 22, username: "root",
-            authKind: .password, keyPath: nil, groupID: nil, password: nil,
+            id: UUID(), name: "web", kind: .ssh,
+            fields: sshExportFields(host: "h", username: "root"),
             jumpHost: "bastion.example.com", jumpPort: 2222, jumpUsername: "jumper",
             jumpAuthKind: .privateKey, jumpKeyPath: "/k", jumpPassword: "jp")
         let plan = await SessionImportPlanner.plan(
@@ -456,10 +457,10 @@ struct SessionImportPlannerTests {
 
     @Test func plannedSessionCarriesAgentAuthKindThrough() async {
         let file = ExportedSession(
-            id: UUID(), name: "web", host: "h", port: 22, username: "root",
-            authKind: .agent, keyPath: nil, groupID: nil, password: nil,
+            id: UUID(), name: "web", kind: .ssh,
+            fields: sshExportFields(host: "h", username: "root", authKind: .agent),
             jumpHost: "bastion.example.com", jumpPort: 22, jumpUsername: "jumper",
-            jumpAuthKind: .agent, jumpKeyPath: nil, jumpPassword: nil)
+            jumpAuthKind: .agent)
         let plan = await SessionImportPlanner.plan(
             existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
 
@@ -474,12 +475,12 @@ struct SessionImportPlannerTests {
 
     @Test func s3FileSessionBuildsStoredS3ConfigAndCarriesSecretAsPassword() async {
         let file = ExportedSession(
-            id: UUID(), name: "s3-prod", host: "unused", port: 22, username: "unused",
-            authKind: .password, keyPath: nil, groupID: nil, password: nil,
-            kind: .s3,
-            s3AccessKeyID: "AKIAEXAMPLE", s3Region: "eu-central-1",
-            s3Endpoint: "https://s3.eu-central-1.amazonaws.com", s3Bucket: "my-bucket",
-            s3UsePathStyle: true, s3SecretAccessKey: "shh-secret")
+            id: UUID(), name: "s3-prod", kind: .s3,
+            fields: s3ExportFields(
+                accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
+                endpoint: "https://s3.eu-central-1.amazonaws.com", bucket: "my-bucket",
+                usePathStyle: true),
+            s3SecretAccessKey: "shh-secret")
         let plan = await SessionImportPlanner.plan(
             existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
 
@@ -496,13 +497,20 @@ struct SessionImportPlannerTests {
 
     /// A file session with no `kind` at all (legacy, pre-M12) must import as
     /// `.ssh` with no S3 config, same as `StoredSession.kind`'s own default.
+    /// `kind` is passed as nil ON PURPOSE — the shared `exported(...)` helper
+    /// writes `.ssh`, which would make this test pass without ever exercising
+    /// the default.
     @Test func fileSessionWithoutKindImportsAsSSH() async {
+        let file = ExportedSession(
+            id: UUID(), name: "web", kind: nil,
+            fields: sshExportFields(host: "h", username: "root"))
         let plan = await SessionImportPlanner.plan(
-            existing: [], existingGroups: [], incoming: incoming([exported()]), arbiter: neverAsked)
+            existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
         let planned = plan.sessionsToImport[0]
         #expect(planned.session.kind == .ssh)
+        #expect(planned.session.host == "h")
         #expect(planned.session.s3 == nil)
-        // The same for WebDAV: no `webdav*` columns in the file means no
+        // The same for WebDAV: no WebDAV keys in the bag means no
         // `StoredWebDAVConfig` on the planned session.
         #expect(planned.session.webdav == nil)
     }
@@ -511,11 +519,11 @@ struct SessionImportPlannerTests {
 
     @Test func webdavFileSessionBuildsStoredWebDAVConfigAndCarriesSecretAsPassword() async {
         let file = ExportedSession(
-            id: UUID(), name: "nextcloud", host: "unused", port: 22, username: "unused",
-            authKind: .password, keyPath: nil, groupID: nil, password: "dav-secret",
-            kind: .webdav,
-            webdavBaseURL: "https://dav.example.com", webdavUsername: "alice",
-            webdavUseNextcloudPath: true)
+            id: UUID(), name: "nextcloud", kind: .webdav,
+            fields: webdavExportFields(
+                baseURL: "https://dav.example.com", username: "alice",
+                useNextcloudPath: true),
+            password: "dav-secret")
         let plan = await SessionImportPlanner.plan(
             existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
 
@@ -532,10 +540,7 @@ struct SessionImportPlannerTests {
     /// columns at all. It must still plan (kind preserved, no config), rather
     /// than crash or be silently retyped.
     @Test func webdavFileSessionWithoutColumnsKeepsKindAndHasNoConfig() async {
-        let file = ExportedSession(
-            id: UUID(), name: "nextcloud", host: "unused", port: 22, username: "unused",
-            authKind: .password, keyPath: nil, groupID: nil, password: nil,
-            kind: .webdav)
+        let file = ExportedSession(id: UUID(), name: "nextcloud", kind: .webdav)
         let plan = await SessionImportPlanner.plan(
             existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
 
@@ -563,11 +568,10 @@ struct SessionImportPlannerTests {
                 baseURL: "https://dav.example.com", username: "alice",
                 useNextcloudPath: false))
         let file = ExportedSession(
-            id: UUID(), name: "new", host: "unused", port: 22, username: "unused",
-            authKind: .password, keyPath: nil, groupID: nil, password: nil,
-            kind: .webdav,
-            webdavBaseURL: "https://dav.example.com", webdavUsername: "alice",
-            webdavUseNextcloudPath: true)
+            id: UUID(), name: "new", kind: .webdav,
+            fields: webdavExportFields(
+                baseURL: "https://dav.example.com", username: "alice",
+                useNextcloudPath: true))
         let plan = await SessionImportPlanner.plan(
             existing: [existing], existingGroups: [], incoming: incoming([file]),
             arbiter: ImportConflictArbiter { _ in (.replace, false) })
@@ -592,11 +596,8 @@ struct SessionImportPlannerTests {
         let files = baseURLs
             .map { baseURL in
                 ExportedSession(
-                    id: UUID(), name: "dav-\(baseURL)", host: "unused", port: 22,
-                    username: "unused", authKind: .password, keyPath: nil, groupID: nil,
-                    password: nil, kind: .webdav,
-                    webdavBaseURL: baseURL, webdavUsername: "alice",
-                    webdavUseNextcloudPath: false)
+                    id: UUID(), name: "dav-\(baseURL)", kind: .webdav,
+                    fields: webdavExportFields(baseURL: baseURL, username: "alice"))
             }
         let plan = await SessionImportPlanner.plan(
             existing: [], existingGroups: [], incoming: incoming(files), arbiter: neverAsked)
@@ -618,11 +619,9 @@ struct SessionImportPlannerTests {
                 endpoint: "https://s3.eu-central-1.amazonaws.com", bucket: "my-bucket",
                 usePathStyle: false))
         let file = ExportedSession(
-            id: UUID(), name: "nextcloud", host: "unused", port: 22, username: "unused",
-            authKind: .password, keyPath: nil, groupID: nil, password: nil,
-            kind: .webdav,
-            webdavBaseURL: "https://dav.example.com", webdavUsername: "alice",
-            webdavUseNextcloudPath: false)
+            id: UUID(), name: "nextcloud", kind: .webdav,
+            fields: webdavExportFields(
+                baseURL: "https://dav.example.com", username: "alice"))
         let plan = await SessionImportPlanner.plan(
             existing: [existing], existingGroups: [], incoming: incoming([file]),
             arbiter: neverAsked)
@@ -643,12 +642,12 @@ struct SessionImportPlannerTests {
                 endpoint: "https://s3.eu-central-1.amazonaws.com", bucket: "my-bucket",
                 usePathStyle: false))
         let file = ExportedSession(
-            id: UUID(), name: "s3-prod-copy", host: "unused", port: 22, username: "unused",
-            authKind: .password, keyPath: nil, groupID: nil, password: nil,
-            kind: .s3,
-            s3AccessKeyID: "AKIAEXAMPLE", s3Region: "us-east-1",  // region is not part of the key
-            s3Endpoint: "https://s3.eu-central-1.amazonaws.com", s3Bucket: "my-bucket",
-            s3UsePathStyle: true)
+            id: UUID(), name: "s3-prod-copy", kind: .s3,
+            fields: s3ExportFields(
+                accessKeyID: "AKIAEXAMPLE",
+                region: "us-east-1",  // region is not part of the key
+                endpoint: "https://s3.eu-central-1.amazonaws.com", bucket: "my-bucket",
+                usePathStyle: true))
         let plan = await SessionImportPlanner.plan(
             existing: [existing], existingGroups: [], incoming: incoming([file]),
             arbiter: skipEverything)

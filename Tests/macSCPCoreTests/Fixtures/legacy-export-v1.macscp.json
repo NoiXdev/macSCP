@@ -1,0 +1,62 @@
+{
+  "encrypted" : false,
+  "format" : "macscp-sessions",
+  "payload" : {
+    "groups" : [
+      {
+        "id" : "11111111-2222-3333-4444-555555555555",
+        "name" : "Servers"
+      }
+    ],
+    "includesSecrets" : true,
+    "sessions" : [
+      {
+        "authKind" : "password",
+        "host" : "unused",
+        "id" : "BBBBBBBB-0000-0000-0000-00000000BBBB",
+        "kind" : "s3",
+        "name" : "Archive",
+        "port" : 22,
+        "s3AccessKeyID" : "AKIAEXAMPLE",
+        "s3Bucket" : "archive",
+        "s3Endpoint" : "https:\/\/s3.example.com",
+        "s3Region" : "eu-central-1",
+        "s3SecretAccessKey" : "not-a-real-secret",
+        "s3UsePathStyle" : true,
+        "username" : "unused"
+      },
+      {
+        "authKind" : "password",
+        "groupID" : "11111111-2222-3333-4444-555555555555",
+        "host" : "unused",
+        "id" : "CCCCCCCC-0000-0000-0000-00000000CCCC",
+        "kind" : "webdav",
+        "name" : "Cloud",
+        "password" : "not-a-real-secret",
+        "port" : 22,
+        "username" : "unused",
+        "webdavBaseURL" : "https:\/\/cloud.example.com\/remote.php\/dav",
+        "webdavUseNextcloudPath" : true,
+        "webdavUsername" : "alice"
+      },
+      {
+        "authKind" : "privateKey",
+        "groupID" : "11111111-2222-3333-4444-555555555555",
+        "host" : "prod.example.com",
+        "id" : "AAAAAAAA-0000-0000-0000-00000000AAAA",
+        "jumpAuthKind" : "password",
+        "jumpHost" : "bastion.example.com",
+        "jumpPassword" : "not-a-real-secret",
+        "jumpPort" : 2022,
+        "jumpUsername" : "jumper",
+        "keyPath" : "\/Users\/x\/.ssh\/id_ed25519",
+        "kind" : "ssh",
+        "name" : "Prod",
+        "password" : "not-a-real-secret",
+        "port" : 2222,
+        "username" : "deploy"
+      }
+    ]
+  },
+  "version" : 1
+}

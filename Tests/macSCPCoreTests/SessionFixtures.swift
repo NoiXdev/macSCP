@@ -76,3 +76,56 @@ func webdavSession(
     StoredSession(id: id, name: name, groupID: groupID,
                   loginSetID: loginSetID, kind: .webdav, webdav: config)
 }
+
+// MARK: - Export field bags (M23/P3)
+//
+// What `SessionListViewModel.exportPayload` writes into
+// `ExportedSession.fields` for a session of each kind — the same keys
+// `BackendDescriptor.sessionValues` produces, written through the typed
+// subscripts so a renamed field id cannot leave a test asserting a key
+// nothing writes any more. The ONE place the test target builds an export
+// bag, for the same reason the session fixtures above exist.
+
+func sshExportFields(
+    host: String = "example.com",
+    port: Int = 22,
+    username: String = "tim",
+    authKind: StoredSession.AuthKind = .password,
+    keyPath: String? = nil
+) -> [String: String] {
+    var values = FieldValues()
+    values[SSHField.host] = host
+    values[SSHField.port] = String(port)
+    values[SSHField.username] = username
+    values[SSHField.authKind] = authKind.rawValue
+    values[SSHField.keyPath] = keyPath ?? ""
+    return values.raw
+}
+
+func s3ExportFields(
+    accessKeyID: String = "AKIA",
+    region: String = "eu-central-1",
+    endpoint: String = "https://s3.example.com",
+    bucket: String = "bucket",
+    usePathStyle: Bool = false
+) -> [String: String] {
+    var values = FieldValues()
+    values[S3Field.accessKeyID] = accessKeyID
+    values[S3Field.region] = region
+    values[S3Field.endpoint] = endpoint
+    values[S3Field.bucket] = bucket
+    values[bool: S3Field.usePathStyle] = usePathStyle
+    return values.raw
+}
+
+func webdavExportFields(
+    baseURL: String = "https://cloud.example.com/remote.php/dav",
+    username: String = "tim",
+    useNextcloudPath: Bool = false
+) -> [String: String] {
+    var values = FieldValues()
+    values[WebDAVField.baseURL] = baseURL
+    values[WebDAVField.username] = username
+    values[bool: WebDAVField.useNextcloudPath] = useNextcloudPath
+    return values.raw
+}
