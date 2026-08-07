@@ -46,9 +46,9 @@ public struct ConnectionField: Sendable, Equatable, Identifiable {
     ///
     /// Optional in the type, mandatory in practice —
     /// `everyValidatableFieldDeclaresItsMessage` fails the build for a field
-    /// that can fail validation without declaring one. The fallback below it
-    /// exists so a slip degrades to a correct-but-generic message rather than
-    /// to silence.
+    /// that can fail validation without declaring one. `firstViolation` falls
+    /// back to a generic key so a slip degrades to a correct-but-generic
+    /// message rather than to silence.
     public let invalidMessageKey: String?
 
     public var isSecret: Bool { kind == .secret }
@@ -142,6 +142,43 @@ extension ConnectionFieldSchema {
         guard case .group(let leaves) = field.kind else { return [] }
         let namespace = "\(owner).\(field.id)"
         return leaves.filter { FieldVisibility.isVisible($0, in: values, namespace: namespace) }
+    }
+
+    /// The first rule these values break, or nil when they break none (M23).
+    ///
+    /// Walks `visibleFields` and nothing else, which is what makes the
+    /// auth-kind branching `connectSSH` used to do by hand disappear: SSH's
+    /// password is required AND only visible under password auth, so an agent
+    /// login is never asked for one. A field that is not on screen has no say.
+    ///
+    /// `requireSecrets` is the connect-versus-save asymmetry, made explicit
+    /// rather than inherited: opening a connection needs an actual secret in
+    /// hand, while an edit-mode save deliberately leaves the secret blank to
+    /// mean "keep the stored one". No default — a caller must decide which it
+    /// is.
+    ///
+    /// Secrets are compared VERBATIM while everything else is trimmed. A
+    /// password of spaces is a legal password, and trimming it would refuse a
+    /// user their own server; a host of spaces is a typo.
+    public func firstViolation(
+        in values: FieldValues, namespace: String, requireSecrets: Bool
+    ) -> (messageKey: String, fieldKey: String)? {
+        for field in visibleFields(in: values, namespace: namespace) {
+            if field.isSecret && !requireSecrets { continue }
+            let key = "\(namespace).\(field.id)"
+            let raw = values.raw[key] ?? ""
+            let value = field.isSecret
+                ? raw : raw.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            let isBlank = field.isRequired && value.isEmpty
+            let isUnparsable = field.format == .numeric && Int(value) == nil
+            guard isBlank || isUnparsable else { continue }
+            // The `??` is unreachable while
+            // `everyValidatableFieldDeclaresItsMessage` passes; it is here so
+            // a slip degrades to a generic message rather than to silence.
+            return (field.invalidMessageKey ?? "core.connect.fieldRequired", key)
+        }
+        return nil
     }
 }
 
