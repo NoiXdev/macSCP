@@ -24,6 +24,7 @@
 "core.connect.passwordEmpty" = "Hasło nie może być puste.";
 "core.connect.keyPathEmpty" = "Wprowadź ścieżkę do klucza SSH.";
 "core.connect.saveNameEmpty" = "Wprowadź nazwę zapisywanej sesji.";
+"core.connect.fieldRequired" = "To pole jest wymagane.";
 
 /* ConnectionViewModel jump-host form validation (M10c/T3) */
 "core.connect.jumpHostEmpty" = "Host pośredniczący nie może być pusty.";

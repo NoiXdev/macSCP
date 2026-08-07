@@ -15,24 +15,51 @@ public struct ConnectionField: Sendable, Equatable, Identifiable {
     public let kind: Kind
     /// Shown only when this holds; nil means always.
     public let visibleWhen: FieldCondition?
-    /// The form cannot be saved while this field is visible and blank (M22/T9).
+    /// The form cannot be saved, and a connection cannot be opened, while this
+    /// field is visible and blank (M22/T9, widened in M23).
     ///
     /// Data because the login-set editor used to answer it with a `switch`
     /// over `ConnectionKind` — and that switch is exactly where `.webdav`
     /// returned "always disabled", making a WebDAV login set unsaveable.
-    /// Marked on the field that IDENTIFIES a login (`username`, `accessKeyID`)
-    /// and nowhere else: a secret may be left blank in edit mode ("keep the
-    /// stored one"), and a key path may be blank because an agent or
-    /// managed-key login supplies it another way.
+    ///
+    /// M23 marked SSH's `keyPath` required too. The M22 rationale for leaving
+    /// it optional — "an agent or managed-key login supplies it another way" —
+    /// does not survive `visibleWhen`: the field is shown only under
+    /// private-key auth, so an agent login never reaches the check, and the
+    /// managed-key picker writes `keyPath` before the form is saved. A
+    /// private-key login with no key path was already refused at connect time;
+    /// now it is refused at save time too.
+    ///
+    /// A SECRET may still be blank in edit mode ("keep the stored one") — that
+    /// asymmetry is `firstViolation(in:namespace:requireSecrets:)`'s parameter,
+    /// not a property of the field.
     public let isRequired: Bool
+
+    /// A parse rule the raw value must satisfy while this field is visible
+    /// (M23). `nil` means any string is acceptable.
+    public let format: FieldFormat?
+
+    /// The localized message to show when this field is blank-but-required or
+    /// violates its `format` (M23). ONE key covers both, because the two are
+    /// the same complaint from the user's side: a blank port and the text
+    /// "abc" both mean "the port must be a number".
+    ///
+    /// Optional in the type, mandatory in practice —
+    /// `everyValidatableFieldDeclaresItsMessage` fails the build for a field
+    /// that can fail validation without declaring one. The fallback below it
+    /// exists so a slip degrades to a correct-but-generic message rather than
+    /// to silence.
+    public let invalidMessageKey: String?
 
     public var isSecret: Bool { kind == .secret }
 
     public init(id: String, labelKey: String, labelDefault: String,
                 kind: Kind, visibleWhen: FieldCondition? = nil,
-                isRequired: Bool = false) {
+                isRequired: Bool = false, format: FieldFormat? = nil,
+                invalidMessageKey: String? = nil) {
         self.id = id; self.labelKey = labelKey; self.labelDefault = labelDefault
         self.kind = kind; self.visibleWhen = visibleWhen; self.isRequired = isRequired
+        self.format = format; self.invalidMessageKey = invalidMessageKey
     }
 }
 

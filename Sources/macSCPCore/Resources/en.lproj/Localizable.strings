@@ -22,6 +22,7 @@
 "core.connect.passwordEmpty" = "Password must not be empty.";
 "core.connect.keyPathEmpty" = "Enter the path to the SSH key.";
 "core.connect.saveNameEmpty" = "Enter a name for the saved session.";
+"core.connect.fieldRequired" = "This field is required.";
 
 /* ConnectionViewModel jump-host form validation (M10c/T3) */
 "core.connect.jumpHostEmpty" = "Jump host must not be empty.";

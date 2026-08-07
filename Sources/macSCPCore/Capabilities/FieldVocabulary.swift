@@ -29,6 +29,16 @@ public enum OptionSource: Sendable, Equatable {
     case fixed([FieldOption])
 }
 
+/// A parse rule a field's raw string must satisfy (M23).
+///
+/// Exactly one case, and deliberately so: the port is the only format rule in
+/// the entire pre-M23 validation code. A second case should arrive with a
+/// second real need, not in anticipation of one — the same discipline that
+/// keeps `FieldCondition` from growing into an expression language.
+public enum FieldFormat: Sendable, Equatable {
+    case numeric
+}
+
 /// "Field X has value Y" — and deliberately nothing else. No and, no or, no
 /// negation. This covers the only real case (SSH shows the key path only for
 /// `authKind == privateKey`) and cannot grow into an expression language. A

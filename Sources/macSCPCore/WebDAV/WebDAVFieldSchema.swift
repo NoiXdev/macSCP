@@ -16,7 +16,9 @@ public enum WebDAVFieldSchema {
         fields: [
             ConnectionField(id: WebDAVField.baseURL.rawValue,
                             labelKey: "connection.webdav.baseURL",
-                            labelDefault: "Server URL", kind: .text),
+                            labelDefault: "Server URL", kind: .text,
+                            isRequired: true,
+                            invalidMessageKey: "core.connect.webdavFieldRequired"),
             ConnectionField(id: WebDAVField.useNextcloudPath.rawValue,
                             labelKey: "connection.webdav.nextcloudPath",
                             labelDefault: "Append Nextcloud path", kind: .toggle),
@@ -47,10 +49,13 @@ public enum WebDAVFieldSchema {
             ConnectionField(id: WebDAVField.username.rawValue,
                             labelKey: "connection.webdav.username",
                             labelDefault: "User name", kind: .text,
-                            isRequired: true),
+                            isRequired: true,
+                            invalidMessageKey: "core.connect.webdavFieldRequired"),
             ConnectionField(id: WebDAVField.password.rawValue,
                             labelKey: "connection.webdav.password",
-                            labelDefault: "Password", kind: .secret),
+                            labelDefault: "Password", kind: .secret,
+                            isRequired: true,
+                            invalidMessageKey: "core.connect.webdavFieldRequired"),
         ],
         presets: [])
 
