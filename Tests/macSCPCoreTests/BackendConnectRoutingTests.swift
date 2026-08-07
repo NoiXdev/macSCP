@@ -14,10 +14,19 @@ struct BackendConnectRoutingTests {
         endpoint: "http://127.0.0.1:1", bucket: "b",
         usePathStyle: true, sessionToken: nil))
 
+    /// Asserting merely that SOMETHING throws proves nothing about routing:
+    /// swap two descriptors' `connect` closures and the wrong closure's own
+    /// kind guard refuses the config, throwing just as reliably. What proves
+    /// the S3 config reached the S3 backend is that the error is NOT that
+    /// refusal — it got past the guard and failed on the dial instead (the
+    /// fixture points at port 1, where nothing listens).
     @Test func theS3DescriptorReachesTheS3Backend() async {
-        await #expect(throws: (any Error).self) {
+        await #expect {
             _ = try await BackendDescriptor.descriptor(for: .s3)
                 .connect(s3Config, { _ in false }, { _ in false })
+        } throws: { error in
+            guard case RemoteFSError.protocolError(let reason) = error else { return true }
+            return !reason.hasPrefix("wrong config for the")
         }
     }
 
