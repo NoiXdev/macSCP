@@ -174,11 +174,16 @@ public enum SessionImportPlanner {
                 // a login set. `collidingSummary` — bound by the `guard let`
                 // above, the same lookup that proves `key` already collides —
                 // names whatever established it: a stored session, or an
-                // earlier session from this same file. So the user can tell
-                // which of their connections is about to be replaced, never
-                // the incoming item's own name (M23/P3 T3). No fallback
-                // value is possible here, let alone needed: this branch only
-                // runs when the lookup above already succeeded.
+                // earlier session from this same file. So the conflict names
+                // what the incoming item collides with, never the incoming
+                // item's own name (M23/P3 T3) — but that is not always a
+                // stored connection "about to be replaced": choosing Replace
+                // only overwrites a genuine stored record; when
+                // `collidingSummary` names an earlier file entry instead,
+                // Replace falls through to a fresh id under a unique name at
+                // :206, replacing nothing of the user's. No fallback value is
+                // possible here, let alone needed: this branch only runs when
+                // the lookup above already succeeded.
                 ImportConflict(
                     itemName: trimmedName, kindLabel: kindLabel,
                     reason: .sameConnection(existing: collidingSummary))
