@@ -213,7 +213,8 @@ struct ConnectionFormView: View {
         guard let sessionID = viewModel.jumpSessionID else { return nil }
         let spec = StoredSession.JumpSpec(host: "", username: "", sessionID: sessionID)
         let synthetic = StoredSession(
-            id: editingSessionID ?? UUID(), name: "", host: "", username: "", jump: spec)
+            id: editingSessionID ?? UUID(), name: "",
+            ssh: StoredSSHConfig(host: "", username: "", jump: spec))
         do {
             guard let resolved = try sessionList.resolvedJump(for: synthetic) else { return nil }
             return .resolved(

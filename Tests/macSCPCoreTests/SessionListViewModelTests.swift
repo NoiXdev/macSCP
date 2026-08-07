@@ -126,7 +126,7 @@ struct SessionListViewModelTests {
     /// M12/T7b: saving an S3 session goes through the same `save(...)`
     /// entry point as SSH, just with `kind` and S3's own field values (M23/T7)
     /// — the secret access key rides the existing `password:` slot (no
-    /// separate S3 secret path) and must never land in `sessions.json`.
+    /// separate S3 secret path) and must never land in the store file.
     @Test func saveWithS3KindPersistsConfigAndKeepsSecretInKeychainOnly() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -146,7 +146,7 @@ struct SessionListViewModelTests {
         #expect(vm.sessions.first?.s3 == s3)
         #expect(try secrets.password(for: stored!.id) == "SECRET")
 
-        let raw = try String(contentsOf: dir.appendingPathComponent("sessions.json"), encoding: .utf8)
+        let raw = try String(contentsOf: dir.appendingPathComponent("sessions-v2.json"), encoding: .utf8)
         #expect(!raw.contains("SECRET"))
     }
 
@@ -177,7 +177,7 @@ struct SessionListViewModelTests {
         #expect(vm.sessions.first?.webdav == webdav)
         #expect(try secrets.password(for: stored!.id) == "SECRET")
 
-        let raw = try String(contentsOf: dir.appendingPathComponent("sessions.json"), encoding: .utf8)
+        let raw = try String(contentsOf: dir.appendingPathComponent("sessions-v2.json"), encoding: .utf8)
         #expect(!raw.contains("SECRET"))
     }
 
@@ -209,7 +209,7 @@ struct SessionListViewModelTests {
         // WebDAV's own user name lives on its block, never on the shared field.
         #expect(cloud?.username == "")
         #expect(cloud?.webdav?.username == "dave")
-        let raw = try String(contentsOf: dir.appendingPathComponent("sessions.json"), encoding: .utf8)
+        let raw = try String(contentsOf: dir.appendingPathComponent("sessions-v2.json"), encoding: .utf8)
         #expect(!raw.contains("unused"))
     }
 
@@ -239,7 +239,7 @@ struct SessionListViewModelTests {
     /// protocol. Mutating rather than rebuilding is what carries group and
     /// login-set binding forward (M23/T6) — but it must not carry the previous
     /// backend's own block forward, or an `.ssh` session keeps a populated `s3`
-    /// block (endpoint, bucket, access key id) that reaches `sessions.json`,
+    /// block (endpoint, bucket, access key id) that reaches the store file,
     /// the export codec and `SessionImportPlanner.duplicateKey`.
     @Test func savingOverAnExistingNameOfAnotherKindClearsTheOldBackendBlock() throws {
         let (vm, _, dir) = makeVM()
@@ -259,7 +259,7 @@ struct SessionListViewModelTests {
         #expect(asSSH.kind == .ssh)
         #expect(asSSH.s3 == nil)
         #expect(asSSH.host == "h.example.com")
-        let raw = try String(contentsOf: dir.appendingPathComponent("sessions.json"), encoding: .utf8)
+        let raw = try String(contentsOf: dir.appendingPathComponent("sessions-v2.json"), encoding: .utf8)
         #expect(!raw.contains("backups"))
     }
 
@@ -374,7 +374,7 @@ struct SessionListViewModelTests {
             values: sshValues(host: "h", port: 22, username: "u"),
             password: "keep")!
         var updated = stored
-        updated.host = "h2"
+        updated.ssh?.host = "h2"
         vm.updateSession(updated, newSecret: nil)
         #expect(vm.password(for: stored) == "keep")
         vm.updateSession(updated, newSecret: "")
@@ -1479,7 +1479,7 @@ struct SessionListViewModelTests {
             values: sshValues(host: "h", port: 22, username: "u"),
             password: "pw")!
         var updated = stored
-        updated.authKind = .agent
+        updated.ssh?.authKind = .agent
 
         vm.updateSession(updated, newSecret: nil)
 
@@ -1597,7 +1597,7 @@ struct SessionListViewModelTests {
         #expect(try secrets.password(for: jump.secretID) == "jp")
 
         var updated = stored
-        updated.jump?.authKind = .agent
+        updated.ssh?.jump?.authKind = .agent
         vm.updateSession(updated, newSecret: nil)
 
         #expect(try secrets.password(for: jump.secretID) == nil)

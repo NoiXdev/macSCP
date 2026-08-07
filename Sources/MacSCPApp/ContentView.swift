@@ -2086,9 +2086,10 @@ struct ContentView: View {
             form.jumpPassword = ""
             return
         }
-        let synthetic = StoredSession(
-            id: set.id, name: set.name, host: "", username: set.username,
-            authKind: set.authKind, keyPath: set.keyPath)
+        // `password(for:)` addresses the Keychain by `id` alone, so the set's
+        // own login fields never had a reader here — M23/T8 dropped them
+        // rather than rebuild them inside an `ssh` block nothing consults.
+        let synthetic = StoredSession(id: set.id, name: set.name)
         form.jumpPassword = sessionListViewModel.password(for: synthetic) ?? ""
     }
 
@@ -2150,7 +2151,9 @@ struct ContentView: View {
         let referencingID: UUID
         if case .edit(let id) = form.mode { referencingID = id } else { referencingID = UUID() }
         let spec = StoredSession.JumpSpec(host: "", username: "", sessionID: sessionID)
-        let synthetic = StoredSession(id: referencingID, name: "", host: "", username: "", jump: spec)
+        let synthetic = StoredSession(
+            id: referencingID, name: "",
+            ssh: StoredSSHConfig(host: "", username: "", jump: spec))
         do {
             guard let resolved = try sessionListViewModel.resolvedJump(for: synthetic) else { return true }
             form.jumpHost = resolved.host

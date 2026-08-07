@@ -65,12 +65,6 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
 
     public let id: UUID
     public var name: String
-    public var host: String
-    public var port: Int
-    public var username: String
-    public var authKind: AuthKind
-    /// Path to the private key (only set when authKind == .privateKey).
-    public var keyPath: String?
     /// The flat group this session belongs to, if any. Optional so legacy
     /// JSON without this field keeps decoding as `nil` (no custom decoder).
     public var groupID: UUID?
@@ -78,14 +72,17 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
     /// Optional so legacy JSON without this field keeps decoding as `nil`
     /// (nil = the session carries its own credentials, "manual" mode).
     public var loginSetID: UUID?
-    /// The jump host hop configured for this session, if any (M10c).
-    /// Optional so legacy JSON without this field keeps decoding as `nil`
-    /// (nil = direct connection, no jump).
-    public var jump: JumpSpec?
     /// The protocol this session speaks (M12). Legacy JSON without the key
     /// decodes as `.ssh` — synthesized Codable does NOT apply property
     /// defaults to missing keys, so decode is done explicitly below.
     public var kind: ConnectionKind = .ssh
+    /// Persisted, SECRET-FREE SSH parameters when `kind == .ssh` (M23). `nil`
+    /// for S3/WebDAV sessions, which is what ends the `"unused"` placeholder
+    /// at the storage layer: host/port/username/authKind/keyPath/jump lived
+    /// flat at the top level until M23 and were meaningless on every
+    /// non-SSH session. The password and key passphrase are NOT here
+    /// (Keychain only).
+    public var ssh: StoredSSHConfig? = nil
     /// Persisted, SECRET-FREE S3 parameters when `kind == .s3` (M12). `nil`
     /// for SSH sessions and on legacy JSON. The secret access key is NOT here
     /// (Keychain only) — this is `StoredS3Config`, not the runtime config.
@@ -98,52 +95,60 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
     public init(
         id: UUID = UUID(),
         name: String,
-        host: String,
-        port: Int = 22,
-        username: String,
-        authKind: AuthKind = .password,
-        keyPath: String? = nil,
         groupID: UUID? = nil,
         loginSetID: UUID? = nil,
-        jump: JumpSpec? = nil,
         kind: ConnectionKind = .ssh,
+        ssh: StoredSSHConfig? = nil,
         s3: StoredS3Config? = nil,
         webdav: StoredWebDAVConfig? = nil
     ) {
         self.id = id
         self.name = name
-        self.host = host
-        self.port = port
-        self.username = username
-        self.authKind = authKind
-        self.keyPath = keyPath
         self.groupID = groupID
         self.loginSetID = loginSetID
-        self.jump = jump
         self.kind = kind
+        self.ssh = ssh
         self.s3 = s3
         self.webdav = webdav
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, host, port, username, authKind, keyPath, groupID, loginSetID, jump, kind, s3, webdav
+        case id, name, groupID, loginSetID, kind, ssh, s3, webdav
     }
 
+    /// Explicit rather than synthesized because `kind` needs its `?? .ssh`
+    /// default: synthesized Codable does NOT apply a property default to a
+    /// missing key, and a `sessions-v2.json` written by an earlier build of
+    /// this same milestone may not carry one.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
-        host = try c.decode(String.self, forKey: .host)
-        port = try c.decode(Int.self, forKey: .port)
-        username = try c.decode(String.self, forKey: .username)
-        authKind = try c.decode(AuthKind.self, forKey: .authKind)
-        keyPath = try c.decodeIfPresent(String.self, forKey: .keyPath)
         groupID = try c.decodeIfPresent(UUID.self, forKey: .groupID)
         loginSetID = try c.decodeIfPresent(UUID.self, forKey: .loginSetID)
-        jump = try c.decodeIfPresent(JumpSpec.self, forKey: .jump)
         kind = try c.decodeIfPresent(ConnectionKind.self, forKey: .kind) ?? .ssh
+        ssh = try c.decodeIfPresent(StoredSSHConfig.self, forKey: .ssh)
         s3 = try c.decodeIfPresent(StoredS3Config.self, forKey: .s3)
         webdav = try c.decodeIfPresent(StoredWebDAVConfig.self, forKey: .webdav)
     }
 
+    // DEPRECATION INTENT: these exist to keep M23 Phase 1 reviewable. Phase 3
+    // removes the ones export/import uses; anything still reading them after
+    // that is a caller that should be asking the descriptor's `displaySummary`
+    // or `sessionValues` instead.
+
+    /// The SSH host, or "" for a session that has no SSH block.
+    ///
+    /// Read-only conveniences over `ssh` (M23), kept so the callers that
+    /// legitimately want "the host, if there is one" — the sidebar tooltip,
+    /// the audit trail, `SSHCommandBuilder` — read one property instead of
+    /// unwrapping. Anything that WRITES must go through `ssh` directly, so
+    /// that writing to a session with no SSH block is a compile error rather
+    /// than a silent no-op.
+    public var host: String { ssh?.host ?? "" }
+    public var port: Int { ssh?.port ?? 22 }
+    public var username: String { ssh?.username ?? "" }
+    public var authKind: AuthKind { ssh?.authKind ?? .password }
+    public var keyPath: String? { ssh?.keyPath }
+    public var jump: JumpSpec? { ssh?.jump }
 }

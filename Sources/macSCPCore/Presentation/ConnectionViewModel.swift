@@ -988,29 +988,21 @@ public final class ConnectionViewModel {
         // group, login-set binding and the other backends' blocks forward.
         session.name = trimmedName
         session.kind = kind
-        // Reset BEFORE `apply`, not after: `host`/`username` are SSH's own
-        // fields, not a place for a backend without them to park a literal.
-        // SSH's `apply` writes real values right back over this; S3's and
-        // WebDAV's apply never touch these two, by contract (see their own
-        // doc comments), so they are left blank rather than carrying over
-        // whatever the ORIGINAL had here -- including a legacy `"unused"`
-        // from before this milestone, or a stale host left behind by
-        // switching `kind` away from SSH during this very edit.
-        //
-        // TEMPORARY (M23/T6, until Task 8): this reset exists only because
-        // `StoredSession` still carries `host`/`username` as top-level fields
-        // shared by every kind. Once Task 8 moves them into an SSH-only
-        // `ssh:` block (mirroring `s3:`/`webdav:` today), a non-SSH session
-        // will have no `host`/`username` to blank in the first place, and
-        // these two lines go away with them -- they are not a permanent rule
-        // about where SSH's fields live, just scaffolding for the shape
-        // `StoredSession` has right now.
-        session.host = ""
-        session.username = ""
+        // Clearing the whole SSH block replaces the `host`/`username` reset
+        // this needed before M23/T8: SSH's fields live in `ssh` now, so a
+        // non-SSH session simply has none to blank, and a stale host left
+        // behind by switching `kind` away from SSH during this very edit goes
+        // with the block. SSH's own `apply` recreates it below.
+        if kind != .ssh {
+            session.ssh = nil
+        }
         session.groupID = selectedGroupID
         session.loginSetID = loginMode == .set ? selectedLoginSetID : nil
-        session.jump = buildJumpSpec(existingSecretID: existingJumpSecretID)
         descriptor.apply(values, &session)
+        // AFTER `apply`, which is what creates the SSH block. A jump is an SSH
+        // concept and lives inside it, so a non-SSH session correctly keeps
+        // none rather than storing a hop nothing dials.
+        session.ssh?.jump = buildJumpSpec(existingSecretID: existingJumpSecretID)
 
         state = .idle
         return session

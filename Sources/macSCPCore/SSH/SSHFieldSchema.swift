@@ -327,17 +327,26 @@ public enum SSHFieldSchema {
     /// trailing space turns a re-import into a silent duplicate instead of the
     /// conflict the user should be offered. No secret is trimmed here because
     /// none is written here — a `StoredSession` never holds one.
+    /// Writing through `session.ssh` CREATES the SSH block when the session has
+    /// none (M23/T8) — the jump spec is preserved because only the six fields
+    /// below are overwritten, exactly as before the block existed.
     public static func apply(_ values: FieldValues, to session: inout StoredSession) {
-        session.host = values[SSHField.host].trimmingCharacters(in: .whitespacesAndNewlines)
-        session.port = Int(values[SSHField.port].trimmingCharacters(in: .whitespaces)) ?? 22
-        session.username = values[SSHField.username]
+        var ssh = session.ssh ?? StoredSSHConfig(host: "", username: "")
+        ssh.host = values[SSHField.host].trimmingCharacters(in: .whitespacesAndNewlines)
+        // `.whitespacesAndNewlines` like every other field here (M23/T8): the
+        // port used to trim only `.whitespaces`, which disagreed with
+        // `makeConfig` and `displaySummary` on a value carrying a newline.
+        ssh.port = Int(values[SSHField.port]
+            .trimmingCharacters(in: .whitespacesAndNewlines)) ?? 22
+        ssh.username = values[SSHField.username]
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if let kind = StoredSession.AuthKind(rawValue: values[SSHField.authKind]) {
-            session.authKind = kind
+            ssh.authKind = kind
         }
         // A key path belongs to private-key auth: switching away from it must
         // clear the path rather than leave a stale one on disk.
         let path = values[SSHField.keyPath].trimmingCharacters(in: .whitespacesAndNewlines)
-        session.keyPath = (session.authKind == .privateKey && !path.isEmpty) ? path : nil
+        ssh.keyPath = (ssh.authKind == .privateKey && !path.isEmpty) ? path : nil
+        session.ssh = ssh
     }
 }

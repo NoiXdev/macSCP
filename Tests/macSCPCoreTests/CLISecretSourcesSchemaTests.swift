@@ -16,8 +16,14 @@ struct CLISecretSourcesSchemaTests {
         kind: ConnectionKind, authKind: StoredSession.AuthKind = .password
     ) -> StoredSession {
         StoredSession(
-            name: "test", host: "example.test", username: "user",
-            authKind: authKind, kind: kind,
+            name: "test", kind: kind,
+            // SSH's fields only for an SSH session (M23/T8): `authKind` is
+            // what the agent guard reads, and it now lives where the guard
+            // can only reach it through the SSH block.
+            ssh: kind == .ssh
+                ? StoredSSHConfig(
+                    host: "example.test", username: "user", authKind: authKind)
+                : nil,
             s3: kind == .s3
                 ? StoredS3Config(
                     accessKeyID: "id", region: "r", endpoint: "https://example.test",
@@ -84,8 +90,7 @@ struct CLISecretSourcesSchemaTests {
         // `kind == .s3` with no stored S3 block is inconsistent data, not a
         // crash: the adapter yields the empty bag and `build` is what reports
         // it.
-        let bare = StoredSession(
-            name: "test", host: "h", username: "u", authKind: .password, kind: .s3)
+        let bare = StoredSession(name: "test", kind: .s3)
         #expect(s3.sessionValues(bare)[S3Field.bucket] == "")
     }
 
