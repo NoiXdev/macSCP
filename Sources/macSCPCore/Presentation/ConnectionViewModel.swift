@@ -914,7 +914,14 @@ public final class ConnectionViewModel {
     /// one", and requiring it would make every saved password session
     /// impossible to edit without retyping its password.
     public func validateForEditSave() -> StoredSession? {
-        guard case .edit(let sessionID) = mode else { return nil }
+        // `editingOriginal` is provably non-nil here, not merely unrelied-
+        // upon: `mode` is `private(set)`, `beginEditing` is the only place
+        // that sets `.edit`, and it sets `editingOriginal` first with nothing
+        // between. A separate fallback that rebuilt a session for this
+        // (unreachable) case used to live here; it silently produced a
+        // half-built session and is worse than the nil return this guard
+        // gives instead.
+        guard case .edit = mode, var session = editingOriginal else { return nil }
 
         let trimmedName = saveName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
@@ -936,12 +943,8 @@ public final class ConnectionViewModel {
             return nil
         }
 
-        // Mutating the ORIGINAL is what carries group, login-set binding and
-        // the other backends' blocks forward. The fallback covers a caller
-        // that set `.edit` without going through `beginEditing`; it rebuilds
-        // only what it can, which is why nothing should rely on it.
-        var session = editingOriginal ?? StoredSession(
-            id: sessionID, name: trimmedName, host: "", username: "", kind: kind)
+        // Mutating the ORIGINAL (bound by the guard above) is what carries
+        // group, login-set binding and the other backends' blocks forward.
         session.name = trimmedName
         session.kind = kind
         // Reset BEFORE `apply`, not after: `host`/`username` are SSH's own
@@ -952,6 +955,15 @@ public final class ConnectionViewModel {
         // whatever the ORIGINAL had here -- including a legacy `"unused"`
         // from before this milestone, or a stale host left behind by
         // switching `kind` away from SSH during this very edit.
+        //
+        // TEMPORARY (M23/T6, until Task 8): this reset exists only because
+        // `StoredSession` still carries `host`/`username` as top-level fields
+        // shared by every kind. Once Task 8 moves them into an SSH-only
+        // `ssh:` block (mirroring `s3:`/`webdav:` today), a non-SSH session
+        // will have no `host`/`username` to blank in the first place, and
+        // these two lines go away with them -- they are not a permanent rule
+        // about where SSH's fields live, just scaffolding for the shape
+        // `StoredSession` has right now.
         session.host = ""
         session.username = ""
         session.groupID = selectedGroupID
