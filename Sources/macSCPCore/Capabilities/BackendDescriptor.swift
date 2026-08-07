@@ -32,9 +32,11 @@ public struct BackendDescriptor: Sendable {
     /// adapter would silently drop; `BackendApplyTests` pins that for all
     /// three backends by populating exactly those fields before applying.
     ///
-    /// A stored member rather than a computed `switch` (unlike
-    /// `sessionValues`) so a test can build a synthetic descriptor with its
-    /// own adapter — the same reason `makeConfig` and `connect` are closures.
+    /// A stored member rather than a computed `switch` (unlike `sessionValues`)
+    /// for consistency with its sibling closures `makeConfig`, `displaySummary`
+    /// and `connect` — not because a test builds a synthetic descriptor with
+    /// its own adapter (none does; `BackendApplyTests` and friends call the
+    /// three real descriptors' own `apply` directly).
     public let apply: @Sendable (FieldValues, inout StoredSession) -> Void
 
     /// Opens a connection. Living here rather than in a central dispatcher is
@@ -136,11 +138,20 @@ public struct BackendDescriptor: Sendable {
     /// need a secret at all" without a `kind` branch of its own.
     ///
     /// Only the connection fields the backend persists are filled; the secret
-    /// never is (it lives in the Keychain). A session whose `kind` says one
-    /// thing but whose stored configuration block is missing yields the empty
-    /// bag rather than trapping — reporting that inconsistency is
-    /// `StoredSessionConnectionConfig.build`'s job
-    /// (`missingBackendConfiguration`), not this adapter's.
+    /// never is (it lives in the Keychain).
+    ///
+    /// A session whose `kind` says one thing but whose stored configuration
+    /// block is missing yields the empty bag ONLY for `.s3`/`.webdav`, where
+    /// `session.s3`/`session.webdav` is genuinely optional — verified against
+    /// `StoredSessionConnectionConfig.build`, whose `missingBackendConfiguration`
+    /// arms exist only for those two. `.ssh` has no such arm: `StoredSession`'s
+    /// `host`/`port`/`username`/`authKind`/`keyPath` accessors fall back to
+    /// `""`/`22`/`""`/`.password`/`nil` when `session.ssh` is nil
+    /// (`StoredSession.swift`), so `SSHFieldSchema.values(from:)` reads
+    /// through those defaults into a POPULATED bag rather than an empty one —
+    /// and `StoredSessionConnectionConfig.buildSSH` then reports the
+    /// inconsistency as `SSHConnectionConfig.ConfigError.emptyHost`, not
+    /// `missingBackendConfiguration`.
     public func sessionValues(_ session: StoredSession) -> FieldValues {
         switch kind {
         case .ssh: return SSHFieldSchema.values(from: session)

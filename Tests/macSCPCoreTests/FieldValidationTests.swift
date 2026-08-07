@@ -43,6 +43,20 @@ import Testing
         #expect(violation?.fieldKey == "SSHField.port")
     }
 
+    /// `SSHField.port` is `format: .numeric` but NOT `isRequired`, so a blank
+    /// port is a live production path (the user clears the field) rather than
+    /// the "blank + required" case `aBlankRequiredFieldReportsItsOwnMessageAndKey`
+    /// already covers. `firstViolation`'s `isUnparsable` check
+    /// (`field.format == .numeric && Int(value) == nil`) fires regardless of
+    /// `isRequired` -- `Int("")` is nil the same as `Int("http")` is -- so a
+    /// blank port must report the same violation a non-numeric one does. Before
+    /// this test, blank was the one arm of that check the suite never entered.
+    @Test func aBlankNumericFieldReportsThePortMessage() {
+        let violation = ssh.firstViolation(in: sshValues(port: ""), requireSecrets: true)
+        #expect(violation?.messageKey == "core.connect.portNumeric")
+        #expect(violation?.fieldKey == "SSHField.port")
+    }
+
     /// A SECRET is checked verbatim, never trimmed: " " is a legal password
     /// and rejecting it would lock a user out of their own server.
     @Test func aSecretMadeOfSpacesIsAccepted() {
