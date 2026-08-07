@@ -146,8 +146,7 @@ final class FakeHTTPTransport: HTTPTransport, @unchecked Sendable {
 @Suite("WebDAVFileSystem")
 struct WebDAVFileSystemTests {
     private let config = WebDAVConnectionConfig(
-        stored: StoredWebDAVConfig(
-            baseURL: "https://dav.example.com/dav", username: "u", useNextcloudPath: false),
+        baseURL: "https://dav.example.com/dav", username: "u", useNextcloudPath: false,
         password: "p")
 
     private let listing = Data("""

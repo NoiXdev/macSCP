@@ -41,11 +41,4 @@ public struct S3ConnectionConfig: Equatable, Sendable {
         self.region = region; self.endpoint = endpoint; self.bucket = bucket
         self.usePathStyle = usePathStyle; self.sessionToken = sessionToken
     }
-
-    /// Build the runtime config from persisted fields + the Keychain secret.
-    public init(stored: StoredS3Config, secretAccessKey: String, sessionToken: String? = nil) {
-        self.init(accessKeyID: stored.accessKeyID, secretAccessKey: secretAccessKey,
-                  region: stored.region, endpoint: stored.endpoint, bucket: stored.bucket,
-                  usePathStyle: stored.usePathStyle, sessionToken: sessionToken)
-    }
 }

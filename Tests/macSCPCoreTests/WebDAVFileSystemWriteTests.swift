@@ -75,8 +75,7 @@ private struct WriteOutcome: Sendable {
 @Suite("WebDAVFileSystem writes")
 struct WebDAVFileSystemWriteTests {
     private let config = WebDAVConnectionConfig(
-        stored: StoredWebDAVConfig(
-            baseURL: "https://dav.example.com/dav", username: "u", useNextcloudPath: false),
+        baseURL: "https://dav.example.com/dav", username: "u", useNextcloudPath: false,
         password: "p")
 
     private func stream(_ text: String) -> AsyncThrowingStream<Data, Error> {
