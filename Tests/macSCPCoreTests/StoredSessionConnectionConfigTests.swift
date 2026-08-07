@@ -77,14 +77,14 @@ struct StoredSessionConnectionConfigTests {
 
     @Test func privateKeyAuthWithoutAKeyPathThrows() {
         let session = makeSSHSession(authKind: .privateKey, keyPath: nil)
-        #expect(throws: StoredSessionConnectionError.missingKeyPath) {
+        #expect(throws: StoredSessionConnectionError.incompleteConfiguration(field: "Key path")) {
             try StoredSessionConnectionConfig.build(for: session, secret: "passphrase")
         }
     }
 
     @Test func privateKeyAuthWithAnEmptyKeyPathThrows() {
         let session = makeSSHSession(authKind: .privateKey, keyPath: "   ")
-        #expect(throws: StoredSessionConnectionError.missingKeyPath) {
+        #expect(throws: StoredSessionConnectionError.incompleteConfiguration(field: "Key path")) {
             try StoredSessionConnectionConfig.build(for: session, secret: "passphrase")
         }
     }
@@ -130,6 +130,18 @@ struct StoredSessionConnectionConfigTests {
         }
         #expect(throws: StoredSessionConnectionError.loginSetSessionsNotSupported) {
             try StoredSessionConnectionConfig.build(for: makeS3Session(loginSetID: setID), secret: "secretkey")
+        }
+    }
+
+    /// A `.ssh` session with no stored block is representable on disk — the
+    /// decoder accepts it deliberately, so one bad record cannot fail the whole
+    /// file. Before M23/P2 only S3 and WebDAV reported that honestly; SSH fell
+    /// through to a blank host and surfaced `ConfigError.emptyHost` instead.
+    @Test func anSSHSessionWithoutItsStoredBlockThrowsMissingConfiguration() {
+        var session = sshSession(name: "broken")
+        session.ssh = nil
+        #expect(throws: StoredSessionConnectionError.missingBackendConfiguration(kind: .ssh)) {
+            try StoredSessionConnectionConfig.build(for: session, secret: "pw")
         }
     }
 

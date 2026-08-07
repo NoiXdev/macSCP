@@ -143,16 +143,14 @@ public struct BackendDescriptor: Sendable {
     ///
     /// A session whose `kind` says one thing but whose stored configuration
     /// block is missing yields the empty bag ONLY for `.s3`/`.webdav`, where
-    /// `session.s3`/`session.webdav` is genuinely optional — verified against
-    /// `StoredSessionConnectionConfig.build`, whose `missingBackendConfiguration`
-    /// arms exist only for those two. `.ssh` has no such arm: `StoredSession`'s
-    /// `host`/`port`/`username`/`authKind`/`keyPath` accessors fall back to
-    /// `""`/`22`/`""`/`.password`/`nil` when `session.ssh` is nil
-    /// (`StoredSession.swift`), so `SSHFieldSchema.values(from:)` reads
-    /// through those defaults into a POPULATED bag rather than an empty one —
-    /// and `StoredSessionConnectionConfig.buildSSH` then reports the
-    /// inconsistency as `SSHConnectionConfig.ConfigError.emptyHost`, not
-    /// `missingBackendConfiguration`.
+    /// `session.s3`/`session.webdav` is genuinely optional. `.ssh` is
+    /// different: `StoredSession`'s `host`/`port`/`username`/`authKind`/
+    /// `keyPath` accessors fall back to `""`/`22`/`""`/`.password`/`nil` when
+    /// `session.ssh` is nil (`StoredSession.swift`), so
+    /// `SSHFieldSchema.values(from:)` reads through those defaults into a
+    /// POPULATED bag rather than an empty one — which is why callers must ask
+    /// `hasStoredConfiguration(_:)` BEFORE reading values rather than inferring
+    /// the answer from an empty bag (M23/P2).
     public func sessionValues(_ session: StoredSession) -> FieldValues {
         switch kind {
         case .ssh: return SSHFieldSchema.values(from: session)
@@ -160,6 +158,68 @@ public struct BackendDescriptor: Sendable {
         case .webdav:
             return session.webdav.map { WebDAVFieldSchema.values(from: $0) } ?? FieldValues()
         }
+    }
+
+    /// Whether this session actually carries the stored block its `kind`
+    /// claims (M23/P2).
+    ///
+    /// A computed answer rather than a check at each call site, because the
+    /// three call sites disagreed: `buildS3` and `buildWebDAV` threw
+    /// `missingBackendConfiguration`, while the SSH path had no such arm at
+    /// all and surfaced a blank host as `ConfigError.emptyHost` instead. The
+    /// shape is representable on disk on purpose — `StoredSession.init(from:)`
+    /// accepts a record with no block so that one bad entry cannot fail the
+    /// whole file — so every reader needs the same answer to the same question.
+    public func hasStoredConfiguration(_ session: StoredSession) -> Bool {
+        switch kind {
+        case .ssh: return session.ssh != nil
+        case .s3: return session.s3 != nil
+        case .webdav: return session.webdav != nil
+        }
+    }
+
+    /// Whether a secret is not merely worth LOOKING for (`requiresSecret`) but
+    /// MANDATORY — without one, no config can be built at all (M23/P2).
+    ///
+    /// A second question rather than a reuse of `requiresSecret`, because SSH
+    /// answers the two differently and must: a private-key login SHOULD be
+    /// searched for a passphrase (an encrypted key has one, and
+    /// `CLISecretSources` consults the Keychain for it) but MUST NOT be
+    /// refused without one (an unencrypted key has none). Collapsing them
+    /// refuses every unencrypted-key session in the CLI — which is exactly
+    /// what a first cut of this function did, caught by
+    /// `privateKeyAuthWithNoSecretMeansAnUnencryptedKey`.
+    ///
+    /// SSH derives its answer from the schema: the visible secret field under
+    /// password auth (`password`) is `isRequired`, the one under private-key
+    /// auth (`passphrase`) deliberately is not.
+    ///
+    /// S3 and WebDAV answer `requiresSecret` verbatim. S3's schema agrees;
+    /// WebDAV's does NOT — its `password` is deliberately not `isRequired` so
+    /// the FORM permits an anonymous share, while the CLI has always refused a
+    /// secret-less WebDAV session (`storedWebDAVSessionWithoutASecretFails`).
+    /// That disagreement predates this function and is preserved here
+    /// unchanged; reconciling the form's rule with the CLI's is M23/P2 Task 2.
+    public func secretIsMandatory(for values: FieldValues) -> Bool {
+        guard requiresSecret(values) else { return false }
+        switch kind {
+        case .ssh:
+            return credentialSchema
+                .visibleSecretField(in: values, namespace: fieldNamespace)?.isRequired ?? false
+        case .s3, .webdav:
+            return true
+        }
+    }
+
+    /// The English label of the field a namespaced `FieldValues` key names, or
+    /// the key itself when nothing matches (M23/P2).
+    ///
+    /// English rather than localized: the one caller renders CLI output, which
+    /// is not localized. The fallback keeps a caller from printing nothing at
+    /// all if a key ever arrives that no schema declares.
+    public func fieldLabel(forKey key: String) -> String {
+        let fields = connectionSchema.fields + credentialSchema.fields
+        return fields.first { "\(fieldNamespace).\($0.id)" == key }?.labelDefault ?? key
     }
 
     /// The inverse: the set a filled-in credential form describes. This is
