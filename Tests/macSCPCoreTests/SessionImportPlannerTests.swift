@@ -60,7 +60,7 @@ struct SessionImportPlannerTests {
     }
 
     @Test func duplicateTripleIsSkippedDespiteDifferentName() async {
-        let existing = [StoredSession(name: "anders", host: "WEB-01", username: "root")]
+        let existing = [sshSession(name: "anders", host: "WEB-01", username: "root")]
         let plan = await SessionImportPlanner.plan(
             existing: existing, existingGroups: [],
             incoming: incoming([exported(name: "neu", host: "web-01")]),
@@ -70,7 +70,7 @@ struct SessionImportPlannerTests {
     }
 
     @Test func hostCaseAndPortDistinguishCorrectly() async {
-        let existing = [StoredSession(name: "a", host: "web-01", username: "root")]
+        let existing = [sshSession(name: "a", host: "web-01", username: "root")]
         let plan = await SessionImportPlanner.plan(
             existing: existing, existingGroups: [],
             incoming: incoming([
@@ -87,7 +87,7 @@ struct SessionImportPlannerTests {
     /// name on different hosts are not a conflict and must never be asked
     /// about.
     @Test func sameNameOnDifferentHostsIsNotAConflict() async {
-        let existing = [StoredSession(name: "web", host: "host-a", username: "root")]
+        let existing = [sshSession(name: "web", host: "host-a", username: "root")]
         let plan = await SessionImportPlanner.plan(
             existing: existing, existingGroups: [],
             incoming: incoming([exported(name: "web", host: "host-b")]),
@@ -148,7 +148,7 @@ struct SessionImportPlannerTests {
     /// that group — otherwise "0 imported" still leaves a ghost group behind
     /// in the store.
     @Test func ghostGroupIsNotCreatedWhenAllItsSessionsAreDuplicates() async {
-        let existing = [StoredSession(name: "a", host: "host", port: 22, username: "root")]
+        let existing = [sshSession(name: "a", host: "host", port: 22, username: "root")]
         let ghostGroup = ExportedGroup(id: UUID(), name: "GhostGroup")
         let plan = await SessionImportPlanner.plan(
             existing: existing, existingGroups: [],
@@ -164,7 +164,7 @@ struct SessionImportPlannerTests {
     // MARK: - Conflict resolution (M19)
 
     @Test func conflictCarriesTheSessionNameAndTheStableKindLabel() async {
-        let existing = [StoredSession(name: "stored-name", host: "host", username: "root")]
+        let existing = [sshSession(name: "stored-name", host: "host", username: "root")]
         let log = DeciderCallLog()
         let captured = CapturedKindLabel()
         let arbiter = ImportConflictArbiter { conflict in
@@ -189,7 +189,7 @@ struct SessionImportPlannerTests {
     /// stored or reported; the conflict shown to the user must not be the
     /// one place a padded name leaks through.
     @Test func conflictCarriesTheTrimmedSessionName() async {
-        let existing = [StoredSession(name: "stored-name", host: "host", username: "root")]
+        let existing = [sshSession(name: "stored-name", host: "host", username: "root")]
         let log = DeciderCallLog()
         let arbiter = ImportConflictArbiter(decider: fixedDecider(.skip, log: log))
         _ = await SessionImportPlanner.plan(
@@ -201,7 +201,7 @@ struct SessionImportPlannerTests {
     }
 
     @Test func replaceKeepsTheExistingSessionID() async {
-        let existing = [StoredSession(name: "old", host: "host", username: "root")]
+        let existing = [sshSession(name: "old", host: "host", username: "root")]
         let arbiter = ImportConflictArbiter(decider: fixedDecider(.replace, log: DeciderCallLog()))
         let plan = await SessionImportPlanner.plan(
             existing: existing, existingGroups: [],
@@ -232,7 +232,7 @@ struct SessionImportPlannerTests {
             incoming: incoming([exported(name: "fresh", host: "host")]), arbiter: neverAsked)
         #expect(!fresh.sessionsToImport[0].replacesExisting)
 
-        let existing = [StoredSession(name: "web", host: "host", username: "root")]
+        let existing = [sshSession(name: "web", host: "host", username: "root")]
         let renamed = await SessionImportPlanner.plan(
             existing: existing, existingGroups: [],
             incoming: incoming([exported(name: "web", host: "host")]),
@@ -241,7 +241,7 @@ struct SessionImportPlannerTests {
     }
 
     @Test func renameGivesTheImportedSessionAUniqueNameAndFreshID() async {
-        let existing = [StoredSession(name: "web", host: "host", username: "root")]
+        let existing = [sshSession(name: "web", host: "host", username: "root")]
         let file = exported(name: "web", host: "host")
         let arbiter = ImportConflictArbiter(decider: fixedDecider(.rename, log: DeciderCallLog()))
         let plan = await SessionImportPlanner.plan(
@@ -271,7 +271,7 @@ struct SessionImportPlannerTests {
     /// the stored name equals the file's trimmed name, so nothing was
     /// actually renamed and the summary must not claim otherwise.
     @Test func renameKeepsAnAlreadyFreeNameUnchanged() async {
-        let existing = [StoredSession(name: "taken", host: "host", username: "root")]
+        let existing = [sshSession(name: "taken", host: "host", username: "root")]
         let arbiter = ImportConflictArbiter(decider: fixedDecider(.rename, log: DeciderCallLog()))
         let plan = await SessionImportPlanner.plan(
             existing: existing, existingGroups: [],
@@ -286,7 +286,7 @@ struct SessionImportPlannerTests {
     /// the same run — the second rename has to skip past whatever the first
     /// one produced.
     @Test func renameStaysUniqueAcrossSeveralCollisionsInOneRun() async {
-        let existing = [StoredSession(name: "web", host: "host", username: "root")]
+        let existing = [sshSession(name: "web", host: "host", username: "root")]
         let arbiter = ImportConflictArbiter(
             decider: fixedDecider(.rename, applyToAll: true, log: DeciderCallLog()))
         let plan = await SessionImportPlanner.plan(
@@ -312,7 +312,7 @@ struct SessionImportPlannerTests {
     /// second incoming duplicate of the same triple must fall back to a fresh
     /// id under a unique name.
     @Test func replaceNeverBindsTwoIncomingSessionsToTheSameExistingID() async {
-        let existing = [StoredSession(name: "web", host: "host", username: "root")]
+        let existing = [sshSession(name: "web", host: "host", username: "root")]
         let arbiter = ImportConflictArbiter(
             decider: fixedDecider(.replace, applyToAll: true, log: DeciderCallLog()))
         let plan = await SessionImportPlanner.plan(
@@ -358,7 +358,7 @@ struct SessionImportPlannerTests {
     }
 
     @Test func applyToAllStopsAskingAndAppliesTheSameResolution() async {
-        let existing = [StoredSession(name: "web", host: "host", username: "root")]
+        let existing = [sshSession(name: "web", host: "host", username: "root")]
         let log = DeciderCallLog()
         let arbiter = ImportConflictArbiter(decider: fixedDecider(.skip, applyToAll: true, log: log))
         let plan = await SessionImportPlanner.plan(
@@ -375,7 +375,7 @@ struct SessionImportPlannerTests {
     /// invariant (M9a Finding 2) has to hold on this path too: a cancelled
     /// import must not leave a group behind for sessions that never landed.
     @Test func cancellingImportsNothingAndCreatesNoGroups() async {
-        let existing = [StoredSession(name: "web", host: "host", username: "root")]
+        let existing = [sshSession(name: "web", host: "host", username: "root")]
         let group = ExportedGroup(id: UUID(), name: "Prod")
         let arbiter = ImportConflictArbiter { _ in nil }
         let plan = await SessionImportPlanner.plan(
@@ -405,7 +405,7 @@ struct SessionImportPlannerTests {
             incoming: incoming([exported(name: "  web  ")]), arbiter: neverAsked)
         #expect(plain.sessionsToImport[0].session.name == "web")
 
-        let existing = [StoredSession(name: "web", host: "host", username: "root")]
+        let existing = [sshSession(name: "web", host: "host", username: "root")]
         let replacing = await SessionImportPlanner.plan(
             existing: existing, existingGroups: [],
             incoming: incoming([exported(name: "  fresh  ", host: "host")]),
@@ -557,9 +557,9 @@ struct SessionImportPlannerTests {
     /// `useNextcloudPath`, so a dropped config could not pass as the stored
     /// one.
     @Test func replacedWebDAVSessionKeepsItsConfig() async {
-        let existing = StoredSession(
-            name: "old", host: "unused", username: "unused", kind: .webdav,
-            webdav: StoredWebDAVConfig(
+        let existing = webdavSession(
+            name: "old",
+            config: StoredWebDAVConfig(
                 baseURL: "https://dav.example.com", username: "alice",
                 useNextcloudPath: false))
         let file = ExportedSession(
@@ -611,9 +611,9 @@ struct SessionImportPlannerTests {
     /// `upsert` overwrote it in place and the applier then dropped the S3
     /// secret under that reused id, destroying an unrelated connection.
     @Test func s3AndWebDAVSessionsDoNotCollide() async {
-        let existing = StoredSession(
-            name: "s3-prod", host: "unused", username: "unused", kind: .s3,
-            s3: StoredS3Config(
+        let existing = s3Session(
+            name: "s3-prod",
+            config: StoredS3Config(
                 accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
                 endpoint: "https://s3.eu-central-1.amazonaws.com", bucket: "my-bucket",
                 usePathStyle: false))
@@ -636,9 +636,9 @@ struct SessionImportPlannerTests {
     /// access key match — the positive half of the S3 key, so the fix cannot
     /// be "never collide".
     @Test func identicalS3EndpointBucketAndKeyStillCollide() async {
-        let existing = StoredSession(
-            name: "s3-prod", host: "unused", username: "unused", kind: .s3,
-            s3: StoredS3Config(
+        let existing = s3Session(
+            name: "s3-prod",
+            config: StoredS3Config(
                 accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
                 endpoint: "https://s3.eu-central-1.amazonaws.com", bucket: "my-bucket",
                 usePathStyle: false))
@@ -660,7 +660,7 @@ struct SessionImportPlannerTests {
     /// SSH semantics must not shift: the endpoint triple still is the key,
     /// against the store and within one file.
     @Test func identicalSSHEndpointsStillCollide() async {
-        let existing = [StoredSession(name: "web", host: "web-01", username: "root")]
+        let existing = [sshSession(name: "web", host: "web-01", username: "root")]
         let plan = await SessionImportPlanner.plan(
             existing: existing, existingGroups: [],
             incoming: incoming([exported(name: "web-copy"), exported(name: "web-copy-2")]),

@@ -5,7 +5,7 @@ import Testing
 @Suite("LoginResolver")
 struct LoginResolverTests {
     @Test func manualSessionResolvesNil() throws {
-        let session = StoredSession(name: "web", host: "example.com", username: "tim")
+        let session = sshSession(name: "web", host: "example.com", username: "tim")
         let resolved = try LoginResolver.resolve(session: session, sets: [], secrets: InMemorySecretStore())
         #expect(resolved == nil)
     }
@@ -14,7 +14,7 @@ struct LoginResolverTests {
         let set = LoginSet(name: "Deploy", username: "deploy", authKind: .privateKey, keyPath: "/k")
         let secrets = InMemorySecretStore()
         try secrets.savePassword("pp", for: set.id)
-        let session = StoredSession(name: "web", host: "example.com", username: "unused", loginSetID: set.id)
+        let session = sshSession(name: "web", host: "example.com", username: "unused", loginSetID: set.id)
 
         // M22/T9: `resolve` returns the backend's own credential values now,
         // so the same four assertions are made field by field. `passphrase`,
@@ -31,7 +31,7 @@ struct LoginResolverTests {
     @Test func missingSecretResolvesNilSecret() throws {
         let set = LoginSet(name: "Deploy", username: "deploy", authKind: .password)
         let secrets = InMemorySecretStore()
-        let session = StoredSession(name: "web", host: "example.com", username: "unused", loginSetID: set.id)
+        let session = sshSession(name: "web", host: "example.com", username: "unused", loginSetID: set.id)
 
         let resolved = try #require(
             try LoginResolver.resolve(session: session, sets: [set], secrets: secrets))
@@ -42,7 +42,7 @@ struct LoginResolverTests {
     }
 
     @Test func missingSetThrows() throws {
-        let session = StoredSession(name: "web", host: "example.com", username: "unused", loginSetID: UUID())
+        let session = sshSession(name: "web", host: "example.com", username: "unused", loginSetID: UUID())
         #expect(throws: LoginResolveError.missingSet) {
             try LoginResolver.resolve(session: session, sets: [], secrets: InMemorySecretStore())
         }
@@ -53,8 +53,8 @@ struct LoginResolverTests {
     /// honestly rather than resolve credentials shaped for the wrong kind.
     @Test func kindMismatchBetweenSessionAndSetThrows() throws {
         let set = LoginSet(name: "S3 Prod", username: "unused", kind: .s3, accessKeyID: "AKIAEXAMPLE")
-        let session = StoredSession(
-            name: "web", host: "example.com", username: "unused", loginSetID: set.id, kind: .ssh)
+        let session = sshSession(
+            name: "web", host: "example.com", username: "unused", loginSetID: set.id)
         #expect(throws: LoginResolveError.kindMismatch) {
             try LoginResolver.resolve(session: session, sets: [set], secrets: InMemorySecretStore())
         }
@@ -132,7 +132,7 @@ struct LoginResolverTests {
     /// double below fails the test if `password(for:)` is ever called.
     @Test func agentSetResolvesWithoutKeychainRead() throws {
         let set = LoginSet(name: "Agent", username: "deploy", authKind: .agent)
-        let session = StoredSession(name: "web", host: "example.com", username: "unused", loginSetID: set.id)
+        let session = sshSession(name: "web", host: "example.com", username: "unused", loginSetID: set.id)
 
         let resolved = try #require(try LoginResolver.resolve(
             session: session, sets: [set], secrets: NoReadAllowedSecretStore()))
@@ -160,7 +160,7 @@ struct LoginResolverTests {
 
     @Test func resolveJumpFromSessionUsesItsHostAndLogin() throws {
         let secrets = InMemorySecretStore()
-        let bastion = StoredSession(
+        let bastion = sshSession(
             name: "Bastion", host: "b", port: 2022, username: "deploy", authKind: .password)
         try secrets.savePassword("s", for: bastion.id)
         let spec = StoredSession.JumpSpec(
@@ -177,7 +177,7 @@ struct LoginResolverTests {
         let set = LoginSet(name: "Deploy", username: "setuser", authKind: .privateKey, keyPath: "/k")
         let secrets = InMemorySecretStore()
         try secrets.savePassword("pp", for: set.id)
-        let bastion = StoredSession(
+        let bastion = sshSession(
             name: "Bastion", host: "b", port: 2022, username: "unused", loginSetID: set.id)
         let spec = StoredSession.JumpSpec(host: "unused", username: "unused", sessionID: bastion.id)
 
@@ -189,7 +189,7 @@ struct LoginResolverTests {
     }
 
     @Test func resolveJumpFromAgentSessionReadsNoKeychain() throws {
-        let bastion = StoredSession(
+        let bastion = sshSession(
             name: "Bastion", host: "b", port: 2022, username: "deploy", authKind: .agent)
         let spec = StoredSession.JumpSpec(host: "unused", username: "unused", sessionID: bastion.id)
 
@@ -211,7 +211,7 @@ struct LoginResolverTests {
 
     @Test func resolveJumpChainThrows() throws {
         let innerJump = StoredSession.JumpSpec(host: "inner", username: "inner")
-        let bastion = StoredSession(
+        let bastion = sshSession(
             name: "Bastion", host: "b", port: 2022, username: "deploy", jump: innerJump)
         let spec = StoredSession.JumpSpec(host: "unused", username: "unused", sessionID: bastion.id)
 
@@ -224,7 +224,7 @@ struct LoginResolverTests {
 
     @Test func resolveJumpSelfReferenceThrows() throws {
         let referencingID = UUID()
-        let bastion = StoredSession(
+        let bastion = sshSession(
             id: referencingID, name: "Self", host: "b", port: 2022, username: "deploy")
         let spec = StoredSession.JumpSpec(host: "unused", username: "unused", sessionID: referencingID)
 
@@ -267,7 +267,7 @@ struct LoginResolverTests {
             .appendingPathComponent("macscp-jump-roundtrip-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
-        let session = StoredSession(name: "web", host: "example.com", username: "tim", jump: jump)
+        let session = sshSession(name: "web", host: "example.com", username: "tim", jump: jump)
 
         try SessionStore(directory: dir).upsert(session)
         // A brand-new SessionStore instance (no shared in-memory state) proves
@@ -283,7 +283,7 @@ struct LoginResolverTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let bastionID = UUID()
         let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper", sessionID: bastionID)
-        let session = StoredSession(name: "web", host: "example.com", username: "tim", jump: jump)
+        let session = sshSession(name: "web", host: "example.com", username: "tim", jump: jump)
 
         try SessionStore(directory: dir).upsert(session)
         let reloaded = try SessionStore(directory: dir).all()
@@ -294,7 +294,7 @@ struct LoginResolverTests {
     // MARK: - S3 through the collapsed resolver (M15, collapsed in M22/T9)
 
     @Test func resolveS3ManualSessionResolvesNil() throws {
-        let session = StoredSession(name: "bucket", host: "unused", username: "unused", kind: .s3)
+        let session = s3Session(name: "bucket")
         let resolved = try LoginResolver.resolve(
             session: session, sets: [], secrets: InMemorySecretStore())
         #expect(resolved == nil)
@@ -304,8 +304,7 @@ struct LoginResolverTests {
         let set = LoginSet(name: "S3 Prod", username: "unused", kind: .s3, accessKeyID: "AKIAEXAMPLE")
         let secrets = InMemorySecretStore()
         try secrets.savePassword("s3cr3t", for: set.id)
-        let session = StoredSession(
-            name: "bucket", host: "unused", username: "unused", loginSetID: set.id, kind: .s3)
+        let session = s3Session(name: "bucket", loginSetID: set.id)
 
         let resolved = try #require(
             try LoginResolver.resolve(session: session, sets: [set], secrets: secrets))
@@ -315,8 +314,7 @@ struct LoginResolverTests {
 
     @Test func resolveS3MissingSecretResolvesNilSecret() throws {
         let set = LoginSet(name: "S3 Prod", username: "unused", kind: .s3, accessKeyID: "AKIAEXAMPLE")
-        let session = StoredSession(
-            name: "bucket", host: "unused", username: "unused", loginSetID: set.id, kind: .s3)
+        let session = s3Session(name: "bucket", loginSetID: set.id)
 
         let resolved = try #require(try LoginResolver.resolve(
             session: session, sets: [set], secrets: InMemorySecretStore()))
@@ -326,16 +324,14 @@ struct LoginResolverTests {
 
     @Test func resolveS3KindMismatchBetweenS3SessionAndSSHSetThrows() throws {
         let set = LoginSet(name: "SSH", username: "deploy", authKind: .password)
-        let session = StoredSession(
-            name: "bucket", host: "unused", username: "unused", loginSetID: set.id, kind: .s3)
+        let session = s3Session(name: "bucket", loginSetID: set.id)
         #expect(throws: LoginResolveError.kindMismatch) {
             try LoginResolver.resolve(session: session, sets: [set], secrets: InMemorySecretStore())
         }
     }
 
     @Test func resolveS3MissingSetThrows() throws {
-        let session = StoredSession(
-            name: "bucket", host: "unused", username: "unused", loginSetID: UUID(), kind: .s3)
+        let session = s3Session(name: "bucket", loginSetID: UUID())
         #expect(throws: LoginResolveError.missingSet) {
             try LoginResolver.resolve(session: session, sets: [], secrets: InMemorySecretStore())
         }
