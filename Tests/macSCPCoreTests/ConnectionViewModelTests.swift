@@ -340,7 +340,7 @@ struct ConnectionViewModelTests {
 
     @Test @MainActor func beginEditingPrefillsEverythingExceptTheSecret() {
         let vm = makeVM()
-        let stored = StoredSession(name: "web", host: "h", port: 2222, username: "u",
+        let stored = sshSession(name: "web", host: "h", port: 2222, username: "u",
                                    authKind: .privateKey, keyPath: "/k", groupID: UUID())
         vm.password = "leftover"
         vm.beginEditing(stored)
@@ -355,7 +355,7 @@ struct ConnectionViewModelTests {
 
     @Test @MainActor func exitEditModeResetsModeAndGroupButKeepsFields() {
         let vm = makeVM()
-        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u", groupID: UUID()))
+        vm.beginEditing(sshSession(name: "web", host: "h", username: "u", groupID: UUID()))
         vm.exitEditMode()
 
         #expect(vm.mode == .new)
@@ -367,7 +367,7 @@ struct ConnectionViewModelTests {
 
     @Test @MainActor func validateForEditSaveAllowsEmptyPasswordAndBuildsTheSession() {
         let vm = makeVM()
-        let stored = StoredSession(name: "web", host: "h", username: "u")
+        let stored = sshSession(name: "web", host: "h", username: "u")
         vm.beginEditing(stored)
         vm.host = "new.example"
 
@@ -379,7 +379,7 @@ struct ConnectionViewModelTests {
 
     @Test @MainActor func validateForEditSaveRejectsInvalidPort() {
         let vm = makeVM()
-        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u"))
+        vm.beginEditing(sshSession(name: "web", host: "h", username: "u"))
         vm.port = "abc"
         #expect(vm.validateForEditSave() == nil)
         #expect(vm.state == .failed(message: CoreL10n.string("core.connect.portNumeric"), field: .port))
@@ -387,7 +387,7 @@ struct ConnectionViewModelTests {
 
     @Test @MainActor func endEditingReturnsToNewMode() {
         let vm = makeVM()
-        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u"))
+        vm.beginEditing(sshSession(name: "web", host: "h", username: "u"))
         vm.endEditing()
         #expect(vm.mode == .new)
         #expect(vm.host.isEmpty && vm.saveName.isEmpty)
@@ -398,7 +398,7 @@ struct ConnectionViewModelTests {
     /// keeps the field values for its own callers.
     @Test @MainActor func endEditingResetsEverything() {
         let vm = makeVM()
-        vm.beginEditing(StoredSession(
+        vm.beginEditing(sshSession(
             name: "web", host: "h", port: 2222, username: "u",
             authKind: .privateKey, keyPath: "/k", groupID: UUID()))
         vm.shouldSaveSession = true
@@ -453,7 +453,7 @@ struct ConnectionViewModelTests {
 
     @Test @MainActor func jumpSetModeRequiresSelection() {
         let vm = makeVM()
-        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u"))
+        vm.beginEditing(sshSession(name: "web", host: "h", username: "u"))
         vm.jumpEnabled = true
         vm.jumpHost = "bastion.example.com"
         vm.jumpLoginMode = .set
@@ -479,7 +479,7 @@ struct ConnectionViewModelTests {
         let jump = StoredSession.JumpSpec(
             host: "bastion.example.com", port: 22, username: "bastion-user",
             authKind: .password, secretID: originalSecretID)
-        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u", jump: jump))
+        vm.beginEditing(sshSession(name: "web", host: "h", username: "u", jump: jump))
         #expect(vm.jumpEnabled) // sanity: beginEditing actually picked the jump up
         #expect(vm.jumpPassword.isEmpty) // sanity: "leave unchanged" starting point
 
@@ -495,7 +495,7 @@ struct ConnectionViewModelTests {
         let jump = StoredSession.JumpSpec(
             host: "bastion.example.com", port: 2200, username: "bastion-user",
             authKind: .privateKey, keyPath: "/k")
-        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u", jump: jump))
+        vm.beginEditing(sshSession(name: "web", host: "h", username: "u", jump: jump))
         #expect(vm.jumpEnabled) // sanity: beginEditing actually picked the jump up
 
         vm.exitEditMode()
@@ -584,7 +584,7 @@ struct ConnectionViewModelTests {
     @Test @MainActor func jumpSourceFieldsResetOnExitEditMode() {
         let vm = makeVM()
         let jump = StoredSession.JumpSpec(host: "", username: "", sessionID: UUID())
-        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u", jump: jump))
+        vm.beginEditing(sshSession(name: "web", host: "h", username: "u", jump: jump))
         // Sanity: beginEditing actually picked up the reference.
         #expect(vm.jumpSourceMode == .session)
         #expect(vm.jumpSessionID != nil)
@@ -674,7 +674,7 @@ struct ConnectionViewModelTests {
 
     @Test @MainActor func validateForEditSaveMapsAgentAuthChoice() {
         let vm = makeVM()
-        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u"))
+        vm.beginEditing(sshSession(name: "web", host: "h", username: "u"))
         vm.authChoice = .agent
         vm.password = ""
         vm.keyPath = ""
@@ -687,7 +687,7 @@ struct ConnectionViewModelTests {
 
     @Test @MainActor func beginEditingMapsAgentAuthKindToAgentChoice() {
         let vm = makeVM()
-        let stored = StoredSession(name: "web", host: "h", username: "u", authKind: .agent)
+        let stored = sshSession(name: "web", host: "h", username: "u", authKind: .agent)
         vm.beginEditing(stored)
         #expect(vm.authChoice == .agent)
     }
@@ -716,7 +716,7 @@ struct ConnectionViewModelTests {
     /// for an agent-mode jump.
     @Test @MainActor func jumpAgentModeSurvivesEditSaveWithoutSecretOrKeyPath() {
         let vm = makeVM()
-        vm.beginEditing(StoredSession(name: "web", host: "h", username: "u"))
+        vm.beginEditing(sshSession(name: "web", host: "h", username: "u"))
         vm.jumpEnabled = true
         vm.jumpHost = "bastion.example.com"
         vm.jumpUsername = "bastion-user"
@@ -779,7 +779,7 @@ struct ConnectionViewModelTests {
 
     @Test @MainActor func validateForEditSaveWithS3KindBuildsStoredSessionWithSecretFreeConfig() {
         let vm = makeVM()
-        let stored = StoredSession(name: "s3-prod", host: "unused", username: "unused", kind: .s3)
+        let stored = s3Session(name: "s3-prod")
         vm.beginEditing(stored)
         vm.kind = .s3
         vm.s3AccessKeyID = "AKIAEXAMPLE"
@@ -806,7 +806,7 @@ struct ConnectionViewModelTests {
             accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
             endpoint: "https://s3.eu-central-1.amazonaws.com", bucket: "my-bucket",
             usePathStyle: true)
-        let stored = StoredSession(name: "s3-prod", host: "unused", username: "unused", kind: .s3, s3: s3Config)
+        let stored = s3Session(name: "s3-prod", config: s3Config)
 
         vm.beginEditing(stored)
 
@@ -864,7 +864,7 @@ struct ConnectionViewModelTests {
 
     @Test @MainActor func validateForEditSaveWithWebDAVKindBuildsStoredSessionWithSecretFreeConfig() {
         let vm = makeVM()
-        let stored = StoredSession(name: "dav-prod", host: "unused", username: "unused", kind: .webdav)
+        let stored = webdavSession(name: "dav-prod")
         vm.beginEditing(stored)
         vm.kind = .webdav
         vm.webdavBaseURL = "https://dav.example.com/dav"
@@ -893,8 +893,8 @@ struct ConnectionViewModelTests {
         let vm = makeVM()
         let webdavConfig = StoredWebDAVConfig(
             baseURL: "https://dav.example.com/dav", username: "dave", useNextcloudPath: true)
-        let stored = StoredSession(
-            name: "dav-prod", host: "unused", username: "unused", kind: .webdav, webdav: webdavConfig)
+        let stored = webdavSession(
+            name: "dav-prod", config: webdavConfig)
 
         vm.beginEditing(stored)
 

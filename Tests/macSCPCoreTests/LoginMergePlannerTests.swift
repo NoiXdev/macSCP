@@ -5,9 +5,9 @@ import Testing
 @Suite("LoginMergePlanner")
 struct LoginMergePlannerTests {
     @Test func groupsByUsernameAndKeyPath() {
-        let s1 = StoredSession(name: "a", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
-        let s2 = StoredSession(name: "b", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
-        let s3 = StoredSession(name: "c", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k2")
+        let s1 = sshSession(name: "a", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
+        let s2 = sshSession(name: "b", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
+        let s3 = sshSession(name: "c", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k2")
 
         let candidates = LoginMergePlanner.candidates(
             sessions: [s1, s2, s3], ignoredGroups: [], secrets: InMemorySecretStore())
@@ -20,9 +20,9 @@ struct LoginMergePlannerTests {
     }
 
     @Test func groupsByUsernameAndPasswordValue() throws {
-        let s1 = StoredSession(name: "a", host: "h", username: "root")
-        let s2 = StoredSession(name: "b", host: "h", username: "root")
-        let s3 = StoredSession(name: "c", host: "h", username: "root")
+        let s1 = sshSession(name: "a", host: "h", username: "root")
+        let s2 = sshSession(name: "b", host: "h", username: "root")
+        let s3 = sshSession(name: "c", host: "h", username: "root")
         let secrets = InMemorySecretStore()
         try secrets.savePassword("a", for: s1.id)
         try secrets.savePassword("a", for: s2.id)
@@ -38,8 +38,8 @@ struct LoginMergePlannerTests {
     }
 
     @Test func sessionWithoutStoredPasswordExcluded() throws {
-        let s1 = StoredSession(name: "a", host: "h", username: "root")
-        let s2 = StoredSession(name: "b", host: "h", username: "root")
+        let s1 = sshSession(name: "a", host: "h", username: "root")
+        let s2 = sshSession(name: "b", host: "h", username: "root")
         let secrets = InMemorySecretStore()
         try secrets.savePassword("a", for: s1.id)
         // s2 deliberately has no stored password.
@@ -51,8 +51,8 @@ struct LoginMergePlannerTests {
     }
 
     @Test func sessionWithSetExcluded() throws {
-        let s1 = StoredSession(name: "a", host: "h", username: "root", loginSetID: UUID())
-        let s2 = StoredSession(name: "b", host: "h", username: "root")
+        let s1 = sshSession(name: "a", host: "h", username: "root", loginSetID: UUID())
+        let s2 = sshSession(name: "b", host: "h", username: "root")
         let secrets = InMemorySecretStore()
         try secrets.savePassword("a", for: s1.id)
         try secrets.savePassword("a", for: s2.id)
@@ -64,7 +64,7 @@ struct LoginMergePlannerTests {
     }
 
     @Test func singletonGroupsSuppressed() {
-        let s1 = StoredSession(name: "a", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
+        let s1 = sshSession(name: "a", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
 
         let candidates = LoginMergePlanner.candidates(
             sessions: [s1], ignoredGroups: [], secrets: InMemorySecretStore())
@@ -73,9 +73,9 @@ struct LoginMergePlannerTests {
     }
 
     @Test func ignoredGroupSuppressesSubset() {
-        let s1 = StoredSession(name: "a", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
-        let s2 = StoredSession(name: "b", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
-        let s3 = StoredSession(name: "c", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
+        let s1 = sshSession(name: "a", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
+        let s2 = sshSession(name: "b", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
+        let s3 = sshSession(name: "c", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
         let secrets = InMemorySecretStore()
 
         let exact = LoginMergePlanner.candidates(
@@ -90,8 +90,8 @@ struct LoginMergePlannerTests {
     // MARK: - Agent auth (M10d/T3)
 
     @Test func agentSessionsGroupByUsernameAlone() {
-        let s1 = StoredSession(name: "a", host: "h", username: "deploy", authKind: .agent)
-        let s2 = StoredSession(name: "b", host: "h", username: "deploy", authKind: .agent)
+        let s1 = sshSession(name: "a", host: "h", username: "deploy", authKind: .agent)
+        let s2 = sshSession(name: "b", host: "h", username: "deploy", authKind: .agent)
 
         let candidates = LoginMergePlanner.candidates(
             sessions: [s1, s2], ignoredGroups: [], secrets: InMemorySecretStore())
@@ -104,8 +104,8 @@ struct LoginMergePlannerTests {
     }
 
     @Test func agentAndPasswordSessionsNeverGroupTogether() throws {
-        let s1 = StoredSession(name: "a", host: "h", username: "root", authKind: .agent)
-        let s2 = StoredSession(name: "b", host: "h", username: "root")
+        let s1 = sshSession(name: "a", host: "h", username: "root", authKind: .agent)
+        let s2 = sshSession(name: "b", host: "h", username: "root")
         let secrets = InMemorySecretStore()
         try secrets.savePassword("a", for: s2.id)
 
@@ -119,8 +119,8 @@ struct LoginMergePlannerTests {
     /// Secret-Read") -- the double below fails the test if `password(for:)`
     /// is ever called.
     @Test func agentSessionsNeverReadKeychain() {
-        let s1 = StoredSession(name: "a", host: "h", username: "deploy", authKind: .agent)
-        let s2 = StoredSession(name: "b", host: "h", username: "deploy", authKind: .agent)
+        let s1 = sshSession(name: "a", host: "h", username: "deploy", authKind: .agent)
+        let s2 = sshSession(name: "b", host: "h", username: "deploy", authKind: .agent)
 
         let candidates = LoginMergePlanner.candidates(
             sessions: [s1, s2], ignoredGroups: [], secrets: NoReadAllowedSecretStore())
@@ -129,9 +129,9 @@ struct LoginMergePlannerTests {
     }
 
     @Test func newMemberReactivates() {
-        let s1 = StoredSession(name: "a", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
-        let s2 = StoredSession(name: "b", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
-        let s3 = StoredSession(name: "c", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
+        let s1 = sshSession(name: "a", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
+        let s2 = sshSession(name: "b", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
+        let s3 = sshSession(name: "c", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
         let secrets = InMemorySecretStore()
 
         let candidates = LoginMergePlanner.candidates(

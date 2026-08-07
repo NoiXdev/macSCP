@@ -277,10 +277,10 @@ struct SessionListViewModelTests {
             groupsToCreate: [StoredGroup(name: "Imported")],
             sessionsToImport: [
                 PlannedSession(
-                    session: StoredSession(name: "one", host: "h1", username: "root"),
+                    session: sshSession(name: "one", host: "h1", username: "root"),
                     password: "secret1"),
                 PlannedSession(
-                    session: StoredSession(name: "two", host: "h2", username: "root"),
+                    session: sshSession(name: "two", host: "h2", username: "root"),
                     password: nil),
             ],
             skipped: [
@@ -313,7 +313,7 @@ struct SessionListViewModelTests {
         let existing = vm.save(name: "web", host: "old.example.com", port: 22,
                                username: "u", password: "old-pw")!
 
-        let replacement = StoredSession(
+        let replacement = sshSession(
             id: existing.id, name: "web", host: "new.example.com", username: "u2")
         let result = vm.applyImport(SessionImportPlan(
             sessionsToImport: [
@@ -340,7 +340,7 @@ struct SessionListViewModelTests {
         let existing = vm.save(name: "web", host: "old.example.com", port: 22,
                                username: "u", password: "old-pw")!
 
-        let replacement = StoredSession(
+        let replacement = sshSession(
             id: existing.id, name: "web", host: "new.example.com", username: "u2")
         let result = vm.applyImport(SessionImportPlan(
             sessionsToImport: [
@@ -362,7 +362,7 @@ struct SessionListViewModelTests {
         let existing = vm.save(name: "web", host: "old.example.com", port: 22,
                                username: "u", password: "old-pw")!
 
-        let replacement = StoredSession(
+        let replacement = sshSession(
             id: existing.id, name: "web", host: "new.example.com", username: "u2")
         let result = vm.applyImport(SessionImportPlan(
             sessionsToImport: [
@@ -398,7 +398,7 @@ struct SessionListViewModelTests {
         let result = vm.applyImport(SessionImportPlan(
             sessionsToImport: [
                 PlannedSession(
-                    session: StoredSession(
+                    session: sshSession(
                         id: existing.id, name: "web", host: "new.example.com", username: "u2"),
                     password: nil, replacesExisting: true),
             ],
@@ -426,7 +426,7 @@ struct SessionListViewModelTests {
         let result = vm.applyImport(SessionImportPlan(
             sessionsToImport: [
                 PlannedSession(
-                    session: StoredSession(
+                    session: sshSession(
                         id: existing.id, name: "web", host: "new.example.com", username: "u2"),
                     password: nil, replacesExisting: true),
             ],
@@ -452,7 +452,7 @@ struct SessionListViewModelTests {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let existing = vm.save(name: "keep", host: "h", port: 22, username: "u", password: "kept")!
-        let fresh = StoredSession(name: "new", host: "h2", username: "u")
+        let fresh = sshSession(name: "new", host: "h2", username: "u")
         try secrets.savePassword("orphaned-but-not-ours-to-delete", for: fresh.id)
 
         let result = vm.applyImport(SessionImportPlan(sessionsToImport: [
@@ -478,7 +478,7 @@ struct SessionListViewModelTests {
         let storedJumpID = try #require(vm.sessions.first { $0.id == existing.id }?.jump?.secretID)
         #expect(try secrets.password(for: storedJumpID) == "jump-pw")
 
-        let replacement = StoredSession(
+        let replacement = sshSession(
             id: existing.id, name: "web", host: "h", username: "u",
             jump: StoredSession.JumpSpec(
                 host: "bastion", port: 22, username: "j", authKind: .password))
@@ -503,7 +503,7 @@ struct SessionListViewModelTests {
 
         // Hold on to the ghost session's own id — asserting against a fresh
         // random UUID would pass even if the password HAD been written.
-        let ghost = StoredSession(name: "ghost", host: "h1", username: "root")
+        let ghost = sshSession(name: "ghost", host: "h1", username: "root")
         let plan = SessionImportPlan(
             groupsToCreate: [StoredGroup(name: "Ghost")],
             sessionsToImport: [PlannedSession(session: ghost, password: "pw")],
@@ -530,7 +530,7 @@ struct SessionListViewModelTests {
             groupsToCreate: [],
             sessionsToImport: [
                 PlannedSession(
-                    session: StoredSession(name: "one", host: "h1", username: "root"),
+                    session: sshSession(name: "one", host: "h1", username: "root"),
                     password: "secret1"),
             ],
             skipped: [])
@@ -557,7 +557,7 @@ struct SessionListViewModelTests {
         let vm = SessionListViewModel(store: SessionStore(directory: dir), secrets: secrets)
 
         let planned = PlannedSession(
-            session: StoredSession(name: "one", host: "h1", username: "root"),
+            session: sshSession(name: "one", host: "h1", username: "root"),
             password: "secret1")
         let plan = SessionImportPlan(
             groupsToCreate: [], sessionsToImport: [planned], skipped: [])
@@ -962,7 +962,7 @@ struct SessionListViewModelTests {
             groupsToCreate: [],
             sessionsToImport: [
                 PlannedSession(
-                    session: StoredSession(name: "one", host: "h1", username: "root", jump: jump),
+                    session: sshSession(name: "one", host: "h1", username: "root", jump: jump),
                     password: "target-secret", jumpPassword: "jump-secret"),
             ],
             skipped: [])
@@ -994,8 +994,7 @@ struct SessionListViewModelTests {
             accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
             endpoint: "https://s3.eu-central-1.amazonaws.com", bucket: "my-bucket",
             usePathStyle: true)
-        let original = StoredSession(
-            name: "s3-prod", host: "unused", username: "unused", kind: .s3, s3: s3Config)
+        let original = s3Session(name: "s3-prod", config: s3Config)
         try store.upsert(original)
         try secrets.savePassword("shh-secret", for: original.id)
 
@@ -1062,9 +1061,7 @@ struct SessionListViewModelTests {
             accessKeyID: "AKIAOWN", region: "eu-central-1",
             endpoint: "https://s3.eu-central-1.amazonaws.com", bucket: "my-bucket",
             usePathStyle: true)
-        let session = StoredSession(
-            name: "s3-bound", host: "unused", username: "unused",
-            loginSetID: set.id, kind: .s3, s3: s3Config)
+        let session = s3Session(name: "s3-bound", loginSetID: set.id, config: s3Config)
         try store.upsert(session)
 
         let (payload, missingPasswordCount) = vm.exportPayload(
@@ -1093,9 +1090,7 @@ struct SessionListViewModelTests {
         let store = SessionStore(directory: dir)
         let webdavConfig = StoredWebDAVConfig(
             baseURL: "https://dav.example.com/dav", username: "alice", useNextcloudPath: true)
-        let original = StoredSession(
-            name: "nextcloud", host: "unused", username: "unused", kind: .webdav,
-            webdav: webdavConfig)
+        let original = webdavSession(name: "nextcloud", config: webdavConfig)
         try store.upsert(original)
         try secrets.savePassword("dav-secret", for: original.id)
 
@@ -1144,7 +1139,7 @@ struct SessionListViewModelTests {
             .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = SessionStore(directory: dir)
-        let original = StoredSession(name: "web", host: "web-01", username: "root")
+        let original = sshSession(name: "web", host: "web-01", username: "root")
         try store.upsert(original)
 
         let vm = SessionListViewModel(
