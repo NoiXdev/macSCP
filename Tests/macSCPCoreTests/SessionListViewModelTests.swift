@@ -1435,6 +1435,40 @@ struct SessionListViewModelTests {
         #expect(importedVM.password(for: imported) == "dav-secret")
     }
 
+    /// The WebDAV twin of `exportOfBlocklessS3SessionFetchesNoSecretAndCountsNothing`:
+    /// a `.webdav` session with NO stored block names no server, so the
+    /// export must not go looking for a secret for it either — neither
+    /// counting it in the user-visible "N passwords missing" total nor
+    /// carrying a key that, on import, would claim a Keychain slot for a
+    /// session with no WebDAV block at all. `exportPayload`'s `password`
+    /// branch had an `.s3` guard restored (fix round 1) with no matching
+    /// `.webdav` counterpart — this pins that the counterpart now exists.
+    @Test func exportOfBlocklessWebDAVSessionFetchesNoSecretAndCountsNothing() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let store = SessionStore(directory: dir)
+        // A secret DOES sit in the keychain under this id: the assertion below
+        // is that the export never reaches for it, not that there is nothing
+        // to reach for.
+        let session = StoredSession(name: "dav-blockless", kind: .webdav)
+        try store.upsert(session)
+        try secrets.savePassword("shh-secret", for: session.id)
+
+        let vm = SessionListViewModel(
+            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+        let (payload, missingPasswordCount) = vm.exportPayload(
+            for: .single(session), includeGroups: false, includePasswords: true)
+
+        let exported = payload.sessions.first!
+        #expect(exported.password == nil)
+        #expect(missingPasswordCount == 0)
+        // And the bag stays empty, so the import side reads it back as "no
+        // block" rather than inventing a server the file never named.
+        #expect(exported.fields.isEmpty)
+    }
+
     /// The optional path, same round trip for a session that has NO WebDAV
     /// block: nothing may be invented on the way through, and the secret-free
     /// export must stay secret-free.
