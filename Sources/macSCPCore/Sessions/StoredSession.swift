@@ -139,12 +139,24 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
 
     /// The SSH host, or "" for a session that has no SSH block.
     ///
-    /// Read-only conveniences over `ssh` (M23), kept so the callers that
-    /// legitimately want "the host, if there is one" — the sidebar tooltip,
-    /// the audit trail, `SSHCommandBuilder` — read one property instead of
-    /// unwrapping. Anything that WRITES must go through `ssh` directly, so
-    /// that writing to a session with no SSH block is a compile error rather
-    /// than a silent no-op.
+    /// Read-only conveniences over `ssh` (M23), kept so the callers that read
+    /// SSH's fields off a session read one property instead of unwrapping.
+    /// The real ones, verified rather than assumed (fix round 1): the three
+    /// SSH-only branches of `StoredSessionConnectionConfig.build`,
+    /// `SSHFieldSchema.values(from:)` — the descriptor's own read adapter, and
+    /// the one every other reader should be routed through —
+    /// `SessionImportPlanner.duplicateKey`'s `.ssh` case, `LoginMergePlanner`,
+    /// and `SessionListViewModel`'s export and jump-restoration paths.
+    ///
+    /// Note what is NOT on that list: the sidebar and the audit trail already
+    /// go through `descriptor.displaySummary(descriptor.sessionValues(...))`,
+    /// and `SSHCommandBuilder` takes an `SSHConnectionConfig`. An earlier
+    /// draft of this comment named those three, which would have justified a
+    /// `""`-returning accessor with an empty set of beneficiaries.
+    ///
+    /// Anything that WRITES must go through `ssh` directly, so that writing to
+    /// a session with no SSH block is a compile error rather than a silent
+    /// no-op.
     public var host: String { ssh?.host ?? "" }
     public var port: Int { ssh?.port ?? 22 }
     public var username: String { ssh?.username ?? "" }

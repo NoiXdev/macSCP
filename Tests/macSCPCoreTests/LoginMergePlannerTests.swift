@@ -140,6 +140,46 @@ struct LoginMergePlannerTests {
         #expect(candidates.count == 1)
         #expect(candidates.first?.sessionIDs == [s1.id, s2.id, s3.id])
     }
+
+    /// CHARACTERIZATION, not an endorsement (M23/T8 fix round 1).
+    ///
+    /// `candidates` filters only on `loginSetID == nil` — there is no `kind`
+    /// predicate — and `SessionListViewModel.mergeCandidates()` hands it every
+    /// session regardless of protocol. So two S3 sessions that happen to share
+    /// a secret are offered as a merge candidate whose username is empty,
+    /// suggesting the user fold two object-storage connections into one SSH
+    /// login set.
+    ///
+    /// Pre-existing and unchanged in severity by M23: before the milestone the
+    /// key was `("unused", .password, nil, <secret>)`, now it is
+    /// `("", .password, nil, <secret>)`. Two S3 sessions sharing a secret
+    /// collided then and collide now — the shape change neither introduces nor
+    /// repairs it. Note the secret compared here is an S3 SECRET ACCESS KEY,
+    /// stored under the session id in the same slot an SSH password uses,
+    /// which is why it lines up at all.
+    ///
+    /// Pinned for the same reason as
+    /// `JumpSessionEligibilityTests.nonSSHSessionsAreStillOfferedAsJumpHosts`:
+    /// so that adding the missing `kind` filter breaks a test that explains
+    /// itself rather than one that reads like a regression.
+    @Test func nonSSHSessionsSharingASecretAreStillOfferedAsAMergeCandidate() throws {
+        let a = s3Session(name: "bucket-a")
+        let b = s3Session(name: "bucket-b")
+        let secrets = InMemorySecretStore()
+        try secrets.savePassword("shared-secret-access-key", for: a.id)
+        try secrets.savePassword("shared-secret-access-key", for: b.id)
+
+        let candidates = LoginMergePlanner.candidates(
+            sessions: [a, b], ignoredGroups: [], secrets: secrets)
+
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.sessionIDs == [a.id, b.id])
+        // The tell that this is wrong rather than merely surprising: the
+        // candidate has no username to merge ON, because an S3 session has no
+        // SSH block to take one from.
+        #expect(candidates.first?.username == "")
+        #expect(a.ssh == nil)
+    }
 }
 
 /// Test double proving `.agent` grouping never reaches into the keychain

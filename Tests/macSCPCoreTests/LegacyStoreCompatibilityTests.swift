@@ -11,11 +11,24 @@ import Testing
 /// only a frozen copy of them can state it.
 ///
 /// The fixtures were produced by `SessionStore.persist`/`LoginSetStore.persist`
-/// themselves, so they are the format the app writes today, byte for byte. That
-/// is the same as the pre-M22 format because M22 changed no persistence shape
-/// at all — `git diff <pre-M22>..HEAD` over `StoredSession`, `StoredS3Config`,
-/// `StoredWebDAVConfig`, `LoginSetStore` and the two export codecs is empty.
-/// If a shape ever does change, this suite is where the break surfaces.
+/// as they stood at M22, so they are a faithful copy of what the app wrote at
+/// that point — which was also the pre-M22 format, because M22 changed no
+/// persistence shape at all.
+///
+/// They are no longer the shape the app writes TODAY (corrected in M23/T8).
+/// M23 moved SSH's fields into an `ssh` block and gave the new format its own
+/// file name: `SessionStore.persist` now writes `sessions-v2.json`, while
+/// `legacy-session-pre-m22.json` is seeded as `sessions.json` and therefore
+/// reaches these assertions through `migrateFromLegacy()`. That is not a
+/// weakening of this suite — it is the point of it. These tests are now an
+/// end-to-end check that a real pre-M23 file still yields the same connections
+/// after the upgrade, and they pass unchanged, which is the strongest
+/// statement available that the migration preserves meaning.
+///
+/// `legacy-loginset-pre-m22.json` is unaffected: `LoginSetStore` still reads
+/// and writes `logins.json` in its original shape.
+///
+/// If a shape ever changes again, this suite is where the break surfaces.
 ///
 /// Loaded through the real stores rather than a bare `JSONDecoder`, because the
 /// store is what a user's installation actually runs: it is where the container
@@ -166,7 +179,14 @@ struct LegacyStoreCompatibilityTests {
             "secretAccessKey", "secret", "password", "passphrase",
             "embeddedKey", "privateKey", "jumpPassword", "fileContents",
         ]
-        for name in ["legacy-session-pre-m22.json", "legacy-loginset-pre-m22.json"] {
+        // `legacy-sessions-pre-m23.json` is covered here too (M23/T8): it is
+        // checked into git for the same reason and carries jump `secretID`s,
+        // which name Keychain slots and must never be accompanied by what
+        // those slots hold.
+        for name in [
+            "legacy-session-pre-m22.json", "legacy-loginset-pre-m22.json",
+            "legacy-sessions-pre-m23.json",
+        ] {
             let data = try Data(contentsOf: URL(fileURLWithPath: #filePath)
                 .deletingLastPathComponent().appendingPathComponent("Fixtures/\(name)"))
             let found = keys(in: try JSONSerialization.jsonObject(with: data))

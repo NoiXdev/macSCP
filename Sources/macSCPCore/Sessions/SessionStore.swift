@@ -98,7 +98,14 @@ public struct SessionStore: Sendable {
         }
         let migrated = StoreFile(
             groups: legacy.groups, sessions: legacy.sessions.map { $0.upgraded() })
-        try persist(migrated)
+        // `try?`, deliberately: this is a READ path, and a write failure must
+        // not turn a perfectly readable set of connections into an error and
+        // an empty sidebar. On a read-only or full volume the first launch
+        // after this update would otherwise hide every session the user has.
+        // Failing to persist only costs the upgrade being redone next launch,
+        // which is strictly better — and `sessions.json` is still there, so
+        // nothing is lost either way.
+        try? persist(migrated)
         return migrated
     }
 

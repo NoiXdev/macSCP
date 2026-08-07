@@ -203,11 +203,13 @@ struct SessionListViewModelTests {
             name: "cloud", values: WebDAVFieldSchema.values(from: webdav),
             password: "SECRET", kind: .webdav)
 
-        #expect(bucket?.host == "")
-        #expect(bucket?.username == "")
-        #expect(cloud?.host == "")
-        // WebDAV's own user name lives on its block, never on the shared field.
-        #expect(cloud?.username == "")
+        // `ssh == nil`, NOT `host == ""` (fix round 1): since M23/T8 the
+        // conveniences return "" unconditionally for a block-less session, so
+        // asserting on them would pass even if `save` wrote nothing at all.
+        // The absence of the block is the claim that still bites.
+        #expect(bucket?.ssh == nil)
+        #expect(cloud?.ssh == nil)
+        // WebDAV's own user name lives on its own block, never on SSH's.
         #expect(cloud?.webdav?.username == "dave")
         let raw = try String(contentsOf: dir.appendingPathComponent("sessions-v2.json"), encoding: .utf8)
         #expect(!raw.contains("unused"))
