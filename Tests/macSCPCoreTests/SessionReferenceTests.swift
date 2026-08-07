@@ -5,7 +5,7 @@ import Testing
 @Suite("SessionReference")
 struct SessionReferenceTests {
     private func session(_ name: String, id: UUID = UUID()) -> StoredSession {
-        StoredSession(id: id, name: name, host: "example.com", port: 22,
+        sshSession(id: id, name: name, host: "example.com", port: 22,
                       username: "deploy", authKind: .password)
     }
 

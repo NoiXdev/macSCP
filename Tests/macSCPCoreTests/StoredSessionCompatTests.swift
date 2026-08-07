@@ -15,7 +15,7 @@ struct StoredSessionCompatTests {
     }
 
     @Test func privateKeySessionRoundtrips() throws {
-        let session = StoredSession(
+        let session = sshSession(
             name: "key-server", host: "example.com", username: "tim",
             authKind: .privateKey, keyPath: "~/.ssh/id_ed25519")
         let data = try JSONEncoder().encode([session])
@@ -27,7 +27,7 @@ struct StoredSessionCompatTests {
     /// remembers the username, exactly like a legacy password session would,
     /// but with the third raw value.
     @Test func agentSessionRoundtrips() throws {
-        let session = StoredSession(
+        let session = sshSession(
             name: "agent-server", host: "example.com", username: "tim", authKind: .agent)
         let data = try JSONEncoder().encode([session])
         let decoded = try JSONDecoder().decode([StoredSession].self, from: data)
