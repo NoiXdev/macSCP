@@ -43,6 +43,26 @@ func s3Session(
         groupID: groupID, loginSetID: loginSetID, kind: .s3, s3: config)
 }
 
+/// SSH form values for `SessionListViewModel.save(name:values:…)` — the flat
+/// host/port/username triple that signature took before M23/T7, in SSH's own
+/// field vocabulary. The ONE place the test target builds an SSH form bag, for
+/// the same reason the session fixtures above exist.
+func sshValues(
+    host: String,
+    port: Int = 22,
+    username: String,
+    authKind: StoredSession.AuthKind = .password,
+    keyPath: String? = nil
+) -> FieldValues {
+    var values = BackendDescriptor.descriptor(for: .ssh).defaultValues
+    values[SSHField.host] = host
+    values[SSHField.port] = String(port)
+    values[SSHField.username] = username
+    values[SSHField.authKind] = authKind.rawValue
+    values[SSHField.keyPath] = keyPath ?? ""
+    return values
+}
+
 func webdavSession(
     id: UUID = UUID(),
     name: String,

@@ -68,59 +68,65 @@ public final class SessionListViewModel {
     /// mode, or replaced with a freshly-generated manual `JumpSpec` (a
     /// changed `secretID`) — has its keychain entry cleaned up (see
     /// `cleanOrphanedJumpSlot`'s own doc comment below for the exact rule).
-    /// `kind`/`s3` (M12/T7b): defaulted so every existing SSH call site is
+    /// `kind` (M12/T7b): defaulted so every existing SSH call site is
     /// untouched. For an `.s3` session, `password` carries the secret access
     /// key — it rides the SAME keychain slot (`secrets.savePassword(_:for:
     /// session.id)` below) as the SSH password; there is no separate S3
-    /// secret path.
-    /// `webdav` (M21, bug-fix round after Task 9): same idea as `s3` above —
-    /// for a `.webdav` session `password` carries the WebDAV password on the
-    /// same keychain slot, and `webdav` carries the secret-free
-    /// `StoredWebDAVConfig`. Without this parameter the caller had no way to
-    /// persist `baseURL`/`useNextcloudPath` at all, which is exactly the bug
-    /// this round fixes (see `ContentView.startSession`).
+    /// secret path, and the same holds for a `.webdav` session's password
+    /// (M21, bug-fix round after Task 9).
+    ///
+    /// `values` (M23/T7) replaces the flat host/port/username triple plus the
+    /// per-protocol `s3:`/`webdav:` parameters: the backend's own adapter
+    /// writes its own fields, so this method no longer needs to know that S3
+    /// has a bucket and SSH has a port — nor to park the literal `"unused"` in
+    /// fields a backend does not have, which is what the three call sites in
+    /// `ContentView` used to do.
     @discardableResult
     public func save(
-        name: String, host: String, port: Int, username: String, password: String,
-        authKind: StoredSession.AuthKind = .password, keyPath: String? = nil,
+        name: String, values: FieldValues, password: String,
+        kind: ConnectionKind = .ssh,
         groupID: UUID? = nil, loginSetID: UUID? = nil,
-        jump: StoredSession.JumpSpec? = nil, jumpSecret: String? = nil,
-        kind: ConnectionKind = .ssh, s3: StoredS3Config? = nil,
-        webdav: StoredWebDAVConfig? = nil
+        jump: StoredSession.JumpSpec? = nil, jumpSecret: String? = nil
     ) -> StoredSession? {
-        let session: StoredSession
+        let descriptor = BackendDescriptor.descriptor(for: kind)
         var previousJump: StoredSession.JumpSpec?
+        var session: StoredSession
         if let existing = sessions.first(where: { $0.name == name }) {
             previousJump = existing.jump
-            var updated = existing
-            updated.host = host
-            updated.port = port
-            updated.username = username
-            updated.authKind = authKind
-            updated.keyPath = keyPath
-            updated.groupID = groupID
-            updated.loginSetID = loginSetID
-            updated.jump = jump
-            updated.kind = kind
-            updated.s3 = s3
-            updated.webdav = webdav
-            session = updated
+            session = existing
         } else {
-            session = StoredSession(name: name, host: host, port: port,
-                                    username: username, authKind: authKind, keyPath: keyPath,
-                                    groupID: groupID, loginSetID: loginSetID, jump: jump,
-                                    kind: kind, s3: s3, webdav: webdav)
+            session = StoredSession(id: UUID(), name: name, host: "", username: "", kind: kind)
         }
+        session.name = name
+        session.kind = kind
+        session.groupID = groupID
+        session.loginSetID = loginSetID
+        session.jump = jump
+        // Reset BEFORE `apply`, for the same reason `validateForEditSave` does
+        // (M23/T6): `host`/`username` are SSH's own fields, and S3's and
+        // WebDAV's `apply` never touch them by contract — so re-saving an
+        // existing session under a different kind would otherwise carry the old
+        // SSH host forward under a `.s3` kind. SSH's own `apply` writes real
+        // values right back over this. TEMPORARY until Task 8 moves the two
+        // into an SSH-only block, exactly like the note in `validateForEditSave`.
+        session.host = ""
+        session.username = ""
+        descriptor.apply(values, &session)
+
         do {
             try store.upsert(session)
             if loginSetID == nil {
-                if authKind == .agent {
-                    // Agent mode needs no secret (M10d) -- clean up a
-                    // leftover manual slot from before the switch, mirroring
-                    // the "no session-level secret needed" set-mode branch.
-                    try? secrets.deletePassword(for: session.id)
-                } else {
+                // The auth kind lives in the values now, and
+                // `requiresSecret` is the descriptor's own answer to "does this
+                // backend need a secret at all" — false ONLY for an SSH agent
+                // login (S3 and WebDAV always answer true), which is exactly
+                // what the `authKind == .agent` check here used to mean. An
+                // agent login stores no secret and has its leftover manual slot
+                // cleaned up (M10d).
+                if descriptor.requiresSecret(values) {
                     try secrets.savePassword(password, for: session.id)
+                } else {
+                    try? secrets.deletePassword(for: session.id)
                 }
             }
             // `sessionID == nil` is load-bearing (M11a/T3 review): a jump that
