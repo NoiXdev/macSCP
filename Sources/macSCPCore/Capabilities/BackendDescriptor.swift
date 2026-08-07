@@ -24,6 +24,19 @@ public struct BackendDescriptor: Sendable {
     /// fill, which is why the audit log carried `host: "unused"`.
     public let displaySummary: @Sendable (FieldValues) -> String
 
+    /// Writes collected form values back into a stored session — the write
+    /// counterpart to the read-only `sessionValues(_:)` (M23).
+    ///
+    /// MUTATES IN PLACE, never reconstructs. `StoredSession` carries group
+    /// assignment, login-set binding and per-protocol blocks that a rebuilding
+    /// adapter would silently drop; `BackendApplyTests` pins that for all
+    /// three backends by populating exactly those fields before applying.
+    ///
+    /// A stored member rather than a computed `switch` (unlike
+    /// `sessionValues`) so a test can build a synthetic descriptor with its
+    /// own adapter — the same reason `makeConfig` and `connect` are closures.
+    public let apply: @Sendable (FieldValues, inout StoredSession) -> Void
+
     /// Opens a connection. Living here rather than in a central dispatcher is
     /// what dissolved the last `ConnectionKind` switch on the connect path
     /// (M22/T10): each backend brings its own trust store -- SSH its
@@ -171,6 +184,7 @@ public struct BackendDescriptor: Sendable {
         credentialSchema: SSHFieldSchema.credential,
         makeConfig: { values, secret in try SSHFieldSchema.makeConfig(values, secret) },
         displaySummary: { values in SSHFieldSchema.displaySummary(values) },
+        apply: { values, session in SSHFieldSchema.apply(values, to: &session) },
         connect: { config, decider, _ in
             guard case .ssh(let ssh) = config else {
                 throw RemoteFSError.protocolError(reason: "wrong config for the SSH backend")
@@ -200,6 +214,7 @@ public struct BackendDescriptor: Sendable {
         credentialSchema: S3FieldSchema.credential,
         makeConfig: { values, secret in try S3FieldSchema.makeConfig(values, secret) },
         displaySummary: { values in S3FieldSchema.displaySummary(values) },
+        apply: { values, session in S3FieldSchema.apply(values, to: &session) },
         connect: { config, _, _ in
             guard case .s3(let s3) = config else {
                 throw RemoteFSError.protocolError(reason: "wrong config for the S3 backend")
@@ -227,6 +242,7 @@ public struct BackendDescriptor: Sendable {
         credentialSchema: WebDAVFieldSchema.credential,
         makeConfig: { values, secret in try WebDAVFieldSchema.makeConfig(values, secret) },
         displaySummary: { values in WebDAVFieldSchema.displaySummary(values) },
+        apply: { values, session in WebDAVFieldSchema.apply(values, to: &session) },
         connect: { config, _, certificateDecider in
             guard case .webdav(let webdav) = config else {
                 throw RemoteFSError.protocolError(reason: "wrong config for the WebDAV backend")
