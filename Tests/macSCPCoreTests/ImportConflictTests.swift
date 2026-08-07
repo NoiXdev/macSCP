@@ -52,8 +52,8 @@ struct ImportConflictTests {
             await log.record(conflict.itemName)
             return (.skip, false)
         }
-        _ = await arbiter.resolve(ImportConflict(itemName: "a", kindLabel: "login set"))
-        _ = await arbiter.resolve(ImportConflict(itemName: "b", kindLabel: "login set"))
+        _ = await arbiter.resolve(ImportConflict(itemName: "a", kindLabel: "login set", reason: .name))
+        _ = await arbiter.resolve(ImportConflict(itemName: "b", kindLabel: "login set", reason: .name))
         #expect(await log.names.count == 2)
     }
 
@@ -63,8 +63,8 @@ struct ImportConflictTests {
             await log.record(conflict.itemName)
             return (.replace, true)
         }
-        let first = await arbiter.resolve(ImportConflict(itemName: "a", kindLabel: "login set"))
-        let second = await arbiter.resolve(ImportConflict(itemName: "b", kindLabel: "login set"))
+        let first = await arbiter.resolve(ImportConflict(itemName: "a", kindLabel: "login set", reason: .name))
+        let second = await arbiter.resolve(ImportConflict(itemName: "b", kindLabel: "login set", reason: .name))
         #expect(first == .replace)
         #expect(second == .replace)
         #expect(await log.names.count == 1)
@@ -81,8 +81,8 @@ struct ImportConflictTests {
             await log.record(conflict.itemName)
             return nil
         }
-        let first = await arbiter.resolve(ImportConflict(itemName: "a", kindLabel: "login set"))
-        let second = await arbiter.resolve(ImportConflict(itemName: "b", kindLabel: "login set"))
+        let first = await arbiter.resolve(ImportConflict(itemName: "a", kindLabel: "login set", reason: .name))
+        let second = await arbiter.resolve(ImportConflict(itemName: "b", kindLabel: "login set", reason: .name))
         #expect(first == nil)
         #expect(second == nil)
         #expect(await arbiter.isCancelled)
@@ -119,10 +119,10 @@ struct ImportConflictTests {
             }
         }
 
-        let taskA = Task { await arbiter.resolve(ImportConflict(itemName: "a", kindLabel: "login set")) }
+        let taskA = Task { await arbiter.resolve(ImportConflict(itemName: "a", kindLabel: "login set", reason: .name)) }
         await aStarted.wait()
 
-        let taskB = Task { await arbiter.resolve(ImportConflict(itemName: "b", kindLabel: "login set")) }
+        let taskB = Task { await arbiter.resolve(ImportConflict(itemName: "b", kindLabel: "login set", reason: .name)) }
         await bStarted.wait()
         // Both calls are now genuinely suspended inside their own decider
         // invocation, with `rule` still nil for both.
@@ -159,11 +159,11 @@ struct ImportConflictTests {
             }
         }
 
-        let taskB = Task { await arbiter.resolve(ImportConflict(itemName: "b", kindLabel: "login set")) }
+        let taskB = Task { await arbiter.resolve(ImportConflict(itemName: "b", kindLabel: "login set", reason: .name)) }
         await bStarted.wait()
         // "b" is now genuinely suspended inside its own decider invocation.
 
-        let taskA = Task { await arbiter.resolve(ImportConflict(itemName: "a", kindLabel: "login set")) }
+        let taskA = Task { await arbiter.resolve(ImportConflict(itemName: "a", kindLabel: "login set", reason: .name)) }
         let resultA = await taskA.value
         #expect(resultA == nil)
         #expect(await arbiter.isCancelled)
