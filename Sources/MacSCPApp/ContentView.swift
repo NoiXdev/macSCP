@@ -2237,10 +2237,15 @@ struct ContentView: View {
     /// id`). Empty for a managed key with a stored passphrase (see
     /// `isManagedKeyWithStoredPassphrase` -- the transient connect-time fill
     /// in `ConnectionFormView`'s Connect button and `connect(in:stored:)`
-    /// still resolves it from `key.id`, so nothing is lost); `form.password`
-    /// unchanged otherwise.
+    /// still resolves it from `key.id`, so nothing is lost); the active
+    /// backend's own secret otherwise.
+    ///
+    /// `resolvedSecret` (M23/T7), not `form.password`: whichever secret row the
+    /// backend actually shows -- SSH's password or passphrase, S3's secret
+    /// access key, WebDAV's password, and NOTHING for an agent login. The three
+    /// save branches this now serves each named their own field by hand.
     private func passwordToPersist(for form: ConnectionViewModel) -> String {
-        isManagedKeyWithStoredPassphrase(form) ? "" : form.password
+        isManagedKeyWithStoredPassphrase(form) ? "" : form.resolvedSecret
     }
 
     private func maybeCreateNewLoginSet(
@@ -2386,88 +2391,36 @@ struct ContentView: View {
             // it — either way `password:` below is safely ignored by `save`
             // once `loginSetID` is non-nil (see its doc comment).
             let newSetID = maybeCreateNewLoginSet(from: form)
-            // S3 (M12/T7b): a much shorter save — no host/username/auth/jump
-            // concepts apply, so `host`/`username` get the SAME "unused"
-            // placeholder `ConnectionViewModel.validateForEditSaveS3` uses
-            // for the edit path, and the secret access key rides the
-            // existing `password:` slot (no separate S3 secret path).
-            let stored: StoredSession?
-            if form.kind == .s3 {
-                stored = sessionListViewModel.save(
-                    name: form.saveName.trimmingCharacters(in: .whitespacesAndNewlines),
-                    host: "unused", port: 22, username: "unused",
-                    password: form.s3SecretAccessKey,
-                    groupID: form.selectedGroupID,
-                    loginSetID: form.loginMode == .set ? form.selectedLoginSetID : newSetID,
-                    kind: .s3,
-                    s3: StoredS3Config(
-                        accessKeyID: form.s3AccessKeyID.trimmingCharacters(in: .whitespacesAndNewlines),
-                        region: form.s3Region.trimmingCharacters(in: .whitespacesAndNewlines),
-                        endpoint: form.s3Endpoint.trimmingCharacters(in: .whitespacesAndNewlines),
-                        bucket: form.s3Bucket.trimmingCharacters(in: .whitespacesAndNewlines),
-                        usePathStyle: form.s3UsePathStyle)
-                )
-            } else if form.kind == .webdav {
-                // WebDAV (M21/T9 bug-fix round): mirrors the S3 branch above
-                // -- no host/port/auth/jump concepts apply, so `host`/
-                // `username` get the SAME "unused" placeholder
-                // `ConnectionViewModel.validateForEditSaveWebDAV` uses for
-                // the edit path, and the password rides the existing
-                // `password:` slot (no separate WebDAV secret path). Before
-                // this fix this branch never existed -- a WebDAV connection
-                // fell through to the `else` below and was saved as a
-                // broken `.ssh` session with `baseURL`/`useNextcloudPath`
-                // silently discarded.
-                stored = sessionListViewModel.save(
-                    name: form.saveName.trimmingCharacters(in: .whitespacesAndNewlines),
-                    host: "unused", port: 22, username: "unused",
-                    password: form.password,
-                    groupID: form.selectedGroupID,
-                    // M22/T9: a WebDAV session can reference a login set now,
-                    // exactly like the S3 branch above — the hardcoded `nil`
-                    // this replaces dated from when `LoginSet` could not model
-                    // a WebDAV login at all.
-                    loginSetID: form.loginMode == .set ? form.selectedLoginSetID : newSetID,
-                    kind: .webdav,
-                    webdav: StoredWebDAVConfig(
-                        baseURL: form.webdavBaseURL.trimmingCharacters(in: .whitespacesAndNewlines),
-                        username: form.username.trimmingCharacters(in: .whitespacesAndNewlines),
-                        useNextcloudPath: form.webdavUseNextcloudPath)
-                )
-            } else {
-                stored = sessionListViewModel.save(
-                    name: form.saveName.trimmingCharacters(in: .whitespacesAndNewlines),
-                    host: form.host.trimmingCharacters(in: .whitespacesAndNewlines),
-                    port: Int(form.port.trimmingCharacters(in: .whitespaces)) ?? 22,
-                    username: form.username.trimmingCharacters(in: .whitespacesAndNewlines),
-                    password: passwordToPersist(for: form),
-                    // Three-way mapping (M10d/T4, found alongside the hand-off
-                    // list's sites): the old two-way `.password ? : .privateKey`
-                    // ternary would silently save an agent-mode connection as a
-                    // private-key session.
-                    authKind: ConnectionViewModel.storedAuthKind(for: form.authChoice),
-                    keyPath: form.authChoice == .privateKey
-                        ? form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
-                        : nil,
-                    groupID: form.selectedGroupID,
-                    loginSetID: form.loginMode == .set ? form.selectedLoginSetID : newSetID,
-                    // Jump (M10c/T3): `existingSecretID` is nil here -- this is
-                    // a BRAND-NEW session, so there is no previous manual slot
-                    // to preserve (unlike `validateForEditSave()`'s own
-                    // internal `buildJumpSpec` call, which reuses
-                    // `existingJumpSecretID`).
-                    //
-                    // Session mode (M11a/T3) passes `nil` instead of
-                    // `form.jumpPassword`, same reasoning as the edit-save path
-                    // above: that field holds the REFERENCED session's own
-                    // resolved secret at this point, and the jump's `secretID`
-                    // slot is supposed to stay unused/empty while `sessionID` is
-                    // set (spec §1), not a copy of a secret it never reads.
-                    jump: form.buildJumpSpec(),
-                    jumpSecret: form.jumpSourceMode == .session ? nil : form.jumpPassword,
-                    kind: .ssh, s3: nil
-                )
-            }
+            // ONE save for every protocol (M23/T7), and the place the last two
+            // `"unused"` placeholders died: the backend's own adapter writes
+            // its own fields out of `form.values`, so this call site no longer
+            // knows that S3 has a bucket and SSH has a port -- nor parks a
+            // literal in `host`/`username` for a backend that has neither.
+            //
+            // What the three branches it replaces did, and where it went:
+            // * S3/WebDAV built a `StoredS3Config`/`StoredWebDAVConfig` from
+            //   the form -> `descriptor.apply` inside `save`.
+            // * Each named its own secret field -> `passwordToPersist`, which
+            //   now asks the schema which row is the visible secret.
+            // * The SSH branch alone passed `authKind`/`keyPath` -> both live
+            //   in `form.values` and are written by SSH's own `apply`.
+            // * S3/WebDAV passed NO jump and NO jump secret; the SSH branch
+            //   passed `form.buildJumpSpec()` (no `existingSecretID`: this is a
+            //   brand-new session, unlike `validateForEditSave`'s own call) and
+            //   suppressed the jump secret in session mode (spec §1: the
+            //   `secretID` slot stays unused while `sessionID` is set). Both
+            //   survive verbatim below -- `buildJumpSpec()` returns nil unless
+            //   `jumpEnabled`, which the S3 and WebDAV forms never offer, so
+            //   the two branches' hardcoded `nil` needs no `kind` check here.
+            let stored = sessionListViewModel.save(
+                name: form.saveName.trimmingCharacters(in: .whitespacesAndNewlines),
+                values: form.values,
+                password: passwordToPersist(for: form),
+                kind: form.kind,
+                groupID: form.selectedGroupID,
+                loginSetID: form.loginMode == .set ? form.selectedLoginSetID : newSetID,
+                jump: form.buildJumpSpec(),
+                jumpSecret: form.jumpSourceMode == .session ? nil : form.jumpPassword)
             tab.activeStoredSessionID = stored?.id
             form.shouldSaveSession = false
             titleName = stored?.name ?? titleName
@@ -2486,11 +2439,11 @@ struct ContentView: View {
             // be current in both connect paths.
             if let stored {
                 // `displaySummary` (M22/T11), not `stored.host`/`stored.username`
-                // directly: those two carry the `"unused"` placeholder for a
-                // freshly saved S3 or WebDAV session (see `startSession`'s own
-                // `"unused"` comments a few lines above), which is exactly what
-                // used to leave "connected to unused as unused" in the audit
-                // trail for anything but SSH.
+                // directly: a legacy S3 or WebDAV session still carries the
+                // `"unused"` placeholder in those two (a freshly saved one no
+                // longer does, since M23/T7), which is what used to leave
+                // "connected to unused as unused" in the audit trail for
+                // anything but SSH.
                 let descriptor = BackendDescriptor.descriptor(for: stored.kind)
                 attachAuditRecorder(
                     to: tab, sessionID: stored.id,
@@ -2533,248 +2486,185 @@ struct ContentView: View {
             // session down first, never anyone else's.
             if tab.isConnected { await teardown(tab) }
             let form = tab.connectionViewModel
-            // BEFORE any field is written (M22/T8): assigning `kind` resets
-            // `values` to that backend's defaults, so a fill that ran first
-            // would be wiped by the protocol switch. The three branches below
-            // used to set it themselves, each after its own fields — which
-            // now only works by accident for S3/WebDAV (they overwrite
-            // everything afterwards) and not at all for SSH, whose host and
-            // port are assigned here.
+            // ONE fill for every protocol (M23/T7). `kind` FIRST (M22/T8):
+            // assigning it resets `values` to that backend's defaults, so a
+            // fill that ran before it would be wiped by the protocol switch;
+            // the explicit reset below is what covers the case where `kind`
+            // does NOT change (two SSH sessions in a row) and its guarded
+            // `didSet` therefore does nothing.
+            //
+            // `sessionValues` replaces the three per-protocol field lists --
+            // and never copies `host`/`username` for an S3 or WebDAV session,
+            // which is where the `"unused"` placeholder used to enter the form.
             form.kind = stored.kind
-            form.host = stored.host
-            form.port = String(stored.port)
+            let descriptor = BackendDescriptor.descriptor(for: stored.kind)
+            form.values = descriptor.defaultValues
+            form.values.merge(descriptor.sessionValues(stored))
             form.saveName = stored.name
             form.shouldSaveSession = false
 
-            // S3 (M12/T7b): a much shorter fill — no login sets, no jump,
-            // no host-key TOFU. The `kind` assignment above is what keeps a
-            // PREVIOUS S3 fill in this same tab from surviving into an SSH
-            // session's fill, or vice versa (sticky-toggle lesson, same as
-            // `clearJumpFields()`'s own doc comment) — the tab's
-            // `ConnectionViewModel` outlives any single connect. The secret
-            // access key is resolved from the Keychain the same way the SSH
-            // password is (`password(for:)`) — same slot, addressed by
-            // session id regardless of kind.
-            if stored.kind == .s3 {
-                form.s3Endpoint = stored.s3?.endpoint ?? ""
-                form.s3Region = stored.s3?.region ?? ""
-                form.s3Bucket = stored.s3?.bucket ?? ""
-                form.s3UsePathStyle = stored.s3?.usePathStyle ?? false
-                // Credentials: from the bound S3 set if any, else the
-                // session's own (M15). A dangling/kind-mismatched set does
-                // NOT connect — same loginSets.missingSet path as SSH.
-                do {
-                    if let resolved = try sessionListViewModel.resolvedCredentials(for: stored) {
-                        form.applyResolvedCredentials(resolved)
-                    } else {
-                        form.s3AccessKeyID = stored.s3?.accessKeyID ?? ""
-                        form.s3SecretAccessKey = sessionListViewModel.password(for: stored) ?? ""
-                    }
-                    form.loginMode = stored.loginSetID != nil ? .set : .manual
-                    form.selectedLoginSetID = stored.loginSetID
-                } catch is LoginResolveError {
-                    form.s3AccessKeyID = stored.s3?.accessKeyID ?? ""
-                    form.s3SecretAccessKey = ""
-                    form.loginMode = .manual
-                    form.selectedLoginSetID = nil
-                    form.showFailure(message: L10n.string(
-                        "loginSets.missingSet",
-                        "The stored login for this connection was not found. Choose a login or enter credentials."))
-                    return
+            // Resolve what this session should actually connect with (M10b/T3):
+            // its own data for a manual session, or its set's credentials --
+            // a dangling `loginSetID` throws rather than silently falling
+            // back (`LoginResolver`'s doc comment). Identical for all three
+            // backends since M22/T9; only the SECRET field differed, which
+            // `fillSecret` now names for whichever backend is active (the S3
+            // branch filled `s3SecretAccessKey`, the other two `password`).
+            do {
+                if let resolved = try sessionListViewModel.resolvedCredentials(for: stored) {
+                    form.applyResolvedCredentials(resolved)
+                } else if descriptor.requiresSecret(form.values) {
+                    // M-6: an agent login reads no keychain at all -- avoid
+                    // the residual lookup on this path too. `requiresSecret`
+                    // is false for exactly that case and true for S3/WebDAV,
+                    // which is what the `authKind != .agent` guard meant.
+                    form.fillSecret(sessionListViewModel.password(for: stored) ?? "")
                 }
-                form.clearJumpFields()
-            } else if stored.kind == .webdav {
-                // WebDAV (M21/T9 bug-fix round): mirrors the S3 fill above --
-                // no jump, no host-key TOFU. The real username lives on
-                // `stored.webdav.username`, not on `stored.username` (that
-                // field holds the "unused" placeholder for a WebDAV session,
-                // same as S3's own host/username).
+                // M17: if this key is a managed key with a stored
+                // passphrase and none was typed, resolve it from the
+                // Keychain so the user need not re-enter it. Inert outside
+                // SSH: no other backend has a private-key auth choice.
+                if form.authChoice == .privateKey {
+                    form.password = ManagedKeyPassphrase.resolve(
+                        keyPath: form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
+                        typed: form.password,
+                        store: ManagedKeyStore(directory: SessionStore.defaultDirectory),
+                        secrets: KeychainSecretStore())
+                }
+                form.loginMode = stored.loginSetID != nil ? .set : .manual
+                form.selectedLoginSetID = stored.loginSetID
+            } catch is LoginResolveError {
+                // Missing set (target, M10c/T3): do NOT connect -- show the
+                // form instead, with the mismatch surfaced through its
+                // existing error field (spec §2/§6). The user picks a login
+                // or enters credentials. Falls back to the session's own raw
+                // values so the form isn't left half-filled: the same
+                // defaults + `sessionValues` merge as above, which leaves
+                // every secret field blank because `defaultValues` does.
                 //
-                // M22/T9: a WebDAV session CAN be bound to a login set now, so
-                // this branch resolves one exactly like the two beside it,
-                // including the dangling-set hard stop.
-                form.webdavBaseURL = stored.webdav?.baseURL ?? ""
-                form.webdavUseNextcloudPath = stored.webdav?.useNextcloudPath ?? false
-                do {
-                    if let resolved = try sessionListViewModel.resolvedCredentials(for: stored) {
-                        form.applyResolvedCredentials(resolved)
-                    } else {
-                        form.username = stored.webdav?.username ?? ""
-                        form.password = sessionListViewModel.password(for: stored) ?? ""
-                    }
-                    form.loginMode = stored.loginSetID != nil ? .set : .manual
-                    form.selectedLoginSetID = stored.loginSetID
-                } catch is LoginResolveError {
-                    form.username = stored.webdav?.username ?? ""
-                    form.password = ""
-                    form.loginMode = .manual
-                    form.selectedLoginSetID = nil
-                    form.showFailure(message: L10n.string(
-                        "loginSets.missingSet",
-                        "The stored login for this connection was not found. Choose a login or enter credentials."))
-                    return
-                }
-                form.clearJumpFields()
-            } else {
-                // Resolve what this session should actually connect with (M10b/T3):
-                // its own data for a manual session, or its set's credentials —
-                // a dangling `loginSetID` throws rather than silently falling
-                // back (`LoginResolver`'s doc comment).
-                do {
-                    if let resolved = try sessionListViewModel.resolvedCredentials(for: stored) {
-                        form.applyResolvedCredentials(resolved)
-                    } else {
-                        form.username = stored.username
-                        form.authChoice = ConnectionViewModel.authChoice(for: stored.authKind)
-                        form.keyPath = stored.keyPath ?? ""
-                        // M-6: an agent login reads no keychain at all -- avoid
-                        // the residual lookup on this path too.
-                        form.password = stored.authKind != .agent
-                            ? (sessionListViewModel.password(for: stored) ?? "") : ""
-                    }
-                    // M17: if this key is a managed key with a stored
-                    // passphrase and none was typed, resolve it from the
-                    // Keychain so the user need not re-enter it.
-                    if form.authChoice == .privateKey {
-                        form.password = ManagedKeyPassphrase.resolve(
-                            keyPath: form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
-                            typed: form.password,
-                            store: ManagedKeyStore(directory: SessionStore.defaultDirectory),
-                            secrets: KeychainSecretStore())
-                    }
-                    form.loginMode = stored.loginSetID != nil ? .set : .manual
-                    form.selectedLoginSetID = stored.loginSetID
-                } catch is LoginResolveError {
-                    // Missing set (target, M10c/T3): do NOT connect — show the
-                    // form instead, with the mismatch surfaced through its
-                    // existing error field (spec §2/§6). The user picks a login
-                    // or enters credentials. Falls back to the session's own raw
-                    // values so the form isn't left half-filled.
-                    //
-                    // Kept in its OWN do/catch, independent of the jump's below
-                    // (final review M-1): sharing one catch meant a JUMP-only
-                    // `.missingSet` also reset this (valid) target resolution —
-                    // a dangling jump set discarded a perfectly good target
-                    // login pick.
-                    form.username = stored.username
-                    form.authChoice = ConnectionViewModel.authChoice(for: stored.authKind)
-                    form.keyPath = stored.keyPath ?? ""
-                    form.password = ""
-                    form.loginMode = .manual
-                    form.selectedLoginSetID = nil
-                    // A stale jump block from a DIFFERENT session's form must not
-                    // survive this early return (F-1 fix): the jump `do`/`catch`
-                    // below is never reached on this path, so apply the same
-                    // raw-jump fallback it would have applied.
-                    applyRawJumpFallback(form, from: stored)
-                    form.showFailure(message: L10n.string(
-                        "loginSets.missingSet",
-                        "The stored login for this connection was not found. Choose a login or enter credentials."))
-                    return
-                }
+                // Kept in its OWN do/catch, independent of the jump's below
+                // (final review M-1): sharing one catch meant a JUMP-only
+                // `.missingSet` also reset this (valid) target resolution --
+                // a dangling jump set discarded a perfectly good target
+                // login pick.
+                form.values = descriptor.defaultValues
+                form.values.merge(descriptor.sessionValues(stored))
+                form.loginMode = .manual
+                form.selectedLoginSetID = nil
+                // A stale jump block from a DIFFERENT session's form must not
+                // survive this early return (F-1 fix): the jump `do`/`catch`
+                // below is never reached on this path, so apply the same
+                // raw-jump fallback it would have applied. The S3 and WebDAV
+                // branches this replaces returned WITHOUT it and so leaked a
+                // stale jump into the form on a dangling-set stop.
+                applyRawJumpFallback(form, from: stored)
+                form.showFailure(message: L10n.string(
+                    "loginSets.missingSet",
+                    "The stored login for this connection was not found. Choose a login or enter credentials."))
+                return
+            }
 
-                // Jump (M10c/T3, extended M11a/T3): same resolution as above,
-                // for the jump's OWN login — `resolvedJumpLogin` is `nil` only
-                // when the session has no jump at all; a resolved jump fills
-                // the manual-looking fields regardless of whether it came from
-                // a set or the jump's own manual secret, exactly like the
-                // target's resolution above. In its OWN do/catch (final review
-                // M-1, see comment above): a jump-only failure must fall back on
-                // the JUMP side only, leaving the target fields resolved above
-                // untouched.
-                //
-                // Session mode (`jump.sessionID` non-nil, spec §4b) branches
-                // FIRST: host/port and the login all come from the REFERENCED
-                // session via `resolvedJump(for:)`, unlike the manual/set branch
-                // below which only ever resolves the jump's OWN fields via
-                // `resolvedJumpLogin`. Each branch keeps its OWN nested do/catch
-                // (rather than one shared catch for both) so a session-mode
-                // failure highlights `.jumpSession` — the only field the
-                // session-mode UI actually renders — while a manual/set failure
-                // keeps highlighting `.jumpHost` exactly as before this feature.
-                if let jump = stored.jump {
-                    form.jumpEnabled = true
-                    if let sessionID = jump.sessionID {
-                        // Set BEFORE the throwing call below: on a failure the
-                        // form stays in session mode with this selection intact,
-                        // so the picker and the `.jumpSession` highlight the
-                        // failure attaches to are both visible — switching back
-                        // to manual with raw fallback values would hide the very
-                        // field the error is about.
-                        form.jumpSourceMode = .session
-                        form.jumpSessionID = sessionID
-                        do {
-                            if let resolved = try sessionListViewModel.resolvedJump(for: stored) {
-                                form.jumpHost = resolved.host
-                                form.jumpPort = String(resolved.port)
-                                form.jumpUsername = resolved.login.username
-                                form.jumpAuthChoice = ConnectionViewModel.authChoice(for: resolved.login.authKind)
-                                form.jumpKeyPath = resolved.login.keyPath ?? ""
-                                form.jumpPassword = resolved.login.secret ?? ""
-                            }
-                        } catch LoginResolveError.missingJumpSession {
-                            form.showFailure(
-                                message: L10n.string(
-                                    "form.jump.session.missing",
-                                    "The connection used as jump host no longer exists."),
-                                field: .jumpSession)
-                            return
-                        } catch LoginResolveError.jumpChainNotSupported {
-                            form.showFailure(
-                                message: L10n.string(
-                                    "form.jump.session.chainNotSupported",
-                                    "The selected jump host connects through another jump host; "
-                                        + "chains are not supported."),
-                                field: .jumpSession)
-                            return
-                        } catch is LoginResolveError {
-                            // The REFERENCED session's own login set is dangling
-                            // (`.missingSet`) -- same wording the login-set
-                            // dangling-reference paths already use elsewhere.
-                            form.showFailure(
-                                message: L10n.string(
-                                    "loginSets.missingSet",
-                                    "The stored login for this connection was not found. "
-                                        + "Choose a login or enter credentials."),
-                                field: .jumpSession)
-                            return
+            // Jump (M10c/T3, extended M11a/T3): same resolution as above,
+            // for the jump's OWN login — `resolvedJumpLogin` is `nil` only
+            // when the session has no jump at all; a resolved jump fills
+            // the manual-looking fields regardless of whether it came from
+            // a set or the jump's own manual secret, exactly like the
+            // target's resolution above. In its OWN do/catch (final review
+            // M-1, see comment above): a jump-only failure must fall back on
+            // the JUMP side only, leaving the target fields resolved above
+            // untouched.
+            //
+            // Session mode (`jump.sessionID` non-nil, spec §4b) branches
+            // FIRST: host/port and the login all come from the REFERENCED
+            // session via `resolvedJump(for:)`, unlike the manual/set branch
+            // below which only ever resolves the jump's OWN fields via
+            // `resolvedJumpLogin`. Each branch keeps its OWN nested do/catch
+            // (rather than one shared catch for both) so a session-mode
+            // failure highlights `.jumpSession` — the only field the
+            // session-mode UI actually renders — while a manual/set failure
+            // keeps highlighting `.jumpHost` exactly as before this feature.
+            if let jump = stored.jump {
+                form.jumpEnabled = true
+                if let sessionID = jump.sessionID {
+                    // Set BEFORE the throwing call below: on a failure the
+                    // form stays in session mode with this selection intact,
+                    // so the picker and the `.jumpSession` highlight the
+                    // failure attaches to are both visible — switching back
+                    // to manual with raw fallback values would hide the very
+                    // field the error is about.
+                    form.jumpSourceMode = .session
+                    form.jumpSessionID = sessionID
+                    do {
+                        if let resolved = try sessionListViewModel.resolvedJump(for: stored) {
+                            form.jumpHost = resolved.host
+                            form.jumpPort = String(resolved.port)
+                            form.jumpUsername = resolved.login.username
+                            form.jumpAuthChoice = ConnectionViewModel.authChoice(for: resolved.login.authKind)
+                            form.jumpKeyPath = resolved.login.keyPath ?? ""
+                            form.jumpPassword = resolved.login.secret ?? ""
                         }
-                    } else {
-                        form.jumpSourceMode = .manual
-                        form.jumpSessionID = nil
-                        form.jumpHost = jump.host
-                        form.jumpPort = String(jump.port)
-                        form.jumpLoginMode = jump.loginSetID != nil ? .set : .manual
-                        form.jumpSelectedLoginSetID = jump.loginSetID
-                        do {
-                            if let resolvedJump = try sessionListViewModel.resolvedJumpLogin(for: stored) {
-                                form.jumpUsername = resolvedJump.username
-                                form.jumpAuthChoice = ConnectionViewModel.authChoice(for: resolvedJump.authKind)
-                                form.jumpKeyPath = resolvedJump.keyPath ?? ""
-                                form.jumpPassword = resolvedJump.secret ?? ""
-                            }
-                        } catch is LoginResolveError {
-                            // Missing set (jump only): the target fields resolved
-                            // above stay untouched — only the jump falls back to
-                            // its raw manual-looking values, and `field:
-                            // .jumpHost` (not the target's `.host`) highlights
-                            // the right row. Shares the fallback with the target
-                            // catch above (F-1 fix) so both early-return paths
-                            // leave the jump block in the identical,
-                            // fully-reset-or-fully-raw state.
-                            applyRawJumpFallback(form, from: stored)
-                            form.showFailure(
-                                message: L10n.string(
-                                    "loginSets.missingSet",
-                                    "The stored login for this connection was not found. "
-                                        + "Choose a login or enter credentials."),
-                                field: .jumpHost)
-                            return
-                        }
+                    } catch LoginResolveError.missingJumpSession {
+                        form.showFailure(
+                            message: L10n.string(
+                                "form.jump.session.missing",
+                                "The connection used as jump host no longer exists."),
+                            field: .jumpSession)
+                        return
+                    } catch LoginResolveError.jumpChainNotSupported {
+                        form.showFailure(
+                            message: L10n.string(
+                                "form.jump.session.chainNotSupported",
+                                "The selected jump host connects through another jump host; "
+                                    + "chains are not supported."),
+                            field: .jumpSession)
+                        return
+                    } catch is LoginResolveError {
+                        // The REFERENCED session's own login set is dangling
+                        // (`.missingSet`) -- same wording the login-set
+                        // dangling-reference paths already use elsewhere.
+                        form.showFailure(
+                            message: L10n.string(
+                                "loginSets.missingSet",
+                                "The stored login for this connection was not found. "
+                                    + "Choose a login or enter credentials."),
+                            field: .jumpSession)
+                        return
                     }
                 } else {
-                    form.clearJumpFields()
+                    form.jumpSourceMode = .manual
+                    form.jumpSessionID = nil
+                    form.jumpHost = jump.host
+                    form.jumpPort = String(jump.port)
+                    form.jumpLoginMode = jump.loginSetID != nil ? .set : .manual
+                    form.jumpSelectedLoginSetID = jump.loginSetID
+                    do {
+                        if let resolvedJump = try sessionListViewModel.resolvedJumpLogin(for: stored) {
+                            form.jumpUsername = resolvedJump.username
+                            form.jumpAuthChoice = ConnectionViewModel.authChoice(for: resolvedJump.authKind)
+                            form.jumpKeyPath = resolvedJump.keyPath ?? ""
+                            form.jumpPassword = resolvedJump.secret ?? ""
+                        }
+                    } catch is LoginResolveError {
+                        // Missing set (jump only): the target fields resolved
+                        // above stay untouched — only the jump falls back to
+                        // its raw manual-looking values, and `field:
+                        // .jumpHost` (not the target's `.host`) highlights
+                        // the right row. Shares the fallback with the target
+                        // catch above (F-1 fix) so both early-return paths
+                        // leave the jump block in the identical,
+                        // fully-reset-or-fully-raw state.
+                        applyRawJumpFallback(form, from: stored)
+                        form.showFailure(
+                            message: L10n.string(
+                                "loginSets.missingSet",
+                                "The stored login for this connection was not found. "
+                                    + "Choose a login or enter credentials."),
+                            field: .jumpHost)
+                        return
+                    }
                 }
+            } else {
+                form.clearJumpFields()
             }
 
             if let fs = await form.connect() {
@@ -2799,9 +2689,10 @@ struct ContentView: View {
                 // is correct by construction; `jumpEnabled` gates it to `nil`
                 // when there is no jump at all.
                 // `displaySummary` (M22/T11), not `stored.host`/`stored.username`
-                // directly — see the "Save & connect" call site's comment above
-                // for why those two are the `"unused"` placeholder outside SSH.
-                let descriptor = BackendDescriptor.descriptor(for: stored.kind)
+                // directly — a legacy non-SSH session still carries the
+                // `"unused"` placeholder in those two, which is what used to
+                // leave "connected to unused as unused" in the audit trail.
+                // Reuses the `descriptor` the fill above already resolved.
                 attachAuditRecorder(
                     to: tab, sessionID: stored.id,
                     summary: descriptor.displaySummary(descriptor.sessionValues(stored)),

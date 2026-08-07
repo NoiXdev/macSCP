@@ -18,8 +18,10 @@ struct SessionListViewModelTests {
     @Test func saveCreatesSessionAndStoresPassword() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let stored = vm.save(name: "web", host: "example.com", port: 22,
-                             username: "tim", password: "geheim")
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "example.com", port: 22, username: "tim"),
+            password: "geheim")
         #expect(stored != nil)
         #expect(vm.sessions.map(\.name) == ["web"])
         #expect(try secrets.password(for: stored!.id) == "geheim")
@@ -28,16 +30,28 @@ struct SessionListViewModelTests {
     @Test func reloadSortsByNameCaseInsensitive() {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        vm.save(name: "zeta", host: "h", port: 22, username: "u", password: "p")
-        vm.save(name: "Alpha", host: "h", port: 22, username: "u", password: "p")
-        vm.save(name: "beta", host: "h", port: 22, username: "u", password: "p")
+        vm.save(
+            name: "zeta",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "p")
+        vm.save(
+            name: "Alpha",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "p")
+        vm.save(
+            name: "beta",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "p")
         #expect(vm.sessions.map(\.name) == ["Alpha", "beta", "zeta"])
     }
 
     @Test func deleteRemovesSessionAndSecret() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let stored = vm.save(name: "weg", host: "h", port: 22, username: "u", password: "p")!
+        let stored = vm.save(
+            name: "weg",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "p")!
         vm.delete(stored)
         #expect(vm.sessions.isEmpty)
         #expect(try secrets.password(for: stored.id) == nil)
@@ -57,7 +71,10 @@ struct SessionListViewModelTests {
             store: SessionStore(directory: dir), secrets: InMemorySecretStore(),
             auditStore: auditStore)
 
-        let stored = vm.save(name: "weg", host: "h", port: 22, username: "u", password: "p")!
+        let stored = vm.save(
+            name: "weg",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "p")!
         auditStore.append(AuditEvent(kind: .connected, detail: "connected to h as u"), for: stored.id)
         #expect(auditStore.events(for: stored.id).count == 1)
 
@@ -69,7 +86,10 @@ struct SessionListViewModelTests {
     @Test func passwordReadsSecret() {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw")!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw")!
         #expect(vm.password(for: stored) == "pw")
     }
 
@@ -88,10 +108,14 @@ struct SessionListViewModelTests {
     @Test func saveWithExistingNameUpdatesInsteadOfDuplicating() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let first = vm.save(name: "web", host: "alt.example.com", port: 22,
-                            username: "tim", password: "p1")!
-        let second = vm.save(name: "web", host: "neu.example.com", port: 2222,
-                             username: "tim2", password: "p2")!
+        let first = vm.save(
+            name: "web",
+            values: sshValues(host: "alt.example.com", port: 22, username: "tim"),
+            password: "p1")!
+        let second = vm.save(
+            name: "web",
+            values: sshValues(host: "neu.example.com", port: 2222, username: "tim2"),
+            password: "p2")!
 
         #expect(second.id == first.id)
         #expect(vm.sessions.count == 1)
@@ -100,9 +124,9 @@ struct SessionListViewModelTests {
     }
 
     /// M12/T7b: saving an S3 session goes through the same `save(...)`
-    /// entry point as SSH, just with `kind`/`s3` filled in — the secret
-    /// access key rides the existing `password:` slot (no separate S3
-    /// secret path) and must never land in `sessions.json`.
+    /// entry point as SSH, just with `kind` and S3's own field values (M23/T7)
+    /// — the secret access key rides the existing `password:` slot (no
+    /// separate S3 secret path) and must never land in `sessions.json`.
     @Test func saveWithS3KindPersistsConfigAndKeepsSecretInKeychainOnly() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -110,8 +134,10 @@ struct SessionListViewModelTests {
             accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
             endpoint: "https://s3.example.com", bucket: "backups", usePathStyle: true)
         let stored = vm.save(
-            name: "bucket", host: "unused", port: 22, username: "unused", password: "SECRET",
-            kind: .s3, s3: s3)
+            name: "bucket",
+            values: S3FieldSchema.values(from: s3),
+            password: "SECRET",
+            kind: .s3)
 
         #expect(stored != nil)
         #expect(stored?.kind == .s3)
@@ -139,8 +165,10 @@ struct SessionListViewModelTests {
         let webdav = StoredWebDAVConfig(
             baseURL: "https://dav.example.com/dav", username: "dave", useNextcloudPath: true)
         let stored = vm.save(
-            name: "dav-prod", host: "unused", port: 22, username: "unused", password: "SECRET",
-            kind: .webdav, webdav: webdav)
+            name: "dav-prod",
+            values: WebDAVFieldSchema.values(from: webdav),
+            password: "SECRET",
+            kind: .webdav)
 
         #expect(stored != nil)
         #expect(stored?.kind == .webdav)
@@ -153,6 +181,59 @@ struct SessionListViewModelTests {
         #expect(!raw.contains("SECRET"))
     }
 
+    /// The other half of the placeholder's death (M23/T7): the NEW-session save
+    /// path. `ContentView`'s S3 and WebDAV branches passed the literal
+    /// `host: "unused", port: 22, username: "unused"`, which made every non-SSH
+    /// session share the import duplicate key `unused|22|unused` and left the
+    /// audit trail reading "connected to unused as unused". `save` writes only
+    /// the fields the backend owns now, so those two stay blank.
+    @Test func saveWritesNoPlaceholderForABackendWithoutHostOrUserName() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let s3 = StoredS3Config(
+            accessKeyID: "AKIA", region: "eu-central-1",
+            endpoint: "https://s3.example.com", bucket: "backups", usePathStyle: false)
+        let webdav = StoredWebDAVConfig(
+            baseURL: "https://dav.example.com/dav", username: "dave", useNextcloudPath: false)
+
+        let bucket = vm.save(
+            name: "bucket", values: S3FieldSchema.values(from: s3),
+            password: "SECRET", kind: .s3)
+        let cloud = vm.save(
+            name: "cloud", values: WebDAVFieldSchema.values(from: webdav),
+            password: "SECRET", kind: .webdav)
+
+        #expect(bucket?.host == "")
+        #expect(bucket?.username == "")
+        #expect(cloud?.host == "")
+        // WebDAV's own user name lives on its block, never on the shared field.
+        #expect(cloud?.username == "")
+        #expect(cloud?.webdav?.username == "dave")
+        let raw = try String(contentsOf: dir.appendingPathComponent("sessions.json"), encoding: .utf8)
+        #expect(!raw.contains("unused"))
+    }
+
+    /// An agent login stores no session-level secret and its leftover manual
+    /// slot is cleaned up — the rule that used to read `authKind == .agent` and
+    /// now reads `descriptor.requiresSecret(values)` (M23/T7). The auth kind
+    /// travels inside `values`, so this also pins that the descriptor sees it.
+    @Test func saveWithAgentAuthDeletesTheSecretSlot() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let first = vm.save(
+            name: "web", values: sshValues(host: "h", username: "u"), password: "typed")!
+        #expect(try secrets.password(for: first.id) == "typed")
+
+        let switched = vm.save(
+            name: "web",
+            values: sshValues(host: "h", username: "u", authKind: .agent),
+            password: "typed")!
+
+        #expect(switched.id == first.id)
+        #expect(switched.authKind == .agent)
+        #expect(try secrets.password(for: switched.id) == nil)
+    }
+
     @Test func saveWithFailingSecretsStillReloadsFromDisk() {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-slvm-fail-\(UUID().uuidString)")
@@ -160,7 +241,10 @@ struct SessionListViewModelTests {
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: FailingSecretStore())
 
-        let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "p")
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "p")
         #expect(stored == nil)
         let prefix = CoreL10n.string("core.session.saveFailed %@")
             .replacingOccurrences(of: "%@", with: "")
@@ -187,8 +271,11 @@ struct SessionListViewModelTests {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let group = vm.createGroup(named: "G")!
-        let stored = vm.save(name: "s", host: "h", port: 22, username: "u",
-                             password: "pw", groupID: group.id)!
+        let stored = vm.save(
+            name: "s",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            groupID: group.id)!
         vm.dissolveGroup(group)
         #expect(vm.groups.isEmpty)
         #expect(vm.sessions.count == 1)
@@ -200,7 +287,10 @@ struct SessionListViewModelTests {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let group = vm.createGroup(named: "G")!
-        let stored = vm.save(name: "s", host: "h", port: 22, username: "u", password: "pw")!
+        let stored = vm.save(
+            name: "s",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw")!
         vm.moveSession(stored, toGroup: group.id)
         #expect(vm.sessions(inGroup: group.id).map(\.name) == ["s"])
         #expect(vm.sessions(inGroup: nil).isEmpty)
@@ -209,7 +299,10 @@ struct SessionListViewModelTests {
     @Test func renameSessionTrimsAndRejectsEmpty() throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let stored = vm.save(name: "old", host: "h", port: 22, username: "u", password: "pw")!
+        let stored = vm.save(
+            name: "old",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw")!
         vm.renameSession(stored, to: "  new ")
         #expect(vm.sessions.first?.name == "new")
         vm.renameSession(vm.sessions.first!, to: "   ")
@@ -219,7 +312,10 @@ struct SessionListViewModelTests {
     @Test func updateSessionKeepsSecretWhenNewSecretIsNilOrEmpty() throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let stored = vm.save(name: "s", host: "h", port: 22, username: "u", password: "keep")!
+        let stored = vm.save(
+            name: "s",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "keep")!
         var updated = stored
         updated.host = "h2"
         vm.updateSession(updated, newSecret: nil)
@@ -235,11 +331,20 @@ struct SessionListViewModelTests {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let group = vm.createGroup(named: "Prod")!
-        _ = vm.save(name: "a", host: "h1", port: 22, username: "u", password: "pw",
-                    groupID: group.id)!
-        let b = vm.save(name: "b", host: "h2", port: 22, username: "u", password: "pw",
-                        groupID: group.id)!
-        let c = vm.save(name: "c", host: "h3", port: 22, username: "u", password: "pw")!
+        _ = vm.save(
+            name: "a",
+            values: sshValues(host: "h1", port: 22, username: "u"),
+            password: "pw",
+            groupID: group.id)!
+        let b = vm.save(
+            name: "b",
+            values: sshValues(host: "h2", port: 22, username: "u"),
+            password: "pw",
+            groupID: group.id)!
+        let c = vm.save(
+            name: "c",
+            values: sshValues(host: "h3", port: 22, username: "u"),
+            password: "pw")!
         // Only one session keeps its password in the keychain; the other two
         // simulate a missing secret (e.g. deleted out-of-band).
         try secrets.deletePassword(for: b.id)
@@ -270,8 +375,10 @@ struct SessionListViewModelTests {
     @Test func applyImportCreatesEverythingAdditively() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let existing = vm.save(name: "existing", host: "other.example.com", port: 22,
-                               username: "u", password: "keep")!
+        let existing = vm.save(
+            name: "existing",
+            values: sshValues(host: "other.example.com", port: 22, username: "u"),
+            password: "keep")!
 
         let plan = SessionImportPlan(
             groupsToCreate: [StoredGroup(name: "Imported")],
@@ -310,8 +417,10 @@ struct SessionListViewModelTests {
     @Test func replacingWithoutASecretRemovesTheStaleOne() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let existing = vm.save(name: "web", host: "old.example.com", port: 22,
-                               username: "u", password: "old-pw")!
+        let existing = vm.save(
+            name: "web",
+            values: sshValues(host: "old.example.com", port: 22, username: "u"),
+            password: "old-pw")!
 
         let replacement = sshSession(
             id: existing.id, name: "web", host: "new.example.com", username: "u2")
@@ -337,8 +446,10 @@ struct SessionListViewModelTests {
     @Test func replacingWithAnEmptyPasswordRemovesTheStaleOne() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let existing = vm.save(name: "web", host: "old.example.com", port: 22,
-                               username: "u", password: "old-pw")!
+        let existing = vm.save(
+            name: "web",
+            values: sshValues(host: "old.example.com", port: 22, username: "u"),
+            password: "old-pw")!
 
         let replacement = sshSession(
             id: existing.id, name: "web", host: "new.example.com", username: "u2")
@@ -359,8 +470,10 @@ struct SessionListViewModelTests {
     @Test func replacingWithASecretOverwritesIt() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let existing = vm.save(name: "web", host: "old.example.com", port: 22,
-                               username: "u", password: "old-pw")!
+        let existing = vm.save(
+            name: "web",
+            values: sshValues(host: "old.example.com", port: 22, username: "u"),
+            password: "old-pw")!
 
         let replacement = sshSession(
             id: existing.id, name: "web", host: "new.example.com", username: "u2")
@@ -391,8 +504,10 @@ struct SessionListViewModelTests {
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: secrets,
             loginSetStore: LoginSetStore(directory: dir))
-        let existing = vm.save(name: "web", host: "old.example.com", port: 22,
-                               username: "u", password: "old-pw")!
+        let existing = vm.save(
+            name: "web",
+            values: sshValues(host: "old.example.com", port: 22, username: "u"),
+            password: "old-pw")!
         #expect(secrets.peek(existing.id) == "old-pw")
 
         let result = vm.applyImport(SessionImportPlan(
@@ -420,8 +535,10 @@ struct SessionListViewModelTests {
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: secrets,
             loginSetStore: LoginSetStore(directory: dir))
-        let existing = vm.save(name: "web", host: "old.example.com", port: 22,
-                               username: "u", password: "old-pw")!
+        let existing = vm.save(
+            name: "web",
+            values: sshValues(host: "old.example.com", port: 22, username: "u"),
+            password: "old-pw")!
 
         let result = vm.applyImport(SessionImportPlan(
             sessionsToImport: [
@@ -451,7 +568,10 @@ struct SessionListViewModelTests {
     @Test func aFreshImportWithoutAPasswordRemovesNothing() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let existing = vm.save(name: "keep", host: "h", port: 22, username: "u", password: "kept")!
+        let existing = vm.save(
+            name: "keep",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "kept")!
         let fresh = sshSession(name: "new", host: "h2", username: "u")
         try secrets.savePassword("orphaned-but-not-ours-to-delete", for: fresh.id)
 
@@ -473,8 +593,12 @@ struct SessionListViewModelTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let oldJump = StoredSession.JumpSpec(
             host: "bastion", port: 22, username: "j", authKind: .password)
-        let existing = vm.save(name: "web", host: "h", port: 22, username: "u",
-                               password: "pw", jump: oldJump, jumpSecret: "jump-pw")!
+        let existing = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: oldJump,
+            jumpSecret: "jump-pw")!
         let storedJumpID = try #require(vm.sessions.first { $0.id == existing.id }?.jump?.secretID)
         #expect(try secrets.password(for: storedJumpID) == "jump-pw")
 
@@ -583,8 +707,11 @@ struct SessionListViewModelTests {
         vm.saveLoginSet(set, secret: "s3cr3t")
         #expect(vm.loginSets.map(\.id) == [set.id])
 
-        let stored = vm.save(name: "web", host: "h", port: 22, username: "ignored",
-                             password: "should-not-be-stored", loginSetID: set.id)!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "ignored"),
+            password: "should-not-be-stored",
+            loginSetID: set.id)!
 
         #expect(stored.loginSetID == set.id)
         #expect(try secrets.password(for: stored.id) == nil)
@@ -596,10 +723,16 @@ struct SessionListViewModelTests {
         let set = LoginSet(name: "Deploy Key", username: "deploy", authKind: .privateKey, keyPath: "/k")
         vm.saveLoginSet(set, secret: "pp")
 
-        let a = vm.save(name: "a", host: "h1", port: 22, username: "ignored",
-                        password: "", loginSetID: set.id)!
-        let b = vm.save(name: "b", host: "h2", port: 22, username: "ignored",
-                        password: "", loginSetID: set.id)!
+        let a = vm.save(
+            name: "a",
+            values: sshValues(host: "h1", port: 22, username: "ignored"),
+            password: "",
+            loginSetID: set.id)!
+        let b = vm.save(
+            name: "b",
+            values: sshValues(host: "h2", port: 22, username: "ignored"),
+            password: "",
+            loginSetID: set.id)!
         #expect(vm.usageCount(of: set.id) == 2)
         #expect(Set(vm.sessionsUsing(setID: set.id).map(\.id)) == Set([a.id, b.id]))
 
@@ -630,10 +763,16 @@ struct SessionListViewModelTests {
         let set = LoginSet(name: "Root", username: "root")
         vm.saveLoginSet(set, secret: "s3cr3t")
 
-        let a = vm.save(name: "a", host: "h1", port: 22, username: "ignored",
-                        password: "", loginSetID: set.id)!
-        let b = vm.save(name: "b", host: "h2", port: 22, username: "ignored",
-                        password: "", loginSetID: set.id)!
+        let a = vm.save(
+            name: "a",
+            values: sshValues(host: "h1", port: 22, username: "ignored"),
+            password: "",
+            loginSetID: set.id)!
+        let b = vm.save(
+            name: "b",
+            values: sshValues(host: "h2", port: 22, username: "ignored"),
+            password: "",
+            loginSetID: set.id)!
         secrets.failingSessionID = b.id
 
         let result = vm.deleteLoginSet(set)
@@ -656,8 +795,14 @@ struct SessionListViewModelTests {
             store: SessionStore(directory: dir), secrets: secrets,
             loginSetStore: LoginSetStore(directory: dir))
 
-        let a = vm.save(name: "a", host: "h1", port: 22, username: "root", password: "a")!
-        let b = vm.save(name: "b", host: "h2", port: 22, username: "root", password: "a")!
+        let a = vm.save(
+            name: "a",
+            values: sshValues(host: "h1", port: 22, username: "root"),
+            password: "a")!
+        let b = vm.save(
+            name: "b",
+            values: sshValues(host: "h2", port: 22, username: "root"),
+            password: "a")!
         // Only the two existing session ids may be written from here on --
         // the new set's (never-before-seen) id will throw, simulating a
         // keychain failure specifically while carrying the secret onto it.
@@ -688,10 +833,14 @@ struct SessionListViewModelTests {
         // still carry `b`'s secret onto the new set rather than silently
         // dropping it because the naive "always use the first session"
         // picked a secret-less source.
-        let a = vm.save(name: "a", host: "h1", port: 22, username: "root",
-                        password: "irrelevant", authKind: .privateKey, keyPath: "/k")!
-        _ = vm.save(name: "b", host: "h2", port: 22, username: "root",
-                   password: "passphrase", authKind: .privateKey, keyPath: "/k")!
+        let a = vm.save(
+            name: "a",
+            values: sshValues(host: "h1", port: 22, username: "root", authKind: .privateKey, keyPath: "/k"),
+            password: "irrelevant")!
+        _ = vm.save(
+            name: "b",
+            values: sshValues(host: "h2", port: 22, username: "root", authKind: .privateKey, keyPath: "/k"),
+            password: "passphrase")!
         try secrets.deletePassword(for: a.id)
 
         let candidates = vm.mergeCandidates()
@@ -708,8 +857,14 @@ struct SessionListViewModelTests {
     @Test func applyMergeCreatesSetAndRewires() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let a = vm.save(name: "a", host: "h1", port: 22, username: "root", password: "a")!
-        let b = vm.save(name: "b", host: "h2", port: 22, username: "root", password: "a")!
+        let a = vm.save(
+            name: "a",
+            values: sshValues(host: "h1", port: 22, username: "root"),
+            password: "a")!
+        let b = vm.save(
+            name: "b",
+            values: sshValues(host: "h2", port: 22, username: "root"),
+            password: "a")!
 
         let candidates = vm.mergeCandidates()
         #expect(candidates.count == 1)
@@ -740,8 +895,14 @@ struct SessionListViewModelTests {
     @Test func ignoreMergePersists() throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        _ = vm.save(name: "a", host: "h1", port: 22, username: "root", password: "a")!
-        _ = vm.save(name: "b", host: "h2", port: 22, username: "root", password: "a")!
+        _ = vm.save(
+            name: "a",
+            values: sshValues(host: "h1", port: 22, username: "root"),
+            password: "a")!
+        _ = vm.save(
+            name: "b",
+            values: sshValues(host: "h2", port: 22, username: "root"),
+            password: "a")!
 
         #expect(vm.mergeCandidates().count == 1)
         let candidate = vm.mergeCandidates().first!
@@ -755,8 +916,11 @@ struct SessionListViewModelTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let set = LoginSet(name: "Deploy", username: "deploy")
         vm.saveLoginSet(set, secret: "s")
-        let stored = vm.save(name: "web", host: "h", port: 22, username: "ignored",
-                             password: "", loginSetID: set.id)!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "ignored"),
+            password: "",
+            loginSetID: set.id)!
 
         let withSecret = vm.exportPayload(for: .single(stored), includeGroups: false, includePasswords: true)
         #expect(withSecret.payload.sessions.first?.username == "deploy")
@@ -773,8 +937,11 @@ struct SessionListViewModelTests {
     @Test func resolvedLoginMissingSetThrows() throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let stored = vm.save(name: "web", host: "h", port: 22, username: "ignored",
-                             password: "", loginSetID: UUID())!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "ignored"),
+            password: "",
+            loginSetID: UUID())!
 
         #expect(throws: LoginResolveError.missingSet) {
             try vm.resolvedCredentials(for: stored)
@@ -787,11 +954,18 @@ struct SessionListViewModelTests {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
-        let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw",
-                             jump: jump, jumpSecret: "jp")!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: jump,
+            jumpSecret: "jp")!
         #expect(try secrets.password(for: jump.secretID) == "jp")
 
-        _ = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw")
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw")
 
         #expect(try secrets.password(for: jump.secretID) == nil)
         #expect(vm.sessions.first { $0.id == stored.id }?.jump == nil)
@@ -803,13 +977,21 @@ struct SessionListViewModelTests {
         let set = LoginSet(name: "Bastion", username: "jumper")
         vm.saveLoginSet(set, secret: "s")
         let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
-        _ = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw",
-                   jump: jump, jumpSecret: "jp")!
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: jump,
+            jumpSecret: "jp")!
         #expect(try secrets.password(for: jump.secretID) == "jp")
 
         let setJump = StoredSession.JumpSpec(
             host: "bastion.example.com", username: "unused", loginSetID: set.id)
-        _ = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw", jump: setJump)
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: setJump)
 
         #expect(try secrets.password(for: jump.secretID) == nil)
         #expect(vm.sessions.first?.jump?.loginSetID == set.id)
@@ -819,8 +1001,12 @@ struct SessionListViewModelTests {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
-        let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw",
-                             jump: jump, jumpSecret: "jp")!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: jump,
+            jumpSecret: "jp")!
         #expect(try secrets.password(for: jump.secretID) == "jp")
 
         vm.delete(stored)
@@ -836,8 +1022,11 @@ struct SessionListViewModelTests {
 
         let jump = StoredSession.JumpSpec(
             host: "bastion.example.com", username: "unused", loginSetID: set.id)
-        let stored = vm.save(name: "web", host: "target.example.com", port: 22, username: "u",
-                             password: "pw", jump: jump)!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "target.example.com", port: 22, username: "u"),
+            password: "pw",
+            jump: jump)!
         #expect(vm.usageCount(of: set.id) == 1)
 
         let result = vm.deleteLoginSet(set)
@@ -863,8 +1052,12 @@ struct SessionListViewModelTests {
 
         let jump = StoredSession.JumpSpec(
             host: "bastion.example.com", username: "unused", loginSetID: set.id)
-        let stored = vm.save(name: "web", host: "target.example.com", port: 22, username: "ignored",
-                             password: "", loginSetID: set.id, jump: jump)!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "target.example.com", port: 22, username: "ignored"),
+            password: "",
+            loginSetID: set.id,
+            jump: jump)!
         #expect(vm.usageCount(of: set.id) == 1) // counted once despite two references
 
         let result = vm.deleteLoginSet(set)
@@ -896,13 +1089,18 @@ struct SessionListViewModelTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let set = LoginSet(name: "Bastion", username: "jumper")
         vm.saveLoginSet(set, secret: "pp")
-        let bastion = vm.save(name: "bastion", host: "bastion.example.com", port: 22,
-                              username: "jumper", password: "pp")!
+        let bastion = vm.save(
+            name: "bastion",
+            values: sshValues(host: "bastion.example.com", port: 22, username: "jumper"),
+            password: "pp")!
 
         let jump = StoredSession.JumpSpec(
             host: "unused", username: "unused", loginSetID: set.id, sessionID: bastion.id)
-        let stored = vm.save(name: "web", host: "target.example.com", port: 22, username: "u",
-                             password: "pw", jump: jump)!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "target.example.com", port: 22, username: "u"),
+            password: "pw",
+            jump: jump)!
 
         #expect(vm.sessionsUsing(setID: set.id).map(\.id) == [])
         #expect(vm.usageCount(of: set.id) == 0)
@@ -926,8 +1124,11 @@ struct SessionListViewModelTests {
         vm.saveLoginSet(set, secret: "jp")
         let jump = StoredSession.JumpSpec(
             host: "bastion.example.com", port: 2222, username: "unused", loginSetID: set.id)
-        let stored = vm.save(name: "web", host: "target.example.com", port: 22, username: "u",
-                             password: "pw", jump: jump)!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "target.example.com", port: 22, username: "u"),
+            password: "pw",
+            jump: jump)!
 
         let withJump = vm.exportPayload(for: .single(stored), includeGroups: false, includePasswords: true)
         let exportedJump = withJump.payload.sessions.first!
@@ -938,7 +1139,10 @@ struct SessionListViewModelTests {
         #expect(exportedJump.jumpPassword == "jp")
         #expect(withJump.missingPasswordCount == 0)
 
-        let noJump = vm.save(name: "plain", host: "h2", port: 22, username: "u", password: "pw")!
+        let noJump = vm.save(
+            name: "plain",
+            values: sshValues(host: "h2", port: 22, username: "u"),
+            password: "pw")!
         let withoutJump = vm.exportPayload(for: .single(noJump), includeGroups: false, includePasswords: true)
         let exportedPlain = withoutJump.payload.sessions.first!
         #expect(exportedPlain.jumpHost == nil)
@@ -1195,10 +1399,16 @@ struct SessionListViewModelTests {
     @Test func saveSwitchingTargetToAgentDeletesSessionSecret() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw")!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw")!
         #expect(try secrets.password(for: stored.id) == "pw")
 
-        _ = vm.save(name: "web", host: "h", port: 22, username: "u", password: "", authKind: .agent)
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u", authKind: .agent),
+            password: "")
 
         #expect(try secrets.password(for: stored.id) == nil)
         #expect(vm.sessions.first?.authKind == .agent)
@@ -1207,7 +1417,10 @@ struct SessionListViewModelTests {
     @Test func updateSessionSwitchingTargetToAgentDeletesSessionSecret() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw")!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw")!
         var updated = stored
         updated.authKind = .agent
 
@@ -1221,8 +1434,12 @@ struct SessionListViewModelTests {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
-        _ = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw",
-                   jump: jump, jumpSecret: "jp")!
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: jump,
+            jumpSecret: "jp")!
         #expect(try secrets.password(for: jump.secretID) == "jp")
 
         // Same secretID, but the jump now switches to agent mode -- the old
@@ -1231,7 +1448,11 @@ struct SessionListViewModelTests {
         // `cleanOrphanedJumpSlot` already covered).
         let agentJump = StoredSession.JumpSpec(
             host: "bastion.example.com", username: "jumper", authKind: .agent, secretID: jump.secretID)
-        _ = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw", jump: agentJump)
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: agentJump)
 
         #expect(try secrets.password(for: jump.secretID) == nil)
         #expect(vm.sessions.first?.jump?.authKind == .agent)
@@ -1247,12 +1468,18 @@ struct SessionListViewModelTests {
     @Test func saveJumpSwitchingManualToSessionDeletesJumpSecretSlot() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let bastion = vm.save(name: "bastion", host: "b.example.com", port: 22,
-                              username: "root", password: "bp")!
+        let bastion = vm.save(
+            name: "bastion",
+            values: sshValues(host: "b.example.com", port: 22, username: "root"),
+            password: "bp")!
 
         let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
-        _ = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw",
-                   jump: jump, jumpSecret: "jp")!
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: jump,
+            jumpSecret: "jp")!
         #expect(try secrets.password(for: jump.secretID) == "jp")
 
         // Same secretID (carried forward as an inert data carrier), but the
@@ -1260,7 +1487,11 @@ struct SessionListViewModelTests {
         let sessionJump = StoredSession.JumpSpec(
             host: "bastion.example.com", username: "jumper",
             secretID: jump.secretID, sessionID: bastion.id)
-        _ = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw", jump: sessionJump)
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: sessionJump)
 
         #expect(try secrets.password(for: jump.secretID) == nil)
         #expect(vm.sessions.first(where: { $0.name == "web" })?.jump?.sessionID == bastion.id)
@@ -1274,13 +1505,19 @@ struct SessionListViewModelTests {
     @Test func sessionModeJumpNeverStoresASecretEvenIfOffered() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let bastion = vm.save(name: "bastion", host: "b.example.com", port: 22,
-                              username: "root", password: "bp")!
+        let bastion = vm.save(
+            name: "bastion",
+            values: sshValues(host: "b.example.com", port: 22, username: "root"),
+            password: "bp")!
 
         let sessionJump = StoredSession.JumpSpec(
             host: "ignored", username: "ignored", sessionID: bastion.id)
-        let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw",
-                             jump: sessionJump, jumpSecret: "leaked-on-save")!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: sessionJump,
+            jumpSecret: "leaked-on-save")!
         #expect(try secrets.password(for: sessionJump.secretID) == nil)
 
         var updated = stored
@@ -1294,8 +1531,12 @@ struct SessionListViewModelTests {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
-        let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw",
-                             jump: jump, jumpSecret: "jp")!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: jump,
+            jumpSecret: "jp")!
         #expect(try secrets.password(for: jump.secretID) == "jp")
 
         var updated = stored
@@ -1308,8 +1549,10 @@ struct SessionListViewModelTests {
     @Test func saveNeverStoresPasswordForAgentTarget() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "leaked",
-                             authKind: .agent)!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u", authKind: .agent),
+            password: "leaked")!
 
         #expect(try secrets.password(for: stored.id) == nil)
     }
@@ -1318,8 +1561,12 @@ struct SessionListViewModelTests {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper", authKind: .agent)
-        _ = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw",
-                   jump: jump, jumpSecret: "leaked")!
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: jump,
+            jumpSecret: "leaked")!
 
         #expect(try secrets.password(for: jump.secretID) == nil)
     }
@@ -1327,8 +1574,10 @@ struct SessionListViewModelTests {
     @Test func exportPayloadSkipsSecretForAgentAndDoesNotCountMissing() throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "",
-                             authKind: .agent)!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u", authKind: .agent),
+            password: "")!
 
         let result = vm.exportPayload(for: .single(stored), includeGroups: false, includePasswords: true)
 
@@ -1341,8 +1590,11 @@ struct SessionListViewModelTests {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper", authKind: .agent)
-        let stored = vm.save(name: "web", host: "target.example.com", port: 22, username: "u",
-                             password: "pw", jump: jump)!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "target.example.com", port: 22, username: "u"),
+            password: "pw",
+            jump: jump)!
 
         let result = vm.exportPayload(for: .single(stored), includeGroups: false, includePasswords: true)
 
@@ -1356,8 +1608,11 @@ struct SessionListViewModelTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let set = LoginSet(name: "Agent Set", username: "deploy", authKind: .agent)
         vm.saveLoginSet(set, secret: nil)
-        let stored = vm.save(name: "web", host: "h", port: 22, username: "ignored",
-                             password: "", loginSetID: set.id)!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "ignored"),
+            password: "",
+            loginSetID: set.id)!
 
         let result = vm.deleteLoginSet(set)
 
@@ -1385,8 +1640,11 @@ struct SessionListViewModelTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let set = LoginSet(name: "Agent", username: "deploy", authKind: .agent)
         vm.saveLoginSet(set, secret: nil)
-        let stored = vm.save(name: "web", host: "h", port: 22, username: "ignored",
-                             password: "", loginSetID: set.id)!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "ignored"),
+            password: "",
+            loginSetID: set.id)!
 
         // M22/T9: `resolvedLogin` collapsed into `resolvedCredentials`, which
         // returns the backend's own field values. An agent set has no visible
@@ -1422,8 +1680,11 @@ struct SessionListViewModelTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         var set = LoginSet(name: "Root", username: "root")
         vm.saveLoginSet(set, secret: "s3cr3t")
-        let stored = vm.save(name: "web", host: "h", port: 22, username: "ignored",
-                             password: "", loginSetID: set.id)!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "ignored"),
+            password: "",
+            loginSetID: set.id)!
 
         set.authKind = .agent
         vm.saveLoginSet(set, secret: nil)
@@ -1447,8 +1708,11 @@ struct SessionListViewModelTests {
         vm.saveLoginSet(set, secret: "s3cr3t")
         let jump = StoredSession.JumpSpec(
             host: "bastion.example.com", username: "unused", loginSetID: set.id)
-        let stored = vm.save(name: "web", host: "target.example.com", port: 22, username: "u",
-                             password: "pw", jump: jump)!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "target.example.com", port: 22, username: "u"),
+            password: "pw",
+            jump: jump)!
 
         set.authKind = .agent
         vm.saveLoginSet(set, secret: nil)
@@ -1467,8 +1731,14 @@ struct SessionListViewModelTests {
     @Test func applyMergeCreatesAgentSetWithoutSecretRead() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let a = vm.save(name: "a", host: "h1", port: 22, username: "root", password: "", authKind: .agent)!
-        let b = vm.save(name: "b", host: "h2", port: 22, username: "root", password: "", authKind: .agent)!
+        let a = vm.save(
+            name: "a",
+            values: sshValues(host: "h1", port: 22, username: "root", authKind: .agent),
+            password: "")!
+        let b = vm.save(
+            name: "b",
+            values: sshValues(host: "h2", port: 22, username: "root", authKind: .agent),
+            password: "")!
 
         let candidates = vm.mergeCandidates()
         #expect(candidates.count == 1)
@@ -1487,13 +1757,19 @@ struct SessionListViewModelTests {
     @Test func resolvedJumpLoginResolvesOrThrows() throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let stored = vm.save(name: "web", host: "h", port: 22, username: "u", password: "pw")!
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw")!
         #expect(try vm.resolvedJumpLogin(for: stored) == nil)
 
         let jump = StoredSession.JumpSpec(
             host: "bastion.example.com", username: "unused", loginSetID: UUID())
-        let withJump = vm.save(name: "web2", host: "h2", port: 22, username: "u", password: "pw",
-                               jump: jump)!
+        let withJump = vm.save(
+            name: "web2",
+            values: sshValues(host: "h2", port: 22, username: "u"),
+            password: "pw",
+            jump: jump)!
         #expect(throws: LoginResolveError.missingSet) {
             _ = try vm.resolvedJumpLogin(for: withJump)
         }
@@ -1504,16 +1780,32 @@ struct SessionListViewModelTests {
     @Test func sessionsUsingAsJumpFindsReferences() throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let bastion = vm.save(name: "bastion", host: "b", port: 22, username: "u", password: "p")!
-        let other = vm.save(name: "other", host: "o", port: 22, username: "u", password: "p")!
+        let bastion = vm.save(
+            name: "bastion",
+            values: sshValues(host: "b", port: 22, username: "u"),
+            password: "p")!
+        let other = vm.save(
+            name: "other",
+            values: sshValues(host: "o", port: 22, username: "u"),
+            password: "p")!
         let jumpToBastion = StoredSession.JumpSpec(
             host: "ignored", username: "ignored", sessionID: bastion.id)
-        let a = vm.save(name: "a", host: "ta", port: 22, username: "u", password: "pw",
-                        jump: jumpToBastion)!
+        let a = vm.save(
+            name: "a",
+            values: sshValues(host: "ta", port: 22, username: "u"),
+            password: "pw",
+            jump: jumpToBastion)!
         let jumpToOther = StoredSession.JumpSpec(
             host: "ignored", username: "ignored", sessionID: other.id)
-        let b = vm.save(name: "b", host: "tb", port: 22, username: "u", password: "pw", jump: jumpToOther)!
-        _ = vm.save(name: "plain", host: "tp", port: 22, username: "u", password: "pw")!
+        let b = vm.save(
+            name: "b",
+            values: sshValues(host: "tb", port: 22, username: "u"),
+            password: "pw",
+            jump: jumpToOther)!
+        _ = vm.save(
+            name: "plain",
+            values: sshValues(host: "tp", port: 22, username: "u"),
+            password: "pw")!
 
         #expect(Set(vm.sessionsUsingAsJump(bastion.id).map(\.id)) == Set([a.id]))
         #expect(vm.sessionsUsingAsJump(other.id).map(\.id) == [b.id])
@@ -1522,14 +1814,24 @@ struct SessionListViewModelTests {
     @Test func deleteRestoresJumpReferences() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let bastion = vm.save(name: "bastion", host: "b.example.com", port: 2022,
-                              username: "deploy", password: "s")!
+        let bastion = vm.save(
+            name: "bastion",
+            values: sshValues(host: "b.example.com", port: 2022, username: "deploy"),
+            password: "s")!
         let jumpA = StoredSession.JumpSpec(
             host: "ignored", username: "ignored", sessionID: bastion.id)
-        let a = vm.save(name: "a", host: "ta", port: 22, username: "u", password: "pw", jump: jumpA)!
+        let a = vm.save(
+            name: "a",
+            values: sshValues(host: "ta", port: 22, username: "u"),
+            password: "pw",
+            jump: jumpA)!
         let jumpB = StoredSession.JumpSpec(
             host: "ignored2", username: "ignored2", sessionID: bastion.id)
-        let b = vm.save(name: "b", host: "tb", port: 22, username: "u", password: "pw", jump: jumpB)!
+        let b = vm.save(
+            name: "b",
+            values: sshValues(host: "tb", port: 22, username: "u"),
+            password: "pw",
+            jump: jumpB)!
 
         let result = vm.delete(bastion)
 
@@ -1556,11 +1858,17 @@ struct SessionListViewModelTests {
             store: SessionStore(directory: dir), secrets: secrets,
             loginSetStore: LoginSetStore(directory: dir))
 
-        let bastion = vm.save(name: "bastion", host: "b.example.com", port: 2022,
-                              username: "deploy", password: "", authKind: .agent)!
+        let bastion = vm.save(
+            name: "bastion",
+            values: sshValues(host: "b.example.com", port: 2022, username: "deploy", authKind: .agent),
+            password: "")!
         let jump = StoredSession.JumpSpec(
             host: "ignored", username: "ignored", sessionID: bastion.id)
-        let a = vm.save(name: "a", host: "ta", port: 22, username: "u", password: "pw", jump: jump)!
+        let a = vm.save(
+            name: "a",
+            values: sshValues(host: "ta", port: 22, username: "u"),
+            password: "pw",
+            jump: jump)!
 
         let result = vm.delete(bastion)
 
@@ -1580,11 +1888,17 @@ struct SessionListViewModelTests {
             store: SessionStore(directory: dir), secrets: secrets,
             loginSetStore: LoginSetStore(directory: dir))
 
-        let bastion = vm.save(name: "bastion", host: "b.example.com", port: 2022,
-                              username: "deploy", password: "s")!
+        let bastion = vm.save(
+            name: "bastion",
+            values: sshValues(host: "b.example.com", port: 2022, username: "deploy"),
+            password: "s")!
         let jump = StoredSession.JumpSpec(
             host: "ignored", username: "ignored", sessionID: bastion.id)
-        let a = vm.save(name: "a", host: "ta", port: 22, username: "u", password: "pw", jump: jump)!
+        let a = vm.save(
+            name: "a",
+            values: sshValues(host: "ta", port: 22, username: "u"),
+            password: "pw",
+            jump: jump)!
         secrets.failingSessionID = jump.secretID
 
         let result = vm.delete(bastion)
@@ -1600,12 +1914,17 @@ struct SessionListViewModelTests {
     @Test func exportResolvesSessionJump() throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let bastion = vm.save(name: "bastion", host: "b.example.com", port: 2022,
-                              username: "deploy", password: "s")!
+        let bastion = vm.save(
+            name: "bastion",
+            values: sshValues(host: "b.example.com", port: 2022, username: "deploy"),
+            password: "s")!
         let jump = StoredSession.JumpSpec(
             host: "ignored", username: "ignored", sessionID: bastion.id)
-        let target = vm.save(name: "web", host: "target.example.com", port: 22, username: "u",
-                             password: "pw", jump: jump)!
+        let target = vm.save(
+            name: "web",
+            values: sshValues(host: "target.example.com", port: 22, username: "u"),
+            password: "pw",
+            jump: jump)!
 
         let exported = vm.exportPayload(for: .single(target), includeGroups: false, includePasswords: true)
         let payload = exported.payload.sessions.first!
@@ -1621,8 +1940,11 @@ struct SessionListViewModelTests {
         // values and never aborts the export.
         let danglingJump = StoredSession.JumpSpec(
             host: "own-host", port: 2121, username: "own-user", sessionID: UUID())
-        let target2 = vm.save(name: "web2", host: "target2.example.com", port: 22, username: "u",
-                              password: "pw", jump: danglingJump)!
+        let target2 = vm.save(
+            name: "web2",
+            values: sshValues(host: "target2.example.com", port: 22, username: "u"),
+            password: "pw",
+            jump: danglingJump)!
         let exported2 = vm.exportPayload(
             for: .single(target2), includeGroups: false, includePasswords: true)
         let payload2 = exported2.payload.sessions.first!

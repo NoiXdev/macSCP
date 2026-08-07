@@ -142,7 +142,9 @@ public final class ConnectionViewModel {
     /// WebDAV's user name is its OWN field, not the SSH one: the two forms
     /// render different schemas now, and the WebDAV row writes
     /// `WebDAVField.username`. Everything else keeps using SSH's — S3 has no
-    /// user name at all and only ever parks the `"unused"` placeholder here.
+    /// user name at all, and since M23/T7 nothing writes one for it either
+    /// (the prefill and save paths used to park the `"unused"` placeholder
+    /// here).
     public var username: String {
         get { kind == .webdav ? values[WebDAVField.username] : values[SSHField.username] }
         set {
@@ -237,6 +239,26 @@ public final class ConnectionViewModel {
         values.merge(resolved)
     }
 
+    /// Fills the active backend's own secret field(s) with a secret resolved
+    /// OUTSIDE the form — the Keychain slot a stored session's connect path
+    /// reads (M23/T7), where the three fill branches each named their own field
+    /// by hand and `password` was the wrong one for S3.
+    ///
+    /// Writes EVERY secret field the active backend declares, which for SSH is
+    /// both the password and the passphrase: the same rule `password`'s setter
+    /// applies, for the same reason — a programmatic fill must not evaporate
+    /// when the auth kind is switched afterwards
+    /// (`userSwitchClearsSecretButProgrammaticSetDoesNot`). S3's secret access
+    /// key and WebDAV's password are one field each.
+    public func fillSecret(_ secret: String) {
+        let descriptor = BackendDescriptor.descriptor(for: kind)
+        let namespace = descriptor.fieldNamespace
+        for field in descriptor.connectionSchema.fields + descriptor.credentialSchema.fields
+        where field.isSecret {
+            values.setRaw("\(namespace).\(field.id)", to: secret)
+        }
+    }
+
     /// Jump host block (M10c/T3, mockup section 2): an optional intermediate
     /// hop the connection tunnels through. Off by default -- a brand-new
     /// form connects directly, exactly as before this feature existed.
@@ -309,10 +331,20 @@ public final class ConnectionViewModel {
     /// Guarded on an ACTUAL change: `exitEditMode()` assigns `.ssh`
     /// unconditionally and is documented to keep the field values for its
     /// callers, which an unguarded reset would wipe.
+    ///
+    /// The jump block goes with it (M23/T7). Its host/port/login live in
+    /// `values` and are wiped by the reset above, but `jumpEnabled` and the
+    /// source/set bookkeeping are stored beside it — and `jumpEnabled` is
+    /// itself a MODE switch, the same sticky-toggle lesson `clearJumpFields()`
+    /// documents. Only the SSH form renders the block, so a jump left on and
+    /// then switched to S3 was invisible while still making `buildJumpSpec()`
+    /// hand a hollow spec (empty host, freshly generated `secretID`) to a
+    /// save path that no longer branches on `kind` to discard it.
     public var kind: ConnectionKind = .ssh {
         didSet {
             guard oldValue != kind else { return }
             values = BackendDescriptor.descriptor(for: kind).defaultValues
+            clearJumpFields()
         }
     }
 
@@ -543,7 +575,12 @@ public final class ConnectionViewModel {
     /// private-key auth, the password under password auth, and NOTHING under
     /// agent auth — where reading a Keychain slot that was never written is
     /// exactly the M10d bug. `visibleSecretField` answers all three.
-    private var resolvedSecret: String {
+    ///
+    /// Public since M23/T7 so the App's ONE save call site can name the secret
+    /// to persist without a `kind` branch of its own: the S3 save branch read
+    /// `s3SecretAccessKey`, the WebDAV one `password`, and each was a second
+    /// truth about which field this backend means by "the secret".
+    public var resolvedSecret: String {
         let descriptor = BackendDescriptor.descriptor(for: kind)
         let namespace = descriptor.fieldNamespace
         let field = descriptor.connectionSchema
@@ -732,54 +769,37 @@ public final class ConnectionViewModel {
     /// is deliberately NEVER loaded from the keychain — `password` stays
     /// empty; an empty password at save time means "leave unchanged" (see
     /// `validateForEditSave`/`ContentView.onSaveEdited`).
+    ///
+    /// One reset plus one fill, for every protocol (M23/T7) — the read
+    /// counterpart to `validateForEditSave`'s single `descriptor.apply`.
     public func beginEditing(_ stored: StoredSession) {
         editingOriginal = stored
         kind = stored.kind
-        host = stored.host
-        port = String(stored.port)
-        username = stored.username
-        authChoice = Self.authChoice(for: stored.authKind)
-        keyPath = stored.keyPath ?? ""
+        // Starting from the descriptor's defaults is what the hand-written S3
+        // and WebDAV `else` branches used to do field by field: a previous S3
+        // edit's bucket must not survive into this (possibly SSH) session's
+        // form, because `kind` is itself a mode switch. The `kind` setter's own
+        // reset above cannot carry this alone -- it is guarded on an ACTUAL
+        // change, so two consecutive edits of the same kind would keep the
+        // previous one's values.
+        //
+        // `sessionValues` returns the EMPTY bag for a session whose `kind` says
+        // one thing but whose stored block is missing, so merging it onto the
+        // defaults leaves a blank form -- the right answer for inconsistent
+        // data, and better than the old `?? ""` fallbacks that silently
+        // produced a half-filled one. It also never copies `host`/`username`
+        // for a non-SSH session, which is where the `"unused"` placeholder a
+        // legacy S3/WebDAV session still carries used to enter the form.
+        let descriptor = BackendDescriptor.descriptor(for: kind)
+        values = descriptor.defaultValues
+        values.merge(descriptor.sessionValues(stored))
+        // The secret is deliberately NEVER loaded from the keychain: an empty
+        // secret at save time means "leave unchanged" (see
+        // `validateForEditSave`). `defaultValues` above already left every
+        // secret field blank, so this is the assertion, not the action.
+        password = ""
         saveName = stored.name
         selectedGroupID = stored.groupID
-        password = ""
-        // S3 fields (M12/T7a): populated only for an `.s3` session, guarding
-        // a nil `stored.s3` (legacy/inconsistent data) the same defensive
-        // way as the `?? ""` fallbacks above. A non-S3 session resets these
-        // to blank -- the same sticky-toggle lesson `clearJumpFields()`
-        // documents above: a previous S3 edit's fields must not survive
-        // into this (possibly SSH) session's form. The secret is NEVER
-        // loaded from the keychain -- same "empty means unchanged" rule as
-        // `password` above.
-        if stored.kind == .s3, let s3 = stored.s3 {
-            s3Endpoint = s3.endpoint
-            s3Region = s3.region
-            s3Bucket = s3.bucket
-            s3AccessKeyID = s3.accessKeyID
-            s3UsePathStyle = s3.usePathStyle
-        } else {
-            s3Endpoint = ""
-            s3Region = ""
-            s3Bucket = ""
-            s3AccessKeyID = ""
-            s3UsePathStyle = false
-        }
-        s3SecretAccessKey = ""
-        // WebDAV fields (M21/T9): same defensive/sticky-toggle shape as the
-        // S3 block above. Unlike S3, the real username lives on
-        // `stored.webdav.username` (the shared `username` field above was
-        // just set to `stored.username`, the "unused" S3-style placeholder
-        // for a WebDAV session) -- so this branch OVERRIDES it back to the
-        // real value. The password is never loaded from the keychain here
-        // either (`password` was already reset to "" above).
-        if stored.kind == .webdav, let webdav = stored.webdav {
-            webdavBaseURL = webdav.baseURL
-            username = webdav.username
-            webdavUseNextcloudPath = webdav.useNextcloudPath
-        } else {
-            webdavBaseURL = ""
-            webdavUseNextcloudPath = false
-        }
         // A referenced login set (M10b/T3) puts the form straight into Set
         // mode with that set preselected; a manual session goes to Manual
         // exactly as before — see the doc comment on `loginMode`.

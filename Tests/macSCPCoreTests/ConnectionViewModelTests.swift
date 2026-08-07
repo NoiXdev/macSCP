@@ -978,14 +978,14 @@ struct ConnectionViewModelTests {
             baseURL: "https://dav.example.com/dav", username: "dave", useNextcloudPath: true))
     }
 
-    /// Pins the statement-order dependency the reviewer flagged in
-    /// `beginEditing`: the shared `username` field is set from
-    /// `stored.username` (the "unused" placeholder every WebDAV session
-    /// carries there, same as S3) FIRST, and only OVERRIDDEN by
-    /// `stored.webdav.username` inside the `.webdav` branch. Using two
-    /// different names for `stored.username` and `stored.webdav.username`
-    /// here means this test would fail if a future refactor reordered or
-    /// merged the S3/WebDAV blocks and dropped the override.
+    /// The shared `username` property must resolve to WebDAV's OWN field, not
+    /// to `stored.username` (the "unused" placeholder every WebDAV session
+    /// carries there, same as S3). This used to be a statement-order
+    /// dependency inside `beginEditing` — the shared field was filled first and
+    /// OVERRIDDEN by the `.webdav` branch afterwards; since M23/T7 it is the
+    /// descriptor's own `sessionValues`, which never reads `stored.username`
+    /// for a WebDAV session at all. The fixture deliberately uses two different
+    /// names for the two, so reading the wrong one still fails here.
     @Test @MainActor func beginEditingWithWebDAVStoredSessionPopulatesFieldsWithoutTheSecret() {
         let vm = makeVM()
         let webdavConfig = StoredWebDAVConfig(
@@ -1000,6 +1000,106 @@ struct ConnectionViewModelTests {
         #expect(vm.username == "dave")
         #expect(vm.webdavUseNextcloudPath == true)
         #expect(vm.password.isEmpty)
+    }
+
+    // MARK: - One prefill body (M23/T7)
+
+    /// `beginEditing` must not leave one protocol's fields visible in another's
+    /// form — the sticky-toggle lesson the S3 and WebDAV `else` branches spelled
+    /// out by hand. Resetting to the descriptor's defaults says it once.
+    @Test @MainActor func beginEditingLeavesNoFieldsFromThePreviousSession() {
+        let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
+        vm.beginEditing(s3Session(
+            name: "bucket",
+            config: StoredS3Config(
+                accessKeyID: "AKIA", region: "eu-central-1",
+                endpoint: "https://s3.example.com", bucket: "archive",
+                usePathStyle: true)))
+        #expect(vm.s3Bucket == "archive")
+
+        vm.beginEditing(sshSession(name: "prod", host: "example.com", username: "tim"))
+        #expect(vm.kind == .ssh)
+        #expect(vm.host == "example.com")
+        #expect(vm.s3Bucket == "")
+        #expect(vm.s3UsePathStyle == false)
+    }
+
+    /// The same rule for two edits of the SAME kind, which the `kind` setter's
+    /// own reset cannot catch (it is guarded on an actual change): a second S3
+    /// session whose stored block is MISSING must leave a blank form, not the
+    /// previous bucket. `sessionValues` returns the empty bag for that
+    /// inconsistency and the defaults underneath it are what blanks the form.
+    @Test @MainActor func beginEditingSameKindTwiceLeavesNoFieldsFromThePreviousSession() {
+        let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
+        vm.beginEditing(s3Session(
+            name: "bucket",
+            config: StoredS3Config(
+                accessKeyID: "AKIA", region: "eu-central-1",
+                endpoint: "https://s3.example.com", bucket: "archive",
+                usePathStyle: true)))
+        #expect(vm.s3Bucket == "archive")
+
+        var inconsistent = s3Session(name: "broken")
+        inconsistent.s3 = nil
+        vm.beginEditing(inconsistent)
+
+        #expect(vm.kind == .s3)
+        #expect(vm.s3Bucket == "")
+        #expect(vm.s3Region == "")
+        #expect(vm.s3Endpoint == "")
+        #expect(vm.s3AccessKeyID == "")
+        #expect(vm.s3UsePathStyle == false)
+    }
+
+    /// WebDAV's user name lives on its own block, and the secret is NEVER read
+    /// from the Keychain during a prefill.
+    @Test @MainActor func beginEditingFillsWebDAVFromItsOwnBlock() {
+        let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
+        vm.beginEditing(webdavSession(
+            name: "cloud",
+            config: StoredWebDAVConfig(
+                baseURL: "https://nas.example.com/dav",
+                username: "tim", useNextcloudPath: true)))
+        #expect(vm.kind == .webdav)
+        #expect(vm.webdavBaseURL == "https://nas.example.com/dav")
+        #expect(vm.username == "tim")
+        #expect(vm.webdavUseNextcloudPath == true)
+        #expect(vm.password == "")
+    }
+
+    /// The jump toggle is a MODE switch and must not survive a protocol switch
+    /// (M23/T7). `kind`'s own reset already wipes the jump's host/port/login out
+    /// of `values`, but `jumpEnabled` and the source/set bookkeeping live beside
+    /// it — so a jump left on in an SSH form and then switched to S3 used to
+    /// leave `buildJumpSpec()` returning a hollow spec (empty host, fresh
+    /// `secretID`) for a backend with no hop at all. Only the SSH form renders
+    /// the block, so the user could not even see what was about to be saved.
+    @Test @MainActor func switchingProtocolClearsTheJumpBlock() {
+        let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
+        vm.jumpEnabled = true
+        vm.jumpHost = "bastion.example.com"
+        vm.jumpUsername = "tim"
+        vm.jumpSourceMode = .session
+        vm.jumpSessionID = UUID()
+
+        vm.kind = .s3
+
+        #expect(vm.jumpEnabled == false)
+        #expect(vm.jumpHost == "")
+        #expect(vm.jumpSourceMode == .manual)
+        #expect(vm.jumpSessionID == nil)
+        #expect(vm.buildJumpSpec() == nil)
+    }
+
+    /// A prefill must never park the `"unused"` placeholder a legacy non-SSH
+    /// session still carries in `host`/`username` into the form — the S3 form
+    /// does not render those rows, but a later switch to the SSH type would
+    /// show them, and `displaySummary` reads them.
+    @Test @MainActor func beginEditingCopiesNoPlaceholderIntoTheForm() {
+        let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
+        vm.beginEditing(s3Session(name: "bucket"))
+        #expect(vm.values[SSHField.host] == "")
+        #expect(vm.values[SSHField.username] == "")
     }
 
     /// M22/T9: an edit-save must carry the login-set reference forward for
