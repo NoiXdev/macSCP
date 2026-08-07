@@ -752,3 +752,21 @@
 "keys.rename" = "Zmień nazwę…";
 "keys.rename.title" = "Zmień nazwę klucza";
 "keys.rename.error" = "Nie udało się zmienić nazwy klucza.";
+
+/* Ustawienia — sekcja „Wiersz poleceń" (skrót macscp-cli) */
+"settings.section.cli" = "Wiersz poleceń";
+"settings.cli.header" = "Narzędzie wiersza poleceń";
+"settings.cli.status.notInstalled" = "Nie zainstalowano.";
+"settings.cli.status.installed %@" = "Zainstalowano w %@";
+"settings.cli.status.stale" = "Zainstalowano, ale wskazuje inną kopię macSCP.";
+"settings.cli.status.stale.detail %@" = "Obecnie wskazuje: %@";
+"settings.cli.status.occupied %@" = "W %@ znajduje się już coś, co nie jest skrótem.";
+"settings.cli.status.occupied.detail" = "macSCP tego nie nadpisze. Przenieś to lub usuń samodzielnie, a następnie zainstaluj ponownie.";
+"settings.cli.install" = "Zainstaluj";
+"settings.cli.repair" = "Napraw";
+"settings.cli.footer" = "Tworzy skrót o nazwie macscp-cli w ~/.local/bin. Polecenia z tego folderu są znajdowane tylko wtedy, gdy należy on do zmiennej PATH Twojej powłoki — macSCP nie zmienia konfiguracji powłoki.";
+"settings.cli.error.title" = "Instalacja nie powiodła się";
+"settings.cli.systemWide.header" = "Instalacja systemowa";
+"settings.cli.systemWide.intro" = "Aby zainstalować zamiast tego w /usr/local/bin, skopiuj to polecenie i uruchom je w terminalu:";
+"settings.cli.systemWide.copy" = "Kopiuj polecenie";
+"settings.cli.systemWide.footer" = "Ten folder należy do systemu, więc polecenie poprosi o hasło administratora. Sam macSCP nigdy nie żąda uprawnień administratora.";

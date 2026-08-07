@@ -99,11 +99,28 @@ bundle**, so installing macSCP installs it too:
 /Applications/macSCP.app/Contents/MacOS/macscp-cli ls prod:/var/www
 ```
 
-For everyday use, put it on your `PATH` once — for example:
+For everyday use, put it on your `PATH` once. The easiest way is
+**Settings → Command Line → Install**: it creates a shortcut at
+`~/.local/bin/macscp-cli` and tells you afterwards whether that shortcut
+still points at the app you are running — handy after moving the app or
+installing a new version, when an old shortcut would silently keep
+starting the previous copy. Use **Repair** to point it at the current one.
+
+`~/.local/bin` has to be part of your shell's `PATH` for the command to be
+found. macSCP does not edit your shell configuration; if the folder is not
+listed yet, add it yourself:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+If you would rather install system-wide, run this yourself — macSCP never
+asks for administrator rights, and the same command is shown ready to copy
+in Settings → Command Line:
 
 ```sh
 sudo mkdir -p /usr/local/bin
-sudo ln -s /Applications/macSCP.app/Contents/MacOS/macscp-cli /usr/local/bin/macscp-cli
+sudo ln -sf /Applications/macSCP.app/Contents/MacOS/macscp-cli /usr/local/bin/macscp-cli
 ```
 
 Building from source also produces it, at `.build/release/macscp-cli`.

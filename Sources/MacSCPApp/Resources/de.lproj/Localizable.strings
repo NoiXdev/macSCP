@@ -750,3 +750,21 @@
 "keys.rename" = "Umbenennen…";
 "keys.rename.title" = "Schlüssel umbenennen";
 "keys.rename.error" = "Der Schlüssel konnte nicht umbenannt werden.";
+
+/* Einstellungen — Bereich „Kommandozeile" (macscp-cli-Verknüpfung) */
+"settings.section.cli" = "Kommandozeile";
+"settings.cli.header" = "Kommandozeilen-Werkzeug";
+"settings.cli.status.notInstalled" = "Nicht installiert.";
+"settings.cli.status.installed %@" = "Installiert unter %@";
+"settings.cli.status.stale" = "Installiert, verweist aber auf eine andere macSCP-Kopie.";
+"settings.cli.status.stale.detail %@" = "Verweist derzeit auf: %@";
+"settings.cli.status.occupied %@" = "Unter %@ liegt bereits etwas, das keine Verknüpfung ist.";
+"settings.cli.status.occupied.detail" = "macSCP überschreibt es nicht. Verschiebe oder entferne es selbst und installiere dann erneut.";
+"settings.cli.install" = "Installieren";
+"settings.cli.repair" = "Reparieren";
+"settings.cli.footer" = "Legt eine Verknüpfung namens macscp-cli in ~/.local/bin an. Befehle in diesem Ordner werden nur gefunden, wenn er Teil des PATH deiner Shell ist — macSCP ändert deine Shell-Konfiguration nicht.";
+"settings.cli.error.title" = "Installation fehlgeschlagen";
+"settings.cli.systemWide.header" = "Systemweite Installation";
+"settings.cli.systemWide.intro" = "Um stattdessen nach /usr/local/bin zu installieren, kopiere diesen Befehl und führe ihn im Terminal aus:";
+"settings.cli.systemWide.copy" = "Befehl kopieren";
+"settings.cli.systemWide.footer" = "Dieser Ordner gehört dem System, deshalb fragt der Befehl nach deinem Administratorkennwort. macSCP selbst fordert nie Administratorrechte an.";
