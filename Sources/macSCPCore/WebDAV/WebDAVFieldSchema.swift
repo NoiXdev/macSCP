@@ -44,18 +44,22 @@ public enum WebDAVFieldSchema {
 
     /// What a login set carries: the credentials, not the server. Rendered
     /// by the login-set editor with the same generic code as the form.
+    ///
+    /// NEITHER field is required (maintainer decision, M23/T5 fix round 1):
+    /// anonymous WebDAV is a real deployment — a public read-only share, or a
+    /// LAN box with no auth — and marking these required would refuse it before
+    /// the connect was even attempted. This was invisible until M23 made
+    /// `connect()` honour `isRequired`; before that only the login-set editor
+    /// read it. `baseURL` in `connection` above STAYS required: a server URL is
+    /// what a WebDAV connection is, and there is no sensible default for it.
     public static let credential = ConnectionFieldSchema(
         fields: [
             ConnectionField(id: WebDAVField.username.rawValue,
                             labelKey: "connection.webdav.username",
-                            labelDefault: "User name", kind: .text,
-                            isRequired: true,
-                            invalidMessageKey: "core.connect.webdavFieldRequired"),
+                            labelDefault: "User name", kind: .text),
             ConnectionField(id: WebDAVField.password.rawValue,
                             labelKey: "connection.webdav.password",
-                            labelDefault: "Password", kind: .secret,
-                            isRequired: true,
-                            invalidMessageKey: "core.connect.webdavFieldRequired"),
+                            labelDefault: "Password", kind: .secret),
         ],
         presets: [])
 

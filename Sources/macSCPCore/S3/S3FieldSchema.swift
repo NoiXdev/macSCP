@@ -92,15 +92,26 @@ public enum S3FieldSchema {
                 // `region` is optional against non-AWS endpoints and
                 // `usePathStyle` is a toggle whose every value is valid. The
                 // two credential fields belong to the LOGIN, not the bucket:
-                // `ConnectionViewModel.validateS3Fields` checks them, because
-                // it owns the edit-mode rule that an empty secret means
-                // "unchanged" and the localized message that goes with it.
+                // on the connect path `BackendDescriptor.firstViolation` checks
+                // them against the schema's own `isRequired` (M23), and
+                // `ConnectionViewModel.validateS3Fields` still does so for
+                // edit-save, which owns the rule that an empty secret means
+                // "unchanged" (until M23/T6 folds that in too).
                 break
             }
         }
         return .s3(S3ConnectionConfig(
             accessKeyID: values[S3Field.accessKeyID].trimmingCharacters(in: .whitespacesAndNewlines),
-            secretAccessKey: secret,
+            // TRIMMED, unlike every other backend's secret (maintainer
+            // decision, M23/T5 fix round 1). An SSH or WebDAV password is sent
+            // verbatim because whitespace can be a legitimate part of it; an
+            // AWS secret access key is a base64-ish token that never contains
+            // any, so the only thing trimming can remove is what a paste
+            // brought along. Leaving it in produces a SigV4 signature mismatch
+            // that surfaces as a bare "access denied" with nothing pointing at
+            // the stray space. Kept HERE, in S3's own factory, rather than in
+            // the shared connect path, so the policy stays S3's.
+            secretAccessKey: secret.trimmingCharacters(in: .whitespacesAndNewlines),
             region: values[S3Field.region].trimmingCharacters(in: .whitespacesAndNewlines),
             endpoint: values[S3Field.endpoint].trimmingCharacters(in: .whitespacesAndNewlines),
             bucket: values[S3Field.bucket].trimmingCharacters(in: .whitespacesAndNewlines),

@@ -481,7 +481,19 @@ public final class ConnectionViewModel {
         // `ssh -J` command line (M11d/T2), so recording the pre-jump config
         // here would make "Open in External Terminal" dial a bastion-only
         // target directly.
-        let dialed = attachingJump(to: config)
+        //
+        // Attached BEFORE `state = .connecting`, and its throw is a hard stop:
+        // a jump `SSHConnectionConfig.init` rejects must fail the connect
+        // rather than fall back to a hop-less config, or a session that may
+        // only be reached through its bastion would dial the target directly
+        // with nothing reported (M23/T5 fix round 1).
+        let dialed: ConnectionConfig
+        do {
+            dialed = try attachingJump(to: config)
+        } catch {
+            state = jumpAwareFailedState(for: error)
+            return nil
+        }
         state = .connecting
         do {
             // The decider is handed to EVERY backend by the `Connector`
@@ -496,12 +508,23 @@ public final class ConnectionViewModel {
             if case .ssh(let ssh) = dialed { lastConnectedConfig = ssh }
             return fs
         } catch {
-            state = Self.failedState(
-                for: error, jumpEnabled: jumpEnabled,
-                jumpKeyPath: jumpKeyPath.trimmingCharacters(in: .whitespacesAndNewlines),
-                jumpAuthChoice: jumpAuthChoice)
+            state = jumpAwareFailedState(for: error)
             return nil
         }
+    }
+
+    /// `failedState` carrying the jump context the form currently holds.
+    ///
+    /// Used by both jump-aware failure sites -- attaching the hop, and the dial
+    /// itself. The four-argument form is what maps `invalidJumpPort`,
+    /// `emptyJumpKeyPath`, `invalidJumpHost` and `invalidJumpUsername` onto the
+    /// jump rows, and what lets `channelSetupRejected`, the `AgentError` cases
+    /// and `SSHKeyError.fileNotFound` tell the jump hop from the target one.
+    private func jumpAwareFailedState(for error: Error) -> State {
+        Self.failedState(
+            for: error, jumpEnabled: jumpEnabled,
+            jumpKeyPath: jumpKeyPath.trimmingCharacters(in: .whitespacesAndNewlines),
+            jumpAuthChoice: jumpAuthChoice)
     }
 
     /// The secret the active backend's visible secret field currently holds.
@@ -530,15 +553,29 @@ public final class ConnectionViewModel {
     /// bastion-only session from quietly dialling its target directly.
     ///
     /// Non-SSH configs pass through untouched — no other protocol has a hop.
-    private func attachingJump(to config: ConnectionConfig) -> ConnectionConfig {
+    ///
+    /// THROWS rather than falling back to `config`. `validateJump` checks only
+    /// presence — host non-empty, port parses as an `Int`, username non-empty
+    /// in manual mode, and in SESSION mode not even that — while the
+    /// initializer below additionally enforces the `isValidJumpHost` /
+    /// `isValidJumpUsername` whitelists, the `1...65535` port range and a
+    /// non-empty jump key path. Those are reachable, not theoretical: a jump
+    /// port of `70000` passes `validateJump` and is rejected here.
+    ///
+    /// Swallowing the throw would hand back the hop-LESS config and dial the
+    /// target directly, succeeding silently, for exactly the session that must
+    /// not be reached any way but through its bastion. It would also make
+    /// `failedState`'s `invalidJumpPort` / `emptyJumpKeyPath` /
+    /// `invalidJumpHost` / `invalidJumpUsername` arms dead code.
+    ///
+    /// The whitelist is deliberately NOT duplicated into `validateJump`:
+    /// `SSHConnectionConfig.init` is the one source of jump validation, and a
+    /// second copy would be a second truth about one rule.
+    private func attachingJump(to config: ConnectionConfig) throws -> ConnectionConfig {
         guard case .ssh(let ssh) = config, let jump = buildJumpConfig() else { return config }
-        // Re-running the initializer cannot throw here: every component came
-        // out of an `SSHConnectionConfig` that already validated, and the jump
-        // is validated by `validateJump` above.
-        guard let withJump = try? SSHConnectionConfig(
+        return .ssh(try SSHConnectionConfig(
             host: ssh.host, port: ssh.port, username: ssh.username,
-            auth: ssh.auth, jump: jump) else { return config }
-        return .ssh(withJump)
+            auth: ssh.auth, jump: jump))
     }
 
     /// Validates the S3 form fields for `validateForEditSaveS3(sessionID:)`

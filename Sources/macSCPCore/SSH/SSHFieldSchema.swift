@@ -226,7 +226,14 @@ public enum SSHFieldSchema {
             host: values[SSHField.host].trimmingCharacters(in: .whitespacesAndNewlines),
             // Trimmed like every other field here: a padded port used to fall
             // through to the 22 default and silently dial the wrong port.
-            port: Int(values[SSHField.port].trimmingCharacters(in: .whitespaces)) ?? 22,
+            //
+            // `.whitespacesAndNewlines`, matching what `firstViolation` trims
+            // before its `.numeric` check (M23/T5 fix round 1). While this
+            // trimmed only `.whitespaces`, a port of "2222\n" passed validation
+            // and then fell through to the 22 default right here — the exact
+            // silent-wrong-port bug the line above exists to prevent.
+            port: Int(values[SSHField.port]
+                .trimmingCharacters(in: .whitespacesAndNewlines)) ?? 22,
             username: values[SSHField.username]
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             auth: auth))
@@ -246,7 +253,8 @@ public enum SSHFieldSchema {
     /// is treated as the default and never leaves a dangling trailing `:`.
     public static func displaySummary(_ values: FieldValues) -> String {
         let base = "\(values[SSHField.username])@\(values[SSHField.host])"
-        let port = Int(values[SSHField.port].trimmingCharacters(in: .whitespaces)) ?? 22
+        let port = Int(values[SSHField.port]
+            .trimmingCharacters(in: .whitespacesAndNewlines)) ?? 22
         return port == 22 ? base : "\(base):\(port)"
     }
 
