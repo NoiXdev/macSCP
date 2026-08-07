@@ -50,12 +50,18 @@ final class TabCommands {
     /// Settings-window route to the hidden-imports sheet — same shape and
     /// same reason as `showLoginsFromSettings` above.
     var showHiddenImportsFromSettings: (() -> Void)?
-    /// Whether a main window is on screen (M8a/T4 mirror pattern, same as
+    /// Whether a main window EXISTS (M8a/T4 mirror pattern, same as
     /// `isActiveTabConnected` below): the three routed entries above have
     /// nowhere to go without one, so the "Manage Data" section disables them
     /// rather than letting the click vanish. `ContentView` keeps this in sync
     /// from `updateMainWindowPresence()`/`handleWindowWillClose(_:)`, and it
     /// starts `false` — no window has resolved yet at that point.
+    ///
+    /// Existence, not visibility: the routed handlers raise the window before
+    /// presenting, and raising deminiaturizes and unhides it, so a minimized
+    /// window or a hidden app is still a window those entries work on. Asking
+    /// `isVisible` here would grey them out (or worse, leave them enabled on a
+    /// stale `true`) for states in which the action would have succeeded.
     var hasMainWindow = false
     /// Mirrors `ContentView`'s `hiddenImportAliases.count` (M11f/T2, same
     /// rationale as `isActiveTabConnected` below): the "Hidden Imports…"
