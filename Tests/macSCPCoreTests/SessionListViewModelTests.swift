@@ -286,11 +286,15 @@ struct SessionListViewModelTests {
 
         #expect(asS3.kind == .s3)
         #expect(asS3.s3 == s3)
-        #expect(asS3.host == "")
-        #expect(asS3.username == "")
-        #expect(asS3.keyPath == nil)
-        #expect(asS3.authKind == .password)
-        #expect(asS3.port == 22)
+        // `ssh == nil`, not the five field-by-field assertions this used to
+        // make (fix round 2). Those were not vacuous — the overwritten session
+        // held real values, so a total failure to clear would have shown — but
+        // they could not tell `ssh == nil` apart from
+        // `ssh == StoredSSHConfig(host: "", username: "")`. That is exactly the
+        // "placeholder resurrected as an empty block" outcome this milestone
+        // exists to prevent, so the test passed against the one result it most
+        // needed to catch.
+        #expect(asS3.ssh == nil)
     }
 
     @Test func saveWithFailingSecretsStillReloadsFromDisk() {

@@ -34,19 +34,36 @@ struct StoredSessionTests {
     /// session with no host. Every field it needs is optional or defaulted, so
     /// there is nothing left for the decoder to fail on.
     ///
-    /// CONCLUSION (deliberate, see the report): this is NOT made a decode
-    /// error. `StoredSession` must keep decoding a payload with no `ssh` block,
-    /// because that is exactly what a valid `.s3` or `.webdav` session looks
-    /// like — the two cases are indistinguishable at the decoder, so rejecting
-    /// one rejects the other. Requiring `ssh` when `kind == .ssh` would also
-    /// make the store throw on a single malformed record instead of loading
-    /// the rest, which is the failure mode M1 in this same round removed from
-    /// the migration.
+    /// CONCLUSION (deliberate): this is NOT made a decode error.
+    ///
+    /// Note first what is NOT the reason, because an earlier draft of this
+    /// comment claimed it and it is false: the legacy payload and a valid
+    /// `.s3`/`.webdav` record are NOT indistinguishable at the decoder.
+    /// `init(from:)` reads `kind` (`StoredSession.swift:129`) BEFORE `ssh`
+    /// (`:130`), so a rule `if kind == .ssh && ssh == nil { throw }` would
+    /// reject the legacy payload and accept every non-SSH record. Nor would it
+    /// falsely reject a legitimate v2 record: `SSHFieldSchema.apply` installs
+    /// the block unconditionally (`var ssh = session.ssh ?? StoredSSHConfig(…)`,
+    /// then assigns it back) and is the only write adapter for `.ssh`, so no
+    /// `.ssh` session is ever persisted without one. Such a rule is entirely
+    /// implementable.
+    ///
+    /// The reason it is still not worth having is BLAST RADIUS.
+    /// `SessionStore.StoreFile.sessions` is a plain `[StoredSession]` decoded
+    /// as one array, so a single throwing element aborts the whole array and
+    /// therefore the whole file. One malformed record would take every other
+    /// connection down with it — precisely the "one bad thing hides all your
+    /// connections" failure that M1 removed from the migration path in this
+    /// same round. Trading a documented, unreachable-in-practice hazard for
+    /// that is a bad trade.
     ///
     /// What protects against it is routing, not validation: `SessionStore`
     /// reads `sessions.json` only through `LegacyStoredSession`, and this test
     /// exists so that a future caller handing legacy JSON to the wrong type
-    /// finds the trap documented instead of a hostless connection.
+    /// finds the trap documented instead of a hostless connection. If the
+    /// store ever decodes sessions element-by-element (skipping and reporting
+    /// bad records rather than failing the file), revisit this — at that point
+    /// the rule costs nothing and should be added.
     @Test func aLegacyPayloadDecodedAsStoredSessionIsSilentlyBlockLess() throws {
         let legacy = """
         {"id":"\(UUID().uuidString)","name":"old","host":"h","port":22,"username":"u","authKind":"password"}

@@ -1229,9 +1229,16 @@ struct ConnectionViewModelTests {
     ///
     /// What takes its place is a real behavioral claim about the new shape,
     /// not a consequence of it: an edit-save on a non-SSH session must leave
-    /// NO SSH block behind. `validateForEditSave` clears it on a kind that is
-    /// not `.ssh` — miss that and the `"unused"` placeholder comes back as an
-    /// `ssh` block full of empty strings, on disk and in every export.
+    /// NO SSH block behind.
+    ///
+    /// SCOPE (corrected in fix round 2): this pins the OUTCOME for a session
+    /// that was already non-SSH, and it does NOT cover the
+    /// `if kind != .ssh { session.ssh = nil }` guard in `validateForEditSave`.
+    /// It cannot: `s3Session(...)` starts with `ssh == nil` and the `.s3`
+    /// adapter never writes `ssh`, so deleting the guard leaves this test
+    /// green. The guard is covered by
+    /// `editSaveClearsTheSSHBlockWhenTheKindChangesAwayFromSSH` below, which
+    /// starts from a session that HAS a block.
     @Test @MainActor func editSaveLeavesNoSSHBlockOnANonSSHSession() {
         let stored = s3Session(
             name: "bucket",
@@ -1247,6 +1254,50 @@ struct ConnectionViewModelTests {
 
         #expect(saved?.ssh == nil)
         #expect(saved?.s3?.bucket == "renamed-bucket")
+    }
+
+    /// The guard the test above cannot reach: `validateForEditSave`'s
+    /// `if kind != .ssh { session.ssh = nil }` (fix round 2).
+    ///
+    /// Starting from a session that HAS an SSH block and switching `kind` away
+    /// from `.ssh` mid-edit is the only way to exercise it — every other route
+    /// begins with `ssh == nil`, so the guard is a no-op and its deletion goes
+    /// unnoticed. Without it the S3 session keeps a fully populated SSH block
+    /// (host, port, user name, key path) that reaches the store, every export,
+    /// and `SessionImportPlanner.duplicateKey` — the pre-M23 defect exactly,
+    /// only now spelled with real values rather than `"unused"`.
+    ///
+    /// REACHABILITY, decided on evidence rather than assumption: the type
+    /// picker is `.disabled(isEditMode)` in `ConnectionFormView`, so the UI
+    /// cannot drive this today. The view model nonetheless permits it —
+    /// `kind` is a public settable property whose `didSet` resets `values`,
+    /// the jump fields and the login-set binding, i.e. it is BUILT to be
+    /// changed, not merely assignable. `validateForEditSave` is public and
+    /// makes no claim about `kind` being frozen. So the guard is defensible
+    /// as a view-model-level invariant rather than dead code, and the right
+    /// answer is to test it, not delete it. If the picker is ever enabled in
+    /// edit mode, this is the test that was already waiting.
+    @Test @MainActor func editSaveClearsTheSSHBlockWhenTheKindChangesAwayFromSSH() {
+        let stored = sshSession(
+            name: "shared", host: "h.example.com", port: 2222, username: "tim",
+            authKind: .privateKey, keyPath: "/keys/id_ed25519")
+        let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
+        vm.beginEditing(stored)
+        // Sanity: the session really does carry a block to lose.
+        #expect(stored.ssh != nil)
+
+        vm.kind = .s3
+        vm.saveName = "shared"
+        vm.s3Endpoint = "https://s3.example.com"
+        vm.s3Region = "eu-central-1"
+        vm.s3Bucket = "backups"
+        vm.s3AccessKeyID = "AKIA"
+
+        let saved = vm.validateForEditSave()
+
+        #expect(saved?.kind == .s3)
+        #expect(saved?.s3?.bucket == "backups")
+        #expect(saved?.ssh == nil)
     }
 
     /// The old S3/WebDAV edit-save bodies passed no `jump:` argument at all
