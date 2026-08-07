@@ -1716,34 +1716,61 @@ struct ContentView: View {
         }
     }
 
-    /// Mirrors "this window exists and is on screen" onto `TabCommands`, for
-    /// the same reason `isActiveTabConnected`/`hiddenImportsCount` are
-    /// mirrored there: the Settings scene cannot see this view's `@State`.
+    /// Mirrors "this window EXISTS" onto `TabCommands`, for the same reason
+    /// `isActiveTabConnected`/`hiddenImportsCount` are mirrored there: the
+    /// Settings scene cannot see this view's `@State`.
     ///
     /// The three "Manage Data" entries that route here are `.disabled` when
     /// this is `false`. Without it they would still be clickable with no main
-    /// window on screen (⌘W on the last, unconnected tab closes the window
-    /// while the app keeps running) and would silently do nothing — and in
-    /// that list, unlike in the Sessions menu, the user has no window context
-    /// to explain it: two rows would open a sheet and three would not react
-    /// at all.
+    /// window (⌘W on the last, unconnected tab closes the window while the app
+    /// keeps running) and would silently do nothing — and in that list, unlike
+    /// in the Sessions menu, the user has no window context to explain it: two
+    /// rows would open a sheet and three would not react at all.
     ///
-    /// Deliberately derived from the SAME expression the routed handlers
-    /// guard on (`window?.isVisible`), so the enabled state and the guard can
-    /// never disagree.
+    /// Existence, NOT visibility, and the reason is in the handlers rather
+    /// than here: they raise the window with `makeKeyAndOrderFront`, which
+    /// deminiaturizes and unhides it, so a window that exists is a window the
+    /// action works on. That is what keeps this mirror and those guards in
+    /// agreement — not that the two spell the same expression, but that
+    /// "exists" is a property no state transition can change without also
+    /// changing `window` here or closing the window outright. An earlier
+    /// version of this pair asked `isVisible` on both sides: same text, but
+    /// the guard read it live at click time while this snapshot was only
+    /// rewritten from `WindowAccessor` and `willClose` — and neither
+    /// miniaturization (⌘M) nor hiding the app goes through either of them.
+    /// An enabled row whose click did nothing was the result, which is the
+    /// exact defect this mirror was added to remove.
+    ///
+    /// Writes only on a real change: `@Observable` notifies on every set, this
+    /// runs from `WindowAccessor.updateNSView` (i.e. on ordinary body
+    /// updates), and `MacSCPApp`'s Scene body reads `tabCommands` — an
+    /// unconditional assignment would invalidate the commands/Settings graph
+    /// on every repaint of this window. The three mirrors next to it are all
+    /// written from `.onChange` for the same reason; M11n was a render storm
+    /// over a bridge in this repo already.
     private func updateMainWindowPresence() {
-        tabCommands.hasMainWindow = window?.isVisible == true
+        let present = window != nil
+        if tabCommands.hasMainWindow != present {
+            tabCommands.hasMainWindow = present
+        }
     }
 
     /// `NSWindow.willCloseNotification` for THIS window — the one moment
-    /// `updateMainWindowPresence()` cannot catch, since it fires while the
-    /// window is still `isVisible` and SwiftUI does not re-run
-    /// `WindowAccessor` on the way out. Hence the explicit `false` rather
-    /// than a recompute. Every other window's close (sheets, the Settings
-    /// window itself) is filtered out by the identity check.
+    /// `updateMainWindowPresence()` cannot catch, since SwiftUI does not re-run
+    /// `WindowAccessor` on the way out and `window` is therefore still
+    /// non-nil. Hence the explicit `false` rather than a recompute. Every
+    /// other window's close (sheets, the Settings window itself, the menu-bar
+    /// panel) is filtered out by the identity check.
+    ///
+    /// Same write-on-change rule as `updateMainWindowPresence()` above: this
+    /// notification fires for every window in the app, and the guard already
+    /// drops the ones that are not ours, but the assignment stays conditional
+    /// so a repeated close of an already-absent window cannot re-notify.
     private func handleWindowWillClose(_ notification: Notification) {
         guard let closing = notification.object as? NSWindow, closing === window else { return }
-        tabCommands.hasMainWindow = false
+        if tabCommands.hasMainWindow {
+            tabCommands.hasMainWindow = false
+        }
     }
 
     /// Settings "Manage Data" → "Logins…": raises THIS window and opens the
@@ -1767,12 +1794,18 @@ struct ContentView: View {
     /// edits.
     ///
     /// No key-window guard (unlike `tabCommands.showLogins`): Settings is key
-    /// when this fires, which is the whole point. The `isVisible` check is
-    /// what stands in for it — with no main window on screen there is nothing
-    /// to raise, and the entry does nothing, exactly as the Sessions-menu
-    /// entries already do in that state.
+    /// when this fires, which is the whole point. What stands in for it is
+    /// EXISTENCE of the window, nothing more.
+    ///
+    /// It deliberately does not ask whether the window is visible. It is about
+    /// to call `makeKeyAndOrderFront`, which deminiaturizes and unhides a
+    /// window that exists — so "currently on screen" was never the
+    /// precondition for this action succeeding, only "there is a window". The
+    /// earlier `window.isVisible` check made ⌘M (and hiding the app) look like
+    /// a closed window to this code and turned the entry into the silent
+    /// no-op it exists to avoid.
     private func presentLoginSetsFromSettings() {
-        guard let window, window.isVisible else { return }
+        guard let window else { return }
         window.makeKeyAndOrderFront(nil)
         loginSetsSheetStartsImport = false
         showLoginSetsSheet = true
@@ -1797,7 +1830,7 @@ struct ContentView: View {
     /// the window width is fixed for the other sections. Routing settles the
     /// geometry too, but the trust argument is the load-bearing one.
     private func presentServerCertificatesFromSettings() {
-        guard let window, window.isVisible else { return }
+        guard let window else { return }
         window.makeKeyAndOrderFront(nil)
         showServerCertificatesSheet = true
     }
@@ -1812,7 +1845,7 @@ struct ContentView: View {
     /// both directions, since this window's own "Hide" context menu stays
     /// reachable behind a sheet that is modal to Settings.
     private func presentHiddenImportsFromSettings() {
-        guard let window, window.isVisible else { return }
+        guard let window else { return }
         window.makeKeyAndOrderFront(nil)
         showHiddenImportsSheet = true
     }

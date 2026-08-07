@@ -886,10 +886,12 @@ private struct SSHSettingsSection: View {
 /// rather than the data. See `ContentView.presentLoginSetsFromSettings()`
 /// and `presentServerCertificatesFromSettings()` for the full reasoning.
 ///
-/// Those three are `.disabled` while no main window is on screen
+/// Those three are `.disabled` while no main window EXISTS
 /// (`TabCommands.hasMainWindow`): they have nowhere to go then, and a row
 /// that swallows a click is worse here than in the Sessions menu, where the
-/// user is at least standing in a window.
+/// user is at least standing in a window. A minimized window or a hidden app
+/// leaves them enabled on purpose — the handlers raise the window before
+/// presenting, so the action works from either state.
 ///
 /// The per-session audit log is deliberately absent: `AuditLogSheet` takes a
 /// `StoredSession` and is opened from that session's sidebar row. There is no
