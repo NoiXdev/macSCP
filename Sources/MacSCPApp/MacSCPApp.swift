@@ -43,9 +43,20 @@ final class TabCommands {
     /// must not present its own copy of `LoginSetsSheet` — see the wiring
     /// comment in `ContentView.performWindowSetup()` for the exact hazard.
     var showLoginsFromSettings: (() -> Void)?
+    /// Settings-window route to the server-certificate sheet — same shape as
+    /// `showLoginsFromSettings` above; the reason is trust, not state (see
+    /// `ContentView.presentServerCertificatesFromSettings()`).
+    var showServerCertificatesFromSettings: (() -> Void)?
     /// Settings-window route to the hidden-imports sheet — same shape and
     /// same reason as `showLoginsFromSettings` above.
     var showHiddenImportsFromSettings: (() -> Void)?
+    /// Whether a main window is on screen (M8a/T4 mirror pattern, same as
+    /// `isActiveTabConnected` below): the three routed entries above have
+    /// nowhere to go without one, so the "Manage Data" section disables them
+    /// rather than letting the click vanish. `ContentView` keeps this in sync
+    /// from `updateMainWindowPresence()`/`handleWindowWillClose(_:)`, and it
+    /// starts `false` — no window has resolved yet at that point.
+    var hasMainWindow = false
     /// Mirrors `ContentView`'s `hiddenImportAliases.count` (M11f/T2, same
     /// rationale as `isActiveTabConnected` below): the "Hidden Imports…"
     /// menu title's count suffix needs this observed value since `MacSCPApp`

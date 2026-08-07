@@ -1,4 +1,8 @@
 import AppKit
+// Only for `NotificationCenter.publisher(for:)` below — the app observes
+// exactly one AppKit notification (`NSWindow.willCloseNotification`, to tell
+// the Settings window that this window is gone).
+import Combine
 import SwiftUI
 import macSCPCore
 
@@ -579,7 +583,16 @@ struct ContentView: View {
         .frame(minWidth: isPristine ? 700 : 930, minHeight: 460)
         .tint(DesignTokens.remoteBlue)
         .navigationTitle(activeTab.titleName.map { "macSCP — \($0)" } ?? "macSCP")
-        .background(WindowAccessor { window = $0 })
+        .background(WindowAccessor {
+            window = $0
+            updateMainWindowPresence()
+        })
+        // Tells the Settings window when this window goes away, so its
+        // "Manage Data" entries that route HERE can disable themselves
+        // instead of swallowing the click (see `updateMainWindowPresence`).
+        .onReceive(
+            NotificationCenter.default.publisher(for: NSWindow.willCloseNotification),
+            perform: handleWindowWillClose)
         // Extracted wholesale into `performWindowSetup()` (M20 CI fix).
         // This closure had grown to ~125 statements in the same inference
         // scope as the `HSplitView` above, and the type checker gave up on
@@ -1610,6 +1623,7 @@ struct ContentView: View {
         // methods rather than inlined closures for the same type-checker
         // reason as `handleCloseActiveTabCommand` above.
         tabCommands.showLoginsFromSettings = presentLoginSetsFromSettings
+        tabCommands.showServerCertificatesFromSettings = presentServerCertificatesFromSettings
         tabCommands.showHiddenImportsFromSettings = presentHiddenImportsFromSettings
         tabCommands.exportAllSessions = {
             guard window?.isKeyWindow == true else { return }
@@ -1702,6 +1716,36 @@ struct ContentView: View {
         }
     }
 
+    /// Mirrors "this window exists and is on screen" onto `TabCommands`, for
+    /// the same reason `isActiveTabConnected`/`hiddenImportsCount` are
+    /// mirrored there: the Settings scene cannot see this view's `@State`.
+    ///
+    /// The three "Manage Data" entries that route here are `.disabled` when
+    /// this is `false`. Without it they would still be clickable with no main
+    /// window on screen (⌘W on the last, unconnected tab closes the window
+    /// while the app keeps running) and would silently do nothing — and in
+    /// that list, unlike in the Sessions menu, the user has no window context
+    /// to explain it: two rows would open a sheet and three would not react
+    /// at all.
+    ///
+    /// Deliberately derived from the SAME expression the routed handlers
+    /// guard on (`window?.isVisible`), so the enabled state and the guard can
+    /// never disagree.
+    private func updateMainWindowPresence() {
+        tabCommands.hasMainWindow = window?.isVisible == true
+    }
+
+    /// `NSWindow.willCloseNotification` for THIS window — the one moment
+    /// `updateMainWindowPresence()` cannot catch, since it fires while the
+    /// window is still `isVisible` and SwiftUI does not re-run
+    /// `WindowAccessor` on the way out. Hence the explicit `false` rather
+    /// than a recompute. Every other window's close (sheets, the Settings
+    /// window itself) is filtered out by the identity check.
+    private func handleWindowWillClose(_ notification: Notification) {
+        guard let closing = notification.object as? NSWindow, closing === window else { return }
+        tabCommands.hasMainWindow = false
+    }
+
     /// Settings "Manage Data" → "Logins…": raises THIS window and opens the
     /// login-sets sheet that already lives here, instead of letting the
     /// Settings window present a second copy.
@@ -1732,6 +1776,30 @@ struct ContentView: View {
         window.makeKeyAndOrderFront(nil)
         loginSetsSheetStartsImport = false
         showLoginSetsSheet = true
+    }
+
+    /// Settings "Manage Data" → "Server Certificates…": routed for a
+    /// different reason than the other two, since `TrustedCertificateStore`
+    /// is a stateless read-modify-write struct and no state here is derived
+    /// from it.
+    ///
+    /// What is at stake is the trust decision, not the data. These are TOFU
+    /// entries, and revoking one from a window that is NOT modal to the
+    /// browser means the user can be editing trust while a WebDAV connect in
+    /// this window is at (or about to raise) its certificate prompt. There is
+    /// no reason to allow that interleaving, and none to reason about it
+    /// later. Presenting the sheet on the window that owns the connect
+    /// removes the question.
+    ///
+    /// The sheet is also `900×460` against the Settings window's `680×620`
+    /// — a 220pt overhang, far past the 40pt the 720-wide sheets already
+    /// have there. Narrowing it would break it where it is currently right;
+    /// the window width is fixed for the other sections. Routing settles the
+    /// geometry too, but the trust argument is the load-bearing one.
+    private func presentServerCertificatesFromSettings() {
+        guard let window, window.isVisible else { return }
+        window.makeKeyAndOrderFront(nil)
+        showServerCertificatesSheet = true
     }
 
     /// Settings "Manage Data" → "Hidden Imports…": same detour, same reasons
