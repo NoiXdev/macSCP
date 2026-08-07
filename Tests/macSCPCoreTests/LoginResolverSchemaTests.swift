@@ -15,8 +15,7 @@ struct LoginResolverSchemaTests {
         try secrets.savePassword("app-password", for: set.id)
 
         let session = StoredSession(
-            name: "s", host: "unused", port: 443, username: "unused",
-            loginSetID: set.id, kind: .webdav)
+            name: "s", loginSetID: set.id, kind: .webdav)
 
         let values = try #require(
             try LoginResolver.resolve(session: session, sets: [set], secrets: secrets))
@@ -30,8 +29,7 @@ struct LoginResolverSchemaTests {
         try secrets.savePassword("topsecret", for: set.id)
 
         let session = StoredSession(
-            name: "s", host: "unused", port: 443, username: "unused",
-            loginSetID: set.id, kind: .s3)
+            name: "s", loginSetID: set.id, kind: .s3)
 
         let values = try #require(
             try LoginResolver.resolve(session: session, sets: [set], secrets: secrets))
@@ -108,8 +106,7 @@ struct LoginResolverSchemaTests {
     @Test func aSetOfTheWrongKindIsAHardStop() {
         let set = LoginSet(name: "ssh", username: "tim")
         let session = StoredSession(
-            name: "s", host: "unused", port: 443, username: "unused",
-            loginSetID: set.id, kind: .webdav)
+            name: "s", loginSetID: set.id, kind: .webdav)
         #expect(throws: LoginResolveError.kindMismatch) {
             _ = try LoginResolver.resolve(
                 session: session, sets: [set], secrets: InMemorySecretStore())

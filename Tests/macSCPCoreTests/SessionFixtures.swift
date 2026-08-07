@@ -23,10 +23,12 @@ func sshSession(
     loginSetID: UUID? = nil,
     jump: StoredSession.JumpSpec? = nil
 ) -> StoredSession {
-    StoredSession(
-        id: id, name: name, host: host, port: port, username: username,
-        authKind: authKind, keyPath: keyPath, groupID: groupID,
-        loginSetID: loginSetID, jump: jump, kind: .ssh)
+    var session = StoredSession(id: id, name: name, groupID: groupID,
+                                loginSetID: loginSetID, kind: .ssh)
+    session.ssh = StoredSSHConfig(
+        host: host, port: port, username: username,
+        authKind: authKind, keyPath: keyPath, jump: jump)
+    return session
 }
 
 func s3Session(
@@ -38,9 +40,8 @@ func s3Session(
         accessKeyID: "AKIA", region: "eu-central-1",
         endpoint: "https://s3.example.com", bucket: "bucket", usePathStyle: false)
 ) -> StoredSession {
-    StoredSession(
-        id: id, name: name, host: "unused", port: 22, username: "unused",
-        groupID: groupID, loginSetID: loginSetID, kind: .s3, s3: config)
+    StoredSession(id: id, name: name, groupID: groupID,
+                  loginSetID: loginSetID, kind: .s3, s3: config)
 }
 
 /// SSH form values for `SessionListViewModel.save(name:values:…)` — the flat
@@ -72,7 +73,6 @@ func webdavSession(
         baseURL: "https://cloud.example.com/remote.php/dav",
         username: "tim", useNextcloudPath: false)
 ) -> StoredSession {
-    StoredSession(
-        id: id, name: name, host: "unused", port: 22, username: "unused",
-        groupID: groupID, loginSetID: loginSetID, kind: .webdav, webdav: config)
+    StoredSession(id: id, name: name, groupID: groupID,
+                  loginSetID: loginSetID, kind: .webdav, webdav: config)
 }

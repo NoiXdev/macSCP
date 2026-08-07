@@ -29,27 +29,43 @@ public struct SessionStore: Sendable {
     }
 
     private var fileURL: URL {
+        directory.appendingPathComponent("sessions-v2.json")
+    }
+
+    /// The pre-M23 file. Read once, then left alone forever.
+    ///
+    /// A version key inside the file would have been the tidier design and is
+    /// not available: macSCP 1.0 is already shipped, knows nothing about one,
+    /// and aborts on the missing required `host`. A version number helps
+    /// FUTURE readers, never past ones — so the new format gets a new name,
+    /// and a downgrade finds its own file exactly where it left it.
+    ///
+    /// The price, stated where the code is: after the migration the two files
+    /// diverge. A connection created here is invisible to an older build.
+    private var legacyFileURL: URL {
         directory.appendingPathComponent("sessions.json")
     }
 
-    /// On-disk container (current format). Legacy files are a bare
-    /// `[StoredSession]` array — `load()` falls back to that shape, so old
-    /// installations keep working without a migration step.
+    /// On-disk container (current format).
     private struct StoreFile: Codable {
         var groups: [StoredGroup] = []
         var sessions: [StoredSession] = []
     }
 
+    /// The same container in its pre-M23 shape.
+    private struct LegacyStoreFile: Decodable {
+        var groups: [StoredGroup] = []
+        var sessions: [LegacyStoredSession] = []
+    }
+
     private func load() throws -> StoreFile {
-        guard FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) else {
-            return StoreFile()
-        }
-        let data = try Data(contentsOf: fileURL)
         var file: StoreFile
-        if let container = try? JSONDecoder().decode(StoreFile.self, from: data) {
-            file = container
+        if FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) {
+            file = try JSONDecoder().decode(StoreFile.self, from: Data(contentsOf: fileURL))
+        } else if let migrated = try migrateFromLegacy() {
+            file = migrated
         } else {
-            file = StoreFile(groups: [], sessions: try JSONDecoder().decode([StoredSession].self, from: data))
+            return StoreFile()
         }
         // Defensive: a groupID whose group no longer exists behaves like nil.
         let knownIDs = Set(file.groups.map(\.id))
@@ -59,6 +75,31 @@ public struct SessionStore: Sendable {
             file.sessions[index].groupID = nil
         }
         return file
+    }
+
+    /// Reads the pre-M23 file, writes its upgrade to the new one, and returns
+    /// it. Returns nil when there is nothing to migrate.
+    ///
+    /// The legacy file supported two shapes — the current container and an
+    /// even older bare `[StoredSession]` array — and both are still read here,
+    /// because an installation that never opened a version with groups still
+    /// has the array on disk.
+    private func migrateFromLegacy() throws -> StoreFile? {
+        let path = legacyFileURL.path(percentEncoded: false)
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        let data = try Data(contentsOf: legacyFileURL)
+        let legacy: LegacyStoreFile
+        if let container = try? JSONDecoder().decode(LegacyStoreFile.self, from: data) {
+            legacy = container
+        } else {
+            legacy = LegacyStoreFile(
+                groups: [],
+                sessions: try JSONDecoder().decode([LegacyStoredSession].self, from: data))
+        }
+        let migrated = StoreFile(
+            groups: legacy.groups, sessions: legacy.sessions.map { $0.upgraded() })
+        try persist(migrated)
+        return migrated
     }
 
     private func persist(_ file: StoreFile) throws {

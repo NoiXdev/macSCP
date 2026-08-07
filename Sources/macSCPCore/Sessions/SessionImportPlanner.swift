@@ -264,17 +264,24 @@ public enum SessionImportPlanner {
                 baseURL: baseURL, username: webdavUsername,
                 useNextcloudPath: fileSession.webdavUseNextcloudPath ?? false)
         }
+        // SSH's block only for an `.ssh` session (M23/T8). The export format
+        // still carries host/port/username as flat top-level columns —
+        // including the literal `"unused"` a pre-M23 export wrote for an S3 or
+        // WebDAV session — so building the block unconditionally would import
+        // exactly the placeholder this milestone removed.
+        var ssh: StoredSSHConfig?
+        if kind == .ssh {
+            ssh = StoredSSHConfig(
+                host: fileSession.host, port: fileSession.port,
+                username: fileSession.username, authKind: fileSession.authKind,
+                keyPath: fileSession.keyPath, jump: jump)
+        }
         let session = StoredSession(
             id: id,
             name: name,
-            host: fileSession.host,
-            port: fileSession.port,
-            username: fileSession.username,
-            authKind: fileSession.authKind,
-            keyPath: fileSession.keyPath,
             groupID: groupID,
-            jump: jump,
             kind: kind,
+            ssh: ssh,
             s3: s3,
             webdav: webdav)
         // The kind's single secret always travels in the same
@@ -286,7 +293,11 @@ public enum SessionImportPlanner {
         let secret = kind == .s3 ? fileSession.s3SecretAccessKey : fileSession.password
         return PlannedSession(
             session: session, password: secret,
-            jumpPassword: jump != nil ? fileSession.jumpPassword : nil,
+            // Keyed on the jump that actually landed on the session, not the
+            // one parsed out of the file: a non-SSH session keeps no jump
+            // since M23/T8, and a password for a hop nobody dials is an
+            // orphan Keychain slot.
+            jumpPassword: ssh?.jump != nil ? fileSession.jumpPassword : nil,
             replacesExisting: replacesExisting)
     }
 

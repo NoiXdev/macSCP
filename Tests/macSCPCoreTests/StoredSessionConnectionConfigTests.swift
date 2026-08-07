@@ -28,8 +28,7 @@ struct StoredSessionConnectionConfigTests {
     private func makeS3Session(withConfig: Bool = true, loginSetID: UUID? = nil) -> StoredSession {
         guard withConfig else {
             return StoredSession(
-                name: "bucket", host: "unused", username: "unused",
-                loginSetID: loginSetID, kind: .s3, s3: nil)
+                name: "bucket", loginSetID: loginSetID, kind: .s3, s3: nil)
         }
         return s3Session(
             name: "bucket", loginSetID: loginSetID,

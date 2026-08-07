@@ -95,7 +95,7 @@ public final class SessionListViewModel {
             previousJump = existing.jump
             session = existing
         } else {
-            session = StoredSession(id: UUID(), name: name, host: "", username: "", kind: kind)
+            session = StoredSession(id: UUID(), name: name, kind: kind)
         }
         session.name = name
         // A name collision across KINDS is the one way this method changes an
@@ -107,36 +107,31 @@ public final class SessionListViewModel {
         // fields its own backend owns, so without this an `.ssh` session keeps
         // a populated `s3` block (endpoint, bucket, access key id) and a `.s3`
         // session keeps SSH's key path, auth kind and port. All of that reaches
-        // `sessions.json`, the export codec and
-        // `SessionImportPlanner.duplicateKey`.
+        // the store, the export codec and `SessionImportPlanner.duplicateKey`.
+        //
+        // Since M23/T8 that is one line per backend block, and the separate
+        // `host`/`username` reset this used to need before `apply` is gone with
+        // it: SSH's fields live in `ssh`, so clearing the block clears them.
         //
         // Guarded on an actual kind CHANGE so the ordinary same-kind re-save
         // stays byte-identical. `validateForEditSave` needs no counterpart: the
         // type picker is disabled in edit mode (`ConnectionFormView`,
         // "connection type is fixed after creation"), so an edit cannot reach
-        // this case — and blanking `port` there would destroy the discriminator
-        // `editSaveMutatesTheOriginalInsteadOfRebuildingIt` relies on.
+        // this case.
         if session.kind != kind {
+            session.ssh = nil
             session.s3 = nil
             session.webdav = nil
-            session.keyPath = nil
-            session.authKind = .password
-            session.port = 22
         }
         session.kind = kind
         session.groupID = groupID
         session.loginSetID = loginSetID
-        session.jump = jump
-        // Reset BEFORE `apply`, for the same reason `validateForEditSave` does
-        // (M23/T6): `host`/`username` are SSH's own fields, and S3's and
-        // WebDAV's `apply` never touch them by contract — so re-saving an
-        // existing session under a different kind would otherwise carry the old
-        // SSH host forward under a `.s3` kind. SSH's own `apply` writes real
-        // values right back over this. TEMPORARY until Task 8 moves the two
-        // into an SSH-only block, exactly like the note in `validateForEditSave`.
-        session.host = ""
-        session.username = ""
         descriptor.apply(values, &session)
+        // AFTER `apply`, which is what creates the SSH block for an `.ssh`
+        // session (M23/T8). A jump is an SSH concept and now lives inside that
+        // block, so a non-SSH session has nowhere to put one — and this line
+        // is correctly a no-op there rather than storing a hop nothing dials.
+        session.ssh?.jump = jump
 
         do {
             try store.upsert(session)
@@ -270,7 +265,9 @@ public final class SessionListViewModel {
             }
 
             var updated = referencing
-            updated.jump = jump
+            // `referencing.jump` was non-nil above, so the SSH block exists:
+            // only an SSH session can carry a jump at all since M23/T8.
+            updated.ssh?.jump = jump
             // Throw-free by design (M10b pattern): a store-write failure for
             // one referencing session must not abort restoring the others,
             // nor the deletion that follows.
@@ -498,9 +495,12 @@ public final class SessionListViewModel {
             var sessionHadSecretFailure = false
 
             if restored.loginSetID == set.id {
-                restored.username = set.username
-                restored.authKind = set.authKind
-                restored.keyPath = set.keyPath
+                // Only an SSH session has a login to restore INTO its own
+                // fields (M23/T8) — an S3 session's set binding is resolved
+                // through `s3`, and it has no `ssh` block to write to.
+                restored.ssh?.username = set.username
+                restored.ssh?.authKind = set.authKind
+                restored.ssh?.keyPath = set.keyPath
                 restored.loginSetID = nil
                 if let setSecret {
                     do {
@@ -528,7 +528,7 @@ public final class SessionListViewModel {
                         sessionHadSecretFailure = true
                     }
                 }
-                restored.jump = jump
+                restored.ssh?.jump = jump
             }
 
             // Throw-free by design: a session's own store write failing here

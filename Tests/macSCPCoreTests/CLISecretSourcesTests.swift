@@ -143,8 +143,13 @@ struct SecretSourcesCompositionTests {
         kind: ConnectionKind, authKind: StoredSession.AuthKind = .password
     ) -> StoredSession {
         StoredSession(
-            name: "test", host: "example.test", username: "user",
-            authKind: authKind, kind: kind,
+            name: "test", kind: kind,
+            // SSH's fields only for an SSH session (M23/T8) — `authKind` is
+            // what the agent guard reads.
+            ssh: kind == .ssh
+                ? StoredSSHConfig(
+                    host: "example.test", username: "user", authKind: authKind)
+                : nil,
             s3: kind == .s3
                 ? StoredS3Config(
                     accessKeyID: "id", region: "r", endpoint: "https://example.test",

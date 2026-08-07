@@ -1145,8 +1145,8 @@ struct ConnectionViewModelTests {
         for kind in ConnectionKind.allCases {
             let vm = makeVM()
             let stored = StoredSession(
-                id: UUID(), name: "n", host: "h", username: "u",
-                loginSetID: setID, kind: kind,
+                id: UUID(), name: "n", loginSetID: setID, kind: kind,
+                ssh: kind == .ssh ? StoredSSHConfig(host: "h", username: "u") : nil,
                 s3: kind == .s3
                     ? StoredS3Config(
                         accessKeyID: "AKIA", region: "r",
@@ -1208,33 +1208,28 @@ struct ConnectionViewModelTests {
         #expect(saved?.loginSetID == set)
     }
 
-    /// The actual mutate-vs-rebuild discriminator that
-    /// `editSavePreservesWhatTheFormNeverShows` was meant to be (fix round
-    /// 1). `port` is not one of the fields `validateForEditSave` reassigns
-    /// explicitly, and no form field S3 renders touches it either — a
-    /// rebuild through `StoredSession(id:name:host:username:groupID:
-    /// loginSetID:kind:s3:)` (as the old `validateForEditSaveS3` did)
-    /// defaults `port` to 22 because that initializer parameter is never
-    /// passed; mutating the original leaves whatever `port` it already had.
-    /// A non-default port (443, the ordinary value for an HTTPS S3 endpoint)
-    /// makes the two outcomes distinguishable.
+    /// RETIRED and replaced (M23/T8): this slot held
+    /// `editSaveMutatesTheOriginalInsteadOfRebuildingIt`, whose own doc
+    /// comment predicted its end. It used `port: 443` on an S3 session as its
+    /// mutate-versus-rebuild discriminator, which only worked while
+    /// `StoredSession` carried `port` as a field shared by every kind even
+    /// though S3 never reads or writes it. Task 8 moved host/port/username/
+    /// authKind/keyPath/jump into an SSH-only `ssh` block, so `StoredSession`
+    /// now shrinks to exactly the set `validateForEditSave` assigns — id,
+    /// name, groupID, loginSetID, kind and the three backend blocks. There is
+    /// nothing left for a rebuild to forget, so mutate-versus-rebuild is
+    /// structural rather than test-guarded, and a test asserting it would
+    /// assert nothing.
     ///
-    /// TEMPORARY (M23/T6, until Task 8): `port` only works as a
-    /// discriminator because `StoredSession` still carries it as a field
-    /// shared by every kind, even though S3 never reads or writes it
-    /// (`S3FieldSchema.apply` never touches `port`). Once Task 8 moves
-    /// `host`/`port`/`username` into an SSH-only `ssh:` block, `StoredSession`
-    /// shrinks to exactly the set `validateForEditSave` assigns, and
-    /// mutate-vs-rebuild stops being externally observable at all — there is
-    /// nothing left to forget to forward, so the property becomes
-    /// structural rather than something a test can pin. This test will need
-    /// rewriting or retiring at that point; do not treat it as load-bearing
-    /// once `StoredSession`'s shape changes.
-    @Test @MainActor func editSaveMutatesTheOriginalInsteadOfRebuildingIt() {
-        let stored = StoredSession(
-            id: UUID(), name: "bucket", host: "unused", port: 443, username: "unused",
-            kind: .s3,
-            s3: StoredS3Config(
+    /// What takes its place is a real behavioral claim about the new shape,
+    /// not a consequence of it: an edit-save on a non-SSH session must leave
+    /// NO SSH block behind. `validateForEditSave` clears it on a kind that is
+    /// not `.ssh` — miss that and the `"unused"` placeholder comes back as an
+    /// `ssh` block full of empty strings, on disk and in every export.
+    @Test @MainActor func editSaveLeavesNoSSHBlockOnANonSSHSession() {
+        let stored = s3Session(
+            name: "bucket",
+            config: StoredS3Config(
                 accessKeyID: "AKIA", region: "eu-central-1",
                 endpoint: "https://s3.example.com", bucket: "bucket", usePathStyle: false))
         let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
@@ -1244,28 +1239,28 @@ struct ConnectionViewModelTests {
 
         let saved = vm.validateForEditSave()
 
-        #expect(saved?.port == 443)
+        #expect(saved?.ssh == nil)
+        #expect(saved?.s3?.bucket == "renamed-bucket")
     }
 
     /// The old S3/WebDAV edit-save bodies passed no `jump:` argument at all
-    /// when constructing their replacement `StoredSession`, so a jump host
-    /// configured on a non-SSH session silently vanished on the very next
-    /// edit-save — a real, distinct bug from the login-set one, fixed as a
-    /// side effect of mutating rather than rebuilding. Nothing pinned it
-    /// before this test (fix round 1).
-    @Test @MainActor func editSavePreservesJumpForANonSSHKind() {
+    /// when constructing their replacement `StoredSession`, so a configured
+    /// jump host silently vanished on the very next edit-save. M23/T6 fixed
+    /// that by mutating rather than rebuilding; nothing pinned it before.
+    ///
+    /// Retargeted from `.s3` to `.ssh` by M23/T8: the jump now lives inside
+    /// the SSH block, so "a jump on an S3 session" is unrepresentable rather
+    /// than merely preserved — and SSH is where the regression would actually
+    /// cost a user their bastion.
+    @Test @MainActor func editSavePreservesTheJumpAcrossAnEditSave() {
         let jump = StoredSession.JumpSpec(
             host: "bastion.example.com", username: "bastion-user", authKind: .password)
-        let stored = StoredSession(
-            id: UUID(), name: "bucket", host: "unused", username: "unused",
-            jump: jump, kind: .s3,
-            s3: StoredS3Config(
-                accessKeyID: "AKIA", region: "eu-central-1",
-                endpoint: "https://s3.example.com", bucket: "bucket", usePathStyle: false))
+        let stored = sshSession(
+            name: "prod", host: "example.com", username: "tim", jump: jump)
         let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
         vm.beginEditing(stored)
         #expect(vm.jumpEnabled) // sanity: beginEditing actually picked the jump up
-        vm.saveName = "bucket"
+        vm.saveName = "prod"
 
         let saved = vm.validateForEditSave()
 
