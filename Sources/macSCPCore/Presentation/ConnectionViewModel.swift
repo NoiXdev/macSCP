@@ -371,6 +371,16 @@ public final class ConnectionViewModel {
     /// set-mode jump (no manual slot to preserve either way).
     private var existingJumpSecretID: UUID?
 
+    /// The session `beginEditing` was handed, kept so `validateForEditSave`
+    /// can MUTATE it rather than rebuild it (M23).
+    ///
+    /// Rebuilding is what the three old bodies did, and it is why a
+    /// set-backed S3 session lost its login-set binding on every unrelated
+    /// edit between M15 and M22: a field the form does not render is a field a
+    /// rebuild drops. Cleared by `exitEditMode`, so a stale original cannot
+    /// outlive its edit.
+    private var editingOriginal: StoredSession?
+
     public private(set) var state: State = .idle
     /// `.new` while the form creates a connection; `.edit` while it edits a
     /// stored session (see `beginEditing`/`endEditing`).
@@ -578,36 +588,6 @@ public final class ConnectionViewModel {
             auth: ssh.auth, jump: jump))
     }
 
-    /// Validates the S3 form fields for `validateForEditSaveS3(sessionID:)`
-    /// -- the required, secret-free fields (endpoint/region/bucket/
-    /// accessKeyID) are always checked; `requireSecret` gates
-    /// `s3SecretAccessKey` the same way `validateJump(requireSecret:)` gates
-    /// the jump's own password above: edit-mode save deliberately leaves it
-    /// empty to mean "unchanged" (see `beginEditing`). Returns the `.failed`
-    /// state to publish, or `nil` when every required field is non-empty
-    /// after trimming.
-    ///
-    /// `connect()` stopped using this in M23 -- it asks
-    /// `BackendDescriptor.firstViolation` instead, which names the offending
-    /// field. The edit-save path follows in M23/T6, at which point this
-    /// method goes away.
-    private func validateS3Fields(requireSecret: Bool) -> State? {
-        let endpoint = s3Endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        let region = s3Region.trimmingCharacters(in: .whitespacesAndNewlines)
-        let bucket = s3Bucket.trimmingCharacters(in: .whitespacesAndNewlines)
-        let accessKeyID = s3AccessKeyID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let secretAccessKey = s3SecretAccessKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !endpoint.isEmpty, !region.isEmpty, !bucket.isEmpty, !accessKeyID.isEmpty else {
-            return .failed(message: CoreL10n.string("core.connect.s3FieldRequired"), field: nil)
-        }
-        if requireSecret {
-            guard !secretAccessKey.isEmpty else {
-                return .failed(message: CoreL10n.string("core.connect.s3FieldRequired"), field: nil)
-            }
-        }
-        return nil
-    }
-
     /// Builds the runtime WebDAV config from the form fields. Since M22/T8 a
     /// thin typed wrapper over `WebDAVFieldSchema.makeConfig` — the trimming
     /// and the empty-URL rejection live there, one place for the form, the
@@ -753,6 +733,7 @@ public final class ConnectionViewModel {
     /// empty; an empty password at save time means "leave unchanged" (see
     /// `validateForEditSave`/`ContentView.onSaveEdited`).
     public func beginEditing(_ stored: StoredSession) {
+        editingOriginal = stored
         kind = stored.kind
         host = stored.host
         port = String(stored.port)
@@ -876,6 +857,7 @@ public final class ConnectionViewModel {
     /// in next.
     public func exitEditMode() {
         mode = .new
+        editingOriginal = nil
         selectedGroupID = nil
         loginMode = .manual
         selectedLoginSetID = nil
@@ -918,162 +900,67 @@ public final class ConnectionViewModel {
         jumpSessionID = nil
     }
 
-    /// Validates the form for saving an edited session (password may be
-    /// empty — unlike `connect()`) and, on success, returns the rebuilt
-    /// `StoredSession` carrying the id from `mode`. On failure sets `state`
-    /// to `.failed` with the same `core.connect.*` messages/fields as
-    /// `connect()` and returns nil.
+    /// Validates the form for saving an edited session and returns the updated
+    /// `StoredSession`, or nil after publishing a `.failed` state.
     ///
-    /// Branches on `kind` (M12/T7a): `.ssh` runs the ORIGINAL body
-    /// unchanged (`validateForEditSaveSSH(sessionID:)`); `.s3` runs the
-    /// new, separate `validateForEditSaveS3(sessionID:)` -- same
-    /// byte-identical-SSH-path rationale as the `connect()` split above.
+    /// One body for every protocol since M23, and the place the `"unused"`
+    /// placeholders died: the session is MUTATED through
+    /// `descriptor.apply` rather than rebuilt, so a backend with no host and
+    /// no user name simply leaves those fields alone instead of parking a
+    /// literal there.
     ///
-    /// `.webdav` (M21/T9) runs `validateForEditSaveWebDAV(sessionID:)` --
-    /// same byte-identical-SSH-path rationale as the `connect()` split above.
+    /// The secret is deliberately NOT required here (`requireSecrets: false`),
+    /// unlike `connect()`: edit mode leaves it blank to mean "keep the stored
+    /// one", and requiring it would make every saved password session
+    /// impossible to edit without retyping its password.
     public func validateForEditSave() -> StoredSession? {
         guard case .edit(let sessionID) = mode else { return nil }
-        switch kind {
-        case .ssh: return validateForEditSaveSSH(sessionID: sessionID)
-        case .s3: return validateForEditSaveS3(sessionID: sessionID)
-        case .webdav: return validateForEditSaveWebDAV(sessionID: sessionID)
-        }
-    }
 
-    private func validateForEditSaveSSH(sessionID: UUID) -> StoredSession? {
-        let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedHost.isEmpty else {
-            state = .failed(message: CoreL10n.string("core.connect.emptyHost"), field: Self.sshField(.host))
-            return nil
-        }
-        guard let portNumber = Int(port.trimmingCharacters(in: .whitespaces)) else {
-            state = .failed(message: CoreL10n.string("core.connect.portNumeric"), field: Self.sshField(.port))
-            return nil
-        }
-        let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedUsername.isEmpty else {
-            state = .failed(message: CoreL10n.string("core.connect.emptyUsername"), field: Self.sshField(.username))
-            return nil
-        }
         let trimmedName = saveName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
-            state = .failed(message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName)
+            state = .failed(
+                message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName)
             return nil
         }
-        let trimmedKeyPath = keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        if authChoice == .privateKey {
-            guard !trimmedKeyPath.isEmpty else {
-                state = .failed(message: CoreL10n.string("core.connect.keyPathEmpty"), field: Self.sshField(.keyPath))
-                return nil
-            }
+        let descriptor = BackendDescriptor.descriptor(for: kind)
+        if let violation = descriptor.firstViolation(in: values, requireSecrets: false) {
+            state = .failed(
+                message: CoreL10n.string(violation.messageKey),
+                field: .schema(violation.fieldKey))
+            return nil
         }
-        // requireSecret: false (final review I-1) -- edit mode deliberately
-        // leaves `jumpPassword` empty ("unchanged", see `beginEditing`);
-        // requiring it here would make a session with a manual password jump
-        // impossible to save without retyping the jump secret. Safe because
-        // `onConnectEdited` (ContentView.swift) re-reads the persisted
-        // session and resolves the jump secret from the keychain, mirroring
-        // the target's own connect-vs-edit password asymmetry above.
+        // requireSecret: false for the same reason as above — see
+        // `validateJump`'s own doc comment.
         if let jumpFailure = validateJump(requireSecret: false) {
             state = jumpFailure
             return nil
         }
-        state = .idle
-        return StoredSession(
-            id: sessionID,
-            name: trimmedName,
-            host: trimmedHost,
-            port: portNumber,
-            username: trimmedUsername,
-            authKind: Self.storedAuthKind(for: authChoice),
-            keyPath: authChoice == .privateKey ? trimmedKeyPath : nil,
-            groupID: selectedGroupID,
-            // Set mode (M10b/T3): the session references the selected set
-            // instead of carrying its own credentials. `ContentView` fills
-            // username/authChoice/keyPath from that set before this
-            // validator runs, so the checks above still see valid data.
-            loginSetID: loginMode == .set ? selectedLoginSetID : nil,
-            jump: buildJumpSpec(existingSecretID: existingJumpSecretID),
-            kind: .ssh,
-            s3: nil)
-    }
 
-    /// The S3 edit-save path (M12/T7a): mirrors `validateForEditSaveSSH`
-    /// above, but for the S3 fields -- saveName is still required, the
-    /// secret is NOT (edit mode leaves it empty to mean "unchanged", same
-    /// rule as `password`/`jumpPassword`), and the built `StoredSession`
-    /// carries a secret-free `StoredS3Config` instead of host/port/auth.
-    /// `host`/`username` are set to the established "unused" placeholder
-    /// (see `SessionListViewModel`'s own S3 sessions) -- `StoredSession`
-    /// requires non-optional values there, but an S3 session has no SSH
-    /// host/username of its own.
-    private func validateForEditSaveS3(sessionID: UUID) -> StoredSession? {
-        let trimmedName = saveName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty else {
-            state = .failed(message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName)
-            return nil
-        }
-        if let failure = validateS3Fields(requireSecret: false) {
-            state = failure
-            return nil
-        }
-        state = .idle
-        return StoredSession(
-            id: sessionID,
-            name: trimmedName,
-            host: "unused",
-            username: "unused",
-            groupID: selectedGroupID,
-            // Same rule as `validateForEditSaveSSH` (M22/T9): an edit-save
-            // must carry the login-set reference forward. Dropping it — which
-            // this path did from M15 until now — silently unbound a set-backed
-            // S3 session the first time anything else about it was edited, and
-            // WebDAV would have inherited that the moment it gained sets.
-            loginSetID: loginMode == .set ? selectedLoginSetID : nil,
-            kind: .s3,
-            s3: StoredS3Config(
-                accessKeyID: s3AccessKeyID.trimmingCharacters(in: .whitespacesAndNewlines),
-                region: s3Region.trimmingCharacters(in: .whitespacesAndNewlines),
-                endpoint: s3Endpoint.trimmingCharacters(in: .whitespacesAndNewlines),
-                bucket: s3Bucket.trimmingCharacters(in: .whitespacesAndNewlines),
-                usePathStyle: s3UsePathStyle))
-    }
+        // Mutating the ORIGINAL is what carries group, login-set binding and
+        // the other backends' blocks forward. The fallback covers a caller
+        // that set `.edit` without going through `beginEditing`; it rebuilds
+        // only what it can, which is why nothing should rely on it.
+        var session = editingOriginal ?? StoredSession(
+            id: sessionID, name: trimmedName, host: "", username: "", kind: kind)
+        session.name = trimmedName
+        session.kind = kind
+        // Reset BEFORE `apply`, not after: `host`/`username` are SSH's own
+        // fields, not a place for a backend without them to park a literal.
+        // SSH's `apply` writes real values right back over this; S3's and
+        // WebDAV's apply never touch these two, by contract (see their own
+        // doc comments), so they are left blank rather than carrying over
+        // whatever the ORIGINAL had here -- including a legacy `"unused"`
+        // from before this milestone, or a stale host left behind by
+        // switching `kind` away from SSH during this very edit.
+        session.host = ""
+        session.username = ""
+        session.groupID = selectedGroupID
+        session.loginSetID = loginMode == .set ? selectedLoginSetID : nil
+        session.jump = buildJumpSpec(existingSecretID: existingJumpSecretID)
+        descriptor.apply(values, &session)
 
-    /// The WebDAV edit-save path (M21/T9): mirrors `validateForEditSaveS3`
-    /// above -- saveName is still required, the password is NOT (edit mode
-    /// leaves it empty to mean "unchanged", same rule as `password`/
-    /// `s3SecretAccessKey`), and the built `StoredSession` carries a
-    /// secret-free `StoredWebDAVConfig` instead of host/port/auth. `host` is
-    /// set to the established "unused" placeholder (see
-    /// `validateForEditSaveS3`'s own doc comment); `username` is ALSO
-    /// "unused" here -- unlike S3, WebDAV's real username lives on
-    /// `StoredWebDAVConfig.username`, not on `StoredSession.username`, since
-    /// the form field it comes from (`username`) is shared with SSH.
-    private func validateForEditSaveWebDAV(sessionID: UUID) -> StoredSession? {
-        let trimmedName = saveName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty else {
-            state = .failed(message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName)
-            return nil
-        }
-        let trimmedBaseURL = webdavBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedBaseURL.isEmpty else {
-            state = .failed(message: CoreL10n.string("core.connect.webdavFieldRequired"), field: nil)
-            return nil
-        }
         state = .idle
-        return StoredSession(
-            id: sessionID,
-            name: trimmedName,
-            host: "unused",
-            username: "unused",
-            groupID: selectedGroupID,
-            // See `validateForEditSaveS3` — the same carry-forward.
-            loginSetID: loginMode == .set ? selectedLoginSetID : nil,
-            kind: .webdav,
-            webdav: StoredWebDAVConfig(
-                baseURL: trimmedBaseURL,
-                username: username.trimmingCharacters(in: .whitespacesAndNewlines),
-                useNextcloudPath: webdavUseNextcloudPath))
+        return session
     }
 
     /// Validates the optional jump block (M10c/T3, spec §3) when

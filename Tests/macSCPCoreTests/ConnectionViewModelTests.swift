@@ -1031,6 +1031,53 @@ struct ConnectionViewModelTests {
             #expect(saved?.loginSetID == setID, "\(kind) dropped its login-set binding on save")
         }
     }
+
+    // MARK: - One edit-save body (M23/T6)
+
+    /// The defect this milestone dissolves at its root: every non-SSH session
+    /// stored the literal placeholder "unused" in host and username, which made
+    /// them all share the import duplicate key `unused|22|unused`.
+    @Test @MainActor func editSaveWritesNoPlaceholders() {
+        let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
+        vm.beginEditing(s3Session(name: "bucket"))
+        vm.saveName = "bucket"
+        vm.s3Endpoint = "https://s3.example.com"
+        vm.s3Region = "eu-central-1"
+        vm.s3Bucket = "archive"
+        vm.s3AccessKeyID = "AKIA"
+        let saved = vm.validateForEditSave()
+        #expect(saved?.host != "unused")
+        #expect(saved?.username != "unused")
+        #expect(saved?.s3?.bucket == "archive")
+    }
+
+    /// An edit-save must carry forward everything the form does not show. The
+    /// three old bodies rebuilt the session from scratch, which is how a
+    /// set-backed S3 session silently lost its binding from M15 until M22.
+    @Test @MainActor func editSavePreservesWhatTheFormNeverShows() {
+        let group = UUID(), set = UUID()
+        let original = s3Session(name: "bucket", groupID: group, loginSetID: set)
+        let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
+        vm.beginEditing(original)
+        vm.saveName = "bucket renamed"
+        vm.s3Bucket = "archive"
+        let saved = vm.validateForEditSave()
+        #expect(saved?.id == original.id)
+        #expect(saved?.name == "bucket renamed")
+        #expect(saved?.groupID == group)
+        #expect(saved?.loginSetID == set)
+    }
+
+    /// Edit mode leaves the secret blank to mean "keep the stored one". A
+    /// requireSecrets: true here would make every password session unsaveable
+    /// without retyping its password.
+    @Test @MainActor func editSaveAcceptsABlankSecret() {
+        let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
+        vm.beginEditing(sshSession(name: "prod", host: "example.com", username: "tim"))
+        vm.saveName = "prod"
+        vm.password = ""
+        #expect(vm.validateForEditSave() != nil)
+    }
 }
 
 private actor CallCounter {
