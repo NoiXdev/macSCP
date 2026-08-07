@@ -7,14 +7,21 @@ import Observation
 @Observable
 @MainActor
 public final class ConnectionViewModel {
-    /// The form field whose validation failed — the UI highlights it in red.
+    /// Which form row to outline for a failure.
+    ///
+    /// Backend fields are addressed by their NAMESPACED `FieldValues` key
+    /// (M23) rather than by a case each: the set of fields is data now, and an
+    /// enum case per field would be exactly the per-protocol code this
+    /// milestone removes — which is also why S3 and WebDAV rows never
+    /// highlighted before, the App's key mapping hardcoded SSH's namespace.
+    ///
+    /// The remaining cases are FORM rules, not backend fields: the save name
+    /// is form bookkeeping, and the jump block is a second login with no
+    /// schema of its own.
     public enum Field: Equatable, Sendable {
-        case host
-        case port
-        case username
-        case password
+        /// A backend field, e.g. `.schema("SSHField.host")`.
+        case schema(String)
         case saveName
-        case keyPath
         /// Jump-host fields (M10c/T3) — highlighted while the jump block is
         /// enabled and one of its own values fails validation.
         case jumpHost
@@ -25,6 +32,15 @@ public final class ConnectionViewModel {
         /// The jump-source session picker (M11a/T3) — highlighted when the
         /// jump is enabled, in "session" mode, and nothing is selected yet.
         case jumpSession
+    }
+
+    /// An SSH field as a `Field.schema` key (M23) — the namespaced form
+    /// `SchemaFormView` matches its rows against. Spelled once here so the
+    /// remaining SSH-only failure sites (`failedState`'s `ConfigError`
+    /// mappings, the edit-save validator) cannot drift from the key the
+    /// schema actually stores the value under.
+    static func sshField(_ field: SSHField) -> Field {
+        .schema("\(SSHField.namespace).\(field.rawValue)")
     }
 
     public enum State: Equatable {
@@ -419,77 +435,65 @@ public final class ConnectionViewModel {
     /// Re-entrancy safe: calls made while `.connecting` are dropped, so a
     /// double-click doesn't open a second (orphaned) connection.
     ///
-    /// Branches on `kind` (M12/T7a): `.ssh` runs the ORIGINAL body
-    /// unchanged (`connectSSH()`, byte-identical to this method's
-    /// pre-M12 implementation); `.s3` runs the new, separate `connectS3()`
-    /// path. Splitting into two private methods -- rather than threading
-    /// an `if kind == .s3` branch through the existing body -- is what
-    /// makes "SSH connect path byte-identical" a structural guarantee
-    /// instead of a hopeful claim.
+    /// One body for every protocol since M23. What used to be three
+    /// hand-written validators is `descriptor.firstViolation`, which walks the
+    /// VISIBLE fields — so SSH's "a password is required, but only under
+    /// password auth, and never under agent auth" is the schema's
+    /// `visibleWhen` rather than a `switch` here.
     ///
-    /// `.webdav` (M21/T9) runs `connectWebDAV()` -- the same
-    /// byte-identical-SSH-path split this file already uses for S3.
+    /// Two things stay hand-written, because they are form rules rather than
+    /// backend fields: the save name, and the jump block.
     public func connect() async -> (any RemoteFileSystem)? {
         guard state != .connecting else { return nil }
         defer { hostKeyPrompt = nil }
-        switch kind {
-        case .ssh: return await connectSSH()
-        case .s3: return await connectS3()
-        case .webdav: return await connectWebDAV()
-        }
-    }
 
-    private func connectSSH() async -> (any RemoteFileSystem)? {
-        guard let portNumber = Int(port.trimmingCharacters(in: .whitespaces)) else {
-            state = .failed(message: CoreL10n.string("core.connect.portNumeric"), field: .port)
-            return nil
-        }
-        switch authChoice {
-        case .password:
-            guard !password.isEmpty else {
-                state = .failed(message: CoreL10n.string("core.connect.passwordEmpty"), field: .password)
-                return nil
-            }
-        case .privateKey:
-            guard !keyPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                state = .failed(message: CoreL10n.string("core.connect.keyPathEmpty"), field: .keyPath)
-                return nil
-            }
-        case .agent:
-            break // Agent mode needs neither a password nor a key path.
-        }
-        if let jumpFailure = validateJump(requireSecret: true) {
-            state = jumpFailure
-            return nil
-        }
         if shouldSaveSession,
            saveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             state = .failed(
                 message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName)
             return nil
         }
+        let descriptor = BackendDescriptor.descriptor(for: kind)
+        if let violation = descriptor.firstViolation(in: values, requireSecrets: true) {
+            state = .failed(
+                message: CoreL10n.string(violation.messageKey),
+                field: .schema(violation.fieldKey))
+            return nil
+        }
+        // Unconditional, not `if kind == .ssh`: `validateJump` returns nil
+        // whenever the toggle is off, and the toggle is cleared by
+        // `exitEditMode` whenever `kind` changes. A guard here would be a
+        // protocol branch that decides nothing.
+        if let jumpFailure = validateJump(requireSecret: true) {
+            state = jumpFailure
+            return nil
+        }
+
+        let config: ConnectionConfig
         do {
-            // The auth branch, the trimming and the port fallback all live in
-            // `SSHFieldSchema.makeConfig` now (M22/T8); `password` carries
-            // whichever secret the chosen auth kind means, exactly as the
-            // factory's one `secret` parameter expects.
-            guard case .ssh(let target) = try makeConfig(secret: password) else {
-                throw RemoteFSError.protocolError(reason: "expected an SSH config")
-            }
-            // The jump is deliberately NOT built by the factory (pinned by
-            // `SSHFieldSchema.makeConfigLeavesTheJumpToTheCaller`): it needs a
-            // SECOND secret out of its own Keychain slot, which a one-secret
-            // factory cannot resolve. Attaching it here is what keeps a
-            // bastion-only session from quietly dialling its target directly.
-            let config = try SSHConnectionConfig(
-                host: target.host, port: portNumber, username: target.username,
-                auth: target.auth, jump: buildJumpConfig())
-            state = .connecting
-            let fs = try await connector(.ssh(config)) { [weak self] candidate in
+            config = try descriptor.makeConfig(values, resolvedSecret)
+        } catch {
+            state = Self.failedState(for: error)
+            return nil
+        }
+        // Bound once and used for BOTH the dial and `lastConnectedConfig`:
+        // the latter is what the external-terminal launcher turns into an
+        // `ssh -J` command line (M11d/T2), so recording the pre-jump config
+        // here would make "Open in External Terminal" dial a bastion-only
+        // target directly.
+        let dialed = attachingJump(to: config)
+        state = .connecting
+        do {
+            // The decider is handed to EVERY backend by the `Connector`
+            // typealias; only SSH consults it (TOFU). S3 and WebDAV receive a
+            // decider they never ask -- WebDAV's own certificate decision
+            // belongs to whoever builds the `connector` (the App passes
+            // `certificateBridge.ask`, the CLI refuses every unknown one).
+            let fs = try await connector(dialed) { [weak self] candidate in
                 await self?.presentHostKeyPrompt(for: candidate) ?? false
             }
             state = .idle
-            lastConnectedConfig = config
+            if case .ssh(let ssh) = dialed { lastConnectedConfig = ssh }
             return fs
         } catch {
             state = Self.failedState(
@@ -500,60 +504,56 @@ public final class ConnectionViewModel {
         }
     }
 
-    /// The S3 connect path (M12/T7a). No jump, no host-key TOFU -- S3 has
-    /// none of that machinery, so this is a much shorter mirror of
-    /// `connectSSH()` above: validate the required fields, build the
-    /// runtime `S3ConnectionConfig`, dispatch through the SAME `connector`
-    /// seam with `.s3(config)`, and reuse `Self.failedState(for:)` for any
-    /// thrown error -- identical failure plumbing to the SSH path, just fed
-    /// a different config type.
-    private func connectS3() async -> (any RemoteFileSystem)? {
-        if shouldSaveSession,
-           saveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            state = .failed(
-                message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName)
-            return nil
-        }
-        if let failure = validateS3Fields(requireSecret: true) {
-            state = failure
-            return nil
-        }
-        let config: ConnectionConfig
-        do {
-            config = try makeConfig(
-                secret: s3SecretAccessKey.trimmingCharacters(in: .whitespacesAndNewlines))
-        } catch {
-            // `validateS3Fields` above has already reported every empty
-            // required field with its localized message; anything the factory
-            // still rejects gets the same text rather than its unlocalized
-            // `reason:`.
-            state = .failed(message: CoreL10n.string("core.connect.s3FieldRequired"), field: nil)
-            return nil
-        }
-        state = .connecting
-        do {
-            // S3 has no host-key prompt (no TOFU) -- the decider is passed
-            // through unconditionally by the `Connector` typealias (every
-            // backend gets one), but S3 simply never consults it, so a
-            // decider that always answers `false` is never actually asked.
-            let fs = try await connector(config) { _ in false }
-            state = .idle
-            return fs
-        } catch {
-            state = Self.failedState(for: error)
-            return nil
-        }
+    /// The secret the active backend's visible secret field currently holds.
+    ///
+    /// A QUERY, not a stored property: SSH means the passphrase under
+    /// private-key auth, the password under password auth, and NOTHING under
+    /// agent auth — where reading a Keychain slot that was never written is
+    /// exactly the M10d bug. `visibleSecretField` answers all three.
+    private var resolvedSecret: String {
+        let descriptor = BackendDescriptor.descriptor(for: kind)
+        let namespace = descriptor.fieldNamespace
+        let field = descriptor.connectionSchema
+            .visibleSecretField(in: values, namespace: namespace)
+            ?? descriptor.credentialSchema
+                .visibleSecretField(in: values, namespace: namespace)
+        guard let field else { return "" }
+        return values.raw["\(namespace).\(field.id)"] ?? ""
     }
 
-    /// Validates the S3 form fields shared by `connectS3()` and
-    /// `validateForEditSaveS3(sessionID:)` -- the required, secret-free
-    /// fields (endpoint/region/bucket/accessKeyID) are always checked;
-    /// `requireSecret` gates `s3SecretAccessKey` the same way
-    /// `validateJump(requireSecret:)` gates the jump's own password above:
-    /// `connect()` needs an actual secret in hand, but edit-mode save
-    /// deliberately leaves it empty to mean "unchanged" (see
-    /// `beginEditing`). Returns the `.failed` state to publish, or `nil`
-    /// when every required field is non-empty after trimming.
+    /// Attaches the jump hop to a freshly built config.
+    ///
+    /// Separate from `makeConfig` on purpose and pinned by
+    /// `SSHFieldSchema.makeConfigLeavesTheJumpToTheCaller`: a jump host has a
+    /// SECOND secret in its own Keychain slot, and a factory taking one secret
+    /// structurally cannot resolve it. Doing this here is what keeps a
+    /// bastion-only session from quietly dialling its target directly.
+    ///
+    /// Non-SSH configs pass through untouched — no other protocol has a hop.
+    private func attachingJump(to config: ConnectionConfig) -> ConnectionConfig {
+        guard case .ssh(let ssh) = config, let jump = buildJumpConfig() else { return config }
+        // Re-running the initializer cannot throw here: every component came
+        // out of an `SSHConnectionConfig` that already validated, and the jump
+        // is validated by `validateJump` above.
+        guard let withJump = try? SSHConnectionConfig(
+            host: ssh.host, port: ssh.port, username: ssh.username,
+            auth: ssh.auth, jump: jump) else { return config }
+        return .ssh(withJump)
+    }
+
+    /// Validates the S3 form fields for `validateForEditSaveS3(sessionID:)`
+    /// -- the required, secret-free fields (endpoint/region/bucket/
+    /// accessKeyID) are always checked; `requireSecret` gates
+    /// `s3SecretAccessKey` the same way `validateJump(requireSecret:)` gates
+    /// the jump's own password above: edit-mode save deliberately leaves it
+    /// empty to mean "unchanged" (see `beginEditing`). Returns the `.failed`
+    /// state to publish, or `nil` when every required field is non-empty
+    /// after trimming.
+    ///
+    /// `connect()` stopped using this in M23 -- it asks
+    /// `BackendDescriptor.firstViolation` instead, which names the offending
+    /// field. The edit-save path follows in M23/T6, at which point this
+    /// method goes away.
     private func validateS3Fields(requireSecret: Bool) -> State? {
         let endpoint = s3Endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         let region = s3Region.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -569,41 +569,6 @@ public final class ConnectionViewModel {
             }
         }
         return nil
-    }
-
-    /// The WebDAV connect path (M21/T9). Mirrors `connectS3()`: validate,
-    /// build the runtime config, dispatch through the SAME `connector` seam
-    /// with `.webdav(config)` -- which is also why nothing about an unknown
-    /// server certificate is decided here. The decider belongs to whoever
-    /// builds the `connector`: the App has passed `certificateBridge.ask`
-    /// since M21 (`ContentView.makeTab`), and the CLI, having no interactive
-    /// prompt, refuses every unknown certificate (`SessionConnecting`).
-    private func connectWebDAV() async -> (any RemoteFileSystem)? {
-        if shouldSaveSession,
-           saveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            state = .failed(
-                message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName)
-            return nil
-        }
-        let config: ConnectionConfig
-        do {
-            config = try makeConfig(secret: values[WebDAVField.password])
-        } catch {
-            state = .failed(message: CoreL10n.string("core.connect.webdavFieldRequired"), field: nil)
-            return nil
-        }
-        state = .connecting
-        do {
-            // WebDAV has no host-key prompt (no TOFU, it authenticates over
-            // TLS) -- same "decider passed through but never consulted"
-            // shape as S3's own connect path above.
-            let fs = try await connector(config) { _ in false }
-            state = .idle
-            return fs
-        } catch {
-            state = Self.failedState(for: error)
-            return nil
-        }
     }
 
     /// Builds the runtime WebDAV config from the form fields. Since M22/T8 a
@@ -941,16 +906,16 @@ public final class ConnectionViewModel {
     private func validateForEditSaveSSH(sessionID: UUID) -> StoredSession? {
         let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedHost.isEmpty else {
-            state = .failed(message: CoreL10n.string("core.connect.emptyHost"), field: .host)
+            state = .failed(message: CoreL10n.string("core.connect.emptyHost"), field: Self.sshField(.host))
             return nil
         }
         guard let portNumber = Int(port.trimmingCharacters(in: .whitespaces)) else {
-            state = .failed(message: CoreL10n.string("core.connect.portNumeric"), field: .port)
+            state = .failed(message: CoreL10n.string("core.connect.portNumeric"), field: Self.sshField(.port))
             return nil
         }
         let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedUsername.isEmpty else {
-            state = .failed(message: CoreL10n.string("core.connect.emptyUsername"), field: .username)
+            state = .failed(message: CoreL10n.string("core.connect.emptyUsername"), field: Self.sshField(.username))
             return nil
         }
         let trimmedName = saveName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -961,7 +926,7 @@ public final class ConnectionViewModel {
         let trimmedKeyPath = keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
         if authChoice == .privateKey {
             guard !trimmedKeyPath.isEmpty else {
-                state = .failed(message: CoreL10n.string("core.connect.keyPathEmpty"), field: .keyPath)
+                state = .failed(message: CoreL10n.string("core.connect.keyPathEmpty"), field: Self.sshField(.keyPath))
                 return nil
             }
         }
@@ -1254,23 +1219,23 @@ public final class ConnectionViewModel {
     ) -> State {
         switch error {
         case SSHConnectionConfig.ConfigError.emptyHost:
-            return .failed(message: CoreL10n.string("core.connect.emptyHost"), field: .host)
+            return .failed(message: CoreL10n.string("core.connect.emptyHost"), field: Self.sshField(.host))
         case SSHConnectionConfig.ConfigError.emptyUsername:
-            return .failed(message: CoreL10n.string("core.connect.emptyUsername"), field: .username)
+            return .failed(message: CoreL10n.string("core.connect.emptyUsername"), field: Self.sshField(.username))
         // Host/username whitelist ConfigErrors (M11d final review, C-1):
         // defense in depth mirroring the jump-side whitelist below -- a UI
         // submission should never reach these either, but `SSHConnectionConfig`'s
         // init re-checks unconditionally.
         case SSHConnectionConfig.ConfigError.invalidHost:
-            return .failed(message: CoreL10n.string("core.connect.hostInvalid"), field: .host)
+            return .failed(message: CoreL10n.string("core.connect.hostInvalid"), field: Self.sshField(.host))
         case SSHConnectionConfig.ConfigError.invalidUsername:
-            return .failed(message: CoreL10n.string("core.connect.usernameInvalid"), field: .username)
+            return .failed(message: CoreL10n.string("core.connect.usernameInvalid"), field: Self.sshField(.username))
         case SSHConnectionConfig.ConfigError.invalidPort(let port):
             return .failed(
                 message: String(format: CoreL10n.string("core.connect.invalidPort %@"), String(port)),
-                field: .port)
+                field: Self.sshField(.port))
         case SSHConnectionConfig.ConfigError.emptyKeyPath:
-            return .failed(message: CoreL10n.string("core.connect.keyPathEmpty"), field: .keyPath)
+            return .failed(message: CoreL10n.string("core.connect.keyPathEmpty"), field: Self.sshField(.keyPath))
         // Jump ConfigErrors (M10c/T3): defense-in-depth mirrors of
         // `validateJump()` above -- a UI submission never reaches these
         // (the form already validated), but `SSHConnectionConfig`'s own init
@@ -1370,17 +1335,21 @@ public final class ConnectionViewModel {
             let isJumpKey = jumpEnabled && !jumpKeyPath.isEmpty && path == jumpKeyPath
             return .failed(
                 message: String(format: CoreL10n.string("core.connect.keyNotFound %@"), path),
-                field: isJumpKey ? .jumpKeyPath : .keyPath)
+                field: isJumpKey ? .jumpKeyPath : Self.sshField(.keyPath))
         case SSHKeyError.passphraseRequired:
             return .failed(
                 message: CoreL10n.string("core.connect.keyPassphraseRequired"),
-                field: .password)
+                // `passphrase`, not `password`: both key-passphrase errors can
+                // only arise under private-key auth, and the passphrase row is
+                // the secret row VISIBLE there. The App used to derive this
+                // from `authChoice` inside `failedFieldID`; the key says it now.
+                field: Self.sshField(.passphrase))
         case SSHKeyError.wrongPassphrase:
-            return .failed(message: CoreL10n.string("core.connect.keyWrongPassphrase"), field: .password)
+            return .failed(message: CoreL10n.string("core.connect.keyWrongPassphrase"), field: Self.sshField(.passphrase))
         case SSHKeyError.unsupportedFormat:
             return .failed(
                 message: CoreL10n.string("core.connect.keyUnsupportedFormat"),
-                field: .keyPath)
+                field: Self.sshField(.keyPath))
         case HostKeyError.mismatch(let host, let expected, let presented):
             return .failed(
                 message: String(

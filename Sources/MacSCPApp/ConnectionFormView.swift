@@ -118,33 +118,21 @@ struct ConnectionFormView: View {
         return nil
     }
 
-    /// `failedField` as the namespaced key `SchemaFormView` matches its rows
-    /// against (M22/T8) — the seam that keeps the red outline alive now that
-    /// the rows are rendered generically.
+    /// The namespaced key `SchemaFormView` matches its rows against.
     ///
-    /// Only SSH has `Field` cases at all; S3 and WebDAV report their failures
-    /// with `field: nil`. The cases returning nil here are NOT unhighlighted:
-    /// the session-name row and the whole jump block are drawn by hand below
-    /// and carry their own `.errorHighlight`.
+    /// A pass-through since M23: the view model reports the failing field by
+    /// its own key, so this no longer translates an enum case into an
+    /// SSH-namespaced string — which is why S3 and WebDAV rows highlight now
+    /// and did not before. The passphrase-versus-password special case is gone
+    /// too: the validator walks the VISIBLE fields, so it names whichever
+    /// secret row is actually on screen.
+    ///
+    /// The cases this returns nil for are NOT unhighlighted: the session-name
+    /// row and the whole jump block are drawn by hand below and carry their
+    /// own `.errorHighlight`.
     private var failedFieldID: String? {
-        guard let failedField else { return nil }
-        let ssh = SSHField.namespace
-        switch failedField {
-        case .host: return "\(ssh).\(SSHField.host.rawValue)"
-        case .port: return "\(ssh).\(SSHField.port.rawValue)"
-        case .username: return "\(ssh).\(SSHField.username.rawValue)"
-        case .keyPath: return "\(ssh).\(SSHField.keyPath.rawValue)"
-        case .password:
-            // The schema splits the one `.password` failure across two rows,
-            // and only one of them is on screen: a passphrase error must
-            // outline the passphrase row, not an invisible password row.
-            return viewModel.authChoice == .privateKey
-                ? "\(ssh).\(SSHField.passphrase.rawValue)"
-                : "\(ssh).\(SSHField.password.rawValue)"
-        case .saveName, .jumpSession, .jumpHost, .jumpPort, .jumpUsername,
-             .jumpPassword, .jumpKeyPath:
-            return nil
-        }
+        guard case .schema(let key) = failedField else { return nil }
+        return key
     }
 
     /// Fields the generic renderer must skip because this view draws them —
