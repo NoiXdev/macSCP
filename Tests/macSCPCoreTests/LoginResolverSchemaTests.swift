@@ -159,31 +159,44 @@ struct LoginResolverSchemaTests {
     /// SSH and S3 mark the field that IDENTIFIES their login as required —
     /// which is what the login-set editor gates Save on since the `switch` over
     /// `ConnectionKind` (that returned "always disabled" for `.webdav`) is
-    /// gone.
+    /// gone. WebDAV is the one exception (maintainer decision, M23/T5 fix
+    /// round 1): anonymous WebDAV is a real deployment (a public read-only
+    /// share, or a LAN box with no auth), so neither of its credential fields
+    /// is required and an empty WebDAV credential form is legitimately
+    /// complete.
     ///
-    /// `.webdav` is excluded deliberately (maintainer decision, M23/T5 fix
-    /// round 1): anonymous WebDAV is supported, so neither of its credential
-    /// fields is required and an empty WebDAV credential form is legitimately
-    /// complete — pinned by `anEmptyWebDAVCredentialFormIsComplete` below.
-    @Test(arguments: ConnectionKind.allCases.filter { $0 != .webdav })
-    func anEmptyCredentialFormIsIncompleteForEveryBackend(kind: ConnectionKind) {
+    /// Total over `ConnectionKind.allCases` rather than filtered (M23/T9 fix
+    /// round 2): a `filter { $0 != .webdav }` silently drops a fourth backend
+    /// into "untested" instead of forcing a decision, which defeats the one
+    /// test whose job is to be total across backends. Each case in the
+    /// argument list names its own expected answer instead, so a new backend
+    /// needs a new tuple to compile-and-pass rather than nothing at all — and
+    /// the separate count assertion below catches a tuple silently missing
+    /// from the list, the same way the filter used to hide `.webdav`.
+    @Test(arguments: [
+        (ConnectionKind.ssh, true), (.s3, true), (.webdav, false),
+    ])
+    func anEmptyCredentialFormIsIncompleteUnlessTheBackendAllowsAnonymousLogin(
+        kind: ConnectionKind, isIncomplete: Bool
+    ) {
         let descriptor = BackendDescriptor.descriptor(for: kind)
-        #expect(!descriptor.credentialSchema.missingRequiredFields(
-            in: descriptor.defaultValues, namespace: descriptor.fieldNamespace).isEmpty,
-            "\(kind) marks no credential field required, so its editor could save a nameless login")
+        let missing = descriptor.credentialSchema.missingRequiredFields(
+            in: descriptor.defaultValues, namespace: descriptor.fieldNamespace)
+        #expect(missing.isEmpty != isIncomplete,
+            isIncomplete
+                ? "\(kind) marks no credential field required, so its editor could save a nameless login"
+                : "\(kind) should allow an anonymous (fully blank) login")
     }
 
-    /// Anonymous WebDAV (maintainer decision, M23/T5 fix round 1): a public
-    /// read-only share, or a LAN box with no auth, is a real deployment. Since
-    /// M23 `connect()` honours `isRequired`, so marking these required would
-    /// refuse such a server before the connect was even attempted.
-    @Test func anEmptyWebDAVCredentialFormIsComplete() {
-        let descriptor = BackendDescriptor.descriptor(for: .webdav)
-        var values = descriptor.defaultValues
-        values[WebDAVField.username] = ""
-        values[WebDAVField.password] = ""
-        #expect(descriptor.credentialSchema.missingRequiredFields(
-            in: values, namespace: descriptor.fieldNamespace).isEmpty)
+    /// A fourth `ConnectionKind` case would silently vanish from the argument
+    /// list above without this: `@Test(arguments:)` only runs what is
+    /// written, so an incomplete list still passes green. This is what makes
+    /// the list ITSELF total, not merely each case in it.
+    @Test func everyConnectionKindHasAnAnonymousLoginExpectation() {
+        let cases: [(ConnectionKind, Bool)] = [
+            (.ssh, true), (.s3, true), (.webdav, false),
+        ]
+        #expect(cases.count == ConnectionKind.allCases.count)
     }
 
     /// Repointed from WebDAV to S3 (M23/T5 fix round 1): WebDAV no longer has a

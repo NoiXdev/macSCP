@@ -495,9 +495,18 @@ public final class SessionListViewModel {
             var sessionHadSecretFailure = false
 
             if restored.loginSetID == set.id {
-                // Only an SSH session has a login to restore INTO its own
-                // fields (M23/T8) — an S3 session's set binding is resolved
-                // through `s3`, and it has no `ssh` block to write to.
+                // Only an SSH session actually gets its login restored here:
+                // `restored.ssh?.username = …` is a silent no-op for an S3
+                // session (`restored.ssh` is nil), and nothing below restores
+                // `restored.s3?.accessKeyID` either — the set's own values
+                // never make it back into the session's `s3` block, only
+                // `loginSetID` is cleared. This matches pre-M23 behaviour (no
+                // regression here), but it is a real gap, not a "handled
+                // elsewhere": an S3 session that had its login set deleted
+                // ends up with the SET's secret copied into its own keychain
+                // slot below, yet no access key ID of its own to pair it
+                // with. `beginEditing`/`SessionImportPlanner` are the later
+                // phases that would need to close this.
                 restored.ssh?.username = set.username
                 restored.ssh?.authKind = set.authKind
                 restored.ssh?.keyPath = set.keyPath

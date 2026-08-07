@@ -157,31 +157,31 @@ public final class ConnectionViewModel {
     }
 
     /// The form's one secret slot, mapped onto whichever field the active
-    /// backend and auth kind actually mean by it.
+    /// backend and auth kind actually mean by it. `ManagedKeyPassphrase.resolve`
+    /// -- its only remaining external callers (`ConnectionFormView`,
+    /// `ContentView`'s `fillFromStored`), both reached only under
+    /// `authChoice == .privateKey` -- is the reason this stays SSH-flavored
+    /// vocabulary rather than being renamed `secret`; every other call site
+    /// already prefers `resolvedSecret`/`fillSecret(_:)` by name.
+    ///
+    /// Built directly on those two (M23/T7 fix round 2) rather than
+    /// duplicating their `switch`-free traversal: `password`'s getter/setter
+    /// used to hand-enumerate `ConnectionKind` (`.webdav` vs. `.ssh`/`.s3`),
+    /// which is exactly the per-protocol branch this milestone removes
+    /// elsewhere, and which would fail to compile for a fourth backend where
+    /// `resolvedSecret`/`fillSecret` already do not.
     ///
     /// SSH declares password and passphrase as two DIFFERENT fields (only one
-    /// of them is ever visible, per auth kind), so the getter picks by auth
-    /// kind while the SETTER writes both. Writing both is what keeps a
-    /// programmatic fill — a login set's secret, a Keychain passphrase — from
-    /// evaporating when the auth kind is switched afterwards, which is the
-    /// asymmetry `userSwitchClearsSecretButProgrammaticSetDoesNot` pins.
+    /// of them is ever visible, per auth kind), so the getter (`resolvedSecret`)
+    /// picks by auth kind while the setter (`fillSecret`) writes every secret
+    /// field the active backend declares -- both, for SSH. Writing both is
+    /// what keeps a programmatic fill — a login set's secret, a Keychain
+    /// passphrase — from evaporating when the auth kind is switched
+    /// afterwards, which is the asymmetry
+    /// `userSwitchClearsSecretButProgrammaticSetDoesNot` pins.
     public var password: String {
-        get {
-            switch kind {
-            case .webdav: return values[WebDAVField.password]
-            case .ssh, .s3:
-                return authChoice == .privateKey
-                    ? values[SSHField.passphrase] : values[SSHField.password]
-            }
-        }
-        set {
-            switch kind {
-            case .webdav: values[WebDAVField.password] = newValue
-            case .ssh, .s3:
-                values[SSHField.password] = newValue
-                values[SSHField.passphrase] = newValue
-            }
-        }
+        get { resolvedSecret }
+        set { fillSecret(newValue) }
     }
 
     /// `AuthChoice` and `StoredSession.AuthKind` share their raw values, which
@@ -701,27 +701,42 @@ public final class ConnectionViewModel {
 
     /// Removes the plaintext password from the state (e.g. after disconnecting).
     ///
-    /// Clears every secret slot of the TARGET's own login, not just the one
-    /// the current `kind`/auth kind happens to read (M22/T8): a secret typed
-    /// under one auth kind and abandoned by switching to another would
-    /// otherwise sit in `values` unreachable but still in memory. That is why
-    /// all four of SSH's password, SSH's passphrase, S3's secret access key
-    /// and WebDAV's password go, regardless of the active `kind`.
+    /// Clears every secret slot of EVERY backend's login, not just the one the
+    /// current `kind`/auth kind happens to read (M22/T8): a secret typed under
+    /// one auth kind and abandoned by switching to another would otherwise sit
+    /// in `values` unreachable but still in memory.
     ///
-    /// `SSHField.jump`'s password is deliberately NOT cleared here: it is a
-    /// SECOND login, with its own Keychain entry (`JumpSpec.secretID`) and its
-    /// own auth switcher. `selectAuthChoice(_:)` calls this whenever the user
-    /// flips the TARGET's auth picker — clearing the jump's slot from there
-    /// would silently discard a bastion password the user already typed, on a
-    /// picker flip that has nothing to do with the jump. The jump's own
-    /// clearing paths (`selectJumpAuthChoice`, `selectJumpSourceMode`,
-    /// `clearJumpFields`) cover it, and `clearJumpFields()` is what
-    /// disconnect-time teardown reaches through.
+    /// Walks `ConnectionKind.allCases` and each descriptor's own declared
+    /// secret fields (M23/T7 fix round 2) instead of naming SSH's password and
+    /// passphrase, S3's secret access key and WebDAV's password by hand -- the
+    /// same declarative traversal `fillSecret(_:)` above uses, generalized
+    /// over every backend instead of just the active one. A hand-written list
+    /// is exactly the enumeration a fourth backend would silently fall outside
+    /// of: nothing here would fail to compile, and its secret would simply
+    /// keep sitting in memory across a disconnect with no test to catch it.
+    ///
+    /// `SSHField.jump`'s password is deliberately NOT cleared here, and is
+    /// unreachable by this traversal in the first place: it is a nested GROUP
+    /// leaf, not a top-level field, so no top-level `field.isSecret` check
+    /// ever sees it (`ConnectionFieldSchema.visibleSecretField`'s own doc
+    /// comment: "secrets never nest"). It is also a SECOND login, with its own
+    /// Keychain entry (`JumpSpec.secretID`) and its own auth switcher.
+    /// `selectAuthChoice(_:)` calls this whenever the user flips the TARGET's
+    /// auth picker — clearing the jump's slot from there would silently
+    /// discard a bastion password the user already typed, on a picker flip
+    /// that has nothing to do with the jump. The jump's own clearing paths
+    /// (`selectJumpAuthChoice`, `selectJumpSourceMode`, `clearJumpFields`)
+    /// cover it, and `clearJumpFields()` is what disconnect-time teardown
+    /// reaches through.
     public func clearPassword() {
-        values[SSHField.password] = ""
-        values[SSHField.passphrase] = ""
-        values[S3Field.secretAccessKey] = ""
-        values[WebDAVField.password] = ""
+        for kind in ConnectionKind.allCases {
+            let descriptor = BackendDescriptor.descriptor(for: kind)
+            let namespace = descriptor.fieldNamespace
+            for field in descriptor.connectionSchema.fields + descriptor.credentialSchema.fields
+            where field.isSecret {
+                values.setRaw("\(namespace).\(field.id)", to: "")
+            }
+        }
     }
 
     /// Full disconnect-time scrub (review finding, M11d fix round 1): clears
@@ -804,11 +819,18 @@ public final class ConnectionViewModel {
         // change, so two consecutive edits of the same kind would keep the
         // previous one's values.
         //
-        // `sessionValues` returns the EMPTY bag for a session whose `kind` says
-        // one thing but whose stored block is missing, so merging it onto the
-        // defaults leaves a blank form -- the right answer for inconsistent
-        // data, and better than the old `?? ""` fallbacks that silently
-        // produced a half-filled one. It also never copies `host`/`username`
+        // `sessionValues` returns the EMPTY bag for an `.s3`/`.webdav` session
+        // whose stored block is missing (`session.s3`/`session.webdav` is
+        // genuinely optional there), so merging it onto the defaults leaves a
+        // blank form for those two -- the right answer for inconsistent data,
+        // and better than the old `?? ""` fallbacks that silently produced a
+        // half-filled one. `.ssh` has no such gap to begin with: a block-less
+        // `.ssh` session's `host`/`port`/`username`/`authKind`/`keyPath`
+        // accessors already fall back to blank/default values
+        // (`StoredSession.swift`), so `sessionValues` reads through those into
+        // an already-blank-where-it-matters bag rather than an empty one --
+        // merging it here has the same visible effect (a blank SSH form) by a
+        // different route. `sessionValues` also never copies `host`/`username`
         // for a non-SSH session, which is where the `"unused"` placeholder a
         // legacy S3/WebDAV session still carries used to enter the form.
         let descriptor = BackendDescriptor.descriptor(for: kind)

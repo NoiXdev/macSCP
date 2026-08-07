@@ -51,6 +51,8 @@ import Testing
 
         #expect(session.s3?.bucket == "archive")
         #expect(session.s3?.region == "us-east-1")
+        #expect(session.s3?.endpoint == "https://minio.example.com")
+        #expect(session.s3?.accessKeyID == "AKIANEW")
         #expect(session.s3?.usePathStyle == true)
         #expect(session.groupID == group)
         #expect(session.loginSetID == set)
@@ -63,11 +65,15 @@ import Testing
 
         var values = FieldValues()
         values[WebDAVField.baseURL] = "https://nas.example.com/dav"
-        values[WebDAVField.username] = "tim"
+        // Deliberately NOT the fixture's default username ("tim") -- an
+        // assertion against the same value the fixture already carries would
+        // pass even if `apply` silently dropped the field.
+        values[WebDAVField.username] = "alice"
         values[bool: WebDAVField.useNextcloudPath] = true
         BackendDescriptor.descriptor(for: .webdav).apply(values, &session)
 
         #expect(session.webdav?.baseURL == "https://nas.example.com/dav")
+        #expect(session.webdav?.username == "alice")
         #expect(session.webdav?.useNextcloudPath == true)
         #expect(session.groupID == group)
         #expect(session.loginSetID == set)
@@ -77,16 +83,23 @@ import Testing
     /// `sessionValues` and `apply` are inverses. Proving it for all three
     /// backends at once is what keeps a field added to one side and forgotten
     /// on the other from shipping.
+    ///
+    /// `groupID`/`loginSetID` are populated (M23/T9 fix round 2), not left
+    /// `nil`: `sessionValues` never reads either one (they are not backend
+    /// fields), so a `nil == nil` comparison would carry this assertion even
+    /// for a REBUILDING adapter that drops them both -- exactly the defect
+    /// this suite exists to catch, per its own header comment.
     @Test(arguments: ConnectionKind.allCases)
     func applyIsTheInverseOfSessionValues(kind: ConnectionKind) {
         let descriptor = BackendDescriptor.descriptor(for: kind)
+        let group = UUID(), set = UUID()
         let original: StoredSession
         switch kind {
         case .ssh: original = sshSession(
             name: "s", host: "h.example.com", port: 2222, username: "u",
-            authKind: .privateKey, keyPath: "/k")
-        case .s3: original = s3Session(name: "s")
-        case .webdav: original = webdavSession(name: "s")
+            authKind: .privateKey, keyPath: "/k", groupID: group, loginSetID: set)
+        case .s3: original = s3Session(name: "s", groupID: group, loginSetID: set)
+        case .webdav: original = webdavSession(name: "s", groupID: group, loginSetID: set)
         }
 
         var rebuilt = original
