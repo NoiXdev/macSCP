@@ -4,9 +4,17 @@ import Testing
 
 /// Covers the whole decision surface of `CLIToolInstaller` against a real
 /// temporary directory (same style as `ManagedKeyStoreTests`): every state the
-/// UI can render, plus the two install paths that must NOT silently destroy
-/// something — a regular file the user put at the link path, and a repeated
-/// install over a link that is already correct.
+/// UI can render, plus the install paths that must NOT silently destroy
+/// something — a regular file the user put at the link path, a repeated
+/// install over a link that is already correct, and a link made from a
+/// translocated app copy that would be dead before the user ever typed the
+/// command.
+///
+/// Most tests build a throwaway sandbox and hit the real filesystem;
+/// `systemWideCommandQuotesThePathAndTargetsUsrLocalBin` and
+/// `defaultBinDirectoryIsDotLocalBinInTheHomeDirectory` are the two that only
+/// inspect constructed paths. Neither of those touches the real
+/// `~/.local/bin` — they read paths and never write.
 @Suite("CLIToolInstaller")
 struct CLIToolInstallerTests {
     /// A throwaway sandbox holding both a fake "bin" directory and a fake
@@ -178,12 +186,76 @@ struct CLIToolInstallerTests {
         )
     }
 
+    /// Pins the literal value rather than recomputing the implementation's own
+    /// expression — a test built the second way stays green if both sides
+    /// drift to `.local/sbin` together, which is precisely the change it
+    /// exists to catch.
+    /// Reads nothing and writes nothing — the default installer is only ever
+    /// asked for its paths here, so the real `~/.local/bin` stays untouched.
     @Test func defaultBinDirectoryIsDotLocalBinInTheHomeDirectory() {
-        let expected = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".local/bin", isDirectory: true)
-            .standardizedFileURL.path(percentEncoded: false)
+        // Trailing slash: `defaultBinDirectory` is built as a directory URL,
+        // and unlike the old `URL.path`, `path(percentEncoded:)` preserves it.
         #expect(
-            CLIToolInstaller.defaultBinDirectory.standardizedFileURL.path(percentEncoded: false)
-                == expected)
+            CLIToolInstaller.defaultBinDirectory.path(percentEncoded: false)
+                == NSHomeDirectory() + "/.local/bin/")
+        // The string the section actually displays, directory and tool name
+        // pinned together in one literal.
+        let installer = CLIToolInstaller(toolURL: URL(fileURLWithPath: "/nonexistent/macscp-cli"))
+        #expect(
+            installer.linkURL.path(percentEncoded: false)
+                == NSHomeDirectory() + "/.local/bin/macscp-cli")
+    }
+
+    // MARK: - App Translocation
+
+    /// Gatekeeper's read-only copy of a quarantined app, in the shape the real
+    /// one has: `…/AppTranslocation/<UUID>/d/macSCP.app/Contents/MacOS/`.
+    private func translocatedTool(in sandbox: Sandbox) -> URL {
+        sandbox.root
+            .appendingPathComponent("AppTranslocation/\(UUID().uuidString)/d")
+            .appendingPathComponent("macSCP.app/Contents/MacOS/macscp-cli")
+    }
+
+    /// The green-lie case: linking from a translocated bundle succeeds, then
+    /// dies the moment the app quits and the mount goes. Refused outright.
+    @Test func translocatedAppIsReportedAndInstallsNothing() throws {
+        let sandbox = try makeSandbox()
+        defer { remove(sandbox) }
+        let installer = CLIToolInstaller(
+            binDirectory: sandbox.binDirectory, toolURL: translocatedTool(in: sandbox))
+
+        #expect(installer.state() == .translocated)
+        #expect(throws: CLIInstallError.appIsTranslocated) { try installer.install() }
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: installer.linkURL.path(percentEncoded: false)))
+    }
+
+    /// Translocation must OUTRANK the link comparison. A user with a perfectly
+    /// good shortcut who reopens the app from the disk image would otherwise
+    /// be shown "points at a different copy" and offered a Repair that
+    /// replaces a working link with a doomed one.
+    @Test func translocationOutranksAWorkingShortcut() throws {
+        let sandbox = try makeSandbox()
+        defer { remove(sandbox) }
+        try FileManager.default.createSymbolicLink(
+            at: sandbox.installer.linkURL, withDestinationURL: sandbox.toolURL)
+        #expect(sandbox.installer.state() == .installed)
+
+        let translocated = CLIToolInstaller(
+            binDirectory: sandbox.binDirectory, toolURL: translocatedTool(in: sandbox))
+        #expect(translocated.state() == .translocated)
+    }
+
+    /// The other half: a marker loose enough to fire on ordinary paths would
+    /// block every installation instead of the doomed ones.
+    @Test func anOrdinaryBundlePathIsNotTranslocated() throws {
+        let sandbox = try makeSandbox()
+        defer { remove(sandbox) }
+        #expect(!CLIToolInstaller.isTranslocated(sandbox.toolURL))
+        #expect(
+            !CLIToolInstaller.isTranslocated(
+                URL(fileURLWithPath: "/Applications/macSCP.app/Contents/MacOS/macscp-cli")))
+        #expect(sandbox.installer.state() == .notInstalled)
     }
 }
