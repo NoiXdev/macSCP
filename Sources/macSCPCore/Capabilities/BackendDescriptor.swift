@@ -34,9 +34,10 @@ public struct BackendDescriptor: Sendable {
     ///
     /// A stored member rather than a computed `switch` (unlike `sessionValues`)
     /// for consistency with its sibling closures `makeConfig`, `displaySummary`
-    /// and `connect` — not because a test builds a synthetic descriptor with
-    /// its own adapter (none does; `BackendApplyTests` and friends call the
-    /// three real descriptors' own `apply` directly).
+    /// and `connect` — not because a test needs a synthetic adapter to exercise
+    /// (the one synthetic descriptor, in `SchemaConformanceTests`, passes an
+    /// empty `apply` that is never called; `BackendApplyTests` and friends
+    /// call the three real descriptors' own `apply` directly).
     public let apply: @Sendable (FieldValues, inout StoredSession) -> Void
 
     /// Opens a connection. Living here rather than in a central dispatcher is
