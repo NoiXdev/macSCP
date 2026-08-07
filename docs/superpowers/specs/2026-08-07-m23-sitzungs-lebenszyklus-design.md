@@ -112,14 +112,45 @@ S3 and WebDAV session.
 
 - `StoredSession(name:host:port:username:)` is the initializer nearly every test
   in the suite uses to build a fixture. It goes away, and those call sites move
-  to the block. This is mechanical churn across many test files — **expect it,
-  budget for it, and do not let a plan pretend it is a handful of sites.**
-  Count them before planning the phase.
+  to the block.
 - Every reader of `session.host` / `session.username` must be found and moved.
   The dangerous ones are the paths that currently *depend* on those fields being
   present for non-SSH sessions — `SessionImportPlanner.duplicateKey` is already
   kind-aware (fixed today) and the sidebar label already comes from
   `displaySummary`, but the sweep must be exhaustive rather than assumed.
+
+### The counts, measured
+
+Taken on `develop` at `4bf8f5a`, so a plan starts from facts rather than an
+estimate:
+
+| | Sources | Tests |
+|---|---|---|
+| `StoredSession(…)` construction sites | 8 | **136**, across 21 files |
+| readers of the six top-level fields (code lines, comments excluded) | 68 | 11 |
+
+The asymmetry is the whole story: **94 % of the churn is test fixtures**, and
+there is **no shared fixture helper** today — every test file inlines its own
+`StoredSession(name:host:port:username:)`.
+
+### What that implies for the phase order
+
+Phase 1 must start with a step the original three-phase sketch did not have:
+
+**1a — introduce a fixture helper and migrate the 136 call sites to it, while the
+type is still unchanged.** A single `makeSession(…)` in the test support layer,
+one purely mechanical commit, suite green throughout, nothing about the format
+touched yet.
+
+Only then does the type change, and it changes **one helper body** instead of 136
+call sites. This is not gold-plating: without it, the type change and 136 hand
+edits land in the same commit, and a reviewer cannot tell a behavioural mistake
+from a transcription slip. It also permanently removes the reason the next format
+change would be expensive.
+
+The cost of getting this wrong is asymmetric, so it is worth saying plainly: a
+mistyped port in one of 136 hand-migrated fixtures produces a test that still
+passes while asserting the wrong thing.
 - `SessionExportCodec` reads them too. Phase 3 owns that; Phase 1 must therefore
   keep export compiling and correct in the interim, even though the columns do
   not become schema-derived until later.
