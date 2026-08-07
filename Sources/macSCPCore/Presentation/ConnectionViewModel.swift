@@ -573,10 +573,11 @@ public final class ConnectionViewModel {
 
     /// The WebDAV connect path (M21/T9). Mirrors `connectS3()`: validate,
     /// build the runtime config, dispatch through the SAME `connector` seam
-    /// with `.webdav(config)` -- the certificate decider defaults to
-    /// refusing unless the caller supplies one, so this path
-    /// never silently trusts an unknown server certificate; wiring an actual
-    /// user-facing decider is a later task's job.
+    /// with `.webdav(config)` -- which is also why nothing about an unknown
+    /// server certificate is decided here. The decider belongs to whoever
+    /// builds the `connector`: the App has passed `certificateBridge.ask`
+    /// since M21 (`ContentView.makeTab`), and the CLI, having no interactive
+    /// prompt, refuses every unknown certificate (`SessionConnecting`).
     private func connectWebDAV() async -> (any RemoteFileSystem)? {
         if shouldSaveSession,
            saveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
