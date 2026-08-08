@@ -241,51 +241,60 @@ public final class SessionListViewModel {
         // picker no longer offers one and `LoginResolver.resolveJump` now
         // refuses one.
         let affected = session.kind == .ssh ? sessionsUsingAsJump(session.id) : []
-        // The deleted session's effective login, via `resolvedSSHLogin(for:)`:
-        // nil for a manual session (use its own fields + own keychain secret
-        // below), a set's values otherwise. An
-        // agent session/set reads no keychain at all (M10d rule).
-        let resolvedBastionLogin = resolvedSSHLogin(for: session)
-        let bastionUsername = resolvedBastionLogin?.username ?? session.username
-        let bastionAuthKind = resolvedBastionLogin?.authKind ?? session.authKind
-        let bastionKeyPath = resolvedBastionLogin?.keyPath ?? session.keyPath
-        var bastionSecret: String?
-        if let resolvedBastionLogin {
-            bastionSecret = resolvedBastionLogin.secret
-        } else if session.authKind != .agent {
-            bastionSecret = (try? secrets.password(for: session.id)) ?? nil
-        }
-
         var secretFailures = 0
-        for referencing in affected {
-            guard var jump = referencing.jump else { continue }
-            jump.host = session.host
-            jump.port = session.port
-            jump.username = bastionUsername
-            jump.authKind = bastionAuthKind
-            jump.keyPath = bastionKeyPath
-            jump.loginSetID = nil
-            jump.sessionID = nil
-
-            var hadSecretFailure = false
-            if let bastionSecret {
-                do {
-                    try secrets.savePassword(bastionSecret, for: jump.secretID)
-                } catch {
-                    hadSecretFailure = true
-                }
+        // Nothing below is needed unless something actually references this
+        // session as its bastion, and since M24 `affected` is empty for every
+        // non-SSH session. Computing it anyway was not merely wasted work: the
+        // `secrets.password(for:)` call reaches into the Keychain, and for an
+        // `.s3` session the slot it reads holds that session's SECRET ACCESS
+        // KEY -- fetched only to be discarded. A read of a secret nobody needs
+        // is one read too many.
+        if !affected.isEmpty {
+            // The deleted session's effective login, via `resolvedSSHLogin(for:)`:
+            // nil for a manual session (use its own fields + own keychain secret
+            // below), a set's values otherwise. An
+            // agent session/set reads no keychain at all (M10d rule).
+            let resolvedBastionLogin = resolvedSSHLogin(for: session)
+            let bastionUsername = resolvedBastionLogin?.username ?? session.username
+            let bastionAuthKind = resolvedBastionLogin?.authKind ?? session.authKind
+            let bastionKeyPath = resolvedBastionLogin?.keyPath ?? session.keyPath
+            var bastionSecret: String?
+            if let resolvedBastionLogin {
+                bastionSecret = resolvedBastionLogin.secret
+            } else if session.authKind != .agent {
+                bastionSecret = (try? secrets.password(for: session.id)) ?? nil
             }
 
-            var updated = referencing
-            // `referencing.jump` was non-nil above, so the SSH block exists:
-            // only an SSH session can carry a jump at all since M23/T8.
-            updated.ssh?.jump = jump
-            // Throw-free by design (M10b pattern): a store-write failure for
-            // one referencing session must not abort restoring the others,
-            // nor the deletion that follows.
-            try? store.upsert(updated)
-            if hadSecretFailure {
-                secretFailures += 1
+            for referencing in affected {
+                guard var jump = referencing.jump else { continue }
+                jump.host = session.host
+                jump.port = session.port
+                jump.username = bastionUsername
+                jump.authKind = bastionAuthKind
+                jump.keyPath = bastionKeyPath
+                jump.loginSetID = nil
+                jump.sessionID = nil
+
+                var hadSecretFailure = false
+                if let bastionSecret {
+                    do {
+                        try secrets.savePassword(bastionSecret, for: jump.secretID)
+                    } catch {
+                        hadSecretFailure = true
+                    }
+                }
+
+                var updated = referencing
+                // `referencing.jump` was non-nil above, so the SSH block exists:
+                // only an SSH session can carry a jump at all since M23/T8.
+                updated.ssh?.jump = jump
+                // Throw-free by design (M10b pattern): a store-write failure for
+                // one referencing session must not abort restoring the others,
+                // nor the deletion that follows.
+                try? store.upsert(updated)
+                if hadSecretFailure {
+                    secretFailures += 1
+                }
             }
         }
 

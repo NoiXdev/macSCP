@@ -2026,6 +2026,35 @@ struct SessionListViewModelTests {
         #expect(vm.sessions.contains { $0.id == bastion.id } == false)
     }
 
+    /// M25/T1: the restoration block (bastion login + secret + the `for
+    /// referencing in affected` loop) only has anything to do once `affected`
+    /// is non-empty, and since M24 `affected` is always empty for a non-SSH
+    /// session. Before the hoist, `bastionSecret` was still computed
+    /// unconditionally -- for an `.s3` session that reads the Keychain slot
+    /// holding its SECRET ACCESS KEY, fetched only to be discarded. Reusing
+    /// `NoReadAllowedSecretStore` (below, shared with
+    /// `deleteRestoresFromAgentBastionWithoutSecret`) fails the test the
+    /// moment `password(for:)` is called at all.
+    @Test func deletingANonSSHSessionNeverReadsTheKeychain() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = NoReadAllowedSecretStore()
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: secrets,
+            loginSetStore: LoginSetStore(directory: dir))
+        let s3 = StoredS3Config(
+            accessKeyID: "AKIA", region: "eu-central-1",
+            endpoint: "https://s3.example.com", bucket: "backups", usePathStyle: false)
+        let bucket = vm.save(
+            name: "bucket", values: S3FieldSchema.values(from: s3), password: "SECRET", kind: .s3)!
+
+        let result = vm.delete(bucket)
+
+        #expect(result.restored == 0)
+        #expect(vm.sessions.contains { $0.id == bucket.id } == false)
+    }
+
     @Test func deleteRestoresFromAgentBastionWithoutSecret() throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
