@@ -725,7 +725,8 @@ public final class SessionListViewModel {
     /// referenced session's own host/port and login. Throws the same
     /// typed errors as `LoginResolver.resolveJump(...sessions:
     /// referencingSessionID:)`: `.missingJumpSession` for a dangling
-    /// reference, `.jumpChainNotSupported` for a chain or self-reference.
+    /// reference, `.jumpSessionNotSSH` for a reference to a non-`.ssh`
+    /// session, `.jumpChainNotSupported` for a chain or self-reference.
     public func resolvedJump(for session: StoredSession) throws -> ResolvedJump? {
         guard let jump = session.jump else { return nil }
         return try LoginResolver.resolveJump(

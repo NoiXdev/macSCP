@@ -209,7 +209,11 @@ struct SessionSidebar: View {
         let base = L10n.string(
             "sidebar.delete.confirmMessage", "The saved credentials are removed as well.")
         guard let session = sessionPendingDelete else { return base }
-        let count = viewModel.sessionsUsingAsJump(session.id).count
+        // Restoration (and thus the "will keep its data directly" claim
+        // below) only happens for an SSH bastion -- `SessionListViewModel
+        // .delete` leaves the reference dangling for any other kind, so a
+        // non-SSH session must not be counted here.
+        let count = session.kind == .ssh ? viewModel.sessionsUsingAsJump(session.id).count : 0
         guard count > 0 else { return base }
         let jumpNote = String(
             format: L10n.string(
