@@ -69,16 +69,28 @@ public struct ConnectionField: Sendable, Equatable, Identifiable {
     /// least one identifying field per backend, and none of them secret.
     public let identity: FieldIdentity?
 
+    /// For a `.secret` field: whether its value takes part in a login's
+    /// identity (M24). Meaningless — and never set — on any other kind.
+    ///
+    /// Optional in the type, mandatory in practice, exactly like
+    /// `invalidMessageKey`: `everySecretFieldDeclaresItsRole` fails the build
+    /// for a secret field without one. The readers treat a missing role as
+    /// `.credential`, which is the SAFE direction — the secret then enters the
+    /// identity key, and two logins that differ in it are kept apart rather
+    /// than merged.
+    public let secretRole: SecretRole?
+
     public var isSecret: Bool { kind == .secret }
 
     public init(id: String, labelKey: String, labelDefault: String,
                 kind: Kind, visibleWhen: FieldCondition? = nil,
                 isRequired: Bool = false, format: FieldFormat? = nil,
-                invalidMessageKey: String? = nil, identity: FieldIdentity? = nil) {
+                invalidMessageKey: String? = nil, identity: FieldIdentity? = nil,
+                secretRole: SecretRole? = nil) {
         self.id = id; self.labelKey = labelKey; self.labelDefault = labelDefault
         self.kind = kind; self.visibleWhen = visibleWhen; self.isRequired = isRequired
         self.format = format; self.invalidMessageKey = invalidMessageKey
-        self.identity = identity
+        self.identity = identity; self.secretRole = secretRole
     }
 }
 

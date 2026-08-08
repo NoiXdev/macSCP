@@ -71,7 +71,8 @@ public enum WebDAVFieldSchema {
                             identity: .verbatim),
             ConnectionField(id: WebDAVField.password.rawValue,
                             labelKey: "connection.webdav.password",
-                            labelDefault: "Password", kind: .secret),
+                            labelDefault: "Password", kind: .secret,
+                            secretRole: .credential),
         ],
         presets: [])
 

@@ -87,7 +87,8 @@ public enum S3FieldSchema {
                             labelKey: "connection.s3.secretKey",
                             labelDefault: "Secret Access Key", kind: .secret,
                             isRequired: true,
-                            invalidMessageKey: "core.connect.s3FieldRequired"),
+                            invalidMessageKey: "core.connect.s3FieldRequired",
+                            secretRole: .credential),
         ],
         presets: [])
 

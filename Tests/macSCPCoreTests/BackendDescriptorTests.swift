@@ -122,6 +122,42 @@ struct BackendDescriptorTests {
         }
     }
 
+    /// The guard for `ConnectionField.secretRole` (M24): every secret field in
+    /// either schema must declare what its value means for a login's
+    /// identity, because a missing role is read as `.credential` — the field
+    /// then enters the identity key by default, which is the safe direction
+    /// but not always the right one (an SSH passphrase must NOT enter it).
+    @Test func everySecretFieldDeclaresItsRole() {
+        for kind in ConnectionKind.allCases {
+            let descriptor = BackendDescriptor.descriptor(for: kind)
+            for schema in [descriptor.connectionSchema, descriptor.credentialSchema] {
+                for field in schema.fields where field.isSecret {
+                    #expect(
+                        field.secretRole != nil,
+                        Comment(rawValue: "\(kind).\(field.id) is a secret and declares no "
+                            + "secretRole, so a missing value would be read as .credential"))
+                }
+            }
+        }
+    }
+
+    /// The reverse guard: no field that is never read as a secret may declare
+    /// a role — `secretRole` is meaningless outside `.secret`, and a role on
+    /// the wrong field would be a role nothing ever consults.
+    @Test func noNonSecretFieldDeclaresASecretRole() {
+        for kind in ConnectionKind.allCases {
+            let descriptor = BackendDescriptor.descriptor(for: kind)
+            for schema in [descriptor.connectionSchema, descriptor.credentialSchema] {
+                for field in schema.fields where !field.isSecret {
+                    #expect(
+                        field.secretRole == nil,
+                        Comment(rawValue: "\(kind).\(field.id) is not a secret but declares a "
+                            + "secretRole, which nothing ever reads"))
+                }
+            }
+        }
+    }
+
     /// What each backend actually declares, pinned as a whole. The guard above
     /// says "at least one and no secret"; this says WHICH — so that adding a
     /// field to an identity, or dropping one from it, is a decision somebody

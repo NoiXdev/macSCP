@@ -163,3 +163,27 @@ public enum FieldVisibility {
         return actual == condition.equals
     }
 }
+
+/// What a secret field's value MEANS for the identity of a login (M24) — the
+/// answer to "do these two sessions log in as the same principal?", which
+/// `LoginMergePlanner` asks before offering to fold them into one login set.
+///
+/// Two cases, because there are two real behaviours. A password and an S3
+/// secret access key ARE the credential: two logins with different ones are
+/// different logins, and merging them would bind both to a set that can only
+/// carry one — destroying the other's Keychain entry. An SSH passphrase is
+/// not: it unlocks a key file that another field (`keyPath`) already names, so
+/// two sessions on the same key file are the same login whether or not either
+/// happens to have the passphrase stored.
+///
+/// NOT derivable from `isRequired`, which was the first thing tried. That
+/// gives the right answer for SSH and S3 and the WRONG one for WebDAV, whose
+/// password is optional since M23 so that anonymous shares work — a WebDAV
+/// password would then leave the identity key, and two sessions with the same
+/// user name and DIFFERENT passwords would collide.
+public enum SecretRole: Sendable, Equatable {
+    /// The secret is the credential itself.
+    case credential
+    /// The secret unlocks a credential named by another field.
+    case passphrase
+}
