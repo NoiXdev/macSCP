@@ -105,8 +105,7 @@ public enum StoredSessionConnectionConfig {
         // `credentialSchema` rather than both schemas: every backend declares
         // its secret there, and it is the same schema `LoginResolver` asks
         // when deciding which Keychain slot a login means.
-        let secretField = descriptor.credentialSchema.visibleSecretField(
-            in: values, namespace: descriptor.fieldNamespace)
+        let secretField = descriptor.visibleSecretField(for: session)
         if secretField?.isRequired == true, secret?.isEmpty != false {
             throw StoredSessionConnectionError.secretRequired
         }

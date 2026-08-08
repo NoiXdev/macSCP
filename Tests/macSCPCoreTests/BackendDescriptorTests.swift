@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import macSCPCore
 
@@ -198,5 +199,57 @@ struct BackendDescriptorTests {
     /// generic renderer can handle it, not a silent one.
     @Test func onlyTheSSHJumpIsHandDrawn() {
         #expect(BackendDescriptor.customRenderedFieldIDs == [SSHField.jump.rawValue])
+    }
+
+    // MARK: - visibleSecretField(for:) (M25/T2)
+
+    /// ssh-agent is the one case that shows no secret field at all: the key
+    /// material lives with the agent, so there is nothing on screen to ask
+    /// for.
+    @Test func sshAgentSessionShowsNoSecretField() {
+        let session = sshSession(name: "agent-box", authKind: .agent)
+        #expect(BackendDescriptor.descriptor(for: .ssh).visibleSecretField(for: session) == nil)
+    }
+
+    @Test func sshPasswordSessionShowsItsPasswordField() {
+        let session = sshSession(name: "password-box", authKind: .password)
+        let field = BackendDescriptor.descriptor(for: .ssh).visibleSecretField(for: session)
+        #expect(field?.id == SSHField.password.rawValue)
+    }
+
+    @Test func sshPrivateKeySessionShowsItsPassphraseField() {
+        let session = sshSession(name: "key-box", authKind: .privateKey, keyPath: "/k")
+        let field = BackendDescriptor.descriptor(for: .ssh).visibleSecretField(for: session)
+        #expect(field?.id == SSHField.passphrase.rawValue)
+    }
+
+    @Test func s3SessionAlwaysShowsItsSecretField() {
+        let session = s3Session(name: "bucket")
+        let field = BackendDescriptor.descriptor(for: .s3).visibleSecretField(for: session)
+        #expect(field?.id == S3Field.secretAccessKey.rawValue)
+    }
+
+    @Test func webdavSessionAlwaysShowsItsPasswordField() {
+        let session = webdavSession(name: "cloud")
+        let field = BackendDescriptor.descriptor(for: .webdav).visibleSecretField(for: session)
+        #expect(field?.id == WebDAVField.password.rawValue)
+    }
+
+    /// No fixture can build a `.ssh` session with a `nil` SSH block — every
+    /// SSH fixture fills one — so this constructs `StoredSession` directly,
+    /// the one sanctioned exception to the fixture rule (see
+    /// `SessionFixtures.swift`'s header comment).
+    ///
+    /// This pins the equivalence the doc comment on `visibleSecretField(for:)`
+    /// claims: a missing SSH block reads through `StoredSession`'s own
+    /// fallback accessors (`authKind` defaults to `.password`) into a
+    /// POPULATED bag, exactly like a normal password session, rather than an
+    /// empty one — the member does not special-case a session whose `kind`
+    /// says `.ssh` but whose block is absent.
+    @Test func anSSHSessionWithoutItsBlockStillShowsAPasswordField() {
+        let session = StoredSession(
+            id: UUID(), name: "blockless", groupID: nil, loginSetID: nil, kind: .ssh)
+        let field = BackendDescriptor.descriptor(for: .ssh).visibleSecretField(for: session)
+        #expect(field?.id == SSHField.password.rawValue)
     }
 }

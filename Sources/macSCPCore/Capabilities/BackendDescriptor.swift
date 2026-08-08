@@ -178,6 +178,28 @@ public struct BackendDescriptor: Sendable {
         }
     }
 
+    /// The secret field this stored session currently shows, or nil when it
+    /// needs none (M25).
+    ///
+    /// The schema's answer to "does this login carry a secret at all", asked
+    /// WITHOUT `StoredSession.authKind` — which for a `.s3`/`.webdav` session
+    /// fabricates `.password`, the placeholder M23 set out to remove. Only
+    /// ssh-agent shows no secret field, so the nil case IS the agent case for
+    /// SSH and never arises for the other two backends.
+    ///
+    /// Deliberately does NOT ask `hasStoredConfiguration` itself. Its three
+    /// callers want different things from a session whose block is missing —
+    /// the CLI refuses it, both view-model paths carry on — and a member that
+    /// guards sometimes would be worse than three callers asking their own
+    /// question. What it DOES inherit is `sessionValues`'s asymmetry: for
+    /// `.ssh` a missing block still reads through `StoredSession`'s own
+    /// fallbacks into a POPULATED bag, while `.s3`/`.webdav` yield an empty
+    /// one (see `sessionValues(_:)`).
+    public func visibleSecretField(for session: StoredSession) -> ConnectionField? {
+        credentialSchema.visibleSecretField(
+            in: sessionValues(session), namespace: fieldNamespace)
+    }
+
     /// The English label of the field a namespaced `FieldValues` key names, or
     /// the key itself when nothing matches (M23/P2).
     ///
