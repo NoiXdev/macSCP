@@ -2239,6 +2239,120 @@ struct SessionListViewModelTests {
         #expect(try secrets.password(for: bucket.id) == "s3cret")
         #expect(try secrets.password(for: host.id) == "pw")
     }
+
+    // MARK: - Secret guard asks the schema, not authKind (M25/T3)
+    //
+    // `StoredSession.authKind` fabricates `.password` for a `.s3`/`.webdav`
+    // session (no `ssh` block to read), so the two guards below moved from
+    // reading it to asking `BackendDescriptor.visibleSecretField(for:)`
+    // instead. These five tests are a regression bracket, not a bug
+    // reproduction: the fabricated value happened to give the right answer
+    // in every one of these cases already, so all five are expected to pass
+    // both before and after the guards are rewritten (task report has the
+    // verified before/after status per test).
+
+    @Test func updateSessionClearsALeftoverSlotWhenSwitchingToAgent() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let store = SessionStore(directory: dir)
+        let session = sshSession(name: "web", authKind: .password)
+        try store.upsert(session)
+        try secrets.savePassword("pw", for: session.id)
+
+        let vm = SessionListViewModel(
+            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+        var updated = session
+        updated.ssh?.authKind = .agent
+        vm.updateSession(updated, newSecret: nil)
+
+        #expect(try secrets.password(for: session.id) == nil)
+    }
+
+    /// Without the schema-based guard, `updated.authKind` for an `.s3`
+    /// session fabricates `.password` -- never `.agent` -- so this happens
+    /// to survive on its own; asking the schema must not regress it (the
+    /// brief's warning: asking the wrong direction would delete an S3
+    /// session's secret).
+    @Test func updateSessionKeepsAnS3SessionsSecret() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let store = SessionStore(directory: dir)
+        let session = s3Session(name: "bucket")
+        try store.upsert(session)
+        try secrets.savePassword("s3-secret", for: session.id)
+
+        let vm = SessionListViewModel(
+            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+        var updated = session
+        updated.name = "bucket renamed"
+        vm.updateSession(updated, newSecret: nil)
+
+        #expect(try secrets.password(for: session.id) == "s3-secret")
+    }
+
+    /// Twin of the S3 case above for `.webdav`.
+    @Test func updateSessionKeepsAWebDAVSessionsSecret() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let store = SessionStore(directory: dir)
+        let session = webdavSession(name: "cloud")
+        try store.upsert(session)
+        try secrets.savePassword("webdav-secret", for: session.id)
+
+        let vm = SessionListViewModel(
+            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+        var updated = session
+        updated.name = "cloud renamed"
+        vm.updateSession(updated, newSecret: nil)
+
+        #expect(try secrets.password(for: session.id) == "webdav-secret")
+    }
+
+    /// Success criterion 4 (spec): the agent-ness of a SET-BOUND session
+    /// comes from the SET, not from the session's own (SSH-shaped) values.
+    /// A blanket replacement of the fallback with a schema question about
+    /// the session would make this session start looking for a secret and
+    /// count itself in the user-visible "N passwords missing" total -- that
+    /// is the regression this test exists to catch.
+    @Test func exportingASessionBoundToAnAgentLoginSetCarriesNoPasswordAndCountsNone() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "Agent Set", username: "deploy", authKind: .agent)
+        vm.saveLoginSet(set, secret: nil)
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "ignored"),
+            password: "",
+            loginSetID: set.id)!
+
+        let result = vm.exportPayload(for: .single(stored), includeGroups: false, includePasswords: true)
+
+        #expect(result.payload.sessions.first?.password == nil)
+        #expect(result.missingPasswordCount == 0)
+    }
+
+    /// Twin of the set-bound case above for a MANUAL agent session (no
+    /// login set involved) -- this is the one where the new fallback schema
+    /// question actually runs.
+    @Test func exportingAManualAgentSessionCarriesNoPasswordAndCountsNone() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u", authKind: .agent),
+            password: "")!
+
+        let result = vm.exportPayload(for: .single(stored), includeGroups: false, includePasswords: true)
+
+        #expect(result.payload.sessions.first?.password == nil)
+        #expect(result.missingPasswordCount == 0)
+    }
 }
 
 private final class FailingSecretStore: SecretStore, @unchecked Sendable {

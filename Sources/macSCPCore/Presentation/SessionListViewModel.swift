@@ -342,9 +342,14 @@ public final class SessionListViewModel {
         let previousJump = sessions.first(where: { $0.id == updated.id })?.jump
         do {
             try store.upsert(updated)
-            if updated.authKind == .agent {
-                // Agent mode needs no secret (M10d) -- clean up a leftover
-                // manual slot from before the switch.
+            if BackendDescriptor.descriptor(for: updated.kind)
+                .visibleSecretField(for: updated) == nil {
+                // No secret field on screen means this login needs none, which
+                // today is ssh-agent and nothing else (M10d) -- clean up a
+                // leftover manual slot from before the switch. Asking the
+                // schema rather than `updated.authKind` keeps a `.s3`/`.webdav`
+                // session out of this branch by its own declaration instead of
+                // by the accident that its fabricated auth kind is not `.agent`.
                 try? secrets.deletePassword(for: updated.id)
             } else if let newSecret, !newSecret.isEmpty {
                 try secrets.savePassword(newSecret, for: updated.id)
@@ -778,7 +783,20 @@ public final class SessionListViewModel {
             // values land in `fields` below; here it decides only whether a
             // secret has to be fetched at all.
             let resolved = resolvedSSHLogin(for: session)
-            let authKind = resolved?.authKind ?? session.authKind
+
+            // Whether a secret can be fetched at all. The two branches are NOT
+            // interchangeable: for a set-bound session the agent-ness belongs
+            // to the SET, so asking the schema about the SESSION's own values
+            // would make a session behind an agent set start looking for a
+            // secret and count itself in the user-visible "N passwords
+            // missing". Only the fallback -- the manual session, which is where
+            // `StoredSession.authKind` used to be read -- becomes a schema
+            // question. The `.agent` comparison on `ResolvedLogin` stays: that
+            // type is SSH-shaped on purpose since M22/T9, and is not one of
+            // the placeholder accessors.
+            let needsSecret = resolved.map { $0.authKind != .agent }
+                ?? (BackendDescriptor.descriptor(for: session.kind)
+                        .visibleSecretField(for: session) != nil)
 
             var password: String?
             // Agent entries (M10d) never carry a secret and are never
@@ -797,7 +815,7 @@ public final class SessionListViewModel {
             // prevent (M23/P3 fix round 1). An `.ssh`/set-bound session with
             // no resolved login still falls through to a real lookup, same
             // as before.
-            if includePasswords, authKind != .agent, session.kind != .s3,
+            if includePasswords, needsSecret, session.kind != .s3,
                 session.kind != .webdav || session.webdav != nil {
                 password = resolved != nil ? resolved?.secret : self.password(for: session)
                 if password == nil {
