@@ -100,10 +100,10 @@ struct LoginMergePlannerTests {
         #expect(candidates.first?.displayLabel == "deploy")
         #expect(candidates.first?.values[SSHField.authKind] == "agent")
         // `keyPath` is not a `.agent`-visible field, so it never enters the
-        // candidate's value bag at all; `FieldValues` reads a missing key back
-        // as "", not nil (see `FieldValues.subscript`) -- the type-correct
-        // spelling of the old `candidate.keyPath == nil`.
-        #expect(candidates.first?.values[SSHField.keyPath] == "")
+        // candidate's value bag at all -- `values.raw` (unlike the subscript,
+        // which folds absence into "") lets this ask for absence directly,
+        // the type-correct spelling of the old `candidate.keyPath == nil`.
+        #expect(candidates.first?.values.raw["SSHField.keyPath"] == nil)
         #expect(candidates.first?.sessionIDs == [s1.id, s2.id])
     }
 
@@ -132,6 +132,26 @@ struct LoginMergePlannerTests {
         #expect(candidates.count == 1)
     }
 
+    /// Pins a dependency the `LoginGroupKey` doc comment relies on but that
+    /// had no test until now: `SSHFieldSchema.values(from:)` never writes
+    /// `SSHField.managedKeyID` (it has no persisted home -- picking a managed
+    /// key writes its path into `keyPath` instead), so under private-key auth
+    /// this field enters the grouping key -- and `candidate.values` -- as the
+    /// constant `""` for every session, never breaking group equality. If
+    /// `values(from:)` ever starts writing a real managed key id, private-key
+    /// login equivalence would silently start depending on it; this goes red
+    /// first.
+    @Test func privateKeyCandidateCarriesManagedKeyIDAsAConstantEmptyString() {
+        let s1 = sshSession(name: "a", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
+        let s2 = sshSession(name: "b", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
+
+        let candidates = LoginMergePlanner.candidates(
+            sessions: [s1, s2], ignoredGroups: [], secrets: InMemorySecretStore())
+
+        #expect(candidates.count == 1)
+        #expect(candidates.first?.values.raw["SSHField.managedKeyID"] == "")
+    }
+
     @Test func newMemberReactivates() {
         let s1 = sshSession(name: "a", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
         let s2 = sshSession(name: "b", host: "h", username: "deploy", authKind: .privateKey, keyPath: "/k1")
@@ -143,6 +163,49 @@ struct LoginMergePlannerTests {
 
         #expect(candidates.count == 1)
         #expect(candidates.first?.sessionIDs == [s1.id, s2.id, s3.id])
+    }
+
+    /// Pins the final tiebreaker in `candidates()`'s sort: two groups that
+    /// share `displayLabel`, `kind` AND member count -- the three things the
+    /// comparator otherwise looks at -- still need a deterministic order, or
+    /// `sorted(by:)` (not a stable sort) could pick either one first between
+    /// runs over identical stored data. Session ids are picked so the "low"
+    /// group's tiebreak-losing order would require it to sort AFTER the
+    /// "high" group if the tiebreaker were absent and the sort merely kept
+    /// input order (session list below lists the "high" group first).
+    @Test func candidatesWithEqualLabelKindAndSizeSortBySessionIDs() throws {
+        let lowID1 = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        let lowID2 = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        let highID1 = UUID(uuidString: "ffffffff-ffff-ffff-ffff-fffffffffff1")!
+        let highID2 = UUID(uuidString: "ffffffff-ffff-ffff-ffff-fffffffffff2")!
+
+        let high1 = sshSession(id: highID1, name: "high1", host: "h", username: "deploy")
+        let high2 = sshSession(id: highID2, name: "high2", host: "h", username: "deploy")
+        let low1 = sshSession(id: lowID1, name: "low1", host: "h", username: "deploy")
+        let low2 = sshSession(id: lowID2, name: "low2", host: "h", username: "deploy")
+        let secrets = InMemorySecretStore()
+        // Different passwords keep these TWO distinct groups (different
+        // `LoginGroupKey.secret`) despite the identical username -- both
+        // groups still share `displayLabel` ("deploy"), `kind` (.ssh) and
+        // `sessionIDs.count` (2), which is exactly the equal case under test.
+        try secrets.savePassword("secret-high", for: high1.id)
+        try secrets.savePassword("secret-high", for: high2.id)
+        try secrets.savePassword("secret-low", for: low1.id)
+        try secrets.savePassword("secret-low", for: low2.id)
+
+        // Input order lists the "high" group first, so an accidental
+        // input-order-preserving sort would put it first in the result too.
+        let candidates = LoginMergePlanner.candidates(
+            sessions: [high1, high2, low1, low2], ignoredGroups: [], secrets: secrets)
+
+        #expect(candidates.count == 2)
+        #expect(candidates.allSatisfy {
+            $0.displayLabel == "deploy" && $0.kind == .ssh && $0.sessionIDs.count == 2
+        })
+        // The tiebreaker orders by `sessionIDs.lexicographicallyPrecedes`, so
+        // the "low"-id group comes first regardless of input order.
+        #expect(candidates[0].sessionIDs == [lowID1, lowID2])
+        #expect(candidates[1].sessionIDs == [highID1, highID2])
     }
 
     // MARK: - Protocol-correct grouping (M24/T2)
@@ -258,10 +321,14 @@ struct LoginMergePlannerTests {
         #expect(candidates.first?.displayLabel == "tim")
     }
 
-    /// The exact bug the M23 characterization test above pinned: `kind` is
-    /// now part of the grouping key, so an S3 session and an SSH session
-    /// sharing a Keychain slot value can never be mistaken for the same
-    /// login, no matter what the raw secret bytes happen to be.
+    /// The exact bug the M23 characterization test above pinned. What
+    /// actually prevents the collision is that field keys are namespaced
+    /// (`SSHField.*` vs. `S3Field.*`), so an S3 session and an SSH session can
+    /// never produce equal `fields` dictionaries in the first place --
+    /// `kind` being part of the grouping key too is redundant with this, not
+    /// the reason. Either way, sharing a Keychain slot value can never be
+    /// mistaken for the same login, no matter what the raw secret bytes
+    /// happen to be.
     @Test func anS3AndAnSSHSessionNeverShareACandidate() throws {
         let ssh = sshSession(name: "ssh", host: "h", username: "root")
         let s3 = s3Session(name: "bucket")

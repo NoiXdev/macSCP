@@ -5,7 +5,12 @@ import Foundation
 /// suggestion the UI banners.
 public struct LoginMergeCandidate: Equatable, Sendable {
     /// Every session in the group has this kind, and the set a merge creates
-    /// gets it. Part of the grouping key, so a group is never mixed.
+    /// gets it. Also part of the grouping key, but that is not what keeps a
+    /// group from mixing kinds -- field keys are namespaced (`SSHField.*` vs.
+    /// `S3Field.*` etc.), so two backends can never produce equal `fields`
+    /// dictionaries to begin with. The actual mixed-group defense is
+    /// `SessionListViewModel.applyMerge`'s own kind guard, which is tested;
+    /// `kind`'s presence here is structurally untestable.
     public var kind: ConnectionKind
     /// The credential values the group shares, in the backend's own field
     /// vocabulary — the visible non-secret credential fields, and NOTHING
@@ -34,7 +39,12 @@ public struct LoginMergeCandidate: Equatable, Sendable {
 /// `fields` holds the visible NON-SECRET credential fields by namespaced key.
 /// Which fields those are is the backend's answer, not this file's — SSH shows
 /// `keyPath` only under private-key auth, so the same code produces the
-/// pre-M24 SSH key without naming SSH.
+/// pre-M24 SSH key without naming SSH. This holds only because
+/// `SSHFieldSchema.values(from:)` never writes `SSHField.managedKeyID` (it has
+/// no persisted home), so that field enters every private-key grouping key as
+/// the constant `""` — an untested-until-now dependency `LoginMergePlannerTests
+/// .privateKeyCandidateCarriesManagedKeyIDAsAConstantEmptyString` now pins, so
+/// a future writer of `managedKeyID` cannot silently change SSH equivalence.
 private struct LoginGroupKey: Hashable {
     var kind: ConnectionKind
     var fields: [String: String]
@@ -128,7 +138,13 @@ public enum LoginMergePlanner {
             // Two protocols can produce the same label; without this the order
             // between them would depend on input order alone.
             if a.kind != b.kind { return a.kind.rawValue < b.kind.rawValue }
-            return a.sessionIDs.count < b.sessionIDs.count
+            if a.sessionIDs.count != b.sessionIDs.count { return a.sessionIDs.count < b.sessionIDs.count }
+            // Final tiebreaker: two candidates can share label, kind AND group
+            // size, and `sorted(by:)` is not a stable sort -- without a total
+            // order here their relative position is unspecified, so the merge
+            // banner could pick a different one of them between launches with
+            // identical stored data.
+            return a.sessionIDs.lexicographicallyPrecedes(b.sessionIDs)
         }
     }
 }
