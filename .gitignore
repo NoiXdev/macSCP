@@ -8,3 +8,6 @@ xcuserdata/
 dist/
 .claude/
 .superpowers/
+
+# Evidence from scripts/hang-hunt (see docs/superpowers/specs/2026-08-08-testsuite-haenger-untersuchung.md)
+.hang-evidence/

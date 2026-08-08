@@ -1,0 +1,93 @@
+#!/bin/bash
+# Capture evidence from the intermittent 0%-CPU test-suite hang.
+#
+# THE POINT OF THIS SCRIPT is the `sample` call, not the loop. The hang leaves
+# a process alive at 0% CPU forever with NOTHING on any thread stack — a
+# suspended Swift task lives on the heap, not on a thread — so the only way to
+# learn anything is to catch a hung process while it is still running. Killing
+# it first destroys the evidence.
+#
+# Usage:
+#   scripts/hang-hunt                     # 40 sequential full-suite runs
+#   RUNS=60 FILTER=ImportConflictBridge scripts/hang-hunt
+#   WORKERS=4 scripts/hang-hunt           # concurrent workers = machine load
+#
+# Env:
+#   RUNS      iterations per worker          (default 40)
+#   WORKERS   concurrent workers             (default 1)
+#   FILTER    --filter argument, empty = all (default empty)
+#   TIMEOUT   seconds before a run counts as hung (default 240)
+#   OUT       evidence directory             (default .hang-evidence, git-ignored)
+#
+# Each worker uses its OWN scratch path so the loop never contends with a
+# normal `swift test` in this checkout for the .build lock — lock contention is
+# a DIFFERENT failure that already cost this project a day (M20/T12: a gated
+# test invoked `swift build` from inside `swift test` and deadlocked).
+#
+# ALSO WORTH KNOWING, learned the hard way: when a hung `swift test` is killed,
+# its `swiftpm-testing-helper` child SURVIVES, reparented to launchd, and runs
+# forever. Two such orphans were found alive after 46 hours. This script kills
+# the whole family; if you kill a run by hand, check afterwards with
+#   pgrep -fl swiftpm-testing-helper
+
+set -u
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+OUT=${OUT:-$REPO/.hang-evidence}
+RUNS=${RUNS:-40}
+WORKERS=${WORKERS:-1}
+FILTER=${FILTER:-}
+TIMEOUT=${TIMEOUT:-240}
+
+mkdir -p "$OUT"
+cd "$REPO" || exit 1
+
+worker() {
+    local id=$1
+    local scratch="$OUT/build-w$id"
+    local args=(--scratch-path "$scratch")
+    [ -n "$FILTER" ] && args+=(--filter "$FILTER")
+
+    swift build --build-tests --scratch-path "$scratch" >"$OUT/prebuild-w$id.log" 2>&1 || {
+        echo "w$id: prebuild FAILED, see $OUT/prebuild-w$id.log"; return 1; }
+
+    for i in $(seq 1 "$RUNS"); do
+        local log="$OUT/w$id-run-$i.log"
+        swift test "${args[@]}" >"$log" 2>&1 &
+        local pid=$!
+        local waited=0
+        while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt "$TIMEOUT" ]; do
+            sleep 1; waited=$((waited + 1))
+        done
+
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "*** w$id run $i HUNG after ${waited}s — capturing ***"
+            {
+                echo "### ps"
+                ps -Ao pid,ppid,%cpu,state,etime,command \
+                    | grep -E "swiftpm-testing-helper|macSCPPackageTests" | grep -v grep
+                echo
+                echo "### test log (its LAST LINE names the test that was in flight —"
+                echo "### the stack cannot tell you, so this is the decisive datum)"
+                cat "$log"
+            } >"$OUT/HANG-w$id-$i-context.txt" 2>&1
+
+            for p in $(pgrep -f "swiftpm-testing-helper|macSCPPackageTests" 2>/dev/null); do
+                sample "$p" 3 -mayDie -f "$OUT/HANG-w$id-$i-sample-$p.txt" >/dev/null 2>&1
+            done
+
+            pkill -9 -f "$scratch" 2>/dev/null
+            kill -9 "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+            echo "w$id: evidence in $OUT/HANG-w$id-$i-*"
+            return 0
+        fi
+
+        wait "$pid" 2>/dev/null
+        rm -f "$log"
+    done
+    echo "w$id: $RUNS runs, no hang"
+}
+
+for w in $(seq 1 "$WORKERS"); do worker "$w" & done
+wait
+echo "done"
+ls "$OUT" | grep HANG || echo "no hang captured"
