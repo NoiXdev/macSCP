@@ -2424,11 +2424,17 @@ private final class NewIDFailingSecretStore: SecretStore, @unchecked Sendable {
     }
 }
 
-/// Test double proving the agent-bastion restore path (M11a Task 2) never
-/// reads the keychain for the deleted session's own secret: `password(for:)`
-/// fails the test if called at all. `savePassword`/`deletePassword` behave
-/// like `InMemorySecretStore` so unrelated calls (e.g. writing another
-/// session's own, non-agent secret) still work normally.
+/// Test double proving a delete path never reads the keychain for the
+/// deleted session's own secret: `password(for:)` fails the test if called at
+/// all. Shared by two callers with different reasons to expect zero reads —
+/// the agent-bastion restore path (M11a Task 2,
+/// `deleteRestoresFromAgentBastionWithoutSecret`) and the non-SSH delete path
+/// (M25/T1, `deletingANonSSHSessionNeverReadsTheKeychain`) — so the failure
+/// message below names neither caller specifically; a regression in either
+/// path should read as what it is instead of misattributing to the other.
+/// `savePassword`/`deletePassword` behave like `InMemorySecretStore` so
+/// unrelated calls (e.g. writing another session's own, non-agent secret)
+/// still work normally.
 private final class NoReadAllowedSecretStore: SecretStore, @unchecked Sendable {
     private let lock = NSLock()
     private var storage: [UUID: String] = [:]
@@ -2439,7 +2445,7 @@ private final class NoReadAllowedSecretStore: SecretStore, @unchecked Sendable {
     }
 
     func password(for sessionID: UUID) throws -> String? {
-        Issue.record("agent bastion restore must not read the keychain")
+        Issue.record("this path must not read the keychain")
         return nil
     }
 

@@ -252,4 +252,52 @@ struct BackendDescriptorTests {
         let field = BackendDescriptor.descriptor(for: .ssh).visibleSecretField(for: session)
         #expect(field?.id == SSHField.password.rawValue)
     }
+
+    /// Guards `updateSession`'s leftover-slot deletion (`SessionListViewModel
+    /// .swift:345`): it deletes the session's Keychain entry precisely when
+    /// `visibleSecretField(for:)` returns nil. Today that never happens for
+    /// `.s3`/`.webdav` only because neither backend's secret field declares a
+    /// `visibleWhen` — `FieldVisibility.evaluate`'s `guard let condition else
+    /// { return true }` (`FieldVocabulary.swift:150`) makes an unconditioned
+    /// field visible even against the EMPTY bag a blockless session yields
+    /// (`sessionValues(_:)`'s `.s3`/`.webdav` case, unlike `.ssh`, has no
+    /// fallback to fall back to). If a `visibleWhen` is ever added to
+    /// `S3Field.secretAccessKey` — nothing here needs one today, but
+    /// `WebDAVField.password` already supports the shape via the "anonymous"
+    /// toggle documented on `WebDAVFieldSchema`, so the pattern is a plausible
+    /// future edit — a blockless `.s3` session run through `updateSession`
+    /// (reachable from the UI via rename or drag-to-group) would take the
+    /// `== nil` branch and silently delete a LIVE Keychain entry. This test is
+    /// the only thing that would catch that: it fails the moment
+    /// `visibleSecretField(for:)` stops being non-nil for a blockless `.s3`
+    /// session.
+    ///
+    /// No fixture can build a `.s3` session with a `nil` S3 block — `s3Session`
+    /// in `SessionFixtures.swift` always fills one — so this constructs
+    /// `StoredSession` directly, the same sanctioned exception the SSH twin
+    /// above uses.
+    @Test func anS3SessionWithoutItsBlockStillShowsItsSecretField() {
+        let session = StoredSession(
+            id: UUID(), name: "blockless", groupID: nil, loginSetID: nil, kind: .s3)
+        let field = BackendDescriptor.descriptor(for: .s3).visibleSecretField(for: session)
+        #expect(field?.id == S3Field.secretAccessKey.rawValue)
+    }
+
+    /// WebDAV twin of the S3 case above, and the more pointed of the two:
+    /// `WebDAVFieldSchema` already documents an "anonymous" configuration that
+    /// would need `WebDAVField.password` to carry a `visibleWhen` — the one
+    /// concrete change that would flip this property. Same guard, same
+    /// consequence (`updateSession` deleting a live Keychain entry on a
+    /// rename), same reasoning as the S3 test's doc comment.
+    ///
+    /// No fixture can build a `.webdav` session with a `nil` WebDAV block —
+    /// `webdavSession` in `SessionFixtures.swift` always fills one — so this
+    /// constructs `StoredSession` directly, the same sanctioned exception the
+    /// SSH twin above uses.
+    @Test func aWebDAVSessionWithoutItsBlockStillShowsItsPasswordField() {
+        let session = StoredSession(
+            id: UUID(), name: "blockless", groupID: nil, loginSetID: nil, kind: .webdav)
+        let field = BackendDescriptor.descriptor(for: .webdav).visibleSecretField(for: session)
+        #expect(field?.id == WebDAVField.password.rawValue)
+    }
 }
