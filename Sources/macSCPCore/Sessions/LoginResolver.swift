@@ -14,9 +14,9 @@ public enum LoginResolveError: Error, Equatable {
     /// A jump's `sessionID` points at a session that is not an SSH
     /// connection. Only SSH tunnels: an object-storage or WebDAV session has
     /// no host to dial through. `resolveJump`'s own `guard referenced.kind ==
-    /// .ssh` (LoginResolver.swift:210) throws this case before it ever reads
-    /// the referenced session's SSH block — there is no fallback host/port
-    /// offered here, blank or otherwise, because that read never happens.
+    /// .ssh` throws this case before it ever reads the referenced session's
+    /// SSH block — there is no fallback host/port offered here, blank or
+    /// otherwise, because that read never happens.
     ///
     /// Distinct from `kindMismatch`, which is about a session and its LOGIN
     /// SET disagreeing. Naming that one here would report the wrong cause.
