@@ -1880,7 +1880,10 @@ struct SessionListViewModelTests {
         let candidates = vm.mergeCandidates()
         #expect(candidates.count == 1)
         let candidate = candidates.first!
-        #expect(candidate.authKind == .agent)
+        // `LoginMergeCandidate.authKind` was removed in M24/T2 (`kind` +
+        // `values` replaced the SSH-shaped properties); read the same fact
+        // back through the field bag.
+        #expect(candidate.values[SSHField.authKind] == "agent")
 
         let set = vm.applyMerge(candidate, name: "root")
 

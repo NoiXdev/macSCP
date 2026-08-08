@@ -1,37 +1,48 @@
 import Foundation
 
-/// A group of manual sessions sharing the same effective login (M10b spec
-/// §4) — the "merge into one set?" suggestion the UI banners.
+/// A group of manual sessions that log in as the same principal (M10b spec §4,
+/// generalized to every protocol in M24) — the "merge into one set?"
+/// suggestion the UI banners.
 public struct LoginMergeCandidate: Equatable, Sendable {
-    public var username: String
-    public var authKind: StoredSession.AuthKind
-    public var keyPath: String?
+    /// Every session in the group has this kind, and the set a merge creates
+    /// gets it. Part of the grouping key, so a group is never mixed.
+    public var kind: ConnectionKind
+    /// The credential values the group shares, in the backend's own field
+    /// vocabulary — the visible non-secret credential fields, and NOTHING
+    /// else. Never the secret: this value is handed to the UI and to
+    /// `BackendDescriptor.loginSet(id:name:from:)`, and a secret has no
+    /// business in either.
+    public var values: FieldValues
+    /// What to call this login on screen — the first visible non-secret
+    /// credential field's value. The user name for SSH and WebDAV, the access
+    /// key ID for S3.
+    public var displayLabel: String
     public var sessionIDs: [UUID]
 
     public init(
-        username: String, authKind: StoredSession.AuthKind, keyPath: String?, sessionIDs: [UUID]
+        kind: ConnectionKind, values: FieldValues, displayLabel: String, sessionIDs: [UUID]
     ) {
-        self.username = username
-        self.authKind = authKind
-        self.keyPath = keyPath
+        self.kind = kind
+        self.values = values
+        self.displayLabel = displayLabel
         self.sessionIDs = sessionIDs
     }
 }
 
-/// Grouping key for equality detection: two sessions merge only if every
-/// field here matches. `.privateKey` sessions never carry a password, so
-/// `password` stays nil for them; `.password` sessions never carry a
-/// keyPath.
+/// Grouping key: two sessions merge only if every part here matches.
+///
+/// `fields` holds the visible NON-SECRET credential fields by namespaced key.
+/// Which fields those are is the backend's answer, not this file's — SSH shows
+/// `keyPath` only under private-key auth, so the same code produces the
+/// pre-M24 SSH key without naming SSH.
 private struct LoginGroupKey: Hashable {
-    var username: String
-    var authKind: StoredSession.AuthKind
-    var keyPath: String?
-    var password: String?
+    var kind: ConnectionKind
+    var fields: [String: String]
+    var secret: String?
 }
 
 /// Pure equality detection over MANUAL sessions (loginSetID == nil).
-/// Password values are compared in memory only and never leave this
-/// function; sessions without a stored password do not participate.
+/// Secret values are compared in memory only and never leave this function.
 public enum LoginMergePlanner {
     public static func candidates(
         sessions: [StoredSession], ignoredGroups: [Set<UUID>], secrets: any SecretStore
@@ -41,35 +52,60 @@ public enum LoginMergePlanner {
         // the order sessions were encountered.
         var order: [LoginGroupKey] = []
         var groups: [LoginGroupKey: [UUID]] = [:]
+        var labels: [LoginGroupKey: String] = [:]
+        var credentials: [LoginGroupKey: FieldValues] = [:]
 
         for session in sessions where session.loginSetID == nil {
-            let key: LoginGroupKey
-            switch session.authKind {
-            case .privateKey:
-                key = LoginGroupKey(
-                    username: session.username, authKind: .privateKey,
-                    keyPath: session.keyPath, password: nil)
-            case .password:
-                // A session with no keychain entry has nothing to compare
-                // against another session's password, so it cannot
-                // participate in a merge suggestion at all.
-                guard let password = (try? secrets.password(for: session.id)) ?? nil else {
-                    continue
-                }
-                key = LoginGroupKey(
-                    username: session.username, authKind: .password,
-                    keyPath: nil, password: password)
-            case .agent:
-                // Agent sessions group by username ALONE (M10d spec §3): no
-                // secret to compare, no key path -- and `authKind: .agent`
-                // in the key means they never collapse into a password or
-                // privateKey group even when the username matches.
-                key = LoginGroupKey(
-                    username: session.username, authKind: .agent,
-                    keyPath: nil, password: nil)
+            let descriptor = BackendDescriptor.descriptor(for: session.kind)
+            // A session whose kind claims a block it does not carry is broken
+            // stored data. It has no credentials to compare, and reading
+            // through `StoredSession`'s SSH fallbacks would group it on
+            // ""/.password — the placeholder M23 removed, in a new place.
+            guard descriptor.hasStoredConfiguration(session) else { continue }
+
+            let namespace = descriptor.fieldNamespace
+            let storedValues = descriptor.sessionValues(session)
+            let visible = descriptor.credentialSchema.visibleFields(
+                in: storedValues, namespace: namespace)
+
+            var fields: [String: String] = [:]
+            var values = FieldValues()
+            var label: String?
+            for field in visible where !field.isSecret {
+                let key = "\(namespace).\(field.id)"
+                // Compared VERBATIM, like every part of this key: this asks
+                // whether two logins are the same, and a user name differing
+                // in case or padding is a different user name. (Distinct from
+                // `FieldIdentity`, which answers "same CONNECTION?" for import
+                // dedup and which `authKind` does not even carry.)
+                let raw = storedValues.raw[key] ?? ""
+                fields[key] = raw
+                values.setRaw(key, to: raw)
+                if label == nil { label = raw }
             }
+
+            var secret: String?
+            if let secretField = visible.first(where: \.isSecret) {
+                // `.passphrase` unlocks a key file `keyPath` already put in
+                // the key, so it neither enters the key nor justifies a
+                // Keychain read. A missing role reads as `.credential`: the
+                // safe direction, keeping logins apart rather than merging
+                // them. And a secret-less session under `.credential` has
+                // nothing to compare, so it cannot take part at all -- which
+                // is the pre-M24 SSH rule, now applied to every backend.
+                if secretField.secretRole != .passphrase {
+                    guard let stored = (try? secrets.password(for: session.id)) ?? nil else {
+                        continue
+                    }
+                    secret = stored
+                }
+            }
+
+            let key = LoginGroupKey(kind: session.kind, fields: fields, secret: secret)
             if groups[key] == nil {
                 order.append(key)
+                labels[key] = label ?? ""
+                credentials[key] = values
             }
             groups[key, default: []].append(session.id)
         }
@@ -82,15 +118,16 @@ public enum LoginMergePlanner {
             // a new member makes it no longer a subset.
             if ignoredGroups.contains(where: { idSet.isSubset(of: $0) }) { return nil }
             return LoginMergeCandidate(
-                username: key.username, authKind: key.authKind, keyPath: key.keyPath,
-                sessionIDs: sessionIDs)
+                kind: key.kind, values: credentials[key] ?? FieldValues(),
+                displayLabel: labels[key] ?? "", sessionIDs: sessionIDs)
         }
 
         return candidates.sorted { a, b in
-            let usernameOrder = a.username.localizedCaseInsensitiveCompare(b.username)
-            if usernameOrder != .orderedSame { return usernameOrder == .orderedAscending }
-            let keyPathOrder = (a.keyPath ?? "").compare(b.keyPath ?? "")
-            if keyPathOrder != .orderedSame { return keyPathOrder == .orderedAscending }
+            let labelOrder = a.displayLabel.localizedCaseInsensitiveCompare(b.displayLabel)
+            if labelOrder != .orderedSame { return labelOrder == .orderedAscending }
+            // Two protocols can produce the same label; without this the order
+            // between them would depend on input order alone.
+            if a.kind != b.kind { return a.kind.rawValue < b.kind.rawValue }
             return a.sessionIDs.count < b.sessionIDs.count
         }
     }
