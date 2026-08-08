@@ -947,12 +947,12 @@ struct SessionListViewModelTests {
     @Test func suggestedSetNameAvoidsCollision() {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        #expect(vm.suggestedSetName(forUsername: "root") == "root")
+        #expect(vm.suggestedSetName(forLabel: "root") == "root")
 
         vm.saveLoginSet(LoginSet(name: "root", username: "root"), secret: nil)
         vm.saveLoginSet(LoginSet(name: "root (2)", username: "root"), secret: nil)
 
-        #expect(vm.suggestedSetName(forUsername: "root") == "root (3)")
+        #expect(vm.suggestedSetName(forLabel: "root") == "root (3)")
     }
 
     @Test func ignoreMergePersists() throws {
@@ -2091,6 +2091,87 @@ struct SessionListViewModelTests {
         #expect(payload2.jumpHost == "own-host")
         #expect(payload2.jumpPort == 2121)
         #expect(payload2.jumpUsername == "own-user")
+    }
+
+    // MARK: - applyMerge builds a set of the candidate's own kind (M24/T3)
+
+    @Test func mergingTwoS3SessionsCreatesAnS3SetCarryingTheAccessKeyID() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let s3 = StoredS3Config(
+            accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
+            endpoint: "https://s3.example.com", bucket: "backups", usePathStyle: false)
+        let a = vm.save(
+            name: "a", values: S3FieldSchema.values(from: s3), password: "sh4red", kind: .s3)!
+        let b = vm.save(
+            name: "b", values: S3FieldSchema.values(from: s3), password: "sh4red", kind: .s3)!
+
+        let candidates = vm.mergeCandidates()
+        #expect(candidates.count == 1)
+        let candidate = candidates.first!
+        #expect(candidate.kind == .s3)
+
+        let set = vm.applyMerge(candidate, name: "acct")
+
+        #expect(set?.kind == .s3)
+        #expect(set?.accessKeyID == "AKIAEXAMPLE")
+        for session in [a, b] {
+            #expect(vm.sessions.first { $0.id == session.id }?.loginSetID == set?.id)
+        }
+    }
+
+    @Test func mergingCarriesTheSecretOntoTheSetBeforeDeletingTheSessionSlots() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let s3 = StoredS3Config(
+            accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
+            endpoint: "https://s3.example.com", bucket: "backups", usePathStyle: false)
+        let a = vm.save(
+            name: "a", values: S3FieldSchema.values(from: s3), password: "sh4red", kind: .s3)!
+        let b = vm.save(
+            name: "b", values: S3FieldSchema.values(from: s3), password: "sh4red", kind: .s3)!
+
+        let candidates = vm.mergeCandidates()
+        #expect(candidates.count == 1)
+        let candidate = candidates.first!
+
+        let set = vm.applyMerge(candidate, name: "acct")
+
+        #expect(set != nil)
+        #expect(try secrets.password(for: set!.id) == "sh4red")
+        #expect(try secrets.password(for: a.id) == nil)
+        #expect(try secrets.password(for: b.id) == nil)
+    }
+
+    @Test func applyMergeRefusesACandidateWhoseSessionsAreOfMixedKind() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let s3 = StoredS3Config(
+            accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
+            endpoint: "https://s3.example.com", bucket: "backups", usePathStyle: false)
+        let bucket = vm.save(
+            name: "bucket", values: S3FieldSchema.values(from: s3), password: "s3cret", kind: .s3)!
+        let host = vm.save(
+            name: "host", values: sshValues(host: "h1", port: 22, username: "root"),
+            password: "pw")!
+
+        // Hand-built, not planner-produced: `LoginMergePlanner` puts `kind` in
+        // its grouping key, so it can never hand out a mixed group. This is
+        // the "a candidate is a plain value anything could build" case the
+        // guard in `applyMerge` defends against.
+        let candidate = LoginMergeCandidate(
+            kind: .s3, values: S3FieldSchema.values(from: s3),
+            displayLabel: "AKIAEXAMPLE", sessionIDs: [bucket.id, host.id])
+
+        let result = vm.applyMerge(candidate, name: "acct")
+
+        #expect(result == nil)
+        // Nothing happened: no set, no rewiring, no deleted secret.
+        #expect(vm.loginSets.isEmpty)
+        #expect(vm.sessions.first { $0.id == bucket.id }?.loginSetID == nil)
+        #expect(vm.sessions.first { $0.id == host.id }?.loginSetID == nil)
+        #expect(try secrets.password(for: bucket.id) == "s3cret")
+        #expect(try secrets.password(for: host.id) == "pw")
     }
 }
 

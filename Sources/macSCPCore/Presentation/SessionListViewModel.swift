@@ -599,35 +599,17 @@ public final class SessionListViewModel {
             sessions.first { $0.id == id }
         }
         guard let first = groupSessions.first else { return nil }
+        // Defense in depth (M24). `LoginMergePlanner` puts the kind in its
+        // grouping key, so a mixed group cannot come from there -- but this
+        // function DELETES Keychain entries, and a candidate reaches it as a
+        // plain value that anything could have built. Refusing here costs
+        // nothing and turns "the planner guarantees it" from a comment into a
+        // fact. Refusing means changing nothing at all: no set, no rewiring,
+        // no deletion, so the banner simply stays.
+        guard groupSessions.allSatisfy({ $0.kind == candidate.kind }) else { return nil }
 
-        // COMPILE-COMPATIBILITY SHIM (M24/T2), not a design choice: T2 changed
-        // `LoginMergeCandidate` to `(kind:values:displayLabel:sessionIDs:)`,
-        // which removed `.username`/`.authKind`/`.keyPath` and left this call
-        // unable to compile. Building the set generically from `candidate.kind`
-        // and `candidate.values` (what a correct per-protocol merge needs) is
-        // M24/T3's job, done together with the mixed-kind guard T3 adds right
-        // here. Until then this reads the same three fields back out of the
-        // SSH namespace, so behaviour is BIT-FOR-BIT identical to before T2 on
-        // every path: for a genuine SSH candidate `candidate.values` holds
-        // exactly what `StoredSession.username`/`.authKind`/`.keyPath` used to
-        // return, and for a non-SSH candidate the SSH keys are simply missing
-        // from the bag, which reads back as "" / `.password` / nil -- the
-        // exact fallback values `StoredSession`'s own SSH accessors produced
-        // for a `.s3`/`.webdav` session before T2. So this still builds an
-        // unusable `.ssh` set for a non-SSH candidate and still deletes both
-        // sessions' Keychain entries once the set is created, EXACTLY as the
-        // pre-M24 code did -- T2 only fixed which pairs of sessions are
-        // offered as a candidate in the first place (`kind` is now part of
-        // the grouping key), not what accepting one does. T3 closes that
-        // remaining gap with
-        // `BackendDescriptor.descriptor(for: candidate.kind).loginSet(id:name:from:)`
-        // plus a guard refusing a candidate whose sessions are not uniformly
-        // `candidate.kind`.
-        let shimKeyPath = candidate.values[SSHField.keyPath]
-        let set = LoginSet(
-            name: name, username: candidate.values[SSHField.username],
-            authKind: StoredSession.AuthKind(rawValue: candidate.values[SSHField.authKind]) ?? .password,
-            keyPath: shimKeyPath.isEmpty ? nil : shimKeyPath)
+        let descriptor = BackendDescriptor.descriptor(for: candidate.kind)
+        let set = descriptor.loginSet(id: UUID(), name: name, from: candidate.values)
         do {
             try loginSetStore.upsert(set)
         } catch {
@@ -670,17 +652,21 @@ public final class SessionListViewModel {
     }
 
     /// A conflict-free name for a new set (pattern of the file-conflict
-    /// names used elsewhere): the username itself, or `"<username> (2)"`,
+    /// names used elsewhere): the label itself, or `"<label> (2)"`,
     /// `"(3)"`, … the first one not colliding case-insensitively with an
-    /// existing set's name.
-    public func suggestedSetName(forUsername username: String) -> String {
+    /// existing set's name. `label` is whichever identifying credential value
+    /// names the login on screen — a user name for SSH and WebDAV, an access
+    /// key ID for S3. (M24/T3 rename: the parameter used to say
+    /// `forUsername:`, which was already inaccurate for its S3 callers before
+    /// this — this merely gives the long-standing behavior an honest label.)
+    public func suggestedSetName(forLabel label: String) -> String {
         let existingNames = Set(loginSets.map { $0.name.lowercased() })
-        guard existingNames.contains(username.lowercased()) else { return username }
+        guard existingNames.contains(label.lowercased()) else { return label }
         var counter = 2
-        while existingNames.contains("\(username) (\(counter))".lowercased()) {
+        while existingNames.contains("\(label) (\(counter))".lowercased()) {
             counter += 1
         }
-        return "\(username) (\(counter))"
+        return "\(label) (\(counter))"
     }
 
     /// Resolves what a session should actually connect with: its own data
