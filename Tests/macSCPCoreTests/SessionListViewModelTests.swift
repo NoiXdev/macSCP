@@ -2240,7 +2240,7 @@ struct SessionListViewModelTests {
         #expect(try secrets.password(for: host.id) == "pw")
     }
 
-    /// `applyMerge`'s SECOND defense in depth (M24 abschluss, Befund E): the
+    /// `applyMerge`'s SECOND defense in depth (M24 closeout, Finding E): the
     /// kind guard above is not enough on its own -- a hand-built `.s3`
     /// candidate over sessions whose `kind` says `.s3` but which carry NO
     /// stored S3 block would pass that guard (kind matches) and still build

@@ -616,22 +616,27 @@ public final class SessionListViewModel {
     /// session's own secret is then removed (throw-free — a leftover
     /// keychain entry is a harmless residual, never a reason to abort). A
     /// store failure while creating the set aborts before anything is
-    /// rewired. Session secrets are deleted only after every session has been
-    /// rewired successfully (spec §4): if carrying the secret onto the new
-    /// set fails, the just-created set is rolled back, no session is
-    /// rewired, and every session keeps its own secret.
+    /// rewired. Deletion is gated on the secret carry, not on rewiring order
+    /// (spec §4): if carrying the source secret onto the new set fails, the
+    /// just-created set is rolled back, no session is rewired, and every
+    /// session keeps its own secret. Once the carry succeeds, each session
+    /// is rewired and has its own secret deleted in the same iteration —
+    /// both are `try?`, so a store-write failure for one session does not
+    /// stop that session's secret from being deleted.
     public func applyMerge(_ candidate: LoginMergeCandidate, name: String) -> LoginSet? {
         let groupSessions = candidate.sessionIDs.compactMap { id in
             sessions.first { $0.id == id }
         }
         guard let first = groupSessions.first else { return nil }
-        // Defense in depth (M24). `LoginMergePlanner` puts the kind in its
-        // grouping key, so a mixed group cannot come from there -- but this
-        // function DELETES Keychain entries, and a candidate reaches it as a
-        // plain value that anything could have built. Refusing here costs
-        // nothing and turns "the planner guarantees it" from a comment into a
-        // fact. Refusing means changing nothing at all: no set, no rewiring,
-        // no deletion, so the banner simply stays.
+        // Defense in depth (M24). Field keys are namespaced (`SSHField.*`
+        // vs. `S3Field.*` vs. `WebDAVField.*`), so two backends can never
+        // produce equal `fields` dictionaries -- `kind`'s presence in
+        // `LoginMergePlanner`'s grouping key is structurally untestable, not
+        // what keeps a group from mixing kinds. This guard is the actual
+        // mixed-group defense, and it has to hold here because this function
+        // DELETES Keychain entries, and a candidate reaches it as a plain
+        // value that anything could have built. Refusing here costs nothing:
+        // no set, no rewiring, no deletion, so the banner simply stays.
         guard groupSessions.allSatisfy({ $0.kind == candidate.kind }) else { return nil }
 
         let descriptor = BackendDescriptor.descriptor(for: candidate.kind)
