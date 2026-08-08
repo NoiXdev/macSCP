@@ -229,10 +229,11 @@ public final class SessionListViewModel {
     @discardableResult
     public func delete(_ session: StoredSession) -> JumpRestoreResult {
         // Restoration copies the deleted session's host, port and login into
-        // every jump that referenced it. Only an SSH session HAS those: for
-        // any other kind `session.host`/`session.port` are `StoredSession`'s
-        // SSH fallbacks, and copying them writes a bastion nobody can dial
-        // into someone else's configuration, looking configured.
+        // every jump that referenced it. Only an SSH session HAS those, which
+        // is why `affected` below is computed only for `.ssh` -- copying a
+        // non-SSH session's (nonexistent) host/port would write a bastion
+        // nobody can dial into someone else's configuration, looking
+        // configured.
         //
         // Leaving the reference dangling instead is the honest outcome: the
         // next connect reports `.missingJumpSession` -- "the connection used
@@ -250,50 +251,58 @@ public final class SessionListViewModel {
         // KEY -- fetched only to be discarded. A read of a secret nobody needs
         // is one read too many.
         if !affected.isEmpty {
-            // The deleted session's effective login, via `resolvedSSHLogin(for:)`:
-            // nil for a manual session (use its own fields + own keychain secret
-            // below), a set's values otherwise. An
-            // agent session/set reads no keychain at all (M10d rule).
-            let resolvedBastionLogin = resolvedSSHLogin(for: session)
-            let bastionUsername = resolvedBastionLogin?.username ?? session.username
-            let bastionAuthKind = resolvedBastionLogin?.authKind ?? session.authKind
-            let bastionKeyPath = resolvedBastionLogin?.keyPath ?? session.keyPath
-            var bastionSecret: String?
-            if let resolvedBastionLogin {
-                bastionSecret = resolvedBastionLogin.secret
-            } else if session.authKind != .agent {
-                bastionSecret = (try? secrets.password(for: session.id)) ?? nil
-            }
-
-            for referencing in affected {
-                guard var jump = referencing.jump else { continue }
-                jump.host = session.host
-                jump.port = session.port
-                jump.username = bastionUsername
-                jump.authKind = bastionAuthKind
-                jump.keyPath = bastionKeyPath
-                jump.loginSetID = nil
-                jump.sessionID = nil
-
-                var hadSecretFailure = false
-                if let bastionSecret {
-                    do {
-                        try secrets.savePassword(bastionSecret, for: jump.secretID)
-                    } catch {
-                        hadSecretFailure = true
-                    }
+            // Defensive, and unreachable in practice for the same reason as
+            // above: `affected` is non-empty only for `.ssh`, and a blockless
+            // `.ssh` record is dropped when the store loads (M26). Wrapping
+            // the computation and the loop in `if let` (rather than an early
+            // `return`) is deliberate: an early return here would skip the
+            // deletion below, which is the whole point of this function.
+            if let ssh = session.ssh {
+                // The deleted session's effective login, via `resolvedSSHLogin(for:)`:
+                // nil for a manual session (use its own fields + own keychain secret
+                // below), a set's values otherwise. An
+                // agent session/set reads no keychain at all (M10d rule).
+                let resolvedBastionLogin = resolvedSSHLogin(for: session)
+                let bastionUsername = resolvedBastionLogin?.username ?? ssh.username
+                let bastionAuthKind = resolvedBastionLogin?.authKind ?? ssh.authKind
+                let bastionKeyPath = resolvedBastionLogin?.keyPath ?? session.keyPath
+                var bastionSecret: String?
+                if let resolvedBastionLogin {
+                    bastionSecret = resolvedBastionLogin.secret
+                } else if ssh.authKind != .agent {
+                    bastionSecret = (try? secrets.password(for: session.id)) ?? nil
                 }
 
-                var updated = referencing
-                // `referencing.jump` was non-nil above, so the SSH block exists:
-                // only an SSH session can carry a jump at all since M23/T8.
-                updated.ssh?.jump = jump
-                // Throw-free by design (M10b pattern): a store-write failure for
-                // one referencing session must not abort restoring the others,
-                // nor the deletion that follows.
-                try? store.upsert(updated)
-                if hadSecretFailure {
-                    secretFailures += 1
+                for referencing in affected {
+                    guard var jump = referencing.jump else { continue }
+                    jump.host = ssh.host
+                    jump.port = ssh.port
+                    jump.username = bastionUsername
+                    jump.authKind = bastionAuthKind
+                    jump.keyPath = bastionKeyPath
+                    jump.loginSetID = nil
+                    jump.sessionID = nil
+
+                    var hadSecretFailure = false
+                    if let bastionSecret {
+                        do {
+                            try secrets.savePassword(bastionSecret, for: jump.secretID)
+                        } catch {
+                            hadSecretFailure = true
+                        }
+                    }
+
+                    var updated = referencing
+                    // `referencing.jump` was non-nil above, so the SSH block exists:
+                    // only an SSH session can carry a jump at all since M23/T8.
+                    updated.ssh?.jump = jump
+                    // Throw-free by design (M10b pattern): a store-write failure for
+                    // one referencing session must not abort restoring the others,
+                    // nor the deletion that follows.
+                    try? store.upsert(updated)
+                    if hadSecretFailure {
+                        secretFailures += 1
+                    }
                 }
             }
         }
@@ -345,9 +354,10 @@ public final class SessionListViewModel {
             // No secret field on screen means this login needs none, which
             // today is ssh-agent and nothing else (M10d) -- clean up a
             // leftover manual slot from before the switch. Asking the
-            // schema rather than `updated.authKind` keeps a `.s3`/`.webdav`
-            // session out of this branch by its own declaration instead of
-            // by the accident that its fabricated auth kind is not `.agent`.
+            // schema rather than `updated.ssh?.authKind` keeps a
+            // `.s3`/`.webdav` session out of this branch by its own
+            // declaration instead of by the accident that its SSH auth kind
+            // (were it read at all) is not `.agent`.
             if BackendDescriptor.descriptor(for: updated.kind)
                 .visibleSecretField(for: updated) == nil {
                 try? secrets.deletePassword(for: updated.id)

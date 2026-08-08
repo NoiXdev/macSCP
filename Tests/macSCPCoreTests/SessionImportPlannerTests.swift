@@ -297,8 +297,8 @@ struct SessionImportPlannerTests {
         #expect(planned.id != file.id)
         // Host/port/username are untouched — a renamed duplicate is a second
         // entry for the SAME endpoint, deliberately.
-        #expect(planned.host == "host")
-        #expect(planned.username == "root")
+        #expect(planned.ssh?.host == "host")
+        #expect(planned.ssh?.username == "root")
         #expect(plan.renamed == [planned.name])
         #expect(plan.replaced.isEmpty)
         #expect(plan.skipped.isEmpty)
@@ -506,7 +506,7 @@ struct SessionImportPlannerTests {
             existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
 
         let planned = plan.sessionsToImport[0]
-        #expect(planned.session.authKind == .agent)
+        #expect(planned.session.ssh?.authKind == .agent)
         #expect(planned.session.jump?.authKind == .agent)
         #expect(planned.password == nil)
         #expect(planned.jumpPassword == nil)
@@ -549,7 +549,7 @@ struct SessionImportPlannerTests {
             existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
         let planned = plan.sessionsToImport[0]
         #expect(planned.session.kind == .ssh)
-        #expect(planned.session.host == "h")
+        #expect(planned.session.ssh?.host == "h")
         #expect(planned.session.s3 == nil)
         // The same for WebDAV: no WebDAV keys in the bag means no
         // `StoredWebDAVConfig` on the planned session.
@@ -948,8 +948,8 @@ struct SessionImportPlannerTests {
         #expect(bag["SSHField.username"] == "  deploy  ")
 
         // The trim happens where every other write goes through it.
-        #expect(session.host == "h.example.com")
-        #expect(session.username == "deploy")
+        #expect(session.ssh?.host == "h.example.com")
+        #expect(session.ssh?.username == "deploy")
     }
 
     /// v1 copied `keyPath` across whatever the auth kind was; `apply` clears
@@ -967,7 +967,7 @@ struct SessionImportPlannerTests {
         // Again: the bag carries the path, so the drop below is `apply`'s
         // doing and not a column the upgrade quietly failed to read.
         #expect(bag["SSHField.keyPath"] == "/legacy/key")
-        #expect(session.authKind == .password)
+        #expect(session.ssh?.authKind == .password)
         #expect(session.keyPath == nil)
     }
 

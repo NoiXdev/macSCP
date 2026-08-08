@@ -240,17 +240,19 @@ struct BackendDescriptorTests {
     /// the one sanctioned exception to the fixture rule (see
     /// `SessionFixtures.swift`'s header comment).
     ///
-    /// This pins the equivalence the doc comment on `visibleSecretField(for:)`
-    /// claims: a missing SSH block reads through `StoredSession`'s own
-    /// fallback accessors (`authKind` defaults to `.password`) into a
-    /// POPULATED bag, exactly like a normal password session, rather than an
-    /// empty one — the member does not special-case a session whose `kind`
-    /// says `.ssh` but whose block is absent.
-    @Test func anSSHSessionWithoutItsBlockStillShowsAPasswordField() {
+    /// Through M25 this pinned the OPPOSITE answer: a missing SSH block read
+    /// through `StoredSession`'s inventing accessors (`authKind` defaulting
+    /// to `.password`) into a POPULATED bag, exactly like a normal password
+    /// session. M26 deletes those accessors and gives `SSHFieldSchema
+    /// .values(from:)` a guard of its own, so `.ssh` now yields the empty bag
+    /// on a missing block, same as `.s3`/`.webdav` always have — there is no
+    /// more asymmetry for this case to pin.
+    @Test func anSSHSessionWithoutItsBlockYieldsTheEmptyBag() {
         let session = StoredSession(
             id: UUID(), name: "blockless", groupID: nil, loginSetID: nil, kind: .ssh)
-        let field = BackendDescriptor.descriptor(for: .ssh).visibleSecretField(for: session)
-        #expect(field?.id == SSHField.password.rawValue)
+        let descriptor = BackendDescriptor.descriptor(for: .ssh)
+        #expect(descriptor.visibleSecretField(for: session) == nil)
+        #expect(descriptor.sessionValues(session).raw.isEmpty)
     }
 
     /// Guards `updateSession`'s leftover-slot deletion (`SessionListViewModel

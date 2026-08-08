@@ -28,9 +28,9 @@ import Testing
         values[SSHField.authKind] = StoredSession.AuthKind.password.rawValue
         BackendDescriptor.descriptor(for: .ssh).apply(values, &session)
 
-        #expect(session.host == "new.example.com")
-        #expect(session.port == 2222)
-        #expect(session.username == "deploy")
+        #expect(session.ssh?.host == "new.example.com")
+        #expect(session.ssh?.port == 2222)
+        #expect(session.ssh?.username == "deploy")
         #expect(session.groupID == group)
         #expect(session.loginSetID == set)
         #expect(session.jump == jump)

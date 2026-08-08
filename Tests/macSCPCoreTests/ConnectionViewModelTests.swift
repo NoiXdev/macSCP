@@ -403,7 +403,7 @@ struct ConnectionViewModelTests {
 
         let result = vm.validateForEditSave()
         #expect(result?.id == stored.id)
-        #expect(result?.host == "new.example")
+        #expect(result?.ssh?.host == "new.example")
         #expect(vm.state == .idle)
     }
 
@@ -748,7 +748,7 @@ struct ConnectionViewModelTests {
 
         let result = vm.validateForEditSave()
 
-        #expect(result?.authKind == .agent)
+        #expect(result?.ssh?.authKind == .agent)
         #expect(result?.keyPath == nil)
     }
 

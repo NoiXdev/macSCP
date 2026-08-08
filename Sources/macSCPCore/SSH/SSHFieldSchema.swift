@@ -286,11 +286,17 @@ public enum SSHFieldSchema {
     /// * `jump` is a second login with its own Keychain slot and its own
     ///   login-set/session bindings; it stays with the caller that owns those.
     public static func values(from session: StoredSession) -> FieldValues {
+        // A record whose kind says `.ssh` but carries no block is dropped when
+        // the store loads (M26), so this cannot be reached through the app --
+        // it is the structural counterpart of that rule, and it puts SSH on
+        // the same footing as the other two backends, whose `sessionValues`
+        // has always returned the empty bag for a missing block.
+        guard let ssh = session.ssh else { return FieldValues() }
         var values = FieldValues()
-        values[SSHField.host] = session.host
-        values[SSHField.port] = String(session.port)
-        values[SSHField.username] = session.username
-        values[SSHField.authKind] = session.authKind.rawValue
+        values[SSHField.host] = ssh.host
+        values[SSHField.port] = String(ssh.port)
+        values[SSHField.username] = ssh.username
+        values[SSHField.authKind] = ssh.authKind.rawValue
         values[SSHField.keyPath] = session.keyPath ?? ""
         return values
     }

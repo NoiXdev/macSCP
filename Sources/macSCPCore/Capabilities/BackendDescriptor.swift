@@ -142,15 +142,14 @@ public struct BackendDescriptor: Sendable {
     /// never is (it lives in the Keychain).
     ///
     /// A session whose `kind` says one thing but whose stored configuration
-    /// block is missing yields the empty bag ONLY for `.s3`/`.webdav`, where
-    /// `session.s3`/`session.webdav` is genuinely optional. `.ssh` is
-    /// different: `StoredSession`'s `host`/`port`/`username`/`authKind`/
-    /// `keyPath` accessors fall back to `""`/`22`/`""`/`.password`/`nil` when
-    /// `session.ssh` is nil (`StoredSession.swift`), so
-    /// `SSHFieldSchema.values(from:)` reads through those defaults into a
-    /// POPULATED bag rather than an empty one — which is why callers must ask
-    /// `hasStoredConfiguration(_:)` BEFORE reading values rather than inferring
-    /// the answer from an empty bag (M23/P2).
+    /// block is missing yields the empty bag for all three backends
+    /// (`SSHFieldSchema.values(from:)` guards on `session.ssh` since M26,
+    /// matching the `session.s3`/`session.webdav` optionals `.s3`/`.webdav`
+    /// always had). Callers still ask `hasStoredConfiguration(_:)` BEFORE
+    /// reading values rather than inferring the answer from an empty bag
+    /// (M23/P2): an empty bag is also what a hand-built `FieldValues` with no
+    /// fields set looks like, so it is not on its own proof of a missing
+    /// block.
     public func sessionValues(_ session: StoredSession) -> FieldValues {
         switch kind {
         case .ssh: return SSHFieldSchema.values(from: session)
@@ -182,19 +181,20 @@ public struct BackendDescriptor: Sendable {
     /// needs none (M25).
     ///
     /// The schema's answer to "does this login carry a secret at all", asked
-    /// WITHOUT `StoredSession.authKind` — which for a `.s3`/`.webdav` session
-    /// fabricates `.password`, the placeholder M23 set out to remove. Only
-    /// ssh-agent shows no secret field, so the nil case IS the agent case for
-    /// SSH and never arises for the other two backends.
+    /// via `sessionValues(_:)` and its `SSHField.authKind`/equivalent key
+    /// rather than a raw `AuthKind` read — the placeholder M23 set out to
+    /// remove. Only ssh-agent shows no secret field, so the nil case IS the
+    /// agent case for SSH and never arises for the other two backends.
     ///
     /// Deliberately does NOT ask `hasStoredConfiguration` itself. Its three
     /// callers want different things from a session whose block is missing —
     /// the CLI refuses it, both view-model paths carry on — and a member that
     /// guards sometimes would be worse than three callers asking their own
-    /// question. What it DOES inherit is `sessionValues`'s asymmetry: for
-    /// `.ssh` a missing block still reads through `StoredSession`'s own
-    /// fallbacks into a POPULATED bag, while `.s3`/`.webdav` yield an empty
-    /// one (see `sessionValues(_:)`).
+    /// question. Since M26 that missing-block case is symmetric across all
+    /// three backends: `sessionValues(_:)` yields the empty bag, which this
+    /// member reads no differently than any other bag with no `authKind` key
+    /// set — the credential schema's own `visibleSecretField` decides what an
+    /// absent key means.
     public func visibleSecretField(for session: StoredSession) -> ConnectionField? {
         credentialSchema.visibleSecretField(
             in: sessionValues(session), namespace: fieldNamespace)

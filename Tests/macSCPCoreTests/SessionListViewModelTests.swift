@@ -119,7 +119,7 @@ struct SessionListViewModelTests {
 
         #expect(second.id == first.id)
         #expect(vm.sessions.count == 1)
-        #expect(vm.sessions.first?.host == "neu.example.com")
+        #expect(vm.sessions.first?.ssh?.host == "neu.example.com")
         #expect(try secrets.password(for: first.id) == "p2")
     }
 
@@ -232,7 +232,7 @@ struct SessionListViewModelTests {
             password: "typed")!
 
         #expect(switched.id == first.id)
-        #expect(switched.authKind == .agent)
+        #expect(switched.ssh?.authKind == .agent)
         #expect(try secrets.password(for: switched.id) == nil)
     }
 
@@ -260,7 +260,7 @@ struct SessionListViewModelTests {
 
         #expect(asSSH.kind == .ssh)
         #expect(asSSH.s3 == nil)
-        #expect(asSSH.host == "h.example.com")
+        #expect(asSSH.ssh?.host == "h.example.com")
         let raw = try String(contentsOf: dir.appendingPathComponent("sessions-v2.json"), encoding: .utf8)
         #expect(!raw.contains("backups"))
     }
@@ -387,7 +387,7 @@ struct SessionListViewModelTests {
         #expect(vm.password(for: stored) == "keep")
         vm.updateSession(updated, newSecret: "next")
         #expect(vm.password(for: stored) == "next")
-        #expect(vm.sessions.first?.host == "h2")
+        #expect(vm.sessions.first?.ssh?.host == "h2")
     }
 
     @Test func exportPayloadScopesAndCountsMissingPasswords() throws {
@@ -469,7 +469,7 @@ struct SessionListViewModelTests {
         let one = vm.sessions.first { $0.name == "one" }!
         #expect(try secrets.password(for: one.id) == "secret1")
         // Existing session is untouched.
-        #expect(vm.sessions.first { $0.id == existing.id }?.host == "other.example.com")
+        #expect(vm.sessions.first { $0.id == existing.id }?.ssh?.host == "other.example.com")
         #expect(try secrets.password(for: existing.id) == "keep")
     }
 
@@ -496,7 +496,7 @@ struct SessionListViewModelTests {
         #expect(result.secretsRemoved == 1)
         #expect(result.imported == 1)
         #expect(try secrets.password(for: existing.id) == nil)
-        #expect(vm.sessions.first { $0.id == existing.id }?.host == "new.example.com")
+        #expect(vm.sessions.first { $0.id == existing.id }?.ssh?.host == "new.example.com")
     }
 
     /// M19/T8 review (leftover 4): the login-set twin (`applyLoginSetImport`)
@@ -525,7 +525,7 @@ struct SessionListViewModelTests {
         #expect(result.secretsRemoved == 1)
         #expect(result.passwordsImported == 0)
         #expect(try secrets.password(for: existing.id) == nil)
-        #expect(vm.sessions.first { $0.id == existing.id }?.host == "new.example.com")
+        #expect(vm.sessions.first { $0.id == existing.id }?.ssh?.host == "new.example.com")
     }
 
     /// A replace that DOES carry a secret simply overwrites, and reports no
@@ -805,8 +805,8 @@ struct SessionListViewModelTests {
         for session in [a, b] {
             let restored = vm.sessions.first { $0.id == session.id }!
             #expect(restored.loginSetID == nil)
-            #expect(restored.username == "deploy")
-            #expect(restored.authKind == .privateKey)
+            #expect(restored.ssh?.username == "deploy")
+            #expect(restored.ssh?.authKind == .privateKey)
             #expect(restored.keyPath == "/k")
             #expect(try secrets.password(for: session.id) == "pp")
         }
@@ -845,8 +845,8 @@ struct SessionListViewModelTests {
         // the keychain failure -- only the secret copy for `b` is missing.
         #expect(vm.sessions.first { $0.id == a.id }?.loginSetID == nil)
         #expect(vm.sessions.first { $0.id == b.id }?.loginSetID == nil)
-        #expect(vm.sessions.first { $0.id == a.id }?.username == "root")
-        #expect(vm.sessions.first { $0.id == b.id }?.username == "root")
+        #expect(vm.sessions.first { $0.id == a.id }?.ssh?.username == "root")
+        #expect(vm.sessions.first { $0.id == b.id }?.ssh?.username == "root")
     }
 
     @Test func applyMergeAbortsAndRewiresNothingWhenCarryingSecretToSetFails() throws {
@@ -1106,7 +1106,7 @@ struct SessionListViewModelTests {
         #expect(try secrets.password(for: restored.jump!.secretID) == "pp")
         // Only the jump was referencing the set -- the target itself is
         // untouched.
-        #expect(restored.username == "u")
+        #expect(restored.ssh?.username == "u")
         #expect(vm.loginSets.isEmpty)
     }
 
@@ -1133,7 +1133,7 @@ struct SessionListViewModelTests {
         #expect(result == SessionListViewModel.LoginSetDeleteResult(restored: 1, secretFailures: 0))
         let restored = vm.sessions.first { $0.id == stored.id }!
         #expect(restored.loginSetID == nil)
-        #expect(restored.username == "shared")
+        #expect(restored.ssh?.username == "shared")
         #expect(restored.jump?.loginSetID == nil)
         #expect(restored.jump?.username == "shared")
         #expect(try secrets.password(for: stored.id) == "s3cr3t")
@@ -1548,7 +1548,7 @@ struct SessionListViewModelTests {
             password: "")
 
         #expect(try secrets.password(for: stored.id) == nil)
-        #expect(vm.sessions.first?.authKind == .agent)
+        #expect(vm.sessions.first?.ssh?.authKind == .agent)
     }
 
     @Test func updateSessionSwitchingTargetToAgentDeletesSessionSecret() throws {
@@ -1564,7 +1564,7 @@ struct SessionListViewModelTests {
         vm.updateSession(updated, newSecret: nil)
 
         #expect(try secrets.password(for: stored.id) == nil)
-        #expect(vm.sessions.first?.authKind == .agent)
+        #expect(vm.sessions.first?.ssh?.authKind == .agent)
     }
 
     @Test func saveJumpSwitchingManualToAgentDeletesJumpSecretSlot() throws {
@@ -1756,8 +1756,8 @@ struct SessionListViewModelTests {
         #expect(result == SessionListViewModel.LoginSetDeleteResult(restored: 1, secretFailures: 0))
         let restored = vm.sessions.first { $0.id == stored.id }!
         #expect(restored.loginSetID == nil)
-        #expect(restored.username == "deploy")
-        #expect(restored.authKind == .agent)
+        #expect(restored.ssh?.username == "deploy")
+        #expect(restored.ssh?.authKind == .agent)
         #expect(restored.keyPath == nil)
         #expect(try secrets.password(for: stored.id) == nil)
     }
@@ -1831,7 +1831,7 @@ struct SessionListViewModelTests {
         #expect(result == SessionListViewModel.LoginSetDeleteResult(restored: 1, secretFailures: 0))
         let restored = vm.sessions.first { $0.id == stored.id }!
         #expect(restored.loginSetID == nil)
-        #expect(restored.authKind == .agent)
+        #expect(restored.ssh?.authKind == .agent)
         // The stale password-era secret must never have been transferred
         // into the session's own slot, nor left behind on the set's slot.
         #expect(try secrets.password(for: stored.id) == nil)
@@ -1991,11 +1991,11 @@ struct SessionListViewModelTests {
         }
     }
 
-    /// M24: an S3 bastion has no SSH host/port/login to restore --
-    /// `session.host`/`session.port` would only report `StoredSession`'s SSH
-    /// fallbacks (`""`/`22`). The referencing session must be left alone
-    /// rather than gain a placeholder bastion that looks configured but can
-    /// never be dialled.
+    /// M24: an S3 bastion has no SSH host/port/login to restore -- `affected`
+    /// is computed only for `.ssh` (`SessionListViewModel.swift`), so an S3
+    /// bastion never even reaches the restoration block. The referencing
+    /// session must be left alone rather than gain a placeholder bastion that
+    /// looks configured but can never be dialled.
     @Test func deletingANonSSHBastionRestoresNothing() throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
@@ -2024,6 +2024,85 @@ struct SessionListViewModelTests {
         #expect(stillReferencing.jump?.host == "ignored")
         #expect(stillReferencing.jump?.username == "ignored")
         #expect(vm.sessions.contains { $0.id == bastion.id } == false)
+    }
+
+    /// M26: unlike the S3 case above, a blockless `.ssh` session still makes
+    /// `affected` non-empty (`sessionsUsingAsJump` doesn't care whether the
+    /// block exists, only that `kind == .ssh` and something references it),
+    /// so this exercises the `if let ssh = session.ssh` inside `delete`'s
+    /// restoration block rather than the `affected.isEmpty` short-circuit.
+    /// That guard is unreachable through `SessionStore.load()` (Task 1 drops
+    /// such a record at load time), which is why the blockless session is
+    /// built directly rather than through `vm.save`/`sshSession` -- no
+    /// fixture can produce one -- and written to the store with a bare
+    /// `upsert`, which does not filter (only `load` does).
+    ///
+    /// `store.load()` filtering the blockless record out of every read means
+    /// `vm.sessions`/`store.all()` can't prove `delete` actually ran the
+    /// deletion below the guard -- they would report `broken` as gone
+    /// whether `delete` ran to completion or returned early, because the very
+    /// next `load()` (inside `delete`'s own `store.delete(id:)` call, or any
+    /// earlier one) filters it regardless. Only reading the raw file
+    /// distinguishes the two: an early `return` before `store.delete(id:)`
+    /// never triggers that filtered rewrite, so `broken`'s bytes would still
+    /// be sitting in `sessions-v2.json` after `delete` returns.
+    ///
+    /// Pins that the guard is written as `if let ssh { ... }` around the
+    /// restoration, not an early `return`: an early return would skip the
+    /// deletion below it.
+    @Test func deletingASessionStillRemovesItWhenItsBlockIsMissing() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let store = SessionStore(directory: dir)
+        let vm = SessionListViewModel(
+            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+
+        let brokenID = UUID()
+        let jump = StoredSession.JumpSpec(
+            host: "ignored", username: "ignored", sessionID: brokenID)
+        let referencing = vm.save(
+            name: "web",
+            values: sshValues(host: "ta", port: 22, username: "u"),
+            password: "pw",
+            jump: jump)!
+
+        // Direct construction, no fixture: `sshSession` always fills `ssh`,
+        // and this is the one shape no fixture is meant to produce (see
+        // `SessionFixtures.swift`'s header comment). `upsert`, not `save`, so
+        // the write bypasses `SessionListViewModel` entirely -- `save` routes
+        // through `SSHFieldSchema.apply`, which cannot construct a session
+        // without a block.
+        let broken = StoredSession(id: brokenID, name: "blockless", kind: .ssh)
+        try store.upsert(broken)
+
+        // Matches the record's own `id` key, not the referencing session's
+        // `jump.sessionID` -- which carries the SAME uuid on purpose (the
+        // dangling reference asserted below) and would otherwise make this
+        // check pass vacuously both before and after the delete.
+        let sessionsFile = dir.appendingPathComponent("sessions-v2.json")
+        let idKey = "\"id\" : \"\(brokenID.uuidString)\""
+        let beforeDelete = try String(contentsOf: sessionsFile, encoding: .utf8)
+        #expect(beforeDelete.contains(idKey))
+
+        let result = vm.delete(broken)
+
+        // `restored` counts `affected.size` -- how many jumps referenced the
+        // deleted session -- not how many were actually restored; it stays 1
+        // here even though the guard skips the restoration itself, exactly
+        // as it would for a per-item Keychain failure elsewhere in this
+        // function. `secretFailures` is the field that reports the guard's
+        // effect: no secret write was even attempted.
+        #expect(result == SessionListViewModel.JumpRestoreResult(restored: 1, secretFailures: 0))
+
+        let afterDelete = try String(contentsOf: sessionsFile, encoding: .utf8)
+        #expect(!afterDelete.contains(idKey))
+
+        let stillReferencing = vm.sessions.first { $0.id == referencing.id }!
+        #expect(stillReferencing.jump?.sessionID == brokenID)
+        #expect(stillReferencing.jump?.host == "ignored")
+        #expect(stillReferencing.jump?.username == "ignored")
     }
 
     /// M25/T1: the restoration block (bastion login + secret + the `for

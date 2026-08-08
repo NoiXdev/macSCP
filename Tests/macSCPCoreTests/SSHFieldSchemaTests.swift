@@ -253,10 +253,10 @@ struct SSHFieldSchemaTests {
 
         SSHFieldSchema.apply(passwordValues(), to: &session)
 
-        #expect(session.host == "server.example.com")
-        #expect(session.port == 22)
-        #expect(session.username == "tim")
-        #expect(session.authKind == .password)
+        #expect(session.ssh?.host == "server.example.com")
+        #expect(session.ssh?.port == 22)
+        #expect(session.ssh?.username == "tim")
+        #expect(session.ssh?.authKind == .password)
         // Everything the schema does not cover survives untouched.
         #expect(session.id == id)
         #expect(session.name == "prod")
@@ -281,8 +281,8 @@ struct SSHFieldSchemaTests {
         values[SSHField.host] = "  server.example.com \n"
         values[SSHField.username] = " tim  "
         SSHFieldSchema.apply(values, to: &session)
-        #expect(session.host == "server.example.com")
-        #expect(session.username == "tim")
+        #expect(session.ssh?.host == "server.example.com")
+        #expect(session.ssh?.username == "tim")
     }
 
     /// A key path belongs to private-key auth only: switching to a password

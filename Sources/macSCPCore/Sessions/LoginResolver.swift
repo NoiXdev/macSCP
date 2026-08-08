@@ -213,21 +213,29 @@ public enum LoginResolver {
         guard sessionID != referencingSessionID, referenced.jump == nil else {
             throw LoginResolveError.jumpChainNotSupported
         }
+        // Defensive, and unreachable in practice: a blockless `.ssh` record is
+        // dropped when the store loads (M26), so `sessions` cannot contain one
+        // and the lookup above would already have thrown. `.missingJumpSession`
+        // is the literally correct answer either way -- from the reference's
+        // point of view a dropped record IS gone.
+        guard let ssh = referenced.ssh else {
+            throw LoginResolveError.missingJumpSession
+        }
 
         let login: ResolvedLogin
         if let resolved = try sshLogin(session: referenced, sets: sets, secrets: secrets) {
             login = resolved
-        } else if referenced.authKind == .agent {
+        } else if ssh.authKind == .agent {
             // Agent sessions carry no secret and never touch the keychain
             // (M10d rule), manual or not.
             login = ResolvedLogin(
-                username: referenced.username, authKind: .agent, keyPath: nil, secret: nil)
+                username: ssh.username, authKind: .agent, keyPath: nil, secret: nil)
         } else {
             let secret = (try? secrets.password(for: referenced.id)) ?? nil
             login = ResolvedLogin(
-                username: referenced.username, authKind: referenced.authKind,
+                username: ssh.username, authKind: ssh.authKind,
                 keyPath: referenced.keyPath, secret: secret)
         }
-        return ResolvedJump(host: referenced.host, port: referenced.port, login: login)
+        return ResolvedJump(host: ssh.host, port: ssh.port, login: login)
     }
 }

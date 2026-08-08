@@ -71,10 +71,12 @@ struct StoredSessionTests {
         let s = try JSONDecoder().decode(StoredSession.self, from: legacy)
         #expect(s.kind == .ssh)
         #expect(s.ssh == nil)
-        // The conveniences then report a connection nobody can dial — the
-        // reason this must never be the decode path for a legacy file.
-        #expect(s.host == "")
-        #expect(s.port == 22)
+        // Through M25, the inventing `host`/`port` accessors reported a
+        // connection nobody can dial — the reason this must never be the
+        // decode path for a legacy file. M26 deletes those accessors;
+        // `SSHFieldSchema.values(from:)`, their sole sanctioned successor,
+        // now guards on the missing block and yields the empty bag instead.
+        #expect(SSHFieldSchema.values(from: s).raw.isEmpty)
     }
 
     @Test func s3SessionRoundtrips() throws {
