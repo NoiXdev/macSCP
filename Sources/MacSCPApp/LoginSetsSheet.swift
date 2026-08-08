@@ -537,9 +537,10 @@ struct LoginSetsSheet: View {
     }
 
     /// Lists the affected session NAMES (resolved from `sessionIDs`) plus the
-    /// target set name (spec §4) — the banner itself only names the
-    /// username/count, this dialog is where the concrete connections show up
-    /// before the user commits.
+    /// target set name (spec §4) — the banner itself only names the display
+    /// label/count (the user name for SSH and WebDAV, the access key ID for
+    /// S3), this dialog is where the concrete connections show up before the
+    /// user commits.
     private var mergeConfirmMessage: String {
         guard let mergeCandidate else { return "" }
         let names = mergeCandidate.sessionIDs

@@ -342,14 +342,14 @@ public final class SessionListViewModel {
         let previousJump = sessions.first(where: { $0.id == updated.id })?.jump
         do {
             try store.upsert(updated)
+            // No secret field on screen means this login needs none, which
+            // today is ssh-agent and nothing else (M10d) -- clean up a
+            // leftover manual slot from before the switch. Asking the
+            // schema rather than `updated.authKind` keeps a `.s3`/`.webdav`
+            // session out of this branch by its own declaration instead of
+            // by the accident that its fabricated auth kind is not `.agent`.
             if BackendDescriptor.descriptor(for: updated.kind)
                 .visibleSecretField(for: updated) == nil {
-                // No secret field on screen means this login needs none, which
-                // today is ssh-agent and nothing else (M10d) -- clean up a
-                // leftover manual slot from before the switch. Asking the
-                // schema rather than `updated.authKind` keeps a `.s3`/`.webdav`
-                // session out of this branch by its own declaration instead of
-                // by the accident that its fabricated auth kind is not `.agent`.
                 try? secrets.deletePassword(for: updated.id)
             } else if let newSecret, !newSecret.isEmpty {
                 try secrets.savePassword(newSecret, for: updated.id)
@@ -616,10 +616,10 @@ public final class SessionListViewModel {
     /// session's own secret is then removed (throw-free — a leftover
     /// keychain entry is a harmless residual, never a reason to abort). A
     /// store failure while creating the set aborts before anything is
-    /// rewired. Session secrets are deleted only "nach erfolgreicher
-    /// Umstellung" (spec §4): if carrying the secret onto the new set fails,
-    /// the just-created set is rolled back, no session is rewired, and every
-    /// session keeps its own secret.
+    /// rewired. Session secrets are deleted only after every session has been
+    /// rewired successfully (spec §4): if carrying the secret onto the new
+    /// set fails, the just-created set is rolled back, no session is
+    /// rewired, and every session keeps its own secret.
     public func applyMerge(_ candidate: LoginMergeCandidate, name: String) -> LoginSet? {
         let groupSessions = candidate.sessionIDs.compactMap { id in
             sessions.first { $0.id == id }
@@ -635,6 +635,14 @@ public final class SessionListViewModel {
         guard groupSessions.allSatisfy({ $0.kind == candidate.kind }) else { return nil }
 
         let descriptor = BackendDescriptor.descriptor(for: candidate.kind)
+        // Same defense, one step further: `kind` matching is not enough --
+        // `LoginMergePlanner.candidates` also filters out any session whose
+        // kind claims a block it does not carry (`hasStoredConfiguration`),
+        // so a hand-built candidate over BLOCKLESS sessions of the right kind
+        // is exactly as unreachable through the planner as a mixed-kind one,
+        // and exactly as capable of deleting a live Keychain entry underneath
+        // an empty stored config if it reached here anyway.
+        guard groupSessions.allSatisfy({ descriptor.hasStoredConfiguration($0) }) else { return nil }
         let set = descriptor.loginSet(id: UUID(), name: name, from: candidate.values)
         do {
             try loginSetStore.upsert(set)
@@ -783,6 +791,10 @@ public final class SessionListViewModel {
             // values land in `fields` below; here it decides only whether a
             // secret has to be fetched at all.
             let resolved = resolvedSSHLogin(for: session)
+            // Built once and reused below (for `needsSecret` and for the
+            // field bag) -- both ask the same backend's descriptor for the
+            // same session's kind.
+            let descriptor = BackendDescriptor.descriptor(for: session.kind)
 
             // Whether a secret can be fetched at all. The two branches are NOT
             // interchangeable: for a set-bound session the agent-ness belongs
@@ -795,8 +807,7 @@ public final class SessionListViewModel {
             // type is SSH-shaped on purpose since M22/T9, and is not one of
             // the placeholder accessors.
             let needsSecret = resolved.map { $0.authKind != .agent }
-                ?? (BackendDescriptor.descriptor(for: session.kind)
-                        .visibleSecretField(for: session) != nil)
+                ?? (descriptor.visibleSecretField(for: session) != nil)
 
             var password: String?
             // Agent entries (M10d) never carry a secret and are never
@@ -856,7 +867,6 @@ public final class SessionListViewModel {
             // here any more, and why a fourth backend costs zero columns. An
             // `.s3`/`.webdav` session with no stored block yields the EMPTY
             // bag, and the import side reads that back as "no block".
-            let descriptor = BackendDescriptor.descriptor(for: session.kind)
             var fields = descriptor.sessionValues(session)
             // A set-bound SSH session exports the SET's credentials, not its
             // own -- login sets are never exported, so the reference has to

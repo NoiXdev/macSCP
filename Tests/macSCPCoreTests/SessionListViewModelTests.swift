@@ -2240,6 +2240,52 @@ struct SessionListViewModelTests {
         #expect(try secrets.password(for: host.id) == "pw")
     }
 
+    /// `applyMerge`'s SECOND defense in depth (M24 abschluss, Befund E): the
+    /// kind guard above is not enough on its own -- a hand-built `.s3`
+    /// candidate over sessions whose `kind` says `.s3` but which carry NO
+    /// stored S3 block would pass that guard (kind matches) and still build
+    /// a set with an empty `accessKeyID`, then delete both Keychain slots.
+    /// `LoginMergePlanner.candidates` already filters such sessions out
+    /// (`hasStoredConfiguration`, `LoginMergePlanner.swift`), so this is
+    /// unreachable through the planner -- exactly the same "candidate is a
+    /// plain value anything could build" threat model as the mixed-kind test
+    /// above, one step further.
+    @Test func applyMergeRefusesACandidateWhoseSessionsLackTheStoredBlockTheirKindClaims() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let store = SessionStore(directory: dir)
+        // Blockless `.s3` sessions -- no fixture can build these (`s3Session`
+        // in `SessionFixtures.swift` always fills a block), so this
+        // constructs `StoredSession` directly, the same sanctioned exception
+        // `BackendDescriptorTests` uses for the identical shape.
+        let a = StoredSession(name: "a", kind: .s3)
+        let b = StoredSession(name: "b", kind: .s3)
+        try store.upsert(a)
+        try store.upsert(b)
+        try secrets.savePassword("secret-a", for: a.id)
+        try secrets.savePassword("secret-b", for: b.id)
+
+        let vm = SessionListViewModel(
+            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+
+        // Hand-built, not planner-produced: `kind` matches on both sides
+        // (`.s3` == `.s3`), so the FIRST guard alone would let this through.
+        let candidate = LoginMergeCandidate(
+            kind: .s3, values: FieldValues(), displayLabel: "", sessionIDs: [a.id, b.id])
+
+        let result = vm.applyMerge(candidate, name: "acct")
+
+        #expect(result == nil)
+        // Nothing happened: no set, no rewiring, no deleted secret.
+        #expect(vm.loginSets.isEmpty)
+        #expect(vm.sessions.first { $0.id == a.id }?.loginSetID == nil)
+        #expect(vm.sessions.first { $0.id == b.id }?.loginSetID == nil)
+        #expect(try secrets.password(for: a.id) == "secret-a")
+        #expect(try secrets.password(for: b.id) == "secret-b")
+    }
+
     // MARK: - Secret guard asks the schema, not authKind (M25/T3)
     //
     // `StoredSession.authKind` fabricates `.password` for a `.s3`/`.webdav`
