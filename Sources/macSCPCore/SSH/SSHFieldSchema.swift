@@ -158,14 +158,18 @@ public enum SSHFieldSchema {
                             labelDefault: "Password", kind: .secret,
                             visibleWhen: onPassword,
                             isRequired: true,
-                            invalidMessageKey: "core.connect.passwordEmpty"),
+                            invalidMessageKey: "core.connect.passwordEmpty",
+                            secretRole: .credential),
             // The passphrase stays OPTIONAL: an unencrypted key has none, and
             // `makeConfig` already turns an empty secret into `nil` rather
-            // than an empty passphrase.
+            // than an empty passphrase. Its role is `.passphrase`, not
+            // `.credential`: it unlocks the key file `keyPath` already names,
+            // so it does not identify the login on its own.
             ConnectionField(id: SSHField.passphrase.rawValue,
                             labelKey: "connection.field.passphrase",
                             labelDefault: "Passphrase (optional)", kind: .secret,
-                            visibleWhen: onPrivateKey),
+                            visibleWhen: onPrivateKey,
+                            secretRole: .passphrase),
             ConnectionField(id: SSHField.keyPath.rawValue,
                             labelKey: "connection.field.keyPath",
                             labelDefault: "Key path", kind: .text,
