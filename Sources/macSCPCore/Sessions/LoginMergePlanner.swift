@@ -68,9 +68,10 @@ public enum LoginMergePlanner {
         for session in sessions where session.loginSetID == nil {
             let descriptor = BackendDescriptor.descriptor(for: session.kind)
             // A session whose kind claims a block it does not carry is broken
-            // stored data. It has no credentials to compare, and reading
-            // through `StoredSession`'s SSH fallbacks would group it on
-            // ""/.password — the placeholder M23 removed, in a new place.
+            // stored data. It has no credentials to compare: `sessionValues`
+            // yields the EMPTY bag for it (M26), so without this guard it
+            // would group with every other blockless session of its kind on
+            // all-empty fields, not on anything the user actually typed.
             guard descriptor.hasStoredConfiguration(session) else { continue }
 
             let namespace = descriptor.fieldNamespace

@@ -292,10 +292,11 @@ public enum SessionImportPlanner {
         // It does NOT hold up the bag round trip, which stays green without
         // it, and its `.ssh` arm is unreachable through any real file: v1's
         // `host` column was non-optional, so every v1 `.ssh` entry yields five
-        // keys, and a stored `.ssh` session with `ssh == nil` still exports
-        // five because `sessionValues` reads the computed accessors. Only a
-        // hand-built `ExportedSession` or a hand-edited `"fields": {}` reaches
-        // it.
+        // keys, and a stored `.ssh` session with `ssh == nil` never reaches an
+        // export at all -- `SessionStore.load()` drops it (M26,
+        // `SessionStore.swift:93`) before `sessionValues`, or anything else
+        // downstream, gets a look. Only a hand-built `ExportedSession` or a
+        // hand-edited `"fields": {}` reaches it.
         var session = StoredSession(id: id, name: name, groupID: groupID, kind: kind)
         if !fileSession.fields.isEmpty {
             var values = FieldValues()

@@ -424,10 +424,13 @@ private struct SessionRow: View {
 
     /// The backend's own `displaySummary` (M22/T11) — NOT the old hand-rolled
     /// "\(session.username)@\(session.host):\(session.port)", which read
-    /// SSH-shaped fields S3 and WebDAV never fill: a session written before M23
-    /// carried the `"unused"` placeholder in `session.host`/`.username` (so the
-    /// tooltip read "unused@unused:22"), and one written since leaves both
-    /// empty (so it would read "@:22"). Neither is a connection summary.
+    /// SSH-shaped fields S3 and WebDAV never fill. Historical now: a session
+    /// written before M23 carried the `"unused"` placeholder in its flat
+    /// host/username columns (so the tooltip read "unused@unused:22"), and
+    /// one written between M23 and M26 read blank through `StoredSession`'s
+    /// SSH-fallback accessors (so it would read "@:22") — accessors M26
+    /// deleted. Neither was a connection summary, and `StoredSession` has had
+    /// no host/username accessor to read at all since.
     private var connectionSummary: String {
         let descriptor = BackendDescriptor.descriptor(for: session.kind)
         return descriptor.displaySummary(descriptor.sessionValues(session))
