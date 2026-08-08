@@ -187,7 +187,9 @@ struct ConnectionFormView: View {
 
     /// The picker's offered sessions (spec §3): excludes the session being
     /// edited (self-reference) and any session that itself has a jump
-    /// (chains — one hop is the rule), sorted like the sidebar.
+    /// (chains — one hop is the rule), and (M24/T4) any session that is not
+    /// `.ssh` — a bucket or WebDAV share has no host/port to dial as a
+    /// bastion — sorted like the sidebar.
     private var eligibleJumpSessions: [StoredSession] {
         JumpSessionEligibility.eligible(for: editingSessionID, in: sessionList.sessions)
     }

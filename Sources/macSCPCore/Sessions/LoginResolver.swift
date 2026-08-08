@@ -182,6 +182,8 @@ public enum LoginResolver {
     /// behavior, spec §4). When `spec.sessionID` is set ("session" mode),
     /// host/port and login instead come from the REFERENCED session:
     /// - missing from `sessions` -> `.missingJumpSession`
+    /// - not `.ssh` (a bucket or WebDAV share is not a bastion) ->
+    ///   `.jumpSessionNotSSH`
     /// - referencing itself, or a session that itself has a jump (chains
     ///   are not supported — one hop only) -> `.jumpChainNotSupported`
     /// - otherwise the referenced session's login is resolved through the

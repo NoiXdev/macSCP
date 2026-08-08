@@ -2139,10 +2139,10 @@ struct ContentView: View {
     /// selected yet (Connect/Save are already disabled for that last case
     /// via `ConnectionFormView.jumpSessionModeIncomplete`, the
     /// belt-and-suspenders half). Returns `false` on
-    /// `.missingJumpSession`/`.jumpChainNotSupported`/a dangling login set
-    /// on the referenced session — surfaced through `showFailure` with
-    /// `field: .jumpSession` — after which the caller must NOT proceed to
-    /// connect/validate.
+    /// `.missingJumpSession`/`.jumpSessionNotSSH`/`.jumpChainNotSupported`/a
+    /// dangling login set on the referenced session — surfaced through
+    /// `showFailure` with `field: .jumpSession` — after which the caller
+    /// must NOT proceed to connect/validate.
     private func resolveSelectedJumpSession(in tab: SessionTab) -> Bool {
         let form = tab.connectionViewModel
         guard form.jumpEnabled, form.jumpSourceMode == .session, let sessionID = form.jumpSessionID else {
