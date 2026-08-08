@@ -209,6 +209,51 @@ struct LoginResolverTests {
         }
     }
 
+    /// Regression clamp for the positive case `resolveJumpFromSessionUsesItsHostAndLogin`
+    /// already covers: a jump referencing an SSH session still resolves, unaffected
+    /// by the M24/T4 `.jumpSessionNotSSH` guard.
+    @Test func resolveJumpAcceptsAnSSHReferencedSession() throws {
+        let secrets = InMemorySecretStore()
+        let bastion = sshSession(
+            name: "Bastion", host: "b", port: 2022, username: "deploy", authKind: .password)
+        try secrets.savePassword("s", for: bastion.id)
+        let spec = StoredSession.JumpSpec(
+            host: "unused", username: "unused", sessionID: bastion.id)
+
+        let resolved = try LoginResolver.resolveJump(
+            spec: spec, sets: [], secrets: secrets, sessions: [bastion], referencingSessionID: nil)
+        #expect(resolved == ResolvedJump(
+            host: "b", port: 2022,
+            login: ResolvedLogin(username: "deploy", authKind: .password, keyPath: nil, secret: "s")))
+    }
+
+    /// A jump's `sessionID` referencing a non-SSH session (an object-storage
+    /// or WebDAV session, creatable since M12) must be refused: it has no
+    /// host to dial, and reading its host/port would silently yield
+    /// `StoredSession`'s SSH fallbacks (`""` and `22`).
+    @Test func resolveJumpRefusesANonSSHReferencedSession() throws {
+        let bucket = s3Session(name: "Bucket")
+        let spec = StoredSession.JumpSpec(host: "unused", username: "unused", sessionID: bucket.id)
+
+        #expect(throws: LoginResolveError.jumpSessionNotSSH) {
+            _ = try LoginResolver.resolveJump(
+                spec: spec, sets: [], secrets: InMemorySecretStore(),
+                sessions: [bucket], referencingSessionID: nil)
+        }
+    }
+
+    /// Pins the guard order in `resolveJump`: a `sessionID` that is not in
+    /// `sessions` at all must still report `.missingJumpSession`, not the
+    /// newer `.jumpSessionNotSSH` — the kind check runs only after the
+    /// referenced session has been found.
+    @Test func resolveJumpStillRefusesAMissingSessionFirst() throws {
+        let spec = StoredSession.JumpSpec(host: "unused", username: "unused", sessionID: UUID())
+        #expect(throws: LoginResolveError.missingJumpSession) {
+            _ = try LoginResolver.resolveJump(
+                spec: spec, sets: [], secrets: InMemorySecretStore(), sessions: [], referencingSessionID: nil)
+        }
+    }
+
     @Test func resolveJumpChainThrows() throws {
         let innerJump = StoredSession.JumpSpec(host: "inner", username: "inner")
         let bastion = sshSession(

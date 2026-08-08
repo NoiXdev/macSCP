@@ -2176,6 +2176,13 @@ struct ContentView: View {
                     "The selected jump host connects through another jump host; chains are not supported."),
                 field: .jumpSession)
             return false
+        } catch LoginResolveError.jumpSessionNotSSH {
+            form.showFailure(
+                message: L10n.string(
+                    "form.jump.session.notSSH",
+                    "Only SSH connections can be used as a jump host."),
+                field: .jumpSession)
+            return false
         } catch {
             // Dangling login set on the REFERENCED session (`.missingSet`),
             // or any other unclassified failure — same fallback wording the
@@ -2624,6 +2631,13 @@ struct ContentView: View {
                                 "form.jump.session.chainNotSupported",
                                 "The selected jump host connects through another jump host; "
                                     + "chains are not supported."),
+                            field: .jumpSession)
+                        return
+                    } catch LoginResolveError.jumpSessionNotSSH {
+                        form.showFailure(
+                            message: L10n.string(
+                                "form.jump.session.notSSH",
+                                "Only SSH connections can be used as a jump host."),
                             field: .jumpSession)
                         return
                     } catch is LoginResolveError {

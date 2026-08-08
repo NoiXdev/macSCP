@@ -232,6 +232,13 @@ struct ConnectionFormView: View {
             return .error(L10n.string(
                 "form.jump.session.chainNotSupported",
                 "The selected jump host connects through another jump host; chains are not supported."))
+        } catch LoginResolveError.jumpSessionNotSSH {
+            // Must NOT fall into the generic `catch` below: that text says
+            // the connection "no longer exists", which would be untrue here
+            // -- the referenced session exists, it just isn't SSH.
+            return .error(L10n.string(
+                "form.jump.session.notSSH",
+                "Only SSH connections can be used as a jump host."))
         } catch {
             // `.missingJumpSession` and any other unclassified failure both
             // read as "the reference is gone" to the user — the same

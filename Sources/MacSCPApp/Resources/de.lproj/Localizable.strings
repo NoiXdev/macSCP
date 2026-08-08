@@ -586,6 +586,7 @@
 "form.jump.session.select" = "Verbindung auswählen";
 "form.jump.session.missing" = "Die als Zwischenhost genutzte Verbindung existiert nicht mehr.";
 "form.jump.session.chainNotSupported" = "Die gewählte Verbindung nutzt selbst einen Zwischenhost; Ketten werden nicht unterstützt.";
+"form.jump.session.notSSH" = "Als Zwischenhost können nur SSH-Verbindungen genutzt werden.";
 
 /* Sidebar-Lösch-Rückfrage — als Zwischenhost referenziert (M11a/T3) */
 "sidebar.delete.jumpUsage %lld" = "%lld Verbindungen nutzen diese Verbindung als Zwischenhost und behalten deren Daten direkt hinterlegt.";
