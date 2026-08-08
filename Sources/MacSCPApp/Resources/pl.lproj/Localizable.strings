@@ -588,6 +588,7 @@
 "form.jump.session.select" = "Wybierz połączenie";
 "form.jump.session.missing" = "Połączenie używane jako host pośredniczący już nie istnieje.";
 "form.jump.session.chainNotSupported" = "Wybrany host pośredniczący łączy się przez inny host pośredniczący; łańcuchy nie są obsługiwane.";
+"form.jump.session.notSSH" = "Jako host pośredniczący można użyć wyłącznie połączeń SSH.";
 
 /* Potwierdzenie usunięcia w pasku bocznym — użycie jako host pośredniczący (M11a/T3) */
 "sidebar.delete.jumpUsage %lld" = "%lld połączeń używa tego połączenia jako hosta pośredniczącego i zachowa jego dane bezpośrednio.";

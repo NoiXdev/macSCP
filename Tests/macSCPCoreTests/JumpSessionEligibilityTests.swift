@@ -25,30 +25,22 @@ struct JumpSessionEligibilityTests {
         #expect(eligible == [a])
     }
 
-    /// CHARACTERIZATION, not an endorsement (M23/T8).
+    /// Formerly `nonSSHSessionsAreStillOfferedAsJumpHosts`, a CHARACTERIZATION
+    /// test that documented a bug: `eligible(for:in:)` used to filter only on
+    /// the edited session and on chains, so a `.s3` or `.webdav` session was
+    /// offered as a jump host even though only SSH tunnels. As of M24/T4 the
+    /// picker also filters on `kind == .ssh`, so the bucket is excluded here.
     ///
-    /// `eligible(for:in:)` filters on the edited session and on chains, and on
-    /// nothing else — a `.s3` or `.webdav` session is offered as a jump host
-    /// even though only SSH tunnels. `LoginResolver.resolveJump(...sessions:
-    /// referencingSessionID:)` does not refuse one either: it rejects a chain
-    /// and a self-reference, then reads the referenced session's host/port
-    /// whatever its kind.
-    ///
-    /// This predates M23 and is unchanged by it — before, such a jump resolved
-    /// to the literal placeholder `"unused"`; now it resolves to `""`. Both
-    /// are a bastion nobody can dial, so the shape change neither introduces
-    /// nor repairs the gap. Pinned here so the next task can see it rather
-    /// than rediscover it, and so that ADDING a kind filter breaks a test that
-    /// says why on purpose instead of one that looks like a regression.
-    @Test func nonSSHSessionsAreStillOfferedAsJumpHosts() throws {
+    /// The picker filter alone does not close the gap for sessions saved
+    /// before this change: `LoginResolver.resolveJump(...sessions:
+    /// referencingSessionID:)` carries the actual hard stop
+    /// (`.jumpSessionNotSSH`), covered separately in `LoginResolverTests`.
+    @Test func onlySSHSessionsAreOfferedAsJumpHosts() throws {
         let ssh = sshSession(name: "alpha", host: "a", username: "u")
         let bucket = s3Session(name: "Bravo")
 
         let eligible = JumpSessionEligibility.eligible(for: nil, in: [ssh, bucket])
 
-        #expect(eligible == [ssh, bucket])
-        // The reason it matters: the offered S3 session carries no SSH block,
-        // so a jump pointing at it has no host to dial.
-        #expect(bucket.ssh == nil)
+        #expect(eligible == [ssh])
     }
 }

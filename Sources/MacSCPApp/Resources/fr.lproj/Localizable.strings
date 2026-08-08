@@ -589,6 +589,7 @@
 "form.jump.session.select" = "Sélectionner une connexion";
 "form.jump.session.missing" = "La connexion utilisée comme hôte relais n'existe plus.";
 "form.jump.session.chainNotSupported" = "L'hôte relais sélectionné se connecte via un autre hôte relais ; les chaînes ne sont pas prises en charge.";
+"form.jump.session.notSSH" = "Seules les connexions SSH peuvent être utilisées comme hôte relais.";
 
 /* Confirmation de suppression dans la barre latérale — référencée comme hôte relais (M11a/T3) */
 "sidebar.delete.jumpUsage %lld" = "%lld connexions utilisent cette connexion comme hôte relais et conserveront directement ses données.";

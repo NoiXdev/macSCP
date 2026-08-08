@@ -11,6 +11,15 @@ public enum LoginResolveError: Error, Equatable {
     /// itself has a jump (chains are not supported — one hop only), or at
     /// itself (self-reference), which would be an infinite chain.
     case jumpChainNotSupported
+    /// A jump's `sessionID` points at a session that is not an SSH
+    /// connection. Only SSH tunnels: an object-storage or WebDAV session has
+    /// no host to dial through, and reading one's host/port yields
+    /// `StoredSession`'s SSH fallbacks ("" and 22) — a bastion nobody can
+    /// reach, offered without complaint.
+    ///
+    /// Distinct from `kindMismatch`, which is about a session and its LOGIN
+    /// SET disagreeing. Naming that one here would report the wrong cause.
+    case jumpSessionNotSSH
     /// A session's `kind` (M12) does not match the login set it references
     /// -- e.g. an SSH session bound to an S3 set. Binding must fail honestly
     /// rather than resolve credentials shaped for the wrong protocol.
@@ -190,6 +199,14 @@ public enum LoginResolver {
         }
         guard let referenced = sessions.first(where: { $0.id == sessionID }) else {
             throw LoginResolveError.missingJumpSession
+        }
+        // The kind check comes before the chain check because it is the more
+        // fundamental objection: a bucket is not a bastion whether or not it
+        // also happens to carry a jump. `JumpSessionEligibility` keeps new
+        // configurations from getting here; this covers the ones already on
+        // disk, which no picker filter can reach.
+        guard referenced.kind == .ssh else {
+            throw LoginResolveError.jumpSessionNotSSH
         }
         guard sessionID != referencingSessionID, referenced.jump == nil else {
             throw LoginResolveError.jumpChainNotSupported

@@ -585,6 +585,7 @@
 "form.jump.session.select" = "Select a connection";
 "form.jump.session.missing" = "The connection used as jump host no longer exists.";
 "form.jump.session.chainNotSupported" = "The selected jump host connects through another jump host; chains are not supported.";
+"form.jump.session.notSSH" = "Only SSH connections can be used as a jump host.";
 
 /* Sidebar delete confirmation — referenced as a jump host (M11a/T3) */
 "sidebar.delete.jumpUsage %lld" = "%lld connections use this connection as their jump host and will keep its data directly.";
