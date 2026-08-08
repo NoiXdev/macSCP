@@ -8,6 +8,13 @@ on:
 jobs:
   test:
     runs-on: macos-15
+    # The test runner has hung intermittently since M20: the process sits at
+    # 0% CPU and never finishes, so the job would burn the runner's default
+    # six-hour budget instead of failing. Green runs take three to four
+    # minutes, so 20 leaves ample room for a slow runner while turning a hang
+    # into a red build. This is the net, not the fix -- the cause is still
+    # open.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Build
