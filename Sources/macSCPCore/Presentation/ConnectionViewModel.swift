@@ -797,15 +797,16 @@ public final class ConnectionViewModel {
         // genuinely optional there), so merging it onto the defaults leaves a
         // blank form for those two -- the right answer for inconsistent data,
         // and better than the old `?? ""` fallbacks that silently produced a
-        // half-filled one. `.ssh` has no such gap to begin with: a block-less
-        // `.ssh` session's `host`/`port`/`username`/`authKind`/`keyPath`
-        // accessors already fall back to blank/default values
-        // (`StoredSession.swift`), so `sessionValues` reads through those into
-        // an already-blank-where-it-matters bag rather than an empty one --
-        // merging it here has the same visible effect (a blank SSH form) by a
-        // different route. `sessionValues` also never copies `host`/`username`
-        // for a non-SSH session, which is where the `"unused"` placeholder a
-        // legacy S3/WebDAV session still carries used to enter the form.
+        // half-filled one. Since M26 `.ssh` has the same gap, not a different
+        // one: `SSHFieldSchema.values(from:)` guards on a missing
+        // `session.ssh` and returns that same empty `FieldValues()` --
+        // `StoredSession`'s inventing `host`/`port`/`username`/`authKind`
+        // accessors that used to paper over this are gone. Merging the empty
+        // bag here produces a blank SSH form the same way the other two
+        // backends do, not by a separate route as before M26. `sessionValues`
+        // also never copies `host`/`username` for a non-SSH session, which is
+        // where the `"unused"` placeholder a legacy S3/WebDAV session still
+        // carries used to enter the form.
         let descriptor = BackendDescriptor.descriptor(for: kind)
         values = descriptor.defaultValues
         values.merge(descriptor.sessionValues(stored))

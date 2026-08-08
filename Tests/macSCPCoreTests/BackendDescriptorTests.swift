@@ -261,9 +261,12 @@ struct BackendDescriptorTests {
     /// `.s3`/`.webdav` only because neither backend's secret field declares a
     /// `visibleWhen` — `FieldVisibility.evaluate`'s `guard let condition else
     /// { return true }` (`FieldVocabulary.swift:150`) makes an unconditioned
-    /// field visible even against the EMPTY bag a blockless session yields
-    /// (`sessionValues(_:)`'s `.s3`/`.webdav` case, unlike `.ssh`, has no
-    /// fallback to fall back to). If a `visibleWhen` is ever added to
+    /// field visible even against the EMPTY bag a blockless session yields.
+    /// Since M26 all three backends' `sessionValues(_:)` return that same
+    /// empty bag for a blockless session — `.ssh` no longer differs from
+    /// `.s3`/`.webdav` here — so the property this test pins rests solely on
+    /// the absent `visibleWhen`, not on any per-backend fallback. If a
+    /// `visibleWhen` is ever added to
     /// `S3Field.secretAccessKey` — nothing here needs one today, but
     /// `WebDAVField.password` already supports the shape via the "anonymous"
     /// toggle documented on `WebDAVFieldSchema`, so the pattern is a plausible

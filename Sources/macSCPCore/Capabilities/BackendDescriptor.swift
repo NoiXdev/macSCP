@@ -183,8 +183,10 @@ public struct BackendDescriptor: Sendable {
     /// The schema's answer to "does this login carry a secret at all", asked
     /// via `sessionValues(_:)` and its `SSHField.authKind`/equivalent key
     /// rather than a raw `AuthKind` read — the placeholder M23 set out to
-    /// remove. Only ssh-agent shows no secret field, so the nil case IS the
-    /// agent case for SSH and never arises for the other two backends.
+    /// remove. For a session that HAS its SSH block, only ssh-agent shows no
+    /// secret field, so among those the nil case IS the agent case; it never
+    /// arises for the other two backends at all, in or out of block, because
+    /// neither declares a `visibleWhen` on its secret field.
     ///
     /// Deliberately does NOT ask `hasStoredConfiguration` itself. Its three
     /// callers want different things from a session whose block is missing —
@@ -194,7 +196,14 @@ public struct BackendDescriptor: Sendable {
     /// three backends: `sessionValues(_:)` yields the empty bag, which this
     /// member reads no differently than any other bag with no `authKind` key
     /// set — the credential schema's own `visibleSecretField` decides what an
-    /// absent key means.
+    /// absent key means. A blockless `.ssh` session therefore ALSO yields nil
+    /// here, alongside the ssh-agent case above — but that shape is
+    /// unreachable through the app: `SessionStore.load()` drops any `.ssh`
+    /// record with no block before it is ever handed to a caller
+    /// (`SessionStore.swift:93`), so only a test building `StoredSession`
+    /// directly can observe it
+    /// (`anSSHSessionWithoutItsBlockYieldsTheEmptyBag` in
+    /// `BackendDescriptorTests`).
     public func visibleSecretField(for session: StoredSession) -> ConnectionField? {
         credentialSchema.visibleSecretField(
             in: sessionValues(session), namespace: fieldNamespace)
