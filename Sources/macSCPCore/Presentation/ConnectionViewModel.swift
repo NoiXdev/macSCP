@@ -218,7 +218,7 @@ public final class ConnectionViewModel {
     /// session, then attaches its id as `loginSetID`.
     public var saveAsNewLoginSet: Bool = false
     /// Name for the new set created by `saveAsNewLoginSet`; an empty value
-    /// falls back to `SessionListViewModel.suggestedSetName(forUsername:)`.
+    /// falls back to `SessionListViewModel.suggestedSetName(forLabel:)`.
     public var newLoginSetName: String = ""
 
     /// Fills the credential block from a resolved login set (M22/T9) — the

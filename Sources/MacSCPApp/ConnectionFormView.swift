@@ -9,7 +9,7 @@ struct ConnectionFormView: View {
     var groups: [StoredGroup] = []
     /// Full view model (M10b/T3), not just an array like `groups` above:
     /// the three-way login block needs `loginSets` for its picker AND
-    /// `suggestedSetName(forUsername:)` for the "save as new set" name
+    /// `suggestedSetName(forLabel:)` for the "save as new set" name
     /// prompt AND — since "Manage logins…" opens the SAME sheet locally
     /// (mockup section 4C, TOFU-footnote pattern) — a live reference so
     /// edits made there are immediately visible everywhere else this
@@ -854,7 +854,7 @@ struct ConnectionFormView: View {
             FormRow(label: setNameLabel) {
                 TextField(
                     setNameLabel, text: $viewModel.newLoginSetName,
-                    prompt: Text(sessionList.suggestedSetName(forUsername: viewModel.username)))
+                    prompt: Text(sessionList.suggestedSetName(forLabel: viewModel.username)))
             }
         }
     }

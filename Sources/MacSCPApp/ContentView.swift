@@ -2193,7 +2193,7 @@ struct ContentView: View {
     /// form's current fields and returns its id, or `nil` when the toggle
     /// isn't active (or the form is in Set mode, where there's nothing new
     /// to create). The name is the field's trimmed value, or
-    /// `suggestedSetName(forUsername:)` when left blank (spec §3).
+    /// `suggestedSetName(forLabel:)` when left blank (spec §3).
     ///
     /// `editedSession` is the session being edited when this runs from the
     /// edit-save path (`nil` for a brand-new connection). In edit mode
@@ -2278,7 +2278,7 @@ struct ContentView: View {
         let draft = descriptor.loginSet(id: UUID(), name: "", from: form.values)
         let name = trimmedName.isEmpty
             ? sessionListViewModel.suggestedSetName(
-                forUsername: draft.accessKeyID ?? draft.username)
+                forLabel: draft.accessKeyID ?? draft.username)
             : trimmedName
         let newSet = descriptor.loginSet(id: draft.id, name: name, from: form.values)
 
