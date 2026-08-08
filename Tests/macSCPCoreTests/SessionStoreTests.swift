@@ -230,4 +230,67 @@ struct SessionStoreTests {
         let sessions = try store.all()
         #expect(sessions.contains { $0.name == "broken-s3" })
     }
+
+    /// Same asymmetry as `aBlocklessS3RecordIsKept`, for the other backend
+    /// with no inventing accessors: a blockless `.webdav` record is equally
+    /// unusable but stays, because `SessionStore.load()`'s drop rule
+    /// (`SessionStore.swift:93`) targets `.ssh` only.
+    @Test func aBlocklessWebDAVRecordIsKept() throws {
+        let (store, dir) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = """
+        {
+          "groups": [],
+          "sessions": [
+            {
+              "id": "44444444-4444-4444-4444-444444444444",
+              "name": "broken-webdav",
+              "kind": "webdav"
+            }
+          ]
+        }
+        """
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(fixture.utf8).write(to: dir.appendingPathComponent("sessions-v2.json"))
+
+        let sessions = try store.all()
+        #expect(sessions.contains { $0.name == "broken-webdav" })
+    }
+
+    /// A record with no `"kind"` key at all -- not the `"kind": "ssh"` shape
+    /// `blocklessSSHFixture` covers, but the shape a genuinely pre-M23 file
+    /// (or a hand-edit that drops the key) would carry: the flat
+    /// host/port/username/authKind columns `StoredSession` decoding never
+    /// reads into anything since M23, still sitting at the top level.
+    /// `StoredSession.init(from:)` defaults a missing `kind` to `.ssh`
+    /// (`StoredSessionTests
+    /// .aLegacyPayloadDecodedAsStoredSessionIsSilentlyBlockLess` pins the
+    /// decode side of this), so this record is `.ssh` with `ssh == nil` just
+    /// like the explicit-`"kind"` case, and the load-time drop rule catches
+    /// it the same way -- this is the one dropped shape that still carries
+    /// the user's original flat columns, unread, in the file.
+    @Test func aRecordWithNoKindKeyDecodesAsSSHAndIsDroppedWhenLoading() throws {
+        let (store, dir) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fixture = """
+        {
+          "groups": [],
+          "sessions": [
+            {
+              "id": "55555555-5555-5555-5555-555555555555",
+              "name": "no-kind-key",
+              "host": "legacy.example.com",
+              "port": 22,
+              "username": "legacyuser",
+              "authKind": "password"
+            }
+          ]
+        }
+        """
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(fixture.utf8).write(to: dir.appendingPathComponent("sessions-v2.json"))
+
+        let sessions = try store.all()
+        #expect(!sessions.contains { $0.name == "no-kind-key" })
+    }
 }
