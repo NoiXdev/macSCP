@@ -230,11 +230,32 @@ Fehler, den er heilen soll.
 | 1 | Zwei S3-Sitzungen mit **gleichem** Zugangspaar ergeben einen `.s3`-Kandidaten, dessen Merge ein `.s3`-Set mit gesetztem `accessKeyID` erzeugt | Test über `applyMerge`, der das entstandene Set liest |
 | 2 | Zwei S3- oder WebDAV-Sitzungen mit **verschiedenen** Secrets sind **kein** Kandidat | Test je Backend |
 | 3 | Kein Merge löscht je ein Secret, das das Ziel-Set nicht trägt | Test: nach `applyMerge` liegt unter `set.id` genau das Secret der Gruppe |
-| 4 | Das heutige SSH-Verhalten ist unverändert | die bestehenden `LoginMergePlannerTests` bleiben grün; die einzige zulässige Anpassung ist das Umlesen von `candidate.username` auf `candidate.displayLabel`. Jede darüber hinausgehende Änderung an einem SSH-Test ist ein Befund und gehört in den Task-Bericht |
+| 4 | Das heutige SSH-Verhalten ist unverändert | siehe unten — die schmalste zulässige Anpassung der bestehenden `LoginMergePlannerTests` |
 | 5 | `.passphrase` und ssh-agent lesen den Keychain nicht an | lesefeindlicher `SecretStore` wie in `agentSetResolvesWithoutKeychainRead` |
 | 6 | Eine Nicht-SSH-Sitzung ist weder wählbar noch auflösbar als Bastion | Picker-Test **und** Resolver-Test; der Resolver-Test baut den `JumpSpec` direkt, ohne den Picker |
 | 7 | `delete` schreibt nie einen Platzhalter-Host in einen fremden `JumpSpec` | Test mit S3-Bastion und referenzierender SSH-Sitzung |
 | 8 | Beide Charakterisierungstests sind zu Zusagen umgeschrieben, nicht gelöscht | `nonSSHSessionsAreStillOfferedAsJumpHosts`, `nonSSHSessionsSharingASecretAreStillOfferedAsAMergeCandidate` |
+
+### Kriterium 4 im Detail
+
+Die bestehenden `LoginMergePlannerTests` lesen `candidate.username`,
+`candidate.authKind` und `candidate.keyPath` — alle drei fallen mit der neuen
+Kandidatenform weg. „Ohne Anpassung grün" ist deshalb nicht erreichbar; die
+Klammer ist stattdessen, **welche** Anpassung zulässig ist.
+
+Zulässig ist ausschließlich das Umlesen einer Behauptung auf ihren neuen
+Sitzplatz — der behauptete Wert bleibt derselbe:
+
+| vorher | nachher |
+|---|---|
+| `candidate.username == "deploy"` | `candidate.displayLabel == "deploy"` |
+| `candidate.authKind == .privateKey` | `candidate.values[SSHField.authKind] == "privateKey"` |
+| `candidate.keyPath == "/k1"` | `candidate.values[SSHField.keyPath] == "/k1"` |
+
+**Unzulässig — und ein Befund für den Task-Bericht — ist jede Änderung an den
+Eingaben eines Tests, an seinem `sessionIDs`-Ergebnis oder an der Zahl der
+Kandidaten.** Wenn eine dieser Zeilen angefasst werden muss, hat der Umbau
+SSH-Verhalten verschoben, und das gehört gemeldet statt weggeschrieben.
 
 ## Test-Hinweise
 
