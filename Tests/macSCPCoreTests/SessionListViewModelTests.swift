@@ -1951,7 +1951,9 @@ struct SessionListViewModelTests {
         #expect(vm.sessionsUsingAsJump(other.id).map(\.id) == [b.id])
     }
 
-    @Test func deleteRestoresJumpReferences() throws {
+    /// Regression bracket for the M24 non-SSH guard in `delete(_:)`: an SSH
+    /// bastion must still restore every referencing jump exactly as before.
+    @Test func deletingAnSSHBastionStillRestores() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let bastion = vm.save(
@@ -1987,6 +1989,41 @@ struct SessionListViewModelTests {
             #expect(restored.jump?.authKind == .password)
             #expect(try secrets.password(for: restored.jump!.secretID) == "s")
         }
+    }
+
+    /// M24: an S3 bastion has no SSH host/port/login to restore --
+    /// `session.host`/`session.port` would only report `StoredSession`'s SSH
+    /// fallbacks (`""`/`22`). The referencing session must be left alone
+    /// rather than gain a placeholder bastion that looks configured but can
+    /// never be dialled.
+    @Test func deletingANonSSHBastionRestoresNothing() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let store = SessionStore(directory: dir)
+        let bastion = s3Session(name: "bucket")
+        try store.upsert(bastion)
+
+        let vm = SessionListViewModel(
+            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+        let jump = StoredSession.JumpSpec(
+            host: "ignored", username: "ignored", sessionID: bastion.id)
+        let referencing = vm.save(
+            name: "web",
+            values: sshValues(host: "ta", port: 22, username: "u"),
+            password: "pw",
+            jump: jump)!
+
+        let result = vm.delete(bastion)
+
+        #expect(result == SessionListViewModel.JumpRestoreResult(restored: 0, secretFailures: 0))
+        let stillReferencing = vm.sessions.first { $0.id == referencing.id }!
+        #expect(stillReferencing.jump?.sessionID == bastion.id)
+        #expect(stillReferencing.jump?.host != "")
+        #expect(stillReferencing.jump?.host == "ignored")
+        #expect(stillReferencing.jump?.username == "ignored")
+        #expect(vm.sessions.contains { $0.id == bastion.id } == false)
     }
 
     @Test func deleteRestoresFromAgentBastionWithoutSecret() throws {

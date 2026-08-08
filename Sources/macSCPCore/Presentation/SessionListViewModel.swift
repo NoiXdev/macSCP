@@ -228,7 +228,19 @@ public final class SessionListViewModel {
     /// untouched, regardless of what happens to the deletion itself.
     @discardableResult
     public func delete(_ session: StoredSession) -> JumpRestoreResult {
-        let affected = sessionsUsingAsJump(session.id)
+        // Restoration copies the deleted session's host, port and login into
+        // every jump that referenced it. Only an SSH session HAS those: for
+        // any other kind `session.host`/`session.port` are `StoredSession`'s
+        // SSH fallbacks, and copying them writes a bastion nobody can dial
+        // into someone else's configuration, looking configured.
+        //
+        // Leaving the reference dangling instead is the honest outcome: the
+        // next connect reports `.missingJumpSession` -- "the connection used
+        // as jump host no longer exists" -- which is true and actionable.
+        // Such a reference can only exist in data written before M24; the
+        // picker no longer offers one and `LoginResolver.resolveJump` now
+        // refuses one.
+        let affected = session.kind == .ssh ? sessionsUsingAsJump(session.id) : []
         // The deleted session's effective login, via `resolvedSSHLogin(for:)`:
         // nil for a manual session (use its own fields + own keychain secret
         // below), a set's values otherwise. An
