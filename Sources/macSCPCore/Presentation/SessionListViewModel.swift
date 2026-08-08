@@ -600,9 +600,34 @@ public final class SessionListViewModel {
         }
         guard let first = groupSessions.first else { return nil }
 
+        // COMPILE-COMPATIBILITY SHIM (M24/T2), not a design choice: T2 changed
+        // `LoginMergeCandidate` to `(kind:values:displayLabel:sessionIDs:)`,
+        // which removed `.username`/`.authKind`/`.keyPath` and left this call
+        // unable to compile. Building the set generically from `candidate.kind`
+        // and `candidate.values` (what a correct per-protocol merge needs) is
+        // M24/T3's job, done together with the mixed-kind guard T3 adds right
+        // here. Until then this reads the same three fields back out of the
+        // SSH namespace, so behaviour is BIT-FOR-BIT identical to before T2 on
+        // every path: for a genuine SSH candidate `candidate.values` holds
+        // exactly what `StoredSession.username`/`.authKind`/`.keyPath` used to
+        // return, and for a non-SSH candidate the SSH keys are simply missing
+        // from the bag, which reads back as "" / `.password` / nil -- the
+        // exact fallback values `StoredSession`'s own SSH accessors produced
+        // for a `.s3`/`.webdav` session before T2. So this still builds an
+        // unusable `.ssh` set for a non-SSH candidate and still deletes both
+        // sessions' Keychain entries once the set is created, EXACTLY as the
+        // pre-M24 code did -- T2 only fixed which pairs of sessions are
+        // offered as a candidate in the first place (`kind` is now part of
+        // the grouping key), not what accepting one does. T3 closes that
+        // remaining gap with
+        // `BackendDescriptor.descriptor(for: candidate.kind).loginSet(id:name:from:)`
+        // plus a guard refusing a candidate whose sessions are not uniformly
+        // `candidate.kind`.
+        let shimKeyPath = candidate.values[SSHField.keyPath]
         let set = LoginSet(
-            name: name, username: candidate.username, authKind: candidate.authKind,
-            keyPath: candidate.keyPath)
+            name: name, username: candidate.values[SSHField.username],
+            authKind: StoredSession.AuthKind(rawValue: candidate.values[SSHField.authKind]) ?? .password,
+            keyPath: shimKeyPath.isEmpty ? nil : shimKeyPath)
         do {
             try loginSetStore.upsert(set)
         } catch {

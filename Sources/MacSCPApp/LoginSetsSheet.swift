@@ -519,7 +519,7 @@ struct LoginSetsSheet: View {
                 format: L10n.string(
                     "loginSets.merge.banner %lld %@",
                     "%lld connections use the same login \u{201C}%@\u{201D}."),
-                candidate.sessionIDs.count, candidate.username))
+                candidate.sessionIDs.count, candidate.displayLabel))
                 .font(.caption)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Button(L10n.string("loginSets.merge.ignore", "Ignore")) {
@@ -545,7 +545,7 @@ struct LoginSetsSheet: View {
         let names = mergeCandidate.sessionIDs
             .compactMap { id in sessionList.sessions.first { $0.id == id }?.name }
             .joined(separator: ", ")
-        let targetName = sessionList.suggestedSetName(forUsername: mergeCandidate.username)
+        let targetName = sessionList.suggestedSetName(forUsername: mergeCandidate.displayLabel)
         return String(
             format: L10n.string(
                 "loginSets.merge.confirmMessage %@ %@",
@@ -555,7 +555,7 @@ struct LoginSetsSheet: View {
 
     private func applyMerge() {
         guard let mergeCandidate else { return }
-        let targetName = sessionList.suggestedSetName(forUsername: mergeCandidate.username)
+        let targetName = sessionList.suggestedSetName(forUsername: mergeCandidate.displayLabel)
         _ = sessionList.applyMerge(mergeCandidate, name: targetName)
         refreshMergeCandidate()
     }
