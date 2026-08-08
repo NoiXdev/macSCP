@@ -74,6 +74,23 @@ public struct SessionStore: Sendable {
                   !knownIDs.contains(groupID) else { continue }
             file.sessions[index].groupID = nil
         }
+        // Second hygiene rule, same shape as the group sweep above: an `.ssh`
+        // record with no stored SSH block is unusable -- no host, no user
+        // name, nothing to dial -- and before M26 it was the last thing that
+        // made `StoredSession`'s SSH accessors invent `""`/`22`/`""`/
+        // `.password` for a session that never had them.
+        //
+        // Only `.ssh`. An `.s3`/`.webdav` record with no block is equally
+        // unusable, but those backends have no inventing accessors (a missing
+        // block yields the EMPTY bag) and their blockless case is already
+        // caught explicitly in several places -- dropping them here would make
+        // those guards unreachable without removing them. See the design doc.
+        //
+        // Deliberately does NOT rewrite the file: a write on the read path
+        // would be a new failure mode for a problem nobody has, and would
+        // change the user's data without being asked. The next regular save
+        // omits the record anyway; until then it is skipped on every start.
+        file.sessions.removeAll { $0.kind == .ssh && $0.ssh == nil }
         return file
     }
 
