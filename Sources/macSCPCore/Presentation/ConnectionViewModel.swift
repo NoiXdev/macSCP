@@ -715,6 +715,46 @@ public final class ConnectionViewModel {
         jumpPassword = ""
     }
 
+    /// User-initiated switch of the jump's login-MODE picker (M28 final
+    /// review, Critical): the third of the jump's three switchers to get a
+    /// clearing path, after `selectJumpAuthChoice` and `selectJumpSourceMode`
+    /// above -- and it needs one for exactly the reason
+    /// `selectJumpSourceMode`'s doc comment gives for its own.
+    ///
+    /// In `.set` mode the jump's manual-looking fields are not typed by the
+    /// user: the App fills `jumpUsername`/`jumpAuthChoice`/`jumpKeyPath`/
+    /// `jumpPassword` from the selected login set before every submit
+    /// (`ContentView.fillJumpForm`, called from
+    /// `resolveSelectedJumpLoginSet`), because `validateJump`'s `.set` branch
+    /// only checks that something is SELECTED and `buildJumpConfig` builds
+    /// from those fields regardless of the mode. A submit that then fails
+    /// validation leaves the form filled -- `endEditing()` does not run on
+    /// that path -- so without this the SET's secret would sit pre-filled in
+    /// the manual SecureField, ready for `buildJumpSpec`'s `.manual` arm to
+    /// pair it with a fresh `secretID` and `updateSession` to write it into
+    /// THIS session's own jump slot: a secret the user never typed and does
+    /// not own.
+    ///
+    /// Clears on any actual change, like `selectJumpAuthChoice` and unlike
+    /// `selectJumpSourceMode` (which clears only when leaving `.session`):
+    /// the values filled from a set are as wrong for a manual jump as a
+    /// manual password is for a set-bound one, whose secret lives under the
+    /// SET's id and whose spec `updateSession` refuses to write a
+    /// `jumpSecret` for at all (it writes only when `loginSetID` and
+    /// `sessionID` are both nil). `jumpUsername` stays -- it is
+    /// displayed, editable and not a credential, the same reason
+    /// `selectJumpSourceMode` leaves it alone.
+    ///
+    /// Programmatic restore (`beginEditing`, `ContentView`'s connect fill and
+    /// its raw jump fallback) assigns `jumpLoginMode` directly and must keep
+    /// doing so -- same pattern as `selectAuthChoice`'s own doc comment.
+    public func selectJumpLoginMode(_ mode: LoginMode) {
+        guard mode != jumpLoginMode else { return }
+        jumpLoginMode = mode
+        jumpPassword = ""
+        jumpKeyPath = ""
+    }
+
     /// User-initiated switch of the jump's source picker (M-5 fix, final
     /// review): mirrors `selectAuthChoice`/`selectJumpAuthChoice` above --
     /// switching AWAY from `.session` clears `jumpPassword`/`jumpKeyPath`.

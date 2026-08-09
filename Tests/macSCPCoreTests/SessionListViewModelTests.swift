@@ -2302,6 +2302,66 @@ struct SessionListViewModelTests {
         #expect(vm.sessions.first(where: { $0.name == "web" })?.jump?.sessionID == bastion.id)
     }
 
+    /// M28 final review (Critical): the jump's login-MODE picker is a mode
+    /// switch over fields the user did not type. In Set mode the App fills
+    /// `jumpUsername`/`jumpAuthChoice`/`jumpKeyPath`/`jumpPassword` from the
+    /// selected set before every submit (`ContentView.fillJumpForm`), so a
+    /// switch to Manual that keeps them leaves the SET's secret pre-filled in
+    /// the manual field -- and the next save persists it into THIS session's
+    /// own jump slot. That is the damage `selectJumpSourceMode`'s doc comment
+    /// describes for the source switcher, one picker over.
+    ///
+    /// Written end-to-end rather than on the view model alone because the
+    /// loss only becomes one when `updateSession` writes the field into
+    /// `jump.secretID`. The set here is a WebDAV set: after M28/T7 that is a
+    /// binding `LoginResolver.resolveJump` refuses outright, so the secret
+    /// arriving in the session's own slot would also silence the refusal --
+    /// the spec no longer has a `loginSetID` for it to judge.
+    ///
+    /// Only the Core half of the fix is pinned here: the picker binding
+    /// (`ConnectionFormView`) and the fill's own `kind` guard
+    /// (`ContentView.resolveSelectedJumpLoginSet`) live in the App target,
+    /// which has no test target.
+    @Test func jumpLoginModeSwitchDropsASetFilledSecretInsteadOfSavingIt() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let shareSecret = "share-secret"
+        let share = LoginSet(name: "Share", username: "web-user", kind: .webdav)
+        vm.saveLoginSet(share, secret: shareSecret)
+
+        let jump = StoredSession.JumpSpec(
+            host: "bastion.example.com", username: "unused", loginSetID: share.id)
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "target.example.com", port: 22, username: "u"),
+            password: "pw",
+            jump: jump)!
+
+        let form = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
+        form.beginEditing(stored)
+        #expect(form.jumpLoginMode == .set)
+        #expect(form.jumpSelectedLoginSetID == share.id)
+        // Exactly what the App's fill does for a set-bound jump before every
+        // submit, secret included -- reproduced here because `fillJumpForm`
+        // itself is App-side.
+        form.jumpUsername = share.username
+        form.jumpPassword = shareSecret
+
+        form.selectJumpLoginMode(.manual)
+
+        let updated = form.validateForEditSave()!
+        vm.updateSession(updated, newSecret: nil, jumpSecret: form.jumpPassword)
+
+        let jumpSlot = updated.jump!.secretID
+        // Compared as a Bool so no secret can reach a failure message.
+        let jumpSlotHoldsTheSharesSecret = secrets.peek(jumpSlot) == shareSecret
+        #expect(jumpSlotHoldsTheSharesSecret == false)
+        #expect(secrets.storedIDs.contains(jumpSlot) == false)
+        // The share's own slot is untouched -- this is about copying, not
+        // moving.
+        #expect(secrets.storedIDs.contains(share.id))
+    }
+
     /// M11a/T3 review (defense in depth): a session-referencing jump owns NO
     /// secret — the referenced connection does. The write guard therefore
     /// lives in the store layer too, not only at the App call sites: even a
