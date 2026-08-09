@@ -904,6 +904,10 @@ private struct ManageDataSettingsSection: View {
     /// this section existed.
     @State private var showSSHKeysSheet = false
     @State private var showKnownHostsSheet = false
+    /// State for the leftover-credential cleanup (M27/T3): a confirmation
+    /// gate and the fixed-text report shown after `runReap()` returns.
+    @State private var confirmingReap = false
+    @State private var reapResult: String?
 
     var body: some View {
         Form {
@@ -966,6 +970,36 @@ private struct ManageDataSettingsSection: View {
                 }
                 .foregroundStyle(.secondary)
             }
+            // Leftover-credential cleanup (M27/T3): its own section, separate
+            // from the shortcuts above, because it runs an action here rather
+            // than opening a sheet in the main window.
+            Section {
+                Button(L10n.string("manageData.reapSecrets.button", "Remove leftover credentials…")) {
+                    confirmingReap = true
+                }
+                .confirmationDialog(
+                    L10n.string("manageData.reapSecrets.confirmTitle", "Remove leftover credentials?"),
+                    isPresented: $confirmingReap, titleVisibility: .visible
+                ) {
+                    Button(
+                        L10n.string("manageData.reapSecrets.confirmAction", "Remove"),
+                        role: .destructive, action: runReap)
+                } message: {
+                    Text(L10n.string(
+                        "manageData.reapSecrets.confirmMessage",
+                        "Only credentials no saved connection, login set or key refers to "
+                            + "are removed. This action cannot be undone."))
+                }
+                if let reapResult {
+                    Text(reapResult).font(.callout).foregroundStyle(.secondary)
+                }
+            } footer: {
+                Text(L10n.string(
+                    "manageData.reapSecrets.explanation",
+                    "Upgrading from version 1.0 could leave credentials in the keychain "
+                        + "that nothing uses any more."))
+                .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .padding()
@@ -974,6 +1008,44 @@ private struct ManageDataSettingsSection: View {
         }
         .sheet(isPresented: $showKnownHostsSheet) {
             KnownHostsSheet(store: KnownHostsStore(directory: SessionStore.defaultDirectory))
+        }
+    }
+
+    /// Runs `LegacyJumpSecretSweep` and reports the outcome in fixed text.
+    ///
+    /// **Deliberately no removal count in the success text.**
+    /// `KeychainSecretStore.deletePassword` maps `errSecItemNotFound` to
+    /// success, so `Result.removed` counts successful delete calls, not
+    /// entries that were actually there. The legacy file that seeds the
+    /// candidate set stays on disk as M23's downgrade snapshot, so it does
+    /// not shrink after a run — a second run against an already-clean
+    /// keychain would report the same number. A count nobody can trust is
+    /// worse than none, so only `failed` (a real, observed event) is shown.
+    ///
+    /// The failure path names no cause: a store read failure could be
+    /// anything from a permissions problem to a corrupt file, the user
+    /// cannot act on the distinction, and the report's job here is to say
+    /// plainly that nothing was removed.
+    private func runReap() {
+        let sweep = LegacyJumpSecretSweep(
+            sessions: SessionStore(directory: SessionStore.defaultDirectory),
+            loginSets: LoginSetStore(directory: SessionStore.defaultDirectory),
+            keys: ManagedKeyStore(directory: SessionStore.defaultDirectory),
+            secrets: KeychainSecretStore())
+        do {
+            let result = try sweep.run()
+            var text = L10n.string("manageData.reapSecrets.result", "Cleanup finished.")
+            if result.failed > 0 {
+                text += "\n" + String(
+                    format: L10n.string(
+                        "manageData.reapSecrets.resultFailures %lld", "Could not be removed: %lld"),
+                    result.failed)
+            }
+            reapResult = text
+        } catch {
+            reapResult = L10n.string(
+                "manageData.reapSecrets.failed",
+                "The leftover credentials could not be checked. Nothing was removed.")
         }
     }
 }

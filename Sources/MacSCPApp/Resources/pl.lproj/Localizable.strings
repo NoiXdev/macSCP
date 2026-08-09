@@ -19,6 +19,16 @@
 "settings.section.manageData" = "Zarządzaj danymi";
 "settings.manageData.footer" = "Loginy, certyfikaty serwera i ukryte importy otwierają się w oknie głównym — tam należy stan, który zmieniają.";
 "settings.manageData.needsMainWindow" = "Są niedostępne, dopóki nie jest otwarte okno główne.";
+
+/* Ustawienia — Zarządzaj danymi, usuwanie pozostałych danych logowania (M27/T3) */
+"manageData.reapSecrets.button" = "Usuń pozostałe dane logowania…";
+"manageData.reapSecrets.explanation" = "Aktualizacja z wersji 1.0 mogła pozostawić w pęku kluczy dane logowania, których nic już nie używa.";
+"manageData.reapSecrets.confirmTitle" = "Usunąć pozostałe dane logowania?";
+"manageData.reapSecrets.confirmMessage" = "Usuwane są tylko dane logowania, do których nie odwołuje się żadne zapisane połączenie, zestaw logowania ani klucz. Tej czynności nie można cofnąć.";
+"manageData.reapSecrets.confirmAction" = "Usuń";
+"manageData.reapSecrets.result" = "Czyszczenie zakończone.";
+"manageData.reapSecrets.resultFailures %lld" = "Nie udało się usunąć: %lld";
+"manageData.reapSecrets.failed" = "Nie udało się sprawdzić pozostałych danych logowania. Nic nie zostało usunięte.";
 "settings.section.ssh" = "SSH";
 "settings.section.s3" = "S3";
 

@@ -17,6 +17,16 @@
 "settings.section.manageData" = "Daten verwalten";
 "settings.manageData.footer" = "Logins, Server-Zertifikate und ausgeblendete Importe öffnen sich im Hauptfenster — dort gehört der Zustand hin, den sie ändern.";
 "settings.manageData.needsMainWindow" = "Diese Einträge sind nicht verfügbar, solange kein Hauptfenster geöffnet ist.";
+
+/* Einstellungen — Daten verwalten, Aufräumen übriger Zugangsdaten (M27/T3) */
+"manageData.reapSecrets.button" = "Übrige Zugangsdaten entfernen…";
+"manageData.reapSecrets.explanation" = "Beim Aufstieg von Version 1.0 können Zugangsdaten im Schlüsselbund geblieben sein, die nichts mehr benutzt.";
+"manageData.reapSecrets.confirmTitle" = "Übrige Zugangsdaten entfernen?";
+"manageData.reapSecrets.confirmMessage" = "Entfernt werden nur Zugangsdaten, auf die keine gespeicherte Verbindung, kein Login-Set und kein Schlüssel verweist. Das lässt sich nicht rückgängig machen.";
+"manageData.reapSecrets.confirmAction" = "Entfernen";
+"manageData.reapSecrets.result" = "Aufräumen abgeschlossen.";
+"manageData.reapSecrets.resultFailures %lld" = "Nicht entfernt werden konnten: %lld";
+"manageData.reapSecrets.failed" = "Die übrigen Zugangsdaten konnten nicht geprüft werden. Es wurde nichts entfernt.";
 "settings.section.ssh" = "SSH";
 "settings.section.s3" = "S3";
 

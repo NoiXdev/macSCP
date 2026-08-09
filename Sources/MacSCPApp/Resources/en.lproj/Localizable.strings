@@ -17,6 +17,16 @@
 "settings.section.manageData" = "Manage Data";
 "settings.manageData.footer" = "Logins, server certificates and hidden imports open in the main window, where the state they change belongs.";
 "settings.manageData.needsMainWindow" = "They are unavailable while no main window is open.";
+
+/* Settings — Manage Data, leftover-credential cleanup (M27/T3) */
+"manageData.reapSecrets.button" = "Remove leftover credentials…";
+"manageData.reapSecrets.explanation" = "Upgrading from version 1.0 could leave credentials in the keychain that nothing uses any more.";
+"manageData.reapSecrets.confirmTitle" = "Remove leftover credentials?";
+"manageData.reapSecrets.confirmMessage" = "Only credentials no saved connection, login set or key refers to are removed. This action cannot be undone.";
+"manageData.reapSecrets.confirmAction" = "Remove";
+"manageData.reapSecrets.result" = "Cleanup finished.";
+"manageData.reapSecrets.resultFailures %lld" = "Could not be removed: %lld";
+"manageData.reapSecrets.failed" = "The leftover credentials could not be checked. Nothing was removed.";
 "settings.section.ssh" = "SSH";
 "settings.section.s3" = "S3";
 

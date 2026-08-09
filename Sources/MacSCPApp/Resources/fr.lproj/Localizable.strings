@@ -19,6 +19,16 @@
 "settings.section.manageData" = "Gérer les données";
 "settings.manageData.footer" = "Les logins, les certificats serveur et les imports masqués s’ouvrent dans la fenêtre principale, où réside l’état qu’ils modifient.";
 "settings.manageData.needsMainWindow" = "Ils sont indisponibles tant qu’aucune fenêtre principale n’est ouverte.";
+
+/* Réglages — Gérer les données, nettoyage des identifiants restants (M27/T3) */
+"manageData.reapSecrets.button" = "Supprimer les identifiants restants…";
+"manageData.reapSecrets.explanation" = "La mise à niveau depuis la version 1.0 peut avoir laissé dans le trousseau des identifiants que plus rien n’utilise.";
+"manageData.reapSecrets.confirmTitle" = "Supprimer les identifiants restants ?";
+"manageData.reapSecrets.confirmMessage" = "Seuls les identifiants auxquels aucune connexion enregistrée, aucun jeu de connexions ni aucune clé ne fait référence sont supprimés. Cette action est irréversible.";
+"manageData.reapSecrets.confirmAction" = "Supprimer";
+"manageData.reapSecrets.result" = "Nettoyage terminé.";
+"manageData.reapSecrets.resultFailures %lld" = "Impossible à supprimer : %lld";
+"manageData.reapSecrets.failed" = "Impossible de vérifier les identifiants restants. Rien n’a été supprimé.";
 "settings.section.ssh" = "SSH";
 "settings.section.s3" = "S3";
 
