@@ -132,7 +132,7 @@ struct IconTooltipLintTests {
         .deletingLastPathComponent()
 
     private static let appSources: URL = repoRoot
-        .appendingPathComponent("Sources/MacSCPApp")
+        .appendingPathComponent("Sources/MacSCPAppKit")
 
     /// Findings name a REPO-RELATIVE path, so the reader can open the file
     /// straight from the failure line; the absolute path is the fallback when
@@ -268,7 +268,7 @@ struct IconTooltipLintTests {
     /// back to the absolute path — green tests, useless output.
     @Test func findingsNameARepoRelativePath() {
         let file = Self.appSources.appendingPathComponent("TabStripView.swift")
-        #expect(Self.repoRelativePath(of: file) == "Sources/MacSCPApp/TabStripView.swift")
+        #expect(Self.repoRelativePath(of: file) == "Sources/MacSCPAppKit/TabStripView.swift")
 
         // Anything outside the checkout keeps its absolute path rather than
         // being mangled into a misleading relative one.

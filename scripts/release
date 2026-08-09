@@ -67,7 +67,7 @@ MACSCP_VERSION="$VERSION" scripts/package-app
 #      signing it once covers arm64 and x86_64.
 #   3. the app itself
 codesign --force --timestamp --sign "$IDENTITY" \
-    "$APP/Contents/Resources/macSCP_MacSCPApp.bundle" \
+    "$APP/Contents/Resources/macSCP_MacSCPAppKit.bundle" \
     "$APP/Contents/Resources/macSCP_macSCPCore.bundle"
 codesign --force --options runtime --timestamp \
     --sign "$IDENTITY" "$APP/Contents/MacOS/macscp-cli"

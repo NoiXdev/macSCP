@@ -28,7 +28,7 @@ struct LocalizableStringsTests {
             .deletingLastPathComponent()
     }()
 
-    private static let appEnPath = "Sources/MacSCPApp/Resources/en.lproj/Localizable.strings"
+    private static let appEnPath = "Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"
     private static let coreEnPath = "Sources/macSCPCore/Resources/en.lproj/Localizable.strings"
 
     /// Loads a `.strings` file (old-style property list) as `[String:
@@ -45,7 +45,7 @@ struct LocalizableStringsTests {
     private static let coreLangs = ["de", "fr", "pl"]
 
     private static func appPath(_ lang: String) -> String {
-        "Sources/MacSCPApp/Resources/\(lang).lproj/Localizable.strings"
+        "Sources/MacSCPAppKit/Resources/\(lang).lproj/Localizable.strings"
     }
     private static func corePath(_ lang: String) -> String {
         "Sources/macSCPCore/Resources/\(lang).lproj/Localizable.strings"

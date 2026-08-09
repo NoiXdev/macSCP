@@ -101,7 +101,6 @@ final class TabCommands {
     var activeTabSupportsShell = true
 }
 
-@main
 struct MacSCPApp: App {
     /// Single instance for the whole app — passed to `ContentView` and the
     /// `Settings` scene below (M5c/T3: no singleton, per the v2 multi-window

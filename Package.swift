@@ -8,7 +8,7 @@ let package = Package(
     products: [
         .library(name: "macSCPCore", targets: ["macSCPCore"]),
         .executable(name: "macscp-cli", targets: ["MacSCPCLI"]),
-        .executable(name: "macSCP", targets: ["MacSCPApp"]),
+        .executable(name: "macSCP", targets: ["MacSCPMain"]),
     ],
     dependencies: [
         .package(url: "https://github.com/orlandos-nl/Citadel.git", from: "0.12.1"),
@@ -42,13 +42,23 @@ let package = Package(
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
-        .executableTarget(
-            name: "MacSCPApp",
+        .target(
+            name: "MacSCPAppKit",
             dependencies: [
                 "macSCPCore",
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
             resources: [.process("Resources")],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .executableTarget(
+            name: "MacSCPMain",
+            dependencies: ["MacSCPAppKit"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(
+            name: "macSCPAppKitTests",
+            dependencies: ["MacSCPAppKit"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(

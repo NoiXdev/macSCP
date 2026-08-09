@@ -19,7 +19,7 @@ import SwiftUI
 /// renders (in English) instead of crashing.
 enum L10n {
     static let bundle: Bundle = {
-        let bundleName = "macSCP_MacSCPApp.bundle"
+        let bundleName = "macSCP_MacSCPAppKit.bundle"
         let candidates = [
             Bundle.main.bundleURL.appendingPathComponent(bundleName),
             Bundle.main.resourceURL?.appendingPathComponent(bundleName),

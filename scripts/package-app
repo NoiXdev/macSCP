@@ -42,7 +42,7 @@ lipo -create "$ARM_BIN/macscp-cli" "$X86_BIN/macscp-cli" \
     -output "$APP/Contents/MacOS/macscp-cli"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # Resource bundles are architecture-independent — take the arm64 build's.
-cp -R "$ARM_BIN/macSCP_MacSCPApp.bundle" "$APP/Contents/Resources/"
+cp -R "$ARM_BIN/macSCP_MacSCPAppKit.bundle" "$APP/Contents/Resources/"
 cp -R "$ARM_BIN/macSCP_macSCPCore.bundle" "$APP/Contents/Resources/"
 mkdir "$APP/Contents/Resources/en.lproj" "$APP/Contents/Resources/de.lproj" \
       "$APP/Contents/Resources/fr.lproj" "$APP/Contents/Resources/pl.lproj"
@@ -117,7 +117,7 @@ for BIN in macSCP macscp-cli; do
     lipo -archs "$APP/Contents/MacOS/$BIN" | grep -q x86_64
     lipo -archs "$APP/Contents/MacOS/$BIN" | grep -q arm64
 done
-test -d "$APP/Contents/Resources/macSCP_MacSCPApp.bundle"
+test -d "$APP/Contents/Resources/macSCP_MacSCPAppKit.bundle"
 test -d "$APP/Contents/Resources/macSCP_macSCPCore.bundle"
 test -d "$APP/Contents/Resources/en.lproj" -a -d "$APP/Contents/Resources/de.lproj" \
      -a -d "$APP/Contents/Resources/fr.lproj" -a -d "$APP/Contents/Resources/pl.lproj"
