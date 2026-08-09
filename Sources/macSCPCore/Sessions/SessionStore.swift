@@ -138,6 +138,28 @@ public struct SessionStore: Sendable {
         return migrated
     }
 
+    /// Every jump `secretID` in the preserved pre-M23 `sessions.json`, in
+    /// file order, without duplicates -- the candidate set for M27's sweep.
+    ///
+    /// This is the only reader of the legacy file besides `migrateFromLegacy`,
+    /// and it is deliberately narrow: it hands out `secretID`s and nothing
+    /// else, so the legacy shape does not leak back into the app. The file is
+    /// read and left alone; M23 keeps it as the downgrade snapshot.
+    ///
+    /// A MISSING file means a clean install and yields no candidates. A file
+    /// that is there and cannot be decoded THROWS -- reading it as "no
+    /// candidates" would make an unreadable disk indistinguishable from a
+    /// clean one, and the sweep decides what to delete from exactly this
+    /// answer.
+    public func legacyJumpSecretIDs() throws -> [UUID] {
+        guard FileManager.default.fileExists(
+            atPath: legacyFileURL.path(percentEncoded: false)) else { return [] }
+        let data = try Data(contentsOf: legacyFileURL)
+        let legacy = try JSONDecoder().decode([LegacyStoredSession].self, from: data)
+        var seen = Set<UUID>()
+        return legacy.compactMap { $0.jump?.secretID }.filter { seen.insert($0).inserted }
+    }
+
     private func persist(_ file: StoreFile) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let encoder = JSONEncoder()

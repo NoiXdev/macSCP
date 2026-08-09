@@ -293,4 +293,86 @@ struct SessionStoreTests {
         let sessions = try store.all()
         #expect(!sessions.contains { $0.name == "no-kind-key" })
     }
+
+    // MARK: - Legacy jump secret ids (M27/T1)
+    //
+    // Hand-written fixtures, same reasoning as `blocklessSSHFixture` above:
+    // no save path in the app still writes the pre-M23 legacy shape, so the
+    // only way to exercise this reader is a fixture built by hand.
+
+    /// A pre-M23 `sessions.json`. Hand-written for the same reason the
+    /// blockless fixtures above are: nothing in the app writes this shape
+    /// any more. `nil` in the array means a session without a jump.
+    private func legacyFixture(withJumpSecretIDs ids: [UUID?]) -> Data {
+        let records = ids.enumerated().map { index, secretID -> String in
+            let jump = secretID.map {
+                """
+                ,"jump":{"host":"bastion.example.com","port":22,\
+                "username":"tim","authKind":"password","secretID":"\($0.uuidString)"}
+                """
+            } ?? ""
+            return """
+            {"id":"\(UUID().uuidString)","name":"legacy-\(index)",\
+            "host":"example.com","port":22,"username":"tim",\
+            "authKind":"password"\(jump)}
+            """
+        }
+        return Data("[\(records.joined(separator: ","))]".utf8)
+    }
+
+    /// The sweep's candidate source. A jump's `secretID` is the only thing
+    /// M23 left behind, so this reads exactly that -- and nothing else about
+    /// the legacy shape leaks out of the store.
+    @Test func legacyJumpSecretIDsReadsEveryJumpFromTheOldFile() throws {
+        let (store, dir) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let a = UUID(), b = UUID()
+        try legacyFixture(withJumpSecretIDs: [a, b]).write(
+            to: dir.appendingPathComponent("sessions.json"))
+        #expect(try store.legacyJumpSecretIDs() == [a, b])
+    }
+
+    @Test func legacyJumpSecretIDsIsEmptyWhenTheOldFileIsGone() throws {
+        let (store, dir) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(try store.legacyJumpSecretIDs().isEmpty)
+    }
+
+    /// An unreadable file must NOT read as "no candidates". Everything in
+    /// M27 hangs on this: a silent empty result here is the one shape that
+    /// cannot be distinguished from a clean install.
+    @Test func legacyJumpSecretIDsThrowsOnAnUnreadableFile() throws {
+        let (store, dir) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data("{ not json".utf8).write(
+            to: dir.appendingPathComponent("sessions.json"))
+        #expect(throws: (any Error).self) { try store.legacyJumpSecretIDs() }
+    }
+
+    /// A session without a jump contributes nothing, and the same secretID
+    /// appearing twice contributes once.
+    @Test func legacyJumpSecretIDsSkipsJumplessRecordsAndDeduplicates() throws {
+        let (store, dir) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let a = UUID()
+        try legacyFixture(withJumpSecretIDs: [a, nil, a]).write(
+            to: dir.appendingPathComponent("sessions.json"))
+        #expect(try store.legacyJumpSecretIDs() == [a])
+    }
+
+    /// M23 keeps sessions.json as the downgrade snapshot. Reading it must
+    /// not touch it.
+    @Test func readingLegacyJumpSecretIDsLeavesTheFileByteIdentical() throws {
+        let (store, dir) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("sessions.json")
+        try legacyFixture(withJumpSecretIDs: [UUID()]).write(to: url)
+        let before = try Data(contentsOf: url)
+        _ = try store.legacyJumpSecretIDs()
+        #expect(try Data(contentsOf: url) == before)
+    }
 }
