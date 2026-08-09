@@ -146,18 +146,33 @@ public struct SessionStore: Sendable {
     /// else, so the legacy shape does not leak back into the app. The file is
     /// read and left alone; M23 keeps it as the downgrade snapshot.
     ///
+    /// The legacy file supports the same two shapes `migrateFromLegacy`
+    /// decodes -- the container every install has carried since groups
+    /// shipped, and the older bare array from before groups existed -- and
+    /// this mirrors that decode exactly, for the same reason: an
+    /// installation that never opened a version with groups still has the
+    /// array on disk.
+    ///
     /// A MISSING file means a clean install and yields no candidates. A file
-    /// that is there and cannot be decoded THROWS -- reading it as "no
+    /// that is there and matches NEITHER shape THROWS -- reading it as "no
     /// candidates" would make an unreadable disk indistinguishable from a
     /// clean one, and the sweep decides what to delete from exactly this
-    /// answer.
+    /// answer. Only the container attempt may swallow its error (`try?`),
+    /// exactly as in `migrateFromLegacy`: the array attempt right after it is
+    /// a plain `try`, so a file that is neither shape still propagates that
+    /// second failure.
     public func legacyJumpSecretIDs() throws -> [UUID] {
         guard FileManager.default.fileExists(
             atPath: legacyFileURL.path(percentEncoded: false)) else { return [] }
         let data = try Data(contentsOf: legacyFileURL)
-        let legacy = try JSONDecoder().decode([LegacyStoredSession].self, from: data)
+        let sessions: [LegacyStoredSession]
+        if let container = try? JSONDecoder().decode(LegacyStoreFile.self, from: data) {
+            sessions = container.sessions
+        } else {
+            sessions = try JSONDecoder().decode([LegacyStoredSession].self, from: data)
+        }
         var seen = Set<UUID>()
-        return legacy.compactMap { $0.jump?.secretID }.filter { seen.insert($0).inserted }
+        return sessions.compactMap { $0.jump?.secretID }.filter { seen.insert($0).inserted }
     }
 
     private func persist(_ file: StoreFile) throws {

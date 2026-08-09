@@ -300,11 +300,10 @@ struct SessionStoreTests {
     // no save path in the app still writes the pre-M23 legacy shape, so the
     // only way to exercise this reader is a fixture built by hand.
 
-    /// A pre-M23 `sessions.json`. Hand-written for the same reason the
-    /// blockless fixtures above are: nothing in the app writes this shape
-    /// any more. `nil` in the array means a session without a jump.
-    private func legacyFixture(withJumpSecretIDs ids: [UUID?]) -> Data {
-        let records = ids.enumerated().map { index, secretID -> String in
+    /// The session records shared by both legacy fixture shapes below.
+    /// `nil` in the array means a session without a jump.
+    private func legacyRecords(withJumpSecretIDs ids: [UUID?]) -> [String] {
+        ids.enumerated().map { index, secretID -> String in
             let jump = secretID.map {
                 """
                 ,"jump":{"host":"bastion.example.com","port":22,\
@@ -317,7 +316,24 @@ struct SessionStoreTests {
             "authKind":"password"\(jump)}
             """
         }
-        return Data("[\(records.joined(separator: ","))]".utf8)
+    }
+
+    /// A pre-M23 `sessions.json` in the older BARE ARRAY shape, from before
+    /// groups existed. Hand-written for the same reason the blockless
+    /// fixtures above are: nothing in the app writes this shape any more.
+    private func legacyFixture(withJumpSecretIDs ids: [UUID?]) -> Data {
+        Data("[\(legacyRecords(withJumpSecretIDs: ids).joined(separator: ","))]".utf8)
+    }
+
+    /// A pre-M23 `sessions.json` in the CONTAINER shape --
+    /// `{"groups": [...], "sessions": [...]}` -- the shape every install has
+    /// carried since groups shipped, which was before 1.0 released and so is
+    /// what nearly every real install has on disk. Same object shape as
+    /// `blocklessSSHFixture` above, wrapping the same hand-written legacy
+    /// records `legacyFixture` uses for the bare-array shape.
+    private func legacyContainerFixture(withJumpSecretIDs ids: [UUID?]) -> Data {
+        let records = legacyRecords(withJumpSecretIDs: ids).joined(separator: ",")
+        return Data(#"{"groups":[],"sessions":[\#(records)]}"#.utf8)
     }
 
     /// The sweep's candidate source. A jump's `secretID` is the only thing
@@ -329,6 +345,20 @@ struct SessionStoreTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let a = UUID(), b = UUID()
         try legacyFixture(withJumpSecretIDs: [a, b]).write(
+            to: dir.appendingPathComponent("sessions.json"))
+        #expect(try store.legacyJumpSecretIDs() == [a, b])
+    }
+
+    /// The container shape is what nearly every real pre-M23 install
+    /// actually carries (fix round 1): groups shipped before 1.0 released,
+    /// so the bare-array shape above is the rarer case in practice, and this
+    /// is the one that must work for the sweep to find real orphans at all.
+    @Test func legacyJumpSecretIDsReadsEveryJumpFromTheContainerShapedOldFile() throws {
+        let (store, dir) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let a = UUID(), b = UUID()
+        try legacyContainerFixture(withJumpSecretIDs: [a, b]).write(
             to: dir.appendingPathComponent("sessions.json"))
         #expect(try store.legacyJumpSecretIDs() == [a, b])
     }
@@ -347,6 +377,20 @@ struct SessionStoreTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try Data("{ not json".utf8).write(
+            to: dir.appendingPathComponent("sessions.json"))
+        #expect(throws: (any Error).self) { try store.legacyJumpSecretIDs() }
+    }
+
+    /// A file that is valid JSON but matches NEITHER legacy shape -- not the
+    /// container's `groups`/`sessions` keys, not a top-level array -- must
+    /// still throw (fix round 1). This is the case the container decode's
+    /// `try?` must NOT swallow: only the array decode after it is allowed to
+    /// be the one that actually reports the failure.
+    @Test func legacyJumpSecretIDsThrowsWhenTheFileMatchesNeitherLegacyShape() throws {
+        let (store, dir) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(#"{"unrelated":true}"#.utf8).write(
             to: dir.appendingPathComponent("sessions.json"))
         #expect(throws: (any Error).self) { try store.legacyJumpSecretIDs() }
     }
