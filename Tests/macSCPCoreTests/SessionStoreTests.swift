@@ -302,7 +302,7 @@ struct SessionStoreTests {
 
     /// The session records shared by both legacy fixture shapes below.
     /// `nil` in the array means a session without a jump.
-    private func legacyRecords(withJumpSecretIDs ids: [UUID?]) -> [String] {
+    static func legacyRecords(withJumpSecretIDs ids: [UUID?]) -> [String] {
         ids.enumerated().map { index, secretID -> String in
             let jump = secretID.map {
                 """
@@ -321,8 +321,8 @@ struct SessionStoreTests {
     /// A pre-M23 `sessions.json` in the older BARE ARRAY shape, from before
     /// groups existed. Hand-written for the same reason the blockless
     /// fixtures above are: nothing in the app writes this shape any more.
-    private func legacyFixture(withJumpSecretIDs ids: [UUID?]) -> Data {
-        Data("[\(legacyRecords(withJumpSecretIDs: ids).joined(separator: ","))]".utf8)
+    static func legacyFixture(withJumpSecretIDs ids: [UUID?]) -> Data {
+        Data("[\(Self.legacyRecords(withJumpSecretIDs: ids).joined(separator: ","))]".utf8)
     }
 
     /// A pre-M23 `sessions.json` in the CONTAINER shape --
@@ -331,8 +331,8 @@ struct SessionStoreTests {
     /// what nearly every real install has on disk. Same object shape as
     /// `blocklessSSHFixture` above, wrapping the same hand-written legacy
     /// records `legacyFixture` uses for the bare-array shape.
-    private func legacyContainerFixture(withJumpSecretIDs ids: [UUID?]) -> Data {
-        let records = legacyRecords(withJumpSecretIDs: ids).joined(separator: ",")
+    static func legacyContainerFixture(withJumpSecretIDs ids: [UUID?]) -> Data {
+        let records = Self.legacyRecords(withJumpSecretIDs: ids).joined(separator: ",")
         return Data(#"{"groups":[],"sessions":[\#(records)]}"#.utf8)
     }
 
@@ -344,7 +344,7 @@ struct SessionStoreTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let a = UUID(), b = UUID()
-        try legacyFixture(withJumpSecretIDs: [a, b]).write(
+        try Self.legacyFixture(withJumpSecretIDs: [a, b]).write(
             to: dir.appendingPathComponent("sessions.json"))
         #expect(try store.legacyJumpSecretIDs() == [a, b])
     }
@@ -358,7 +358,7 @@ struct SessionStoreTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let a = UUID(), b = UUID()
-        try legacyContainerFixture(withJumpSecretIDs: [a, b]).write(
+        try Self.legacyContainerFixture(withJumpSecretIDs: [a, b]).write(
             to: dir.appendingPathComponent("sessions.json"))
         #expect(try store.legacyJumpSecretIDs() == [a, b])
     }
@@ -402,7 +402,7 @@ struct SessionStoreTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let a = UUID()
-        try legacyFixture(withJumpSecretIDs: [a, nil, a]).write(
+        try Self.legacyFixture(withJumpSecretIDs: [a, nil, a]).write(
             to: dir.appendingPathComponent("sessions.json"))
         #expect(try store.legacyJumpSecretIDs() == [a])
     }
@@ -414,7 +414,7 @@ struct SessionStoreTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appendingPathComponent("sessions.json")
-        try legacyFixture(withJumpSecretIDs: [UUID()]).write(to: url)
+        try Self.legacyFixture(withJumpSecretIDs: [UUID()]).write(to: url)
         let before = try Data(contentsOf: url)
         _ = try store.legacyJumpSecretIDs()
         #expect(try Data(contentsOf: url) == before)
