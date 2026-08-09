@@ -301,9 +301,21 @@ struct SessionStoreTests {
     // only way to exercise this reader is a fixture built by hand.
 
     /// The session records shared by both legacy fixture shapes below.
-    /// `nil` in the array means a session without a jump.
-    static func legacyRecords(withJumpSecretIDs ids: [UUID?]) -> [String] {
+    /// `nil` in `ids` means a session without a jump.
+    ///
+    /// `kinds` is positional against `ids` and may be shorter or empty. A
+    /// record with no entry, or a `nil` entry, is written with NO `kind` key
+    /// at all -- the shape of a file saved before that key existed, which
+    /// `LegacyStoredSession.upgraded()` resolves to `.ssh`. Naming a kind
+    /// matters for exactly one thing, and it is the thing M27 exists for:
+    /// `upgraded()` carries a jump into the new file for `.ssh` and drops it
+    /// for every other kind.
+    static func legacyRecords(
+        withJumpSecretIDs ids: [UUID?], kinds: [ConnectionKind?] = []
+    ) -> [String] {
         ids.enumerated().map { index, secretID -> String in
+            let kind = (index < kinds.count ? kinds[index] : nil)
+                .map { #","kind":"\#($0.rawValue)""# } ?? ""
             let jump = secretID.map {
                 """
                 ,"jump":{"host":"bastion.example.com","port":22,\
@@ -313,7 +325,7 @@ struct SessionStoreTests {
             return """
             {"id":"\(UUID().uuidString)","name":"legacy-\(index)",\
             "host":"example.com","port":22,"username":"tim",\
-            "authKind":"password"\(jump)}
+            "authKind":"password"\(kind)\(jump)}
             """
         }
     }
@@ -331,8 +343,11 @@ struct SessionStoreTests {
     /// what nearly every real install has on disk. Same object shape as
     /// `blocklessSSHFixture` above, wrapping the same hand-written legacy
     /// records `legacyFixture` uses for the bare-array shape.
-    static func legacyContainerFixture(withJumpSecretIDs ids: [UUID?]) -> Data {
-        let records = Self.legacyRecords(withJumpSecretIDs: ids).joined(separator: ",")
+    static func legacyContainerFixture(
+        withJumpSecretIDs ids: [UUID?], kinds: [ConnectionKind?] = []
+    ) -> Data {
+        let records = Self.legacyRecords(withJumpSecretIDs: ids, kinds: kinds)
+            .joined(separator: ",")
         return Data(#"{"groups":[],"sessions":[\#(records)]}"#.utf8)
     }
 

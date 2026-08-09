@@ -43,9 +43,18 @@ struct LegacyJumpSecretSweepTests {
     ///
     /// Call this BEFORE writing the legacy file. `SessionStore.load()` reads
     /// `sessions-v2.json` when it exists and only migrates `sessions.json`
-    /// otherwise -- and a migration would carry every legacy SSH jump into
-    /// the new file, so every candidate would come back claimed and there
-    /// would be nothing to sweep.
+    /// otherwise, so writing it first is what keeps the migration out of
+    /// these tests and lets each of them state its claimed set outright.
+    ///
+    /// Skipping the migration is not the same as skipping nothing.
+    /// `LegacyStoredSession.upgraded()` treats the two kinds of legacy record
+    /// differently: an `.ssh` record's jump is carried into the new file and
+    /// comes back claimed, a non-SSH record's jump is dropped and stays a
+    /// candidate -- that dropped one is the orphan M27 exists for. The
+    /// records `legacyRecords` writes carry no `kind` key and therefore
+    /// upgrade as `.ssh`, so for THESE fixtures a migration would leave
+    /// nothing to sweep. `sweepsOnlyTheJumpTheMigrationDropsWhenItRunsOnFirstLaunch`
+    /// is the one test that lets the migration run and pins that difference.
     ///
     /// The jumpless session is always written so the file exists even when
     /// nothing is claimed.
@@ -67,8 +76,11 @@ struct LegacyJumpSecretSweepTests {
     /// install carries. The fixture is `SessionStoreTests`' -- the same bytes
     /// Task 1's reader is tested against, so the two halves of M27 cannot
     /// drift apart on what a legacy file looks like.
-    private func writeLegacyFile(_ directory: URL, jumpSecretIDs: [UUID?]) throws {
-        try SessionStoreTests.legacyContainerFixture(withJumpSecretIDs: jumpSecretIDs)
+    private func writeLegacyFile(
+        _ directory: URL, jumpSecretIDs: [UUID?], kinds: [ConnectionKind?] = []
+    ) throws {
+        try SessionStoreTests.legacyContainerFixture(
+            withJumpSecretIDs: jumpSecretIDs, kinds: kinds)
             .write(to: directory.appendingPathComponent("sessions.json"))
     }
 
@@ -118,6 +130,35 @@ struct LegacyJumpSecretSweepTests {
 
         #expect(result == LegacyJumpSecretSweep.Result(removed: 1, failed: 0))
         #expect(secrets.storedIDs == [kept])
+    }
+
+    /// The milestone in one test, and the only one that runs the path a real
+    /// user takes: `sessions-v2.json` does not exist yet, so the migration
+    /// runs INSIDE `claimedIDs()` and decides the claimed set as it goes.
+    ///
+    /// Two legacy records, one jump each. `upgraded()` keeps the jump of the
+    /// `.ssh` record, whose secretID therefore comes back claimed; it drops
+    /// the jump of the `.webdav` record, which is precisely the entry M23
+    /// orphaned and this sweep exists to remove. That asymmetry is what makes
+    /// the sweep safe, and every other test here bypasses it by writing
+    /// `sessions-v2.json` first.
+    @Test func sweepsOnlyTheJumpTheMigrationDropsWhenItRunsOnFirstLaunch() throws {
+        let stores = try makeStores()
+        defer { try? FileManager.default.removeItem(at: stores.directory) }
+        let carried = UUID(), dropped = UUID()
+        try writeLegacyFile(
+            stores.directory, jumpSecretIDs: [carried, dropped], kinds: [.ssh, .webdav])
+        #expect(!FileManager.default.fileExists(
+            atPath: stores.directory.appendingPathComponent("sessions-v2.json")
+                .path(percentEncoded: false)))
+        let secrets = InMemorySecretStore()
+        try secrets.savePassword(Self.storedValue, for: carried)
+        try secrets.savePassword(Self.storedValue, for: dropped)
+
+        let result = try sweep(stores, secrets).run()
+
+        #expect(result == LegacyJumpSecretSweep.Result(removed: 1, failed: 0))
+        #expect(secrets.storedIDs == [carried])
     }
 
     /// Not "the id we asked about is gone" but "nothing is gone anywhere".
