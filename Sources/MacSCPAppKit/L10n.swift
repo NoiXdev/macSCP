@@ -26,9 +26,10 @@ import SwiftUI
 /// App-layer text was effectively untested. The last candidate closes that
 /// hole: under `swift test` `Bundle(for:)` resolves to the `.xctest` bundle,
 /// and the resource bundle sits next to it rather than inside it, so we walk
-/// up one level. In a real `.app` that same candidate lands on the directory
-/// containing the app bundle, finds nothing, and is skipped — the three
-/// production candidates ahead of it still decide the outcome.
+/// up one level. In a real `.app` that candidate is never even reached:
+/// `scripts/package-app` copies `macSCP_MacSCPAppKit.bundle` into
+/// `Contents/Resources/`, which is exactly `Bundle.main.resourceURL`, so the
+/// second candidate matches and the loop returns before the fourth is built.
 enum L10n {
     private final class BundleFinder {}
 

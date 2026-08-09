@@ -19,8 +19,12 @@ import Foundation
 /// test helper — neither CONTAINS the resource bundle. It sits BESIDE the
 /// test bundle instead, which is why the last candidate walks up one level
 /// from `Bundle(for:)`'s own URL. Without it every lookup fell through to
-/// `Bundle.main` and `string(_:)` returned the raw key, which is what made
-/// key-against-key assertions vacuous for several milestones.
+/// `Bundle.main` and `string(_:)` returned the raw key. Assertions of the
+/// form `#expect(error == CoreL10n.string(key))` still caught the WRONG key
+/// even then -- both sides reduced to key text, and key A never equals key
+/// B -- but nothing checked that a key maps to real text at all: a key that
+/// no catalog declares passed exactly like a declared one, for several
+/// milestones.
 enum CoreL10n {
     private static let bundleName = "macSCP_macSCPCore.bundle"
 

@@ -6,9 +6,11 @@ import Testing
 @Suite("CoreL10n")
 struct CoreL10nTests {
     /// `CoreL10n.string` returns the KEY when the resource bundle cannot be
-    /// found. Under `swift test` that was always the case, which silently
-    /// made dozens of `#expect(error == CoreL10n.string(…))` assertions
-    /// compare a key against itself — they could not fail.
+    /// found. Under `swift test` that was always the case. The existing
+    /// `#expect(error == CoreL10n.string(key))` assertions were not thereby
+    /// worthless — both sides reduced to key text, so a wrong key on either
+    /// side still went red — but no test could tell a key that maps to real
+    /// text from one that maps to nothing at all. This is the test that can.
     ///
     /// Deliberately not asserting a specific translation: the host's
     /// preferred language decides which one comes back, so any fixed text

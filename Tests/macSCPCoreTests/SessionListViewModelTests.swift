@@ -1192,12 +1192,13 @@ struct SessionListViewModelTests {
         let messageQuotesASecret = (vm.errorMessage ?? "").contains(passphraseA)
             || (vm.errorMessage ?? "").contains(passphraseB)
         #expect(!messageQuotesASecret)
-        // Not asserted here: the localized TEXT. `CoreL10n.string` cannot find
-        // the resource bundle under `swift test` and returns the key itself --
-        // for the long-standing `core.login.mergeFailed %@` just as much as for
-        // the new reason key -- so any such assertion would pin the test
-        // environment. That all four Core catalogs carry the same key set is
-        // what `LocalizableStringsTests` checks, off disk.
+        // Not asserted here: the localized TEXT. `CoreL10n.string` resolves
+        // against the host's preferred language -- for the long-standing
+        // `core.login.mergeFailed %@` just as much as for the new reason key
+        // -- so a fixed expected text would pin the test environment, passing
+        // on a German Mac and failing in an English CI. That all four Core
+        // catalogs carry the same key set is what `LocalizableStringsTests`
+        // checks, off disk.
     }
 
     /// The counterpart that must stay green: members that agree still merge.
