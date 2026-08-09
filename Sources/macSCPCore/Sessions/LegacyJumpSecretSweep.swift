@@ -12,8 +12,9 @@ import Foundation
 /// nothing claims TODAY. M23's orphans are why it exists, but they are not
 /// the only way a named slot ends up unclaimed -- `SessionListViewModel`'s
 /// `delete(_:)` removes a session's jump secret with `try?`, so a failure
-/// there leaves a slot behind that no record refers to any more either. It goes with the rest, and should: "unclaimed" is the property
-/// that makes deleting safe, and it is the one being tested.
+/// there leaves a slot behind that no record refers to any more either. It
+/// goes with the rest, and should: "unclaimed" is the property that makes
+/// deleting safe, and it is the one being tested.
 ///
 /// **Candidates come from the preserved legacy file, never from the Keychain.**
 /// That is what makes the sweep safe rather than merely careful: an entry a
@@ -94,8 +95,9 @@ public struct LegacyJumpSecretSweep {
         // Both reads also happen unconditionally. Returning early on an empty
         // candidate set would be safe -- with nothing to delete the outcome is
         // the same either way -- but it would report success on a run that
-        // never opened the files deciding what is claimed, and this is a
-        // button whose whole message to the user is "I checked".
+        // never opened the files deciding what is claimed, and the only
+        // caller is a settings button whose entire message to the user is
+        // that the check happened.
         let candidates = try sessions.legacyJumpSecretIDs()
         let claimed = try claimedIDs()
 
