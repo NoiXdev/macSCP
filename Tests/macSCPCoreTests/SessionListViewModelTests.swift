@@ -861,6 +861,37 @@ struct SessionListViewModelTests {
         #expect(vm.sessions.first { $0.id == b.id }?.ssh?.username == "root")
     }
 
+    /// M28 final review (I-1): `deleteLoginSet` decides a deletion from the
+    /// set's own Keychain read, and a swallowed read makes a locked Keychain
+    /// look exactly like a set with nothing to hand back -- every referencing
+    /// session is restored WITHOUT its secret, and the set's slot, the only
+    /// copy for a session bound by `applyMerge`, is then deleted. The read
+    /// therefore throws and nothing changes on a failure, the same rule
+    /// `applyMerge` already follows for its carry.
+    @Test func deleteLoginSetChangesNothingWhenTheSetsSecretCannotBeRead() throws {
+        let (vm, secrets, dir) = makeLockableVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "Deploy", username: "deploy")
+        vm.saveLoginSet(set, secret: "s3cr3t")
+        let bound = vm.save(
+            name: "a",
+            values: sshValues(host: "h1", port: 22, username: "ignored"),
+            password: "",
+            loginSetID: set.id)!
+        // The set's slot is the only copy of this session's credential --
+        // the state `applyMerge` leaves behind.
+        #expect(secrets.storedIDs == [set.id])
+
+        secrets.failReads(for: [set.id])
+        let result = vm.deleteLoginSet(set)
+
+        #expect(result == SessionListViewModel.LoginSetDeleteResult(restored: 0, secretFailures: 0))
+        #expect(vm.loginSets.map(\.id) == [set.id])
+        #expect(vm.sessions.first { $0.id == bound.id }?.loginSetID == set.id)
+        #expect(secrets.storedIDs == [set.id])
+        #expect(vm.errorMessage != nil)
+    }
+
     @Test func applyMergeAbortsAndRewiresNothingWhenCarryingSecretToSetFails() throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")

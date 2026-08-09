@@ -667,14 +667,36 @@ public final class SessionListViewModel {
     /// `restored`/`secretFailures` — `sessionsUsing` already de-duplicates
     /// per session, and any secret-copy failure on either reference marks
     /// that one session as a failure, not two.
+    ///
+    /// A failure to READ the set's own secret is the one case that aborts:
+    /// nothing is restored, nothing is deleted, the result is zeroed and the
+    /// failure goes to `errorMessage` — see the read site's own comment.
     public func deleteLoginSet(_ set: LoginSet) -> LoginSetDeleteResult {
         let affected = sessionsUsing(setID: set.id)
         // C-1: an agent set carries no secret to restore, even if a stale
         // slot survives from before an edit switched the set to agent mode
         // (`saveLoginSet` scrubs new switches, but an already-agent set must
         // never read/transfer a leftover secret either).
-        let setSecret: String? = set.authKind == .agent
-            ? nil : ((try? secrets.password(for: set.id)) ?? nil)
+        //
+        // The read THROWS rather than swallowing (M28 final review, I-1),
+        // and a failure changes nothing at all -- the same rule `applyMerge`
+        // follows for its own carry, for the same reason. A locked Keychain
+        // or a refused prompt is indistinguishable from a set with nothing to
+        // hand back: every referencing session would be restored without its
+        // secret, `secretFailures` would stay 0 (it counts WRITE failures),
+        // and the set's own slot would then be deleted -- for a session bound
+        // by `applyMerge` that slot is the only copy. Reported through the
+        // same `errorMessage` the store-failure path below uses; nothing was
+        // restored and nothing was deleted, which is what the zeroed result
+        // says.
+        let setSecret: String?
+        do {
+            setSecret = set.authKind == .agent ? nil : try secrets.password(for: set.id)
+        } catch {
+            errorMessage = String(
+                format: CoreL10n.string("core.login.deleteFailed %@"), String(describing: error))
+            return LoginSetDeleteResult(restored: 0, secretFailures: 0)
+        }
         var secretFailures = 0
 
         for session in affected {
