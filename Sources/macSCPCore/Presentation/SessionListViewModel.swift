@@ -660,7 +660,8 @@ public final class SessionListViewModel {
     /// group onto it. The source secret is the first group session that
     /// actually HAS one (not blindly `sessionIDs.first` — a `.privateKey`
     /// group can have an earlier member with no stored passphrase while a
-    /// later one does) and is copied under the new set id; every group
+    /// later one does; a slot holding the empty string counts as having none,
+    /// M28/T2) and is copied under the new set id; every group
     /// session's own secret is then removed (throw-free — a leftover
     /// keychain entry is a harmless residual, never a reason to abort). A
     /// store failure while creating the set aborts before anything is
@@ -713,13 +714,26 @@ public final class SessionListViewModel {
         do {
             // Both reads throw rather than swallowing (M28/T2): a Keychain that
             // will not answer looks exactly like a group of empty slots, and
-            // the loop below deletes every member's own slot. Reading "nothing
-            // to carry" out of a failure would take the only copy each member
-            // has. A genuinely empty group is a different case and still merges
-            // -- there is nothing to carry and nothing to lose, so those two
-            // deletes are no-ops.
-            let source = try groupSessions.first { try secrets.password(for: $0.id) != nil } ?? first
-            if let secret = try secrets.password(for: source.id) {
+            // the loop below deletes one slot per member. Reading "nothing to
+            // carry" out of a failure would take the only copy each member has.
+            // A genuinely empty group is a different case and still merges --
+            // there is nothing to carry and nothing to lose, so each of those
+            // deletes is a no-op.
+            //
+            // An EMPTY secret counts as no secret in both reads (M28/T2 fix
+            // round 1), or the same loss happens without any keychain failure:
+            // `save` stores the password it is given for every manual non-agent
+            // session (`requiresSecret`), empty string included, so an
+            // unencrypted private key leaves a slot holding "". A passphrase
+            // never enters `LoginMergePlanner`'s grouping key -- the planner
+            // skips the read for a `.passphrase`-role field -- so that member
+            // can group with, and be ordered before, one holding a real
+            // passphrase. Picking it as the source would carry "" onto the set
+            // and then delete that real passphrase, the group's only copy.
+            let source = try groupSessions.first {
+                try !(secrets.password(for: $0.id) ?? "").isEmpty
+            } ?? first
+            if let secret = try secrets.password(for: source.id), !secret.isEmpty {
                 try secrets.savePassword(secret, for: set.id)
             }
         } catch {
