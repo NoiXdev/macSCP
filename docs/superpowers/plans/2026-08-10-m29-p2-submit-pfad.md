@@ -489,7 +489,19 @@ Run: `swift test --filter SubmitPreparation 2>&1 | tail -4`, then
 `swift test 2>&1 | tail -3`
 Expected: green.
 
-- [ ] **Step 5: Prove the no-short-circuit test guards it**
+- [ ] **Step 5: Commit — BEFORE the probe**
+
+```bash
+git add -A
+git commit -m "feat(core): collect every submit refusal instead of the first"
+```
+
+**Commit first.** Task 2 learned this the hard way: a mutation probe whose
+revert is `git checkout --` will delete the whole uncommitted
+implementation, not just the mutation. Commit, mutate, revert, and the
+revert can only undo the mutation.
+
+- [ ] **Step 6: Prove the no-short-circuit test guards it**
 
 Mutation: rewrite the coordinator to return early on the first refusal.
 
@@ -497,7 +509,13 @@ Run: `swift test --filter everyResolutionRunsEvenAfterOneRefuses 2>&1 | tail -5`
 Expected: RED. Copy verbatim, then revert and prove `git status --porcelain`
 is clean.
 
-- [ ] **Step 6: Commit**
+**Never assert directly on a value that may carry a secret.** `#expect`
+expands its receiver into the failure message, so `#expect(secretish.isEmpty)`
+prints the secret when it fails. Hoist into a `Bool` first — the pattern
+`SessionListViewModelTests` already uses. Task 2 hit this with the plan's own
+example code.
+
+- [ ] **Step 7: Nothing further**
 
 ```bash
 git add -A
