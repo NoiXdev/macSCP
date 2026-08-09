@@ -571,6 +571,7 @@
 "loginSets.editor.name" = "Name";
 "loginSets.editor.kind" = "Typ";
 "loginSets.missingSet" = "Das hinterlegte Login dieser Verbindung wurde nicht gefunden. Login wählen oder Zugangsdaten eingeben.";
+"form.loginSet.kindMismatch" = "Das gewählte gespeicherte Login gehört zu einem anderen Verbindungstyp. Login für dieses Protokoll wählen oder Zugangsdaten hier eingeben.";
 "loginSets.badge.key" = "KEY";
 "loginSets.badge.pass" = "PASS";
 "loginSets.badge.agent" = "AGENT";

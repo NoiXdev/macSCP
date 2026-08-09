@@ -570,6 +570,7 @@
 "loginSets.editor.name" = "Name";
 "loginSets.editor.kind" = "Type";
 "loginSets.missingSet" = "The stored login for this connection was not found. Choose a login or enter credentials.";
+"form.loginSet.kindMismatch" = "The selected stored login belongs to a different kind of connection. Choose a login for this connection's protocol, or enter the credentials here.";
 "loginSets.badge.key" = "KEY";
 "loginSets.badge.pass" = "PASS";
 "loginSets.badge.agent" = "AGENT";

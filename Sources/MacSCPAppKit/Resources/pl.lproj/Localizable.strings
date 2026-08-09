@@ -573,6 +573,7 @@
 "loginSets.editor.name" = "Nazwa";
 "loginSets.editor.kind" = "Typ";
 "loginSets.missingSet" = "Nie znaleziono zapisanego loginu dla tego połączenia. Wybierz login lub wprowadź dane uwierzytelniające.";
+"form.loginSet.kindMismatch" = "Wybrany zapisany login należy do innego rodzaju połączenia. Wybierz login dla protokołu tego połączenia lub wprowadź dane uwierzytelniające tutaj.";
 "loginSets.badge.key" = "KLUCZ";
 "loginSets.badge.pass" = "HASŁO";
 "loginSets.badge.agent" = "AGENT";

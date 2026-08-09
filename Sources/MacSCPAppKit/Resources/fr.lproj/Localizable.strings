@@ -574,6 +574,7 @@
 "loginSets.editor.name" = "Nom";
 "loginSets.editor.kind" = "Type";
 "loginSets.missingSet" = "Le login enregistré pour cette connexion est introuvable. Choisissez un login ou saisissez des identifiants.";
+"form.loginSet.kindMismatch" = "Le login enregistré sélectionné appartient à un autre type de connexion. Choisissez un login pour le protocole de cette connexion, ou saisissez les identifiants ici.";
 "loginSets.badge.key" = "CLÉ";
 "loginSets.badge.pass" = "PASS";
 "loginSets.badge.agent" = "AGENT";
