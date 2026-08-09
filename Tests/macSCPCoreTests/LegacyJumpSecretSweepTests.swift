@@ -185,6 +185,14 @@ struct LegacyJumpSecretSweepTests {
         #expect(secrets.storedIDs == [orphan])
     }
 
+    /// The weakest of the four abort tests, and unavoidably so: reading the
+    /// legacy file is the FIRST statement of `run()`, so there is no way to
+    /// arrange a candidate the sweep already knows about. The store here holds
+    /// an id that was never a candidate, which means the `storedIDs`
+    /// assertion would hold for any implementation that throws at all -- the
+    /// throw is what this one proves. Its three siblings carry the ordering
+    /// proof, because there the candidates are already in hand when the
+    /// failing read happens.
     @Test func anUnreadableLegacyFileDeletesNothingAndThrows() throws {
         let stores = try makeStores()
         defer { try? FileManager.default.removeItem(at: stores.directory) }
@@ -263,10 +271,15 @@ struct LegacyJumpSecretSweepTests {
         try secrets.savePassword(Self.storedValue, for: kept)
         try secrets.savePassword(Self.storedValue, for: orphan)
 
-        _ = try sweep(stores, secrets).run()
+        let first = try sweep(stores, secrets).run()
         let second = try sweep(stores, secrets).run()
 
-        #expect(second.failed == 0)
+        // The whole result, not just `failed`: `removed: 1` a second time is
+        // the claim above made checkable. `InMemorySecretStore.deletePassword`
+        // cannot throw, so asserting only `failed == 0` would hold for any
+        // implementation at all.
+        #expect(first == LegacyJumpSecretSweep.Result(removed: 1, failed: 0))
+        #expect(second == LegacyJumpSecretSweep.Result(removed: 1, failed: 0))
         #expect(secrets.storedIDs == [kept])
     }
 }

@@ -29,12 +29,24 @@ public struct LegacyJumpSecretSweep {
     /// What the run did.
     ///
     /// `removed` counts DELETES THAT SUCCEEDED, not entries that were known
-    /// to be there: `deletePassword` reports success for a slot that is
-    /// already gone (`KeychainSecretStore` maps `errSecItemNotFound` to
-    /// success), and the sweep never reads, so it cannot tell the two apart.
-    /// A repeat run therefore reports the same `removed` again while changing
-    /// nothing -- the legacy file stays on disk as M23's downgrade snapshot,
-    /// so the candidate list does not shrink either.
+    /// to be there. The sweep never reads, so it cannot tell the two apart,
+    /// and two ordinary situations make the difference real:
+    ///
+    /// - A slot that is already gone still deletes successfully
+    ///   (`KeychainSecretStore` maps `errSecItemNotFound` to success). The
+    ///   legacy file stays on disk as M23's downgrade snapshot, so a repeat
+    ///   run sees the same candidates; a run in which every delete succeeded
+    ///   therefore reports the same `removed` again while changing nothing.
+    ///   After a run with `failed > 0` that is not true: a repeat that now
+    ///   gets past whatever blocked those slots reports MORE, and does remove
+    ///   something.
+    /// - A legacy jump backed by a LOGIN SET had a `secretID` that never held
+    ///   a secret -- `JumpSpec.secretID` is present in set mode too, unused.
+    ///   `legacyJumpSecretIDs()` yields it like any other, so the very first
+    ///   run counts a slot that was empty from the start.
+    ///
+    /// So `removed` is an upper bound on entries that actually went away, and
+    /// is not fit to be shown as one.
     public struct Result: Equatable, Sendable {
         public var removed: Int
         public var failed: Int
@@ -74,18 +86,32 @@ public struct LegacyJumpSecretSweep {
             } catch {
                 // One failure does not stop the rest -- same rule as removing
                 // several known hosts. The count is reported; the error is not
-                // carried further, because it can only be an OSStatus and the
-                // user's next step is the same either way.
+                // carried further, because in production it can only be an
+                // OSStatus and the user's next step is the same either way.
                 failed += 1
             }
         }
         return Result(removed: removed, failed: failed)
     }
 
-    /// Every id anything still claims. Wider than strictly necessary -- a
-    /// pre-M23 jump `secretID` cannot also be a login-set or managed-key id --
-    /// and deliberately so: it costs one pass each and makes the rule "delete
-    /// only what appears NOWHERE" true without case analysis.
+    /// The ids of every session, login set and managed key the stores SURFACE,
+    /// plus the jump `secretID` of every surfaced session.
+    ///
+    /// Deliberately wider than strictly necessary -- a pre-M23 jump `secretID`
+    /// cannot also be a login-set or managed-key id, since the only place a
+    /// `JumpSpec.secretID` is created is `ConnectionViewModel.buildJumpSpec`,
+    /// which reuses the jump's own previous id or mints a fresh UUID. Asking
+    /// all three costs one pass each and makes the rule "delete only what
+    /// appears NOWHERE" true without case analysis.
+    ///
+    /// "Surfaced" is not "stored": `SessionStore.load()` drops an `.ssh`
+    /// record with no SSH block, and `LoginSetStore.all()` hides a record
+    /// whose `authKind` it does not recognise, so both can withhold an id
+    /// that is on disk. Neither can matter for THIS candidate set. A dropped
+    /// session record has no `ssh` block and therefore no `jump` at all, so it
+    /// could never have contributed a candidate; and a hidden login set could
+    /// only matter through its own `id`, which by the paragraph above is never
+    /// a jump `secretID`.
     private func claimedIDs() throws -> Set<UUID> {
         var claimed = Set<UUID>()
         for session in try sessions.all() {
