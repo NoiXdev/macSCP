@@ -95,3 +95,5 @@
 "core.login.saveFailed %@" = "Échec de l'enregistrement du login : %@";
 "core.login.deleteFailed %@" = "Échec de la suppression du login : %@";
 "core.login.mergeFailed %@" = "Échec de la fusion des logins : %@";
+"core.login.bindKeptSessionSecret" = "Cet identifiant n'a pas de mot de passe enregistré : la connexion conserve le sien. Ajoutez-en un à l'identifiant pour le lui confier.";
+"core.login.bindCoverageUnknown" = "Le trousseau n'a pas pu être lu : la connexion conserve son mot de passe pour l'instant.";

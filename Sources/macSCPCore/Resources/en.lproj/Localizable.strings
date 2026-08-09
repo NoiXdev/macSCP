@@ -93,3 +93,5 @@
 "core.login.saveFailed %@" = "Failed to save login: %@";
 "core.login.deleteFailed %@" = "Failed to delete login: %@";
 "core.login.mergeFailed %@" = "Failed to merge logins: %@";
+"core.login.bindKeptSessionSecret" = "This login has no stored password, so the connection keeps its own. Add one to the login to hand it over.";
+"core.login.bindCoverageUnknown" = "The keychain could not be read, so the connection keeps its own password for now.";

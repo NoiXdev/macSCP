@@ -93,3 +93,5 @@
 "core.login.saveFailed %@" = "Login konnte nicht gespeichert werden: %@";
 "core.login.deleteFailed %@" = "Login konnte nicht gelöscht werden: %@";
 "core.login.mergeFailed %@" = "Logins konnten nicht zusammengeführt werden: %@";
+"core.login.bindKeptSessionSecret" = "Dieses Login hat kein gespeichertes Passwort, daher behält die Verbindung ihr eigenes. Hinterlege eines im Login, um es zu übergeben.";
+"core.login.bindCoverageUnknown" = "Der Schlüsselbund konnte nicht gelesen werden, daher behält die Verbindung vorerst ihr eigenes Passwort.";

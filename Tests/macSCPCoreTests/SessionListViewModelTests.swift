@@ -1700,6 +1700,101 @@ struct SessionListViewModelTests {
         #expect(secrets.peek(set.id) == "pp")
     }
 
+    /// Binding to an EXISTING set the user picked, which `createLoginSet`
+    /// never sees. A login-set file exported without secrets imports as a
+    /// `.password` set with no Keychain slot (`applyLoginSetImport` passes a
+    /// nil secret), and `validateForEditSave` lets the switch through because
+    /// it validates with `requireSecrets: false`. The session's own slot is
+    /// then the only copy there is, so the bind must keep it.
+    @Test func bindingToASetThatHoldsNoSecretKeepsTheSessionsOwn() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "imported", username: "deploy")
+        vm.saveLoginSet(set, secret: nil)
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw")!
+        var updated = stored
+        updated.loginSetID = set.id
+
+        vm.updateSession(updated, newSecret: nil)
+
+        #expect(vm.sessions.first?.loginSetID == set.id)
+        #expect(secrets.peek(stored.id) == "pw")
+        // Never silent: the sidebar shows this.
+        #expect(vm.errorMessage != nil)
+    }
+
+    /// The same guard on the "save & connect" side, where the set is picked
+    /// rather than created.
+    @Test func savingOntoASetThatHoldsNoSecretKeepsTheSessionsOwn() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "imported", username: "deploy")
+        vm.saveLoginSet(set, secret: nil)
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw")!
+
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            loginSetID: set.id)
+
+        #expect(vm.sessions.first?.loginSetID == set.id)
+        #expect(secrets.peek(stored.id) == "pw")
+        #expect(vm.errorMessage != nil)
+    }
+
+    /// A secretless set costs nothing when the session has nothing to lose —
+    /// no leftover slot, and no warning about one.
+    @Test func bindingToASetThatHoldsNoSecretIsSilentWhenTheSessionHasNone() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "imported", username: "deploy")
+        vm.saveLoginSet(set, secret: nil)
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "")!
+        var updated = stored
+        updated.loginSetID = set.id
+
+        vm.updateSession(updated, newSecret: nil)
+
+        #expect(secrets.storedIDs.isEmpty)
+        #expect(vm.errorMessage == nil)
+    }
+
+    /// A Keychain that will not answer proves neither that the set holds a
+    /// secret nor that the session has none, so the bind may not delete. The
+    /// rule two earlier rounds got wrong, at the place that does the deleting.
+    @Test func bindingKeepsTheSessionSecretWhenTheKeychainWillNotAnswer() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = UnreliableSecretStore(failsReads: true)
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: secrets,
+            loginSetStore: LoginSetStore(directory: dir))
+        let set = LoginSet(name: "prod", username: "deploy")
+        vm.saveLoginSet(set, secret: "set-secret")
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw")!
+        var updated = stored
+        updated.loginSetID = set.id
+
+        vm.updateSession(updated, newSecret: nil)
+
+        #expect(secrets.peek(stored.id) == "pw")
+        #expect(vm.errorMessage != nil)
+    }
+
     /// The "save & connect" route, which never holds the record it is about to
     /// overwrite: it has only the name the user typed, and `save` decides by
     /// that name which session it binds — and whose slot it deletes. The carry
@@ -1735,12 +1830,21 @@ struct SessionListViewModelTests {
     @Test func createLoginSetAcceptsANameNoSessionHas() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
+        // Another session exists, so an implementation that resolves the name
+        // loosely has something wrong to find.
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw")!
         let set = LoginSet(name: "prod", username: "deploy")
 
-        #expect(vm.createLoginSet(set, secret: "typed", carryingFrom: .sessionNamed("brand-new"))
+        // `secret: nil` is what makes the name matter at all: with a secret in
+        // hand the carry short-circuits before any resolution happens.
+        #expect(vm.createLoginSet(set, secret: nil, carryingFrom: .sessionNamed("brand-new"))
             == set.id)
 
-        #expect(secrets.peek(set.id) == "typed")
+        #expect(secrets.peek(set.id) == nil)
+        #expect(secrets.storedIDs == [vm.sessions[0].id])
     }
 
     /// The same abort as the by-id case, on the route that only has a name:
