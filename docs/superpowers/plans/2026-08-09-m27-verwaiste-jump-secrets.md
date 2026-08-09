@@ -145,6 +145,17 @@ Erwartet: FAIL, `value of type 'SessionStore' has no member 'legacyJumpSecretIDs
 
 In `SessionStore`, neben `migrateFromLegacy()`:
 
+> **Korrektur 2026-08-09 (Task-1-Review, Critical).** Der Beispielcode unten
+> war falsch: `sessions.json` hat **zwei** Legacy-Formen, und
+> `migrateFromLegacy()` behandelt beide — erst den Container
+> `{"groups":…,"sessions":…}` per `try?`, dann als Rückfall das nackte Array
+> per hartem `try`. Nur das Array zu dekodieren lässt den Zugriff auf jeder
+> Installation mit Gruppen **werfen** — also seit vor 1.0. Die Umsetzung
+> spiegelt `migrateFromLegacy()`. **Die tragende Eigenschaft dabei:** der
+> `try?` auf den Container ist nur harmlos, weil der Array-Versuch danach ein
+> hartes `try` ist; wären beide optional, würde aus „nicht lesbar" wieder
+> „keine Kandidaten".
+
 ```swift
 /// Every jump `secretID` in the preserved pre-M23 `sessions.json`, in file
 /// order, without duplicates -- the candidate set for M27's sweep.
