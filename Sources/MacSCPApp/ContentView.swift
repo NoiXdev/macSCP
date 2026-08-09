@@ -2294,38 +2294,69 @@ struct ContentView: View {
         // row under private-key auth, and NOTHING for an agent login, whose
         // set never carries a secret (M10d/T4). `createLoginSet` already
         // refuses to write one for `.agent`; resolving to "no secret field"
-        // here also skips the (then-discarded) keychain lookup for the edited
-        // session's own secret.
+        // here also keeps this path from naming any keychain source below.
         let typed = descriptor.credentialSchema.visibleSecretField(
             in: form.values, namespace: descriptor.fieldNamespace)
             .map { form.values.raw["\(descriptor.fieldNamespace).\($0.id)"] ?? "" }
-        // A managed key with its own slot resolves to "carry nothing", exactly
-        // as an agent login does: the passphrase belongs to the KEY, and a
-        // copy under the set id would win at connect time and go on shadowing
-        // the key's own value (`EmbeddedKeyPorter.MaterializedKey`'s doc says
-        // the same about the import direction).
-        let carried: String? = isManagedKeyWithStoredPassphrase(form) ? nil : typed
-        // The edited session's OWN slot is the fallback source whenever this
-        // call has no secret of its own to write — a blank secret row
-        // ("unchanged") AND the nil above.
+        // The managed-key probe has THREE outcomes, and collapsing any two of
+        // them costs something different:
         //
-        // `?? true` for that nil is deliberate, and it is the same rule the
-        // key writes follow: fall into the state you can come back from.
-        // `isManagedKeyWithStoredPassphrase` answers `true` from its `catch`,
-        // which `ManagedKeyPassphrase.hasStoredPassphrase` also reaches when
-        // `managed_keys.json` itself cannot be read — a FILE error saying
-        // nothing about any Keychain slot. Naming no source there would create
-        // a set with no secret, still hand back an id, and let the binding
-        // delete a session slot that for an external key (or a managed key
-        // with no slot of its own) holds the only copy. Naming the source
-        // costs at worst a duplicate the user can see and change in the login
-        // editor; not naming it costs the credential.
+        // * a passphrase IS stored under the key's own id — the set must carry
+        //   nothing, not even from the session's slot. The set's copy wins at
+        //   connect (`LoginResolver.credentials` fills the passphrase field
+        //   and `ManagedKeyPassphrase.resolve` prefers a non-empty typed
+        //   value), so it would shadow the key's own passphrase for good —
+        //   the duplication `hasStoredPassphrase` exists to prevent.
+        // * no passphrase is stored — the visible field is the secret, and the
+        //   session's own slot is the right fallback for a blank one.
+        // * the probe could not ANSWER — `hasStoredPassphrase` throws for an
+        //   unreadable `managed_keys.json` as well as an unreadable Keychain,
+        //   so nothing is known about any slot. Carrying from the session is
+        //   then the recoverable direction: at worst a duplicate the login
+        //   editor shows and can change, where the alternative is a set with
+        //   no secret whose binding deletes the only copy the user had.
         //
-        // The lookup itself happens inside `createLoginSet`, which is what
-        // lets an unanswerable Keychain abort the whole rewiring instead of
-        // quietly producing a set with no secret — `password(for:)` swallows
-        // that difference into `nil`.
-        let source: UUID? = (carried?.isEmpty ?? true) ? editedSession?.id : nil
+        // `isManagedKeyWithStoredPassphrase` answers the first two and the
+        // third as `true` — right for `passwordToPersist`, which only decides
+        // whether to duplicate, and wrong here, where the answer decides a
+        // deletion.
+        var keyOwnsThePassphrase = false
+        if form.kind == .ssh, form.authChoice == .privateKey {
+            do {
+                keyOwnsThePassphrase = try ManagedKeyPassphrase.hasStoredPassphrase(
+                    keyPath: form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
+                    store: ManagedKeyStore(directory: SessionStore.defaultDirectory),
+                    secrets: KeychainSecretStore())
+            } catch {
+                // The third outcome, and the reason this is not
+                // `isManagedKeyWithStoredPassphrase`: staying `false` keeps
+                // the typed value and names the session as the fallback
+                // source, which is the recoverable direction. Folding it into
+                // "stored" would carry nothing onto the set and let the
+                // binding delete the session's slot.
+            }
+        }
+        let carried: String? = keyOwnsThePassphrase ? nil : typed
+        // A session's own slot is the fallback source when this call has no
+        // secret of its own to write. The lookup happens inside
+        // `createLoginSet`, which is what lets an unanswerable Keychain abort
+        // the rewiring instead of quietly producing a set with no secret —
+        // `password(for:)` swallows that difference into `nil`.
+        //
+        // WHICH session, by the two things the two call sites actually know:
+        // the edit route holds its record, and "save & connect" holds only the
+        // name it is about to save under — the same name whose match decides
+        // which session `save` then binds and deletes the slot of. Naming the
+        // session here and letting Core resolve it is what closes the route at
+        // BOTH call sites without a second copy of that match rule.
+        let source: SessionListViewModel.LoginSetSecretSource?
+        if typed == nil || keyOwnsThePassphrase || !(carried ?? "").isEmpty {
+            source = nil
+        } else if let editedSession {
+            source = .session(editedSession.id)
+        } else {
+            source = .sessionNamed(form.saveName.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
         // `createLoginSet`, never `saveLoginSet`: a nil result means the set
         // was rolled back and this session must stay MANUAL. Returning its id
         // anyway would bind the session — and binding is what deletes the

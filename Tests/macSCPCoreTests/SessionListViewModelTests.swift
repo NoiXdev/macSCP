@@ -1609,15 +1609,11 @@ struct SessionListViewModelTests {
 
     /// The login-set counterpart of the two agent twins above. A session that
     /// moves onto a login set must not keep its own slot: the set owns the
-    /// secret from then on, and `ContentView.beginEditing` fills the form's
-    /// secret field from `resolvedCredentials` (the set) whenever
-    /// `loginSetID` is set, never from the session's own slot. A credential
-    /// nothing displays, changes or rotates does not belong in the Keychain —
-    /// and in the four cases `save`'s own comment names (no set secret, an
-    /// unreadable one, an agent set, a dangling reference) a later switch back
-    /// to manual leaves the form's secret field blank, which means
-    /// "unchanged", so the pre-switch secret would be what the next connect
-    /// authenticates with.
+    /// secret from then on, so the session's own copy is a credential nothing
+    /// displays, changes or rotates — and one a later switch back to manual
+    /// revives, because `ConnectionViewModel.beginEditing` never loads a
+    /// session's secret and an empty secret field means "unchanged", so
+    /// nothing overwrites it and the next connect uses the pre-switch value.
     @Test func saveSwitchingTargetToALoginSetDeletesSessionSecret() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -1674,7 +1670,7 @@ struct SessionListViewModelTests {
         // Empty `secret` = the user retyped nothing, so the session's own slot
         // is the source.
         let set = LoginSet(name: "prod", username: "deploy")
-        #expect(vm.createLoginSet(set, secret: "", carryingFrom: stored.id) == set.id)
+        #expect(vm.createLoginSet(set, secret: "", carryingFrom: .session(stored.id)) == set.id)
         #expect(secrets.peek(set.id) == "pw")
 
         var updated = try #require(vm.sessions.first)
@@ -1699,9 +1695,75 @@ struct SessionListViewModelTests {
             password: "pp")!
 
         let set = LoginSet(name: "prod", username: "deploy", authKind: .privateKey)
-        #expect(vm.createLoginSet(set, secret: nil, carryingFrom: stored.id) == set.id)
+        #expect(vm.createLoginSet(set, secret: nil, carryingFrom: .session(stored.id)) == set.id)
 
         #expect(secrets.peek(set.id) == "pp")
+    }
+
+    /// The "save & connect" route, which never holds the record it is about to
+    /// overwrite: it has only the name the user typed, and `save` decides by
+    /// that name which session it binds — and whose slot it deletes. The carry
+    /// has to follow the same match, so `.sessionNamed` resolves it here
+    /// rather than in a second copy of the rule.
+    @Test func createLoginSetCarriesFromTheSessionASaveWouldMatchByName() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw")!
+
+        let set = LoginSet(name: "prod", username: "deploy")
+        #expect(vm.createLoginSet(set, secret: nil, carryingFrom: .sessionNamed("web")) == set.id)
+        #expect(secrets.peek(set.id) == "pw")
+
+        // The rest of that route: the same name, now with the set attached.
+        // The session `save` matches is the one the carry read from, so the
+        // deletion it performs takes the second copy, not the last one.
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            loginSetID: set.id)
+
+        #expect(vm.sessions.first?.id == stored.id)
+        #expect(secrets.storedIDs == [set.id])
+    }
+
+    /// A name that matches nothing is not a failure: there is no session to
+    /// carry from because `save` is about to create one.
+    @Test func createLoginSetAcceptsANameNoSessionHas() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "prod", username: "deploy")
+
+        #expect(vm.createLoginSet(set, secret: "typed", carryingFrom: .sessionNamed("brand-new"))
+            == set.id)
+
+        #expect(secrets.peek(set.id) == "typed")
+    }
+
+    /// The same abort as the by-id case, on the route that only has a name:
+    /// an unreadable slot must roll the set back rather than leave a secretless
+    /// set for `save` to bind the matching session to.
+    @Test func anUnreadableCarrySourceNamedByNameAlsoRollsTheSetBack() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = UnreliableSecretStore(failsReads: true)
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: secrets,
+            loginSetStore: LoginSetStore(directory: dir))
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw")!
+
+        let set = LoginSet(name: "prod", username: "deploy")
+        #expect(vm.createLoginSet(set, secret: nil, carryingFrom: .sessionNamed("web")) == nil)
+
+        #expect(vm.loginSets.isEmpty)
+        #expect(secrets.peek(stored.id) == "pw")
     }
 
     /// The hazard the whole ordering exists for: the set's secret write fails,
@@ -1749,7 +1811,7 @@ struct SessionListViewModelTests {
         #expect(secrets.peek(stored.id) == "pw")
 
         let set = LoginSet(name: "prod", username: "deploy")
-        #expect(vm.createLoginSet(set, secret: "", carryingFrom: stored.id) == nil)
+        #expect(vm.createLoginSet(set, secret: "", carryingFrom: .session(stored.id)) == nil)
 
         #expect(vm.loginSets.isEmpty)
         #expect(secrets.peek(set.id) == nil)

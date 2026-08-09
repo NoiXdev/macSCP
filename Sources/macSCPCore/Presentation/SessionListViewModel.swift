@@ -93,7 +93,7 @@ public final class SessionListViewModel {
         let descriptor = BackendDescriptor.descriptor(for: kind)
         var previousJump: StoredSession.JumpSpec?
         var session: StoredSession
-        if let existing = sessions.first(where: { $0.name == name }) {
+        if let existing = existingSession(named: name) {
             previousJump = existing.jump
             session = existing
         } else {
@@ -140,22 +140,23 @@ public final class SessionListViewModel {
             // Two reasons this session's own slot must not hold a secret, and
             // the same cleanup for both.
             //
-            // `loginSetID != nil`: the set owns the secret. Nothing reads the
-            // session's own slot while it is bound — `ContentView.beginEditing`
-            // fills the form from `resolvedCredentials` (the set) and only
-            // falls back to `password(for:)` when `loginSetID` is nil. A
-            // credential nothing displays, changes or rotates has no business
-            // sitting in the Keychain, and that alone settles it.
+            // `loginSetID != nil`: the set owns the secret. A credential
+            // nothing displays, changes or rotates has no business sitting in
+            // the Keychain, and that alone settles it — while the session is
+            // bound, `connect(in:stored:)` authenticates with
+            // `resolvedCredentials` (the set) and the edit form shows the
+            // set's fields, so its own slot is reachable from no screen. (Not
+            // "read by nothing": `exportPayload` still falls back to it when
+            // the reference dangles, which its own comment now covers.)
             //
-            // It can also come BACK, though not unconditionally: switching to
-            // manual again normally OVERWRITES the old value, because
-            // `applyResolvedCredentials` puts the set's secret into the
-            // visible field and the edit save writes what is in it. The four
-            // cases that leave that field blank are a set with no secret, a
-            // set whose Keychain read fails, an agent set, and a dangling
-            // reference — and a blank field means "unchanged", so nothing is
-            // written and the next connect authenticates with the pre-switch
-            // secret.
+            // It also comes BACK. `ConnectionViewModel.beginEditing` never
+            // loads a session's secret — it sets `password = ""`, because an
+            // empty secret at save time means "unchanged" — and nothing fills
+            // it on the way to manual either: `ContentView`'s only fill on
+            // that path, `resolveSelectedLoginSet`, returns early unless the
+            // mode is `.set`. So unless the user types a new secret, the edit
+            // save writes nothing, and the next connect authenticates with the
+            // pre-switch value.
             //
             // Callers must therefore never bind a session to a set that does
             // not yet hold the secret; `createLoginSet` is what enforces that
@@ -190,6 +191,20 @@ public final class SessionListViewModel {
                 format: CoreL10n.string("core.session.saveFailed %@"), String(describing: error))
             return nil
         }
+    }
+
+    /// The session `save(name:…)` would write into for this name, or nil when
+    /// that call would create a new record. Matching by name ALONE, across
+    /// kinds, is the rule "Save & connect" has always used (see `save`'s own
+    /// comment about a name collision converting a session's protocol).
+    ///
+    /// Exists as one function because two decisions depend on the same match:
+    /// which session `save` binds and deletes the slot of, and which session
+    /// `createLoginSet` may carry a secret FROM. Two copies of this rule could
+    /// drift apart, and the pair that drifts is "delete this slot" against
+    /// "the secret is safe elsewhere".
+    private func existingSession(named name: String) -> StoredSession? {
+        sessions.first(where: { $0.name == name })
     }
 
     /// Slot hygiene (M10c, extended M10d, extended M11a): an old MANUAL jump
@@ -391,12 +406,13 @@ public final class SessionListViewModel {
             // and the same cleanup for both (`save` carries the twin of this
             // branch and the long form of the login-set reasoning).
             //
-            // A set-bound session's secret lives under the SET id: nothing
-            // reads the session's own slot while `loginSetID` is set, so a
-            // survivor is a credential no screen shows and no edit can change
-            // — and one that four specific switch-back cases revive unchanged
-            // (`save` names them). The schema question
-            // below cannot answer this one — `visibleSecretField(for:)` reads
+            // A set-bound session's secret lives under the SET id, so a
+            // survivor in its own slot is a credential no screen shows and no
+            // edit can change — and one a later switch back to manual revives
+            // unchanged, since the edit form never loads a secret and an empty
+            // field means "unchanged" (`save` spells the mechanism out). The
+            // schema question below cannot answer this one —
+            // `visibleSecretField(for:)` reads
             // the session's own backend fields and has no path to
             // `loginSetID`, which is why an SSH session bound to a
             // password-auth set kept its old secret.
@@ -541,6 +557,33 @@ public final class SessionListViewModel {
         }
     }
 
+    /// Which session's own Keychain slot a new set may take its secret from.
+    ///
+    /// Two cases because the two forms know different things, and neither may
+    /// guess the other's. The edit form holds the record it is editing; the
+    /// "save & connect" form holds only the name the user typed, and the
+    /// session that name resolves to is decided by `save`'s match — the same
+    /// match that then binds that session and deletes its slot. Resolving the
+    /// name here keeps those two answers from being derived twice.
+    public enum LoginSetSecretSource: Equatable, Sendable {
+        /// The session with this id.
+        case session(UUID)
+        /// Whichever session a `save(name:…)` with this exact name would write
+        /// into — none, when it would create a new record instead. Pass the
+        /// name the caller is about to save under, trimmed the same way.
+        case sessionNamed(String)
+    }
+
+    /// Resolves a secret source to the session it means, or nil when it means
+    /// no session at all.
+    private func sessionID(of source: LoginSetSecretSource?) -> UUID? {
+        switch source {
+        case .none: return nil
+        case .session(let id): return id
+        case .sessionNamed(let name): return existingSession(named: name)?.id
+        }
+    }
+
     /// Creates a NEW set and carries a secret onto it, reporting the set id
     /// only once that secret is demonstrably there. `nil` means the caller
     /// must leave its session MANUAL rather than bind it; the set record is
@@ -560,17 +603,17 @@ public final class SessionListViewModel {
     /// only ever delete a session's own secret afterwards.
     ///
     /// `carryingFrom` names the session whose OWN slot supplies the secret
-    /// when `secret` is nil or empty — the "user retyped nothing" edit path. A
-    /// read that THROWS aborts the whole thing: "the slot is empty" and "the
-    /// Keychain would not answer" are different facts, and treating the second
-    /// as the first is what would create an empty set and delete a live
-    /// credential on a locked Keychain. A read that returns nil is the real
-    /// "there is nothing to carry" and proceeds.
+    /// when `secret` is nil or empty — the "the caller has nothing in hand"
+    /// case. A read that THROWS aborts the whole thing: "the slot is empty"
+    /// and "the Keychain would not answer" are different facts, and treating
+    /// the second as the first is what would create an empty set and delete a
+    /// live credential on a locked Keychain. A read that returns nil is the
+    /// real "there is nothing to carry" and proceeds.
     ///
     /// Never call this to UPDATE an existing set: the rollback deletes it.
     @discardableResult
     public func createLoginSet(
-        _ set: LoginSet, secret: String?, carryingFrom sourceSessionID: UUID? = nil
+        _ set: LoginSet, secret: String?, carryingFrom source: LoginSetSecretSource? = nil
     ) -> UUID? {
         do {
             try loginSetStore.upsert(set)
@@ -591,9 +634,9 @@ public final class SessionListViewModel {
         }
 
         var carried = secret
-        if (carried ?? "").isEmpty, let sourceSessionID {
+        if (carried ?? "").isEmpty, let sourceID = sessionID(of: source) {
             do {
-                carried = try secrets.password(for: sourceSessionID)
+                carried = try secrets.password(for: sourceID)
             } catch {
                 return rollBack(set, reporting: error)
             }
