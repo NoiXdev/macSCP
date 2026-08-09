@@ -369,50 +369,13 @@ public final class ConnectionViewModel {
         }
     }
 
-    // MARK: - S3 and WebDAV fields, read through `values`
-
-    public var s3Endpoint: String {
-        get { values[S3Field.endpoint] }
-        set { values[S3Field.endpoint] = newValue }
-    }
-
-    public var s3Region: String {
-        get { values[S3Field.region] }
-        set { values[S3Field.region] = newValue }
-    }
-
-    public var s3Bucket: String {
-        get { values[S3Field.bucket] }
-        set { values[S3Field.bucket] = newValue }
-    }
-
-    public var s3AccessKeyID: String {
-        get { values[S3Field.accessKeyID] }
-        set { values[S3Field.accessKeyID] = newValue }
-    }
-
-    /// Never persisted — same "leave unchanged in edit mode" rule as the
-    /// SSH `password`/jump `jumpPassword` above; the App layer resolves the
-    /// actual secret from the Keychain at connect time.
-    public var s3SecretAccessKey: String {
-        get { values[S3Field.secretAccessKey] }
-        set { values[S3Field.secretAccessKey] = newValue }
-    }
-
-    public var s3UsePathStyle: Bool {
-        get { values[bool: S3Field.usePathStyle] }
-        set { values[bool: S3Field.usePathStyle] = newValue }
-    }
-
-    public var webdavBaseURL: String {
-        get { values[WebDAVField.baseURL] }
-        set { values[WebDAVField.baseURL] = newValue }
-    }
-
-    public var webdavUseNextcloudPath: Bool {
-        get { values[bool: WebDAVField.useNextcloudPath] }
-        set { values[bool: WebDAVField.useNextcloudPath] = newValue }
-    }
+    // S3 and WebDAV field pass-throughs used to live here. Since M22 made the
+    // form data-driven, production reads and writes `values` directly and
+    // none of them has a caller left in `MacSCPApp`/`MacSCPCLI` (confirmed by
+    // deleting all eight and rebuilding both executable targets clean — only
+    // test files failed to compile). They still exist as
+    // `ConnectionViewModelTests`-only convenience accessors; see
+    // `Tests/macSCPCoreTests/ConnectionViewModelTestAccessors.swift`.
 
     /// The jump's existing MANUAL keychain slot when editing a session that
     /// already had one (M10c/T3), remembered by `beginEditing` so
