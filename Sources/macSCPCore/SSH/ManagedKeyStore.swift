@@ -42,10 +42,11 @@ public struct ManagedKeyStore: Sendable {
     /// again: `SecretStore` has no enumeration (a deliberate limit, see its
     /// own doc), and every caller resolves the id it deletes out of
     /// `managed_keys.json` — so once the entry is gone, no screen and no code
-    /// path reaches the passphrase. Deleting the slot last made an ordinary
-    /// key deletion against a Keychain that is there but not answering enough
-    /// to produce one. Failing before the metadata write instead leaves the
-    /// key fully listed, which the user can see and retry.
+    /// path reaches the passphrase. While the slot was deleted last, producing
+    /// such an unreachable secret took nothing more than an ordinary key
+    /// deletion against a Keychain that is there but not answering. Failing
+    /// before the metadata write instead leaves the key fully listed, which
+    /// the user can see and retry.
     ///
     /// The FILES stay best-effort and come last: if `persist` throws, at worst
     /// an orphaned file is left behind (harmless) — never a metadata entry

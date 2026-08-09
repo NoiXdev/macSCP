@@ -143,14 +143,23 @@ public final class SessionListViewModel {
             // `loginSetID != nil`: the set owns the secret. Nothing reads the
             // session's own slot while it is bound — `ContentView.beginEditing`
             // fills the form from `resolvedCredentials` (the set) and only
-            // falls back to `password(for:)` when `loginSetID` is nil — so a
-            // surviving slot is invisible, and it comes BACK the moment the
-            // user switches to manual: the edit form's secret field is then
-            // deliberately blank ("unchanged"), nothing is written, and the
-            // next connect authenticates with the pre-switch secret. Callers
-            // must therefore never bind a session to a set that does not yet
-            // hold the secret; `createLoginSet` is what enforces that for a
-            // set created out of this very session.
+            // falls back to `password(for:)` when `loginSetID` is nil. A
+            // credential nothing displays, changes or rotates has no business
+            // sitting in the Keychain, and that alone settles it.
+            //
+            // It can also come BACK, though not unconditionally: switching to
+            // manual again normally OVERWRITES the old value, because
+            // `applyResolvedCredentials` puts the set's secret into the
+            // visible field and the edit save writes what is in it. The four
+            // cases that leave that field blank are a set with no secret, a
+            // set whose Keychain read fails, an agent set, and a dangling
+            // reference — and a blank field means "unchanged", so nothing is
+            // written and the next connect authenticates with the pre-switch
+            // secret.
+            //
+            // Callers must therefore never bind a session to a set that does
+            // not yet hold the secret; `createLoginSet` is what enforces that
+            // for a set created out of this very session.
             //
             // `requiresSecret` is the descriptor's own answer to "does this
             // backend need a secret at all" — false ONLY for an SSH agent
@@ -383,9 +392,10 @@ public final class SessionListViewModel {
             // branch and the long form of the login-set reasoning).
             //
             // A set-bound session's secret lives under the SET id: nothing
-            // reads the session's own slot while `loginSetID` is set, and a
-            // survivor would come back the moment the user switches to manual
-            // again, unseen and unwritable from the form. The schema question
+            // reads the session's own slot while `loginSetID` is set, so a
+            // survivor is a credential no screen shows and no edit can change
+            // — and one that four specific switch-back cases revive unchanged
+            // (`save` names them). The schema question
             // below cannot answer this one — `visibleSecretField(for:)` reads
             // the session's own backend fields and has no path to
             // `loginSetID`, which is why an SSH session bound to a
@@ -532,9 +542,11 @@ public final class SessionListViewModel {
     }
 
     /// Creates a NEW set and carries a secret onto it, reporting the set id
-    /// only once that secret is demonstrably there. `nil` means nothing was
-    /// created: the set record is rolled back, and the caller must leave its
-    /// session MANUAL rather than bind it.
+    /// only once that secret is demonstrably there. `nil` means the caller
+    /// must leave its session MANUAL rather than bind it; the set record is
+    /// rolled back best-effort, so a set with no secret can survive in the
+    /// list when even that delete fails — visible and deletable, and bound to
+    /// nothing.
     ///
     /// This exists because `saveLoginSet` cannot answer the question a caller
     /// about to rewire a session has to ask. It reports a failed secret write
@@ -597,9 +609,12 @@ public final class SessionListViewModel {
         return set.id
     }
 
-    /// Undoes `createLoginSet`'s store write and reports why. The set's own
-    /// slot is scrubbed too: `savePassword` is not documented to leave nothing
-    /// behind when it throws, and the id is about to stop existing.
+    /// Undoes `createLoginSet`'s store write and reports why. Best-effort on
+    /// both counts — a set that cannot be deleted is a visible, deletable
+    /// record referenced by nothing, never a reason to keep the caller from
+    /// learning that the carry failed. The set's own slot is scrubbed too:
+    /// `savePassword` is not documented to leave nothing behind when it
+    /// throws, and the id is about to stop existing.
     private func rollBack(_ set: LoginSet, reporting error: any Error) -> UUID? {
         try? loginSetStore.delete(id: set.id)
         try? secrets.deletePassword(for: set.id)
@@ -920,10 +935,20 @@ public final class SessionListViewModel {
         let exportedSessions: [ExportedSession] = scopedSessions.map { session in
             // A set-backed session exports the SET's credentials (and, with
             // includePasswords, the SET's secret) instead of its own — a
-            // missing/dangling set just falls back to the session's own
-            // (possibly empty) values; export never aborts. The credential
-            // values land in `fields` below; here it decides only whether a
-            // secret has to be fetched at all.
+            // missing/dangling set falls back to the session's own values;
+            // export never aborts. The credential values land in `fields`
+            // below; here it decides only whether a secret has to be fetched
+            // at all.
+            //
+            // That fallback now yields NO secret rather than a stale one, at
+            // both `self.password(for: session)` sites below (the password and
+            // the S3 secret access key): a set-bound session no longer keeps a
+            // slot of its own, because `save`/`updateSession` delete it on
+            // binding. So a dangling reference exports the session without a
+            // password and counts it in `missingPasswordCount`, instead of
+            // quietly shipping the credential it used before it was bound.
+            // That is the intended reading of "dangling": nobody knows what
+            // this session's secret is any more, and the export says so.
             let resolved = resolvedSSHLogin(for: session)
             // Built once and reused below (for `needsSecret` and for the
             // field bag) -- both ask the same backend's descriptor for the

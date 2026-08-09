@@ -2305,13 +2305,27 @@ struct ContentView: View {
         // the key's own value (`EmbeddedKeyPorter.MaterializedKey`'s doc says
         // the same about the import direction).
         let carried: String? = isManagedKeyWithStoredPassphrase(form) ? nil : typed
-        // The edited session's OWN slot is the fallback source, and only when
-        // the form shows a secret row the user left blank ("unchanged"). The
-        // lookup itself now happens inside `createLoginSet`, which is what
+        // The edited session's OWN slot is the fallback source whenever this
+        // call has no secret of its own to write — a blank secret row
+        // ("unchanged") AND the nil above.
+        //
+        // `?? true` for that nil is deliberate, and it is the same rule the
+        // key writes follow: fall into the state you can come back from.
+        // `isManagedKeyWithStoredPassphrase` answers `true` from its `catch`,
+        // which `ManagedKeyPassphrase.hasStoredPassphrase` also reaches when
+        // `managed_keys.json` itself cannot be read — a FILE error saying
+        // nothing about any Keychain slot. Naming no source there would create
+        // a set with no secret, still hand back an id, and let the binding
+        // delete a session slot that for an external key (or a managed key
+        // with no slot of its own) holds the only copy. Naming the source
+        // costs at worst a duplicate the user can see and change in the login
+        // editor; not naming it costs the credential.
+        //
+        // The lookup itself happens inside `createLoginSet`, which is what
         // lets an unanswerable Keychain abort the whole rewiring instead of
         // quietly producing a set with no secret — `password(for:)` swallows
         // that difference into `nil`.
-        let source: UUID? = carried?.isEmpty == true ? editedSession?.id : nil
+        let source: UUID? = (carried?.isEmpty ?? true) ? editedSession?.id : nil
         // `createLoginSet`, never `saveLoginSet`: a nil result means the set
         // was rolled back and this session must stay MANUAL. Returning its id
         // anyway would bind the session — and binding is what deletes the

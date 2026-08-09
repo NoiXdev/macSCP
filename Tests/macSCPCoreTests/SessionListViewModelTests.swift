@@ -1611,10 +1611,13 @@ struct SessionListViewModelTests {
     /// moves onto a login set must not keep its own slot: the set owns the
     /// secret from then on, and `ContentView.beginEditing` fills the form's
     /// secret field from `resolvedCredentials` (the set) whenever
-    /// `loginSetID` is set, never from the session's own slot. Switching back
-    /// to manual later leaves that field deliberately blank ("unchanged"), so
-    /// nothing overwrites the slot and the next connect would authenticate
-    /// with a secret shown nowhere on screen.
+    /// `loginSetID` is set, never from the session's own slot. A credential
+    /// nothing displays, changes or rotates does not belong in the Keychain —
+    /// and in the four cases `save`'s own comment names (no set secret, an
+    /// unreadable one, an agent set, a dangling reference) a later switch back
+    /// to manual leaves the form's secret field blank, which means
+    /// "unchanged", so the pre-switch secret would be what the next connect
+    /// authenticates with.
     @Test func saveSwitchingTargetToALoginSetDeletesSessionSecret() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -1679,6 +1682,26 @@ struct SessionListViewModelTests {
         vm.updateSession(updated, newSecret: nil)
 
         #expect(secrets.storedIDs == [set.id])
+    }
+
+    /// A nil `secret` reaches the source the same way an empty one does. The
+    /// App layer passes nil whenever it believes the secret lives elsewhere
+    /// (a managed key with its own slot), and that belief comes from a probe
+    /// that also answers "yes" when it simply could not read the key store —
+    /// so nil must not mean "carry nothing", or a healthy Keychain would
+    /// delete a session slot holding the only copy.
+    @Test func createLoginSetTreatsANilSecretAsACarryFromTheSource() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u", authKind: .privateKey),
+            password: "pp")!
+
+        let set = LoginSet(name: "prod", username: "deploy", authKind: .privateKey)
+        #expect(vm.createLoginSet(set, secret: nil, carryingFrom: stored.id) == set.id)
+
+        #expect(secrets.peek(set.id) == "pp")
     }
 
     /// The hazard the whole ordering exists for: the set's secret write fails,
