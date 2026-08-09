@@ -63,17 +63,37 @@ Eine Aufzählung des Schlüsselbunds ist nicht nötig. **Das `SecretStore`-
 Protokoll bleibt unverändert** — und mit ihm die zwölf Konformitäten in acht
 Dateien.
 
-### Die Anspruchsmenge kommt aus den Rohdateien
+### Die Anspruchsmenge, und welcher Teil davon wirklich trägt
 
 Abgezogen wird die Vereinigung aller IDs, die heute irgendetwas beansprucht:
-Sitzungs-IDs, Jump-`secretID`s, Login-Set-IDs, Managed-Key-IDs — jeweils aus
-der **Datei**, nicht aus dem nachsichtigen Zugriff. `all()` und `reload()` sind
-für diesen Zweck unbrauchbar, siehe Tabelle oben.
+Sitzungs-IDs, Jump-`secretID`s, Login-Set-IDs, Managed-Key-IDs.
 
-Der Abzug ist großzügiger als nötig (eine Legacy-Jump-`secretID` kann keine
-heutige Managed-Key-ID sein), und das ist Absicht: er kostet nichts und macht
-die Regel „gelöscht wird nur, was **nirgends** vorkommt" ohne Fallunterscheidung
-wahr.
+**Hier ist eine Einschränkung fällig, die dieser Entwurf sich beim Nachrechnen
+selbst auferlegt hat.** Der erste Entwurf verlangte, all das aus den
+**Rohdateien** zu lesen statt aus `all()`, und begründete das mit den vier
+Filterfallen der Tabelle oben. Nachgerechnet trägt dieses Argument hier
+**nicht**:
+
+- `dropsOnLoad` verbirgt nur blocklose `.ssh`-Datensätze — und ein solcher hat
+  keinen `ssh`-Block, also auch keine Jump-`secretID`, die zu schützen wäre.
+- `LoginSetStore.all()` verbirgt Login-Sets mit unbekanntem `authKind` — deren
+  IDs werden eigens vergeben und können keine Jump-`secretID` von vor M23 sein.
+
+Weil Kandidaten **ausschließlich** Jump-`secretID`s aus der Legacy-Datei sind,
+kann keine der beiden verborgenen Sorten je Kandidat werden. Der Rohdatei-Weg
+ist damit **Gürtel und Hosenträger, nicht die tragende Wand** — und die Spec
+sagt das, statt eine Sicherheit zu behaupten, die woanders herkommt.
+
+**Tragend ist etwas anderes, und das ist ernst:** wird die Sitzungsdatei nicht
+gelesen, sondern schweigend als leer behandelt, ist **keine** Jump-`secretID`
+mehr beansprucht — und der Sweep löscht die Secrets sämtlicher noch
+existierender Jump-Verbindungen. Genau diesen Weg macht `reload()` auf, das
+bei einem Wurf auf leere Listen setzt.
+
+Daraus die Regel: **der Sweep benutzt niemals den Zustand des ViewModels**,
+sondern die Stores selbst, und lässt sie werfen. Der großzügige Abzug über
+alle vier Sorten bleibt trotzdem — er kostet nichts und macht „gelöscht wird
+nur, was nirgends vorkommt" ohne Fallunterscheidung wahr.
 
 ### Jeder Lesefehler bricht ab
 
@@ -159,8 +179,8 @@ bemerken kann.
 |---|---|---|
 | 1 | Eine Legacy-Jump-`secretID`, die kein heutiger Datensatz beansprucht, wird gelöscht | Test über temporäre Dateien + `InMemorySecretStore`: ID vorher da, nachher weg |
 | 2 | Eine Legacy-`secretID`, die ein heutiger Datensatz weiterhin beansprucht, wird **nicht** gelöscht | derselbe Test, zweite ID, bleibt liegen |
-| 3 | Ein blockloser `.ssh`-Datensatz schützt seine IDs trotzdem | Rohdatei enthält ihn, `all()` nicht; Sweep lässt seine IDs in Ruhe |
-| 4 | Ein Login-Set mit unbekanntem `authKind` schützt seine ID | Fixture mit `"authKind": "future-x"`; Sweep lässt sie in Ruhe |
+| 3 | **Eine nicht lesbare Sitzungsdatei löscht nichts** — der schwerste Fall: schweigend leer hieße, sämtliche lebenden Jump-Secrets zu löschen | Test mit unlesbarer Datei; `InMemorySecretStore` danach **unverändert**, Lauf meldet den Fehler |
+| 4 | Der Sweep liest den ViewModel-Zustand nicht | Sweep bekommt die Stores, nicht das ViewModel; als Signatur festgelegt und im Review geprüft |
 | 5 | Jede einzelne unlesbare Datei bricht den Lauf ab, ohne zu löschen | ein Test je Datei; `InMemorySecretStore` unverändert |
 | 6 | Fehlende Legacy-Datei ist kein Fehler | Lauf meldet null entfernt, kein Wurf |
 | 7 | Der Sweep liest nie ein Secret | Test-Double, dessen `password(for:)` den Test scheitern lässt |
@@ -173,9 +193,16 @@ bemerken kann.
 
 - Die Kernlogik gehört in Core und wird **ohne echten Schlüsselbund** getestet:
   temporäre Dateien plus `InMemorySecretStore`. Dessen `storedIDs` — im
-  Aufräum-Durchgang eingeführt — ist genau das Werkzeug für Kriterium 1–4:
-  es zeigt, dass **nirgends** etwas übrig blieb, nicht nur unter der einen ID,
-  nach der man gefragt hat.
+  Aufräum-Durchgang eingeführt — ist genau das Werkzeug für die Kriterien 1–3:
+  es zeigt, dass **nirgends** etwas übrig blieb bzw. dass **nichts** angefasst
+  wurde, nicht nur unter der einen ID, nach der man gefragt hat.
+- **Zwei Tests, die keine sind, und trotzdem hineingehören.** Die Fixtures für
+  den blocklosen `.ssh`-Datensatz und für das Login-Set mit unbekanntem
+  `authKind` werden mitgeführt — aber mit einem Doc-Kommentar, der sagt, dass
+  sie unter der heutigen Kandidatenregel **nicht scheitern können** und als
+  Wächter für eine spätere Ausweitung dastehen. Wer die Kandidatenmenge je auf
+  „alles im Schlüsselbund" erweitert, macht sie damit scharf. Ohne diesen
+  Kommentar wären es zwei Tests, die Sicherheit vortäuschen.
 - Für Kriterium 7 braucht es ein Double, dessen `password(for:)` den Test
   scheitern lässt. Das Muster existiert im Repo mehrfach.
 - Die gegatete `MACSCP_KEYCHAIN`-Suite bleibt **unberührt**. Sie deckt den
