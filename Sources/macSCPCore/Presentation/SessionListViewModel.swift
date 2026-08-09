@@ -1,6 +1,17 @@
 import Foundation
 import Observation
 
+/// `applyMerge` refusing a group whose members hold different secrets (M28/T2).
+/// Thrown rather than branched so it lands in the rollback the carry failures
+/// already use -- one place that deletes the set, rewires nothing and deletes
+/// nothing. `description` is what that branch interpolates into
+/// `core.login.mergeFailed %@`, which is why this is a localized sentence
+/// instead of a type name; it states THAT the credentials differ and never
+/// quotes either of them.
+private struct LoginMergeSecretConflict: Error, CustomStringConvertible {
+    var description: String { CoreL10n.string("core.login.mergeConflictingSecrets") }
+}
+
 /// State of the sessions sidebar: list, save, delete, password access.
 /// Secrets go exclusively through the SecretStore.
 @Observable
@@ -738,12 +749,29 @@ public final class SessionListViewModel {
             // can lock in it, and the slot can change in it -- and the second
             // read's answer would be the one that counts. There is no such
             // window with one read.
+            //
+            // Members that hold DIFFERENT non-empty secrets abort the merge
+            // (M28/T2 fix round 3, maintainer decision). A login set is one
+            // credential: `LoginResolver.credentials(of:secrets:)` reads the
+            // set's single slot and every bound session resolves through it, so
+            // a set built from disagreeing members could have served at most
+            // one of them -- and the way there was to
+            // write one onto the set and delete the other, whose slot was the
+            // only place it existed. Refusing is not a new restriction; it
+            // declines a merge that could not have worked. Only `.passphrase`
+            // groups reach this through `LoginMergePlanner.candidates`, which
+            // puts a `.credential` secret in its grouping key and so never
+            // groups disagreeing members in the first place -- but a candidate
+            // arrives here as a plain value that anything could have built.
             var carried: String?
             for session in groupSessions {
                 guard let secret = try secrets.password(for: session.id), !secret.isEmpty
                 else { continue }
-                carried = secret
-                break
+                if let carried {
+                    guard secret == carried else { throw LoginMergeSecretConflict() }
+                } else {
+                    carried = secret
+                }
             }
             if let carried {
                 try secrets.savePassword(carried, for: set.id)

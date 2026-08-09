@@ -1112,6 +1112,92 @@ struct SessionListViewModelTests {
         #expect(secrets.storedIDs.isEmpty)
     }
 
+    /// Members holding DIFFERENT non-empty secrets. A login set is one
+    /// credential, so a set built from these could have served at most one of
+    /// them -- and the merge got there by writing the first onto the set and
+    /// deleting the second, which existed nowhere else. Refusing takes nothing
+    /// away: it declines a merge that could not have worked. Reachable through
+    /// the planner because a `.passphrase`-role secret is never read there and
+    /// so never enters the grouping key, unlike a `.password` group, whose
+    /// members must already share a secret value to be grouped at all.
+    @Test func membersWithDifferentPassphrasesAbortTheMergeAndKeepBothSecrets() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let passphraseA = "first"
+        let passphraseB = "second"
+        let a = vm.save(
+            name: "a",
+            values: sshValues(
+                host: "h1", port: 22, username: "root", authKind: .privateKey, keyPath: "/k"),
+            password: passphraseA)!
+        let b = vm.save(
+            name: "b",
+            values: sshValues(
+                host: "h2", port: 22, username: "root", authKind: .privateKey, keyPath: "/k"),
+            password: passphraseB)!
+
+        let candidates = vm.mergeCandidates()
+        #expect(candidates.count == 1)
+
+        let result = vm.applyMerge(candidates.first!, name: "root")
+
+        #expect(result == nil)
+        #expect(vm.errorMessage != nil)
+        #expect(vm.loginSets.isEmpty)
+        #expect(vm.sessions.first { $0.id == a.id }?.loginSetID == nil)
+        #expect(vm.sessions.first { $0.id == b.id }?.loginSetID == nil)
+        // Both secrets survive, each still under its own member's id and
+        // nowhere else. Searched over every id the store holds, so a failure
+        // reads as "gone" (an empty set) rather than as a flag, and only ids
+        // take part in the comparison.
+        let idsHoldingTheFirst = secrets.storedIDs.filter { secrets.peek($0) == passphraseA }
+        let idsHoldingTheSecond = secrets.storedIDs.filter { secrets.peek($0) == passphraseB }
+        #expect(idsHoldingTheFirst == Set([a.id]))
+        #expect(idsHoldingTheSecond == Set([b.id]))
+        #expect(secrets.storedIDs == Set([a.id, b.id]))
+        // The reported reason may not quote what it compared. Reduced to a
+        // Bool first so the message itself never reaches a failure report.
+        let messageQuotesASecret = (vm.errorMessage ?? "").contains(passphraseA)
+            || (vm.errorMessage ?? "").contains(passphraseB)
+        #expect(!messageQuotesASecret)
+        // Not asserted here: the localized TEXT. `CoreL10n.string` cannot find
+        // the resource bundle under `swift test` and returns the key itself --
+        // for the long-standing `core.login.mergeFailed %@` just as much as for
+        // the new reason key -- so any such assertion would pin the test
+        // environment. That all four Core catalogs carry the same key set is
+        // what `LocalizableStringsTests` checks, off disk.
+    }
+
+    /// The counterpart that must stay green: members that agree still merge.
+    @Test func membersSharingOnePassphraseStillMerge() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let passphrase = "shared"
+        let a = vm.save(
+            name: "a",
+            values: sshValues(
+                host: "h1", port: 22, username: "root", authKind: .privateKey, keyPath: "/k"),
+            password: passphrase)!
+        let b = vm.save(
+            name: "b",
+            values: sshValues(
+                host: "h2", port: 22, username: "root", authKind: .privateKey, keyPath: "/k"),
+            password: passphrase)!
+
+        let candidates = vm.mergeCandidates()
+        #expect(candidates.count == 1)
+
+        let set = vm.applyMerge(candidates.first!, name: "root")
+
+        #expect(set != nil)
+        #expect(vm.errorMessage == nil)
+        #expect(vm.sessions.first { $0.id == a.id }?.loginSetID == set?.id)
+        #expect(vm.sessions.first { $0.id == b.id }?.loginSetID == set?.id)
+        let idsHoldingThePassphrase = secrets.storedIDs.filter { secrets.peek($0) == passphrase }
+        #expect(idsHoldingThePassphrase == Set([set!.id]))
+        #expect(secrets.storedIDs == Set([set!.id]))
+    }
+
     /// A group with no stored secret at all -- no slot, as opposed to a slot
     /// holding "" -- is not the failure case: there is nothing to carry and
     /// nothing to lose, so the merge goes through and deleting the absent slots

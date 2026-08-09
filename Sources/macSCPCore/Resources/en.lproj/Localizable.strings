@@ -93,3 +93,4 @@
 "core.login.saveFailed %@" = "Failed to save login: %@";
 "core.login.deleteFailed %@" = "Failed to delete login: %@";
 "core.login.mergeFailed %@" = "Failed to merge logins: %@";
+"core.login.mergeConflictingSecrets" = "they store different credentials";

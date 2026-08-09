@@ -95,3 +95,4 @@
 "core.login.saveFailed %@" = "Échec de l'enregistrement du login : %@";
 "core.login.deleteFailed %@" = "Échec de la suppression du login : %@";
 "core.login.mergeFailed %@" = "Échec de la fusion des logins : %@";
+"core.login.mergeConflictingSecrets" = "ils stockent des identifiants différents";

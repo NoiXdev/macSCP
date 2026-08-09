@@ -93,3 +93,4 @@
 "core.login.saveFailed %@" = "Login konnte nicht gespeichert werden: %@";
 "core.login.deleteFailed %@" = "Login konnte nicht gelöscht werden: %@";
 "core.login.mergeFailed %@" = "Logins konnten nicht zusammengeführt werden: %@";
+"core.login.mergeConflictingSecrets" = "sie speichern unterschiedliche Zugangsdaten";
