@@ -944,6 +944,129 @@ struct SessionListViewModelTests {
         }
     }
 
+    // MARK: - applyMerge tells "unreadable" apart from "empty" (M28/T2)
+
+    /// The merge carries one member's secret onto the new set and then deletes
+    /// every member's own slot. A read that FAILS has to abort that: with the
+    /// read swallowed, a Keychain that will not answer is indistinguishable
+    /// from a group of empty slots, so nothing is carried, the rollback that
+    /// exists for a failed carry never fires, and the loop takes the only copy
+    /// each member has.
+    ///
+    /// The store answers while `mergeCandidates()` plans and stops answering
+    /// afterwards, which is the real timeline: `LoginMergePlanner.candidates`
+    /// reads first, a confirmation dialog sits in between, and `applyMerge`
+    /// reads again.
+    @Test func anUnreadableMemberSecretRollsTheMergeBackAndDeletesNothing() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = LockableReadSecretStore()
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: secrets,
+            loginSetStore: LoginSetStore(directory: dir))
+        let a = vm.save(
+            name: "a", values: sshValues(host: "h1", port: 22, username: "root"),
+            password: "shared")!
+        let b = vm.save(
+            name: "b", values: sshValues(host: "h2", port: 22, username: "root"),
+            password: "shared")!
+
+        let candidates = vm.mergeCandidates()
+        #expect(candidates.count == 1)
+        let candidate = candidates.first!
+
+        secrets.readsFail = true
+        let result = vm.applyMerge(candidate, name: "root")
+
+        #expect(result == nil)
+        #expect(vm.errorMessage != nil)
+        // The rollback deleted the set it had just created, and no session was
+        // rewired onto it.
+        #expect(vm.loginSets.isEmpty)
+        #expect(vm.sessions.first { $0.id == a.id }?.loginSetID == nil)
+        #expect(vm.sessions.first { $0.id == b.id }?.loginSetID == nil)
+        // The point of the test: both members still hold their own secret, and
+        // the store holds nothing else -- no slot under a set id either.
+        // Checked over the ids the store actually has rather than by looking up
+        // the two ids the test expects, so a slot under any third id would fail
+        // this too. No secret VALUE takes part in the comparison, so no failure
+        // message can print one.
+        #expect(secrets.storedIDs == Set([a.id, b.id]))
+    }
+
+    /// A group whose slots are genuinely EMPTY is not the same case: there is
+    /// nothing to carry and nothing to lose, so the merge goes through and
+    /// deleting the empty slots is a no-op. Private-key sessions make this
+    /// reachable through the planner at all -- `LoginMergePlanner.candidates`
+    /// skips the Keychain for a `.passphrase`-role secret field, which is what
+    /// `SSHFieldSchema` declares its passphrase to be, so two members with no
+    /// stored passphrase still form a candidate. Under `.password` the same
+    /// planner drops a secret-less session instead.
+    @Test func genuinelyEmptyMemberSlotsStillMerge() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let a = vm.save(
+            name: "a",
+            values: sshValues(
+                host: "h1", port: 22, username: "root", authKind: .privateKey, keyPath: "/k"),
+            password: "")!
+        let b = vm.save(
+            name: "b",
+            values: sshValues(
+                host: "h2", port: 22, username: "root", authKind: .privateKey, keyPath: "/k"),
+            password: "")!
+        // `save` stores the empty passphrase of an unencrypted key, which is a
+        // slot that EXISTS. Removing both is what makes the group have no
+        // stored secret at all, which is the case under test.
+        try secrets.deletePassword(for: a.id)
+        try secrets.deletePassword(for: b.id)
+        #expect(secrets.storedIDs.isEmpty)
+
+        let candidates = vm.mergeCandidates()
+        #expect(candidates.count == 1)
+
+        let set = vm.applyMerge(candidates.first!, name: "root")
+
+        #expect(set != nil)
+        #expect(vm.errorMessage == nil)
+        #expect(vm.sessions.first { $0.id == a.id }?.loginSetID == set?.id)
+        #expect(vm.sessions.first { $0.id == b.id }?.loginSetID == set?.id)
+        // Nothing was there to carry, so nothing is stored -- not under the
+        // set's id either.
+        #expect(secrets.storedIDs.isEmpty)
+    }
+
+    /// The carry itself is unchanged by the throwing reads: one member's secret
+    /// lands on the set and both members' own slots go.
+    @Test func aReadableMemberSecretIsCarriedByTheMergeAndTheOwnSlotsGo() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let memberSecret = "shared"
+        let a = vm.save(
+            name: "a", values: sshValues(host: "h1", port: 22, username: "root"),
+            password: memberSecret)!
+        let b = vm.save(
+            name: "b", values: sshValues(host: "h2", port: 22, username: "root"),
+            password: memberSecret)!
+
+        let candidates = vm.mergeCandidates()
+        #expect(candidates.count == 1)
+
+        let set = vm.applyMerge(candidates.first!, name: "root")
+
+        #expect(set != nil)
+        // Compared through a Bool so a failure prints `false` instead of the
+        // secret the comparison looked at.
+        let carriedTheMemberSecret = try secrets.password(for: set!.id) == memberSecret
+        #expect(carriedTheMemberSecret)
+        // Exactly one slot is left and it is the set's -- both members' own
+        // slots are gone.
+        #expect(secrets.storedIDs == Set([set!.id]))
+        #expect(vm.sessions.first { $0.id == a.id }?.loginSetID == set!.id)
+        #expect(vm.sessions.first { $0.id == b.id }?.loginSetID == set!.id)
+    }
+
     @Test func suggestedSetNameAvoidsCollision() {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -2742,6 +2865,42 @@ private final class NewIDFailingSecretStore: SecretStore, @unchecked Sendable {
     func deletePassword(for sessionID: UUID) throws {
         lock.lock(); defer { lock.unlock() }
         storage[sessionID] = nil
+    }
+}
+
+/// Test double for a Keychain that answers until it does not: `readsFail` is
+/// flipped between two reads of the same test run, which is the timeline
+/// `applyMerge` actually faces -- `LoginMergePlanner.candidates` reads while
+/// the Keychain is open, a confirmation dialog follows, and `applyMerge` reads
+/// again. Distinct from `UnreliableSecretStore`, whose `failsReads` is fixed at
+/// init and so cannot let a candidate be planned first. Writes and deletes keep
+/// working on purpose: a double that refused those too would satisfy "nothing
+/// was deleted" by itself instead of letting the code under test earn it.
+private final class LockableReadSecretStore: SecretStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [UUID: String] = [:]
+    var readsFail = false
+
+    func savePassword(_ password: String, for sessionID: UUID) throws {
+        lock.lock(); defer { lock.unlock() }
+        storage[sessionID] = password
+    }
+
+    func password(for sessionID: UUID) throws -> String? {
+        if readsFail { throw KeychainError(status: -25308) }
+        lock.lock(); defer { lock.unlock() }
+        return storage[sessionID]
+    }
+
+    func deletePassword(for sessionID: UUID) throws {
+        lock.lock(); defer { lock.unlock() }
+        storage[sessionID] = nil
+    }
+
+    /// See `InMemorySecretStore.storedIDs`.
+    var storedIDs: Set<UUID> {
+        lock.lock(); defer { lock.unlock() }
+        return Set(storage.keys)
     }
 }
 

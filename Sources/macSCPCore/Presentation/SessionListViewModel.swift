@@ -665,9 +665,12 @@ public final class SessionListViewModel {
     /// keychain entry is a harmless residual, never a reason to abort). A
     /// store failure while creating the set aborts before anything is
     /// rewired. Deletion is gated on the secret carry, not on rewiring order
-    /// (spec §4): if carrying the source secret onto the new set fails, the
-    /// just-created set is rolled back, no session is rewired, and every
-    /// session keeps its own secret. Once the carry succeeds, each session
+    /// (spec §4): if any part of the carry fails — either keychain READ, or
+    /// the write onto the set — the just-created set is rolled back, no
+    /// session is rewired, and every session keeps its own secret. A failing
+    /// read is a failed carry and not an empty one, which is what keeps a
+    /// locked keychain from looking like a group with nothing to carry
+    /// (M28/T2). Once the carry succeeds, each session
     /// is rewired and has its own secret deleted in the same iteration —
     /// both are `try?`, so a store-write failure for one session does not
     /// stop that session's secret from being deleted.
@@ -706,14 +709,21 @@ public final class SessionListViewModel {
             return nil
         }
 
-        let source = groupSessions.first { (try? secrets.password(for: $0.id)) ?? nil != nil } ?? first
         var carryError: (any Error)?
-        if let secret = (try? secrets.password(for: source.id)) ?? nil {
-            do {
+        do {
+            // Both reads throw rather than swallowing (M28/T2): a Keychain that
+            // will not answer looks exactly like a group of empty slots, and
+            // the loop below deletes every member's own slot. Reading "nothing
+            // to carry" out of a failure would take the only copy each member
+            // has. A genuinely empty group is a different case and still merges
+            // -- there is nothing to carry and nothing to lose, so those two
+            // deletes are no-ops.
+            let source = try groupSessions.first { try secrets.password(for: $0.id) != nil } ?? first
+            if let secret = try secrets.password(for: source.id) {
                 try secrets.savePassword(secret, for: set.id)
-            } catch {
-                carryError = error
             }
+        } catch {
+            carryError = error
         }
         if let carryError {
             // The secret never made it onto the set -- roll the set back and
