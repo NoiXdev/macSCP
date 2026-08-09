@@ -2678,20 +2678,33 @@ struct ContentView: View {
                         }
                     } catch LoginResolveError.jumpSetNotSSH {
                         // The jump is bound to a login set of another
-                        // protocol (M28/T7). This is the ONLY catch site the
-                        // new case can reach: the three session-mode ones
-                        // (the two above and `resolveSelectedJumpSession`)
-                        // all build a spec whose `sessionID` is set, and
-                        // `LoginResolver.resolveJump` only consults a
-                        // `loginSetID` on the other branch.
+                        // protocol (M28/T7). This is the only catch site the
+                        // case can reach, because it is the only one that
+                        // resolves a jump spec whose `sessionID` is nil: the
+                        // three others — `resolveSelectedJumpSession`,
+                        // `ConnectionFormView.jumpSessionSummary` and the
+                        // session-mode branch just above — all build or pass
+                        // a spec carrying a `sessionID`, and
+                        // `LoginResolver.resolveJump(...sessions:...)` only
+                        // delegates to the throwing overload when that is
+                        // nil; with a `sessionID` it resolves the REFERENCED
+                        // session's own login instead, where a set of the
+                        // wrong kind is `.kindMismatch`. (The remaining catch
+                        // above is the TARGET's resolution, not a jump's.)
                         //
                         // The raw fallback is what keeps the refusal
-                        // meaningful: it clears `jumpSelectedLoginSetID` and
-                        // returns the block to Manual, so a following submit
-                        // does not walk `resolveSelectedJumpLoginSet` into
-                        // `fillJumpForm` and copy the very credentials this
-                        // refusal is about into the form. It also blanks
-                        // `jumpPassword` — the set's secret was never read.
+                        // meaningful on THIS path: it clears
+                        // `jumpSelectedLoginSetID` and returns the block to
+                        // Manual, so a following submit does not walk
+                        // `resolveSelectedJumpLoginSet` into `fillJumpForm`
+                        // and copy the very credentials this refusal is about
+                        // into the form. It also blanks `jumpPassword` — the
+                        // set's secret was never read. Editing such a session
+                        // (`ConnectionViewModel.beginEditing`) reaches the
+                        // same submit with no resolution and no fallback at
+                        // all; the `kind` guard inside
+                        // `resolveSelectedJumpLoginSet` is what covers that
+                        // route.
                         applyRawJumpFallback(form, from: stored)
                         form.showFailure(
                             message: L10n.string(
