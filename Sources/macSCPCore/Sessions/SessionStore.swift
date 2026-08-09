@@ -90,8 +90,20 @@ public struct SessionStore: Sendable {
         // would be a new failure mode for a problem nobody has, and would
         // change the user's data without being asked. The next regular save
         // omits the record anyway; until then it is skipped on every start.
-        file.sessions.removeAll { $0.kind == .ssh && $0.ssh == nil }
+        file.sessions.removeAll(where: Self.dropsOnLoad)
         return file
+    }
+
+    /// The rule `load()` above applies, as a value anyone can ask about.
+    ///
+    /// It is factored out because the import planner has to reject exactly
+    /// what this drops: a record it planned and this removed would be counted
+    /// as imported, be invisible in the sidebar, and leave its Keychain secret
+    /// unreachable. Two independent spellings of the same rule could drift;
+    /// one predicate cannot. Widening it therefore widens both sides at once —
+    /// see the reasoning above for why only `.ssh` is dropped.
+    static func dropsOnLoad(_ session: StoredSession) -> Bool {
+        session.kind == .ssh && session.ssh == nil
     }
 
     /// Reads the pre-M23 file, writes its upgrade to the new one, and returns

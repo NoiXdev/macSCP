@@ -1531,6 +1531,43 @@ struct SessionListViewModelTests {
         #expect(imported.webdav == nil)
     }
 
+    /// The M26 defect, end to end. A file entry that builds a blockless
+    /// `.ssh` record used to be counted as imported and to have its password
+    /// written to the Keychain under the planned id — while
+    /// `SessionStore.load()` removed the record itself on the very next read,
+    /// which `applyImport`'s closing `reload()` performs immediately. The user
+    /// was told "1 imported" for a session not in the sidebar, and the secret
+    /// became an orphan no delete path can reach, because every
+    /// `deletePassword` caller resolves its id from a session in the reloaded
+    /// list.
+    @Test func blocklessSSHEntryIsNeitherImportedNorLeavesAnOrphanSecret() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = ExportedSession(
+            id: UUID(), name: "ghost", kind: .ssh, fields: [:], password: "orphan-secret")
+        let payload = SessionExportPayload(
+            includesSecrets: true, groups: [], sessions: [file])
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: payload,
+            arbiter: ImportConflictArbiter { _ in Issue.record("decider must not be asked"); return nil })
+
+        let secrets = InMemorySecretStore()
+        let vm = SessionListViewModel(store: SessionStore(directory: dir), secrets: secrets)
+        let result = vm.applyImport(plan)
+
+        #expect(result.imported == 0)
+        #expect(plan.rejected == ["ghost"])
+        #expect(vm.sessions.isEmpty)
+        // No Keychain slot may be left behind for a record that is not there.
+        // Written as a loop over the plan rather than a single lookup so it
+        // asserts something real on today's code too, where the entry IS
+        // planned and its secret IS saved.
+        for planned in plan.sessionsToImport {
+            #expect(secrets.peek(planned.session.id) == nil)
+        }
+    }
+
     // MARK: - Agent auth (M10d/T3)
 
     @Test func saveSwitchingTargetToAgentDeletesSessionSecret() throws {

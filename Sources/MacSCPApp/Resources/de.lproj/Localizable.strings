@@ -379,6 +379,7 @@
 "import.result.body %lld %lld %lld" = "%lld importiert, %lld als Duplikate übersprungen, %lld Passwörter importiert";
 "import.result.passwordFailures %lld" = "Passwörter, die nicht gespeichert werden konnten: %lld";
 "import.result.storeFailures %lld" = "Wegen eines Fehlers nicht gespeichert: %lld";
+"import.result.rejected %lld" = "Wegen unvollständiger Angaben nicht importiert: %lld";
 "import.result.plaintextNotice" = "Die Datei enthielt unverschlüsselte Passwörter.";
 "import.error.notExport" = "Keine macSCP-Sitzungsdatei.";
 "import.error.newerVersion" = "Diese Datei wurde mit einer neueren Version von macSCP erstellt.";

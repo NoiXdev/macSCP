@@ -3448,6 +3448,16 @@ struct ContentView: View {
                 "import.result.storeFailures %lld", "Not saved due to an error: %lld"),
                 result.storeFailures))
         }
+        // Entries the planner refused: the file described a connection with
+        // nothing to dial, which the store would discard on its next read. A
+        // COUNT only — a rejected entry can carry a password, and neither it
+        // nor the entry's contents belong in an alert.
+        if !plan.rejected.isEmpty {
+            lines.append(String(format: L10n.string(
+                "import.result.rejected %lld",
+                "Not imported because the entry was incomplete: %lld"),
+                plan.rejected.count))
+        }
         if includesSecrets && !encrypted {
             lines.append(L10n.string(
                 "import.result.plaintextNotice", "The file contained unencrypted passwords."))

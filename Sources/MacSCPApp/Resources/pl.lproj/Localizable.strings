@@ -381,6 +381,7 @@
 "import.result.body %lld %lld %lld" = "Zaimportowano: %lld, pominięto jako duplikaty: %lld, zaimportowanych haseł: %lld";
 "import.result.passwordFailures %lld" = "Hasła, których nie udało się zapisać: %lld";
 "import.result.storeFailures %lld" = "Niezapisane z powodu błędu: %lld";
+"import.result.rejected %lld" = "Niezaimportowane z powodu niekompletnego wpisu: %lld";
 "import.result.plaintextNotice" = "Plik zawierał niezaszyfrowane hasła.";
 "import.error.notExport" = "To nie jest plik sesji macSCP.";
 "import.error.newerVersion" = "Ten plik został utworzony przez nowszą wersję macSCP.";

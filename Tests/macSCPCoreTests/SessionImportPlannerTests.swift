@@ -590,6 +590,70 @@ struct SessionImportPlannerTests {
         #expect(planned.session.webdav == nil)
     }
 
+    // MARK: - Blockless `.ssh` entries (M27)
+
+    /// The mirror image of the WebDAV case above: an `.ssh` entry with an
+    /// empty bag builds a record `SessionStore.load()` removes on sight, so
+    /// planning it would promise the user an import that cannot survive the
+    /// very next store read. It is rejected instead of planned.
+    @Test func blocklessSSHFileSessionIsRejectedInsteadOfPlanned() async {
+        let file = ExportedSession(id: UUID(), name: "ghost", kind: .ssh, fields: [:])
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.isEmpty)
+        #expect(plan.rejected == ["ghost"])
+        #expect(plan.skipped.isEmpty)
+    }
+
+    /// The M23 precedent, pinned: one unusable entry is reported and skipped,
+    /// it does not fail the file around it. This is the test that goes red if
+    /// anyone later turns the rejection into a whole-file verdict.
+    @Test func oneRejectedEntryDoesNotStopTheRestOfTheFile() async {
+        let files = [
+            exported(name: "good-1", host: "host-a"),
+            ExportedSession(id: UUID(), name: "broken", kind: .ssh, fields: [:]),
+            exported(name: "good-2", host: "host-b"),
+        ]
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming(files), arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.map(\.session.name) == ["good-1", "good-2"])
+        #expect(plan.rejected == ["broken"])
+    }
+
+    /// A rejected entry is not a conflict, so it must not establish a
+    /// duplicate key either: two blockless entries in one file would
+    /// otherwise collide with each other and put a decision to the user about
+    /// a session nobody can import. `neverAsked` fails the test if the
+    /// decider is consulted at all.
+    @Test func rejectedEntriesNeverReachTheArbiter() async {
+        let files = [
+            ExportedSession(id: UUID(), name: "broken-1", kind: .ssh, fields: [:]),
+            ExportedSession(id: UUID(), name: "broken-2", kind: .ssh, fields: [:]),
+        ]
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming(files), arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.isEmpty)
+        #expect(plan.rejected == ["broken-1", "broken-2"])
+    }
+
+    /// Same rule the skipped-duplicate case already obeys: a group nothing
+    /// imported references must not be created. Pinned at the new branch too,
+    /// so a rejected entry cannot leave a ghost group behind.
+    @Test func groupReferencedOnlyByARejectedEntryIsNotCreated() async {
+        let fileGroup = ExportedGroup(id: UUID(), name: "Staging")
+        let file = ExportedSession(
+            id: UUID(), name: "broken", kind: .ssh, fields: [:], groupID: fileGroup.id)
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [],
+            incoming: incoming([file], groups: [fileGroup]), arbiter: neverAsked)
+
+        #expect(plan.groupsToCreate.isEmpty)
+        #expect(plan.rejected == ["broken"])
+    }
+
     /// The replace path (M19) goes through the same `makePlanned` builder, so
     /// an overwritten record must land with its WebDAV config too — the field
     /// must not be dropped on one branch and carried on another.

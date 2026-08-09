@@ -45,6 +45,13 @@ public struct SessionImportPlan: Equatable, Sendable {
     /// the user, so they must be the names actually stored.
     public var replaced: [String]
     public var renamed: [String]
+    /// Trimmed names of entries the planner refused to import at all, in file
+    /// order, because the record they would build is one `SessionStore.load()`
+    /// removes on sight (`SessionStore.dropsOnLoad`). Distinct from `skipped`,
+    /// which the USER chose: nobody is asked about these, and they are not
+    /// duplicates. Reported as a COUNT to the user — a rejected entry may
+    /// carry a secret, and no part of it is logged.
+    public var rejected: [String]
     /// True when the user cancelled the run; every other array is then empty
     /// and the caller must apply nothing at all.
     public var cancelled: Bool
@@ -52,13 +59,14 @@ public struct SessionImportPlan: Equatable, Sendable {
     public init(
         groupsToCreate: [StoredGroup] = [], sessionsToImport: [PlannedSession] = [],
         skipped: [ExportedSession] = [], replaced: [String] = [], renamed: [String] = [],
-        cancelled: Bool = false
+        rejected: [String] = [], cancelled: Bool = false
     ) {
         self.groupsToCreate = groupsToCreate
         self.sessionsToImport = sessionsToImport
         self.skipped = skipped
         self.replaced = replaced
         self.renamed = renamed
+        self.rejected = rejected
         self.cancelled = cancelled
     }
 }
@@ -152,14 +160,29 @@ public enum SessionImportPlanner {
         var skipped: [ExportedSession] = []
         var replaced: [String] = []
         var renamed: [String] = []
+        var rejected: [String] = []
 
         for fileSession in incoming.sessions {
-            let key = duplicateKey(for: fileSession)
             // The connection form trims on save, so import must not be the
             // one path that stores a name with surrounding whitespace — and
             // the summary arrays below report exactly what was stored.
             let trimmedName = fileSession.name.trimmingCharacters(in: .whitespacesAndNewlines)
             let resolvedGroupID = fileSession.groupID.flatMap { groupIDMap[$0] }
+
+            // Rejected BEFORE the duplicate key is even consulted: an entry
+            // nothing can import is not a conflict, so the user must not be
+            // asked about it, and it must not establish a key a later entry
+            // could collide with. Reported and skipped rather than failing
+            // the file — the same rule `storeFailures` and `passwordFailures`
+            // follow in the applier, and the reason `StoredSession.init(from:)`
+            // accepts a blockless record on disk in the first place (see
+            // `BackendDescriptor`'s note on the representable shape).
+            guard !wouldBeDroppedByStore(fileSession) else {
+                rejected.append(trimmedName)
+                continue
+            }
+
+            let key = duplicateKey(for: fileSession)
 
             guard let collidingSummary = summaryByKey[key] else {
                 summaryByKey[key] = displaySummary(for: fileSession)
@@ -246,7 +269,24 @@ public enum SessionImportPlanner {
 
         return SessionImportPlan(
             groupsToCreate: groupsToCreate, sessionsToImport: sessionsToImport,
-            skipped: skipped, replaced: replaced, renamed: renamed, cancelled: false)
+            skipped: skipped, replaced: replaced, renamed: renamed, rejected: rejected,
+            cancelled: false)
+    }
+
+    /// True when this file entry would build a record the store removes the
+    /// moment it reads the file back.
+    ///
+    /// The shape is built by `makePlanned` — the same builder every accepted
+    /// path uses, so what is judged here is what would actually be stored —
+    /// and judged by `SessionStore.dropsOnLoad`, the store's own rule rather
+    /// than a second copy of it.
+    ///
+    /// Id, name and group take no part in that rule, so the probe passes
+    /// throwaway values for them; the record it builds is discarded either
+    /// way. Nothing here reads a secret, and the probe is never stored.
+    private static func wouldBeDroppedByStore(_ fileSession: ExportedSession) -> Bool {
+        let probe = makePlanned(from: fileSession, id: UUID(), name: "", groupID: nil)
+        return SessionStore.dropsOnLoad(probe.session)
     }
 
     /// Builds the planned session for one file entry under an already-decided
@@ -293,10 +333,12 @@ public enum SessionImportPlanner {
         // it, and its `.ssh` arm is unreachable through any real file: v1's
         // `host` column was non-optional, so every v1 `.ssh` entry yields five
         // keys, and a stored `.ssh` session with `ssh == nil` never reaches an
-        // export at all -- `SessionStore.load()` drops it (M26,
-        // `SessionStore.swift:93`) before `sessionValues`, or anything else
-        // downstream, gets a look. Only a hand-built `ExportedSession` or a
-        // hand-edited `"fields": {}` reaches it.
+        // export at all -- `SessionStore.load()` drops it (M26) before
+        // `sessionValues`, or anything else downstream, gets a look. Only a
+        // hand-built `ExportedSession` or a hand-edited `"fields": {}` takes
+        // that arm, and since M27 the only caller that hands one to this
+        // builder is `wouldBeDroppedByStore`, whose result is thrown away:
+        // such an entry is rejected before it can be planned.
         var session = StoredSession(id: id, name: name, groupID: groupID, kind: kind)
         if !fileSession.fields.isEmpty {
             var values = FieldValues()
