@@ -2125,6 +2125,16 @@ struct ContentView: View {
                 field: .jumpHost)
             return false
         }
+        guard JumpLoginSetEligibility.isEligible(set) else {
+            form.showFailure(
+                message: L10n.string(
+                    "form.jump.set.notSSH",
+                    "The jump host uses a stored login that is not an SSH login. "
+                        + "Choose an SSH login for the jump host, or enter its "
+                        + "user name and password here."),
+                field: .jumpHost)
+            return false
+        }
         fillJumpForm(form, from: set)
         return true
     }

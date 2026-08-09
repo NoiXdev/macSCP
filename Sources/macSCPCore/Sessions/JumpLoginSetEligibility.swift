@@ -22,7 +22,16 @@ import Foundation
 /// same `kind` question before it lets the old bastion slot go — the same
 /// split `JumpSessionEligibility` documents for saved connections.
 public enum JumpLoginSetEligibility {
+    /// Whether ONE set may serve a jump. The picker filters with it; the App's
+    /// fill-before-submit path asks it about the set it is about to copy
+    /// credentials out of, where a binding that predates the filter (or that
+    /// an import turned into another kind under the same id) arrives
+    /// unfiltered.
+    public static func isEligible(_ set: LoginSet) -> Bool {
+        set.kind == .ssh
+    }
+
     public static func eligible(in sets: [LoginSet]) -> [LoginSet] {
-        sets.filter { $0.kind == .ssh }
+        sets.filter(isEligible)
     }
 }

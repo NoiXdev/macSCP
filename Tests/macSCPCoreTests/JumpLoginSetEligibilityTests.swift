@@ -19,6 +19,26 @@ struct JumpLoginSetEligibilityTests {
         #expect(eligible == [ssh])
     }
 
+    /// The single-set question the picker's filter is built from, and the one
+    /// the App's fill-before-submit path asks about the set it is ABOUT to
+    /// copy credentials out of (`ContentView.resolveSelectedJumpLoginSet`,
+    /// M28 final review): a picker filter shapes what can be chosen next,
+    /// while a binding already on disk arrives at the fill unfiltered.
+    @Test func isEligibleAnswersTheSameQuestionAsTheFilter() throws {
+        let ssh = LoginSet(name: "Bastion", username: "jumper")
+        let share = LoginSet(name: "Share", username: "dav", kind: .webdav)
+        let bucket = LoginSet(
+            name: "Bucket", username: "", kind: .s3, accessKeyID: "AKIAEXAMPLE")
+
+        #expect(JumpLoginSetEligibility.isEligible(ssh))
+        #expect(JumpLoginSetEligibility.isEligible(share) == false)
+        #expect(JumpLoginSetEligibility.isEligible(bucket) == false)
+        // Not two rules that happen to agree today: the filter is defined in
+        // terms of this predicate.
+        let sets = [ssh, share, bucket]
+        #expect(JumpLoginSetEligibility.eligible(in: sets) == sets.filter(JumpLoginSetEligibility.isEligible))
+    }
+
     /// Every SSH auth kind stays offered: the filter is about the PROTOCOL a
     /// set's credentials are for, not about what they contain. An agent set
     /// holds no secret at all and is still a perfectly good bastion login.
