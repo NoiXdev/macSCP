@@ -666,12 +666,12 @@ public final class SessionListViewModel {
     /// keychain entry is a harmless residual, never a reason to abort). A
     /// store failure while creating the set aborts before anything is
     /// rewired. Deletion is gated on the secret carry, not on rewiring order
-    /// (spec §4): if any part of the carry fails — either keychain READ, or
-    /// the write onto the set — the just-created set is rolled back, no
-    /// session is rewired, and every session keeps its own secret. A failing
-    /// read is a failed carry and not an empty one, which is what keeps a
-    /// locked keychain from looking like a group with nothing to carry
-    /// (M28/T2). Once the carry succeeds, each session
+    /// (spec §4): if any part of the carry fails — a keychain READ, or the
+    /// write onto the set — the just-created set is rolled back, no session
+    /// is rewired, and every session keeps its own secret. A failing read is
+    /// a failed carry and not an empty one, which is what keeps a locked
+    /// keychain from looking like a group with nothing to carry (M28/T2).
+    /// Once the carry succeeds, each session
     /// is rewired and has its own secret deleted in the same iteration —
     /// both are `try?`, so a store-write failure for one session does not
     /// stop that session's secret from being deleted.
@@ -679,7 +679,7 @@ public final class SessionListViewModel {
         let groupSessions = candidate.sessionIDs.compactMap { id in
             sessions.first { $0.id == id }
         }
-        guard let first = groupSessions.first else { return nil }
+        guard !groupSessions.isEmpty else { return nil }
         // Defense in depth (M24). Field keys are namespaced (`SSHField.*`
         // vs. `S3Field.*` vs. `WebDAVField.*`), so two backends can never
         // produce equal `fields` dictionaries -- `kind`'s presence in
@@ -712,29 +712,41 @@ public final class SessionListViewModel {
 
         var carryError: (any Error)?
         do {
-            // Both reads throw rather than swallowing (M28/T2): a Keychain that
+            // The read throws rather than swallowing (M28/T2): a Keychain that
             // will not answer looks exactly like a group of empty slots, and
             // the loop below deletes one slot per member. Reading "nothing to
             // carry" out of a failure would take the only copy each member has.
-            // A genuinely empty group is a different case and still merges --
-            // there is nothing to carry and nothing to lose, so each of those
-            // deletes is a no-op.
+            // A group that really has nothing to carry is a different case and
+            // still merges: those deletes remove slots, but nothing is LOST by
+            // them, because a member holding no secret -- or holding only ""
+            // -- has nothing to lose when its slot goes.
             //
-            // An EMPTY secret counts as no secret in both reads (M28/T2 fix
-            // round 1), or the same loss happens without any keychain failure:
-            // `save` stores the password it is given for every manual non-agent
-            // session (`requiresSecret`), empty string included, so an
-            // unencrypted private key leaves a slot holding "". A passphrase
-            // never enters `LoginMergePlanner`'s grouping key -- the planner
-            // skips the read for a `.passphrase`-role field -- so that member
-            // can group with, and be ordered before, one holding a real
-            // passphrase. Picking it as the source would carry "" onto the set
-            // and then delete that real passphrase, the group's only copy.
-            let source = try groupSessions.first {
-                try !(secrets.password(for: $0.id) ?? "").isEmpty
-            } ?? first
-            if let secret = try secrets.password(for: source.id), !secret.isEmpty {
-                try secrets.savePassword(secret, for: set.id)
+            // An EMPTY secret counts as no secret (M28/T2 fix round 1), or the
+            // same loss happens without any keychain failure: `save` stores the
+            // password it is given for every manual non-agent session
+            // (`requiresSecret`), empty string included, so an unencrypted
+            // private key leaves a slot holding "". A passphrase never enters
+            // `LoginMergePlanner`'s grouping key -- the planner skips the read
+            // for a `.passphrase`-role field -- so that member can group with,
+            // and be ordered before, one holding a real passphrase. Taking it
+            // as the source would carry "" onto the set and then delete that
+            // real passphrase, the group's only copy.
+            //
+            // One read per member, none repeated (fix round 2): the value found
+            // here IS the value carried. Choosing a source and then re-reading
+            // its slot would open a window between the two reads -- the Keychain
+            // can lock in it, and the slot can change in it -- and the second
+            // read's answer would be the one that counts. There is no such
+            // window with one read.
+            var carried: String?
+            for session in groupSessions {
+                guard let secret = try secrets.password(for: session.id), !secret.isEmpty
+                else { continue }
+                carried = secret
+                break
+            }
+            if let carried {
+                try secrets.savePassword(carried, for: set.id)
             }
         } catch {
             carryError = error

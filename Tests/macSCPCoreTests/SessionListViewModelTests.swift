@@ -1002,13 +1002,13 @@ struct SessionListViewModelTests {
         #expect(secrets.storedIDs == Set([a.id, b.id]))
     }
 
-    /// One member unreadable while the OTHER answers. Without this the whole
-    /// suite could pass with the source-selection read back on `try?`: a store
-    /// that fails every read makes the selection yield nothing at all, `??
-    /// first` takes over, and the carry read then aborts the merge anyway. Here
-    /// the selection would instead find the readable member, carry ITS secret,
-    /// and let the loop delete the unreadable member's secret -- a secret this
-    /// process never managed to look at.
+    /// One member unreadable while the OTHER answers -- a denied prompt for a
+    /// single item, not a locked keychain. The distinction is what this test
+    /// adds: with the read back on `try?` the search skips the member it could
+    /// not read, carries the readable member's secret, and lets the loop delete
+    /// the unreadable one's -- a secret this process never managed to look at.
+    /// A store that fails EVERY read cannot show that, because then there is
+    /// nothing to carry from anywhere.
     @Test func oneUnreadableMemberAbortsTheMergeEvenWhenAnotherMemberAnswers() throws {
         let (vm, secrets, dir) = makeLockableVM()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -1027,39 +1027,6 @@ struct SessionListViewModelTests {
         #expect(candidate.sessionIDs.first == a.id)
 
         secrets.failReads(for: [a.id])
-        let result = vm.applyMerge(candidate, name: "root")
-
-        #expect(result == nil)
-        #expect(vm.errorMessage != nil)
-        #expect(vm.loginSets.isEmpty)
-        #expect(vm.sessions.first { $0.id == a.id }?.loginSetID == nil)
-        #expect(vm.sessions.first { $0.id == b.id }?.loginSetID == nil)
-        #expect(secrets.storedIDs == Set([a.id, b.id]))
-    }
-
-    /// The keychain locks BETWEEN `applyMerge`'s two reads -- the selection read
-    /// answers, the carry read does not. Without this the suite could pass with
-    /// the carry read back on `try?`, because every other unreadable case
-    /// aborts at the selection read and never reaches the carry.
-    @Test func aKeychainThatLocksBetweenTheTwoReadsRollsTheMergeBack() throws {
-        let (vm, secrets, dir) = makeLockableVM()
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let a = vm.save(
-            name: "a", values: sshValues(host: "h1", port: 22, username: "root"),
-            password: "shared")!
-        let b = vm.save(
-            name: "b", values: sshValues(host: "h2", port: 22, username: "root"),
-            password: "shared")!
-
-        let candidates = vm.mergeCandidates()
-        #expect(candidates.count == 1)
-        let candidate = candidates.first!
-        #expect(candidate.sessionIDs.first == a.id)
-
-        // One more read is answered -- the selection's, which matches the first
-        // member and short-circuits there. Everything after it throws, and the
-        // next read is the carry's re-read of that same member.
-        secrets.lockReads(after: 1)
         let result = vm.applyMerge(candidate, name: "root")
 
         #expect(result == nil)
@@ -3019,21 +2986,20 @@ private final class NewIDFailingSecretStore: SecretStore, @unchecked Sendable {
     }
 }
 
-/// Test double for a Keychain that answers until it does not, in the two shapes
-/// `applyMerge` can actually meet: reads can fail for SPECIFIC ids while the
-/// rest answer, and reads can start failing after a given number of further
-/// calls -- the keychain locking BETWEEN the two reads `applyMerge` performs.
-/// Both are needed to pin the two reads separately; a store that fails every
-/// read cannot tell them apart, because whichever read runs first aborts the
-/// merge and the other one is never reached.
+/// Test double for a Keychain that answers for some ids and refuses others, so
+/// a test can fail ONE member's read while the rest answer -- the difference
+/// between "the whole keychain is locked" and "this one item's prompt was
+/// denied", which the merge has to treat the same way but which a store failing
+/// every read cannot express.
 ///
-/// Both knobs are set AFTER `mergeCandidates()` has planned, which is the real
-/// timeline: `LoginMergePlanner.candidates` reads first, a confirmation dialog
-/// follows (`LoginSetsSheet.applyMerge`), and `SessionListViewModel.applyMerge`
-/// reads again. `UnreliableSecretStore` cannot express that -- its `failsReads`
-/// is fixed at init -- though only for a `.credential`-role secret, which is
-/// the one the planner reads; under a `.passphrase` role it plans without
-/// reading at all and a permanently failing store would do just as well.
+/// `failReads(for:)` is called AFTER `mergeCandidates()` has planned, which is
+/// the real timeline: `LoginMergePlanner.candidates` reads first, a
+/// confirmation dialog follows (`LoginSetsSheet.applyMerge`), and
+/// `SessionListViewModel.applyMerge` reads again. `UnreliableSecretStore`
+/// cannot express that -- its `failsReads` is fixed at init -- though only for
+/// a `.credential`-role secret, which is the one the planner reads; under a
+/// `.passphrase` role it plans without reading at all and a permanently failing
+/// store would do just as well.
 ///
 /// Writes and deletes keep working on purpose: a double that refused those too
 /// would satisfy "nothing was deleted" by itself instead of letting the code
@@ -3043,18 +3009,11 @@ private final class LockableReadSecretStore: SecretStore, @unchecked Sendable {
     private let lock = NSLock()
     private var storage: [UUID: String] = [:]
     private var failingIDs: Set<UUID> = []
-    private var readsBeforeLock: Int?
 
     /// Every read for one of `ids` throws from here on; other ids still answer.
     func failReads(for ids: Set<UUID>) {
         lock.lock(); defer { lock.unlock() }
         failingIDs = ids
-    }
-
-    /// Answer `count` more reads, then throw for every read after those.
-    func lockReads(after count: Int) {
-        lock.lock(); defer { lock.unlock() }
-        readsBeforeLock = count
     }
 
     func savePassword(_ password: String, for sessionID: UUID) throws {
@@ -3065,10 +3024,6 @@ private final class LockableReadSecretStore: SecretStore, @unchecked Sendable {
     func password(for sessionID: UUID) throws -> String? {
         lock.lock(); defer { lock.unlock() }
         if failingIDs.contains(sessionID) { throw KeychainError(status: -25308) }
-        if let remaining = readsBeforeLock {
-            if remaining == 0 { throw KeychainError(status: -25308) }
-            readsBeforeLock = remaining - 1
-        }
         return storage[sessionID]
     }
 
