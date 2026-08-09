@@ -108,7 +108,9 @@ struct SSHKeysSheet: View {
         .frame(width: 720, height: 460)
         .onAppear { reload() }
         .sheet(isPresented: $showGenerate) {
-            GenerateKeySheet(store: store) { reload() }
+            GenerateKeySheet(store: store) { keptPassphrase in
+                reportKeyOutcome(keptPassphrase: keptPassphrase)
+            }
         }
         .fileImporter(
             isPresented: $showImportFileImporter, allowedContentTypes: [.item]
@@ -118,7 +120,9 @@ struct SSHKeysSheet: View {
             }
         }
         .sheet(item: $importTarget) { target in
-            ImportKeySheet(fileURL: target.fileURL, store: store) { reload() }
+            ImportKeySheet(fileURL: target.fileURL, store: store) { keptPassphrase in
+                reportKeyOutcome(keptPassphrase: keptPassphrase)
+            }
         }
         .sheet(item: $renameTarget) { key in
             RenameKeySheet(key: key, store: store) { reload() }
@@ -310,6 +314,21 @@ struct SSHKeysSheet: View {
 
     // MARK: - Actions
 
+    /// Refreshes the list after a key was generated or imported, and says so
+    /// when the key made it but its passphrase did not. The message belongs
+    /// HERE and not in the creating sheet: that sheet dismisses itself on the
+    /// same run, and the key must not be creatable a second time just to
+    /// surface a note about the first one. `reload()` only refills `keys` and
+    /// leaves `errorMessage` alone, so the note survives it either way.
+    private func reportKeyOutcome(keptPassphrase: Bool) {
+        reload()
+        if !keptPassphrase {
+            errorMessage = L10n.string(
+                "keys.passphrase.notStored",
+                "The key was saved, but its passphrase wasn't. It will be asked for on the next connection.")
+        }
+    }
+
     private func copyPublicKey(_ key: ManagedKey) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(key.publicKeyOpenSSH, forType: .string)
@@ -446,7 +465,9 @@ struct SSHPrivateKeyExportDocument: FileDocument {
 /// `.sheet(isPresented:)` above without needing wider visibility.
 private struct GenerateKeySheet: View {
     let store: ManagedKeyStore
-    let onGenerated: () -> Void
+    /// `false` means the key exists but its passphrase did not reach the
+    /// Keychain — see `generate()`.
+    let onGenerated: (Bool) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
@@ -551,17 +572,25 @@ private struct GenerateKeySheet: View {
         .textFieldStyle(.roundedBorder)
     }
 
-    /// Generates the key on disk, saves the passphrase (if any) to the
-    /// Keychain under a FRESH id, and persists the resulting `ManagedKey`.
+    /// Generates the key on disk, persists the resulting `ManagedKey`, and
+    /// only THEN saves the passphrase (if any) to the Keychain under the same
+    /// fresh id.
     ///
-    /// `savePassword`/`store.add` run in an INNER `do/catch` so that a
-    /// failure on either of them — AFTER `SSHKeyGenerator.generate` already
-    /// wrote the private/public key files (and possibly the Keychain entry,
-    /// if `store.add` is what threw) — actively rolls back everything THIS
-    /// run created, instead of leaving orphaned artifacts behind (a key file
-    /// with no metadata record, or a Keychain entry with no matching key).
-    /// The cleaned-up error is then re-thrown so the outer `catch` still
-    /// reports the same single fixed message as any other failure.
+    /// The two failures fall in opposite directions, deliberately. A failed
+    /// METADATA write rolls the key files back: without a metadata entry there
+    /// is no key, and nothing on disk may pretend otherwise. A failed
+    /// PASSPHRASE write keeps everything — the key is already listed, so
+    /// "encrypted key, no stored passphrase" is a state the app carries (the
+    /// connection form shows the passphrase row, `ManagedKeyPassphrase.resolve`
+    /// falls back to what is typed, and typing it once persists it). Rolling
+    /// the key back there would discard what the user just created; writing the
+    /// passphrase first, as this used to, left a Keychain entry under an id
+    /// `managed_keys.json` never learned — unreachable, because nothing
+    /// enumerates the Keychain. `keptPassphrase` carries that outcome to the
+    /// parent sheet, which says so.
+    ///
+    /// New orphans only: existing ones cannot be collected without a Keychain
+    /// enumeration, which `SecretStore` deliberately does not have.
     private func generate() {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedComment = comment.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -572,9 +601,6 @@ private struct GenerateKeySheet: View {
                 into: store.keyDirectory)
             let newID = UUID()
             do {
-                if !passphrase.isEmpty {
-                    try KeychainSecretStore().savePassword(passphrase, for: newID)
-                }
                 let key = ManagedKey(
                     id: newID, name: trimmedName, comment: trimmedComment, type: resolvedType,
                     fingerprint: generated.fingerprint, publicKeyOpenSSH: generated.publicKeyOpenSSH,
@@ -586,10 +612,17 @@ private struct GenerateKeySheet: View {
                 try? FileManager.default.removeItem(
                     at: generated.privateKeyURL.deletingLastPathComponent()
                         .appendingPathComponent(generated.privateKeyURL.lastPathComponent + ".pub"))
-                try? KeychainSecretStore().deletePassword(for: newID)
                 throw error
             }
-            onGenerated()
+            var keptPassphrase = true
+            if !passphrase.isEmpty {
+                do {
+                    try KeychainSecretStore().savePassword(passphrase, for: newID)
+                } catch {
+                    keptPassphrase = false
+                }
+            }
+            onGenerated(keptPassphrase)
             dismiss()
         } catch {
             // Never surface the underlying error (same reasoning as
@@ -605,15 +638,17 @@ private struct GenerateKeySheet: View {
 /// for the private key file the caller already picked via `fileImporter`.
 /// `SSHKeyImporter.inspect` (Task 4) reads the file first — on success, the
 /// file is copied into `store.keyDirectory` under a FRESH id, chmod'd 0600,
-/// the passphrase (if any) saved to the Keychain under that SAME id, and the
-/// resulting `ManagedKey` persisted. A failure at any point AFTER the copy
-/// rolls back both the copied file and the Keychain slot (best-effort,
-/// `try?`) — mirrors `GenerateKeySheet.generate()`'s own rollback for the
-/// exact same reason: never leave an orphaned file or Keychain entry behind.
+/// the resulting `ManagedKey` persisted, and only THEN the passphrase (if any)
+/// saved to the Keychain under that SAME id. A failure up to and including the
+/// metadata write rolls the copied file back; a failed passphrase write keeps
+/// the key and reports itself instead — same ordering and the same reasoning
+/// as `GenerateKeySheet.generate()`, whose doc spells both directions out.
 private struct ImportKeySheet: View {
     let fileURL: URL
     let store: ManagedKeyStore
-    let onImported: () -> Void
+    /// `false` means the key exists but its passphrase did not reach the
+    /// Keychain — see `GenerateKeySheet.generate()`.
+    let onImported: (Bool) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
@@ -621,7 +656,7 @@ private struct ImportKeySheet: View {
     @State private var passphrase = ""
     @State private var errorMessage: String?
 
-    init(fileURL: URL, store: ManagedKeyStore, onImported: @escaping () -> Void) {
+    init(fileURL: URL, store: ManagedKeyStore, onImported: @escaping (Bool) -> Void) {
         self.fileURL = fileURL
         self.store = store
         self.onImported = onImported
@@ -703,9 +738,6 @@ private struct ImportKeySheet: View {
                 try FileManager.default.copyItem(at: fileURL, to: destination)
                 try FileManager.default.setAttributes(
                     [.posixPermissions: 0o600], ofItemAtPath: destination.path(percentEncoded: false))
-                if !passphrase.isEmpty {
-                    try KeychainSecretStore().savePassword(passphrase, for: newID)
-                }
                 let key = ManagedKey(
                     id: newID, name: trimmedName, comment: trimmedComment, type: info.type,
                     fingerprint: info.fingerprint, publicKeyOpenSSH: info.publicKeyOpenSSH,
@@ -713,16 +745,25 @@ private struct ImportKeySheet: View {
                     fileName: newID.uuidString)
                 try store.add(key)
             } catch {
-                // Anything failing AFTER the copy above (chmod, Keychain
-                // save, or `store.add`) must not leave an orphaned file or
-                // Keychain slot behind — both removals are best-effort and
-                // safe to run even if the step that "created" them never
-                // actually got there (e.g. `copyItem` itself is what threw).
+                // Anything failing AFTER the copy above (chmod or `store.add`)
+                // must not leave a key file behind that no metadata entry
+                // claims. The removal is best-effort and safe to run even if
+                // the step that "created" the file never actually got there
+                // (e.g. `copyItem` itself is what threw). No Keychain slot
+                // exists to clean up yet — that write happens below, once the
+                // key is discoverable.
                 try? FileManager.default.removeItem(at: destination)
-                try? KeychainSecretStore().deletePassword(for: newID)
                 throw error
             }
-            onImported()
+            var keptPassphrase = true
+            if !passphrase.isEmpty {
+                do {
+                    try KeychainSecretStore().savePassword(passphrase, for: newID)
+                } catch {
+                    keptPassphrase = false
+                }
+            }
+            onImported(keptPassphrase)
             dismiss()
         } catch {
             // Fixed message only (same reasoning as `GenerateKeySheet`):

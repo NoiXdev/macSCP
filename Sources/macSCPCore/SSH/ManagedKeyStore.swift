@@ -33,16 +33,27 @@ public struct ManagedKeyStore: Sendable {
         try persist(keys)
     }
 
-    /// Removes metadata AND the private/public key files AND the Keychain
-    /// passphrase slot under `id`. Missing files/slot are ignored (idempotent).
+    /// Removes the Keychain passphrase slot under `id`, then the metadata,
+    /// then the private/public key files. A missing slot or missing files are
+    /// ignored (idempotent).
     ///
-    /// Metadata is persisted FIRST, then the files/Keychain slot are deleted
-    /// best-effort. This way, if `persist` throws, at worst an orphaned file
-    /// is left behind (harmless) — never a metadata entry pointing at files
-    /// that no longer exist.
+    /// The Keychain delete goes FIRST and is the one step allowed to abort the
+    /// removal. A slot that outlives its metadata entry can never be found
+    /// again: `SecretStore` has no enumeration (a deliberate limit, see its
+    /// own doc), and every caller resolves the id it deletes out of
+    /// `managed_keys.json` — so once the entry is gone, no screen and no code
+    /// path reaches the passphrase. Deleting the slot last made an ordinary
+    /// key deletion against a Keychain that is there but not answering enough
+    /// to produce one. Failing before the metadata write instead leaves the
+    /// key fully listed, which the user can see and retry.
+    ///
+    /// The FILES stay best-effort and come last: if `persist` throws, at worst
+    /// an orphaned file is left behind (harmless) — never a metadata entry
+    /// pointing at files that no longer exist.
     public func remove(id: UUID, secrets: any SecretStore) throws {
         let keys = try all()
         let key = keys.first(where: { $0.id == id })
+        try secrets.deletePassword(for: id)
         try persist(keys.filter { $0.id != id })
         // A `fileName` that does not address a file inside the key directory
         // resolves to nothing, so the deletions are skipped entirely rather
@@ -51,7 +62,6 @@ public struct ManagedKeyStore: Sendable {
             try? FileManager.default.removeItem(at: priv)
             try? FileManager.default.removeItem(at: priv.appendingPathExtension("pub"))
         }
-        try? secrets.deletePassword(for: id)
     }
 
     /// The private key file of `key` inside `keyDirectory`, or `nil` when the

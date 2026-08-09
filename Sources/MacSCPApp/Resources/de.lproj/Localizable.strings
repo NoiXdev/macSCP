@@ -734,6 +734,7 @@
 "keys.generate.passphrase.mismatch" = "Die Passphrasen stimmen nicht überein.";
 "keys.generate.submit" = "Erzeugen";
 "keys.generate.error" = "Der Schlüssel konnte nicht erzeugt werden.";
+"keys.passphrase.notStored" = "Der Schlüssel wurde gespeichert, seine Passphrase jedoch nicht. Sie wird bei der nächsten Verbindung abgefragt.";
 "keys.type.ed25519" = "ED25519";
 "keys.type.rsa" = "RSA";
 "keys.type.ecdsa" = "ECDSA";

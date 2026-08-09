@@ -733,6 +733,7 @@
 "keys.generate.passphrase.mismatch" = "Passphrases don't match.";
 "keys.generate.submit" = "Generate";
 "keys.generate.error" = "Couldn't generate the key.";
+"keys.passphrase.notStored" = "The key was saved, but its passphrase wasn't. It will be asked for on the next connection.";
 "keys.type.ed25519" = "ED25519";
 "keys.type.rsa" = "RSA";
 "keys.type.ecdsa" = "ECDSA";

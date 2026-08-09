@@ -1491,10 +1491,15 @@ public final class SessionListViewModel {
                 result.storeFailures += 1
                 // Undo the key that was just written for a set that never
                 // landed: it would otherwise sit in the key list owned by
-                // nothing.
+                // nothing. The count is only walked back when the removal
+                // actually happened — `remove` refuses to unlist a key whose
+                // Keychain slot it could not delete (see its doc), and a key
+                // still in the list is still imported.
                 if let materializedKeyID {
-                    try? keyStore.remove(id: materializedKeyID, secrets: secrets)
-                    result.keysImported -= 1
+                    do {
+                        try keyStore.remove(id: materializedKeyID, secrets: secrets)
+                        result.keysImported -= 1
+                    } catch {}
                 }
                 continue
             }

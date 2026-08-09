@@ -502,7 +502,14 @@ struct EmbeddedKeyPorterTests {
         #expect(!String(decoding: metadata, as: UTF8.self).contains("s3cr3t"))
     }
 
-    @Test func materializeCleansUpTheFileAndKeychainSlotWhenAStepFails() throws {
+    /// The one failure that must NOT take the key with it. "Key present,
+    /// passphrase missing" is a state the app handles end to end:
+    /// `ManagedKeyPassphrase.resolve` falls back to the typed value, the
+    /// connection form shows the passphrase row, connecting without one fails
+    /// as `passphraseRequired`, and typing it once persists it. The opposite
+    /// leftover — a Keychain slot under an id no store knows — is reachable
+    /// from nowhere, because `SecretStore` cannot enumerate.
+    @Test func materializeKeepsTheKeyWhenOnlyThePassphraseWriteFails() throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)
         let secrets = InMemorySecretStore()
@@ -514,18 +521,20 @@ struct EmbeddedKeyPorterTests {
 
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
         let targetSecrets = RecordingSecretStore(failSaves: true)
-        #expect(throws: (any Error).self) {
-            _ = try EmbeddedKeyPorter.materialize(embedded, store: target, secrets: targetSecrets)
-        }
-        // Nothing left behind: no key file, no metadata entry, and the
-        // Keychain slot under the fresh id was cleared even though the save
-        // itself had failed.
-        let leftovers = (try? FileManager.default.contentsOfDirectory(
-            atPath: target.keyDirectory.path(percentEncoded: false))) ?? []
-        #expect(leftovers.isEmpty)
-        #expect(try target.all().isEmpty)
+        let materialized = try EmbeddedKeyPorter.materialize(
+            embedded, store: target, secrets: targetSecrets)
+
+        // `false` is what makes the caller keep its OWN copy of the
+        // passphrase (a `.privateKey` set's secret IS the key passphrase), so
+        // the value is not lost even though the key's own slot has none.
+        #expect(materialized.storedPassphrase == false)
+        let imported = try #require(try target.key(forPath: materialized.path))
+        #expect(imported.hasPassphrase)
+        #expect(FileManager.default.fileExists(atPath: materialized.path))
         #expect(targetSecrets.stored.isEmpty)
-        #expect(targetSecrets.deleted.count == 1)
+        // No cleanup was attempted either: the fresh id belongs to a key that
+        // now exists, so there is nothing orphaned to scrub.
+        #expect(targetSecrets.deleted.isEmpty)
     }
 
     /// The import file's metadata is a claim, not a fact: the type and
@@ -971,11 +980,12 @@ struct EmbeddedKeyPorterTests {
         let leftovers = (try? FileManager.default.contentsOfDirectory(
             atPath: target.keyDirectory.path(percentEncoded: false))) ?? []
         #expect(leftovers.isEmpty)
-        // The passphrase HAD been written under the fresh id and was rolled
-        // back again — no secret survives the failed import.
+        // A failed METADATA write still rolls everything back — there is no
+        // key for a passphrase to belong to. And the slot was never created in
+        // the first place: the metadata now goes first precisely so a failure
+        // here cannot leave a Keychain entry under an id nothing knows.
         #expect(targetSecrets.stored.isEmpty)
-        #expect(targetSecrets.deleted == targetSecrets.savedIDs)
-        #expect(targetSecrets.savedIDs.count == 1)
+        #expect(targetSecrets.savedIDs.isEmpty)
     }
 }
 
@@ -995,8 +1005,8 @@ private final class TestBox<T>: @unchecked Sendable {
 /// records which ids were written/deleted and can be told to fail every save.
 /// (`FailingSecretStore` in `SessionListViewModelTests` covers the same
 /// failure mode but is file-private there, and only a recording double can
-/// show that the fresh id's slot was actually cleared — the id itself never
-/// leaves `materialize`.)
+/// say what happened to the FRESH id at all — that id never leaves
+/// `materialize` unless the write succeeded.)
 private final class RecordingSecretStore: SecretStore, @unchecked Sendable {
     private let lock = NSLock()
     private var storage: [UUID: String] = [:]

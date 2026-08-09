@@ -71,6 +71,35 @@ struct ManagedKeyStoreTests {
         #expect(try store.all().isEmpty)
     }
 
+    /// A Keychain that is there but not answering — locked, prompt denied —
+    /// used to cost the passphrase its only route back: the metadata entry was
+    /// already gone, and nothing enumerates the Keychain, so the slot could
+    /// never be found again. The delete now runs FIRST and its failure aborts
+    /// the removal, leaving a key the user can see, use and delete again.
+    @Test func aFailedSlotDeleteLeavesTheKeyListedInsteadOfHidingItsPassphrase() throws {
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = ManagedKeyStore(directory: dir)
+        try FileManager.default.createDirectory(
+            at: store.keyDirectory, withIntermediateDirectories: true)
+        let priv = store.keyDirectory.appendingPathComponent("abc123")
+        try Data("priv".utf8).write(to: priv)
+        let key = sampleKey(fileName: "abc123")
+        try store.add(key)
+        let secrets = UnreliableSecretStore(failsDeletes: true)
+        try secrets.savePassword("s3cr3t", for: key.id)
+
+        #expect(throws: (any Error).self) {
+            try store.remove(id: key.id, secrets: secrets)
+        }
+
+        #expect(try store.all() == [key])
+        #expect(secrets.peek(key.id) == "s3cr3t")
+        // The file has to survive too, or the surviving entry would point at
+        // nothing.
+        #expect(FileManager.default.fileExists(atPath: priv.path))
+    }
+
     /// `fileName` is always a UUID that macSCP wrote itself, so this can only
     /// be reached through a hand-edited or tampered `managed_keys.json`. It
     /// is still worth closing: `appendingPathComponent("../…")` builds a URL

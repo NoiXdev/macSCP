@@ -736,6 +736,7 @@
 "keys.generate.passphrase.mismatch" = "Hasła nie są zgodne.";
 "keys.generate.submit" = "Generuj";
 "keys.generate.error" = "Nie udało się wygenerować klucza.";
+"keys.passphrase.notStored" = "Klucz został zapisany, ale jego hasło nie. Zostanie ono wymagane przy następnym połączeniu.";
 "keys.type.ed25519" = "ED25519";
 "keys.type.rsa" = "RSA";
 "keys.type.ecdsa" = "ECDSA";

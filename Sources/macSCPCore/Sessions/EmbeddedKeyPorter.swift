@@ -153,13 +153,18 @@ public enum EmbeddedKeyPorter {
     /// new local path plus whether the key took the passphrase (see
     /// `MaterializedKey`). The caller owns the login set; this function only
     /// touches the key store and the Keychain.
+    ///
+    /// Failures land on "key present, passphrase missing" rather than on a
+    /// Keychain slot under an id no store knows: metadata is written before
+    /// the passphrase, and only the metadata leg rolls back. This prevents NEW
+    /// orphans; it collects none that already exist, which would need a
+    /// Keychain enumeration `SecretStore` deliberately does not have.
     public static func materialize(
         _ key: EmbeddedKey, store: ManagedKeyStore, secrets: any SecretStore
     ) throws -> MaterializedKey {
         let newID = UUID()
         let destination = store.keyDirectory.appendingPathComponent(newID.uuidString)
         let destinationPath = destination.path(percentEncoded: false)
-        var storedPassphrase = false
 
         try FileManager.default.createDirectory(
             at: store.keyDirectory, withIntermediateDirectories: true,
@@ -171,6 +176,12 @@ public enum EmbeddedKeyPorter {
             [.posixPermissions: 0o700],
             ofItemAtPath: store.keyDirectory.path(percentEncoded: false))
 
+        // Evidence and metadata FIRST, passphrase last. Not a line swap: the
+        // identity below is what makes the `ManagedKey` constructible at all,
+        // so the order is evidence -> `store.add` -> `savePassword`. What that
+        // buys is the direction a failure falls in — see the two error paths
+        // below.
+        let evidence: KeyMaterialEvidence
         do {
             // The directory above is already 0700, so the key bytes are
             // unreachable for other users even in the moment between this
@@ -184,17 +195,7 @@ public enum EmbeddedKeyPorter {
             // (invariant 5). This runs BEFORE the Keychain write, so a rejected
             // payload never reaches the Keychain at all and the slot is only
             // created for a key whose passphrase demonstrably opens it.
-            let evidence = try identity(of: destination, declaredBy: key)
-
-            if evidence.keepsTheCarriedPassphrase,
-               let passphrase = key.passphrase, !passphrase.isEmpty
-            {
-                try secrets.savePassword(passphrase, for: newID)
-                // Only after the write actually succeeded: the caller decides
-                // whether to keep its own copy based on this, and a `true`
-                // that nothing backs would drop the passphrase entirely.
-                storedPassphrase = true
-            }
+            evidence = try identity(of: destination, declaredBy: key)
 
             // `name` and `comment` stay as the payload wrote them BY DESIGN:
             // they are user-facing labels, not identity, and the importer can
@@ -216,14 +217,36 @@ public enum EmbeddedKeyPorter {
                 throw PorterError.keyStoreUnwritable
             }
         } catch {
-            // Anything failing after the write above — chmod, Keychain save,
-            // or the metadata write — must not leave an orphaned key file or
-            // Keychain slot behind. Both removals are best-effort and safe to
-            // run even if the step that "created" them never got there. The
-            // error is rethrown unchanged; it carries no key material.
+            // Everything up to and including the metadata write rolls the key
+            // file back: without an entry there is no key, so nothing may be
+            // left on disk pretending otherwise. No Keychain slot exists yet
+            // to clean up — that write only happens below, once this key is
+            // discoverable. The error is rethrown unchanged; it carries no key
+            // material.
             try? FileManager.default.removeItem(at: destination)
-            try? secrets.deletePassword(for: newID)
             throw error
+        }
+
+        var storedPassphrase = false
+        if evidence.keepsTheCarriedPassphrase,
+           let passphrase = key.passphrase, !passphrase.isEmpty
+        {
+            do {
+                try secrets.savePassword(passphrase, for: newID)
+                // Only after the write actually succeeded: the caller decides
+                // whether to keep its own copy based on this, and a `true`
+                // that nothing backs would drop the passphrase entirely.
+                storedPassphrase = true
+            } catch {
+                // Deliberately NOT fatal and deliberately no rollback. The key
+                // is already in the store, and "key present, passphrase
+                // missing" is a state the app carries end to end:
+                // `ManagedKeyPassphrase.resolve` falls back to the typed
+                // value, the connection form shows the passphrase row, and
+                // typing it once persists it. Throwing here would instead
+                // discard a key the user asked to import, and `storedPassphrase
+                // == false` already tells the caller to keep its own copy.
+            }
         }
 
         return MaterializedKey(path: destinationPath, storedPassphrase: storedPassphrase)

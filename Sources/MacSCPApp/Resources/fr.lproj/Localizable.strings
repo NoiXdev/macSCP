@@ -737,6 +737,7 @@
 "keys.generate.passphrase.mismatch" = "Les phrases secrètes ne correspondent pas.";
 "keys.generate.submit" = "Générer";
 "keys.generate.error" = "Impossible de générer la clé.";
+"keys.passphrase.notStored" = "La clé a été enregistrée, mais pas sa phrase secrète. Elle sera demandée à la prochaine connexion.";
 "keys.type.ed25519" = "ED25519";
 "keys.type.rsa" = "RSA";
 "keys.type.ecdsa" = "ECDSA";
