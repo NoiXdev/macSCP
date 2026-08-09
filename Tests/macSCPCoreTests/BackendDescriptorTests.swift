@@ -305,4 +305,32 @@ struct BackendDescriptorTests {
         let field = BackendDescriptor.descriptor(for: .webdav).visibleSecretField(for: session)
         #expect(field?.id == WebDAVField.password.rawValue)
     }
+
+    // MARK: - visibleSecretField(for set:) (M28/T1)
+
+    /// The LoginSet twin of the StoredSession question. Both ask
+    /// `visibleSecretField` over the same schema; only the value source differs.
+    @Test func aPasswordLoginSetShowsItsPasswordField() throws {
+        let set = LoginSet(name: "deploy", username: "deploy", authKind: .password)
+        let field = BackendDescriptor.descriptor(for: .ssh).visibleSecretField(for: set)
+        #expect(field?.id == SSHField.password.rawValue)
+    }
+
+    @Test func anAgentLoginSetShowsNoSecretField() throws {
+        let set = LoginSet(name: "agent", username: "deploy", authKind: .agent)
+        #expect(BackendDescriptor.descriptor(for: .ssh).visibleSecretField(for: set) == nil)
+    }
+
+    /// The passphrase row IS on screen for a key set, so this is not the
+    /// agent's nil case — it is the second way a set can need no secret, and
+    /// the assertion on `isRequired` is what distinguishes them. It is also
+    /// what lets `SessionListViewModel.setCoversItsLogin` answer for a key set
+    /// without a `ManagedKeyStore` of its own.
+    @Test func aPrivateKeyLoginSetShowsAnOptionalPassphraseField() throws {
+        let set = LoginSet(
+            name: "key", username: "deploy", authKind: .privateKey, keyPath: "/k")
+        let field = BackendDescriptor.descriptor(for: .ssh).visibleSecretField(for: set)
+        #expect(field?.id == SSHField.passphrase.rawValue)
+        #expect(field?.isRequired == false)
+    }
 }

@@ -476,6 +476,33 @@ public final class SessionListViewModel {
         sessions.filter { $0.jump?.sessionID == id }
     }
 
+    /// Whether `set` holds what a login bound to it will need (M28).
+    ///
+    /// Two arms, and the order matters: a set whose visible secret field is
+    /// absent or optional needs nothing, and answering that FIRST is what
+    /// keeps the Keychain from being read for an agent or key login that has
+    /// no slot (the M10d rule). Only a set that declares a REQUIRED secret is
+    /// asked whether it actually holds one.
+    ///
+    /// The question goes to the schema, via
+    /// `BackendDescriptor.visibleSecretField(for set:)` — see that member's
+    /// own doc comment for why `LoginSet.authKind` is the wrong thing to ask.
+    ///
+    /// THROWS rather than answering false when the Keychain will not respond.
+    /// A failed read is not proof of an empty slot, and the callers of this
+    /// decide whether to delete a credential from its answer -- reading "not
+    /// covered" out of a locked Keychain would destroy an intact secret.
+    ///
+    /// A stored secret is judged VERBATIM, untrimmed, the same rule
+    /// `ConnectionFieldSchema.missingRequiredFields` applies to a secret
+    /// field: whitespace can be a legitimate part of a password, so a slot
+    /// holding one covers its login.
+    func setCoversItsLogin(_ set: LoginSet) throws -> Bool {
+        let descriptor = BackendDescriptor.descriptor(for: set.kind)
+        guard descriptor.visibleSecretField(for: set)?.isRequired == true else { return true }
+        return !((try secrets.password(for: set.id)) ?? "").isEmpty
+    }
+
     /// Saves a set; a non-nil, non-empty secret overwrites the keychain
     /// entry stored under the SET id (nil/empty keeps it — the editor's
     /// "unchanged" prompt semantics, same as `updateSession`). Agent sets

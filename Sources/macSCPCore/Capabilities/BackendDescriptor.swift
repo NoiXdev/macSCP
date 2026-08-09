@@ -209,6 +209,26 @@ public struct BackendDescriptor: Sendable {
             in: sessionValues(session), namespace: fieldNamespace)
     }
 
+    /// The login set's currently visible secret field, or nil when the set
+    /// needs no secret at all (M28).
+    ///
+    /// The twin of the `StoredSession` question above, over `loginSetValues`
+    /// instead of `sessionValues`. Both exist because "which field is the
+    /// secret right now" is a schema question, and a login set answers it from
+    /// its own values -- never from `LoginSet.authKind`, which is a separate
+    /// column from `kind` (both are stored properties of `LoginSet`) and is
+    /// copied verbatim out of an imported file
+    /// (`LoginSetImportPlanner.makeSet` passes `fileSet.authKind` and
+    /// `fileSet.kind` through unexamined), so the two can disagree. Only SSH's
+    /// schema conditions anything on the auth kind, and only
+    /// `SSHFieldSchema.values(from set:)` writes that key -- an `.s3` set's bag
+    /// carries no `authKind` at all, so its unconditioned, required
+    /// `secretAccessKey` field stays visible whatever the column says.
+    public func visibleSecretField(for set: LoginSet) -> ConnectionField? {
+        credentialSchema.visibleSecretField(
+            in: loginSetValues(set), namespace: fieldNamespace)
+    }
+
     /// The English label of the field a namespaced `FieldValues` key names, or
     /// the key itself when nothing matches (M23/P2).
     ///

@@ -2573,6 +2573,107 @@ struct SessionListViewModelTests {
         #expect(result.payload.sessions.first?.password == nil)
         #expect(result.missingPasswordCount == 0)
     }
+
+    // MARK: - setCoversItsLogin (M28/T1)
+
+    @Test func aPasswordSetWithoutASecretIsNotCovered() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "deploy", username: "deploy", authKind: .password)
+
+        #expect(try vm.setCoversItsLogin(set) == false)
+    }
+
+    @Test func aPasswordSetHoldingASecretIsCovered() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "deploy", username: "deploy", authKind: .password)
+        try secrets.savePassword("pw", for: set.id)
+
+        #expect(try vm.setCoversItsLogin(set) == true)
+    }
+
+    /// The M10d rule: a login that needs no secret is never a reason to touch
+    /// the Keychain. `NoReadAllowedSecretStore` (below) fails the test the
+    /// moment `password(for:)` is called at all, so this pins the ORDER of the
+    /// two arms, not just the answer.
+    @Test func anAgentSetIsCoveredWithoutReadingTheKeychain() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: NoReadAllowedSecretStore(),
+            loginSetStore: LoginSetStore(directory: dir))
+        let set = LoginSet(name: "agent", username: "deploy", authKind: .agent)
+
+        #expect(try vm.setCoversItsLogin(set) == true)
+    }
+
+    /// The second way a set can need nothing, and the reason M28 takes no
+    /// `ManagedKeyStore` dependency: a key set's `passphrase` field is on
+    /// screen but not required (`aPrivateKeyLoginSetShowsAnOptionalPassphraseField`
+    /// in `BackendDescriptorTests` pins that), so an empty slot is not a gap.
+    @Test func aPrivateKeySetIsCoveredWithoutASetSecret() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(
+            name: "key", username: "deploy", authKind: .privateKey, keyPath: "/k")
+
+        #expect(try vm.setCoversItsLogin(set) == true)
+    }
+
+    @Test func anS3SetWithoutASecretIsNotCovered() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "minio", username: "", kind: .s3, accessKeyID: "AKIA")
+
+        #expect(try vm.setCoversItsLogin(set) == false)
+    }
+
+    /// WebDAV declares no required secret at all (`WebDAVFieldSchema.credential`
+    /// marks neither of its two fields required, so anonymous shares stay
+    /// connectable), so an empty slot is not a gap here either.
+    @Test func aWebDAVSetIsCoveredWithoutASecret() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "cloud", username: "tim", kind: .webdav)
+
+        #expect(try vm.setCoversItsLogin(set) == true)
+    }
+
+    /// The most important test of this milestone. `kind` and `authKind` are
+    /// independent columns and the login-set importer copies both verbatim, so
+    /// a set can declare S3 storage with agent auth. Asking `authKind` would
+    /// call this covered and delete a session's only secret access key. Asking
+    /// the schema does not: `S3FieldSchema.values(from:)` writes only
+    /// `accessKeyID`, and `S3Field.secretAccessKey` carries no `visibleWhen`,
+    /// so the required secret field stays on screen whatever `authKind` says.
+    @Test func anS3SetDeclaringAgentAuthIsStillNotCovered() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(
+            name: "minio", username: "", authKind: .agent, kind: .s3, accessKeyID: "AKIA")
+
+        #expect(try vm.setCoversItsLogin(set) == false)
+    }
+
+    /// A keychain that will not answer is not an empty one. Everything in M28
+    /// hangs on this: the two deleting binders decide from this answer, and a
+    /// swallowed read would report the INTACT secret seeded below as missing.
+    @Test func anUnreadableKeychainMakesCoverageThrowRatherThanFalse() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = UnreliableSecretStore(failsReads: true)
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: secrets,
+            loginSetStore: LoginSetStore(directory: dir))
+        let set = LoginSet(name: "deploy", username: "deploy", authKind: .password)
+        try secrets.savePassword("pw", for: set.id)
+
+        #expect(throws: KeychainError.self) { try vm.setCoversItsLogin(set) }
+        #expect(secrets.peek(set.id) != nil)
+    }
 }
 
 private final class FailingSecretStore: SecretStore, @unchecked Sendable {
