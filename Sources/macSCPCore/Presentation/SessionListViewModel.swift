@@ -674,15 +674,18 @@ public final class SessionListViewModel {
     /// later one does; a slot holding the empty string counts as having none,
     /// M28/T2) and is copied under the new set id; every group
     /// session's own secret is then removed (throw-free — a leftover
-    /// keychain entry is a harmless residual, never a reason to abort). A
+    /// keychain entry is a harmless residual, never a reason to abort).
+    /// Members that hold DIFFERENT non-empty secrets are not merged on the
+    /// first of them: that is refused outright, because one set has one
+    /// credential slot and could serve at most one of them (M28/T2). A
     /// store failure while creating the set aborts before anything is
     /// rewired. Deletion is gated on the secret carry, not on rewiring order
-    /// (spec §4): if any part of the carry fails — a keychain READ, or the
-    /// write onto the set — the just-created set is rolled back, no session
-    /// is rewired, and every session keeps its own secret. A failing read is
-    /// a failed carry and not an empty one, which is what keeps a locked
-    /// keychain from looking like a group with nothing to carry (M28/T2).
-    /// Once the carry succeeds, each session
+    /// (spec §4): if any part of the carry fails — a keychain READ, members
+    /// disagreeing, or the write onto the set — the just-created set is
+    /// rolled back, no session is rewired, and every session keeps its own
+    /// secret. A failing read is a failed carry and not an empty one, which
+    /// is what keeps a locked keychain from looking like a group with
+    /// nothing to carry (M28/T2). Once the carry succeeds, each session
     /// is rewired and has its own secret deleted in the same iteration —
     /// both are `try?`, so a store-write failure for one session does not
     /// stop that session's secret from being deleted.
@@ -758,11 +761,22 @@ public final class SessionListViewModel {
             // one of them -- and the way there was to
             // write one onto the set and delete the other, whose slot was the
             // only place it existed. Refusing is not a new restriction; it
-            // declines a merge that could not have worked. Only `.passphrase`
-            // groups reach this through `LoginMergePlanner.candidates`, which
-            // puts a `.credential` secret in its grouping key and so never
-            // groups disagreeing members in the first place -- but a candidate
-            // arrives here as a plain value that anything could have built.
+            // declines a merge that could not have worked.
+            //
+            // Which groups can reach it: `LoginMergePlanner.candidates` puts a
+            // member's secret in its grouping key only when the schema shows a
+            // visible secret field AND that field's role is not `.passphrase`,
+            // so disagreeing members are kept apart for a `.credential` secret
+            // and only for that. The two that get here are a `.passphrase`
+            // group, and a group whose schema shows NO secret field at all --
+            // an ssh-agent login, whose members should have no slot, since
+            // `save` deletes it for them, but does so with `try?`, so a refused
+            // delete leaves one behind. Two agent sessions with leftover slots
+            // of differing content would be refused here for a login that has
+            // no credential to disagree about. Nothing is lost by that refusal,
+            // but it is not a case this check was written for -- see the M28/T2
+            // report. And a candidate arrives here as a plain value that
+            // anything could have built, planner or not.
             var carried: String?
             for session in groupSessions {
                 guard let secret = try secrets.password(for: session.id), !secret.isEmpty

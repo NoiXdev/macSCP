@@ -1022,10 +1022,11 @@ struct SessionListViewModelTests {
         let candidates = vm.mergeCandidates()
         #expect(candidates.count == 1)
         let candidate = candidates.first!
-        // The unreadable member has to be the one the selection meets FIRST;
-        // `first(where:)` short-circuits, so the order is part of the setup.
-        #expect(candidate.sessionIDs.first == a.id)
 
+        // Which member is unreadable, not where it sits: the search reads every
+        // member and has no early exit, so `a`'s read throws whether it is met
+        // first or last. Both members hold the same secret here, which keeps
+        // this about the failing read rather than about a disagreement.
         secrets.failReads(for: [a.id])
         let result = vm.applyMerge(candidate, name: "root")
 
