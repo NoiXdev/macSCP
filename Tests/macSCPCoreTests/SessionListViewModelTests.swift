@@ -1605,6 +1605,155 @@ struct SessionListViewModelTests {
         #expect(vm.sessions.first?.ssh?.authKind == .agent)
     }
 
+    // MARK: - Login-set binding
+
+    /// The login-set counterpart of the two agent twins above. A session that
+    /// moves onto a login set must not keep its own slot: the set owns the
+    /// secret from then on, and `ContentView.beginEditing` fills the form's
+    /// secret field from `resolvedCredentials` (the set) whenever
+    /// `loginSetID` is set, never from the session's own slot. Switching back
+    /// to manual later leaves that field deliberately blank ("unchanged"), so
+    /// nothing overwrites the slot and the next connect would authenticate
+    /// with a secret shown nowhere on screen.
+    @Test func saveSwitchingTargetToALoginSetDeletesSessionSecret() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "prod", username: "deploy")
+        vm.saveLoginSet(set, secret: "set-secret")
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw")!
+        #expect(try secrets.password(for: stored.id) == "pw")
+
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            loginSetID: set.id)
+
+        #expect(vm.sessions.first?.loginSetID == set.id)
+        // `storedIDs` rather than a lookup under the session id: the claim is
+        // "nothing is left anywhere", and the set's own slot is the only one
+        // that may survive this.
+        #expect(secrets.storedIDs == [set.id])
+    }
+
+    @Test func updateSessionSwitchingTargetToALoginSetDeletesSessionSecret() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "prod", username: "deploy")
+        vm.saveLoginSet(set, secret: "set-secret")
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw")!
+        var updated = stored
+        updated.loginSetID = set.id
+
+        vm.updateSession(updated, newSecret: nil)
+
+        #expect(vm.sessions.first?.loginSetID == set.id)
+        #expect(secrets.storedIDs == [set.id])
+    }
+
+    /// The carry that the "save as new login set" checkbox performs: the set
+    /// is created out of the session's OWN secret, and only afterwards may the
+    /// session be bound (which is what removes that secret).
+    @Test func createLoginSetCarriesTheSessionsOwnSecretAndThenOneSlotIsLeft() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw")!
+
+        // Empty `secret` = the user retyped nothing, so the session's own slot
+        // is the source.
+        let set = LoginSet(name: "prod", username: "deploy")
+        #expect(vm.createLoginSet(set, secret: "", carryingFrom: stored.id) == set.id)
+        #expect(secrets.peek(set.id) == "pw")
+
+        var updated = try #require(vm.sessions.first)
+        updated.loginSetID = set.id
+        vm.updateSession(updated, newSecret: nil)
+
+        #expect(secrets.storedIDs == [set.id])
+    }
+
+    /// The hazard the whole ordering exists for: the set's secret write fails,
+    /// so the set is rolled back and the caller gets no id to bind with — the
+    /// session stays manual and keeps the only copy of its secret.
+    @Test func aLoginSetWhoseSecretWriteFailedIsRolledBackAndTheSessionKeepsItsOwn() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = SelectiveFailingSecretStore()
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: secrets,
+            loginSetStore: LoginSetStore(directory: dir))
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw")!
+        let set = LoginSet(name: "prod", username: "deploy")
+        secrets.failingSessionID = set.id
+
+        #expect(vm.createLoginSet(set, secret: "pw") == nil)
+        #expect(vm.loginSets.isEmpty)
+        // Nothing was rewired, so nothing deleted the session's own secret.
+        #expect(vm.sessions.first?.loginSetID == nil)
+        #expect(try secrets.password(for: stored.id) == "pw")
+    }
+
+    /// A failed READ is not proof of an empty slot. With the Keychain there
+    /// but not answering, carrying the session's secret onto the set must
+    /// abort rather than create a set with nothing in it — which the caller
+    /// would then bind the session to, deleting the credential it could not
+    /// read a moment earlier.
+    @Test func anUnreadableCarrySourceRollsTheSetBackInsteadOfCreatingItEmpty() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = UnreliableSecretStore(failsReads: true)
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: secrets,
+            loginSetStore: LoginSetStore(directory: dir))
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw")!
+        #expect(secrets.peek(stored.id) == "pw")
+
+        let set = LoginSet(name: "prod", username: "deploy")
+        #expect(vm.createLoginSet(set, secret: "", carryingFrom: stored.id) == nil)
+
+        #expect(vm.loginSets.isEmpty)
+        #expect(secrets.peek(set.id) == nil)
+        #expect(secrets.peek(stored.id) == "pw")
+    }
+
+    /// An agent set has no secret to carry, so nothing can fail on the way —
+    /// and the session binding it may still drop its own leftover slot.
+    @Test func createLoginSetForAnAgentSetNeitherCarriesNorKeepsASecret() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw")!
+        let set = LoginSet(name: "prod", username: "deploy", authKind: .agent)
+
+        #expect(vm.createLoginSet(set, secret: "should-not-be-stored") == set.id)
+
+        var updated = try #require(vm.sessions.first)
+        updated.loginSetID = set.id
+        vm.updateSession(updated, newSecret: nil)
+
+        #expect(secrets.storedIDs.isEmpty)
+        #expect(stored.id != set.id)
+    }
+
     @Test func saveJumpSwitchingManualToAgentDeletesJumpSecretSlot() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }

@@ -2292,20 +2292,31 @@ struct ContentView: View {
         // The secret is whichever field the backend's credential schema shows
         // right now — SSH's password row under password auth, its passphrase
         // row under private-key auth, and NOTHING for an agent login, whose
-        // set never carries a secret (M10d/T4). `saveLoginSet` already refuses
-        // to write one for `.agent`; resolving to "no secret field" here also
-        // skips the (then-discarded) keychain lookup for the edited session's
-        // own secret.
+        // set never carries a secret (M10d/T4). `createLoginSet` already
+        // refuses to write one for `.agent`; resolving to "no secret field"
+        // here also skips the (then-discarded) keychain lookup for the edited
+        // session's own secret.
         let typed = descriptor.credentialSchema.visibleSecretField(
             in: form.values, namespace: descriptor.fieldNamespace)
             .map { form.values.raw["\(descriptor.fieldNamespace).\($0.id)"] ?? "" }
-        let carried: String? = typed == nil ? nil
-            : isManagedKeyWithStoredPassphrase(form) ? ""
-            : ((typed ?? "").isEmpty
-                ? (editedSession.flatMap { sessionListViewModel.password(for: $0) })
-                : typed)
-        sessionListViewModel.saveLoginSet(newSet, secret: carried)
-        return newSet.id
+        // A managed key with its own slot resolves to "carry nothing", exactly
+        // as an agent login does: the passphrase belongs to the KEY, and a
+        // copy under the set id would win at connect time and go on shadowing
+        // the key's own value (`EmbeddedKeyPorter.MaterializedKey`'s doc says
+        // the same about the import direction).
+        let carried: String? = isManagedKeyWithStoredPassphrase(form) ? nil : typed
+        // The edited session's OWN slot is the fallback source, and only when
+        // the form shows a secret row the user left blank ("unchanged"). The
+        // lookup itself now happens inside `createLoginSet`, which is what
+        // lets an unanswerable Keychain abort the whole rewiring instead of
+        // quietly producing a set with no secret — `password(for:)` swallows
+        // that difference into `nil`.
+        let source: UUID? = carried?.isEmpty == true ? editedSession?.id : nil
+        // `createLoginSet`, never `saveLoginSet`: a nil result means the set
+        // was rolled back and this session must stay MANUAL. Returning its id
+        // anyway would bind the session — and binding is what deletes the
+        // session's own secret, here the only copy left.
+        return sessionListViewModel.createLoginSet(newSet, secret: carried, carryingFrom: source)
     }
 
     /// After a successful connect: build the panes of THIS tab and save the
@@ -2403,8 +2414,11 @@ struct ContentView: View {
         if form.shouldSaveSession {
             // Set mode: reference the picked set directly. Manual mode +
             // "Save as new login set": create the set FIRST, then reference
-            // it — either way `password:` below is safely ignored by `save`
-            // once `loginSetID` is non-nil (see its doc comment).
+            // it — either way `password:` below is ignored by `save` once
+            // `loginSetID` is non-nil, which then also clears the session's
+            // own slot (see its doc comment). `maybeCreateNewLoginSet`
+            // returning nil means the set was rolled back, so `loginSetID`
+            // below stays nil and the password is persisted as usual.
             let newSetID = maybeCreateNewLoginSet(from: form)
             // ONE save for every protocol (M23/T7), and the place the last two
             // `"unused"` placeholders died: the backend's own adapter writes

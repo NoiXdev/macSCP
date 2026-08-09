@@ -59,8 +59,10 @@ public final class SessionListViewModel {
     }
 
     /// `loginSetID`, when non-nil, makes the session reference a login set
-    /// (M10b): `password` is then ignored and no session-level keychain
-    /// entry is written, since the set owns the secret instead.
+    /// (M10b): `password` is then ignored and the session's own keychain slot
+    /// is REMOVED, not merely left unwritten, since the set owns the secret
+    /// instead — see the delete's own comment below for why leaving it behind
+    /// is not the harmless residual it looks like.
     /// `jump` (M10c) attaches a jump host hop; `jumpSecret` of `nil` or empty
     /// leaves an existing MANUAL jump's keychain slot untouched, a non-empty
     /// value overwrites it. Slot hygiene: an old manual jump whose slot is no
@@ -135,19 +137,31 @@ public final class SessionListViewModel {
 
         do {
             try store.upsert(session)
-            if loginSetID == nil {
-                // The auth kind lives in the values now, and
-                // `requiresSecret` is the descriptor's own answer to "does this
-                // backend need a secret at all" — false ONLY for an SSH agent
-                // login (S3 and WebDAV always answer true), which is exactly
-                // what the `authKind == .agent` check here used to mean. An
-                // agent login stores no secret and has its leftover manual slot
-                // cleaned up (M10d).
-                if descriptor.requiresSecret(values) {
-                    try secrets.savePassword(password, for: session.id)
-                } else {
-                    try? secrets.deletePassword(for: session.id)
-                }
+            // Two reasons this session's own slot must not hold a secret, and
+            // the same cleanup for both.
+            //
+            // `loginSetID != nil`: the set owns the secret. Nothing reads the
+            // session's own slot while it is bound — `ContentView.beginEditing`
+            // fills the form from `resolvedCredentials` (the set) and only
+            // falls back to `password(for:)` when `loginSetID` is nil — so a
+            // surviving slot is invisible, and it comes BACK the moment the
+            // user switches to manual: the edit form's secret field is then
+            // deliberately blank ("unchanged"), nothing is written, and the
+            // next connect authenticates with the pre-switch secret. Callers
+            // must therefore never bind a session to a set that does not yet
+            // hold the secret; `createLoginSet` is what enforces that for a
+            // set created out of this very session.
+            //
+            // `requiresSecret` is the descriptor's own answer to "does this
+            // backend need a secret at all" — false ONLY for an SSH agent
+            // login (S3 and WebDAV always answer true), which is exactly what
+            // the `authKind == .agent` check here used to mean. An agent login
+            // stores no secret and has its leftover manual slot cleaned up
+            // (M10d).
+            if loginSetID != nil || !descriptor.requiresSecret(values) {
+                try? secrets.deletePassword(for: session.id)
+            } else {
+                try secrets.savePassword(password, for: session.id)
             }
             // `sessionID == nil` is load-bearing (M11a/T3 review): a jump that
             // borrows a saved connection has no secret of its own — the
@@ -355,6 +369,8 @@ public final class SessionListViewModel {
 
     /// Persists an updated session. `newSecret` of `nil` or empty leaves the
     /// existing Keychain secret untouched; a non-empty value overwrites it.
+    /// Both are overridden for a session bound to a login set: its own slot is
+    /// removed, whatever `newSecret` says, because the set owns the secret.
     /// `jumpSecret` (M10c) is the same "unchanged when nil/empty" semantics
     /// for a MANUAL `updated.jump`'s own slot; slot hygiene for an orphaned
     /// old jump secret runs the same as in `save`.
@@ -362,6 +378,19 @@ public final class SessionListViewModel {
         let previousJump = sessions.first(where: { $0.id == updated.id })?.jump
         do {
             try store.upsert(updated)
+            // Two ways this session's own slot becomes one nothing may read,
+            // and the same cleanup for both (`save` carries the twin of this
+            // branch and the long form of the login-set reasoning).
+            //
+            // A set-bound session's secret lives under the SET id: nothing
+            // reads the session's own slot while `loginSetID` is set, and a
+            // survivor would come back the moment the user switches to manual
+            // again, unseen and unwritable from the form. The schema question
+            // below cannot answer this one — `visibleSecretField(for:)` reads
+            // the session's own backend fields and has no path to
+            // `loginSetID`, which is why an SSH session bound to a
+            // password-auth set kept its old secret.
+            //
             // No secret field on screen means this login needs none, which
             // today is ssh-agent and nothing else (M10d) -- clean up a
             // leftover manual slot from before the switch. Asking the
@@ -369,8 +398,9 @@ public final class SessionListViewModel {
             // `.s3`/`.webdav` session out of this branch by its own
             // declaration instead of by the accident that its SSH auth kind
             // (were it read at all) is not `.agent`.
-            if BackendDescriptor.descriptor(for: updated.kind)
-                .visibleSecretField(for: updated) == nil {
+            if updated.loginSetID != nil
+                || BackendDescriptor.descriptor(for: updated.kind)
+                    .visibleSecretField(for: updated) == nil {
                 try? secrets.deletePassword(for: updated.id)
             } else if let newSecret, !newSecret.isEmpty {
                 try secrets.savePassword(newSecret, for: updated.id)
@@ -499,6 +529,84 @@ public final class SessionListViewModel {
             errorMessage = String(
                 format: CoreL10n.string("core.login.saveFailed %@"), String(describing: error))
         }
+    }
+
+    /// Creates a NEW set and carries a secret onto it, reporting the set id
+    /// only once that secret is demonstrably there. `nil` means nothing was
+    /// created: the set record is rolled back, and the caller must leave its
+    /// session MANUAL rather than bind it.
+    ///
+    /// This exists because `saveLoginSet` cannot answer the question a caller
+    /// about to rewire a session has to ask. It reports a failed secret write
+    /// through `errorMessage` alone and returns nothing, so a caller acting on
+    /// the set id it already had would bind a session to a set holding no
+    /// secret — and binding is exactly what makes `save`/`updateSession`
+    /// delete the session's own slot. The last copy would be gone.
+    ///
+    /// Same ordering as `applyMerge`, which faces the same choice: carry
+    /// first, roll the set back rather than rewire if the carry fails, and
+    /// only ever delete a session's own secret afterwards.
+    ///
+    /// `carryingFrom` names the session whose OWN slot supplies the secret
+    /// when `secret` is nil or empty — the "user retyped nothing" edit path. A
+    /// read that THROWS aborts the whole thing: "the slot is empty" and "the
+    /// Keychain would not answer" are different facts, and treating the second
+    /// as the first is what would create an empty set and delete a live
+    /// credential on a locked Keychain. A read that returns nil is the real
+    /// "there is nothing to carry" and proceeds.
+    ///
+    /// Never call this to UPDATE an existing set: the rollback deletes it.
+    @discardableResult
+    public func createLoginSet(
+        _ set: LoginSet, secret: String?, carryingFrom sourceSessionID: UUID? = nil
+    ) -> UUID? {
+        do {
+            try loginSetStore.upsert(set)
+        } catch {
+            reload()
+            errorMessage = String(
+                format: CoreL10n.string("core.login.saveFailed %@"), String(describing: error))
+            return nil
+        }
+
+        // An agent set never holds a secret at all (M10d), so there is nothing
+        // to carry and nothing that could fail — same rule `saveLoginSet`
+        // applies, including scrubbing a slot that a recycled id might carry.
+        if set.authKind == .agent {
+            try? secrets.deletePassword(for: set.id)
+            reload()
+            return set.id
+        }
+
+        var carried = secret
+        if (carried ?? "").isEmpty, let sourceSessionID {
+            do {
+                carried = try secrets.password(for: sourceSessionID)
+            } catch {
+                return rollBack(set, reporting: error)
+            }
+        }
+        if let carried, !carried.isEmpty {
+            do {
+                try secrets.savePassword(carried, for: set.id)
+            } catch {
+                return rollBack(set, reporting: error)
+            }
+        }
+        reload()
+        return set.id
+    }
+
+    /// Undoes `createLoginSet`'s store write and reports why. The set's own
+    /// slot is scrubbed too: `savePassword` is not documented to leave nothing
+    /// behind when it throws, and the id is about to stop existing.
+    private func rollBack(_ set: LoginSet, reporting error: any Error) -> UUID? {
+        try? loginSetStore.delete(id: set.id)
+        try? secrets.deletePassword(for: set.id)
+        reload()
+        errorMessage = String(
+            format: CoreL10n.string("core.login.saveFailed %@"), String(describing: error))
+        return nil
     }
 
     /// The outcome of `deleteLoginSet`.
