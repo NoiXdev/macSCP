@@ -5,8 +5,9 @@ import Foundation
 ///
 /// Cases, not text: the App layer maps each to a localized message, the same
 /// split `LoginResolveError` uses. The field each case highlights belongs
-/// here rather than at the call site — it used to live scattered across four
-/// catch branches in the view, where nothing could check it.
+/// here rather than at the call site — it used to live scattered across the
+/// view's own resolution functions, in a mix of `guard`-`else` exits and
+/// `catch` branches, where nothing could check it.
 public enum SubmitRefusal: Equatable, Sendable {
     /// The selected target login set no longer exists.
     case targetSetMissing

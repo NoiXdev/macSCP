@@ -11,8 +11,10 @@ extension SessionListViewModel {
     /// The `kind` check is new in M29-P2. Without it a set belonging to
     /// another protocol was accepted and its values written under that
     /// protocol's own field namespace, which the form never reads — harmless
-    /// by coincidence rather than by rule, and only for as long as no two
-    /// backends share a field id.
+    /// by coincidence rather than by rule: what actually keeps the two apart
+    /// is each backend's own `namespace` string (e.g. `SSHField.namespace`),
+    /// hand-written per backend and never checked for collisions against the
+    /// others.
     public func resolveTargetLoginSet(form: ConnectionViewModel) -> SubmitRefusal? {
         guard form.loginMode == .set, let id = form.selectedLoginSetID else { return nil }
         guard let set = loginSets.first(where: { $0.id == id }) else {
