@@ -37,12 +37,24 @@ nicht: die zwei Defekte sind verschieden.
 Beide Fixes stehen im Plan, mit ihrer je eigenen Begründung. Die Spec bleibt
 in der Sache richtig — ihre Verallgemeinerung war eine Ebene zu grob.
 
-**Zweite Abweichung, kleiner:** die Spec nennt die Managed-Key-Probe als
-Sonderfall, den das Schema nicht beantworten kann. Für die *Deckungsfrage*
-stimmt das nicht: ein `.privateKey`-Set zeigt `passphrase`, und das Feld ist
-**nicht** `isRequired` — der „nicht erforderlich ⇒ gedeckt"-Zweig trägt den
-Fall bereits. Die Probe wird hier also **nicht** gebraucht, und M28 nimmt
-keine `ManagedKeyStore`-Abhängigkeit auf.
+**Zweite Abweichung — und ihre Korrektur nach der Task-1-Review.** Die Spec
+nennt die Managed-Key-Probe als Sonderfall, den das Schema nicht beantworten
+kann. Der Plan hat daraus zunächst geschlossen, sie werde gar nicht gebraucht.
+**Das war zu breit, und die Task-1-Review hat es gefangen:**
+
+- Für die **Deckungsfrage selbst** stimmt es: ein `.privateKey`-Set zeigt
+  `passphrase`, das Feld ist nicht `isRequired`, der „nicht erforderlich ⇒
+  gedeckt"-Zweig trägt den Fall. Task 1 braucht keine
+  `ManagedKeyStore`-Abhängigkeit und hat keine.
+- Für die **Löschentscheidung** stimmt es **nicht**. Ein Binder, der allein auf
+  dieser Antwort löscht, entfernt den Passphrase-Slot einer Sitzung, deren
+  Schlüssel verschlüsselt ist und deren Set nichts hält — die Passphrase ist
+  dann nirgends mehr. Die Deckungsfrage sagt „braucht das Set ein Secret", nicht
+  „verliert der Login etwas, das er braucht".
+
+**Task 3 kombiniert deshalb beide Fragen**, und die Probe wirft weiterhin,
+statt zu raten. Task 2 ist davon unberührt: dort wird übertragen, nicht
+gedeckt.
 
 ## Global Constraints
 
