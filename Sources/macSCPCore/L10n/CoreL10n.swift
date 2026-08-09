@@ -12,9 +12,15 @@ import Foundation
 /// `macSCP_macSCPCore.bundle`), but degrades gracefully instead of crashing:
 /// if none of the candidates exist, it falls back to `Bundle.main`, and
 /// `string(_:)` returns the raw key text instead of trapping — every key
-/// below is itself a readable (if unlocalized) fallback. In the test target
-/// `Bundle.module`'s own search succeeds normally, so tests exercise the
-/// same lookup as production code.
+/// below is itself a readable (if unlocalized) fallback.
+///
+/// Under `swift test` the module is linked into the test runner, so
+/// `Bundle(for:)` returns the `.xctest` bundle and `Bundle.main` is the
+/// test helper — neither CONTAINS the resource bundle. It sits BESIDE the
+/// test bundle instead, which is why the last candidate walks up one level
+/// from `Bundle(for:)`'s own URL. Without it every lookup fell through to
+/// `Bundle.main` and `string(_:)` returned the raw key, which is what made
+/// key-against-key assertions vacuous for several milestones.
 enum CoreL10n {
     private static let bundleName = "macSCP_macSCPCore.bundle"
 
@@ -25,6 +31,7 @@ enum CoreL10n {
             Bundle.main.resourceURL,
             Bundle(for: BundleFinder.self).resourceURL,
             Bundle.main.bundleURL,
+            Bundle(for: BundleFinder.self).bundleURL.deletingLastPathComponent(),
         ].compactMap { $0 }
 
         for candidate in candidates {
