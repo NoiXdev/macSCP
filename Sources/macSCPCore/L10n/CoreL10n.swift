@@ -7,9 +7,12 @@ import Foundation
 /// sibling resource bundle next to the executable/test binary — a real risk
 /// for stripped/bare launches (e.g. a verification wrapper that copies only
 /// the built binary without `.build`'s resource output alongside it). This
-/// helper mirrors `Bundle.module`'s own candidate search (`Bundle.main`,
-/// `Bundle(for:)`, and the bundle name SwiftPM generates for this target,
-/// `macSCP_macSCPCore.bundle`), but degrades gracefully instead of crashing:
+/// helper looks for the same bundle name SwiftPM generates for this target,
+/// `macSCP_macSCPCore.bundle`, but over a WIDER candidate list than the
+/// generated accessor: that one tries exactly two locations —
+/// `Bundle.main.bundleURL` and a build path hardcoded at compile time — and
+/// never consults `Bundle(for:)`. This helper also degrades gracefully
+/// instead of crashing:
 /// if none of the candidates exist, it falls back to `Bundle.main`, and
 /// `string(_:)` returns the raw key text instead of trapping — every key
 /// below is itself a readable (if unlocalized) fallback.
