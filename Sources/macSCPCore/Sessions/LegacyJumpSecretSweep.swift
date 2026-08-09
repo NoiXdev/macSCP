@@ -10,10 +10,9 @@ import Foundation
 /// The rule it applies is wider than that name, and deliberately so: it
 /// deletes every jump `secretID` the preserved legacy file names that
 /// nothing claims TODAY. M23's orphans are why it exists, but they are not
-/// the only way a named slot ends up unclaimed -- deleting a session removes
-/// its jump secret with `try?` (`SessionListViewModel.deleteSession`), so a
-/// failure there leaves a slot behind that no record refers to any more
-/// either. It goes with the rest, and should: "unclaimed" is the property
+/// the only way a named slot ends up unclaimed -- `SessionListViewModel`'s
+/// `delete(_:)` removes a session's jump secret with `try?`, so a failure
+/// there leaves a slot behind that no record refers to any more either. It goes with the rest, and should: "unclaimed" is the property
 /// that makes deleting safe, and it is the one being tested.
 ///
 /// **Candidates come from the preserved legacy file, never from the Keychain.**
