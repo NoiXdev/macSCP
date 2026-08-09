@@ -1318,10 +1318,10 @@ struct ContentView: View {
         // subtree — the connected browser layout AND the form branch — to
         // remount on every tab switch. Without it, two connected tabs would
         // share the same SwiftUI view identities: `SSHTerminalView` binds
-        // `onOutput` and replays its buffer only in `makeNSView` (see
-        // SSHTerminalView.swift:29-30, `updateNSView` is empty), so a tab
-        // switch would keep rendering/typing into the OLD tab's shell
-        // instead of rebinding to the new one. `BrowserPane`/
+        // `onOutput` and replays its buffer only in `makeNSView` --
+        // `updateNSView` touches font and cursor style and nothing else --
+        // so a tab switch would keep rendering/typing into the OLD tab's
+        // shell instead of rebinding to the new one. `BrowserPane`/
         // `ConnectionFormView` `@State` would leak across tabs the same way.
         .id(tab.id)
     }
@@ -2110,6 +2110,21 @@ struct ContentView: View {
     /// switching Source to "Saved connection" must not block submit with an
     /// error on a field session mode doesn't even render -- session mode has
     /// its own resolution path (`resolveSelectedJumpSession` below).
+    ///
+    /// The `kind` guard (M28 final review, Critical) is the same refusal
+    /// `LoginResolver.resolveJump` makes for a stored binding, made here for
+    /// the FORM's binding -- and it has to be made twice, because this path
+    /// never consults the resolver: it reads the set's Keychain slot itself
+    /// (`fillJumpForm` below) and hands the values to `validateJump`, whose
+    /// `.set` branch only checks that something is selected. The picker's
+    /// filter does not cover it either: `beginEditing` restores
+    /// `jumpSelectedLoginSetID` from the stored jump without resolving, and a
+    /// selection matching no `tag` is drawn empty by SwiftUI rather than
+    /// reset, so an old binding — or one an import created by replacing an
+    /// SSH set with a non-SSH one under the same id — reaches this fill
+    /// unfiltered. Refusing BEFORE `fillJumpForm` is the point: the share's
+    /// or bucket's secret is never read into the form, so no later mode
+    /// switch or save can carry it onto a bastion.
     private func resolveSelectedJumpLoginSet(in tab: SessionTab) -> Bool {
         let form = tab.connectionViewModel
         guard form.jumpEnabled, form.jumpSourceMode != .session,

@@ -1620,8 +1620,8 @@ struct SessionListViewModelTests {
     /// inert data carrier once `sessionID` is set (the same F-1 rule
     /// `sessionsUsing(setID:)` applies). So the coverage question must not
     /// fire for one: the referenced session owns the login, and the old manual
-    /// slot is orphaned exactly as `saveJumpSwitchingManualToSessionDeletes
-    /// JumpSecretSlot` has it. The set below holds nothing, which is what
+    /// slot is orphaned exactly as
+    /// `saveJumpSwitchingManualToSessionDeletesJumpSecretSlot` has it. The set below holds nothing, which is what
     /// makes this fail if the guard forgets to check `sessionID`.
     @Test func switchingAJumpToSessionModeDropsTheOldSlotDespiteAStaleSetID() throws {
         let (vm, secrets, dir) = makeVM()

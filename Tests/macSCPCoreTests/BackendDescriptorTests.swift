@@ -255,13 +255,13 @@ struct BackendDescriptorTests {
         #expect(descriptor.sessionValues(session).raw.isEmpty)
     }
 
-    /// Guards `updateSession`'s leftover-slot deletion (`SessionListViewModel
-    /// .swift:345`): it deletes the session's Keychain entry precisely when
+    /// Guards `SessionListViewModel.updateSession`'s leftover-slot
+    /// deletion: it deletes the session's Keychain entry precisely when
     /// `visibleSecretField(for:)` returns nil. Today that never happens for
     /// `.s3`/`.webdav` only because neither backend's secret field declares a
     /// `visibleWhen` — `FieldVisibility.evaluate`'s `guard let condition else
-    /// { return true }` (`FieldVocabulary.swift:150`) makes an unconditioned
-    /// field visible even against the EMPTY bag a blockless session yields.
+    /// { return true }` makes an unconditioned field visible even against the
+    /// EMPTY bag a blockless session yields.
     /// Since M26 all three backends' `sessionValues(_:)` return that same
     /// empty bag for a blockless session — `.ssh` no longer differs from
     /// `.s3`/`.webdav` here — so the property this test pins rests solely on
