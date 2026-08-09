@@ -653,7 +653,16 @@ struct ConnectionFormView: View {
                         .errorHighlight(failedField == .jumpPort)
 
                         FormRow(label: loginModeLabel) {
-                            Picker(loginModeLabel, selection: $viewModel.jumpLoginMode) {
+                            // Through the switcher, not a raw binding (M28
+                            // final review): Set mode's fields are filled
+                            // from the SET, so a switch away from it has a
+                            // secret to drop -- see
+                            // `ConnectionViewModel.selectJumpLoginMode`. The
+                            // source and auth pickers above/below do the same.
+                            Picker(loginModeLabel, selection: Binding(
+                                get: { viewModel.jumpLoginMode },
+                                set: { viewModel.selectJumpLoginMode($0) }
+                            )) {
                                 Text(L10n.string("form.loginMode.set", "Login set"))
                                     .tag(ConnectionViewModel.LoginMode.set)
                                 Text(L10n.string("form.loginMode.manual", "Manual"))
