@@ -51,10 +51,12 @@ struct LegacyJumpSecretSweepTests {
     /// differently: an `.ssh` record's jump is carried into the new file and
     /// comes back claimed, a non-SSH record's jump is dropped and stays a
     /// candidate -- that dropped one is the orphan M27 exists for. The
-    /// records `legacyRecords` writes carry no `kind` key and therefore
-    /// upgrade as `.ssh`, so for THESE fixtures a migration would leave
-    /// nothing to sweep. `sweepsOnlyTheJumpTheMigrationDropsWhenItRunsOnFirstLaunch`
-    /// is the one test that lets the migration run and pins that difference.
+    /// records `legacyRecords` writes without a `kinds` argument -- the case
+    /// this function pairs with -- carry no `kind` key and therefore upgrade
+    /// as `.ssh`, so for THESE fixtures a migration would leave nothing to
+    /// sweep. (A caller that DOES pass `kinds` gets one written per entry --
+    /// see `sweepsOnlyTheJumpTheMigrationDropsWhenItRunsOnFirstLaunch` below,
+    /// the one test that lets the migration run and pins that difference.)
     ///
     /// The jumpless session is always written so the file exists even when
     /// nothing is claimed.
