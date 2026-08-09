@@ -2477,6 +2477,63 @@ struct SessionListViewModelTests {
         #expect(try secrets.password(for: session.id) == "webdav-secret")
     }
 
+    /// Blockless twin of `updateSessionKeepsAnS3SessionsSecret`. Pins a latch
+    /// that holds by accident: `S3Field.secretAccessKey` declares no
+    /// `visibleWhen`, so `visibleSecretField(for:)` finds it in
+    /// `visibleFields` regardless of what `sessionValues(_:)` returns -- and
+    /// for a blockless `.s3` session that is the empty bag. So the field
+    /// counts as "on screen" even though the session has no S3 block at all,
+    /// and `updateSession` takes the "keep" branch instead of deleting the
+    /// Keychain slot. If S3 ever grew a secret field gated by a
+    /// `visibleWhen` (say a toggle that hides the key under some other auth
+    /// mode), a blockless session could stop matching that condition, flip
+    /// `visibleSecretField(for:)` to nil, and this same rename-only edit
+    /// would silently delete the slot instead.
+    @Test func updateSessionOfABlocklessS3SessionKeepsTheKeychainSlot() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let store = SessionStore(directory: dir)
+        let session = StoredSession(name: "s3-blockless", kind: .s3)
+        try store.upsert(session)
+        try secrets.savePassword("s3-secret", for: session.id)
+
+        let vm = SessionListViewModel(
+            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+        var updated = session
+        updated.name = "s3-blockless renamed"
+        vm.updateSession(updated, newSecret: nil)
+
+        #expect(try secrets.password(for: session.id) == "s3-secret")
+    }
+
+    /// Blockless twin of `updateSessionKeepsAWebDAVSessionsSecret`, same
+    /// reasoning as the S3 case above: `WebDAVField.password` declares no
+    /// `visibleWhen` either, so it is "visible" against the empty bag a
+    /// blockless `.webdav` session yields, and `updateSession` keeps the
+    /// Keychain slot instead of deleting it. A future `visibleWhen` on this
+    /// field (say an "anonymous access" toggle) would change the answer for
+    /// exactly this case.
+    @Test func updateSessionOfABlocklessWebDAVSessionKeepsTheKeychainSlot() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let store = SessionStore(directory: dir)
+        let session = StoredSession(name: "webdav-blockless", kind: .webdav)
+        try store.upsert(session)
+        try secrets.savePassword("webdav-secret", for: session.id)
+
+        let vm = SessionListViewModel(
+            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+        var updated = session
+        updated.name = "webdav-blockless renamed"
+        vm.updateSession(updated, newSecret: nil)
+
+        #expect(try secrets.password(for: session.id) == "webdav-secret")
+    }
+
     /// Success criterion 4 (spec): the agent-ness of a SET-BOUND session
     /// comes from the SET, not from the session's own (SSH-shaped) values.
     /// A blanket replacement of the fallback with a schema question about
