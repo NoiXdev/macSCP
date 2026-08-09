@@ -52,8 +52,11 @@ struct SessionTabTests {
         #expect(tab.plaintextConfirmationPending == false)
     }
 
-    /// A refusal must come back as `false`, not merely as "not true" — the
-    /// connector treats the two identically only by accident today.
+    /// A refusal is reported as `false`, and clears the pending flag exactly
+    /// like an acceptance does. `ContentView`'s connector closure guards on
+    /// exactly this value (`guard await box.tab.confirmPlaintext() else {
+    /// throw … }`), so a `confirmPlaintext()` that came back `true` here
+    /// would let a refused connect through.
     @Test func refusingTheConfirmationReportsFalse() async {
         let tab = makeTab()
 
@@ -66,6 +69,11 @@ struct SessionTabTests {
 
     /// Resolving twice must not resume the continuation twice — that traps
     /// at runtime. The second call is a no-op by design.
+    ///
+    /// Caveat: the `#expect` below cannot observe a trap directly — a double
+    /// resume aborts the whole test process (SIGABRT) rather than failing
+    /// this assertion. A regression here would still fail the run, just not
+    /// as a clean red result isolated to this test.
     @Test func resolvingTwiceIsHarmless() async {
         let tab = makeTab()
 
@@ -79,6 +87,12 @@ struct SessionTabTests {
 
     /// Resolving without a pending prompt must not trap either — the UI can
     /// dismiss a sheet that was never asked for.
+    ///
+    /// Caveat: same as `resolvingTwiceIsHarmless` above — a regression to an
+    /// unguarded unwrap would abort the process rather than fail the
+    /// `#expect` below, which itself is nearly satisfied by construction
+    /// (`confirmPlaintext()` is never called here, so the flag was never set
+    /// `true` to begin with).
     @Test func resolvingWithNothingPendingIsHarmless() {
         let tab = makeTab()
 

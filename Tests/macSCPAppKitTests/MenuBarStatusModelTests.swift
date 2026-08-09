@@ -20,6 +20,13 @@ struct MenuBarStatusModelTests {
 
     /// With no tabs the status item must read idle and count zero — not
     /// crash on an empty aggregation.
+    ///
+    /// Caveat: `Array.contains`/`Array.filter(_:).count` over an empty
+    /// `tabs` are `false`/`0` regardless of the closure passed to them, so
+    /// this only catches a hard-coded wrong default (e.g. returning `true`
+    /// or a nonzero constant), not a broken aggregation rule. The actual
+    /// per-tab logic is covered by `disconnectedTabsDoNotCount` and
+    /// `tabsWithoutRunningTransfersLeaveTheIconIdle` below.
     @Test func anEmptyModelIsIdleAndCountsNothing() {
         let model = MenuBarStatusModel()
 
