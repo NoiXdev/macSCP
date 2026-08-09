@@ -33,10 +33,39 @@ struct JumpLoginSetEligibilityTests {
         #expect(JumpLoginSetEligibility.isEligible(ssh))
         #expect(JumpLoginSetEligibility.isEligible(share) == false)
         #expect(JumpLoginSetEligibility.isEligible(bucket) == false)
-        // Not two rules that happen to agree today: the filter is defined in
-        // terms of this predicate.
-        let sets = [ssh, share, bucket]
-        #expect(JumpLoginSetEligibility.eligible(in: sets) == sets.filter(JumpLoginSetEligibility.isEligible))
+    }
+
+    /// The App refuses a jump set with `isEligible`, Core refuses it with
+    /// `LoginResolver.resolveJump`'s own `kind` guard — two separate pieces of
+    /// code answering one question. This holds them together: for every set,
+    /// the predicate says exactly what the resolver does. Loosening either one
+    /// alone turns this red, which is the point — an App that still offers to
+    /// fill from a set the resolver will refuse (or worse, an App that fills
+    /// from one the resolver would have stopped) is how a WebDAV password
+    /// reached an SSH bastion in the first place.
+    @Test func theResolverRefusesExactlyTheSetsThePredicateRejects() throws {
+        let sets = [
+            LoginSet(name: "Bastion", username: "jumper"),
+            LoginSet(name: "Key", username: "u", authKind: .privateKey, keyPath: "/k"),
+            LoginSet(name: "Agent", username: "u", authKind: .agent),
+            LoginSet(name: "Share", username: "dav", kind: .webdav),
+            LoginSet(name: "Bucket", username: "", kind: .s3, accessKeyID: "AKIAEXAMPLE"),
+        ]
+        let secrets = InMemorySecretStore()
+
+        for set in sets {
+            let spec = StoredSession.JumpSpec(
+                host: "bastion.example.com", username: "unused", loginSetID: set.id)
+            var resolverRefused = false
+            do {
+                _ = try LoginResolver.resolveJump(spec: spec, sets: [set], secrets: secrets)
+            } catch LoginResolveError.jumpSetNotSSH {
+                resolverRefused = true
+            }
+            #expect(
+                resolverRefused == !JumpLoginSetEligibility.isEligible(set),
+                "\(set.kind.rawValue)/\(set.authKind.rawValue): resolver refused \(resolverRefused), predicate eligible \(JumpLoginSetEligibility.isEligible(set))")
+        }
     }
 
     /// Every SSH auth kind stays offered: the filter is about the PROTOCOL a

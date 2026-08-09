@@ -2707,6 +2707,15 @@ struct ContentView: View {
                         // wrong kind is `.kindMismatch`. (The remaining catch
                         // above is the TARGET's resolution, not a jump's.)
                         //
+                        // Only the CATCH sites are enumerated above, not the
+                        // call sites: `SessionListViewModel.exportPayload`
+                        // calls the same overload with a possibly-nil
+                        // `sessionID` too, but swallows the throw with `try?`
+                        // and falls back to the spec's raw values, so the
+                        // export writes no jump password and counts the jump
+                        // under its missing-password tally instead of
+                        // surfacing a refusal.
+                        //
                         // The raw fallback is what keeps the refusal
                         // meaningful on THIS path: it clears
                         // `jumpSelectedLoginSetID` and returns the block to
