@@ -198,6 +198,17 @@ public final class SessionListViewModel {
 
     /// The outcome of `delete(_:)`'s jump-restoration pass (M11a Task 2).
     public struct JumpRestoreResult: Equatable {
+        /// The number of sessions REFERENCING the deleted one as a jump host
+        /// -- not the number actually restored. `delete(_:)` only performs a
+        /// restoration when the deleted session still carries its SSH block;
+        /// a session that references it can be counted here while none of
+        /// that copying runs, so this field can overstate how many
+        /// restorations actually happened. That gap is currently
+        /// unreachable in practice: `SessionStore.load()` drops any `.ssh`
+        /// record with no stored SSH block before it ever reaches a caller,
+        /// so no session lacking that block -- and therefore no session that
+        /// could trigger the gap -- can be in the list `delete(_:)` operates
+        /// on.
         public var restored: Int
         public var secretFailures: Int
 
