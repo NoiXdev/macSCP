@@ -668,7 +668,12 @@ struct ConnectionFormView: View {
                                 HStack(spacing: 10) {
                                     Picker(loginModeLabel, selection: $viewModel.jumpSelectedLoginSetID) {
                                         Text(L10n.string("form.selectLogin", "Select a login")).tag(UUID?.none)
-                                        ForEach(sessionList.loginSets) { set in
+                                        // A jump is an SSH hop, so only SSH
+                                        // sets are offered (M28/T6) -- see
+                                        // `JumpLoginSetEligibility` for why,
+                                        // and for why the hard stop is not
+                                        // here.
+                                        ForEach(JumpLoginSetEligibility.eligible(in: sessionList.loginSets)) { set in
                                             Text("\(set.name) — \(set.username)").tag(UUID?.some(set.id))
                                         }
                                     }

@@ -205,8 +205,9 @@ public final class SessionListViewModel {
     /// no secret then leaves the jump unable to authenticate with nothing to
     /// go back to, and secretless sets are ordinary: `LoginSetExportSheet`
     /// starts its `includeSecrets` switch off. The old slot now goes only when
-    /// `jumpSetDemonstrablyCoversItsLogin` below says so; both "the set holds
-    /// nothing" and "the Keychain would not answer" keep it.
+    /// `jumpSetDemonstrablyCoversItsLogin` below says so; "the set holds
+    /// nothing", "the Keychain would not answer" and "the set is not for SSH
+    /// at all" (M28/T6) each keep it.
     ///
     /// Keeping on an unanswerable read is chosen deliberately, not inherited:
     /// this function stays throw-free, so the alternative would be to abort
@@ -230,16 +231,35 @@ public final class SessionListViewModel {
         }
         if let new, let setID = new.loginSetID, new.sessionID == nil,
            !jumpSetDemonstrablyCoversItsLogin(setID) {
-            return // The new set cannot be shown to cover this jump -- keep it.
+            return // The new set cannot be shown to serve this jump -- keep it.
         }
         try? secrets.deletePassword(for: previous.secretID)
     }
 
-    /// Whether the login set a jump has just been bound to demonstrably holds
-    /// what that jump will need (M28/T3). `false` for every case this site
-    /// cannot establish — an unreadable set store, an id matching no set, a
-    /// Keychain that will not answer — because the only caller deletes a
-    /// credential from a `true` and there is no second copy of it.
+    /// Whether the login set a jump has just been bound to is a set a jump can
+    /// use at all, and demonstrably holds what that jump will need (M28/T3,
+    /// applicability added M28/T6). `false` for every case this site cannot
+    /// establish — an unreadable set store, an id matching no set, a Keychain
+    /// that will not answer — because the only caller deletes a credential
+    /// from a `true` and there is no second copy of it.
+    ///
+    /// APPLICABILITY comes first, and asks `kind`, because coverage is only
+    /// meaningful once the set is one this jump could resolve through. A jump
+    /// is an SSH hop: `LoginResolver.resolveJump` hands a set-bound spec to
+    /// its private `sshLogin(from:)`, which reads the set's `username`,
+    /// `authKind` and `keyPath` and the Keychain slot under the set's id, and
+    /// `ConnectionViewModel.buildJumpConfig` puts those into an
+    /// `SSHConnectionConfig.Jump` — a type with a host, a port, a username and
+    /// an `AuthMethod`, and no notion of any other backend. Neither of those
+    /// looks at `kind`, so nothing else in the jump path refuses a set of the
+    /// wrong protocol; without this arm a WebDAV set (whose password field is
+    /// declared without `isRequired`, so `setCoversItsLogin` answers `true`
+    /// while it holds nothing) or an S3 set holding its secret access key
+    /// would count as covering an SSH bastion, and the only copy of the
+    /// bastion password would go.
+    ///
+    /// Asking it BEFORE `setCoversItsLogin` also means no Keychain read
+    /// happens for a set that could never have justified the deletion.
     ///
     /// The sets come from `loginSetStore` rather than from `loginSets`:
     /// `reload()` fills that array through a `try?`, so a store that cannot be
@@ -275,6 +295,7 @@ public final class SessionListViewModel {
             guard let set = try loginSetStore.all().first(where: { $0.id == setID }) else {
                 return false
             }
+            guard set.kind == .ssh else { return false }
             guard try setCoversItsLogin(set) else { return false }
             guard set.authKind == .privateKey else { return true }
             return !((try secrets.password(for: set.id)) ?? "").isEmpty

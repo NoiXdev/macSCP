@@ -1623,6 +1623,76 @@ struct SessionListViewModelTests {
         #expect(vm.sessions.first(where: { $0.name == "web" })?.jump?.sessionID == bastion.id)
     }
 
+    /// The coverage question asks whether the SET needs a secret and holds
+    /// one. It says nothing about whether the set can serve a JUMP at all,
+    /// and a WebDAV set slips through both arms: its password field is
+    /// declared without `isRequired` (`WebDAVFieldSchema.credentialSchema`,
+    /// the M23 decision that keeps anonymous shares connectable), so
+    /// `setCoversItsLogin` answers `true` without reading anything, and
+    /// `authKind` is `.password` (`WebDAVFieldSchema.loginSet` builds every
+    /// set that way), so the private-key arm never fires either. Deleting on
+    /// that answer destroys the only copy of the bastion password.
+    @Test func switchingAJumpToAWebDAVSetKeepsTheBastionSlot() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "Share", username: "dav", kind: .webdav)
+        vm.saveLoginSet(set, secret: nil)
+        let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: jump,
+            jumpSecret: "jp")!
+        #expect(secrets.peek(jump.secretID) != nil)
+
+        let setJump = StoredSession.JumpSpec(
+            host: "bastion.example.com", username: "unused", loginSetID: set.id)
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: setJump)
+
+        #expect(secrets.peek(jump.secretID) != nil)
+        // The binding itself still went through -- only the cleanup was
+        // skipped, exactly as for a secretless SSH set.
+        #expect(vm.sessions.first?.jump?.loginSetID == set.id)
+    }
+
+    /// The same gap in its other shape: an S3 set that HOLDS its secret is
+    /// covered on both arms, so the old slot went. What the jump would then
+    /// authenticate with is a secret access key -- `LoginResolver.resolveJump`
+    /// hands a set-bound jump to `sshLogin(from:)`, which reads the set's
+    /// Keychain slot whatever `kind` says. Applicability, not coverage, is
+    /// what refuses this.
+    @Test func switchingAJumpToAnS3SetHoldingItsSecretKeepsTheBastionSlot() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(
+            name: "Bucket", username: "", kind: .s3, accessKeyID: "AKIAEXAMPLE")
+        vm.saveLoginSet(set, secret: "sak")
+        let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: jump,
+            jumpSecret: "jp")!
+        #expect(secrets.peek(jump.secretID) != nil)
+
+        let setJump = StoredSession.JumpSpec(
+            host: "bastion.example.com", username: "unused", loginSetID: set.id)
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: setJump)
+
+        #expect(secrets.peek(jump.secretID) != nil)
+        #expect(vm.sessions.first?.jump?.loginSetID == set.id)
+    }
+
     @Test func deleteSessionCleansJumpSlot() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
