@@ -17,17 +17,32 @@ import SwiftUI
 /// resource bundle isn't where we expect, we fall back to `Bundle.main`, and
 /// every call site supplies its own English `defaultValue`, so the UI still
 /// renders (in English) instead of crashing.
+///
+/// That graceful fallback also hid a failure under `swift test`: none of the
+/// three `Bundle.main`-derived candidates points anywhere near the test
+/// runner's build directory, so the lookup settled for `Bundle.main` and
+/// every `string(_:_:)` call returned its own `defaultValue`. The UI strings
+/// looked fine (they are the English source text) and nothing went red, so
+/// App-layer text was effectively untested. The last candidate closes that
+/// hole: under `swift test` `Bundle(for:)` resolves to the `.xctest` bundle,
+/// and the resource bundle sits next to it rather than inside it, so we walk
+/// up one level. In a real `.app` that same candidate lands on the directory
+/// containing the app bundle, finds nothing, and is skipped — the three
+/// production candidates ahead of it still decide the outcome.
 enum L10n {
+    private final class BundleFinder {}
+
     static let bundle: Bundle = {
         let bundleName = "macSCP_MacSCPAppKit.bundle"
         let candidates = [
-            Bundle.main.bundleURL.appendingPathComponent(bundleName),
-            Bundle.main.resourceURL?.appendingPathComponent(bundleName),
-            Bundle.main.executableURL?.deletingLastPathComponent()
-                .appendingPathComponent(bundleName),
+            Bundle.main.bundleURL,
+            Bundle.main.resourceURL,
+            Bundle.main.executableURL?.deletingLastPathComponent(),
+            Bundle(for: BundleFinder.self).bundleURL.deletingLastPathComponent(),
         ].compactMap { $0 }
 
-        for candidate in candidates {
+        for directory in candidates {
+            let candidate = directory.appendingPathComponent(bundleName)
             if FileManager.default.fileExists(atPath: candidate.path),
                 let bundle = Bundle(url: candidate)
             {
