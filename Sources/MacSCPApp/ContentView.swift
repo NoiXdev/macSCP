@@ -3404,7 +3404,8 @@ struct ContentView: View {
     /// the base imported/skipped/passwords-imported line, the M19 lines for
     /// what the user decided about duplicates (replaced/renamed) and for
     /// secrets a replace removed, plus optional lines for password-save
-    /// failures, store-write failures, and an unencrypted-secrets notice when
+    /// failures, store-write failures, the M27 count of entries the planner
+    /// rejected outright as unusable, and an unencrypted-secrets notice when
     /// the file wasn't itself encrypted.
     private func importResultText(
         _ result: SessionListViewModel.SessionImportResult, plan: SessionImportPlan,

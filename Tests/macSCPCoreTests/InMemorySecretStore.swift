@@ -28,6 +28,17 @@ final class InMemorySecretStore: SecretStore, @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         return storage[sessionID]
     }
+
+    /// Every id this store currently holds a secret for. The real
+    /// `SecretStore` protocol has no enumeration (`SecretStore.swift`) — a
+    /// deliberate Keychain limit, not an oversight — so this exists only on
+    /// the test double, for the one thing a lookup by id cannot prove: that
+    /// NO secret was left behind anywhere, not just under the one id a test
+    /// thought to check.
+    var storedIDs: Set<UUID> {
+        lock.lock(); defer { lock.unlock() }
+        return Set(storage.keys)
+    }
 }
 
 /// Test double for a Keychain that is THERE but not answering — a locked

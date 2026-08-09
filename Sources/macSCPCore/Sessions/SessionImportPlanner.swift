@@ -283,7 +283,12 @@ public enum SessionImportPlanner {
     ///
     /// Id, name and group take no part in that rule, so the probe passes
     /// throwaway values for them; the record it builds is discarded either
-    /// way. Nothing here reads a secret, and the probe is never stored.
+    /// way. The probe carries the entry's secret exactly as a planned
+    /// session would — `makePlanned` puts it in `PlannedSession.password`
+    /// (or `jumpPassword`) the same as on every accepted path — but this
+    /// function never reads that field: it returns a `Bool` computed from
+    /// `probe.session` alone, so the whole `PlannedSession`, secret
+    /// included, is discarded here and never reported or stored.
     private static func wouldBeDroppedByStore(_ fileSession: ExportedSession) -> Bool {
         let probe = makePlanned(from: fileSession, id: UUID(), name: "", groupID: nil)
         return SessionStore.dropsOnLoad(probe.session)
@@ -325,10 +330,15 @@ public enum SessionImportPlanner {
         // the session keeps no block at all — as before the bag.
         //
         // The guard earns its place ONLY for `.s3`/`.webdav`, where it
-        // preserves v1's all-columns-required gate. Removing it fails exactly
-        // two tests, both WebDAV-empty-block ones
+        // preserves v1's all-columns-required gate. Removing it fails eight
+        // tests, not two: the two WebDAV-empty-block ones
         // (`webdavFileSessionWithoutColumnsKeepsKindAndHasNoConfig`,
-        // `preFixExportFileStillImports`) — measured by mutation, not assumed.
+        // `preFixExportFileStillImports`) plus six M27 blockless-`.ssh`
+        // tests it would also let back in (five at the planner level,
+        // including the `SessionStore.dropsOnLoad` invariant check, plus one
+        // end to end) — measured by mutation (the guard's condition replaced
+        // with an unconditional `true`, full suite run) in this session, not
+        // assumed.
         // It does NOT hold up the bag round trip, which stays green without
         // it, and its `.ssh` arm is unreachable through any real file: v1's
         // `host` column was non-optional, so every v1 `.ssh` entry yields five
@@ -336,9 +346,23 @@ public enum SessionImportPlanner {
         // export at all -- `SessionStore.load()` drops it (M26) before
         // `sessionValues`, or anything else downstream, gets a look. Only a
         // hand-built `ExportedSession` or a hand-edited `"fields": {}` takes
-        // that arm, and since M27 the only caller that hands one to this
-        // builder is `wouldBeDroppedByStore`, whose result is thrown away:
-        // such an entry is rejected before it can be planned.
+        // that arm.
+        //
+        // Since M27, an empty bag with NO jump fields is rejected before
+        // `makePlanned` is ever called from an accepted path: the guard in
+        // the loop above calls `wouldBeDroppedByStore`, which runs such an
+        // entry through this same function and asks
+        // `SessionStore.dropsOnLoad`, which reads true for it (`ssh` stays
+        // nil) — so the only call that reaches this arm for that exact
+        // shape is `wouldBeDroppedByStore`'s own probe, and the probe's
+        // `PlannedSession` is thrown away, never planned. An empty bag that
+        // ALSO carries `jumpHost`/`jumpUsername` is NOT caught by that
+        // guard: the jump attachment below gives the session a non-nil
+        // `ssh` block regardless of the bag, so `dropsOnLoad` reads false
+        // and such an entry reaches this arm through the ordinary accepted
+        // paths too, same as any other file entry. That jump-only shape is
+        // a known, out-of-scope remainder — neither the guard nor the
+        // rejection above address it.
         var session = StoredSession(id: id, name: name, groupID: groupID, kind: kind)
         if !fileSession.fields.isEmpty {
             var values = FieldValues()

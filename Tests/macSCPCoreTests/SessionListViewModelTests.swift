@@ -1559,13 +1559,14 @@ struct SessionListViewModelTests {
         #expect(result.imported == 0)
         #expect(plan.rejected == ["ghost"])
         #expect(vm.sessions.isEmpty)
-        // No Keychain slot may be left behind for a record that is not there.
-        // Written as a loop over the plan rather than a single lookup so it
-        // asserts something real on today's code too, where the entry IS
-        // planned and its secret IS saved.
-        for planned in plan.sessionsToImport {
-            #expect(secrets.peek(planned.session.id) == nil)
-        }
+        // No Keychain slot may be left behind for a record that is not
+        // there — checked across every id `secrets` actually holds, not by
+        // looking up the one id the fix planned to use. After the fix
+        // `plan.sessionsToImport` is itself empty, so a loop keyed on it
+        // would run zero times and prove nothing at all; `storedIDs` proves
+        // the stronger claim, "empty, full stop", which is what "no orphan"
+        // actually means.
+        #expect(secrets.storedIDs.isEmpty)
     }
 
     // MARK: - Agent auth (M10d/T3)

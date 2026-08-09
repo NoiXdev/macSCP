@@ -597,7 +597,11 @@ struct SessionImportPlannerTests {
     /// planning it would promise the user an import that cannot survive the
     /// very next store read. It is rejected instead of planned.
     @Test func blocklessSSHFileSessionIsRejectedInsteadOfPlanned() async {
-        let file = ExportedSession(id: UUID(), name: "ghost", kind: .ssh, fields: [:])
+        // Untrimmed on purpose: `rejected` promises trimmed names (see its
+        // doc comment on `SessionImportPlan`) the same as `replaced` and
+        // `renamed` do, and nothing else in this suite feeds a name with
+        // surrounding whitespace through the rejection path.
+        let file = ExportedSession(id: UUID(), name: "  ghost  ", kind: .ssh, fields: [:])
         let plan = await SessionImportPlanner.plan(
             existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
 
@@ -628,15 +632,20 @@ struct SessionImportPlannerTests {
     /// a session nobody can import. `neverAsked` fails the test if the
     /// decider is consulted at all.
     @Test func rejectedEntriesNeverReachTheArbiter() async {
+        // Named so file order and alphabetical order disagree: `rejected`'s
+        // doc comment on `SessionImportPlan` promises file order, and an
+        // implementation that instead SORTED the array would still pass an
+        // alphabetically-ordered fixture. "zeta" before "alpha" makes a
+        // sorting implementation produce `["alpha", "zeta"]` here and fail.
         let files = [
-            ExportedSession(id: UUID(), name: "broken-1", kind: .ssh, fields: [:]),
-            ExportedSession(id: UUID(), name: "broken-2", kind: .ssh, fields: [:]),
+            ExportedSession(id: UUID(), name: "zeta", kind: .ssh, fields: [:]),
+            ExportedSession(id: UUID(), name: "alpha", kind: .ssh, fields: [:]),
         ]
         let plan = await SessionImportPlanner.plan(
             existing: [], existingGroups: [], incoming: incoming(files), arbiter: neverAsked)
 
         #expect(plan.sessionsToImport.isEmpty)
-        #expect(plan.rejected == ["broken-1", "broken-2"])
+        #expect(plan.rejected == ["zeta", "alpha"])
     }
 
     /// Same rule the skipped-duplicate case already obeys: a group nothing
@@ -652,6 +661,49 @@ struct SessionImportPlannerTests {
 
         #expect(plan.groupsToCreate.isEmpty)
         #expect(plan.rejected == ["broken"])
+    }
+
+    /// The coupling this whole M27 fix exists to create, pinned directly
+    /// rather than only implied by the rejection tests above: nothing the
+    /// planner ever puts into `sessionsToImport` may satisfy
+    /// `SessionStore.dropsOnLoad` — an entry that did would be reported as
+    /// imported and then vanish on the very next store read, the exact
+    /// defect this fix closed. If the rejection guard and the store's own
+    /// load-time rule ever drift apart again (say, a later change adds a
+    /// second condition straight into `SessionStore.load()`'s `removeAll`
+    /// instead of folding it into `dropsOnLoad`), an entry the store would
+    /// actually drop could once again reach `sessionsToImport` unrejected;
+    /// this loop is what turns that red.
+    ///
+    /// Deliberately mixes FOUR outcomes in one run — unchanged import,
+    /// replace, the replace-with-nothing-left-to-replace fallback that
+    /// renames instead, and an outright rejection — so the invariant is
+    /// checked against three separate `makePlanned` call sites at once, not
+    /// only the single shape the rejection tests above already cover.
+    @Test func nothingThePlannerAcceptsWouldBeDroppedOnTheNextLoad() async {
+        let existing = [sshSession(name: "kept", host: "host-r", username: "root")]
+        let arbiter = ImportConflictArbiter(
+            decider: fixedDecider(.replace, applyToAll: true, log: DeciderCallLog()))
+        let plan = await SessionImportPlanner.plan(
+            existing: existing, existingGroups: [],
+            incoming: incoming([
+                exported(name: "fresh", host: "host-u"),
+                exported(name: "kept", host: "host-r"),
+                exported(name: "kept", host: "host-r"),
+                ExportedSession(id: UUID(), name: "ghost", kind: .ssh, fields: [:]),
+            ]),
+            arbiter: arbiter)
+
+        // Sanity on the mix itself: if these stop matching, the loop below
+        // is no longer exercising the four paths this test is named for.
+        #expect(plan.sessionsToImport.count == 3)
+        #expect(plan.replaced == ["kept"])
+        #expect(plan.renamed == ["kept (2)"])
+        #expect(plan.rejected == ["ghost"])
+
+        for planned in plan.sessionsToImport {
+            #expect(!SessionStore.dropsOnLoad(planned.session))
+        }
     }
 
     /// The replace path (M19) goes through the same `makePlanned` builder, so
