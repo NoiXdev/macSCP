@@ -247,6 +247,24 @@ struct LegacyJumpSecretSweepTests {
         #expect(secrets.storedIDs == [existing])
     }
 
+    /// The same rule with NO candidates at all: no legacy file, and a
+    /// `sessions-v2.json` that cannot be read. Nothing could be deleted here
+    /// whatever the sweep did, which is why this was easy to miss -- but a
+    /// run that reports success has told the user their leftover credentials
+    /// were checked when the file that decides what is claimed never opened.
+    /// An unreadable store aborts, candidates or none.
+    @Test func anUnreadableSessionFileThrowsEvenWithNoCandidates() throws {
+        let stores = try makeStores()
+        defer { try? FileManager.default.removeItem(at: stores.directory) }
+        try writeUndecodableFile(stores.directory.appendingPathComponent("sessions-v2.json"))
+        let secrets = InMemorySecretStore()
+        let existing = UUID()
+        try secrets.savePassword(Self.storedValue, for: existing)
+
+        #expect(throws: (any Error).self) { try sweep(stores, secrets).run() }
+        #expect(secrets.storedIDs == [existing])
+    }
+
     /// No legacy file at all is a clean install, not an error.
     @Test func aMissingLegacyFileIsNotAnError() throws {
         let stores = try makeStores()

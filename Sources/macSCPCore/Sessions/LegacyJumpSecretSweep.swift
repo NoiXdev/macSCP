@@ -74,8 +74,13 @@ public struct LegacyJumpSecretSweep {
     public func run() throws -> Result {
         // Order matters: every read happens before the first delete, so a
         // failure anywhere leaves the Keychain untouched.
+        //
+        // Both reads also happen unconditionally. Returning early on an empty
+        // candidate set would be safe -- with nothing to delete the outcome is
+        // the same either way -- but it would report success on a run that
+        // never opened the files deciding what is claimed, and this is a
+        // button whose whole message to the user is "I checked".
         let candidates = try sessions.legacyJumpSecretIDs()
-        guard !candidates.isEmpty else { return Result(removed: 0, failed: 0) }
         let claimed = try claimedIDs()
 
         var removed = 0, failed = 0
