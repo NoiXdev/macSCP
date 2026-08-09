@@ -146,6 +146,11 @@ public struct SessionStore: Sendable {
     /// else, so the legacy shape does not leak back into the app. The file is
     /// read and left alone; M23 keeps it as the downgrade snapshot.
     ///
+    /// Internal rather than public, which is what makes that last point more
+    /// than an intention: `LegacyJumpSecretSweep` is the only caller and it
+    /// lives in Core too, so neither the app nor the CLI can reach the legacy
+    /// file through this store at all.
+    ///
     /// The legacy file supports the same two shapes `migrateFromLegacy`
     /// decodes -- the container every install has carried since groups
     /// shipped, and the older bare array from before groups existed -- and
@@ -161,7 +166,7 @@ public struct SessionStore: Sendable {
     /// exactly as in `migrateFromLegacy`: the array attempt right after it is
     /// a plain `try`, so a file that is neither shape still propagates that
     /// second failure.
-    public func legacyJumpSecretIDs() throws -> [UUID] {
+    func legacyJumpSecretIDs() throws -> [UUID] {
         guard FileManager.default.fileExists(
             atPath: legacyFileURL.path(percentEncoded: false)) else { return [] }
         let data = try Data(contentsOf: legacyFileURL)
