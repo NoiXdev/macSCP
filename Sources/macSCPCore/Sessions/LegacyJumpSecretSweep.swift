@@ -98,11 +98,12 @@ public struct LegacyJumpSecretSweep {
     /// plus the jump `secretID` of every surfaced session.
     ///
     /// Deliberately wider than strictly necessary -- a pre-M23 jump `secretID`
-    /// cannot also be a login-set or managed-key id, since the only place a
-    /// `JumpSpec.secretID` is created is `ConnectionViewModel.buildJumpSpec`,
-    /// which reuses the jump's own previous id or mints a fresh UUID. Asking
-    /// all three costs one pass each and makes the rule "delete only what
-    /// appears NOWHERE" true without case analysis.
+    /// cannot also be a login-set or managed-key id, because every producer of
+    /// one mints it independently rather than deriving it from a set or key:
+    /// `ConnectionViewModel.buildJumpSpec` reuses the jump's own previous id or
+    /// mints a fresh UUID, and `SessionImportPlanner.makePlanned` leaves it at
+    /// its fresh default. Asking all three costs one pass each and makes the
+    /// rule "delete only what appears NOWHERE" true without case analysis.
     ///
     /// "Surfaced" is not "stored": `SessionStore.load()` drops an `.ssh`
     /// record with no SSH block, and `LoginSetStore.all()` hides a record
