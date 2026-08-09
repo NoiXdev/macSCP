@@ -7,6 +7,15 @@ import Foundation
 /// that nothing referenced afterwards, and the cleanup was deferred to "a
 /// separate pass that owns a `SecretStore`". This is that pass.
 ///
+/// The rule it applies is wider than that name, and deliberately so: it
+/// deletes every jump `secretID` the preserved legacy file names that
+/// nothing claims TODAY. M23's orphans are why it exists, but they are not
+/// the only way a named slot ends up unclaimed -- deleting a session removes
+/// its jump secret with `try?` (`SessionListViewModel.deleteSession`), so a
+/// failure there leaves a slot behind that no record refers to any more
+/// either. It goes with the rest, and should: "unclaimed" is the property
+/// that makes deleting safe, and it is the one being tested.
+///
 /// **Candidates come from the preserved legacy file, never from the Keychain.**
 /// That is what makes the sweep safe rather than merely careful: an entry a
 /// future macSCP wrote cannot appear in a file written before M23, so it can
@@ -23,8 +32,16 @@ import Foundation
 /// to the stores rather than to a view model: `reload()` turns a failure into
 /// empty lists.
 ///
-/// The sweep never calls `password(for:)`. Nothing is read, only deleted, so
-/// there are no access prompts and no decision rests on a failing read.
+/// The sweep never calls `password(for:)`. What that buys is precise: no
+/// READ consent prompt -- `KeychainSecretStore`'s own doc comment records
+/// that macOS prompts a binary that did not create an item on first read --
+/// and no decision resting on a read that proves nothing when it fails.
+///
+/// It does not make the run promptless. Deleting is governed by the same
+/// per-item access list, so a slot this binary is not on can still put a
+/// dialog up or come back as a plain failure; `deletePassword` turns every
+/// status but success and not-found into a `KeychainError`. That is why
+/// `run()` counts failures instead of treating them as impossible.
 public struct LegacyJumpSecretSweep {
     /// What the run did.
     ///
