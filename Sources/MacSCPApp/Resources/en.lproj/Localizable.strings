@@ -599,6 +599,9 @@
 "form.jump.session.chainNotSupported" = "The selected jump host connects through another jump host; chains are not supported.";
 "form.jump.session.notSSH" = "Only SSH connections can be used as a jump host.";
 
+/* Jump host bound to a login set of another protocol (M28/T7) */
+"form.jump.set.notSSH" = "The jump host uses a stored login that is not an SSH login. Choose an SSH login for the jump host, or enter its user name and password here.";
+
 /* Sidebar delete confirmation — referenced as a jump host (M11a/T3) */
 "sidebar.delete.jumpUsage %lld" = "%lld connections use this connection as their jump host and will keep its data directly.";
 "sidebar.delete.jumpRestoreError %lld" = "Could not restore the stored password for %lld connections.";

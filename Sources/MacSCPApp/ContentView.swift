@@ -2666,6 +2666,31 @@ struct ContentView: View {
                             form.jumpKeyPath = resolvedJump.keyPath ?? ""
                             form.jumpPassword = resolvedJump.secret ?? ""
                         }
+                    } catch LoginResolveError.jumpSetNotSSH {
+                        // The jump is bound to a login set of another
+                        // protocol (M28/T7). This is the ONLY catch site the
+                        // new case can reach: the three session-mode ones
+                        // (the two above and `resolveSelectedJumpSession`)
+                        // all build a spec whose `sessionID` is set, and
+                        // `LoginResolver.resolveJump` only consults a
+                        // `loginSetID` on the other branch.
+                        //
+                        // The raw fallback is what keeps the refusal
+                        // meaningful: it clears `jumpSelectedLoginSetID` and
+                        // returns the block to Manual, so a following submit
+                        // does not walk `resolveSelectedJumpLoginSet` into
+                        // `fillJumpForm` and copy the very credentials this
+                        // refusal is about into the form. It also blanks
+                        // `jumpPassword` — the set's secret was never read.
+                        applyRawJumpFallback(form, from: stored)
+                        form.showFailure(
+                            message: L10n.string(
+                                "form.jump.set.notSSH",
+                                "The jump host uses a stored login that is not an SSH login. "
+                                    + "Choose an SSH login for the jump host, or enter its "
+                                    + "user name and password here."),
+                            field: .jumpHost)
+                        return
                     } catch is LoginResolveError {
                         // Missing set (jump only): the target fields resolved
                         // above stay untouched — only the jump falls back to

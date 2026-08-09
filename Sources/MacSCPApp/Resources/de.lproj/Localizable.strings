@@ -600,6 +600,9 @@
 "form.jump.session.chainNotSupported" = "Die gewählte Verbindung nutzt selbst einen Zwischenhost; Ketten werden nicht unterstützt.";
 "form.jump.session.notSSH" = "Als Zwischenhost können nur SSH-Verbindungen genutzt werden.";
 
+/* Zwischenhost an ein Login einer anderen Protokollart gebunden (M28/T7) */
+"form.jump.set.notSSH" = "Der Zwischenhost nutzt ein hinterlegtes Login, das kein SSH-Login ist. SSH-Login für den Zwischenhost wählen oder Benutzername und Passwort hier eingeben.";
+
 /* Sidebar-Lösch-Rückfrage — als Zwischenhost referenziert (M11a/T3) */
 "sidebar.delete.jumpUsage %lld" = "%lld Verbindungen nutzen diese Verbindung als Zwischenhost und behalten deren Daten direkt hinterlegt.";
 "sidebar.delete.jumpRestoreError %lld" = "Das gespeicherte Passwort für %lld Verbindungen konnte nicht wiederhergestellt werden.";

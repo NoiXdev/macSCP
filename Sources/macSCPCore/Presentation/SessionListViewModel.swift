@@ -250,13 +250,18 @@ public final class SessionListViewModel {
     /// `authKind` and `keyPath` and the Keychain slot under the set's id, and
     /// `ConnectionViewModel.buildJumpConfig` puts those into an
     /// `SSHConnectionConfig.Jump` — a type with a host, a port, a username and
-    /// an `AuthMethod`, and no notion of any other backend. Neither of those
-    /// looks at `kind`, so nothing else in the jump path refuses a set of the
-    /// wrong protocol; without this arm a WebDAV set (whose password field is
-    /// declared without `isRequired`, so `setCoversItsLogin` answers `true`
-    /// while it holds nothing) or an S3 set holding its secret access key
-    /// would count as covering an SSH bastion, and the only copy of the
-    /// bastion password would go.
+    /// an `AuthMethod`, and no notion of any other backend. Without this arm a
+    /// WebDAV set (whose password field is declared without `isRequired`, so
+    /// `setCoversItsLogin` answers `true` while it holds nothing) or an S3 set
+    /// holding its secret access key would count as covering an SSH bastion,
+    /// and the only copy of the bastion password would go.
+    ///
+    /// `resolveJump` refuses such a binding itself since M28/T7
+    /// (`.jumpSetNotSSH`), which is what keeps the wrong credentials off the
+    /// wire — but that answer comes at CONNECT time and this runs at SAVE
+    /// time, from `cleanOrphanedJumpSlot` inside the two store-writing paths.
+    /// A deletion decided here cannot be taken back by a later refusal, so
+    /// this arm still has to ask.
     ///
     /// Asking it BEFORE `setCoversItsLogin` also means no Keychain read
     /// happens for a set that could never have justified the deletion.
@@ -279,7 +284,7 @@ public final class SessionListViewModel {
     /// question here, and not because the case is unreachable — a jump bound
     /// to a private-key set is ordinary. It is that a managed key's own slot
     /// is never consulted on the jump path: a set-bound jump's secret comes
-    /// from `LoginResolver.resolveJump`, which for a non-agent set reads
+    /// from `LoginResolver.resolveJump`, which for a non-agent SSH set reads
     /// `secrets.password(for: set.id)` and nothing else, while the two callers
     /// of `ManagedKeyPassphrase.resolve` (`ConnectionFormView`'s Connect
     /// button and `ContentView`'s fill path) both write the connection form's
@@ -963,7 +968,9 @@ public final class SessionListViewModel {
 
     /// Resolves what a session's jump host should actually connect with
     /// (M10c). `nil` when the session has no jump; a dangling `loginSetID`
-    /// on the jump throws, same as `resolvedCredentials(for:)` (spec §2).
+    /// on the jump throws, same as `resolvedCredentials(for:)` (spec §2), and
+    /// so does one bound to a set that is not an SSH set
+    /// (`.jumpSetNotSSH`, M28/T7 — a jump is an SSH bastion).
     public func resolvedJumpLogin(for session: StoredSession) throws -> ResolvedLogin? {
         guard let jump = session.jump else { return nil }
         return try LoginResolver.resolveJump(spec: jump, sets: loginSets, secrets: secrets)
@@ -976,7 +983,9 @@ public final class SessionListViewModel {
     /// typed errors as `LoginResolver.resolveJump(...sessions:
     /// referencingSessionID:)`: `.missingJumpSession` for a dangling
     /// reference, `.jumpSessionNotSSH` for a reference to a non-`.ssh`
-    /// session, `.jumpChainNotSupported` for a chain or self-reference.
+    /// session, `.jumpChainNotSupported` for a chain or self-reference, and
+    /// -- on the `sessionID == nil` half it delegates -- `.missingSet` and
+    /// `.jumpSetNotSSH` for the jump's own `loginSetID`.
     public func resolvedJump(for session: StoredSession) throws -> ResolvedJump? {
         guard let jump = session.jump else { return nil }
         return try LoginResolver.resolveJump(

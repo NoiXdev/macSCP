@@ -108,6 +108,97 @@ struct LoginResolverTests {
         }
     }
 
+    // MARK: - A jump bound to a set of another protocol (M28/T7)
+
+    /// A WebDAV set carries `authKind: .password` and its own username, and
+    /// its Keychain slot holds the share's password -- so without a `kind`
+    /// guard `resolveJump` would build a `ResolvedLogin` out of them and the
+    /// caller would hand exactly that to the SSH bastion. The refusal must
+    /// therefore come BEFORE the read, which `readIDs` pins.
+    ///
+    /// The failure message names the leaked IDENTITY (whose username, which
+    /// auth kind, whether a secret came along) and never the secret's value.
+    @Test func resolveJumpRefusesAWebDAVSet() throws {
+        let set = LoginSet(name: "Share", username: "dav", kind: .webdav)
+        let spec = StoredSession.JumpSpec(
+            host: "bastion.example.com", username: "unused", loginSetID: set.id)
+        let secrets = RecordingSecretStore([set.id: "the-share-password"])
+
+        do {
+            let resolved = try LoginResolver.resolveJump(spec: spec, sets: [set], secrets: secrets)
+            Issue.record("""
+                the jump was not refused: it resolved to the WebDAV set's own login, which the \
+                caller would then hand to the SSH bastion -- username equals the set's: \
+                \(resolved.username == set.username), auth kind: \(resolved.authKind.rawValue), \
+                a secret was attached: \(resolved.secret != nil)
+                """)
+        } catch LoginResolveError.jumpSetNotSSH {
+            // The refusal this test is about. Any OTHER error propagates out
+            // of the `throws` test and fails it by itself.
+        }
+        #expect(secrets.readIDs.isEmpty)
+    }
+
+    /// The same refusal for an object-storage set. `username` is deliberately
+    /// non-empty: `LoginSetImportPlanner.makeSet` passes an imported set's
+    /// `username` through unexamined, so an `.s3` set can carry one, and with
+    /// one the jump would reach `SSHConnectionConfig`'s own
+    /// `emptyJumpUsername` check and pass it -- the wrong cause, reported
+    /// late, instead of a refusal here.
+    @Test func resolveJumpRefusesAnS3Set() throws {
+        let set = LoginSet(
+            name: "Bucket", username: "imported", kind: .s3, accessKeyID: "AKIAEXAMPLE")
+        let spec = StoredSession.JumpSpec(
+            host: "bastion.example.com", username: "unused", loginSetID: set.id)
+        let secrets = RecordingSecretStore([set.id: "the-secret-access-key"])
+
+        do {
+            let resolved = try LoginResolver.resolveJump(spec: spec, sets: [set], secrets: secrets)
+            Issue.record("""
+                the jump was not refused: it resolved to the S3 set's own login, which the \
+                caller would then hand to the SSH bastion -- username equals the set's: \
+                \(resolved.username == set.username), auth kind: \(resolved.authKind.rawValue), \
+                a secret was attached: \(resolved.secret != nil)
+                """)
+        } catch LoginResolveError.jumpSetNotSSH {
+            // The refusal this test is about.
+        }
+        #expect(secrets.readIDs.isEmpty)
+    }
+
+    /// Regression clamp for `resolveJumpSetResolvesFromSet` above: an `.ssh`
+    /// set is what the new guard lets through, secret read included, so the
+    /// refusal cannot have been written as "refuse every set".
+    @Test func resolveJumpStillAcceptsAnSSHSet() throws {
+        let set = LoginSet(name: "Bastion", username: "deploy", authKind: .password)
+        let spec = StoredSession.JumpSpec(
+            host: "bastion.example.com", username: "unused", loginSetID: set.id)
+        let secrets = RecordingSecretStore([set.id: "bp"])
+
+        let resolved = try LoginResolver.resolveJump(spec: spec, sets: [set], secrets: secrets)
+        #expect(resolved == ResolvedLogin(
+            username: "deploy", authKind: .password, keyPath: nil, secret: "bp"))
+        #expect(secrets.readIDs == [set.id])
+    }
+
+    /// The session-mode path is untouched: a jump referencing an SSH session
+    /// whose OWN login set is WebDAV still reports `.kindMismatch` -- that
+    /// disagreement is between a session and its set, which is what
+    /// `sshLogin(session:sets:secrets:)`'s guard is about, and reporting the
+    /// new jump case there would name the wrong cause.
+    @Test func resolveJumpFromSessionKeepsReportingKindMismatch() throws {
+        let set = LoginSet(name: "Share", username: "dav", kind: .webdav)
+        let bastion = sshSession(
+            name: "Bastion", host: "b", port: 2022, username: "unused", loginSetID: set.id)
+        let spec = StoredSession.JumpSpec(host: "unused", username: "unused", sessionID: bastion.id)
+
+        #expect(throws: LoginResolveError.kindMismatch) {
+            _ = try LoginResolver.resolveJump(
+                spec: spec, sets: [set], secrets: InMemorySecretStore(),
+                sessions: [bastion], referencingSessionID: nil)
+        }
+    }
+
     @Test func legacySessionJSONDecodesNilJump() throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-legacy-jump-\(UUID().uuidString)")
@@ -392,6 +483,26 @@ private final class NoReadAllowedSecretStore: SecretStore, @unchecked Sendable {
     func password(for sessionID: UUID) throws -> String? {
         Issue.record("agent resolution must not read the keychain")
         return nil
+    }
+    func deletePassword(for sessionID: UUID) throws {}
+}
+
+/// Test double for the jump refusal tests (M28/T7). Unlike
+/// `NoReadAllowedSecretStore` it does not judge a read — it RECORDS which ids
+/// were read and hands back what it was seeded with, so one store serves both
+/// a test that requires no read at all and one that requires exactly one.
+/// Seeding matters for the mutation check: with the guard removed, the
+/// resolver produces a `ResolvedLogin` that visibly carries a secret.
+private final class RecordingSecretStore: SecretStore, @unchecked Sendable {
+    private let stored: [UUID: String]
+    private(set) var readIDs: [UUID] = []
+
+    init(_ stored: [UUID: String]) { self.stored = stored }
+
+    func savePassword(_ password: String, for sessionID: UUID) throws {}
+    func password(for sessionID: UUID) throws -> String? {
+        readIDs.append(sessionID)
+        return stored[sessionID]
     }
     func deletePassword(for sessionID: UUID) throws {}
 }

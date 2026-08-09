@@ -602,6 +602,9 @@
 "form.jump.session.chainNotSupported" = "Wybrany host pośredniczący łączy się przez inny host pośredniczący; łańcuchy nie są obsługiwane.";
 "form.jump.session.notSSH" = "Jako host pośredniczący można użyć wyłącznie połączeń SSH.";
 
+/* Host pośredniczący powiązany z loginem innego protokołu (M28/T7) */
+"form.jump.set.notSSH" = "Host pośredniczący używa zapisanego loginu, który nie jest loginem SSH. Wybierz login SSH dla hosta pośredniczącego lub wprowadź tutaj jego nazwę użytkownika i hasło.";
+
 /* Potwierdzenie usunięcia w pasku bocznym — użycie jako host pośredniczący (M11a/T3) */
 "sidebar.delete.jumpUsage %lld" = "%lld połączeń używa tego połączenia jako hosta pośredniczącego i zachowa jego dane bezpośrednio.";
 "sidebar.delete.jumpRestoreError %lld" = "Nie udało się przywrócić zapisanego hasła dla %lld połączeń.";

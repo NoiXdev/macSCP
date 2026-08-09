@@ -199,8 +199,9 @@ public struct BackendDescriptor: Sendable {
     /// absent key means. A blockless `.ssh` session therefore ALSO yields nil
     /// here, alongside the ssh-agent case above — but that shape is
     /// unreachable through the app: `SessionStore.load()` drops any `.ssh`
-    /// record with no block before it is ever handed to a caller
-    /// (`SessionStore.swift:93`), so only a test building `StoredSession`
+    /// record with no block before it is ever handed to a caller (the
+    /// `removeAll(where: Self.dropsOnLoad)` sweep in `load()`), so only a
+    /// test building `StoredSession`
     /// directly can observe it
     /// (`anSSHSessionWithoutItsBlockYieldsTheEmptyBag` in
     /// `BackendDescriptorTests`).

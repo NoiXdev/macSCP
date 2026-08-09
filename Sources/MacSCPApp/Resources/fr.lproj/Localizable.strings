@@ -603,6 +603,9 @@
 "form.jump.session.chainNotSupported" = "L'hôte relais sélectionné se connecte via un autre hôte relais ; les chaînes ne sont pas prises en charge.";
 "form.jump.session.notSSH" = "Seules les connexions SSH peuvent être utilisées comme hôte relais.";
 
+/* Hôte relais lié à un login d'un autre protocole (M28/T7) */
+"form.jump.set.notSSH" = "L'hôte relais utilise un login enregistré qui n'est pas un login SSH. Choisissez un login SSH pour l'hôte relais ou saisissez ici son nom d'utilisateur et son mot de passe.";
+
 /* Confirmation de suppression dans la barre latérale — référencée comme hôte relais (M11a/T3) */
 "sidebar.delete.jumpUsage %lld" = "%lld connexions utilisent cette connexion comme hôte relais et conserveront directement ses données.";
 "sidebar.delete.jumpRestoreError %lld" = "Impossible de restaurer le mot de passe enregistré pour %lld connexions.";

@@ -21,6 +21,25 @@ public enum LoginResolveError: Error, Equatable {
     /// Distinct from `kindMismatch`, which is about a session and its LOGIN
     /// SET disagreeing. Naming that one here would report the wrong cause.
     case jumpSessionNotSSH
+    /// A jump's `loginSetID` points at a login set that is not an SSH set.
+    /// A jump is an SSH bastion: the App fills the jump's form fields from
+    /// the resolved login, and `ConnectionViewModel.buildJumpConfig` turns
+    /// those into an `SSHConnectionConfig.Jump` -- a value of host, port,
+    /// username and `SSHConnectionConfig.AuthMethod` and nothing else -- so a
+    /// set of any other kind describes credentials that path cannot use.
+    /// Without this case `resolveJump` would build a `ResolvedLogin` from the
+    /// set's `username`, `authKind` and its own Keychain slot -- for a WebDAV
+    /// set, the share's password -- and the caller would send them to the
+    /// bastion.
+    ///
+    /// Distinct from `jumpSessionNotSSH` above and `kindMismatch` below. The
+    /// former is about the jump's `sessionID`, not its `loginSetID`, and its
+    /// own doc says so. The latter is about a SESSION and its login set
+    /// disagreeing; a `JumpSpec` is not a session and has no `kind` of its
+    /// own to disagree with -- being SSH is intrinsic to a jump, not a
+    /// property compared against the set. Naming either here would report
+    /// the wrong cause.
+    case jumpSetNotSSH
     /// A session's `kind` (M12) does not match the login set it references
     /// -- e.g. an SSH session bound to an S3 set. Binding must fail honestly
     /// rather than resolve credentials shaped for the wrong protocol.
@@ -140,6 +159,15 @@ public enum LoginResolver {
     /// and no other backend has anything to say about it — so `resolveJump`
     /// keeps returning `ResolvedLogin` and this stays a typed read of the
     /// set's SSH columns rather than a `FieldValues`.
+    ///
+    /// It reads those columns off ANY set it is handed, whatever `kind` says,
+    /// and reaches the set's Keychain slot for a non-agent one. Both callers
+    /// therefore establish that the set is applicable first: `sshLogin(
+    /// session:sets:secrets:)` via `set.kind == session.kind`, `resolveJump(
+    /// spec:sets:secrets:)` via `set.kind == .ssh` (M28/T7). Neither guard
+    /// may be moved in here: they throw DIFFERENT cases, because a session
+    /// disagreeing with its set and a jump bound to a set that cannot serve
+    /// it are different causes.
     private static func sshLogin(from set: LoginSet, secrets: any SecretStore) -> ResolvedLogin {
         // Agent sets carry no secret and no key path (M10d) -- the keychain
         // is never read for them.
@@ -155,7 +183,15 @@ public enum LoginResolver {
     /// Resolves a jump host's login (M10c): unlike `resolve`, this is ALWAYS
     /// non-nil — a jump either carries its own credentials (manual mode,
     /// secret read from `spec.secretID`) or a set's. A dangling
-    /// `loginSetID` throws, same as `resolve`.
+    /// `loginSetID` throws, same as `resolve`; so does a `loginSetID`
+    /// pointing at a set that is not an SSH set (`.jumpSetNotSSH`, M28/T7).
+    ///
+    /// That second guard sits BETWEEN the lookup and `sshLogin(from:)`, so
+    /// an inapplicable set is refused before its Keychain slot is read at
+    /// all — the point being that the set's secret never leaves the machine
+    /// for a bastion it does not belong to. Order matters the same way it
+    /// does in the session overload below: a `loginSetID` naming no set at
+    /// all is still `.missingSet`, since there is no `kind` to judge yet.
     public static func resolveJump(
         spec: StoredSession.JumpSpec, sets: [LoginSet], secrets: any SecretStore
     ) throws -> ResolvedLogin {
@@ -174,13 +210,22 @@ public enum LoginResolver {
         guard let set = sets.first(where: { $0.id == setID }) else {
             throw LoginResolveError.missingSet
         }
+        // A jump is an SSH bastion, so only an SSH set can serve one. The
+        // picker stopped OFFERING other kinds in M28/T6
+        // (`JumpLoginSetEligibility.eligible(in:)`); this covers the
+        // bindings already on disk, which no picker filter can reach.
+        guard set.kind == .ssh else {
+            throw LoginResolveError.jumpSetNotSSH
+        }
         return sshLogin(from: set, secrets: secrets)
     }
 
     /// Resolves a jump host fully, including host/port (M11a): when
     /// `spec.sessionID` is nil this is exactly `resolveJump(spec:sets:
-    /// secrets:)` wrapped with the spec's own host/port (unchanged
-    /// behavior, spec §4). When `spec.sessionID` is set ("session" mode),
+    /// secrets:)` wrapped with the spec's own host/port (spec §4) —
+    /// including that overload's `.missingSet` and `.jumpSetNotSSH`, which
+    /// travel up through the delegation untouched. When `spec.sessionID` is
+    /// set ("session" mode),
     /// host/port and login instead come from the REFERENCED session:
     /// - missing from `sessions` -> `.missingJumpSession`
     /// - not `.ssh` (a bucket or WebDAV share is not a bastion) ->

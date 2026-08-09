@@ -234,7 +234,7 @@ struct SessionStoreTests {
     /// Same asymmetry as `aBlocklessS3RecordIsKept`, for the other backend
     /// with no inventing accessors: a blockless `.webdav` record is equally
     /// unusable but stays, because `SessionStore.load()`'s drop rule
-    /// (`SessionStore.swift:93`) targets `.ssh` only.
+    /// (`SessionStore.dropsOnLoad`) targets `.ssh` only.
     @Test func aBlocklessWebDAVRecordIsKept() throws {
         let (store, dir) = makeTempStore()
         defer { try? FileManager.default.removeItem(at: dir) }
