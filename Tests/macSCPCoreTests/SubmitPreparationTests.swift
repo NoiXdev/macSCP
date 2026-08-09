@@ -353,6 +353,53 @@ struct SubmitPreparationTests {
         #expect(vm.resolveJumpSession(form: unselected) == nil)
     }
 
+    // MARK: - The coordinator
+
+    /// All three resolutions run even when the first already refused, so
+    /// every problem gets its own message instead of the user fixing them
+    /// one reload at a time. A short-circuiting coordinator would return one
+    /// refusal here.
+    @Test func everyResolutionRunsEvenAfterOneRefuses() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // Form with BOTH a dangling target set and a dangling jump set.
+        let form = makeForm()
+        form.loginMode = .set
+        form.selectedLoginSetID = UUID()
+        form.jumpEnabled = true
+        form.jumpLoginMode = .set
+        form.jumpSelectedLoginSetID = UUID()
+
+        #expect(vm.prepareForSubmit(form: form) == [.targetSetMissing, .jumpSetMissing])
+    }
+
+    /// The order is fixed so the App can present them deterministically.
+    @Test func refusalsComeBackInTargetJumpSetJumpSessionOrder() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // Form that refuses on the target and on the jump SESSION.
+        let form = makeForm()
+        form.loginMode = .set
+        form.selectedLoginSetID = UUID()
+        form.jumpEnabled = true
+        form.jumpSourceMode = .session
+        form.jumpSessionID = UUID()
+
+        #expect(vm.prepareForSubmit(form: form) == [.targetSetMissing, .jumpSessionMissing])
+    }
+
+    /// A clean form yields an empty list — the "may proceed" answer.
+    @Test func aCleanFormYieldsNoRefusals() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let form = makeForm()
+
+        #expect(vm.prepareForSubmit(form: form).isEmpty)
+    }
+
     /// The field mapping is part of the contract: a refusal that highlighted
     /// the wrong control would be a silent regression the user sees but no
     /// test does.

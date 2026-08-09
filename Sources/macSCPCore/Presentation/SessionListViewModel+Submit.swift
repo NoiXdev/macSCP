@@ -144,4 +144,26 @@ extension SessionListViewModel {
             return .jumpSessionLoginUnresolvable
         }
     }
+
+    /// Runs every resolution the form needs before a submit and returns each
+    /// refusal, in a fixed order. An empty result means the submit may
+    /// proceed.
+    ///
+    /// None of the three is skipped when an earlier one refuses: each
+    /// surfaces its own message, so a form with two problems reports both
+    /// rather than making the user discover them one submit at a time.
+    ///
+    /// The three `let`s below are load-bearing: they are what makes "all
+    /// three ran" true, independent of what the array literal does with
+    /// their results. Folding them into the literal would still evaluate
+    /// all three today, but it would let a later reader "simplify" this into
+    /// a short-circuiting `??`/`if let` chain that stops at the first
+    /// refusal — `everyResolutionRunsEvenAfterOneRefuses` is what catches
+    /// that.
+    public func prepareForSubmit(form: ConnectionViewModel) -> [SubmitRefusal] {
+        let target = resolveTargetLoginSet(form: form)
+        let jumpSet = resolveJumpLoginSet(form: form)
+        let jumpSession = resolveJumpSession(form: form)
+        return [target, jumpSet, jumpSession].compactMap { $0 }
+    }
 }
