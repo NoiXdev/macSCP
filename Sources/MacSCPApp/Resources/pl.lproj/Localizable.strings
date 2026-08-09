@@ -439,6 +439,7 @@
 "logins.import.missingKeys %@" = "Brak pliku klucza na tym Macu: %@";
 "logins.import.keyFailures %@" = "Pliki kluczy, których nie udało się zaimportować: %@";
 "logins.import.secretsRemoved %lld" = "Usunięto zapisane hasła, ponieważ plik ich nie zawierał: %lld";
+"logins.import.withoutPassword %lld" = "Otrzymano bez hasła: %lld";
 "logins.import.notExport" = "To nie jest plik zestawów logowania macSCP.";
 
 /* Arkusz dziennika audytu (M9b/T3) */

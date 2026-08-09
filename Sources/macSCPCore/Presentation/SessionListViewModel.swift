@@ -1441,6 +1441,15 @@ public final class SessionListViewModel {
         public var skipped: Int
         public var renamed: Int
         public var secretsImported: Int
+        /// `.password`-authKind sets (which includes S3 — see
+        /// `S3FieldSchema.loginSet`) whose secret slot ends up EMPTY after this
+        /// import: the file carried none, or a replace's incoming secret was
+        /// empty. A count only — the planned secret decides it, never a
+        /// Keychain read. Same authKind-only scope as
+        /// `LoginSetExportResult.missingSecretCount`, so a private-key set's
+        /// legitimately unencrypted (passphrase-less) state and an agent set's
+        /// permanent absence never count here.
+        public var secretsMissing: Int
         /// Replaced sets whose previously stored secret was deleted because
         /// the file carried none — same rule as `SessionImportResult`.
         public var secretsRemoved: Int
@@ -1463,15 +1472,16 @@ public final class SessionListViewModel {
 
         public init(
             imported: Int = 0, replaced: Int = 0, skipped: Int = 0, renamed: Int = 0,
-            secretsImported: Int = 0, secretsRemoved: Int = 0, secretRemovalFailures: Int = 0,
-            secretFailures: Int = 0, storeFailures: Int = 0, keysImported: Int = 0,
-            keyFailures: [String] = [], missingKeyPaths: [String] = []
+            secretsImported: Int = 0, secretsMissing: Int = 0, secretsRemoved: Int = 0,
+            secretRemovalFailures: Int = 0, secretFailures: Int = 0, storeFailures: Int = 0,
+            keysImported: Int = 0, keyFailures: [String] = [], missingKeyPaths: [String] = []
         ) {
             self.imported = imported
             self.replaced = replaced
             self.skipped = skipped
             self.renamed = renamed
             self.secretsImported = secretsImported
+            self.secretsMissing = secretsMissing
             self.secretsRemoved = secretsRemoved
             self.secretRemovalFailures = secretRemovalFailures
             self.secretFailures = secretFailures
@@ -1586,6 +1596,16 @@ public final class SessionListViewModel {
                 result.replaced += 1
             } else {
                 result.imported += 1
+            }
+
+            // Same authKind-only scope as `loginSetExportPayload`'s
+            // `missingSecretCount`: a `.privateKey` set legitimately has no
+            // passphrase and an `.agent` set never holds one, so only
+            // `.password` (which is also what an S3 set's secret access key
+            // uses — see `S3FieldSchema.loginSet`) is worth flagging. Reads
+            // `secretForSet`, the planned value, never the Keychain.
+            if set.authKind == .password, (secretForSet ?? "").isEmpty {
+                result.secretsMissing += 1
             }
 
             if let secret = secretForSet, !secret.isEmpty {

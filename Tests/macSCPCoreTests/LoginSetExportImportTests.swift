@@ -363,6 +363,38 @@ struct LoginSetExportImportTests {
         #expect(try secrets.password(for: unrelated.id) == "keep")
     }
 
+    /// The export leaves secrets out by default and the import said nothing, so
+    /// the state that M28's guards exist for used to arrive unannounced.
+    /// Scope mirrors `LoginSetExportResult.missingSecretCount`: `.password`
+    /// authKind only (which also covers S3 sets — `S3FieldSchema.loginSet`
+    /// always builds them with `authKind: .password`), so a key set's
+    /// legitimately absent passphrase never counts, and it counts both a
+    /// fresh set that arrives empty and a replace that ends up empty.
+    @Test func importingSetsWithoutSecretsReportsTheirNumber() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let existing = LoginSet(name: "prod", username: "old")
+        vm.saveLoginSet(existing, secret: "old-pw")
+
+        let withSecret = LoginSet(name: "with-secret", username: "u")
+        let withoutSecret = LoginSet(name: "without-secret", username: "u")
+        // A key set with no passphrase is normal, not a gap — must not count.
+        let keySet = LoginSet(name: "keyed", username: "u", authKind: .privateKey)
+
+        let plan = LoginSetImportPlan(setsToImport: [
+            PlannedLoginSet(set: withSecret, secret: "pw", embeddedKey: nil, replacesExisting: false),
+            PlannedLoginSet(
+                set: withoutSecret, secret: nil, embeddedKey: nil, replacesExisting: false),
+            PlannedLoginSet(set: keySet, secret: nil, embeddedKey: nil, replacesExisting: false),
+            PlannedLoginSet(
+                set: LoginSet(id: existing.id, name: "prod", username: "new"),
+                secret: nil, embeddedKey: nil, replacesExisting: true),
+        ], replaced: ["prod"])
+        let result = vm.applyLoginSetImport(plan, keyStore: keyStore(in: dir))
+
+        #expect(result.secretsMissing == 2)
+    }
+
     /// M19 review (minor): `imported` counted replaced sets too, so the
     /// summary's one line — "%lld imported, %lld replaced, %lld skipped" —
     /// reported a single replacing set as "1 imported, 1 replaced". `imported`

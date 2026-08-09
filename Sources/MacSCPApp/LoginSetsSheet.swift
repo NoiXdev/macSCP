@@ -738,6 +738,14 @@ struct LoginSetsSheet: View {
                 "Stored passwords removed because the file had none: %lld"),
                 result.secretsRemoved))
         }
+        // The counterpart to the export sheet's "Exported without a password"
+        // line (M28/T4): without this, a set that arrived with no secret only
+        // surfaces the day a connection using it fails.
+        if result.secretsMissing > 0 {
+            lines.append(String(format: L10n.string(
+                "logins.import.withoutPassword %lld", "Arrived without a password: %lld"),
+                result.secretsMissing))
+        }
         // Same shared line the session summary uses: a stale secret the
         // Keychain refused to delete is still bound to the replaced set.
         if result.secretRemovalFailures > 0 {

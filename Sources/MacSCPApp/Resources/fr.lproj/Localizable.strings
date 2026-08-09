@@ -440,6 +440,7 @@
 "logins.import.missingKeys %@" = "Fichier de clé absent de ce Mac : %@";
 "logins.import.keyFailures %@" = "Fichiers de clé qui n’ont pas pu être importés : %@";
 "logins.import.secretsRemoved %lld" = "Mots de passe enregistrés supprimés, car le fichier n’en contenait aucun : %lld";
+"logins.import.withoutPassword %lld" = "Arrivés sans mot de passe : %lld";
 "logins.import.notExport" = "Ce n’est pas un fichier d’identifiants macSCP.";
 
 /* Feuille du journal d'audit (M9b/T3) */

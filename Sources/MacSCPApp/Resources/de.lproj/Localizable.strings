@@ -437,6 +437,7 @@
 "logins.import.missingKeys %@" = "Schlüsseldatei auf diesem Mac nicht vorhanden: %@";
 "logins.import.keyFailures %@" = "Schlüsseldateien, die nicht importiert werden konnten: %@";
 "logins.import.secretsRemoved %lld" = "Gespeicherte Passwörter entfernt, weil die Datei keine enthielt: %lld";
+"logins.import.withoutPassword %lld" = "Ohne Passwort angekommen: %lld";
 "logins.import.notExport" = "Keine macSCP-Logins-Datei.";
 
 /* Audit-Log-Sheet (M9b/T3) */
