@@ -1391,6 +1391,238 @@ struct SessionListViewModelTests {
         #expect(vm.sessions.first?.jump?.loginSetID == set.id)
     }
 
+    // MARK: - Switching a jump to a login set (M28/T3)
+
+    /// The defect this task closes: switching a jump from manual to a login
+    /// set dropped the old bastion slot on the strength of the new MODE alone.
+    /// Nothing carries that value -- `save` writes `jumpSecret` only for a
+    /// manual jump -- so the slot is the only copy, and a set holding no
+    /// secret leaves the jump unable to authenticate with nothing to go back
+    /// to. Secretless sets are ordinary: the login-set export leaves secrets
+    /// out by default.
+    @Test func switchingAJumpToASetWithoutASecretKeepsTheBastionSlot() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "Bastion", username: "jumper")
+        vm.saveLoginSet(set, secret: nil)
+        let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: jump,
+            jumpSecret: "jp")!
+        #expect(secrets.peek(jump.secretID) != nil)
+
+        let setJump = StoredSession.JumpSpec(
+            host: "bastion.example.com", username: "unused", loginSetID: set.id)
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: setJump)
+
+        #expect(secrets.peek(jump.secretID) != nil)
+        // The binding itself still went through -- only the cleanup was
+        // skipped.
+        #expect(vm.sessions.first?.jump?.loginSetID == set.id)
+    }
+
+    /// The positive twin, stated from the guard's side: the set holds its
+    /// secret, so the old slot is genuinely redundant and goes.
+    /// `saveCleansOrphanedJumpSlotWhenSwitchingToSetMode` above covers the
+    /// same switch from M10c's side and predates the coverage question.
+    @Test func switchingAJumpToASetThatHoldsItsSecretDropsTheOldSlot() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "Bastion", username: "jumper")
+        vm.saveLoginSet(set, secret: "s")
+        let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: jump,
+            jumpSecret: "jp")!
+        #expect(secrets.peek(jump.secretID) != nil)
+
+        let setJump = StoredSession.JumpSpec(
+            host: "bastion.example.com", username: "unused", loginSetID: set.id)
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: setJump)
+
+        #expect(secrets.peek(jump.secretID) == nil)
+        #expect(vm.sessions.first?.jump?.loginSetID == set.id)
+    }
+
+    /// An agent set needs no secret at all, so it covers its login while
+    /// holding nothing -- the M10d rule, and the reason the guard asks
+    /// `setCoversItsLogin` rather than "is a secret stored".
+    @Test func switchingAJumpToAnAgentSetDropsTheOldSlot() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "Bastion", username: "jumper", authKind: .agent)
+        vm.saveLoginSet(set, secret: nil)
+        let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: jump,
+            jumpSecret: "jp")!
+        #expect(secrets.peek(jump.secretID) != nil)
+
+        let setJump = StoredSession.JumpSpec(
+            host: "bastion.example.com", username: "unused", loginSetID: set.id)
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: setJump)
+
+        #expect(secrets.peek(jump.secretID) == nil)
+        #expect(vm.sessions.first?.jump?.loginSetID == set.id)
+    }
+
+    /// A Keychain that will not answer is not a set holding nothing. The set
+    /// below DOES hold its secret, so the deletion would even be correct --
+    /// and the guard still refuses, because it could not establish that.
+    @Test func switchingAJumpWhileTheKeychainIsSilentKeepsTheBastionSlot() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = UnreliableSecretStore(failsReads: true)
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: secrets,
+            loginSetStore: LoginSetStore(directory: dir))
+        let set = LoginSet(name: "Bastion", username: "jumper")
+        vm.saveLoginSet(set, secret: "s")
+        let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: jump,
+            jumpSecret: "jp")!
+        #expect(secrets.peek(jump.secretID) != nil)
+
+        let setJump = StoredSession.JumpSpec(
+            host: "bastion.example.com", username: "unused", loginSetID: set.id)
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: setJump)
+
+        #expect(secrets.peek(jump.secretID) != nil)
+        #expect(vm.sessions.first?.jump?.loginSetID == set.id)
+    }
+
+    /// `setCoversItsLogin` answers `true` for a private-key set without
+    /// reading anything, because the passphrase field is visible but not
+    /// required -- right for an unencrypted key, not enough for a DELETION:
+    /// an encrypted key whose passphrase is stored nowhere leaves the jump
+    /// unable to authenticate, and nothing at this site can tell the two
+    /// apart. See `jumpSetDemonstrablyCoversItsLogin` for why a managed key's
+    /// own slot cannot close that gap either.
+    @Test func switchingAJumpToAPrivateKeySetWithoutAPassphraseKeepsTheBastionSlot() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(
+            name: "Bastion", username: "jumper", authKind: .privateKey, keyPath: "/k")
+        vm.saveLoginSet(set, secret: nil)
+        let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: jump,
+            jumpSecret: "jp")!
+        #expect(secrets.peek(jump.secretID) != nil)
+
+        let setJump = StoredSession.JumpSpec(
+            host: "bastion.example.com", username: "unused", loginSetID: set.id)
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: setJump)
+
+        #expect(secrets.peek(jump.secretID) != nil)
+        #expect(vm.sessions.first?.jump?.loginSetID == set.id)
+    }
+
+    /// …and the positive twin: a private-key set whose own slot holds the
+    /// passphrase is the one thing that CAN be established here -- that slot
+    /// is exactly what `LoginResolver.resolveJump` reads for a set-bound jump.
+    @Test func switchingAJumpToAPrivateKeySetHoldingItsPassphraseDropsTheOldSlot() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(
+            name: "Bastion", username: "jumper", authKind: .privateKey, keyPath: "/k")
+        vm.saveLoginSet(set, secret: "pp")
+        let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: jump,
+            jumpSecret: "jp")!
+        #expect(secrets.peek(jump.secretID) != nil)
+
+        let setJump = StoredSession.JumpSpec(
+            host: "bastion.example.com", username: "unused", loginSetID: set.id)
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: setJump)
+
+        #expect(secrets.peek(jump.secretID) == nil)
+        #expect(vm.sessions.first?.jump?.loginSetID == set.id)
+    }
+
+    /// A session-mode jump never reads its `loginSetID` -- it survives as an
+    /// inert data carrier once `sessionID` is set (the same F-1 rule
+    /// `sessionsUsing(setID:)` applies). So the coverage question must not
+    /// fire for one: the referenced session owns the login, and the old manual
+    /// slot is orphaned exactly as `saveJumpSwitchingManualToSessionDeletes
+    /// JumpSecretSlot` has it. The set below holds nothing, which is what
+    /// makes this fail if the guard forgets to check `sessionID`.
+    @Test func switchingAJumpToSessionModeDropsTheOldSlotDespiteAStaleSetID() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "Bastion", username: "jumper")
+        vm.saveLoginSet(set, secret: nil)
+        let bastion = vm.save(
+            name: "bastion",
+            values: sshValues(host: "bastion.example.com", port: 22, username: "jumper"),
+            password: "bp")!
+        let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: jump,
+            jumpSecret: "jp")!
+        #expect(secrets.peek(jump.secretID) != nil)
+
+        let sessionJump = StoredSession.JumpSpec(
+            host: "bastion.example.com", username: "unused",
+            loginSetID: set.id, secretID: jump.secretID, sessionID: bastion.id)
+        _ = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw",
+            jump: sessionJump)
+
+        #expect(secrets.peek(jump.secretID) == nil)
+        #expect(vm.sessions.first(where: { $0.name == "web" })?.jump?.sessionID == bastion.id)
+    }
+
     @Test func deleteSessionCleansJumpSlot() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }

@@ -196,6 +196,30 @@ public final class SessionListViewModel {
     /// alongside a jump that no longer reads it. Throw-free by design
     /// (M9b/M10b pattern): a stray keychain entry is a harmless residual,
     /// never a reason to fail the save/update itself.
+    ///
+    /// SET mode is the one case that asks before it deletes (M28/T3). It used
+    /// to drop the old slot on the strength of the new MODE alone, without
+    /// asking whether the set holds anything — and nothing carries that value
+    /// (`save` and `updateSession` both write `jumpSecret` only for a jump
+    /// with `loginSetID == nil`), so the slot is the only copy. A set holding
+    /// no secret then leaves the jump unable to authenticate with nothing to
+    /// go back to, and secretless sets are ordinary: `LoginSetExportSheet`
+    /// starts its `includeSecrets` switch off. The old slot now goes only when
+    /// `jumpSetDemonstrablyCoversItsLogin` below says so; both "the set holds
+    /// nothing" and "the Keychain would not answer" keep it.
+    ///
+    /// Keeping on an unanswerable read is chosen deliberately, not inherited:
+    /// this function stays throw-free, so the alternative would be to abort
+    /// the save — but the BINDING is fine, only the cleanup cannot be
+    /// justified, and a stray entry is the residual this function's own
+    /// contract already tolerates. Losing the only copy of a credential is
+    /// not.
+    ///
+    /// The question is asked only for a genuinely set-bound jump
+    /// (`sessionID == nil`): once `sessionID` is set, `loginSetID` survives as
+    /// an inert data carrier that nothing reads — the same F-1 rule
+    /// `sessionsUsing(setID:)` applies — so a session-mode jump keeps
+    /// deleting, as it did before.
     private func cleanOrphanedJumpSlot(
         previous: StoredSession.JumpSpec?, new: StoredSession.JumpSpec?
     ) {
@@ -204,7 +228,59 @@ public final class SessionListViewModel {
            new.secretID == previous.secretID {
             return // Still referenced by the new manual jump -- keep it.
         }
+        if let new, let setID = new.loginSetID, new.sessionID == nil,
+           !jumpSetDemonstrablyCoversItsLogin(setID) {
+            return // The new set cannot be shown to cover this jump -- keep it.
+        }
         try? secrets.deletePassword(for: previous.secretID)
+    }
+
+    /// Whether the login set a jump has just been bound to demonstrably holds
+    /// what that jump will need (M28/T3). `false` for every case this site
+    /// cannot establish — an unreadable set store, an id matching no set, a
+    /// Keychain that will not answer — because the only caller deletes a
+    /// credential from a `true` and there is no second copy of it.
+    ///
+    /// The sets come from `loginSetStore` rather than from `loginSets`:
+    /// `reload()` fills that array through a `try?`, so a store that cannot be
+    /// read is indistinguishable there from a store holding no sets. Both mean
+    /// "keep" here, but only a real read can say which one it is — and
+    /// `reload()` runs AFTER this in both callers, so the array would also be
+    /// one save behind.
+    ///
+    /// The private-key arm is the one place this asks more than
+    /// `setCoversItsLogin`. That member answers `true` for a private-key set
+    /// without reading anything, because the schema shows the passphrase field
+    /// as visible but not required — right, since an unencrypted key needs
+    /// none. For a DELETION it is not enough: an encrypted key whose
+    /// passphrase is stored nowhere leaves the jump unable to authenticate.
+    ///
+    /// `ManagedKeyPassphrase.hasStoredPassphrase` is deliberately NOT the
+    /// question here, and not because the case is unreachable — a jump bound
+    /// to a private-key set is ordinary. It is that a managed key's own slot
+    /// is never consulted on the jump path: a set-bound jump's secret comes
+    /// from `LoginResolver.resolveJump`, which for a non-agent set reads
+    /// `secrets.password(for: set.id)` and nothing else, while the two callers
+    /// of `ManagedKeyPassphrase.resolve` (`ConnectionFormView`'s Connect
+    /// button and `ContentView`'s fill path) both write the connection form's
+    /// OWN password from the form's own key path. A key's slot could not
+    /// rescue this jump even holding the passphrase. The set's own slot is
+    /// therefore the only evidence that exists at this site, and an empty one
+    /// means "cannot tell" — which keeps the old slot.
+    ///
+    /// A stored secret is judged verbatim, untrimmed, for the same reason
+    /// `setCoversItsLogin` gives.
+    private func jumpSetDemonstrablyCoversItsLogin(_ setID: UUID) -> Bool {
+        do {
+            guard let set = try loginSetStore.all().first(where: { $0.id == setID }) else {
+                return false
+            }
+            guard try setCoversItsLogin(set) else { return false }
+            guard set.authKind == .privateKey else { return true }
+            return !((try secrets.password(for: set.id)) ?? "").isEmpty
+        } catch {
+            return false
+        }
     }
 
     /// The outcome of `delete(_:)`'s jump-restoration pass (M11a Task 2).
