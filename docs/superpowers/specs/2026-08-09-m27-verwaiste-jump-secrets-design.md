@@ -136,16 +136,29 @@ enthält bisher nur Verknüpfungen, keine eigene Aktion.
 - **Ein Teilfehler stoppt nicht.** Wie beim Entfernen mehrerer Known Hosts
   läuft die Schleife weiter und der Bericht nennt die Fehlerzahl.
 
-### Audit
+### Kein Audit-Eintrag — und warum die erste Entscheidung zurückgenommen wurde
 
-Der Lauf wird auditiert — mit **Anzahl** entfernter Einträge und Anzahl
-Fehler, **niemals mit IDs und niemals mit Werten**.
+Ursprünglich sollte der Lauf auditiert werden: hier verschwinden Zugangsdaten,
+die der Nutzer nie gesehen hat. Beim Schreiben des Plans stellte sich heraus,
+dass das im heutigen Modell nicht einlösbar ist.
 
-Das weicht bewusst vom Umfeld ab: das Löschen einer Sitzung, eines Login-Sets
-und eines Managed Key ist heute nicht auditiert, das rekursive Remote-Löschen
-schon. Begründung: hier werden Zugangsdaten entfernt, die der Nutzer nie zu
-Gesicht bekommen hat und deren Verschwinden er auf keinem anderen Weg
-bemerken kann.
+**Das Audit-Log ist strikt sitzungsgebunden.** `AuditRecorder` wird mit einer
+`sessionID` erzeugt, `AuditLogStore` legt eine Datei je Sitzung an, und ein
+Recorder entsteht nur, wenn ein Verbindungsfenster einen anhängt. Die
+Einstellungen haben keine Sitzung. Zudem gibt es **bewusst keine globale
+Audit-Ansicht** — ein erzeugter Eintrag wäre aus der App heraus nicht lesbar.
+
+„Auditiert" hieße also: eine Datei auf der Platte, die niemand öffnen kann.
+Das ist kein Protokoll, sondern die Behauptung eines Protokolls.
+
+**Entscheidung (Maintainer, 2026-08-09): kein Audit-Eintrag.** Stattdessen der
+Bericht unmittelbar nach dem Lauf — der Nutzer hat die Aktion selbst ausgelöst
+und steht davor. Damit liegt M27 auf einer Linie mit dem Löschen von
+Sitzungen, Login-Sets und Managed Keys, die alle nicht auditiert sind.
+
+Ein app-weiter Audit-Bereich wurde erwogen und verworfen: er löste das Problem
+richtig, hat aber eigene Designfragen (Aufbewahrung, Ansicht, Menge) und wäre
+größer als dieser Meilenstein. **Gehört aufs Backlog, nicht in M27.**
 
 ## Was ausdrücklich nicht dazugehört
 
@@ -186,7 +199,7 @@ bemerken kann.
 | 7 | Der Sweep liest nie ein Secret | Test-Double, dessen `password(for:)` den Test scheitern lässt |
 | 8 | Ein Teilfehler stoppt den Lauf nicht | Double, das für eine ID wirft; die übrigen werden entfernt, der Bericht nennt den Fehler |
 | 9 | Die Legacy-Datei ist nach dem Lauf byte-gleich | Bytes vorher/nachher |
-| 10 | Der Audit-Eintrag enthält keine ID und keinen Wert | Test über den aufgezeichneten Eintrag |
+| 10 | Der Bericht nennt Zahlen, nie eine ID und nie einen Wert | Test über den erzeugten Text |
 | 11 | Alle vier Kataloge tragen die neuen Schlüssel | der vorhandene Wächtertest |
 
 ## Test-Hinweise
@@ -219,6 +232,9 @@ von nichts mehr benutzt werden.
 ## Offen, bewusst nicht Teil von M27
 
 - Das abgestandene Secret im Login-Set-Modus (siehe oben) — **auf dem Backlog**.
+- **Ein app-weiter Audit-Bereich** ohne Sitzungsbezug, samt Ansicht — die
+  Voraussetzung dafür, eine Aktion aus den Einstellungen überhaupt
+  protokollieren zu können. **Auf dem Backlog.**
 - Waisen aus fehlgeschlagenen Managed-Key-Rollbacks — nur über eine
   Schlüsselbund-Aufzählung erreichbar, die dieser Entwurf ablehnt.
 - Der 0-%-CPU-Testsuite-Hänger.
