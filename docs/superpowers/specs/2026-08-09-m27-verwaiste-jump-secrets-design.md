@@ -125,11 +125,21 @@ enthält bisher nur Verknüpfungen, keine eigene Aktion.
 
 - **Bestätigung nach Hausmuster:** `.confirmationDialog` mit destruktivem
   Knopf, wie beim Löschen von Sitzungen, Login-Sets und Known Hosts.
-- **Kein Vorschau-Zähler, sondern ein Bericht danach**, gebildet aus den
-  tatsächlichen Löschergebnissen: „N Einträge entfernt", bei Fehlern zusätzlich
-  deren Anzahl. Ein zweiter Lauf meldet schlicht null. Damit braucht es **keine
-  Erledigt-Markierung** — und der Meilenstein muss keine Migrations-Flag-
-  Maschinerie erfinden, die es im Projekt nicht gibt.
+- **Kein Vorschau-Zähler, sondern ein Bericht danach.** Ursprünglich sollte er
+  „N Einträge entfernt" lauten, und ein zweiter Lauf sollte null melden.
+  **Das geht nicht, und der Grund kam bei der Umsetzung ans Licht:**
+  `KeychainSecretStore.deletePassword` bildet `errSecItemNotFound` auf **Erfolg**
+  ab. Eine Löschung meldet also auch dann Erfolg, wenn gar nichts da war —
+  `removed` zählt geglückte Lösch*aufrufe*, nicht entfernte Einträge. Und da
+  die Legacy-Datei als Downgrade-Zusage liegen bleibt, ist die Kandidatenmenge
+  beim zweiten Lauf dieselbe: er meldete erneut „N entfernt", obwohl nichts da
+  war. Unterscheiden ließe sich das nur durch Lesen (verboten: Zugriffsdialoge,
+  und ein fehlschlagender Read beweist nichts) oder durch ein neues
+  Protokollmitglied (verboten).
+  **Also nennt der Bericht keine Entfernungszahl.** Er sagt, dass der Lauf
+  durch ist, und nennt die Zahl der **Fehler**, wenn es welche gab. Eine Zahl,
+  der man nicht trauen kann, ist schlechter als keine. Damit braucht es
+  weiterhin **keine Erledigt-Markierung**.
 - **Der Knopf ist immer aktiv.** Ein Ausgegraut-Zustand bräuchte einen
   Dateizugriff beim Zeichnen der Einstellungen, für eine Aktion, die ohnehin
   idempotent ist.
@@ -199,7 +209,7 @@ größer als dieser Meilenstein. **Gehört aufs Backlog, nicht in M27.**
 | 7 | Der Sweep liest nie ein Secret | Test-Double, dessen `password(for:)` den Test scheitern lässt |
 | 8 | Ein Teilfehler stoppt den Lauf nicht | Double, das für eine ID wirft; die übrigen werden entfernt, der Bericht nennt den Fehler |
 | 9 | Die Legacy-Datei ist nach dem Lauf byte-gleich | Bytes vorher/nachher |
-| 10 | Der Bericht nennt Zahlen, nie eine ID und nie einen Wert | Test über den erzeugten Text |
+| 10 | Der Bericht behauptet keine Entfernungszahl und nennt nie eine ID oder einen Wert | Test über den erzeugten Text |
 | 11 | Alle vier Kataloge tragen die neuen Schlüssel | der vorhandene Wächtertest |
 
 ## Test-Hinweise

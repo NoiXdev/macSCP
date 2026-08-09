@@ -413,7 +413,7 @@ Neue Schlüssel, in **allen vier** Dateien, an der Stelle der übrigen
 "manageData.reapSecrets.confirmTitle" = "Remove leftover credentials?";
 "manageData.reapSecrets.confirmMessage" = "Only credentials no saved connection, login set or key refers to are removed. This action cannot be undone.";
 "manageData.reapSecrets.confirmAction" = "Remove";
-"manageData.reapSecrets.result %lld" = "%lld leftover credentials removed.";
+"manageData.reapSecrets.result" = "Cleanup finished.";
 "manageData.reapSecrets.resultFailures %lld" = "Could not be removed: %lld";
 "manageData.reapSecrets.failed" = "The leftover credentials could not be checked. Nothing was removed.";
 ```
@@ -426,7 +426,7 @@ Deutsch:
 "manageData.reapSecrets.confirmTitle" = "Übrige Zugangsdaten entfernen?";
 "manageData.reapSecrets.confirmMessage" = "Entfernt werden nur Zugangsdaten, auf die keine gespeicherte Verbindung, kein Login-Set und kein Schlüssel verweist. Das lässt sich nicht rückgängig machen.";
 "manageData.reapSecrets.confirmAction" = "Entfernen";
-"manageData.reapSecrets.result %lld" = "%lld übrige Zugangsdaten entfernt.";
+"manageData.reapSecrets.result" = "Aufräumen abgeschlossen.";
 "manageData.reapSecrets.resultFailures %lld" = "Nicht entfernt werden konnten: %lld";
 "manageData.reapSecrets.failed" = "Die übrigen Zugangsdaten konnten nicht geprüft werden. Es wurde nichts entfernt.";
 ```
@@ -484,9 +484,13 @@ private func runReap() {
         secrets: KeychainSecretStore())
     do {
         let result = try sweep.run()
-        var text = String(
-            format: L10n.string("manageData.reapSecrets.result %lld", "%lld removed."),
-            result.removed)
+        // No removal count, deliberately: `deletePassword` maps
+        // `errSecItemNotFound` to success, so `Result.removed` counts
+        // successful delete CALLS, not entries that were actually there --
+        // and since the legacy file stays as the downgrade snapshot, a second
+        // run would report the same number for a keychain that is already
+        // clean. A number nobody can trust is worse than none.
+        var text = L10n.string("manageData.reapSecrets.result", "Cleanup finished.")
         if result.failed > 0 {
             text += "\n" + String(
                 format: L10n.string("manageData.reapSecrets.resultFailures %lld", "Failed: %lld"),
