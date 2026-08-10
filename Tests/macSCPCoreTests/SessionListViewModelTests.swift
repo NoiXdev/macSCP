@@ -2337,7 +2337,8 @@ struct SessionListViewModelTests {
     /// M28 final review (Critical): the jump's login-MODE picker is a mode
     /// switch over fields the user did not type. In Set mode the App fills
     /// `jumpUsername`/`jumpAuthChoice`/`jumpKeyPath`/`jumpPassword` from the
-    /// selected set before every submit (`ContentView.fillJumpForm`), so a
+    /// selected set before every submit (the fill inside
+    /// `SessionListViewModel.resolveJumpLoginSet`), so a
     /// switch to Manual that keeps them leaves the SET's secret pre-filled in
     /// the manual field -- and the next save persists it into THIS session's
     /// own jump slot. That is the damage `selectJumpSourceMode`'s doc comment
@@ -2350,10 +2351,11 @@ struct SessionListViewModelTests {
     /// arriving in the session's own slot would also silence the refusal --
     /// the spec no longer has a `loginSetID` for it to judge.
     ///
-    /// Only the Core half of the fix is pinned here: the picker binding
-    /// (`ConnectionFormView`) and the fill's own `kind` guard
-    /// (`ContentView.resolveSelectedJumpLoginSet`) live in the App target,
-    /// which has no test target.
+    /// Only the picker-mode half of the fix is pinned here. The picker
+    /// binding (`ConnectionFormView`) is still App-side and unpinned; the
+    /// fill's own `kind` guard moved to Core in M29-P2
+    /// (`SessionListViewModel.resolveJumpLoginSet`) and is covered by
+    /// `SubmitPreparationTests.aJumpBoundToANonSSHSetIsRefusedBeforeItsSecretIsRead`.
     @Test func jumpLoginModeSwitchDropsASetFilledSecretInsteadOfSavingIt() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -2373,9 +2375,11 @@ struct SessionListViewModelTests {
         form.beginEditing(stored)
         #expect(form.jumpLoginMode == .set)
         #expect(form.jumpSelectedLoginSetID == share.id)
-        // Exactly what the App's fill does for a set-bound jump before every
-        // submit, secret included -- reproduced here because `fillJumpForm`
-        // itself is App-side.
+        // Exactly what the fill does for a set-bound jump before every
+        // submit, secret included -- spelled out here rather than routed
+        // through `SessionListViewModel.resolveJumpLoginSet`, because this
+        // test is about what `selectJumpLoginMode` does with an
+        // already-filled form, not about how it got filled.
         form.jumpUsername = share.username
         form.jumpPassword = shareSecret
 

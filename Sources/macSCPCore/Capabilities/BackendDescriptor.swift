@@ -292,12 +292,11 @@ public struct BackendDescriptor: Sendable {
     /// That cannot happen only because the App fills the selected set's values
     /// into the form BEFORE validating: `ConnectionFormView`'s Connect/Save
     /// actions run `resolveLoginSetForSubmit` first and proceed only when its
-    /// refusal list is empty (M29-P2: `SessionListViewModel.
-    /// prepareForSubmit(form:)`, which reaches
-    /// `SessionListViewModel.resolveTargetLoginSet` ->
-    /// `ConnectionViewModel.applyResolvedCredentials`
-    /// (a dangling or wrong-kind set returns a refusal and never reaches
-    /// validation at all). By the time `connect()`/`validateForEditSave()`
+    /// refusal list is empty (M29-P2: `SessionListViewModel.prepareForSubmit(form:)`,
+    /// which reaches `SessionListViewModel.resolveTargetLoginSet` ->
+    /// `ConnectionViewModel.applyResolvedCredentials`; a dangling or
+    /// wrong-kind set returns a refusal and never reaches validation at
+    /// all). By the time `connect()`/`validateForEditSave()`
     /// call in here, the credential fields hold the set's own values.
     ///
     /// So this is a call-ORDER guarantee, not a structural one, and nothing

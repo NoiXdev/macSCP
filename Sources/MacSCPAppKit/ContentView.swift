@@ -2308,10 +2308,10 @@ struct ContentView: View {
             //
             // `form.jumpHost` (M-1 fix, final review), not `stored.jump?.
             // host`: for a session-mode jump `form.jumpHost` already holds
-            // the freshly resolved host (`SessionListViewModel.
-            // resolveJumpSession` filled it before `connect()` ran, a few
-            // lines above `buildJumpSpec()` reads the very same field) --
-            // using `stored.jump?.host`
+            // the freshly resolved host
+            // (`SessionListViewModel.resolveJumpSession` filled it before
+            // `connect()` ran, a few lines above `buildJumpSpec()` reads
+            // the very same field) -- using `stored.jump?.host`
             // instead happened to read the identical value here (it's the
             // trimmed copy of this same field), but only by accident, not by
             // construction; `form.jumpHost` is the one field guaranteed to
@@ -2535,9 +2535,9 @@ struct ContentView: View {
                         // protocol (M28/T7). This is the only catch site the
                         // case can reach, because it is the only one that
                         // resolves a jump spec whose `sessionID` is nil: the
-                        // three others — `SessionListViewModel.
-                        // resolveJumpSession`, `ConnectionFormView.
-                        // jumpSessionSummary` and the
+                        // three others —
+                        // `SessionListViewModel.resolveJumpSession`,
+                        // `ConnectionFormView.jumpSessionSummary` and the
                         // session-mode branch just above — all build or pass
                         // a spec carrying a `sessionID`, and
                         // `LoginResolver.resolveJump(...sessions:...)` only

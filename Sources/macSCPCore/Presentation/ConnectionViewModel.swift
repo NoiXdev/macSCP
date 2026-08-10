@@ -351,8 +351,9 @@ public final class ConnectionViewModel {
     /// `.s3` session bound to an SSH set — which `LoginResolver.resolve` then
     /// rejects with `kindMismatch` on every later connect, i.e. a session
     /// that can never be opened again. The submit gate itself only started
-    /// catching a stale selection with `SessionListViewModel.
-    /// resolveTargetLoginSet`'s `kind` guard (M29-P2) — this reset here
+    /// catching a stale selection with
+    /// `SessionListViewModel.resolveTargetLoginSet`'s `kind` guard
+    /// (M29-P2) — this reset here
     /// remains the earlier line of defense, clearing the selection before
     /// that guard is ever reached.
     ///

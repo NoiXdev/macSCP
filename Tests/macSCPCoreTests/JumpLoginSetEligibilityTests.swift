@@ -20,10 +20,11 @@ struct JumpLoginSetEligibilityTests {
     }
 
     /// The single-set question the picker's filter is built from, and the one
-    /// the App's fill-before-submit path asks about the set it is ABOUT to
-    /// copy credentials out of (`ContentView.resolveSelectedJumpLoginSet`,
-    /// M28 final review): a picker filter shapes what can be chosen next,
-    /// while a binding already on disk arrives at the fill unfiltered.
+    /// the fill-before-submit path asks about the set it is ABOUT to
+    /// copy credentials out of (`SessionListViewModel.resolveJumpLoginSet`,
+    /// M28 final review; moved out of the view in M29-P2): a picker filter
+    /// shapes what can be chosen next, while a binding already on disk
+    /// arrives at the fill unfiltered.
     @Test func isEligibleAnswersTheSameQuestionAsTheFilter() throws {
         let ssh = LoginSet(name: "Bastion", username: "jumper")
         let share = LoginSet(name: "Share", username: "dav", kind: .webdav)

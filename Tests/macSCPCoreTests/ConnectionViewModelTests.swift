@@ -685,7 +685,7 @@ struct ConnectionViewModelTests {
 
     /// M-5 fix (final review): switching the jump's source picker AWAY from
     /// `.session` must clear `jumpPassword`/`jumpKeyPath` --
-    /// `resolveSelectedJumpSession` (App layer) fills both with the
+    /// `SessionListViewModel.resolveJumpSession` fills both with the
     /// REFERENCED session's own resolved secret/key path right before a
     /// connect attempt; if that connect then fails and the user flips Source
     /// to Manual, the bastion's secret would otherwise sit pre-filled in the
@@ -1095,10 +1095,13 @@ struct ConnectionViewModelTests {
     /// worse than a stale jump: the picker filters its options by kind
     /// (`ConnectionFormView.loginSetPicker`), so an SSH set selected before a
     /// switch to S3 becomes INVISIBLE rather than cleared, while the submit gate
-    /// only checks that something is selected and `resolveSelectedLoginSet`
-    /// looks the id up without a kind check. The session would be stored with
-    /// `kind == .s3` bound to an SSH set, and every later connect would throw
-    /// `LoginResolveError.kindMismatch` — a permanently unopenable session.
+    /// only checked that something is selected. The session would be stored
+    /// with `kind == .s3` bound to an SSH set, and every later connect would
+    /// throw `LoginResolveError.kindMismatch` — a permanently unopenable
+    /// session. Since M29-P2 the gate also compares kinds
+    /// (`SessionListViewModel.resolveTargetLoginSet` refuses with
+    /// `.targetSetKindMismatch`); this reset stays the earlier line of
+    /// defense, clearing the selection before that guard is reached.
     @Test @MainActor func switchingProtocolClearsTheLoginSetSelection() {
         let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
         vm.loginMode = .set
