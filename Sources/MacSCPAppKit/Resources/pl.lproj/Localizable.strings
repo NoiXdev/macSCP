@@ -791,3 +791,23 @@
 "settings.cli.systemWide.footer" = "Ten folder należy do systemu, więc polecenie poprosi o hasło administratora. Sam macSCP nigdy nie żąda uprawnień administratora.";
 "settings.cli.status.translocated" = "macSCP działa z lokalizacji tymczasowej.";
 "settings.cli.status.translocated.detail" = "macOS uruchamia aplikacje otwierane z obrazu dysku lub folderu Pobrane z tymczasowej kopii, która znika po zamknięciu. Przenieś macSCP do folderu Aplikacje, otwórz go stamtąd i zainstaluj ponownie.";
+
+/* Snippets sheet (Terminal-Snippets milestone, Task 3) */
+"snippets.sheet.title" = "Snippets";
+"snippets.empty" = "Brak zapisanych fragmentów.";
+"snippets.noMatches" = "Brak wyników.";
+"snippets.new" = "Nowy…";
+"snippets.edit" = "Edytuj…";
+"snippets.delete" = "Usuń…";
+"snippets.delete.title" = "Usunąć ten fragment?";
+"snippets.delete.confirm" = "Usuń";
+"snippets.delete.error" = "Nie udało się usunąć fragmentu.";
+"snippets.runsImmediately.help" = "Uruchamia się natychmiast po wywołaniu";
+"snippets.editor.titleNew" = "Nowy fragment";
+"snippets.editor.titleEdit" = "Edytuj fragment";
+"snippets.editor.name" = "Nazwa";
+"snippets.editor.command" = "Polecenie";
+"snippets.editor.runsImmediately" = "Uruchom natychmiast";
+"snippets.editor.credentialsNote" = "Nie umieszczaj tu danych uwierzytelniających: plik to zwykły JSON, a linia poleceń i tak jest widoczna w ps oraz w historii powłoki na zdalnym hoście.";
+"snippets.editor.error.multiline" = "Polecenie nie może zawierać znaku nowej linii.";
+"snippets.editor.error.save" = "Nie udało się zapisać fragmentu.";

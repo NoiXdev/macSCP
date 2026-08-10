@@ -789,3 +789,23 @@
 "settings.cli.systemWide.footer" = "Dieser Ordner gehört dem System, deshalb fragt der Befehl nach deinem Administratorkennwort. macSCP selbst fordert nie Administratorrechte an.";
 "settings.cli.status.translocated" = "macSCP läuft von einem temporären Ort.";
 "settings.cli.status.translocated.detail" = "macOS startet Apps, die von einem Image oder aus dem Ordner „Downloads“ geöffnet werden, aus einer temporären Kopie, die beim Beenden verschwindet. Verschiebe macSCP in deinen Programme-Ordner, öffne es von dort und installiere erneut.";
+
+/* Snippets sheet (Terminal-Snippets milestone, Task 3) */
+"snippets.sheet.title" = "Snippets";
+"snippets.empty" = "Noch keine Snippets.";
+"snippets.noMatches" = "Keine Treffer.";
+"snippets.new" = "Neu…";
+"snippets.edit" = "Bearbeiten…";
+"snippets.delete" = "Löschen…";
+"snippets.delete.title" = "Dieses Snippet löschen?";
+"snippets.delete.confirm" = "Löschen";
+"snippets.delete.error" = "Das Snippet konnte nicht gelöscht werden.";
+"snippets.runsImmediately.help" = "Wird beim Auslösen sofort ausgeführt";
+"snippets.editor.titleNew" = "Neues Snippet";
+"snippets.editor.titleEdit" = "Snippet bearbeiten";
+"snippets.editor.name" = "Name";
+"snippets.editor.command" = "Kommando";
+"snippets.editor.runsImmediately" = "Sofort ausführen";
+"snippets.editor.credentialsNote" = "Keine Zugangsdaten hier eintragen: Die Ablage ist reines JSON, und eine Kommandozeile ist ohnehin in ps und in der Shell-History der Gegenseite sichtbar.";
+"snippets.editor.error.multiline" = "Das Kommando darf keinen Zeilenumbruch enthalten.";
+"snippets.editor.error.save" = "Das Snippet konnte nicht gespeichert werden.";

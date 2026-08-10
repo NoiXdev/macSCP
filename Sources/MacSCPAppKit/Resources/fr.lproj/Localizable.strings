@@ -792,3 +792,23 @@
 "settings.cli.systemWide.footer" = "Ce dossier appartient au système, la commande demande donc votre mot de passe administrateur. macSCP ne demande jamais de droits d’administrateur lui-même.";
 "settings.cli.status.translocated" = "macSCP s’exécute depuis un emplacement temporaire.";
 "settings.cli.status.translocated.detail" = "macOS exécute les apps ouvertes depuis une image disque ou le dossier Téléchargements à partir d’une copie temporaire qui disparaît à la fermeture. Déplacez macSCP dans votre dossier Applications, ouvrez-le depuis là, puis installez de nouveau.";
+
+/* Snippets sheet (Terminal-Snippets milestone, Task 3) */
+"snippets.sheet.title" = "Snippets";
+"snippets.empty" = "Pas encore de snippets.";
+"snippets.noMatches" = "Aucun résultat.";
+"snippets.new" = "Nouveau…";
+"snippets.edit" = "Modifier…";
+"snippets.delete" = "Supprimer…";
+"snippets.delete.title" = "Supprimer ce snippet ?";
+"snippets.delete.confirm" = "Supprimer";
+"snippets.delete.error" = "Impossible de supprimer le snippet.";
+"snippets.runsImmediately.help" = "S’exécute immédiatement au déclenchement";
+"snippets.editor.titleNew" = "Nouveau snippet";
+"snippets.editor.titleEdit" = "Modifier le snippet";
+"snippets.editor.name" = "Nom";
+"snippets.editor.command" = "Commande";
+"snippets.editor.runsImmediately" = "Exécuter immédiatement";
+"snippets.editor.credentialsNote" = "N’y mettez pas d’identifiants : le fichier est du JSON brut, et une ligne de commande est de toute façon visible dans ps et dans l’historique du shell sur l’hôte distant.";
+"snippets.editor.error.multiline" = "La commande ne peut pas contenir de saut de ligne.";
+"snippets.editor.error.save" = "Impossible d’enregistrer le snippet.";
