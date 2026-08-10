@@ -101,8 +101,11 @@ extension SessionListViewModel {
     /// from a saved connection instead of a login set.
     ///
     /// Returns `nil` (no-op) when the jump is off, when its source is the
-    /// manual block, and while nothing is selected. The four refusals are the
-    /// resolver's own typed errors, classified rather than invented here; the
+    /// manual block, and while nothing is selected — Connect/Save are
+    /// already disabled via `jumpSessionModeIncomplete` for that last case,
+    /// so this is the defensive half rather than the only guard. The four
+    /// refusals are the resolver's own typed errors, classified rather than
+    /// invented here; the
     /// `catch`-all covers a dangling login set on the REFERENCED connection
     /// (`.missingSet`) and any other resolution failure, which is why its case
     /// is named for the condition rather than for one error.

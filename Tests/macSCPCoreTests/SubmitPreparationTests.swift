@@ -196,10 +196,10 @@ struct SubmitPreparationTests {
         #expect(jumpPasswordFieldIsEmpty)
     }
 
-    /// The three no-ops of the set half: the jump is off, the jump's SOURCE is
-    /// a saved connection (which has its own resolution), or the jump's login
-    /// is manual. A leftover dangling selection must not refuse a submit in
-    /// any of them.
+    /// The no-ops of the set half: the jump is off, the jump's SOURCE is a
+    /// saved connection (which has its own resolution), the jump's login is
+    /// manual, or the jump has no set selected. A leftover dangling
+    /// selection must not refuse a submit in any of them.
     @Test func theJumpSetHalfIsANoOpOffInSessionModeAndInManualMode() throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -328,8 +328,9 @@ struct SubmitPreparationTests {
         #expect(vm.resolveJumpSession(form: form) == .jumpSessionLoginUnresolvable)
     }
 
-    /// The two no-ops of the session half: the jump is off, or its source is
-    /// the manual block (which the set half resolves instead).
+    /// The no-ops of the session half: the jump is off, its source is the
+    /// manual block (which the set half resolves instead), or no session is
+    /// selected.
     @Test func theJumpSessionHalfIsANoOpOffAndInManualSourceMode() throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -375,7 +376,17 @@ struct SubmitPreparationTests {
     }
 
     /// The order is fixed so the App can present them deterministically.
-    @Test func refusalsComeBackInTargetJumpSetJumpSessionOrder() throws {
+    /// Pins that the coordinator returns refusals in a fixed order: target
+    /// before jump. It cannot pin a three-way target/jump-set/jump-session
+    /// order, because the two jump resolutions are mutually exclusive on a
+    /// single form — `resolveJumpLoginSet` only runs when `jumpSourceMode
+    /// != .session` and `resolveJumpSession` only runs when it IS
+    /// `.session` — so at most one of the two jump refusals can ever appear
+    /// alongside the target refusal, and the jump-set-vs-jump-session
+    /// position is unobservable by construction. This form drives
+    /// `jumpSourceMode` to `.session` and so exercises target-then-jump-
+    /// session.
+    @Test func refusalsComeBackInTargetThenJumpOrder() throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
 
