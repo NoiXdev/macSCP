@@ -24,11 +24,16 @@ Jedes Snippet kann jedoch als **sofort ausführend** gekennzeichnet werden
 die Entscheidung fällt beim **Anlegen**, wirkt aber beim **Auslösen**, wo
 niemand mehr weiß, welche Einträge scharf sind.
 
-**Das Design löst den Einwand, statt ihn zu überstimmen:** ein eigenes
-Menü **„Snippets"** in der Menüleiste, darin zwei Abschnitte — oben die
-einfügenden, darunter die ausführenden unter eigener Überschrift. Eine
-Gruppierung trägt diese Bedeutung zuverlässiger als ein Symbol am Eintrag,
-und sie umgeht die Symbol-Regel aus M19a gleich mit.
+**Das Design löst den Einwand, statt ihn zu überstimmen:** zwei Abschnitte
+im Menü — oben die einfügenden, darunter die ausführenden unter eigener
+Überschrift. Eine Gruppierung trägt diese Bedeutung zuverlässiger als ein
+Symbol am Eintrag, und sie umgeht die Symbol-Regel aus M19a gleich mit.
+
+**Korrektur am ersten Entwurf:** dieser sah ein eigenes Menü „Snippets" vor.
+Beim Vermessen für den Plan stellte sich heraus, dass es **bereits ein
+`CommandMenu("Terminal")`** gibt, mit „Terminal ein-/ausblenden" und „In
+externem Terminal öffnen". Snippets gehören dort hinein, nicht in eine
+zweite Anlaufstelle für dieselbe Sache.
 
 ### Snippets enthalten keine Zugangsdaten
 
@@ -99,6 +104,11 @@ und zeigt den eingefügten Text in ihrer Eingabezeile.
 **Ohne verbundene Sitzung im aktiven Tab sind die Menüeinträge deaktiviert**
 — es gibt kein `send`-Ziel, und ein Eintrag, der ins Leere läuft, ist
 schlechter als einer, der grau ist.
+
+Die Bedingung ist nicht neu zu erfinden: die beiden vorhandenen Einträge im
+Terminal-Menü benutzen bereits
+`!tabCommands.isActiveTabConnected || !tabCommands.activeTabSupportsShell`.
+Snippets nehmen dieselbe.
 
 ## Verwaltung
 
