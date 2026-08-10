@@ -137,7 +137,7 @@ extension ContentView {
         lifecycleAndToolbar(sheetsAndAlerts(windowChrome(splitLayout)))
     }
 
-    /// See the `.onChange(of: tabIDs)` call above.
+    /// See the `.onChange(of: tabIDs)` call in `ContentView+Lifecycle.swift`.
     var tabIDs: [UUID] {
         tabsModel.tabs.map(\.id)
     }
