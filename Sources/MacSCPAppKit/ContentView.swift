@@ -172,7 +172,7 @@ struct ContentView: View {
     /// `importedHosts`/`hiddenImportAliases` from THIS, never by re-reading
     /// the config file, so hiding/unhiding an entry can never race a
     /// concurrent edit of the file the user made in a text editor.
-    @State private var fullImportedHosts: [SSHConfigHost] = []
+    @State var fullImportedHosts: [SSHConfigHost] = []
     /// Aliases currently hidden from the IMPORTED sidebar section (M11f/T2),
     /// freshly read from `HiddenImportStore` by every `refreshImportedHosts()`
     /// call. Its count drives the Sessions-menu/background-menu "Hidden
@@ -193,14 +193,14 @@ struct ContentView: View {
     @State private var lastBrowserSize: CGSize?
     /// Tab pending a destructive close confirmation (active transfers) — nil
     /// when no confirmation is showing (M8a/T4).
-    @State private var closeRequest: SessionTab?
+    @State var closeRequest: SessionTab?
     /// Warning text for `closeRequest`, frozen at the moment the dialog is
     /// requested (M8b review, finding 4). The dialog's `message:` builder
     /// re-evaluates on every render; recomputing `TabCloseWarning.message`
     /// there instead of reading this snapshot would let the text go blank
     /// mid-dialog if the underlying transfers finish while it's still open —
     /// blank text under a destructive "Close" button.
-    @State private var closeWarningText: String = ""
+    @State var closeWarningText: String = ""
 
     // MARK: - Audit log (M9b/T3)
 
@@ -224,7 +224,7 @@ struct ContentView: View {
     /// Sessions menu. Same no-item-payload shape as `showKnownHostsSheet`
     /// above; the certificate list used to be a second section inside that
     /// sheet and is now its own overlay (see `ServerCertificatesSheet`).
-    @State private var showServerCertificatesSheet = false
+    @State var showServerCertificatesSheet = false
 
     // MARK: - Login sets (M10b/T3)
 
@@ -238,7 +238,7 @@ struct ContentView: View {
     /// import lives in, rather than growing a second import implementation
     /// here — and the sheet is where the result belongs anyway, since the
     /// imported sets appear in its list.
-    @State private var loginSetsSheetStartsImport = false
+    @State var loginSetsSheetStartsImport = false
 
     // MARK: - Hidden imports (M11f/T2)
 
@@ -255,14 +255,14 @@ struct ContentView: View {
     /// Same no-item-payload shape as `showKnownHostsSheet`/
     /// `showLoginSetsSheet`/`showHiddenImportsSheet` above: `SSHKeysSheet`
     /// always reflects the same window-wide `ManagedKeyStore` directory.
-    @State private var showSSHKeysSheet = false
+    @State var showSSHKeysSheet = false
 
     // MARK: - Snippets (Terminal-Snippets milestone)
 
     /// Drives the snippet management sheet — opened from the Terminal menu.
     /// Same no-item-payload shape as `showSSHKeysSheet` above; the sheet
     /// reads and writes `snippetStore` directly.
-    @State private var showSnippetsSheet = false
+    @State var showSnippetsSheet = false
 
     // MARK: - Session export/import (M9a/T3)
 
@@ -278,7 +278,7 @@ struct ContentView: View {
 
     /// A decoded session-import payload plus whether the file it came from was
     /// itself encrypted (which the result alert's plaintext notice needs).
-    private struct PendingSessionImport {
+    struct PendingSessionImport {
         let payload: SessionExportPayload
         let wasEncrypted: Bool
     }
@@ -304,38 +304,38 @@ struct ContentView: View {
     /// Set by `performExport` right before `showExportFileExporter` — the
     /// `fileExporter` completion handler reads it to decide whether the
     /// "exported without password" alert is needed (spec M9a §3.3).
-    @State private var exportDocument: SessionExportDocument?
-    @State private var showExportFileExporter = false
-    @State private var exportMissingPasswordCount = 0
-    @State private var showExportMissingPasswordAlert = false
-    @State private var exportErrorMessage: String?
+    @State var exportDocument: SessionExportDocument?
+    @State var showExportFileExporter = false
+    @State var exportMissingPasswordCount = 0
+    @State var showExportMissingPasswordAlert = false
+    @State var exportErrorMessage: String?
 
     @State var showImportFileImporter = false
     /// Bytes read from the chosen import file, held between the initial
     /// `probe` and the (optional) password prompt's `decode` attempt.
-    @State private var importFileData: Data?
-    @State private var showImportPasswordSheet = false
+    @State var importFileData: Data?
+    @State var showImportPasswordSheet = false
     /// A successfully decoded payload waiting to be planned and applied
     /// (M19/T8). Planning can open the conflict sheet, and SwiftUI presents
     /// only one sheet per view at a time — so an import that came through the
     /// password prompt decodes while that prompt is up and plans only once it
     /// has closed. Without the split, the conflict sheet would never appear
     /// and the password sheet would wait on it forever.
-    @State private var pendingImport: PendingSessionImport?
+    @State var pendingImport: PendingSessionImport?
     /// Bridges the shared `ImportConflictSheet`'s callbacks to the
     /// `ImportConflictArbiter`'s decider for SESSION imports (login-set
     /// imports own an instance of the same bridge inside `LoginSetsSheet`).
-    @State private var importConflictBridge = ImportConflictBridge()
-    @State private var importResultMessage: String = ""
-    @State private var showImportResultAlert = false
-    @State private var importErrorMessage: String?
+    @State var importConflictBridge = ImportConflictBridge()
+    @State var importResultMessage: String = ""
+    @State var showImportResultAlert = false
+    @State var importErrorMessage: String?
 
     // MARK: - External terminal (M11d/T2)
 
     /// One requested external-terminal open, captured between the moment the
     /// toolbar button/menu entry fires and the moment the password hint (if
     /// shown) is answered — `performExternalOpen` needs all four values.
-    private struct ExternalTerminalRequest {
+    struct ExternalTerminalRequest {
         let config: SSHConnectionConfig
         let target: TerminalTarget
         let customPath: String?
@@ -343,10 +343,10 @@ struct ContentView: View {
 
     /// Non-nil while the "external terminals can't receive a saved password"
     /// hint is showing (spec §4 item 6) — drives its alert below.
-    @State private var pendingPasswordHintRequest: ExternalTerminalRequest?
+    @State var pendingPasswordHintRequest: ExternalTerminalRequest?
     /// Set by `performExternalOpen` on `ExternalTerminalLauncher.LaunchError`
     /// — drives the error alert below (spec §4 item 7).
-    @State private var externalTerminalErrorMessage: String?
+    @State var externalTerminalErrorMessage: String?
     /// Set when a shell-only command (⌘T/toolbar Terminal button, or the
     /// "Terminal" menu's two entries) is invoked while the active tab's
     /// backend has no shell (M12/T7b, e.g. an S3 session) — drives the
@@ -405,7 +405,7 @@ struct ContentView: View {
     /// shape and the same directory the known-hosts sheet's `KnownHostsStore`
     /// is built with below, so constructing one per use costs nothing and
     /// keeps the directory named in a single place.
-    private var snippetStore: SnippetStore {
+    var snippetStore: SnippetStore {
         SnippetStore(directory: SessionStore.defaultDirectory)
     }
 
@@ -499,235 +499,6 @@ struct ContentView: View {
             } message: {
                 Text(terminalUnavailableAlertMessage ?? "")
             }
-    }
-
-    /// Every sheet, alert, dialog, and file importer/exporter this window owns.
-    /// 
-    /// See `windowChrome(_:)` for why these are grouped.
-    func sheetsAndAlerts<Content: View>(_ content: Content) -> some View {
-        content
-        // (M8a/T4) — mirrors `SessionSidebar`'s delete-confirmation pattern.
-        // An idle tab bypasses this and closes immediately (`requestClose`).
-        .confirmationDialog(
-            L10n.string("tabs.close.title", "Close tab?"),
-            isPresented: Binding(
-                get: { closeRequest != nil },
-                set: { isPresented in if !isPresented { closeRequest = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button(L10n.string("tabs.close.confirm", "Close"), role: .destructive) {
-                if let tab = closeRequest {
-                    closeRequest = nil
-                    Task { await performClose(tab) }
-                }
-            }
-            Button(L10n.string("common.cancel", "Cancel"), role: .cancel) {
-                closeRequest = nil
-            }
-        } message: {
-            Text(closeWarningText)
-        }
-        // Export sheet (M9a/T3): one view for all three scopes, opened by
-        // the sidebar's context menus via `exportSheetItem`.
-        .sheet(item: $exportSheetItem) { item in
-            SessionExportSheet(
-                viewModel: sessionListViewModel,
-                scope: item.scope,
-                onExport: { options in performExport(scope: item.scope, options: options) }
-            )
-        }
-        // Share-link sheet (M14/T5): opened from the remote pane's
-        // "Share Link…" context-menu entry (an S3-only `backendFileAction`,
-        // see `detail` below) — never offered for SSH, since its descriptor's
-        // `fileActions` is empty.
-        .sheet(item: $presignedSheetItem) { item in
-            PresignedURLSheet(
-                itemKey: item.itemKey, provider: item.provider, settingsStore: settingsStore)
-        }
-        // Audit log sheet (M9b/T3): opened from the sidebar context menu,
-        // available whether or not the session is currently connected — it
-        // reads straight from `auditStore`, independent of any tab.
-        .sheet(item: $auditLogSession) { stored in
-            AuditLogSheet(session: stored, store: auditStore)
-        }
-        // Known-hosts sheet (M10a/T2) — same directory the connector's
-        // `KnownHostsStore` uses (`makeTab` below), so it reflects the same
-        // TOFU state the connect flow reads from.
-        .sheet(isPresented: $showKnownHostsSheet) {
-            KnownHostsSheet(store: KnownHostsStore(directory: SessionStore.defaultDirectory))
-        }
-        // Server-certificate sheet — same directory the WebDAV connector's
-        // `TrustedCertificateStore` uses, so it reflects the same TOFU state
-        // the connect flow reads from.
-        .sheet(isPresented: $showServerCertificatesSheet) {
-            ServerCertificatesSheet(
-                store: TrustedCertificateStore(directory: SessionStore.defaultDirectory))
-        }
-        // Login-sets sheet (M10b/T3) — shares `sessionListViewModel` (not a
-        // fresh store) so the Sessions-menu/sidebar entry point and the
-        // form's own local "Manage logins…" sheet (`ConnectionFormView`)
-        // always show the exact same, up-to-date list.
-        .sheet(isPresented: $showLoginSetsSheet, onDismiss: {
-            loginSetsSheetStartsImport = false
-        }) {
-            LoginSetsSheet(
-                sessionList: sessionListViewModel, startsImport: loginSetsSheetStartsImport)
-        }
-        // SSH-keys sheet (M18/T5) — standalone overlay replacement for the
-        // M17 Settings tab; owns its own `ManagedKeyStore` instance the same
-        // way `showKnownHostsSheet` above does for `KnownHostsStore` (there
-        // is no shared observable object to pass in, unlike
-        // `showLoginSetsSheet`'s `sessionListViewModel`).
-        .sheet(isPresented: $showSSHKeysSheet) {
-            SSHKeysSheet()
-        }
-        // Snippets sheet (Terminal-Snippets milestone) — same window-scoped
-        // presentation as `showSSHKeysSheet` above. The sheet is the only
-        // place a snippet can be added, edited or deleted, so re-reading the
-        // store on dismiss is enough to keep the Terminal menu's entries
-        // current.
-        .sheet(isPresented: $showSnippetsSheet, onDismiss: { reloadSnippets() }) {
-            SnippetsSheet(store: snippetStore)
-        }
-        // Hidden-imports sheet (M11f/T2) — `fullImportedHosts` is the SAME
-        // full inventory `refreshImportedHosts()` reads from, so the sheet's
-        // "still in config"/"orphaned" split matches the sidebar exactly.
-        // `onChange` re-derives `importedHosts`/`hiddenImportAliases` after
-        // every unhide, so the sidebar's IMPORTED section and the menu
-        // count stay live while the sheet is still open.
-        .sheet(isPresented: $showHiddenImportsSheet) {
-            HiddenImportsSheet(
-                store: HiddenImportStore(directory: SessionStore.defaultDirectory),
-                hosts: fullImportedHosts,
-                onChange: { refreshImportedHosts() }
-            )
-        }
-        .fileExporter(
-            isPresented: $showExportFileExporter,
-            document: exportDocument,
-            contentType: .macscpSessions,
-            defaultFilename: "macSCP Sessions.macscpsessions"
-        ) { result in
-            handleExportResult(result)
-        }
-        .alert(
-            L10n.string("export.error.title", "Export Failed"),
-            isPresented: Binding(
-                get: { exportErrorMessage != nil },
-                set: { isPresented in if !isPresented { exportErrorMessage = nil } })
-        ) {
-            Button(L10n.string("common.ok", "OK"), role: .cancel) {}
-        } message: {
-            Text(exportErrorMessage ?? "")
-        }
-        .alert(
-            L10n.string("export.result.title", "Export Complete"),
-            isPresented: $showExportMissingPasswordAlert
-        ) {
-            Button(L10n.string("common.ok", "OK"), role: .cancel) {}
-        } message: {
-            Text(String(
-                format: L10n.string("export.missingPasswords %lld", "Exported without password: %lld"),
-                exportMissingPasswordCount))
-        }
-        // Import flow (M9a/T3): file picker → probe → optional password
-        // sheet → decode/plan/apply → result/error alert. No auto-connect
-        // after import (spec M9a §3.5).
-        .fileImporter(
-            isPresented: $showImportFileImporter,
-            allowedContentTypes: [.macscpSessions, .json],
-            allowsMultipleSelection: false
-        ) { result in
-            handleImportFileSelection(result)
-        }
-        .sheet(isPresented: $showImportPasswordSheet, onDismiss: {
-            // Covers every dismissal path, including ESC/click-outside,
-            // which bypasses the sheet's own Cancel button and its
-            // `onCancel` handler below (M9a final review, Finding 4) — the
-            // pending ciphertext must not linger in view state either way.
-            importFileData = nil
-            // Planning happens HERE, not in the sheet: it may open the
-            // conflict sheet, which cannot present while this one is up
-            // (M19/T8). A cancelled prompt leaves `pendingImport` nil and
-            // nothing runs.
-            if let pending = pendingImport {
-                pendingImport = nil
-                Task { await applyImport(pending) }
-            }
-        }) {
-            ImportPasswordSheet(
-                onSubmit: { password in
-                    guard let data = importFileData else { return nil }
-                    switch decodeImport(data: data, password: password) {
-                    case .ready(let pending):
-                        // Parked for `onDismiss` above; dismissing is what
-                        // clears the way for the conflict sheet.
-                        pendingImport = pending
-                        return nil
-                    case .retry(let message):
-                        return message
-                    case .failed:
-                        return nil
-                    }
-                },
-                onCancel: {
-                    importFileData = nil
-                    pendingImport = nil
-                }
-            )
-        }
-        // Shared import conflict sheet (M19/T7) for SESSION imports — the
-        // login-set import presents the same view through the same modifier
-        // inside `LoginSetsSheet`, so the resumption contract documented on
-        // `importConflictSheet(bridge:)` covers both flows.
-        .importConflictSheet(bridge: importConflictBridge)
-        .alert(
-            L10n.string("import.error.title", "Import Failed"),
-            isPresented: Binding(
-                get: { importErrorMessage != nil },
-                set: { isPresented in if !isPresented { importErrorMessage = nil } })
-        ) {
-            Button(L10n.string("common.ok", "OK"), role: .cancel) {}
-        } message: {
-            Text(importErrorMessage ?? "")
-        }
-        .alert(
-            L10n.string("import.result.title", "Import Complete"),
-            isPresented: $showImportResultAlert
-        ) {
-            Button(L10n.string("common.ok", "OK"), role: .cancel) {}
-        } message: {
-            Text(importResultMessage)
-        }
-        // Update-check result (M11b/T2, spec §4): a manual "Check for
-        // Updates…" always shows one of these four outcomes; the startup
-        // automatic only ever reaches this alert for `.updateAvailable`
-        // (see `UpdateCheckModel.check`, which stays silent otherwise).
-        .alert(
-            updateAlertTitle,
-            isPresented: Binding(
-                get: { updateModel.presentedResult != nil },
-                set: { isPresented in if !isPresented { updateModel.presentedResult = nil } })
-        ) {
-            if case .updateAvailable(_, _, let url) = updateModel.presentedResult {
-                Button(L10n.string("update.openReleasePage", "Open Release Page")) {
-                    NSWorkspace.shared.open(url)
-                }
-                Button(L10n.string("update.later", "Later"), role: .cancel) {}
-            } else {
-                Button(L10n.string("common.ok", "OK"), role: .cancel) {}
-            }
-        } message: {
-            Text(updateAlertMessage)
-        }
-        // Marks this `ContentView` as the (only) presenter of
-        // `updateModel.presentedResult` while it's actually in the view
-        // hierarchy (M11b final review, Finding I2): a manual check that
-        // finds nobody mounted falls back to a plain `NSAlert` instead (see
-        // `UpdateCheckModel.check`/`presentFallbackAlert`). On disappear —
-        // this window closing — any leftover `presentedResult` is cleared
-        // too, so a check that completed just as the window went away can
     }
 
     /// Appearance lifecycle, the toolbar, and the settings observers that keep
@@ -838,24 +609,6 @@ struct ContentView: View {
         .onChange(of: tabIDs) { _, _ in
             menuBarModel.tabs = tabsModel.tabs
         }
-    }
-
-    /// Extracted from the `.alert(isPresented:)` call above (M11d/T2 build
-    /// fix): inlined there, the whole modifier chain's combined closures made
-    /// the type checker time out ("unable to type-check this expression in
-    /// reasonable time") — a named computed `Binding` sidesteps that without
-    /// changing behavior.
-    private var passwordHintPresented: Binding<Bool> {
-        Binding(
-            get: { pendingPasswordHintRequest != nil },
-            set: { isPresented in if !isPresented { pendingPasswordHintRequest = nil } })
-    }
-
-    /// Same fix as `passwordHintPresented` above, for the error alert.
-    private var externalTerminalErrorPresented: Binding<Bool> {
-        Binding(
-            get: { externalTerminalErrorMessage != nil },
-            set: { isPresented in if !isPresented { externalTerminalErrorMessage = nil } })
     }
 
     // MARK: - Tab lifecycle
@@ -1219,15 +972,8 @@ struct ContentView: View {
     /// array, so anything that does throw is a file that exists and cannot be
     /// decoded. The management sheet reports the same state in its own error
     /// slot, and it is the place where the user can act on it.
-    private func reloadSnippets() {
+    func reloadSnippets() {
         tabCommands.snippetsLoad = SnippetsLoad(reading: snippetStore)
-    }
-
-    /// "Manage Snippets…" — same key-window guard as the other menu-driven
-    /// sheets in this bridge.
-    private func presentSnippets() {
-        guard window?.isKeyWindow == true else { return }
-        showSnippetsSheet = true
     }
 
     /// Sends one snippet's keystrokes to the active tab's shell.
@@ -1366,83 +1112,6 @@ struct ContentView: View {
         }
     }
 
-    /// Settings "Manage Data" → "Logins…": raises THIS window and opens the
-    /// login-sets sheet that already lives here, instead of letting the
-    /// Settings window present a second copy.
-    ///
-    /// Why the detour. `LoginSetsSheet` does not only edit login sets — via
-    /// `SessionListViewModel.deleteLoginSet`/`applyMerge`/
-    /// `applyLoginSetImport` it rewrites the SESSIONS that reference a set
-    /// (username/authKind/keyPath restored onto them, `loginSetID` cleared).
-    /// A Settings-side copy would need a second `SessionListViewModel` — and
-    /// the view model is window scope by design, so the copy in this window
-    /// would keep serving the pre-rewrite records to the sidebar. That is not
-    /// only a display problem: a sheet in the Settings window is modal to
-    /// THAT window only, so this window's sidebar stays clickable while it is
-    /// open, and one drag onto a group (`updateSession`, which upserts the
-    /// stale record) would put the dangling `loginSetID` straight back on
-    /// disk. A refresh-on-dismiss cannot close that hole, because the damage
-    /// is reachable before the dismissal. Routing here sidesteps all of it:
-    /// one view model, and the sheet is modal to the window whose state it
-    /// edits.
-    ///
-    /// No key-window guard (unlike `tabCommands.showLogins`): Settings is key
-    /// when this fires, which is the whole point. What stands in for it is
-    /// EXISTENCE of the window, nothing more.
-    ///
-    /// It deliberately does not ask whether the window is visible. It is about
-    /// to call `makeKeyAndOrderFront`, which deminiaturizes and unhides a
-    /// window that exists — so "currently on screen" was never the
-    /// precondition for this action succeeding, only "there is a window". The
-    /// earlier `window.isVisible` check made ⌘M (and hiding the app) look like
-    /// a closed window to this code and turned the entry into the silent
-    /// no-op it exists to avoid.
-    private func presentLoginSetsFromSettings() {
-        guard let window else { return }
-        window.makeKeyAndOrderFront(nil)
-        loginSetsSheetStartsImport = false
-        showLoginSetsSheet = true
-    }
-
-    /// Settings "Manage Data" → "Server Certificates…": routed for a
-    /// different reason than the other two, since `TrustedCertificateStore`
-    /// is a stateless read-modify-write struct and no state here is derived
-    /// from it.
-    ///
-    /// What is at stake is the trust decision, not the data. These are TOFU
-    /// entries, and revoking one from a window that is NOT modal to the
-    /// browser means the user can be editing trust while a WebDAV connect in
-    /// this window is at (or about to raise) its certificate prompt. There is
-    /// no reason to allow that interleaving, and none to reason about it
-    /// later. Presenting the sheet on the window that owns the connect
-    /// removes the question.
-    ///
-    /// The sheet is also `900×460` against the Settings window's `680×620`
-    /// — a 220pt overhang, far past the 40pt the 720-wide sheets already
-    /// have there. Narrowing it would break it where it is currently right;
-    /// the window width is fixed for the other sections. Routing settles the
-    /// geometry too, but the trust argument is the load-bearing one.
-    private func presentServerCertificatesFromSettings() {
-        guard let window else { return }
-        window.makeKeyAndOrderFront(nil)
-        showServerCertificatesSheet = true
-    }
-
-    /// Settings "Manage Data" → "Hidden Imports…": same detour, same reasons
-    /// as `presentLoginSetsFromSettings()` above, one store lower in the
-    /// stack. `HiddenImportsSheet` is handed this window's `fullImportedHosts`
-    /// snapshot and calls back into `refreshImportedHosts()` after every
-    /// unhide, which is what keeps the sidebar's IMPORTED section and the
-    /// Sessions-menu count live WHILE the sheet is open. A Settings-side copy
-    /// would have neither end of that wire, and both lists would drift — in
-    /// both directions, since this window's own "Hide" context menu stays
-    /// reachable behind a sheet that is modal to Settings.
-    private func presentHiddenImportsFromSettings() {
-        guard let window else { return }
-        window.makeKeyAndOrderFront(nil)
-        showHiddenImportsSheet = true
-    }
-
     /// Tab close entry point (strip ✕, ⌘W): a tab with active transfers OF
     /// ITS OWN, or that is currently the DESTINATION of another tab's
     /// cross-session transfer (M8b/T4), requires destructive confirmation
@@ -1469,13 +1138,13 @@ struct ContentView: View {
     /// unwrap `presentedResult`. Delegates to `UpdateAlertContent` (M11b
     /// final review, Finding I2) so this copy can never drift from
     /// `UpdateCheckModel`'s `NSAlert` fallback.
-    private var updateAlertTitle: String {
+    var updateAlertTitle: String {
         UpdateAlertContent.title(for: updateModel.presentedResult)
     }
 
     /// Message body matching `updateAlertTitle` above — see
     /// `UpdateAlertContent.message` for the wording of each case.
-    private var updateAlertMessage: String {
+    var updateAlertMessage: String {
         UpdateAlertContent.message(for: updateModel.presentedResult)
     }
 
@@ -1487,7 +1156,7 @@ struct ContentView: View {
     /// was the active one does the auto-activated neighbor get its attention
     /// indicator reset (same rule as `activate(_:)`) — closing a background
     /// tab must not acknowledge failures on the untouched active tab.
-    private func performClose(_ tab: SessionTab) async {
+    func performClose(_ tab: SessionTab) async {
         await teardown(tab)
         if !tabsModel.isLastTab {
             let wasActive = tab.id == tabsModel.activeTabID
@@ -2181,7 +1850,7 @@ struct ContentView: View {
     /// re-reads the same broken file) offers no way back. `hiddenImportAliases`
     /// is deliberately left alone: a stale count keeps the menu entry
     /// discoverable, which is where the user goes to investigate.
-    private func refreshImportedHosts() {
+    func refreshImportedHosts() {
         do {
             let aliases = try HiddenImportStore(directory: SessionStore.defaultDirectory).allHidden()
             hiddenImportAliases = aliases
@@ -2593,7 +2262,7 @@ struct ContentView: View {
     /// M9a §3.3). Encoding failure is rare (random salt generation, AES-GCM
     /// sealing) but not impossible, so it is reported inline rather than
     /// asserted away.
-    private func performExport(
+    func performExport(
         scope: SessionListViewModel.ExportScope, options: SessionExportOptions
     ) -> String? {
         let (payload, missingPasswordCount) = sessionListViewModel.exportPayload(
@@ -2616,7 +2285,7 @@ struct ContentView: View {
     /// `fileExporter` completion: on success, surfaces the "exported without
     /// password" notice when applicable (spec M9a §3.3); on failure, a
     /// generic localized write-error alert.
-    private func handleExportResult(_ result: Result<URL, Error>) {
+    func handleExportResult(_ result: Result<URL, Error>) {
         switch result {
         case .success:
             if exportMissingPasswordCount > 0 {
@@ -2638,7 +2307,7 @@ struct ContentView: View {
     /// access (the URL comes from an NSOpenPanel outside this app's own
     /// sandbox container) and probes whether it's encrypted before deciding
     /// whether the password sheet is needed.
-    private func handleImportFileSelection(_ result: Result<[URL], Error>) {
+    func handleImportFileSelection(_ result: Result<[URL], Error>) {
         switch result {
         case .failure(let error):
             importErrorMessage = ImportFeedbackText.readErrorMessage(error)
@@ -2671,7 +2340,7 @@ struct ContentView: View {
     /// What a decode attempt produced: something to plan, something the user
     /// can fix by retyping the password, or a failure already surfaced in the
     /// top-level alert.
-    private enum ImportDecodeOutcome {
+    enum ImportDecodeOutcome {
         case ready(PendingSessionImport)
         /// Keep the password sheet open and show this message.
         case retry(String)
@@ -2680,7 +2349,7 @@ struct ContentView: View {
 
     /// Decode step of an import (spec M9a §3.4). Planning deliberately does
     /// NOT happen here — see `pendingImport`'s doc comment.
-    private func decodeImport(data: Data, password: String?) -> ImportDecodeOutcome {
+    func decodeImport(data: Data, password: String?) -> ImportDecodeOutcome {
         do {
             return .ready(PendingSessionImport(
                 payload: try SessionExportCodec.decode(data, password: password),
@@ -2705,7 +2374,7 @@ struct ContentView: View {
     /// the login-set import shows. A cancelled run reports NOTHING: no alert
     /// at all, rather than an "import finished" full of zeros for an import
     /// the user explicitly called off.
-    private func applyImport(_ pending: PendingSessionImport) async {
+    func applyImport(_ pending: PendingSessionImport) async {
         let bridge = importConflictBridge
         let arbiter = ImportConflictArbiter { conflict in await bridge.ask(conflict) }
         let plan = await SessionImportPlanner.plan(
