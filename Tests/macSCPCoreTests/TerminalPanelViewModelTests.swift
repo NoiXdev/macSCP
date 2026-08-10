@@ -302,6 +302,39 @@ struct TerminalPanelViewModelTests {
         #expect(await shells.current.sent.isEmpty)
     }
 
+    /// Regression: the `send()` chain belongs to ONE shell. A send that is
+    /// still running when the shell ends must not make the first send to the
+    /// NEXT shell wait behind it — the queued call carries its own shell
+    /// reference, so waiting buys nothing and only delays delivery.
+    ///
+    /// `HangingSendShell.send` never returns on its own, so without the reset
+    /// the chained send below waits for it forever and `[7]` never reaches
+    /// the second shell.
+    @Test func aSendToAnEndedShellDoesNotDelayTheNextOne() async throws {
+        let first = HangingSendShell()
+        let second = MockShell()
+        let attempts = Counter()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in
+            await attempts.increment()
+            return await attempts.value == 1 ? first : second
+        })
+
+        vm.toggle()
+        try await waitUntil(vm.state == .running)
+        vm.send([1])                  // Enters the chain and never finishes.
+        try await waitUntil(first.sendCalls == 1)
+
+        first.finish()                // Shell ends -> `.ended`.
+        try await waitUntil(vm.state == .ended(nil))
+
+        vm.openIfNeeded()             // "Reopen" -> second shell.
+        try await waitUntil(vm.state == .running)
+        vm.send([7])
+
+        try await waitUntil(!second.sent.isEmpty)
+        #expect(second.sent.flatMap { $0 } == [7])
+    }
+
     /// The hold is bounded (64 KiB), so an open that never completes cannot
     /// let it grow without limit — same discipline as `replayBuffer`.
     @Test func bytesHeldWhileOpeningAreBounded() async throws {
@@ -374,6 +407,31 @@ final class LateFinishShell: RemoteShell, @unchecked Sendable {
     func finish() {
         lock.lock(); _finished = true; lock.unlock()
     }
+}
+
+/// Shell whose `send(_:)` never returns on its own — it sleeps until the
+/// surrounding task is cancelled. Stands in for a send that is still in
+/// flight when the shell ends (a stalled connection); `finish()` ends the
+/// output stream the way a closing shell does.
+final class HangingSendShell: RemoteShell, @unchecked Sendable {
+    let output: AsyncThrowingStream<[UInt8], Error>
+    private let continuation: AsyncThrowingStream<[UInt8], Error>.Continuation
+    private let lock = NSLock()
+    private var _sendCalls = 0
+    var sendCalls: Int { lock.lock(); defer { lock.unlock() }; return _sendCalls }
+
+    init() {
+        (output, continuation) = AsyncThrowingStream<[UInt8], Error>.makeStream()
+    }
+
+    func send(_ bytes: [UInt8]) async throws {
+        lock.lock(); _sendCalls += 1; lock.unlock()
+        // Long enough to outlast the whole test; cancellation ends it.
+        try await Task.sleep(for: .seconds(600))
+    }
+    func resize(cols: Int, rows: Int) async throws {}
+    func close() async { continuation.finish() }
+    func finish() { continuation.finish() }
 }
 
 /// Shell whose `send(_:)` delays the i-th of N calls by `(N - i) * 2ms`

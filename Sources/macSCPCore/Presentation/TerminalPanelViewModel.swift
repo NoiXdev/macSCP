@@ -78,6 +78,7 @@ public final class TerminalPanelViewModel {
         replayBuffer = []
         replayBytes = 0
         pendingBytes = []
+        cancelPendingSends()
         generation += 1
         let myGeneration = generation
         openTask = Task {
@@ -114,9 +115,16 @@ public final class TerminalPanelViewModel {
             } catch {
                 guard self.generation == myGeneration else { return }
                 shell = nil
-                // Whatever was buffered was meant for THIS attempt's shell —
-                // there is none. The `.ended` message below is what the panel
-                // shows instead, so the loss is not silent.
+                // Defensive, not load-bearing — and the difference matters
+                // enough to write down, because an earlier comment here
+                // claimed the opposite. The only reader of `pendingBytes` is
+                // `flushPendingBytes()`, which runs on the success path
+                // above, right after `openIfNeeded()` has cleared the buffer
+                // itself; nothing between this `catch` and the next open can
+                // reach these bytes either way. What this line does buy is
+                // releasing up to `maxPendingBytes` now instead of at the
+                // next `openIfNeeded()`/`shutdown()`. The `.ended` message
+                // below is what actually tells the user the input is gone.
                 pendingBytes = []
                 state = .ended(String(
                     format: CoreL10n.string("core.terminal.openFailed %@"),
@@ -142,7 +150,25 @@ public final class TerminalPanelViewModel {
         shell = nil
         readTask = nil
         pendingBytes = []
+        cancelPendingSends()
         state = .ended(message)
+    }
+
+    /// Drops the `send()` chain, because the calls queued in it are aimed at
+    /// a shell that is gone.
+    ///
+    /// Called wherever the current shell stops being the one `send()` should
+    /// reach: when an open starts, when the shell ends, and on `shutdown()`.
+    /// Without it the chain outlives its shell, and the first `send()` after
+    /// a reopen has to wait behind a `send` to the closed one before it can
+    /// run — a delay, not a misdelivery, since the queued calls carry their
+    /// own shell reference and can never reach the new one.
+    ///
+    /// Cancelled rather than awaited: a `send` that hangs must not hold up
+    /// the reopen (`shutdown()` states the same reason for the same call).
+    private func cancelPendingSends() {
+        sendTask?.cancel()
+        sendTask = nil
     }
 
     /// Sends what `send(_:)` buffered while the shell was opening.
@@ -212,8 +238,7 @@ public final class TerminalPanelViewModel {
         // Don't wait on `sendTask`: the `send()` calls chained into it target
         // the just-closed shell and may simply run out or no-op — otherwise
         // `shutdown()` could block on a hanging `send()`.
-        sendTask?.cancel()
-        sendTask = nil
+        cancelPendingSends()
         pendingBytes = []
         replayBuffer = []
         replayBytes = 0

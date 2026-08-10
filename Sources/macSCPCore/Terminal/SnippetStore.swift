@@ -21,11 +21,21 @@ public struct SnippetStore: Sendable {
         return try JSONDecoder().decode([Snippet].self, from: data)
     }
 
-    /// Adds `snippet`, or replaces the existing entry with the same `id`.
+    /// Adds `snippet` at the end, or replaces the existing entry with the
+    /// same `id` **in place**.
+    ///
+    /// Replacing in place rather than removing and appending keeps the list
+    /// order stable across an edit. The order is not cosmetic: the Terminal
+    /// menu lists snippets in exactly this order and hands the first three
+    /// inserting ones a ⌃⌘n shortcut, so a remove-and-append would silently
+    /// move an edited snippet to the end and reassign those shortcuts.
     public func save(_ snippet: Snippet) throws {
         var snippets = try all()
-        snippets.removeAll { $0.id == snippet.id }
-        snippets.append(snippet)
+        if let index = snippets.firstIndex(where: { $0.id == snippet.id }) {
+            snippets[index] = snippet
+        } else {
+            snippets.append(snippet)
+        }
         try persist(snippets)
     }
 

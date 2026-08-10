@@ -46,6 +46,23 @@ struct SnippetStoreTests {
         #expect(try store.all().first?.name == "Disk usage")
     }
 
+    /// Editing a snippet must not move it: the Terminal menu lists snippets
+    /// in store order and gives the first three inserting ones ⌃⌘1–3, so a
+    /// replace that appends would silently reassign those shortcuts.
+    @Test func replacingAnExistingIdKeepsItsPosition() throws {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        var first = try #require(Snippet(name: "First", command: "uptime", runsImmediately: false))
+        let second = try #require(Snippet(name: "Second", command: "whoami", runsImmediately: false))
+        try store.save(first)
+        try store.save(second)
+        first.name = "First, renamed"
+
+        try store.save(first)
+
+        #expect(try store.all().map(\.name) == ["First, renamed", "Second"])
+    }
+
     @Test func removingAnIdLeavesTheOthers() throws {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
