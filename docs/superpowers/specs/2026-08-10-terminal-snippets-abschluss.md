@@ -104,19 +104,21 @@ Belege nennen Testnamen und Symbole, **keine Zeilennummern**.
 | 3 | Ein Kommando mit Zeilenumbruch wird abgelehnt | **erfüllt** | `aCommandWithALineBreakIsRefused` (Initialisierer, `\n` und `\r`) und `aHandEditedMultiLineCommandDoesNotDecode` (JSON-Literal, also ein von Hand bearbeiteter Store) |
 | 4 | Der Store überlebt Schreiben und Lesen unverändert | **erfüllt** | `aSavedSnippetSurvivesTheRoundTrip`; dazu `savingTheSameIdTwiceReplaces` und `removingAnIdLeavesTheOthers` |
 | 5 | Ein fehlender Store liefert eine leere Liste, keinen Fehler | **erfüllt** | `aMissingFileReadsAsAnEmptyList` |
-| 6 | Ausführende Snippets stehen im Menü in einem eigenen Abschnitt | **Review-Punkt, kein Test** | siehe eigener Absatz unten |
+| 6 | Ausführende Snippets stehen im Menü in einem eigenen Abschnitt | **Review-Punkt; die Markierung selbst seit der Fix-Runde geprüft** | siehe eigener Absatz unten |
 | 7 | Ohne verbundene Sitzung sind die Einträge deaktiviert | **Review-Punkt, kein Test** | siehe eigener Absatz unten |
 | 8 | Der Store enthält nie ein Secret | **erfüllt, als Zusage gelesen** | `Snippet`s Doc-Kommentar sagt es am Typ („Never holds credentials… this project keeps secrets exclusively in the Keychain"). Der Editor im Sheet trägt denselben Hinweis mit Begründung. Es gibt **keinen** Test, der die Abwesenheit eines Secrets erzwingen könnte — Snippets sind Freitext |
-| 9 | Alle vier Kataloge tragen die neuen Schlüssel | **erfüllt** | **22** neue Schlüssel in `en`; die Schlüsselmengen-Differenz gegen `en` ist für `de`, `fr` und `pl` **leer** (ausgezählt aus dem Milestone-Diff). Der Wächter `LocalizableStringsTests` (`appLayerLanguagesMatchEnglishKeys`, `coreLayerLanguagesMatchEnglishKeys`) bleibt grün, ebenso `KeyboardShortcutsCatalogTests.everyLabelKeyResolves`; `plutil -lint` auf allen acht Katalogen `OK`. Die **Core**-Kataloge hat dieser Meilenstein nicht angefasst — sie wurden trotzdem mitgelintet |
+| 9 | Alle vier Kataloge tragen die neuen Schlüssel | **erfüllt** | **22** neue Schlüssel in `en` (mit der Fix-Runde unten: **25**); die Schlüsselmengen-Differenz gegen `en` ist für `de`, `fr` und `pl` **leer** (ausgezählt aus dem Milestone-Diff). Der Wächter `LocalizableStringsTests` (`appLayerLanguagesMatchEnglishKeys`, `coreLayerLanguagesMatchEnglishKeys`) bleibt grün, ebenso `KeyboardShortcutsCatalogTests.everyLabelKeyResolves`; `plutil -lint` auf allen acht Katalogen `OK`. Die **Core**-Kataloge hat dieser Meilenstein nicht angefasst — sie wurden trotzdem mitgelintet |
 | 10 | Der Shortcuts-Katalog nennt die neuen Kürzel | **erfüllt** | Neue Gruppe `settings.shortcuts.group.snippets` mit der Zeile `settings.shortcuts.label.insertSnippet` / „Insert snippet 1–3" / Glyph `⌃⌘1–3`; zusätzlich ist die Kürzel-Aufzählung im eigenen Doc-Kommentar des Katalogs (Fundstelle 1, die SwiftUI-Menüs) um `⌃⌘1–3` ergänzt — beide Stellen, die der Katalog selbst als Pflicht nennt |
 
 ### Kriterien 6 und 7: Review, nicht Test
 
-**Beide sind ausdrücklich keine Tests, und dieser Bericht behauptet keine
-Testabdeckung für sie.** Die Menü-Verdrahtung ist App-seitig, und dieses
-Projekt hat kein View-Testwerkzeug — dieselbe Grenze, die M29 offengelegt
-hat, und eine bewusste Entscheidung. Was tatsächlich vorliegt, ist ein
-gelesener Code-Stand:
+**Beide waren zum Abschluss ausdrücklich keine Tests, und dieser Bericht
+behauptete keine Testabdeckung für sie.** Die Menü-Verdrahtung ist
+App-seitig, und dieses Projekt kann keine `View` rendern — dieselbe Grenze,
+die M29 offengelegt hat. Was zum Abschluss vorlag, war ein gelesener
+Code-Stand. *(Teilweise überholt: die Fix-Runde hat die Markierung aus
+Kriterium 6 in eine reine Funktion gezogen und dort geprüft — das Menü
+selbst rendert weiterhin kein Test. Siehe den Einschub unter Kriterium 6.)*
 
 - **Kriterium 6:** `MacSCPApp.snippetMenuItems` teilt die Liste in
   `inserting` und `executing`. Zwischen beiden steht ein expliziter
@@ -125,6 +127,26 @@ gelesener Code-Stand:
   Divider: **wie `Section` seinen Titel in einem Menüleisten-Menü zeichnet,
   hat niemand gesehen.** Der Titel ist die Zugabe, der Divider der tragende
   Teil — so steht es auch im Doc-Kommentar der Funktion.
+
+  > **Falsch, korrigiert in der Fix-Runde (`429fdaf`).** Der Satz „der
+  > Divider der tragende Teil" hat keine Grundlage: `snippetMenuItems`
+  > setzte **drei** gleichrangige `Divider()` — vor dem Snippet-Block, vor
+  > der `Section`, vor „Manage Snippets…". Ein Divider markiert damit
+  > nichts Bestimmtes; das Einfüge-Band sah aus wie das Ausführ-Band sah aus
+  > wie das Verwaltungs-Band. Getragen hätte die Unterscheidung nur der
+  > `Section`-Titel — genau das Stück, das niemand gezeichnet gesehen hat.
+  > **Neu:** Die Markierung sitzt jetzt im Titel des Eintrags selbst
+  > (`SnippetMenuEntry.title(for:)`, Schlüssel
+  > `menu.snippets.executingItem`, „%@ (runs immediately)"). Ein Titel ist
+  > Text, den das Menü sicher zeichnet, und er hält auch dann, wenn es gar
+  > keine einfügenden Snippets gibt und die Gruppierung nichts mehr
+  > kontrastiert. Gruppierung und `Section`-Titel bleiben als Zugabe
+  > stehen. Der Doc-Kommentar der Funktion sagt beides jetzt so.
+  > **Und damit erstmals geprüft:** `onlyAnExecutingEntryIsMarkedInItsTitle`
+  > und `theExecutingMarkerResolvesFromTheCatalog` in
+  > `SnippetsPresentationTests` (App-Testziel `macSCPAppKitTests`, das es
+  > seit M29-P1 gibt). Das Menü selbst rendert weiterhin kein Test — was
+  > geprüft ist, ist der Titel, den es bekommt.
 - **Kriterium 7:** Jeder Snippet-Eintrag trägt in `MacSCPApp.snippetButton`
   denselben Ausdruck wie die beiden vorbestehenden Einträge des Menüs,
   `!tabCommands.isActiveTabConnected || !tabCommands.activeTabSupportsShell`
@@ -268,15 +290,21 @@ defensive Redundanz, die als Notwendigkeit auftritt. Nach derselben Logik
 sind auch die Löschungen in `finishShell` und `shutdown()` defensiv statt
 tragend. Als kleiner Nachtrag offen (unten).
 
+> **Erledigt in der Fix-Runde (`53f7fe1`).** Die Zeile bleibt stehen, der
+> Kommentar sagt jetzt, was sie ist: defensiv, nicht tragend. Eine
+> Wirkung hat sie doch, nur eine andere als behauptet — sie gibt bis zu
+> `maxPendingBytes` (64 KiB) **sofort** frei statt erst beim nächsten
+> `openIfNeeded()`/`shutdown()`. Nachgelesen an allen vier Schreibstellen
+> von `pendingBytes`; der einzige Leser bleibt `flushPendingBytes()` auf
+> dem Erfolgspfad.
+
 ## Was aus dem Ledger offen zurückbleibt
 
 Alle folgenden Punkte sind während der Reviews bewusst zurückgestellt worden.
 
-- **Leeres Trennband im Menü**, wenn es ausführende, aber **keine**
-  einfügenden Snippets gibt: `snippetMenuItems` setzt dann den Divider für
-  die nicht leere Gesamtliste und unmittelbar danach den Divider vor der
-  `Section` — zwei Trenner ohne etwas dazwischen. Nachgelesen und bestätigt.
-  Kosmetik, ungesehen, weil die GUI nicht lief.
+- ~~**Leeres Trennband im Menü**, wenn es ausführende, aber **keine**
+  einfügenden Snippets gibt~~ — **erledigt in `429fdaf`**: der mittlere
+  Divider wird nur noch gesetzt, wenn auf beiden Seiten etwas steht.
 - **`prefix(maxPendingBytes - count)` würde bei negativem Argument
   abstürzen.** Heute unerreichbar, weil der Anhang nie über die Deckelung
   hinausläuft; ein `max(0,)` würde nichts kosten.
@@ -292,8 +320,64 @@ Alle folgenden Punkte sind während der Reviews bewusst zurückgestellt worden.
   nicht mehr: der Poll, in dem er lebte, ist mit der Fix-Runde ganz
   entfallen. Erledigt, nicht offen — hier genannt, damit die Ledger-Zeile
   nicht als offener Punkt weiterlebt.
-- **Der tote `pendingBytes = []` im `catch`** samt irreführendem Kommentar
-  (siehe oben).
+- ~~**Der tote `pendingBytes = []` im `catch`** samt irreführendem
+  Kommentar~~ — **erledigt in `53f7fe1`**: Zeile bleibt, Kommentar sagt
+  jetzt die Wahrheit (siehe oben).
+
+## Fix-Runde nach der Whole-Branch-Review (2026-08-10)
+
+Die Review über `7a1777b..53f3b4f` kam mit **Fix first** zurück: zwei
+Wichtige, drei Kleinigkeiten. Alle fünf Punkte wurden vor dem Umsetzen
+selbst nachgeprüft; alle fünf haben gehalten.
+
+| Commit | Inhalt |
+|---|---|
+| `53f7fe1` | Core — Reihenfolge im Store, `sendTask`-Lebenszyklus, Kommentar im `catch` |
+| `429fdaf` | App — unlesbarer Store wird gesagt, ausführende Einträge tragen die Markierung selbst |
+
+**Die dritte stille Fehlermeldung, geschlossen.** `SnippetStore.all()` wirft
+bei einer Datei, die es nicht decodieren kann — ein von Hand eingetragenes
+mehrzeiliges Kommando genügt. Beide Leser haben das auf `[]` eingeebnet:
+das Menü zeigte keine Snippet-Einträge, und das Verwaltungs-Sheet — laut
+`ContentView`-Kommentar „the place to notice" — schrieb „No snippets yet."
+über eine Datei, die noch jedes Snippet enthält. Verloren geht dabei
+nichts (`save`/`remove` lesen vorher und werfen ebenfalls), ein Signal gab
+es aber auch nicht. Neu trägt `SnippetsLoad` das Leseergebnis statt einer
+nackten Liste: das Sheet zeigt den Lesefehler in seinem vorhandenen
+Fehler-Slot und behauptet nicht mehr, der Store sei leer; das Menü bekommt
+einen **deaktivierten Hinweiseintrag** — genau das Vokabular, mit dem
+dieses Menü schon „gerade nicht verfügbar" sagt —, während „Manage
+Snippets…" darunter aktiv bleibt. Geprüft in
+`anUndecodableStoreIsUnreadableRatherThanEmpty` (App-Testziel): dieselbe
+Dateiform wie im Core-Test, aber am App-seitigen Lesepfad.
+
+**Die zwei Kleinigkeiten aus Core.** `SnippetStore.save` ersetzte per
+`removeAll` + `append` und schob ein bearbeitetes Snippet damit ans Ende —
+die positionsgebundenen ⌃⌘1–3 wanderten still mit. Jetzt wird an Ort und
+Stelle ersetzt (`replacingAnExistingIdKeepsItsPosition`); die Zusage des
+Kürzel-Katalogs, „in the order the menu lists them", stimmt damit wieder.
+`TerminalPanelViewModel` setzte `sendTask` nur in `shutdown()` zurück, also
+konnte sich nach `.ended` → Neuöffnen ein `send` an die **neue** Shell
+hinter einem `send` an die geschlossene anstellen. Verzögerung, keine
+Fehlzustellung. `cancelPendingSends()` läuft jetzt überall dort, wo die
+aktuelle Shell aufhört, das Ziel zu sein. Mutationsprobe: ohne den Fix
+fällt `aSendToAnEndedShellDoesNotDelayTheNextOne` nach 2,8 s durch, mit
+Fix läuft er in 0,08 s grün.
+
+**Kataloge.** Drei neue Schlüssel (`snippets.load.error`,
+`menu.snippets.executingItem`, `menu.snippets.unreadable`) in allen vier
+App-Katalogen; die Meilenstein-Summe steigt damit von **22** auf **25**
+(gezählt über `git diff 7a1777b~1 -- …/en.lproj/Localizable.strings`).
+`plutil -lint` auf allen **acht** Katalogen: OK. **FR und PL sind
+maschinell erzeugt und ungeprüft.**
+
+**Suite:** **1756 Tests in 144 Suites**, grün (vorher 1749 in 143).
+`swift build` inklusive App-Target sauber.
+
+**Was diese Runde NICHT verifiziert hat:** die Oberfläche. Die App wurde
+wieder nicht gestartet — der Hinweiseintrag im Menü, der Fehlertext im
+Sheet und die Titel-Markierung sind gelesener, geprüfter Quelltext,
+gesehen hat sie niemand.
 
 ## Was in diesem Bericht NICHT verifiziert ist
 
@@ -320,10 +404,11 @@ Alle folgenden Punkte sind während der Reviews bewusst zurückgestellt worden.
 - **Die FR- und PL-Übersetzungen der 22 neuen Schlüssel** sind maschinell
   erzeugt und **nicht muttersprachlich geprüft**; der stehende Vorbehalt des
   Projekts gilt unverändert. Die deutsche Fassung ist handgeschrieben.
-- **Die Whole-Branch-Review über `7a1777b..HEAD`** ist noch nicht gelaufen.
-  Die vorangegangenen zwei Meilensteine haben dabei jeweils weitere falsche
-  Behauptungen gefunden, die den jeweiligen Abschlussbericht überlebt hatten
-  — es ist damit zu rechnen, dass auch dieser Bericht noch korrigiert wird.
+- ~~**Die Whole-Branch-Review über `7a1777b..HEAD`** ist noch nicht
+  gelaufen.~~ **Gelaufen**, mit genau dem erwarteten Ergebnis: sie hat zwei
+  weitere falsche Behauptungen gefunden, die diesen Bericht überlebt hatten.
+  Beide sind oben korrigiert, die Fix-Runde steht in ihrem eigenen
+  Abschnitt.
 - **`scripts/release`** — nicht ausgeführt.
 - **Dass der Testsuite-Hänger nicht mehr auftritt** — er trat in keinem der
   Läufe auf, mehr ist damit nicht gesagt.
@@ -337,8 +422,10 @@ im Terminal einfügen.
 
 - **Die Sichtprüfung der GUI** — der einzige Weg, Kriterien 6 und 7 von
   „gelesen" auf „gesehen" zu heben.
-- **Die Whole-Branch-Review** über `7a1777b..HEAD`.
-- Die sechs zurückgestellten Kleinigkeiten aus dem Abschnitt oben.
+- Die **drei** noch offenen Kleinigkeiten aus dem Abschnitt oben
+  (`prefix` mit negativem Argument, `resize()` während `.opening`, zwei im
+  selben `.opening`-Fenster ausgelöste Snippets); zwei weitere sind in der
+  Fix-Runde erledigt.
 - Aus der Spec ausdrücklich ausgeschlossen und unverändert offen:
   Platzhalter, Export/Import von Snippets, Bindung an Hosts oder Gruppen,
   mehrzeilige Skripte — und **Agent-Forwarding** als eigener Meilenstein,
