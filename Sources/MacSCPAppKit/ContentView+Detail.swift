@@ -1,0 +1,535 @@
+import AppKit
+// Only for `NotificationCenter.publisher(for:)` inside `windowChrome(_:)`
+// below — the app observes exactly one AppKit notification
+// (`NSWindow.willCloseNotification`, to tell the Settings window that this
+// window is gone).
+import Combine
+import SwiftUI
+import macSCPCore
+
+/// Detail-pane builders split out of `ContentView.swift`: the two-pane
+/// split layout, the window-chrome modifier group, the composed
+/// `mainContent`, the tab-identity proxy that drives its `.onChange`, the
+/// connected/prompt/form detail view, and the terminal panel it embeds.
+///
+/// Extraction only (no behavior change) -- see `ContentView.swift` for the
+/// surrounding state and the rest of the window's modifier groups.
+extension ContentView {
+    /// The window's two-pane layout: session sidebar on the left, tab strip
+    /// plus detail on the right.
+    ///
+    /// Split out of `mainContent` (M20 CI fix) so the layout and the modifier
+    /// chain that decorates it are two separate inference problems instead of
+    /// one. Together they had grown past what the type checker will solve.
+    var splitLayout: some View {
+    HSplitView {
+        SessionSidebar(
+            viewModel: sessionListViewModel,
+            importedHosts: importedHosts,
+            activeSessionID: activeTab.activeStoredSessionID,
+            // A running transfer no longer locks the sidebar (M8a): a
+            // sidebar click opens a NEW tab instead of tearing the
+            // connected one down. Only the active tab's own in-flight
+            // connect/reconnect blocks interaction.
+            interactionsDisabled: activeTab.isReconnecting
+                || activeTab.connectionViewModel.state == .connecting,
+            onSelect: { stored in connectFromSidebar(stored) },
+            onDelete: { stored in
+                // Return value (M11a/T3): the sidebar surfaces
+                // `secretFailures` as its own red inline message, the
+                // same way `LoginSetsSheet.deleteSelected()` does for
+                // `deleteLoginSet`.
+                let result = sessionListViewModel.delete(stored)
+                for tab in tabsModel.tabs where tab.activeStoredSessionID == stored.id {
+                    tab.activeStoredSessionID = nil
+                    // Same release as `teardown`'s audit recorder block
+                    // (M9b/T4 review, finding 1): leaving `auditRecorder`
+                    // and its two sinks wired after the STORE's log file
+                    // was just deleted means the next event (teardown's
+                    // own `recordDisconnected()` is guaranteed to fire
+                    // later) recreates `audit/<id>.json` from scratch —
+                    // an unreachable, permanent orphan, since no session
+                    // list entry (and no sidebar menu) points at that id
+                    // anymore.
+                    tab.auditRecorder = nil
+                    tab.transferQueue.auditSink = nil
+                    tab.session?.remote.auditSink = nil
+                }
+                return result
+            },
+            onNew: { newConnection() },
+            onSelectImported: { fillFromImported($0) },
+            onEdit: { stored in editStored(stored) },
+            onExport: { scope in exportSheetItem = ExportSheetItem(scope: scope) },
+            onImport: { showImportFileImporter = true },
+            onShowAuditLog: { stored in auditLogSession = stored },
+            onShowKnownHosts: { showKnownHostsSheet = true },
+            onShowLogins: { showLoginSetsSheet = true },
+            onHideImported: { host in hideImported(host) },
+            onShowHiddenImports: { showHiddenImportsSheet = true },
+            hiddenImportsCount: hiddenImportAliases.count,
+            hiddenImportsErrorMessage: hiddenImportsErrorMessage
+        )
+        .frame(minWidth: 170, idealWidth: 190, maxWidth: 260)
+
+        VStack(spacing: 0) {
+            // Hidden in the pristine (single unconnected tab) state — a
+            // strip with nothing to switch between would just be clutter
+            // (M8a/T4 spec 2).
+            if !isPristine {
+                TabStripView(
+                    tabs: tabsModel.tabs,
+                    activeTabID: tabsModel.activeTabID,
+                    onActivate: { activate($0) },
+                    onClose: { requestClose($0) },
+                    onAdd: { tabsModel.addTab(makeTab()) }
+                )
+            }
+            detail
+        }
+        // The detail minimum must fit inside the window minimum
+        // below together with the sidebar minimum (170), otherwise
+        // the split view's content overflows the window and gets
+        // clipped on both sides instead of shrinking.
+        .frame(minWidth: isPristine ? 500 : 590, maxWidth: .infinity)
+    }
+    }
+
+    /// Window-level chrome: minimum size, tint, title, the `NSWindow` handle,
+    /// and the once-per-appearance setup hook.
+    /// 
+    /// One of three modifier groups `mainContent` composes (M20 CI fix). Each is
+    /// its own generic function so the type checker solves three small problems
+    /// rather than one it gives up on.
+    func windowChrome<Content: View>(_ content: Content) -> some View {
+        content
+        // Compact form vs. browser: the minimum size depends on the window's
+        // pristine state (M5c/T0, M8a/T3) — replaces the global `.frame` from
+        // `MacSCPApp.swift`.
+        .frame(minWidth: isPristine ? 700 : 930, minHeight: 460)
+        .tint(DesignTokens.remoteBlue)
+        .navigationTitle(activeTab.titleName.map { "macSCP — \($0)" } ?? "macSCP")
+        .background(WindowAccessor {
+            window = $0
+            updateMainWindowPresence()
+        })
+        // Tells the Settings window when this window goes away, so its
+        // "Manage Data" entries that route HERE can disable themselves
+        // instead of swallowing the click (see `updateMainWindowPresence`).
+        .onReceive(
+            NotificationCenter.default.publisher(for: NSWindow.willCloseNotification),
+            perform: handleWindowWillClose)
+        // Extracted wholesale into `performWindowSetup()` (M20 CI fix).
+        // This closure had grown to ~125 statements in the same inference
+        // scope as the `HSplitView` above, and the type checker gave up on
+        // the whole `mainContent` expression -- on the CI runner first,
+        // which is slower than a dev machine and hits the per-expression
+        // time budget sooner. Same failure mode and same remedy as
+        // `wireMenuBarBridge()` (M11n/T2) and `handleCloseActiveTabCommand`
+        // (M14/T5); this time the whole body moves rather than one closure.
+        .task { performWindowSetup() }
+        // Destructive confirmation for closing a tab with active transfers
+    }
+
+    /// Composed from `splitLayout` plus three modifier groups rather than one
+    /// long chain -- see `windowChrome(_:)`.
+    var mainContent: some View {
+        lifecycleAndToolbar(sheetsAndAlerts(windowChrome(splitLayout)))
+    }
+
+    /// See the `.onChange(of: tabIDs)` call above.
+    var tabIDs: [UUID] {
+        tabsModel.tabs.map(\.id)
+    }
+
+    @ViewBuilder
+    var detail: some View {
+        let tab = activeTab
+        // Captured once per `detail` evaluation (M8a T5 review, finding 3):
+        // the sheet's four closures below all read THIS tab's bridge, not
+        // `tabsModel.activeTab` at call time. Without this, ⌘1–9 switching
+        // the active tab while the sheet is still up would make `onDismiss`/
+        // `onCancel`/`onResolve` resolve the NEWLY active tab's prompt
+        // instead of the one actually presenting the sheet. Invariant: the
+        // sheet always talks to its presenting tab's bridge, for its whole
+        // lifetime, regardless of what becomes active afterwards.
+        let bridge = tab.conflictBridge
+        Group {
+            if let session = tab.session {
+                VStack(spacing: 0) {
+                    VSplitView {
+                        HSplitView {
+                            BrowserPane(
+                                title: L10n.string("browser.paneLocal", "Local"),
+                                tint: DesignTokens.localAmber,
+                                softTint: DesignTokens.localSoft,
+                                viewModel: session.local,
+                                side: .local,
+                                fileSystem: session.localFS,
+                                pasteboardWriter: { item in
+                                    item.kind == .file
+                                        ? NSURL(fileURLWithPath: item.path)
+                                        : nil
+                                },
+                                onMenuAction: { entry, selection in
+                                    switch entry {
+                                    case .transferToOtherPane:
+                                        transferSelection(
+                                            selection, from: .local, in: tab, session: session)
+                                    case .transferToSession(let target):
+                                        transferToSession(
+                                            selection, from: .local, target: target,
+                                            in: tab, session: session)
+                                    case .copyPath:
+                                        copyPaths(of: selection)
+                                    case .openInEditor:
+                                        break   // never emitted for the local pane (menu model)
+                                    case .rename, .infoAndPermissions, .newFolder, .newFile, .delete:
+                                        break   // handled inside BrowserPane, never forwarded
+                                    case .backendFileAction:
+                                        break   // never contributed on the LOCAL pane (fileActions is nil here)
+                                    }
+                                },
+                                crossSessionTargets: { CrossSessionTargets.targets(excluding: tab.id, in: tabsModel.tabs) },
+                                visibleColumns: settingsStore.visibleColumns
+                            )
+                            .frame(minWidth: 280)
+
+                            BrowserPane(
+                                title: L10n.string("browser.paneRemote", "Remote"),
+                                tint: DesignTokens.remoteBlue,
+                                softTint: DesignTokens.remoteSoft,
+                                viewModel: session.remote,
+                                side: .remote,
+                                onDropURLs: { urls in
+                                    uploadDropped(urls, in: tab, session: session)
+                                },
+                                onOpenFile: { item in
+                                    openInEditor(item, in: tab, session: session)
+                                },
+                                fileSystem: session.remoteFS,
+                                pasteboardWriter: { item in
+                                    item.kind == .file
+                                        ? remotePromiseProvider(for: item, in: tab, session: session)
+                                        : nil
+                                },
+                                onMenuAction: { entry, selection in
+                                    switch entry {
+                                    case .transferToOtherPane:
+                                        transferSelection(
+                                            selection, from: .remote, in: tab, session: session)
+                                    case .transferToSession(let target):
+                                        transferToSession(
+                                            selection, from: .remote, target: target,
+                                            in: tab, session: session)
+                                    case .openInEditor:
+                                        if let item = selection.first {
+                                            openInEditor(item, in: tab, session: session)
+                                        }
+                                    case .copyPath:
+                                        copyPaths(of: selection)
+                                    case .rename, .infoAndPermissions, .newFolder, .newFile, .delete:
+                                        break   // handled inside BrowserPane, never forwarded
+                                    case .backendFileAction(let action):
+                                        // Currently the only backend-contributed action is
+                                        // S3's presigned URL (M14/T5) — keyed off `action.id`
+                                        // so a future second contribution doesn't need a new
+                                        // `BrowserMenuEntry` case, just another `if` here.
+                                        // `selection.count == 1` mirrors the menu-model gate
+                                        // (`BrowserContextMenu.entries`) that only ever offers
+                                        // `backendFileAction` for a single selected file.
+                                        if action.id == "s3.presignedURL",
+                                            selection.count == 1, let file = selection.first,
+                                            let provider = session.remoteFS as? PresignedURLProvider
+                                        {
+                                            // Same "no leading slash" convention
+                                            // `S3FileSystem.objectKey(forPath:)` uses
+                                            // internally: normalize first (collapses any
+                                            // repeated slashes), then drop the single
+                                            // leading one.
+                                            let normalizedPath = RemotePath.normalizedAbsolute(file.path)
+                                            let key = normalizedPath == "/" ? "" : String(normalizedPath.dropFirst())
+                                            presignedSheetItem = PresignedSheetItem(
+                                                itemKey: key, provider: provider)
+                                        }
+                                    }
+                                },
+                                crossSessionTargets: { CrossSessionTargets.targets(excluding: tab.id, in: tabsModel.tabs) },
+                                fileActions: {
+                                    BackendDescriptor.descriptor(for: tab.connectionViewModel.kind)
+                                        .fileActions
+                                },
+                                visibleColumns: settingsStore.visibleColumns
+                            )
+                            .frame(minWidth: 280)
+                        }
+                        .frame(minHeight: 200)
+                        .layoutPriority(1)
+
+                        if session.terminal.isVisible {
+                            terminalPanel(session)
+                                .frame(minHeight: 120, idealHeight: 220)
+                        }
+                    }
+
+                    // Resume banner: displayed when the ACTIVE tab has interrupted
+                    // transfers (M5d/T4). Clicking "Resume" re-enqueues them with
+                    // that tab's file systems and resume semantics enabled.
+                    //
+                    // No capability gate needed here (M12/T7b): the banner is
+                    // governed by `ProtocolCapabilities.resumeMode`, but an
+                    // S3 session can never populate `hasInterrupted` in the
+                    // first place today — `S3FileSystem`'s read/write both
+                    // throw `.protocolError` immediately (deferred to M13),
+                    // so no S3 transfer can ever reach "interrupted" (that
+                    // requires a transfer to have started and been cut off
+                    // mid-flight). Gating this now would be dead code; M13
+                    // is where `resumeMode == .rangeGet`'s actual mechanics
+                    // (distinct from SSH's `.append`) need to be wired here.
+                    if tab.transferQueue.hasInterrupted {
+                        HStack {
+                            Text(L10n.string(
+                                "transfers.interrupted.banner",
+                                "Interrupted transfers can be resumed."))
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button(L10n.string("transfers.interrupted.resume", "Resume")) {
+                                tab.transferQueue.retryInterrupted(
+                                    source: session.localFS,
+                                    destination: session.remoteFS)
+                            }
+                            .controlSize(.small)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4)
+                        .background(Color(nsColor: .controlBackgroundColor))
+                    }
+
+                    // Edit-open error (M5e/T4): subtle inline message, matching
+                    // the resume banner's placement/styling above. Dismissible;
+                    // cleared automatically on the next successful editor open.
+                    if let editErrorMessage = tab.editErrorMessage {
+                        HStack {
+                            Text(editErrorMessage)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .lineLimit(2)
+                            Spacer()
+                            // Icon-only hit target: the banner text is the
+                            // error message and never says that the ✕ dismisses
+                            // it, so the glyph needs its own hint — the same
+                            // one the identical dismiss button in
+                            // `FileSearchBar` carries.
+                            Button {
+                                tab.editErrorMessage = nil
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                            .help(L10n.string("common.close", "Close"))
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4)
+                    }
+
+                    if tab.transfersPanelVisible {
+                        TransferQueueBar(viewModel: tab.transferQueue)
+                    }
+                }
+                .onChange(of: tab.transferQueue.items.count) { oldCount, newCount in
+                    // A newly enqueued transfer reveals the bar (M11o) — the
+                    // pre-M11o auto-appear behavior, now gated by the per-tab
+                    // visibility flag. Only an INCREASE reveals; clearing or
+                    // finishing items never force-hides.
+                    if newCount > oldCount {
+                        tab.transfersPanelVisible = true
+                    }
+                }
+                .task(id: session.id) {
+                    // Auto-refresh loop (M9c): lives inside the tab's `.id` identity,
+                    // so switching tabs (or disconnecting) cancels it and the next
+                    // active tab starts its own. Keyed on the SESSION id as a
+                    // defensive guard (final review): even a hypothetical
+                    // synchronous session swap without a branch flip would
+                    // restart the loop against the new session.
+                    // Reads the settings fresh every lap
+                    // so changes apply without restart; skipped laps just sleep on.
+                    while !Task.isCancelled {
+                        let seconds = settingsStore.autoRefreshIntervalSeconds
+                        try? await Task.sleep(for: .seconds(seconds))
+                        guard !Task.isCancelled, settingsStore.autoRefreshEnabled else { continue }
+                        await session.remote.refreshQuietly()
+                    }
+                }
+                .transferConflictSheet(bridge: bridge)
+            } else if let candidate = tab.certificateBridge.currentCandidate {
+                // Certificate trust prompt (M21/T10): the same "form is
+                // hidden entirely while the trust decision is pending" shape
+                // `ConnectionFormView.hostKeyPromptView` uses for the SSH
+                // case, just driven by `tab.certificateBridge` instead of
+                // `viewModel.hostKeyPrompt` — see that bridge's own doc
+                // comment for why this state lives on the tab rather than on
+                // `tab.connectionViewModel`.
+                CertificatePromptView(
+                    candidate: candidate,
+                    onTrust: { tab.certificateBridge.resolve(trust: true) },
+                    onCancel: { tab.certificateBridge.resolve(trust: false) }
+                )
+                .padding(24)
+                .frame(minWidth: 420, maxWidth: 460)
+                .frame(maxHeight: .infinity, alignment: .top)
+            } else {
+                // Align the form to the top instead of centering it vertically
+                // (user feedback 2026-07-10, M5c/T0) — otherwise the compact
+                // window has a lot of empty space below the content.
+                ConnectionFormView(
+                    viewModel: tab.connectionViewModel,
+                    groups: sessionListViewModel.groups,
+                    sessionList: sessionListViewModel,
+                    resolveLoginSetForSubmit: {
+                        let form = tab.connectionViewModel
+                        let refusals = sessionListViewModel.prepareForSubmit(form: form)
+                        for refusal in refusals {
+                            form.showFailure(
+                                message: SubmitRefusalText.message(for: refusal), field: refusal.field)
+                        }
+                        return refusals.isEmpty
+                    },
+                    onSaveEdited: { stored, secret in
+                        var stored = stored
+                        var effectiveSecret = secret
+                        if let newSetID = maybeCreateNewLoginSet(
+                            from: tab.connectionViewModel, editedSession: stored
+                        ) {
+                            // The secret now lives under the new set's id —
+                            // don't also duplicate it into the session's own
+                            // keychain slot.
+                            stored.loginSetID = newSetID
+                            effectiveSecret = nil
+                        } else if stored.loginSetID != nil {
+                            // Set mode: the set already owns the secret.
+                            effectiveSecret = nil
+                        }
+                        // Jump secret (M10c/T3): `stored.jump` was already
+                        // built by `validateForEditSave()` (Set mode carries
+                        // only `loginSetID`, Manual carries the manual
+                        // fields + the EXISTING `secretID` it remembered) --
+                        // `updateSession` itself gates on `jump.loginSetID
+                        // == nil` before writing this, so passing it
+                        // unconditionally is safe in Set/Manual mode.
+                        //
+                        // Session mode (M11a/T3): `jumpPassword` was just
+                        // filled with the REFERENCED session's own resolved
+                        // secret (`SessionListViewModel.resolveJumpSession`,
+                        // spec §4a) --
+                        // passing that through here would copy it into the
+                        // jump's supposedly UNUSED `secretID` slot (spec §1:
+                        // "ungenutzt") on every save, not just the
+                        // manual→session switch `cleanOrphanedJumpSlot`
+                        // guards against. `nil` keeps that slot untouched.
+                        sessionListViewModel.updateSession(
+                            stored, newSecret: effectiveSecret,
+                            jumpSecret: tab.connectionViewModel.jumpSourceMode == .session
+                                ? nil : tab.connectionViewModel.jumpPassword)
+                        tab.connectionViewModel.endEditing()
+                    },
+                    onCancelEdit: { tab.connectionViewModel.endEditing() },
+                    onConnectEdited: { stored in
+                        // onSaveEdited may have rewired loginSetID (e.g. "save as new
+                        // login set") on its own local copy of `stored`, which never
+                        // reaches this closure's parameter. `updateSession` inside
+                        // onSaveEdited already reloaded the list synchronously, so look
+                        // up the just-persisted session by id and connect with that.
+                        let current = sessionListViewModel.sessions.first(where: { $0.id == stored.id }) ?? stored
+                        connect(in: tab, stored: current)
+                    }
+                ) { fs in
+                    // Remote home start (M9d): resolved once per connect,
+                    // right before the browser session is built, so the
+                    // remote pane opens where the user actually lands after
+                    // login instead of hardcoded "/". A lookup failure
+                    // (older SFTP servers, permission quirks) falls back to
+                    // "/" rather than failing the connect.
+                    // Accept only usable absolute paths (M9d final review): an
+                    // empty/relative realpath result would land the pane in
+                    // .failed where "/" always worked.
+                    let resolved = (try? await fs.homeDirectoryPath()) ?? "/"
+                    let home = resolved.hasPrefix("/") ? resolved : "/"
+                    startSession(in: tab, with: fs, startPath: home)
+                }
+                .frame(maxHeight: .infinity, alignment: .top)
+                // Plaintext-transport confirmation (M21/T10): asked by the
+                // connector closure (`ContentView.makeTab`) before it ever
+                // dispatches a connect whose transport is `.optionalTLS` and
+                // whose endpoint is `http://`. Declining resolves the
+                // waiting `confirmPlaintext()` call with `false`, which
+                // throws `RemoteFSError.connectionFailed` — the connect
+                // never happens (see that closure's own comment).
+                .confirmationDialog(
+                    L10n.string("transport.plaintext.title", "Send credentials unencrypted?"),
+                    isPresented: Binding(
+                        get: { tab.plaintextConfirmationPending },
+                        set: { _ in /* answered exclusively through the buttons below */ }
+                    ),
+                    titleVisibility: .visible
+                ) {
+                    Button(L10n.string("common.cancel", "Cancel"), role: .cancel) {
+                        tab.resolvePlaintextConfirmation(confirmed: false)
+                    }
+                    Button(L10n.string("connection.connect", "Connect"), role: .destructive) {
+                        tab.resolvePlaintextConfirmation(confirmed: true)
+                    }
+                } message: {
+                    Text(L10n.string(
+                        "transport.plaintext.body",
+                        "This connection uses http://, so the password travels in the clear. "
+                            + "Use https:// where the server offers it."))
+                }
+            }
+        }
+        // Load-bearing identity (M8a/T3 review): forces this whole per-tab
+        // subtree — the connected browser layout AND the form branch — to
+        // remount on every tab switch. Without it, two connected tabs would
+        // share the same SwiftUI view identities: `SSHTerminalView` binds
+        // `onOutput` and replays its buffer only in `makeNSView` --
+        // `updateNSView` touches font and cursor style and nothing else --
+        // so a tab switch would keep rendering/typing into the OLD tab's
+        // shell instead of rebinding to the new one. `BrowserPane`/
+        // `ConnectionFormView` `@State` would leak across tabs the same way.
+        .id(tab.id)
+    }
+
+    /// Panel content: terminal while the shell is running, otherwise an
+    /// ended/empty state. `SSHTerminalView` is deliberately mounted only
+    /// while the shell is active, so `onOutput` binds fresh on every reopen.
+    @ViewBuilder
+    func terminalPanel(_ session: BrowserSession) -> some View {
+        ZStack {
+            Color(nsColor: DesignTokens.terminalBackground)
+            switch session.terminal.state {
+            case .running, .opening:
+                SSHTerminalView(viewModel: session.terminal, settingsStore: settingsStore)
+            case .ended(let message):
+                VStack(spacing: 8) {
+                    Text(message ?? L10n.string("terminal.ended", "Shell ended."))
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color(nsColor: DesignTokens.terminalText))
+                    Button(L10n.string("terminal.reopen", "Reopen")) { session.terminal.openIfNeeded() }
+                }
+                .padding(.vertical, 8)
+                .padding(.horizontal, 14)
+            case .closed:
+                Color.clear
+            }
+        }
+        // Mockup: the terminal strip carries a hairline top border.
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(DesignTokens.hairline)
+                .frame(height: 1)
+                .allowsHitTesting(false)
+        }
+    }
+}
