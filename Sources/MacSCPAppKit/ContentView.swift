@@ -1037,7 +1037,7 @@ struct ContentView: View {
                                         break   // never contributed on the LOCAL pane (fileActions is nil here)
                                     }
                                 },
-                                crossSessionTargets: { crossSessionTargets(for: tab) },
+                                crossSessionTargets: { CrossSessionTargets.targets(excluding: tab.id, in: tabsModel.tabs) },
                                 visibleColumns: settingsStore.visibleColumns
                             )
                             .frame(minWidth: 280)
@@ -1101,7 +1101,7 @@ struct ContentView: View {
                                         }
                                     }
                                 },
-                                crossSessionTargets: { crossSessionTargets(for: tab) },
+                                crossSessionTargets: { CrossSessionTargets.targets(excluding: tab.id, in: tabsModel.tabs) },
                                 fileActions: {
                                     BackendDescriptor.descriptor(for: tab.connectionViewModel.kind)
                                         .fileActions
@@ -2942,23 +2942,6 @@ struct ContentView: View {
                     destinationDirectory: session.local.currentPath,
                     onCompleted: { [weak local = session.local] in await local?.refresh() })
             }
-        }
-    }
-
-    /// Cross-session transfer targets for `tab`'s context menu (M8b/T4):
-    /// every OTHER tab that currently has a live session, in tab-strip
-    /// order, mapped to its remote pane's CURRENT directory. Called fresh
-    /// from inside `menuNeedsUpdate` on every menu open (never cached) —
-    /// the menu itself freezes the resulting path into `CrossSessionTarget`
-    /// at build time (Spec §5.3), so staleness is bounded to "between two
-    /// menu opens", never longer.
-    private func crossSessionTargets(for tab: SessionTab) -> [CrossSessionTarget] {
-        tabsModel.tabs.compactMap { other in
-            guard other.id != tab.id, let session = other.session else { return nil }
-            return CrossSessionTarget(
-                id: other.id, title: other.displayTitle,
-                remotePath: session.remote.currentPath,
-                kind: other.connectionViewModel.kind)
         }
     }
 
