@@ -106,7 +106,10 @@ final class TabCommands {
     /// entry per snippet. `ContentView` fills it from `SnippetStore` during
     /// window setup and again whenever the management sheet closes, which is
     /// the only place a snippet can be created, edited or deleted.
-    var snippets: [Snippet] = []
+    ///
+    /// Carries the read OUTCOME, not just a list: a store that cannot be read
+    /// must not look like an empty one in the menu (see `SnippetsLoad`).
+    var snippetsLoad: SnippetsLoad = .loaded([])
     /// Triggers one snippet in the active tab's shell — `ContentView` sends
     /// `SnippetKeystrokes.bytes(for:)` to that tab's
     /// `TerminalPanelViewModel`. Same bridge shape and key-window guard as
@@ -349,32 +352,43 @@ struct MacSCPApp: App {
     }
 
     /// The snippet half of the "Terminal" menu (Terminal-Snippets
-    /// milestone), in two groups: the INSERTING snippets first, then the
-    /// executing ones under their own heading.
+    /// milestone): the INSERTING snippets first, then the executing ones
+    /// under their own heading, then the management entry.
     ///
-    /// The grouping is the safety feature, not decoration. "Runs
-    /// immediately" is decided when a snippet is authored but takes effect
-    /// when it is triggered, so at trigger time the menu itself has to say
-    /// which entries are live; a heading carries that reliably, and it also
-    /// stays clear of M19a's rule about decorative symbols.
+    /// **Which entries fire a command immediately is carried by the entries
+    /// themselves**, through `SnippetMenuEntry.title(for:)` — see that
+    /// function for why the grouping cannot carry it. The grouping stays as
+    /// an extra: it costs nothing, and it reads well if `Section` does draw
+    /// its title. It is not what the distinction rests on, and an earlier
+    /// version of this comment claiming a `Divider()` was "the part that has
+    /// to hold" was simply wrong — this function emits three sibling
+    /// dividers (before the snippet block, before the executing section,
+    /// before "Manage Snippets…"), so a divider marks no particular band.
     ///
-    /// The split between the two groups is an explicit `Divider()`, and the
-    /// `Section` title on top of it is a bonus: how `Section` draws its title
-    /// in a menu-bar menu was NOT verified at runtime (this task did not
-    /// launch the app), so the separation may not rest on it. A divider is
-    /// the part that has to hold.
+    /// The middle divider is emitted only when there is something on both
+    /// sides of it, so an all-executing list no longer produces two dividers
+    /// with nothing between them.
+    ///
+    /// An unreadable store is not silence: it gets a disabled notice entry
+    /// (see `SnippetsLoad`). Disabled entries are this menu's existing way
+    /// of saying "not available right now" — the two pre-existing entries
+    /// use them for a missing connection — and "Manage Snippets…" stays
+    /// enabled right below it, which is where the user can go look.
     @ViewBuilder
     private var snippetMenuItems: some View {
-        let inserting = tabCommands.snippets.filter { !$0.runsImmediately }
-        let executing = tabCommands.snippets.filter(\.runsImmediately)
-        if !tabCommands.snippets.isEmpty {
+        let snippets = tabCommands.snippetsLoad.snippets
+        let inserting = snippets.filter { !$0.runsImmediately }
+        let executing = snippets.filter(\.runsImmediately)
+        if !snippets.isEmpty {
             Divider()
         }
         ForEach(Array(inserting.enumerated()), id: \.element.id) { index, snippet in
             snippetButton(snippet, shortcutIndex: index)
         }
         if !executing.isEmpty {
-            Divider()
+            if !inserting.isEmpty {
+                Divider()
+            }
             Section(L10n.string("menu.snippets.runsImmediately", "Runs Immediately")) {
                 ForEach(executing) { snippet in
                     snippetButton(snippet, shortcutIndex: nil)
@@ -382,6 +396,11 @@ struct MacSCPApp: App {
             }
         }
         Divider()
+        if tabCommands.snippetsLoad.isUnreadable {
+            Button(L10n.string(
+                "menu.snippets.unreadable", "Snippets Couldn't Be Read")) {}
+                .disabled(true)
+        }
         // Not disabled with the entries above: editing snippets needs no
         // connection, the same way the Sessions menu's management sheets
         // are reachable without one.
@@ -394,6 +413,9 @@ struct MacSCPApp: App {
     /// pre-existing entries of this menu use — without a connected,
     /// shell-capable tab there is no `send` target.
     ///
+    /// The title comes from `SnippetMenuEntry.title(for:)`, which is where an
+    /// executing snippet is marked as one.
+    ///
     /// `shortcutIndex` is the snippet's position among the INSERTING ones;
     /// the first three of those get ⌃⌘1–3. A dynamic list cannot carry
     /// stable shortcuts for every entry, and the executing ones deliberately
@@ -401,7 +423,7 @@ struct MacSCPApp: App {
     /// command on the far host.
     @ViewBuilder
     private func snippetButton(_ snippet: Snippet, shortcutIndex: Int?) -> some View {
-        let entry = Button(snippet.name) {
+        let entry = Button(SnippetMenuEntry.title(for: snippet)) {
             tabCommands.runSnippet?(snippet)
         }
         .disabled(!tabCommands.isActiveTabConnected || !tabCommands.activeTabSupportsShell)

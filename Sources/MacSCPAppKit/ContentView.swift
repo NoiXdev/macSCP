@@ -1699,13 +1699,17 @@ struct ContentView: View {
     }
 
     /// Re-reads `snippets.json` into the command bridge (Terminal-Snippets
-    /// milestone). A read failure yields an empty menu section rather than an
-    /// alert: the store is absent until the first snippet is saved, and
-    /// `SnippetStore.all()` returns an empty array for that case, so anything
-    /// that does throw here is a broken file the management sheet is the
-    /// place to notice.
+    /// milestone).
+    ///
+    /// A read failure raises no alert here — the menu says it instead, with a
+    /// disabled notice entry, because `snippetsLoad` carries the read outcome
+    /// rather than a bare list (see `SnippetsLoad`). A missing store is not a
+    /// failure: `SnippetStore.all()` answers an absent file with an empty
+    /// array, so anything that does throw is a file that exists and cannot be
+    /// decoded. The management sheet reports the same state in its own error
+    /// slot, and it is the place where the user can act on it.
     private func reloadSnippets() {
-        tabCommands.snippets = (try? snippetStore.all()) ?? []
+        tabCommands.snippetsLoad = SnippetsLoad(reading: snippetStore)
     }
 
     /// "Manage Snippets…" — same key-window guard as the other menu-driven

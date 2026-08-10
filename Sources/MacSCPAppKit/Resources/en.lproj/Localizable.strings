@@ -808,9 +808,12 @@
 "snippets.editor.credentialsNote" = "Don't put credentials here: the store is plain JSON, and a command line is visible in ps and in the shell history on the far host anyway.";
 "snippets.editor.error.multiline" = "The command can't contain a line break.";
 "snippets.editor.error.save" = "Couldn't save the snippet.";
+"snippets.load.error" = "The snippets file couldn't be read. It exists but can't be decoded — no snippet was lost, and nothing will be written over it.";
 
 /* Terminal menu — snippets (Terminal-Snippets milestone) */
 "menu.snippets.runsImmediately" = "Runs Immediately";
+"menu.snippets.executingItem" = "%@ (runs immediately)";
 "menu.snippets.manage" = "Manage Snippets…";
+"menu.snippets.unreadable" = "Snippets Couldn't Be Read";
 "settings.shortcuts.group.snippets" = "Snippets";
 "settings.shortcuts.label.insertSnippet" = "Insert snippet 1–3";

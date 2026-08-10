@@ -17,15 +17,20 @@ import macSCPCore
 /// sheet, it does not trigger it.
 ///
 /// This is view code with no dedicated view-testing tool in this project
-/// (M29 made that gap explicit); nothing here is covered by the test suite,
-/// which is the same boundary `LoginSetsSheet`/`SSHKeysSheet` already live
-/// with.
+/// (M29 made that gap explicit): no test in this repo renders this body or
+/// clicks anything in it, the same boundary `LoginSetsSheet`/`SSHKeysSheet`
+/// already live with. What IS tested is the decision the body renders —
+/// `SnippetsLoad`, which decides whether this sheet may say "No snippets
+/// yet." — in `SnippetsPresentationTests`.
 struct SnippetsSheet: View {
     let store: SnippetStore
 
     @Environment(\.dismiss) private var dismiss
 
-    @State private var snippets: [Snippet] = []
+    /// The last read of the store — the OUTCOME, not just a list, so an
+    /// unreadable file cannot be shown as "no snippets yet" (see
+    /// `SnippetsLoad`).
+    @State private var load: SnippetsLoad = .loaded([])
     @State private var selectedID: Snippet.ID?
     @State private var searchText = ""
     @State private var searchIsRegex = false
@@ -41,8 +46,23 @@ struct SnippetsSheet: View {
         let existing: Snippet?
     }
 
+    private var snippets: [Snippet] { load.snippets }
+
     private var selectedSnippet: Snippet? {
         snippets.first { $0.id == selectedID }
+    }
+
+    /// The one message the sheet shows. A store that cannot be read wins over
+    /// an action error: it explains why the list is empty, and every action
+    /// against such a store fails for that same reason (`save`/`remove` read
+    /// the file before writing), so the read message is the informative one.
+    private var displayedError: String? {
+        if load.isUnreadable {
+            return L10n.string(
+                "snippets.load.error",
+                "The snippets file couldn't be read. It exists but can't be decoded — no snippet was lost, and nothing will be written over it.")
+        }
+        return errorMessage
     }
 
     var body: some View {
@@ -55,8 +75,8 @@ struct SnippetsSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text(L10n.string("snippets.sheet.title", "Snippets")).font(.headline)
 
-            if let errorMessage {
-                Text(errorMessage).font(.caption).foregroundStyle(.red).lineLimit(2)
+            if let displayedError {
+                Text(displayedError).font(.caption).foregroundStyle(.red).lineLimit(2)
             }
 
             SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
@@ -64,11 +84,18 @@ struct SnippetsSheet: View {
 
             if visibleSnippets.isEmpty {
                 Spacer(minLength: 0)
-                Text(searchText.isEmpty
-                    ? L10n.string("snippets.empty", "No snippets yet.")
-                    : L10n.string("snippets.noMatches", "No matches."))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
+                // Only an actually-read store may be called empty. For an
+                // unreadable one the space stays blank and the message above
+                // says what happened — claiming "No snippets yet." there
+                // would be the sheet telling the user their snippets are
+                // gone when the file still holds every one of them.
+                if !load.isUnreadable {
+                    Text(searchText.isEmpty
+                        ? L10n.string("snippets.empty", "No snippets yet.")
+                        : L10n.string("snippets.noMatches", "No matches."))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
                 Spacer(minLength: 0)
             } else {
                 List(visibleSnippets, selection: $selectedID) { snippet in
@@ -128,7 +155,7 @@ struct SnippetsSheet: View {
         }
     }
 
-    private func reload() { snippets = (try? store.all()) ?? [] }
+    private func reload() { load = SnippetsLoad(reading: store) }
 
     @ViewBuilder
     private func row(_ snippet: Snippet) -> some View {

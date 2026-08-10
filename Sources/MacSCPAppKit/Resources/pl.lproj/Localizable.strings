@@ -811,9 +811,12 @@
 "snippets.editor.credentialsNote" = "Nie umieszczaj tu danych uwierzytelniających: plik to zwykły JSON, a linia poleceń i tak jest widoczna w ps oraz w historii powłoki na zdalnym hoście.";
 "snippets.editor.error.multiline" = "Polecenie nie może zawierać znaku nowej linii.";
 "snippets.editor.error.save" = "Nie udało się zapisać fragmentu.";
+"snippets.load.error" = "Nie udało się odczytać pliku fragmentów. Plik istnieje, ale nie da się go zdekodować — żaden fragment nie został utracony i nic nie zostanie nadpisane.";
 
 /* Terminal menu — snippets (Terminal-Snippets milestone) */
 "menu.snippets.runsImmediately" = "Uruchamiane natychmiast";
+"menu.snippets.executingItem" = "%@ (uruchamia się natychmiast)";
 "menu.snippets.manage" = "Zarządzaj fragmentami…";
+"menu.snippets.unreadable" = "Nie udało się odczytać fragmentów";
 "settings.shortcuts.group.snippets" = "Fragmenty";
 "settings.shortcuts.label.insertSnippet" = "Wstaw fragment 1–3";
