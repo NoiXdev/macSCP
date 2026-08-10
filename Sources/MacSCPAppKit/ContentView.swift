@@ -3156,15 +3156,6 @@ struct ContentView: View {
         exportDocument = nil
     }
 
-    /// Shared formatter for non-typed read/decode failures on the import
-    /// path — single source for the message so the three call sites cannot
-    /// drift apart (T3 review).
-    private func readErrorMessage(_ error: Error) -> String {
-        String(format: L10n.string(
-            "import.error.readFailed %@", "Could not read the file: %@"),
-            String(describing: error))
-    }
-
     /// `fileImporter` completion: reads the chosen file with security-scoped
     /// access (the URL comes from an NSOpenPanel outside this app's own
     /// sandbox container) and probes whether it's encrypted before deciding
@@ -3172,7 +3163,7 @@ struct ContentView: View {
     private func handleImportFileSelection(_ result: Result<[URL], Error>) {
         switch result {
         case .failure(let error):
-            importErrorMessage = readErrorMessage(error)
+            importErrorMessage = ImportFeedbackText.readErrorMessage(error)
         case .success(let urls):
             guard let url = urls.first else { return }
             let didAccess = url.startAccessingSecurityScopedResource()
@@ -3192,9 +3183,9 @@ struct ContentView: View {
                     }
                 }
             } catch let error as SessionExportError {
-                importErrorMessage = importErrorText(for: error)
+                importErrorMessage = ImportFeedbackText.importErrorText(for: error)
             } catch {
-                importErrorMessage = readErrorMessage(error)
+                importErrorMessage = ImportFeedbackText.readErrorMessage(error)
             }
         }
     }
@@ -3220,10 +3211,10 @@ struct ContentView: View {
             return .retry(
                 L10n.string("import.password.wrong", "Wrong password, or the file is corrupted."))
         } catch let error as SessionExportError {
-            importErrorMessage = importErrorText(for: error)
+            importErrorMessage = ImportFeedbackText.importErrorText(for: error)
             return .failed
         } catch {
-            importErrorMessage = readErrorMessage(error)
+            importErrorMessage = ImportFeedbackText.readErrorMessage(error)
             return .failed
         }
     }
@@ -3247,99 +3238,9 @@ struct ContentView: View {
         importFileData = nil
         guard !plan.cancelled else { return }
         let result = sessionListViewModel.applyImport(plan)
-        importResultMessage = importResultText(
+        importResultMessage = ImportFeedbackText.importResultText(
             result, plan: plan, includesSecrets: pending.payload.includesSecrets,
             encrypted: pending.wasEncrypted)
         showImportResultAlert = true
-    }
-
-    /// Maps the two non-password `SessionExportError` cases the top-level
-    /// alert can show (spec M9a §3.5). `.passwordRequired` and
-    /// `.wrongPasswordOrCorrupted` are only ever thrown from a `decode` call
-    /// that already supplied a password (handled inline by the password
-    /// sheet instead), so they fall back to the same generic text here —
-    /// defensive only, never actually reached.
-    private func importErrorText(for error: SessionExportError) -> String {
-        switch error {
-        case .notAnExportFile:
-            return L10n.string("import.error.notExport", "Not a macSCP sessions file.")
-        case .unsupportedVersion:
-            return L10n.string(
-                "import.error.newerVersion",
-                "This file was created by a newer version of macSCP.")
-        case .passwordRequired, .wrongPasswordOrCorrupted:
-            return L10n.string("import.password.wrong", "Wrong password, or the file is corrupted.")
-        case .randomnessUnavailable:
-            // Only ever thrown from `encode`, never from `decode` — this
-            // import-path mapper never actually reaches it. Kept for
-            // exhaustiveness now that the enum has a fourth case.
-            return L10n.string("import.error.notExport", "Not a macSCP sessions file.")
-        }
-    }
-
-    /// Assembles the multi-line import result alert body (spec M9a §3.4):
-    /// the base imported/skipped/passwords-imported line, the M19 lines for
-    /// what the user decided about duplicates (replaced/renamed) and for
-    /// secrets a replace removed, plus optional lines for password-save
-    /// failures, store-write failures, the M27 count of entries the planner
-    /// rejected outright as unusable, and an unencrypted-secrets notice when
-    /// the file wasn't itself encrypted.
-    private func importResultText(
-        _ result: SessionListViewModel.SessionImportResult, plan: SessionImportPlan,
-        includesSecrets: Bool, encrypted: Bool
-    ) -> String {
-        var lines = [String(format: L10n.string(
-            "import.result.body %lld %lld %lld",
-            "%lld imported, %lld skipped as duplicates, %lld passwords imported"),
-            result.imported, result.skipped, result.passwordsImported)]
-        if !plan.replaced.isEmpty || !plan.renamed.isEmpty {
-            lines.append(String(format: L10n.string(
-                "import.result.resolved %lld %lld", "%lld replaced, %lld renamed"),
-                plan.replaced.count, plan.renamed.count))
-        }
-        // A replace from a secret-free file drops the stored password rather
-        // than leaving the old one bound (see `applyImport`) — the user has to
-        // be told, or the session silently stops connecting.
-        if result.secretsRemoved > 0 {
-            lines.append(String(format: L10n.string(
-                "import.result.secretsRemoved %lld",
-                "Stored passwords removed because the file had none: %lld"),
-                result.secretsRemoved))
-        }
-        // The other half of that rule: a removal the Keychain refused leaves
-        // the OLD credential live under the reused id. Silence there would be
-        // the worst case of all — a session connecting with a password the
-        // user believes they just replaced.
-        if result.secretRemovalFailures > 0 {
-            lines.append(String(format: L10n.string(
-                "import.result.secretsRemoveFailed %lld",
-                "Stored passwords that could not be removed: %lld"),
-                result.secretRemovalFailures))
-        }
-        if result.passwordFailures > 0 {
-            lines.append(String(format: L10n.string(
-                "import.result.passwordFailures %lld", "Passwords that could not be saved: %lld"),
-                result.passwordFailures))
-        }
-        if result.storeFailures > 0 {
-            lines.append(String(format: L10n.string(
-                "import.result.storeFailures %lld", "Not saved due to an error: %lld"),
-                result.storeFailures))
-        }
-        // Entries the planner refused: the file described a connection with
-        // nothing to dial, which the store would discard on its next read. A
-        // COUNT only — a rejected entry can carry a password, and neither it
-        // nor the entry's contents belong in an alert.
-        if !plan.rejected.isEmpty {
-            lines.append(String(format: L10n.string(
-                "import.result.rejected %lld",
-                "Not imported because the entry was incomplete: %lld"),
-                plan.rejected.count))
-        }
-        if includesSecrets && !encrypted {
-            lines.append(L10n.string(
-                "import.result.plaintextNotice", "The file contained unencrypted passwords."))
-        }
-        return lines.joined(separator: "\n")
     }
 }
