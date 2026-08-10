@@ -30,4 +30,25 @@ struct TabCloseWarningTests {
         #expect(!incoming.isEmpty)
         #expect(active != incoming)
     }
+
+    /// When both reasons hold, the active-transfers line reads first and the
+    /// incoming-transfers line second — the user-visible order the caller
+    /// relies on. `bothReasonsAreNamedWhenBothHold` only counts the lines,
+    /// so it would stay green even if the two `lines.append` calls in
+    /// `TabCloseWarning.message` were swapped; this pins the order those two
+    /// calls produce.
+    @Test func activeTransfersLineComesBeforeIncomingTransfersLine() {
+        let text = TabCloseWarning.message(activeTransfers: true, incomingTransfers: true)
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+
+        let activeLine = L10n.string(
+            "tabs.close.activeTransfers", "Active transfers in this tab will be canceled.")
+        let incomingLine = L10n.string(
+            "tabs.close.incomingTransfers",
+            "Other tabs are streaming to this session; closing cancels those transfers.")
+
+        #expect(lines.count == 2)
+        #expect(lines.first.map(String.init) == activeLine)
+        #expect(lines.last.map(String.init) == incomingLine)
+    }
 }
