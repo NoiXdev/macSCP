@@ -7,8 +7,14 @@ gemessen, nicht geschätzt.
 ## Kurzantwort
 
 **Ja — mit `ImageRenderer` und ohne jede neue Abhängigkeit.** Und zwar
-*unterscheidend*: derselbe View mit zwei verschiedenen Eingaben ergibt zwei
-verschiedene Bitmaps, während dieselbe Eingabe zweimal pixelgleich rendert.
+*unterscheidend*: derselbe View mit **genau einer** geänderten Eingabe ergibt
+zwei verschiedene Bitmaps, während die erste Eingabe danach wieder pixelgleich
+zurückkommt.
+
+**Aber nur mit Methode.** `ImageRenderer` liefert für denselben View in den
+ersten Renderings eines Prozesses *andere* Pixel als danach. Wer das nicht
+ausräumt, bekommt Unterschiede, die nichts mit den Eingaben zu tun haben.
+Siehe „Fixrunde 1" am Ende.
 
 Empfehlungssatz steht am Ende.
 
@@ -53,22 +59,34 @@ einen PNG-Encoder; der Vergleich sieht damit Pixel und keine Container-Metadaten
 
 ### 2.3 Der eigentliche Test: unterscheidet es?
 
-Ja. Zwei Renderings desselben `SheetSearchField`, einmal ohne und einmal mit
-`errorText` (plus umgeschaltetem Regex-Häkchen):
+Ja — aber erst, nachdem zwei Störgrößen ausgeräumt sind. Beide sind in der
+Fix-Runde vom selben Tag gefunden worden und stehen unter „Fixrunde 1" am Ende
+dieses Dokuments ausführlich; hier das bereinigte Ergebnis.
 
-| Render | Größe | Fingerprint (FNV-1a über alle Pixel) |
+Verglichen werden zwei Renderings desselben `SheetSearchField`, bei denen
+**genau eine** Eingabe abweicht (`errorText`); `text` und `isRegex` bleiben
+fest. Jedes Rendering wird erst nach drei verworfenen Aufwärm-Renderings
+genommen (Begründung: Abschnitt „Fixrunde 1").
+
+| Render (eingeschwungen) | Größe | Fingerprint (FNV-1a über alle Pixel) |
 |---|---|---|
-| ohne Fehlertext | 840×80 | `71186a2f4b11fdad` |
-| mit Fehlertext  | 840×80 | `7ef4c012bd35263d` |
+| `errorText: nil` | 840×80 | `7dc27e7c7c85d45c` |
+| `errorText: "Invalid regular expression"` | 840×80 | `b4adf3924f8fdfc4` |
+| `errorText: nil` (A/B/A-Kontrolle) | 840×80 | `7dc27e7c7c85d45c` |
 
-Gleiche Maße, verschiedene Pixel. Gegenprobe (**Positivkontrolle**): dieselbe
-Eingabe zweimal gerendert ergibt **byteweise identische** Bitmaps — das
-Ergebnis oben ist also keine Renderer-Unruhe. Zusätzlich rot bewiesen: die
-Zusicherung `!=` auf `==` gedreht ⇒ Test schlägt fehl. Die Behauptung trägt
-also Last.
+Gleiche Maße, verschiedene Pixel, und die Wiederholung der ersten Eingabe
+kommt **byteweise identisch** zurück. Rot bewiesen: `!=` auf `==` gedreht ⇒
+Test schlägt fehl.
 
-Ein zweiter, unabhängiger View (`PolishedButtonStyle`, `prominent` an/aus)
-unterscheidet ebenfalls. Der Befund hängt also nicht an einem glücklichen View.
+Die zweite Einzelvariable ist ebenfalls gemessen: nur `isRegex` umgeschaltet,
+`errorText` fest ⇒ **identische Pixel** (`7dc27e7c7c85d45c` in beiden Fällen).
+Das Regex-Häkchen trägt also nichts zum Bild bei — womit klar ist, dass der
+Unterschied oben allein vom Fehlertext kommt.
+
+Ein zweiter, unabhängiger View (`PolishedButtonStyle`, `prominent` an/aus,
+ebenfalls Einzelvariable mit A/B/A-Kontrolle) unterscheidet ebenfalls
+(`6ea7c7548e08687b` vs. `542f5bbbfda8f78`). Der Befund hängt also nicht an
+einem glücklichen View.
 
 ### 2.4 Die gemessene Grenze — AppKit-gestützte Controls rendern nicht mit
 
@@ -145,10 +163,11 @@ Testtarget über `MacSCPAppKit` ohnehin schon lädt.
 
 1. **Instanziieren?** Ja. `@testable import` genügt, `@Binding` über
    `.constant(…)`.
-2. **Inhalt prüfbar — und unterscheidend?** Ja. 840×80,
-   `71186a2f4b11fdad` vs. `7ef4c012bd35263d` bei gleicher Größe; identische
-   Eingabe rendert byteweise gleich. Einschränkung: Inhalte AppKit-gestützter
-   Controls erscheinen nicht im Bitmap.
+2. **Inhalt prüfbar — und unterscheidend?** Ja, bei genau einer variierten
+   Eingabe: 840×80, `7dc27e7c7c85d45c` (ohne Fehlertext) vs.
+   `b4adf3924f8fdfc4` (mit), A/B/A-Kontrolle kommt auf `7dc27e7c7c85d45c`
+   zurück. Zwei Einschränkungen: Inhalte AppKit-gestützter Controls erscheinen
+   nicht im Bitmap, und Renderings müssen eingeschwungen sein (Fixrunde 1).
 3. **Swift Testing?** Ja, `@Test`/`#expect`, Suite `@MainActor` und
    `.serialized`.
 4. **Ohne GUI-Sitzung?** Reine SwiftUI-Views: ja, ohne `NSApplication`.
@@ -161,7 +180,7 @@ Testtarget über `MacSCPAppKit` ohnehin schon lädt.
 | | Tests | Suites | Dauer |
 |---|---|---|---|
 | vorher | 1756 | 144 | — |
-| nachher | **1763** | **145** | 3,88 s gesamt, davon 0,19 s Spike |
+| nachher | **1763** | **145** | 4,35 s gesamt, davon 0,33 s Spike |
 
 Voller Lauf `swift test` grün, keine Störung anderer Tests durch die
 hochgezogene `NSApplication`.
@@ -169,13 +188,14 @@ hochgezogene `NSApplication`.
 ## Empfehlung
 
 **View-Tests sind hier ohne Fremdcode machbar und lohnen sich für alles, was
-aus SwiftUI-Primitiven besteht — für Inhalte AppKit-gestützter Controls
-(`TextField`, `Toggle`, Tabellen) bleibt das Herausziehen in prüfbare
-Nicht-View-Typen der einzige Weg, und genau dort lagen die drei Fehler des
-letzten Meilensteins.**
+aus SwiftUI-Primitiven besteht — sofern jeder Pixelvergleich genau eine
+Eingabe variiert, eingeschwungen rendert und seine A/B/A-Kontrolle mitführt;
+für Inhalte AppKit-gestützter Controls (`TextField`, `Toggle`, Tabellen)
+bleibt das Herausziehen in prüfbare Nicht-View-Typen der einzige Weg, und
+genau dort lagen die drei Fehler des letzten Meilensteins.**
 
 `ViewTestabilitySpike.swift` bleibt im Baum: er ist der lauffähige
-Beispieltest, kostet 0,19 s, und der nächste CI-Lauf beantwortet nebenbei die
+Beispieltest, kostet 0,33 s, und der nächste CI-Lauf beantwortet nebenbei die
 offene Fensterserver-Frage.
 
 ## Anmerkungen zum Auftrag
@@ -190,3 +210,75 @@ Die Prosa des Briefs deckte sich mit dem Code; ein Punkt weicht ab:
   Das wäre genau die Prüfung, vor der er selbst warnt: `NSImage` mit Größe > 0
   bekäme man auch von einem leeren Bild. Der Spike prüft stattdessen die
   zurückgelesenen Pixel.
+
+## Fixrunde 1 — zwei Störgrößen im Schaufensterbeispiel
+
+Das Review hielt fest: der Vorzeige-Vergleich änderte **zwei** Eingaben
+gleichzeitig (`isRegex` *und* `errorText`), während Tabelle und Text ihn als
+Einzelvariable verkauften. Berechtigt. Beim Ausräumen fiel eine zweite, größere
+Störgröße auf, von der niemand wusste.
+
+### Störgröße 1 — die zweite Variable
+
+Behoben: der Vergleich hält `text` und `isRegex` fest und variiert nur
+`errorText`. Zusätzlich ist die andere Hälfte jetzt eigenständig gemessen —
+nur `isRegex` umgeschaltet, `errorText` fest ⇒ **pixelgleich**. Das
+Regex-Häkchen erreicht das Bitmap also gar nicht (wie der `TextField`-Inhalt,
+Abschnitt 2.4), es war im alten Vergleich tatsächlich kein Faktor. Nur stand
+das eben nirgends, und genau das war der Vorwurf.
+
+### Störgröße 2 — `ImageRenderer` schwingt sich ein
+
+Beim Nachmessen der Fingerprints ergab **dieselbe Eingabe** in zwei
+verschiedenen Tests zwei verschiedene Werte. Ein Wegwerf-Probe-Test, der
+denselben View mehrfach hintereinander rendert, zeigt die Ursache:
+
+```
+DRIFT off #0: 71186a2f4b11fdad      PURE prominent #0: 540076827d8d1edd
+DRIFT off #1: 71186a2f4b11fdad      PURE prominent #1: 540076827d8d1edd
+DRIFT off #2: 7dc27e7c7c85d45c      PURE prominent #2: 6ea7c7548e08687b
+DRIFT off #3: 7dc27e7c7c85d45c      PURE prominent #3: 6ea7c7548e08687b
+DRIFT off #4: 7dc27e7c7c85d45c      PURE prominent #4: 6ea7c7548e08687b
+DRIFT off #5: 7dc27e7c7c85d45c
+```
+
+Die ersten Renderings eines Views liefern einen anderen Wert als alle
+folgenden; danach ist es stabil. Das betrifft **auch reine SwiftUI-Views**
+(rechte Spalte, ohne jede `NSApplication`), hat also nichts mit AppKit-Controls
+oder dem Fensterserver zu tun. Es ist reproduzierbar: über mehrere
+`swift test`-Läufe kommen exakt dieselben Zahlen heraus.
+
+**Damit war die alte Tabelle in doppelter Hinsicht falsch.** Ihre beiden Werte
+(`71186a2f4b11fdad`, `7ef4c012bd35263d`) sind *unaufgewärmte* Renderings. Der
+alte Vorzeige-Vergleich hätte auch dann einen Unterschied gemeldet, wenn beide
+Eingaben identisch gewesen wären — er verglich nebenbei Rendering Nr. 2 mit
+Rendering Nr. 3.
+
+### Die Methode, die trägt
+
+Drei Regeln, alle gemessen, nicht geraten:
+
+1. **Genau eine Eingabe variieren.**
+2. **Eingeschwungen rendern**: drei Renderings verwerfen, das vierte nehmen
+   (`renderSettled`).
+3. **A/B/A-Kontrolle**: nach dem zweiten Rendering die erste Eingabe erneut
+   rendern und Gleichheit fordern.
+
+Regel 3 ist das Sicherheitsnetz für Regel 2: sie macht eine zu kurze
+Aufwärmphase **rot statt still**. Gegenprobe, Aufwärmphase auf 0 gesetzt:
+
+```
+✘ Expectation failed: (withoutError → Bitmap(840x80, …, fingerprint 71186a2f4b11fdad))
+  == (withoutErrorAgain → Bitmap(840x80, …, fingerprint 7dc27e7c7c85d45c))
+```
+
+Genau der alte, unaufgewärmte Wert — die Kontrolle fängt den Fehler, den der
+erste Anlauf gemacht hat.
+
+### Folge für P0
+
+Die Antwort auf die Ausgangsfrage bleibt **ja**; die Empfehlung oben ist um die
+Methode ergänzt. Wer in P0 Pixelvergleiche schreibt, übernimmt die drei Regeln
+— sonst produziert er Tests, die aus dem Renderer-Aufwärmen Bedeutung lesen.
+Das ist ein Argument mehr dafür, Logik in Nicht-View-Typen herauszuziehen und
+Pixelvergleiche sparsam einzusetzen.

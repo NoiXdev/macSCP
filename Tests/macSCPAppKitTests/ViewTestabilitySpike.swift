@@ -10,11 +10,16 @@ import Testing
 /// from `macSCPAppKitTests` without adding a dependency?
 ///
 /// The question is not "does something come out" — a renderer that silently
-/// produced a blank bitmap for every input would pass that. Every positive
-/// claim here is paired with a discriminating pair: the same view, two
-/// inputs, two results that must differ. `sameInputRendersIdentically` is
-/// the counterweight, so a "they differ" result cannot be explained by the
-/// renderer simply being nondeterministic.
+/// produced a blank bitmap for every input would pass that. So every positive
+/// claim here is a comparison in which **exactly one input differs**, and
+/// every such comparison carries an A/B/A control: the first input is
+/// rendered again after the second, and must come back byte-identical.
+///
+/// That control is not ceremony. `ImageRenderer` was measured to return
+/// *different* pixels for the same view on the first renders of a process
+/// than it does once it has settled (see `renderSettled`), so a naive
+/// single-render A/B comparison can report a difference that has nothing to
+/// do with its inputs.
 ///
 /// The suite is serialized because one of its measurements is about
 /// process-wide state (`NSApp`), which parallel renders would race on.
@@ -22,7 +27,7 @@ import Testing
 @MainActor
 struct ViewTestabilitySpike {
 
-    // MARK: - Rendering helper
+    // MARK: - Rendering helpers
 
     /// A rendered view as raw premultiplied RGBA pixels.
     ///
@@ -49,12 +54,13 @@ struct ViewTestabilitySpike {
         }
     }
 
-    /// Renders a view offscreen. Nil when `ImageRenderer` produced no image.
+    /// Renders a view offscreen exactly once. Nil when `ImageRenderer`
+    /// produced no image.
     ///
     /// The bytes are read back through an explicit `CGContext` rather than
     /// through a PNG encoder, so the comparison sees pixels and not
     /// container metadata.
-    private func render<V: View>(_ view: V) -> Bitmap? {
+    private func renderOnce<V: View>(_ view: V) -> Bitmap? {
         let renderer = ImageRenderer(content: view)
         renderer.scale = 2
         guard let image = renderer.cgImage else { return nil }
@@ -78,6 +84,27 @@ struct ViewTestabilitySpike {
         }
         guard drawn else { return nil }
         return Bitmap(width: width, height: height, bytes: bytes)
+    }
+
+    /// Renders a view repeatedly and returns the last result.
+    ///
+    /// Measured with a throwaway probe, on both a pure-SwiftUI view and one
+    /// containing AppKit-backed controls: the first renders of a view in a
+    /// process differ from every later render (observed shape: two renders
+    /// of one value, then a second value that never changes again). The
+    /// difference is real pixels, not noise — it repeats identically across
+    /// separate `swift test` runs.
+    ///
+    /// Discarding the warm-up renders makes results comparable. Because too
+    /// short a warm-up would be a silent confound, every comparison in this
+    /// suite additionally re-renders its first input at the end; if the
+    /// warm-up were ever insufficient, that control turns red rather than
+    /// the comparison quietly lying.
+    private func renderSettled<V: View>(_ view: V, warmUpRenders: Int = 3) -> Bitmap? {
+        for _ in 0..<warmUpRenders {
+            guard renderOnce(view) != nil else { return nil }
+        }
+        return renderOnce(view)
     }
 
     /// The search field under a fixed frame, so two renders of it are
@@ -118,7 +145,7 @@ struct ViewTestabilitySpike {
     @Test("ImageRenderer turns that view into a non-empty bitmap")
     func imageRendererProducesANonEmptyBitmap() throws {
         let bitmap = try #require(
-            render(searchField(text: "alpha", isRegex: false, errorText: nil))
+            renderSettled(searchField(text: "alpha", isRegex: false, errorText: nil))
         )
         #expect(bitmap.width > 0)
         #expect(bitmap.height > 0)
@@ -126,48 +153,68 @@ struct ViewTestabilitySpike {
         #expect(bitmap.bytes.contains { $0 != 0 })
     }
 
-    // MARK: - Step 2.3 — the discriminating pair
+    // MARK: - Step 2.3 — the discriminating comparison
 
-    @Test("Two different inputs render to different pixels")
-    func differentInputsRenderDifferently() throws {
+    /// Exactly one input differs between the two renders: `errorText`.
+    /// `text` and `isRegex` are held fixed, so a difference in the pixels can
+    /// only be attributed to the error label — and the closing A/B/A control
+    /// rules out the renderer having simply moved on between the two.
+    @Test("Varying only errorText renders different pixels")
+    func varyingOnlyTheErrorTextRendersDifferently() throws {
         let withoutError = try #require(
-            render(searchField(text: "alpha", isRegex: false, errorText: nil))
+            renderSettled(searchField(text: "alpha", isRegex: false, errorText: nil))
         )
         let withError = try #require(
-            render(
+            renderSettled(
                 searchField(
                     text: "alpha",
-                    isRegex: true,
+                    isRegex: false,
                     errorText: "Invalid regular expression"
                 )
             )
         )
+        let withoutErrorAgain = try #require(
+            renderSettled(searchField(text: "alpha", isRegex: false, errorText: nil))
+        )
+
         #expect(withoutError.width == withError.width)
         #expect(withoutError.height == withError.height)
+        #expect(
+            withoutError == withoutErrorAgain,
+            "A/B/A control: the same input must render identically before and after the other one"
+        )
         #expect(withoutError != withError)
     }
 
-    /// The negative control for the test above: identical input must give
-    /// identical pixels. Without this, "they differ" could just mean the
-    /// renderer is nondeterministic.
-    @Test("The same input renders identically twice")
-    func sameInputRendersIdentically() throws {
-        let first = try #require(
-            render(searchField(text: "alpha", isRegex: false, errorText: nil))
+    /// The other single-variable half: only `isRegex` differs. Measured, not
+    /// assumed — `Toggle` is an AppKit-backed control, and its checked state
+    /// therefore stays out of the bitmap, the same way the `TextField`'s text
+    /// does. Recording it is what makes the comparison above unambiguous: the
+    /// inputs it holds fixed are known quantities, not untested ones.
+    @Test("Varying only isRegex leaves the pixels unchanged")
+    func varyingOnlyTheRegexToggleRendersIdentically() throws {
+        let off = try #require(
+            renderSettled(searchField(text: "alpha", isRegex: false, errorText: nil))
         )
-        let second = try #require(
-            render(searchField(text: "alpha", isRegex: false, errorText: nil))
+        let on = try #require(
+            renderSettled(searchField(text: "alpha", isRegex: true, errorText: nil))
         )
-        #expect(first == second)
+        #expect(off == on)
     }
 
     /// A second, independent view — a pure-SwiftUI `ButtonStyle` with no
     /// AppKit-backed control in it — to show the result is not a property of
-    /// one lucky view.
+    /// one lucky view. Single variable, same A/B/A control.
     @Test("A pure-SwiftUI style discriminates on its own parameter")
     func buttonStyleDiscriminatesOnItsParameter() throws {
-        let prominent = try #require(render(styledButton(prominent: true)))
-        let plain = try #require(render(styledButton(prominent: false)))
+        let prominent = try #require(renderSettled(styledButton(prominent: true)))
+        let plain = try #require(renderSettled(styledButton(prominent: false)))
+        let prominentAgain = try #require(renderSettled(styledButton(prominent: true)))
+
+        #expect(
+            prominent == prominentAgain,
+            "A/B/A control: the same input must render identically before and after the other one"
+        )
         #expect(prominent != plain)
     }
 
@@ -179,10 +226,10 @@ struct ViewTestabilitySpike {
     @Test("TextField content does not reach the bitmap")
     func textFieldContentDoesNotReachTheBitmap() throws {
         let short = try #require(
-            render(searchField(text: "a", isRegex: false, errorText: nil))
+            renderSettled(searchField(text: "a", isRegex: false, errorText: nil))
         )
         let long = try #require(
-            render(
+            renderSettled(
                 searchField(
                     text: "a very much longer needle to search for",
                     isRegex: false,
@@ -206,10 +253,10 @@ struct ViewTestabilitySpike {
     @Test("Only AppKit-backed controls bring up an NSApplication")
     func onlyAppKitBackedControlsBringUpAnNSApplication() throws {
         let before = NSApp
-        _ = try #require(render(styledButton(prominent: true)))
+        _ = try #require(renderOnce(styledButton(prominent: true)))
         #expect(NSApp === before, "a pure-SwiftUI view must not change the NSApplication state")
 
-        _ = try #require(render(searchField(text: "alpha", isRegex: false, errorText: nil)))
+        _ = try #require(renderOnce(searchField(text: "alpha", isRegex: false, errorText: nil)))
         #expect(NSApp != nil, "TextField/Toggle instantiate the shared NSApplication")
     }
 }
