@@ -27,7 +27,7 @@ public enum ManagedKeyPassphrase {
     ///
     /// Ask this — never `ManagedKey.hasPassphrase` — before deciding that a
     /// typed passphrase does NOT need persisting because the key's own slot is
-    /// authoritative (`ContentView.isManagedKeyWithStoredPassphrase`). For a
+    /// authoritative (`SessionSecretPolicy.usesStoredManagedPassphrase`). For a
     /// key imported from a login-set export that carried no secrets, the flag
     /// is true and the slot does not exist: trusting the flag there discards
     /// the passphrase the user types on every save, with no other UI anywhere
@@ -46,7 +46,7 @@ public enum ManagedKeyPassphrase {
     /// own slot, and the SAME secret now sits in two places, which is exactly
     /// the duplication this function exists to prevent. Callers must decide
     /// deliberately what an unanswerable probe means for them (see
-    /// `ContentView.isManagedKeyWithStoredPassphrase`, which treats it as "a
+    /// `SessionSecretPolicy.usesStoredManagedPassphrase`, which treats it as "a
     /// slot may well exist" and declines to duplicate).
     public static func hasStoredPassphrase(
         keyPath: String, store: ManagedKeyStore, secrets: any SecretStore

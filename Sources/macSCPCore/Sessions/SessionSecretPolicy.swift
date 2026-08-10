@@ -52,12 +52,18 @@ public enum SessionSecretPolicy {
 
     /// The value to persist under a session's (or new login set's) OWN
     /// secret slot. Empty when `usesStoredManagedPassphrase` says the
-    /// passphrase already lives under the managed key's own slot — nothing
-    /// is lost by that: the connect-time fill still resolves it from
-    /// `key.id`. `resolvedSecret` otherwise — whichever secret the active
-    /// backend and auth choice actually show: SSH's password or passphrase,
-    /// S3's secret access key, WebDAV's password, and empty for an agent
-    /// login, which has no secret to persist.
+    /// passphrase already lives under the managed key's own slot — on the
+    /// ordinary path nothing is lost by that: the connect-time fill still
+    /// resolves it from `key.id`. On the `catch` path inside
+    /// `usesStoredManagedPassphrase` that is only an assumption, not a
+    /// fact — the probe could not confirm a slot exists at all, so this
+    /// still declines to persist (see that function's doc comment for why),
+    /// but if no slot actually exists the passphrase the user just typed is
+    /// simply dropped, and they retype it. `resolvedSecret` otherwise —
+    /// whichever secret the active backend and auth choice actually show:
+    /// SSH's password or passphrase, S3's secret access key, WebDAV's
+    /// password, and empty for an agent login, which has no secret to
+    /// persist.
     public static func valueToPersist(
         resolvedSecret: String, kind: ConnectionKind, authChoice: ConnectionViewModel.AuthChoice,
         keyPath: String, keys: ManagedKeyStore, secrets: any SecretStore
