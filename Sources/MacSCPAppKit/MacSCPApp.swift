@@ -358,12 +358,11 @@ struct MacSCPApp: App {
     /// which entries are live; a heading carries that reliably, and it also
     /// stays clear of M19a's rule about decorative symbols.
     ///
-    /// The heading is a `Section` title, the framework's own way to name a
-    /// group of menu entries, rather than a hand-rolled disabled row; the
-    /// explicit `Divider()`s here separate the snippets from the two entries
-    /// this menu already had, and "Manage Snippets…" from the snippets
-    /// themselves. How `Section` draws its title in the menu bar was not
-    /// verified at runtime — this task did not launch the app.
+    /// The split between the two groups is an explicit `Divider()`, and the
+    /// `Section` title on top of it is a bonus: how `Section` draws its title
+    /// in a menu-bar menu was NOT verified at runtime (this task did not
+    /// launch the app), so the separation may not rest on it. A divider is
+    /// the part that has to hold.
     @ViewBuilder
     private var snippetMenuItems: some View {
         let inserting = tabCommands.snippets.filter { !$0.runsImmediately }
@@ -375,6 +374,7 @@ struct MacSCPApp: App {
             snippetButton(snippet, shortcutIndex: index)
         }
         if !executing.isEmpty {
+            Divider()
             Section(L10n.string("menu.snippets.runsImmediately", "Runs Immediately")) {
                 ForEach(executing) { snippet in
                     snippetButton(snippet, shortcutIndex: nil)

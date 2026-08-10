@@ -1721,11 +1721,18 @@ struct ContentView: View {
     /// already disabled for a non-shell backend, and this re-checks anyway so
     /// no path can reach a silent no-op.
     ///
-    /// The panel is revealed and the shell opened first. `send(_:)` drops its
-    /// bytes when no shell is running (it starts with `guard let shell else
-    /// { return }`), and the panel is closed until the user opens it — so
-    /// without this, triggering a snippet on a freshly connected tab would do
-    /// nothing at all, which is exactly the outcome the design rules out.
+    /// The panel is revealed and the shell opened first, because the panel is
+    /// closed until the user opens it and a snippet must work on a tab that
+    /// has just connected. `openIfNeeded()` reaches `.running` only after the
+    /// shell channel is up, so `send(_:)` here usually runs while the shell
+    /// is still opening — `TerminalPanelViewModel` holds those bytes and
+    /// sends them once it runs (see `pendingBytes` there). That waiting
+    /// policy deliberately lives in Core, where it is under test, not here.
+    ///
+    /// A failed open leaves the panel in `.ended(message)`, which
+    /// `terminalPanel(_:)` renders as its error text with a "Reopen" button —
+    /// the tab's existing channel for a terminal that would not start, and
+    /// the reason no second message is raised here.
     private func triggerSnippet(_ snippet: Snippet) {
         guard window?.isKeyWindow == true else { return }
         guard activeTabSupportsShell else {
@@ -1735,38 +1742,8 @@ struct ContentView: View {
         guard let terminal = activeTab.session?.terminal else { return }
         terminal.isVisible = true
         terminal.openIfNeeded()
-        let bytes = SnippetKeystrokes.bytes(for: snippet)
-        Task { await send(bytes, onceRunning: terminal) }
+        terminal.send(SnippetKeystrokes.bytes(for: snippet))
     }
-
-    /// Waits for `terminal` to reach `.running`, then sends `bytes`.
-    ///
-    /// `openIfNeeded()` sets `.opening` synchronously and only reaches
-    /// `.running` after the shell channel is up, so a send issued right after
-    /// it would be dropped. There is no completion callback on
-    /// `TerminalPanelViewModel` to await, hence the bounded poll.
-    ///
-    /// A failed open leaves `.ended(message)`, which the panel renders as its
-    /// own error text — the reason this returns without sending in that case
-    /// instead of raising a second message of its own.
-    private func send(_ bytes: [UInt8], onceRunning terminal: TerminalPanelViewModel) async {
-        for _ in 0..<Self.snippetOpenPollCount {
-            switch terminal.state {
-            case .running:
-                terminal.send(bytes)
-                return
-            case .opening:
-                try? await Task.sleep(for: .milliseconds(50))
-            case .closed, .ended:
-                return
-            }
-        }
-    }
-
-    /// Poll budget for `send(_:onceRunning:)`: 200 × 50 ms ≈ 10 s, well past
-    /// any healthy shell open, and bounded so a wedged open cannot leave the
-    /// task spinning for the window's lifetime.
-    private static let snippetOpenPollCount = 200
 
     /// Menu-bar status bridge wiring (M11n), called once from `.task`:
     /// seeds `menuBarModel.tabs` and sets its window-raising closures.

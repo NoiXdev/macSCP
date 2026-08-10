@@ -231,6 +231,100 @@ struct TerminalPanelViewModelTests {
         try await Task.sleep(for: .milliseconds(150))
         #expect(vm.state == .closed)
     }
+
+    /// Terminal-Snippets milestone: a menu-triggered snippet has to open the
+    /// panel and send in the same step — it cannot wait for the shell. Bytes
+    /// handed to `send(_:)` during `.opening` must therefore survive and
+    /// arrive once the shell runs, instead of hitting `guard let shell` and
+    /// vanishing.
+    @Test func sendDuringOpeningIsDeliveredOnceRunning() async throws {
+        let shell = MockShell()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in
+            try await Task.sleep(for: .milliseconds(100))
+            return shell
+        })
+
+        vm.openIfNeeded()
+        #expect(vm.state == .opening)
+        vm.send(Array("uptime\r".utf8))
+        #expect(shell.sent.isEmpty)  // Nothing to send to yet.
+
+        try await waitUntil(vm.state == .running)
+        try await waitUntil(!shell.sent.isEmpty)
+        #expect(shell.sent.flatMap { $0 } == Array("uptime\r".utf8))
+    }
+
+    /// The held bytes keep their order, and keep it against sends issued
+    /// after the shell is up: the flush runs in the same step that sets
+    /// `.running`, so nothing sent later can overtake it.
+    @Test func bytesHeldWhileOpeningKeepTheirOrder() async throws {
+        let shell = MockShell()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in
+            try await Task.sleep(for: .milliseconds(100))
+            return shell
+        })
+
+        vm.openIfNeeded()
+        vm.send([1, 2])
+        vm.send([3])
+        try await waitUntil(vm.state == .running)
+        vm.send([4])
+        try await waitUntil(shell.sent.flatMap { $0 }.count == 4)
+        #expect(shell.sent.flatMap { $0 } == [1, 2, 3, 4])
+    }
+
+    /// A failed open must not leave the held bytes lying around for a LATER
+    /// shell to receive out of nowhere — the user gets the `.ended` message
+    /// the panel renders, not a command that runs on the next reopen.
+    @Test func bytesHeldWhileOpeningAreDroppedWhenTheOpenFails() async throws {
+        let shells = ShellFactory()
+        let attempts = Counter()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in
+            try await Task.sleep(for: .milliseconds(50))
+            await attempts.increment()
+            // First attempt fails, every later one succeeds.
+            if await attempts.value == 1 {
+                throw RemoteFSError.connectionFailed(reason: "nein")
+            }
+            return await shells.next()
+        })
+
+        vm.openIfNeeded()
+        vm.send(Array("rm -rf /\r".utf8))
+        try await waitUntil({
+            if case .ended(let msg) = vm.state { return msg != nil } else { return false }
+        }())
+
+        vm.openIfNeeded()  // "Reopen"
+        try await waitUntil(vm.state == .running)
+        // Give a mistaken replay time to show up before asserting it didn't.
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(await shells.current.sent.isEmpty)
+    }
+
+    /// The hold is bounded (64 KiB), so an open that never completes cannot
+    /// let it grow without limit — same discipline as `replayBuffer`.
+    @Test func bytesHeldWhileOpeningAreBounded() async throws {
+        let shell = MockShell()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in
+            try await Task.sleep(for: .milliseconds(150))
+            return shell
+        })
+
+        vm.openIfNeeded()
+        vm.send([UInt8](repeating: 1, count: 50_000))
+        vm.send([UInt8](repeating: 2, count: 50_000))
+
+        try await waitUntil(vm.state == .running)
+        try await waitUntil(!shell.sent.isEmpty)
+        let delivered = shell.sent.flatMap { $0 }
+        #expect(delivered.count == 64 * 1024)
+        // The cap truncates the tail, it does not evict the head: what
+        // arrives is the START of the input, so a command is cut short
+        // rather than silently rewritten into a different one.
+        #expect(delivered.first == 1)
+        #expect(delivered.last == 2)
+    }
 }
 
 actor Counter {

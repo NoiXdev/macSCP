@@ -29,6 +29,23 @@ public final class TerminalPanelViewModel {
     private static let maxReplayBytes = 256 * 1024
     private var replayBytes = 0
 
+    /// Keystrokes handed to `send(_:)` while the shell was still opening,
+    /// replayed in order the moment it is running.
+    ///
+    /// Without this, everything sent between `openIfNeeded()` and the shell
+    /// coming up is dropped on `send(_:)`'s `guard let shell` — which is what
+    /// a menu-triggered terminal snippet hits on a tab whose panel was never
+    /// opened, since that path has to open the panel first and cannot wait
+    /// for it. Typing into the panel during `.opening` reaches the same
+    /// guard.
+    ///
+    /// Belongs to ONE open attempt: cleared when an open starts, when one
+    /// fails, when the shell ends, and on `shutdown()`. Capped like
+    /// `replayBuffer` above — bytes past the cap are dropped rather than
+    /// growing without bound behind an open that never completes.
+    private var pendingBytes: [UInt8] = []
+    private static let maxPendingBytes = 64 * 1024
+
     private let openShell: ShellOpener
     private var shell: (any RemoteShell)?
     private var readTask: Task<Void, Never>?
@@ -60,6 +77,7 @@ public final class TerminalPanelViewModel {
         state = .opening
         replayBuffer = []
         replayBytes = 0
+        pendingBytes = []
         generation += 1
         let myGeneration = generation
         openTask = Task {
@@ -75,6 +93,7 @@ public final class TerminalPanelViewModel {
                 }
                 self.shell = shell
                 state = .running
+                flushPendingBytes()
                 let readGeneration = myGeneration
                 readTask = Task { [weak self] in
                     do {
@@ -95,6 +114,10 @@ public final class TerminalPanelViewModel {
             } catch {
                 guard self.generation == myGeneration else { return }
                 shell = nil
+                // Whatever was buffered was meant for THIS attempt's shell —
+                // there is none. The `.ended` message below is what the panel
+                // shows instead, so the loss is not silent.
+                pendingBytes = []
                 state = .ended(String(
                     format: CoreL10n.string("core.terminal.openFailed %@"),
                     error.localizedDescription))
@@ -118,15 +141,40 @@ public final class TerminalPanelViewModel {
         guard generation == readGeneration else { return }
         shell = nil
         readTask = nil
+        pendingBytes = []
         state = .ended(message)
+    }
+
+    /// Sends what `send(_:)` buffered while the shell was opening.
+    ///
+    /// Called from the same synchronous step that sets `.running`, so no
+    /// later `send(_:)` can slip in front of the buffered bytes: order is
+    /// preserved without touching the `sendTask` chain, which takes over from
+    /// here.
+    private func flushPendingBytes() {
+        guard !pendingBytes.isEmpty else { return }
+        let buffered = pendingBytes
+        pendingBytes = []
+        send(buffered)
     }
 
     /// Sends keyboard bytes to the shell. Calls are chained in FIFO order —
     /// independent tasks per call would NOT guarantee that (fast keystrokes
     /// or a paste could otherwise arrive out of order). Send errors end the
     /// read loop anyway.
+    ///
+    /// While the shell is still opening the bytes are held and sent as soon
+    /// as it runs (see `pendingBytes`). In every other shell-less state
+    /// (`.closed`, `.ended`) they are dropped: nothing is on its way that
+    /// could ever deliver them.
     public func send(_ bytes: [UInt8]) {
-        guard let shell else { return }
+        guard let shell else {
+            if state == .opening {
+                pendingBytes.append(
+                    contentsOf: bytes.prefix(Self.maxPendingBytes - pendingBytes.count))
+            }
+            return
+        }
         let previous = sendTask
         sendTask = Task {
             await previous?.value
@@ -166,6 +214,7 @@ public final class TerminalPanelViewModel {
         // `shutdown()` could block on a hanging `send()`.
         sendTask?.cancel()
         sendTask = nil
+        pendingBytes = []
         replayBuffer = []
         replayBytes = 0
         state = .closed
