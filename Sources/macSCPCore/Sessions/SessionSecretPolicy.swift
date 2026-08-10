@@ -1,7 +1,19 @@
 import Foundation
 
 /// Decides what a session (or a login set built alongside it) writes into
-/// its OWN secret slot at save time.
+/// its OWN secret slot when a NEW session is created.
+///
+/// Only the new-session creation path consults this type: `ContentView.
+/// startSession` reaches `valueToPersist` through `SessionListViewModel.
+/// save`. The edit-save path does NOT — `ContentView+Detail`'s
+/// `onSaveEdited` closure hands the edited secret straight to
+/// `SessionListViewModel.updateSession`, which calls `secrets.
+/// savePassword` unconditionally (the "save as new login set" branch is the
+/// one exception, since it routes through `maybeCreateNewLoginSet` ->
+/// `usesStoredManagedPassphrase` instead). Editing a private-key login's
+/// passphrase in place, without creating a login set, can therefore
+/// duplicate it into both the session's own slot and the managed key's
+/// slot — this type does not guard against that.
 ///
 /// A private-key login's passphrase can live in two different places: the
 /// managed key's own Keychain slot (addressed by `key.id`,
@@ -51,7 +63,10 @@ public enum SessionSecretPolicy {
     }
 
     /// The value to persist under a session's (or new login set's) OWN
-    /// secret slot. Empty when `usesStoredManagedPassphrase` says the
+    /// secret slot when a NEW session is created — see this type's own doc
+    /// comment for which paths actually call this and which one (edit-save
+    /// without a new login set) does not. Empty when
+    /// `usesStoredManagedPassphrase` says the
     /// passphrase already lives under the managed key's own slot — on the
     /// ordinary path nothing is lost by that: the connect-time fill still
     /// resolves it from `key.id`. On the `catch` path inside
