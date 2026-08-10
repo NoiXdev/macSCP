@@ -811,3 +811,9 @@
 "snippets.editor.credentialsNote" = "Nie umieszczaj tu danych uwierzytelniających: plik to zwykły JSON, a linia poleceń i tak jest widoczna w ps oraz w historii powłoki na zdalnym hoście.";
 "snippets.editor.error.multiline" = "Polecenie nie może zawierać znaku nowej linii.";
 "snippets.editor.error.save" = "Nie udało się zapisać fragmentu.";
+
+/* Terminal menu — snippets (Terminal-Snippets milestone) */
+"menu.snippets.runsImmediately" = "Uruchamiane natychmiast";
+"menu.snippets.manage" = "Zarządzaj fragmentami…";
+"settings.shortcuts.group.snippets" = "Fragmenty";
+"settings.shortcuts.label.insertSnippet" = "Wstaw fragment 1–3";

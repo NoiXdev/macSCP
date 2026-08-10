@@ -261,6 +261,13 @@ struct ContentView: View {
     /// always reflects the same window-wide `ManagedKeyStore` directory.
     @State private var showSSHKeysSheet = false
 
+    // MARK: - Snippets (Terminal-Snippets milestone)
+
+    /// Drives the snippet management sheet — opened from the Terminal menu.
+    /// Same no-item-payload shape as `showSSHKeysSheet` above; the sheet
+    /// reads and writes `snippetStore` directly.
+    @State private var showSnippetsSheet = false
+
     // MARK: - Session export/import (M9a/T3)
 
     /// Wraps `ExportScope` so it can drive `.sheet(item:)` — `ExportScope`
@@ -395,6 +402,15 @@ struct ContentView: View {
     /// `MacSCPApp`'s "Terminal" menu needs to know that too.
     private var activeTabSupportsShell: Bool {
         BackendDescriptor.descriptor(for: activeTab.connectionViewModel.kind).capabilities.supportsShell
+    }
+
+    /// The snippet store this window reads and writes (Terminal-Snippets
+    /// milestone). A stateless struct over a fixed directory — the same
+    /// shape and the same directory the known-hosts sheet's `KnownHostsStore`
+    /// is built with below, so constructing one per use costs nothing and
+    /// keeps the directory named in a single place.
+    private var snippetStore: SnippetStore {
+        SnippetStore(directory: SessionStore.defaultDirectory)
     }
 
     var body: some View {
@@ -685,6 +701,14 @@ struct ContentView: View {
         // `showLoginSetsSheet`'s `sessionListViewModel`).
         .sheet(isPresented: $showSSHKeysSheet) {
             SSHKeysSheet()
+        }
+        // Snippets sheet (Terminal-Snippets milestone) — same window-scoped
+        // presentation as `showSSHKeysSheet` above. The sheet is the only
+        // place a snippet can be added, edited or deleted, so re-reading the
+        // store on dismiss is enough to keep the Terminal menu's entries
+        // current.
+        .sheet(isPresented: $showSnippetsSheet, onDismiss: { reloadSnippets() }) {
+            SnippetsSheet(store: snippetStore)
         }
         // Hidden-imports sheet (M11f/T2) — `fullImportedHosts` is the SAME
         // full inventory `refreshImportedHosts()` reads from, so the sheet's
@@ -1664,7 +1688,85 @@ struct ContentView: View {
             }
             requestExternalTerminal(for: activeTab)
         }
+        // Snippets in the Terminal menu (Terminal-Snippets milestone) —
+        // seeds the mirrored list once, then wires the two entry points.
+        // Both handlers are method references rather than inline closures,
+        // for the same type-checker reason as `handleCloseActiveTabCommand`
+        // above; each carries the key-window guard itself.
+        reloadSnippets()
+        tabCommands.runSnippet = triggerSnippet
+        tabCommands.showSnippets = presentSnippets
     }
+
+    /// Re-reads `snippets.json` into the command bridge (Terminal-Snippets
+    /// milestone). A read failure yields an empty menu section rather than an
+    /// alert: the store is absent until the first snippet is saved, and
+    /// `SnippetStore.all()` returns an empty array for that case, so anything
+    /// that does throw here is a broken file the management sheet is the
+    /// place to notice.
+    private func reloadSnippets() {
+        tabCommands.snippets = (try? snippetStore.all()) ?? []
+    }
+
+    /// "Manage Snippets…" — same key-window guard as the other menu-driven
+    /// sheets in this bridge.
+    private func presentSnippets() {
+        guard window?.isKeyWindow == true else { return }
+        showSnippetsSheet = true
+    }
+
+    /// Sends one snippet's keystrokes to the active tab's shell.
+    ///
+    /// Capability guard as in `toggleTerminal` above: the menu entry is
+    /// already disabled for a non-shell backend, and this re-checks anyway so
+    /// no path can reach a silent no-op.
+    ///
+    /// The panel is revealed and the shell opened first. `send(_:)` drops its
+    /// bytes when no shell is running (it starts with `guard let shell else
+    /// { return }`), and the panel is closed until the user opens it — so
+    /// without this, triggering a snippet on a freshly connected tab would do
+    /// nothing at all, which is exactly the outcome the design rules out.
+    private func triggerSnippet(_ snippet: Snippet) {
+        guard window?.isKeyWindow == true else { return }
+        guard activeTabSupportsShell else {
+            presentTerminalUnavailable()
+            return
+        }
+        guard let terminal = activeTab.session?.terminal else { return }
+        terminal.isVisible = true
+        terminal.openIfNeeded()
+        let bytes = SnippetKeystrokes.bytes(for: snippet)
+        Task { await send(bytes, onceRunning: terminal) }
+    }
+
+    /// Waits for `terminal` to reach `.running`, then sends `bytes`.
+    ///
+    /// `openIfNeeded()` sets `.opening` synchronously and only reaches
+    /// `.running` after the shell channel is up, so a send issued right after
+    /// it would be dropped. There is no completion callback on
+    /// `TerminalPanelViewModel` to await, hence the bounded poll.
+    ///
+    /// A failed open leaves `.ended(message)`, which the panel renders as its
+    /// own error text — the reason this returns without sending in that case
+    /// instead of raising a second message of its own.
+    private func send(_ bytes: [UInt8], onceRunning terminal: TerminalPanelViewModel) async {
+        for _ in 0..<Self.snippetOpenPollCount {
+            switch terminal.state {
+            case .running:
+                terminal.send(bytes)
+                return
+            case .opening:
+                try? await Task.sleep(for: .milliseconds(50))
+            case .closed, .ended:
+                return
+            }
+        }
+    }
+
+    /// Poll budget for `send(_:onceRunning:)`: 200 × 50 ms ≈ 10 s, well past
+    /// any healthy shell open, and bounded so a wedged open cannot leave the
+    /// task spinning for the window's lifetime.
+    private static let snippetOpenPollCount = 200
 
     /// Menu-bar status bridge wiring (M11n), called once from `.task`:
     /// seeds `menuBarModel.tabs` and sets its window-raising closures.

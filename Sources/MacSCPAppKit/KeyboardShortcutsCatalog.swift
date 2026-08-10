@@ -5,7 +5,8 @@ import Foundation
 /// bindings live across six sites; when a shortcut changes at ANY of them,
 /// update this catalog too:
 ///   1. SwiftUI `.keyboardShortcut` in `MacSCPApp.swift` menus (⌘N, ⌘W,
-///      ⌘1–9, ⌘⇧., ⌘⇧Y, ⌘⇧K, ⌘⇧L, ⌘⇧I; ⌘, is the SwiftUI Settings default).
+///      ⌘1–9, ⌘⇧., ⌘⇧Y, ⌘⇧K, ⌘⇧L, ⌘⇧I, ⌃⌘1–3; ⌘, is the SwiftUI Settings
+///      default).
 ///   2. The ⌘T terminal toolbar button in `ContentView.swift`.
 ///   3. `KeyboardDrivenTableView` hardcoded keyCodes in
 ///      `RemoteFileTableView.swift`, resolved via `BrowserKeyCommand` (Core).
@@ -46,6 +47,15 @@ enum KeyboardShortcutsCatalog {
             Row(labelKey: "settings.shortcuts.label.knownHosts", labelDefault: "Known Hosts", shortcut: "⌘⇧K"),
             Row(labelKey: "settings.shortcuts.label.logins", labelDefault: "Logins", shortcut: "⌘⇧L"),
             Row(labelKey: "settings.shortcuts.label.hiddenImports", labelDefault: "Hidden Imports", shortcut: "⌘⇧I"),
+        ]),
+        // The Terminal menu's snippet entries are built from the saved
+        // snippets, so only a fixed prefix of them can carry a shortcut at
+        // all: the first three INSERTING snippets, in the order the menu
+        // lists them (see `MacSCPApp.snippetButton`). Snippets marked "run
+        // immediately" get none by design.
+        Group(titleKey: "settings.shortcuts.group.snippets", titleDefault: "Snippets", rows: [
+            Row(labelKey: "settings.shortcuts.label.insertSnippet",
+                labelDefault: "Insert snippet 1–3", shortcut: "⌃⌘1–3"),
         ]),
         Group(titleKey: "settings.shortcuts.group.browser", titleDefault: "File browser", rows: [
             Row(labelKey: "settings.shortcuts.label.goUp", labelDefault: "Go to parent folder", shortcut: "⌘↑"),

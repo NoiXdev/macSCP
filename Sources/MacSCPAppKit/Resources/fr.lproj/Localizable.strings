@@ -812,3 +812,9 @@
 "snippets.editor.credentialsNote" = "N’y mettez pas d’identifiants : le fichier est du JSON brut, et une ligne de commande est de toute façon visible dans ps et dans l’historique du shell sur l’hôte distant.";
 "snippets.editor.error.multiline" = "La commande ne peut pas contenir de saut de ligne.";
 "snippets.editor.error.save" = "Impossible d’enregistrer le snippet.";
+
+/* Terminal menu — snippets (Terminal-Snippets milestone) */
+"menu.snippets.runsImmediately" = "S’exécute immédiatement";
+"menu.snippets.manage" = "Gérer les snippets…";
+"settings.shortcuts.group.snippets" = "Snippets";
+"settings.shortcuts.label.insertSnippet" = "Insérer le snippet 1–3";
