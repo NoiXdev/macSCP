@@ -200,7 +200,7 @@ struct ContentView: View {
     @State private var closeRequest: SessionTab?
     /// Warning text for `closeRequest`, frozen at the moment the dialog is
     /// requested (M8b review, finding 4). The dialog's `message:` builder
-    /// re-evaluates on every render; recomputing `closeWarningMessage(for:)`
+    /// re-evaluates on every render; recomputing `TabCloseWarning.message`
     /// there instead of reading this snapshot would let the text go blank
     /// mid-dialog if the underlying transfers finish while it's still open —
     /// blank text under a destructive "Close" button.
@@ -1938,34 +1938,18 @@ struct ContentView: View {
     /// (`closeRequest`, bound to the confirmation dialog above); an
     /// otherwise-idle tab closes immediately.
     private func requestClose(_ tab: SessionTab) {
-        if tab.transferQueue.isActive || hasIncomingTransfers(for: tab) {
+        let incoming = TabCloseWarning.hasIncomingTransfers(for: tab.id, in: tabsModel.tabs)
+        if tab.transferQueue.isActive || incoming {
             // Freeze the warning text NOW (M8b review, finding 4) — the
             // dialog reads this snapshot for its whole lifetime instead of
             // recomputing per render, so it can't go blank if the transfers
             // it describes finish while the confirmation is still up.
-            closeWarningText = closeWarningMessage(for: tab)
+            closeWarningText = TabCloseWarning.message(
+                activeTransfers: tab.transferQueue.isActive, incomingTransfers: incoming)
             closeRequest = tab
         } else {
             Task { await performClose(tab) }
         }
-    }
-
-    /// Combined close-warning text (M8b/T4): a tab can have its OWN active
-    /// transfers, be the destination of ANOTHER tab's cross-session
-    /// transfer, or both — both reasons are shown (one per line) when they
-    /// co-occur, so the user isn't left guessing which one applies.
-    private func closeWarningMessage(for tab: SessionTab) -> String {
-        var lines: [String] = []
-        if tab.transferQueue.isActive {
-            lines.append(L10n.string(
-                "tabs.close.activeTransfers", "Active transfers in this tab will be canceled."))
-        }
-        if hasIncomingTransfers(for: tab) {
-            lines.append(L10n.string(
-                "tabs.close.incomingTransfers",
-                "Other tabs are streaming to this session; closing cancels those transfers."))
-        }
-        return lines.joined(separator: "\n")
     }
 
     /// Title for the update-check result alert (M11b/T2, spec §4) — one per
@@ -1982,16 +1966,6 @@ struct ContentView: View {
     /// `UpdateAlertContent.message` for the wording of each case.
     private var updateAlertMessage: String {
         UpdateAlertContent.message(for: updateModel.presentedResult)
-    }
-
-    /// True while any OTHER tab's queue holds a non-terminal item that
-    /// targets this tab (M8b/T4) — closing it would sever those incoming
-    /// cross-session streams. Evaluated live against the tabs collection at
-    /// both call sites (confirm gate and warning text).
-    private func hasIncomingTransfers(for tab: SessionTab) -> Bool {
-        tabsModel.tabs.contains {
-            $0.id != tab.id && $0.transferQueue.hasActiveItems(destinationTabID: tab.id)
-        }
     }
 
     /// Closes a tab: tab-local teardown first, then either removal from the
