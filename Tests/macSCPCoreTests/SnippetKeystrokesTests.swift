@@ -52,18 +52,37 @@ struct SnippetKeystrokesTests {
     ///    selector with `send(EscapeSequences.cmdRet)`.
     /// 3. `EscapeSequences.cmdRet` is `[13]` — a single CR, no LF.
     ///
-    /// Two cross-checks, because the wrong byte would make a
-    /// `runsImmediately` snippet silently do nothing:
+    /// Cross-checks, because the wrong byte would make a `runsImmediately`
+    /// snippet silently do nothing:
     ///
     /// - SwiftTerm also defines `EscapeSequences.cmdNewLine` (`[10]`, LF),
     ///   and no code in the library references it. LF is a byte the library
-    ///   never sends for a keypress.
+    ///   never sends for a keypress, in any mode.
     /// - When the remote program negotiates the Kitty keyboard protocol
     ///   (`Terminal.keyboardEnhancementFlags` non-empty), Return goes through
-    ///   `sendKittyFunctionalKey(.enter, ...)` instead — whose legacy encoding
-    ///   is `[ControlCodes.CR]` and whose functional codepoint is 13. Both
-    ///   input paths agree on CR, so the terminator does not depend on
-    ///   terminal mode.
+    ///   `sendKittyFunctionalKey(.enter, ...)` into
+    ///   `KittyKeyboardEncoder.encode(_:)` instead. That encoder yields a bare
+    ///   CR for an ordinary Return only on its legacy branch: with
+    ///   report-all-keys OFF, `.enter` carries no associated text, so it
+    ///   reaches `encodeFunctionalKey`, where an unmodified press has no
+    ///   modifier field to disambiguate and falls to
+    ///   `legacySpecialKeySequence` — `[ControlCodes.CR]`, and
+    ///   `ControlCodes.CR` is `0x0d`.
+    ///
+    /// **The terminator is therefore NOT mode-independent, and this test does
+    /// not claim it is.** With report-all-keys ON, `encode(_:)` routes
+    /// `.enter` to `encodeCsiU(overrideKeyCode: 13, ...)` — `ESC [ 13 u`, not
+    /// a bare `0x0D`. (The same CSI-u form also appears with report-all-keys
+    /// off when disambiguation is on AND the press carries modifiers, which an
+    /// ordinary Return does not.) So a program in that mode would see a
+    /// snippet's CR differ from a real keypress.
+    ///
+    /// That is accepted scope, not an oversight: a snippet is a shell command
+    /// line aimed at a shell prompt (see `Snippet`), where the legacy encoding
+    /// is what is in force. A full-screen program driving the Kitty
+    /// report-all-keys mode is not what snippets target. If that ever changes,
+    /// the terminator has to become mode-aware, and this comment is the
+    /// warning.
     @Test func theTerminatorIsCarriageReturn() throws {
         let snippet = try #require(Snippet(name: "Disk", command: "df -h", runsImmediately: true))
 

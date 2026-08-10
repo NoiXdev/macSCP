@@ -15,13 +15,21 @@ public enum SnippetKeystrokes {
     /// arrive at `TerminalPanelViewModel.send(_:)` through
     /// `SSHTerminalView.Coordinator.send(source:data:)` unchanged. The
     /// library's `EscapeSequences.cmdNewLine` (`[10]`, LF) exists but is
-    /// referenced nowhere, and the Kitty-keyboard-protocol input path encodes
-    /// Return as CR as well. The full evidence trail lives on the
-    /// `theTerminatorIsCarriageReturn` test in `SnippetKeystrokesTests`,
-    /// which is where to re-check it.
+    /// referenced nowhere in it.
     ///
-    /// This matters: LF can be inert in a remote line discipline, which would
-    /// leave a `runsImmediately` snippet sitting unexecuted in the input line.
+    /// Scope: this is the legacy input encoding — the one in force at a shell
+    /// prompt, which is what a snippet targets. It is NOT mode-independent. A
+    /// program that negotiates the Kitty keyboard protocol's report-all-keys
+    /// mode makes a real Return keypress encode as `ESC [ 13 u` instead, so in
+    /// that mode a snippet's bare CR is not byte-identical to a keypress.
+    /// `SnippetKeystrokesTests.theTerminatorIsCarriageReturn` carries the full
+    /// evidence trail for both encodings and is where to re-check them.
+    ///
+    /// Why the byte matters at all: LF can be inert in a POSIX line
+    /// discipline, which would leave a `runsImmediately` snippet sitting
+    /// unexecuted in the input line. That is general background — the reason
+    /// the terminator was measured rather than guessed — not a claim measured
+    /// against this app's remote shells.
     private static let terminator: UInt8 = 0x0D
 
     /// The keystrokes for `snippet`: its command as UTF-8, followed by the
