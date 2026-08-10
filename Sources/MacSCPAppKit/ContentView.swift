@@ -1212,16 +1212,12 @@ struct ContentView: View {
                     groups: sessionListViewModel.groups,
                     sessionList: sessionListViewModel,
                     resolveLoginSetForSubmit: {
-                        // All three resolutions always run (never
-                        // short-circuited) so a dangling target set, a
-                        // dangling jump set, AND an unresolvable jump-session
-                        // reference each surface their own `showFailure` —
-                        // only the combined AND decides whether the caller
-                        // may proceed (M11a/T3 added the third).
-                        let targetResolved = resolveSelectedLoginSet(in: tab)
-                        let jumpResolved = resolveSelectedJumpLoginSet(in: tab)
-                        let jumpSessionResolved = resolveSelectedJumpSession(in: tab)
-                        return targetResolved && jumpResolved && jumpSessionResolved
+                        let form = tab.connectionViewModel
+                        let refusals = sessionListViewModel.prepareForSubmit(form: form)
+                        for refusal in refusals {
+                            form.showFailure(message: message(for: refusal), field: refusal.field)
+                        }
+                        return refusals.isEmpty
                     },
                     onSaveEdited: { stored, secret in
                         var stored = stored
@@ -1248,7 +1244,8 @@ struct ContentView: View {
                         //
                         // Session mode (M11a/T3): `jumpPassword` was just
                         // filled with the REFERENCED session's own resolved
-                        // secret (`resolveSelectedJumpSession`, spec §4a) --
+                        // secret (`SessionListViewModel.resolveJumpSession`,
+                        // spec §4a) --
                         // passing that through here would copy it into the
                         // jump's supposedly UNUSED `secretID` slot (spec §1:
                         // "ungenutzt") on every save, not just the
@@ -2021,203 +2018,44 @@ struct ContentView: View {
 
     // MARK: - Login sets (M10b/T3)
 
-    /// Fills the form's manual-looking fields from a login set — called
-    /// right before Connect/Save whenever the form is in Set mode, so the
-    /// EXISTING connect/save validators (which only know about
-    /// username/authChoice/keyPath/password) see the set's current values.
+    /// Maps a `SessionListViewModel.prepareForSubmit(form:)` refusal to the
+    /// localized message it produced before M29-P2, when each resolution
+    /// lived here as its own function (`resolveSelectedLoginSet`,
+    /// `resolveSelectedJumpLoginSet`, `resolveSelectedJumpSession`) and
+    /// called `showFailure` directly. The field to highlight now comes from
+    /// `SubmitRefusal.field` instead — only the message is decided here.
     ///
-    /// Running BEFORE validation is a contract, not a convenience: see
-    /// `BackendDescriptor.firstViolation`, which walks the credential schema
-    /// unconditionally and would otherwise outline a row the picker has
-    /// replaced on screen.
-    /// The secret is read from the keychain under the SET's own id, exactly
-    /// where `saveLoginSet`/`deleteLoginSet` keep it — a synthetic
-    /// `StoredSession` carrying that id is enough for `password(for:)` to
-    /// find it, no separate lookup API needed on `SessionListViewModel`.
-    private func fillForm(_ form: ConnectionViewModel, from set: LoginSet) {
-        // One path for every protocol since M22/T9. The `if set.kind == .s3`
-        // branch this replaces had no WebDAV counterpart, and the fall-through
-        // wrote SSH-shaped fields; asking the set's own backend for its
-        // credential values (secret included, and NO keychain read at all for
-        // an agent set — M10d/T4) is the same question for every kind.
-        form.applyResolvedCredentials(sessionListViewModel.credentials(of: set))
-    }
-
-    /// `ConnectionFormView.resolveLoginSetForSubmit` implementation:
-    /// mirrors `resolveSelectedJumpLoginSet` for the target (M11e/T1 point
-    /// 5 — the two used to be asymmetric, this one silently no-op'd on a
-    /// dangling set). Returns `true` outside Set mode, while nothing is
-    /// selected (the button is disabled in that case anyway — the
-    /// defensive belt-and-suspenders half), or on a successful fill.
-    /// Returns `false` when the selection is DANGLING — the set was
-    /// removed, e.g. via "Manage logins…" while this form stayed open —
-    /// after surfacing that through `showFailure` with the same M10b
-    /// `loginSets.missingSet` key the jump half uses. `field: nil` here
-    /// (unlike the jump half's `.jumpHost`): there is no matching
-    /// target-side field to highlight.
-    private func resolveSelectedLoginSet(in tab: SessionTab) -> Bool {
-        let form = tab.connectionViewModel
-        guard form.loginMode == .set, let id = form.selectedLoginSetID else { return true }
-        guard let set = sessionListViewModel.loginSets.first(where: { $0.id == id }) else {
-            form.showFailure(
-                message: L10n.string(
-                    "loginSets.missingSet",
-                    "The stored login for this connection was not found. Choose a login or enter credentials."),
-                field: nil)
-            return false
-        }
-        fillForm(form, from: set)
-        return true
-    }
-
-    /// Same as `fillForm(_:from:)` but for the jump block's own login
-    /// (M10c/T3) — fills `jumpUsername`/`jumpAuthChoice`/`jumpKeyPath`/
-    /// `jumpPassword` instead of the target's fields. Kept as a separate
-    /// function rather than a generalized field-pair helper: the two call
-    /// sites bind to different `ConnectionViewModel` properties, and a
-    /// shared abstraction would only add indirection for two short bodies.
-    private func fillJumpForm(_ form: ConnectionViewModel, from set: LoginSet) {
-        form.jumpUsername = set.username
-        form.jumpAuthChoice = ConnectionViewModel.authChoice(for: set.authKind)
-        form.jumpKeyPath = set.keyPath ?? ""
-        // Agent sets carry no secret (M10d/T4) — skip the keychain lookup
-        // entirely rather than looking up a slot that was never written.
-        guard set.authKind != .agent else {
-            form.jumpPassword = ""
-            return
-        }
-        // `password(for:)` addresses the Keychain by `id` alone, so the set's
-        // own login fields never had a reader here — M23/T8 dropped them
-        // rather than rebuild them inside an `ssh` block nothing consults.
-        let synthetic = StoredSession(id: set.id, name: set.name)
-        form.jumpPassword = sessionListViewModel.password(for: synthetic) ?? ""
-    }
-
-    /// `ConnectionFormView.resolveLoginSetForSubmit`'s jump half (M10c/T3):
-    /// fills the jump's manual fields from the currently selected login set,
-    /// mirroring `resolveSelectedLoginSet` for the target. Returns `true`
-    /// (no-op) when the jump is off, in Manual mode, or nothing is selected
-    /// yet (Connect/Save are already disabled for that last case via
-    /// `jumpLoginSetModeIncomplete`, the belt-and-suspenders half). Returns
-    /// `false` when the selection is DANGLING — the set was removed, e.g.
-    /// via "Manage logins…" while this form stayed open (spec §4a) — after
-    /// surfacing that through `showFailure` with the M10b `loginSets.
-    /// missingSet` key; the caller must not proceed to connect/validate in
-    /// that case.
-    ///
-    /// `jumpSourceMode != .session` (F-1 fix, final review): a leftover
-    /// dangling `jumpSelectedLoginSetID` from a Manual+Set pick made before
-    /// switching Source to "Saved connection" must not block submit with an
-    /// error on a field session mode doesn't even render -- session mode has
-    /// its own resolution path (`resolveSelectedJumpSession` below).
-    ///
-    /// The `kind` guard (M28 final review, Critical) is the same refusal
-    /// `LoginResolver.resolveJump` makes for a stored binding, made here for
-    /// the FORM's binding -- and it has to be made twice, because this path
-    /// never consults the resolver: it reads the set's Keychain slot itself
-    /// (`fillJumpForm` below) and hands the values to `validateJump`, whose
-    /// `.set` branch only checks that something is selected. The picker's
-    /// filter does not cover it either: `beginEditing` restores
-    /// `jumpSelectedLoginSetID` from the stored jump without resolving, and a
-    /// selection matching no `tag` is drawn empty by SwiftUI rather than
-    /// reset, so an old binding — or one an import created by replacing an
-    /// SSH set with a non-SSH one under the same id — reaches this fill
-    /// unfiltered. Refusing BEFORE `fillJumpForm` is the point: the share's
-    /// or bucket's secret is never read into the form, so no later mode
-    /// switch or save can carry it onto a bastion.
-    private func resolveSelectedJumpLoginSet(in tab: SessionTab) -> Bool {
-        let form = tab.connectionViewModel
-        guard form.jumpEnabled, form.jumpSourceMode != .session,
-              form.jumpLoginMode == .set, let id = form.jumpSelectedLoginSetID
-        else {
-            return true
-        }
-        guard let set = sessionListViewModel.loginSets.first(where: { $0.id == id }) else {
-            form.showFailure(
-                message: L10n.string(
-                    "loginSets.missingSet",
-                    "The stored login for this connection was not found. Choose a login or enter credentials."),
-                field: .jumpHost)
-            return false
-        }
-        guard JumpLoginSetEligibility.isEligible(set) else {
-            form.showFailure(
-                message: L10n.string(
-                    "form.jump.set.notSSH",
-                    "The jump host uses a stored login that is not an SSH login. "
-                        + "Choose an SSH login for the jump host, or enter its "
-                        + "user name and password here."),
-                field: .jumpHost)
-            return false
-        }
-        fillJumpForm(form, from: set)
-        return true
-    }
-
-    /// `ConnectionFormView.resolveLoginSetForSubmit`'s jump-SESSION half
-    /// (M11a/T3, spec §4a): when the jump is enabled and in session mode,
-    /// resolves the referenced connection and fills the jump's
-    /// manual-looking fields (host/port/login) from that resolution —
-    /// mirrors `resolveSelectedJumpLoginSet`'s fill-before-submit pattern,
-    /// just sourced from a saved session instead of a login set. Returns
-    /// `true` (no-op) when the jump is off, in Manual mode, or nothing is
-    /// selected yet (Connect/Save are already disabled for that last case
-    /// via `ConnectionFormView.jumpSessionModeIncomplete`, the
-    /// belt-and-suspenders half). Returns `false` on
-    /// `.missingJumpSession`/`.jumpSessionNotSSH`/`.jumpChainNotSupported`/a
-    /// dangling login set on the referenced session — surfaced through
-    /// `showFailure` with `field: .jumpSession` — after which the caller
-    /// must NOT proceed to connect/validate.
-    private func resolveSelectedJumpSession(in tab: SessionTab) -> Bool {
-        let form = tab.connectionViewModel
-        guard form.jumpEnabled, form.jumpSourceMode == .session, let sessionID = form.jumpSessionID else {
-            return true
-        }
-        let referencingID: UUID
-        if case .edit(let id) = form.mode { referencingID = id } else { referencingID = UUID() }
-        let spec = StoredSession.JumpSpec(host: "", username: "", sessionID: sessionID)
-        let synthetic = StoredSession(
-            id: referencingID, name: "",
-            ssh: StoredSSHConfig(host: "", username: "", jump: spec))
-        do {
-            guard let resolved = try sessionListViewModel.resolvedJump(for: synthetic) else { return true }
-            form.jumpHost = resolved.host
-            form.jumpPort = String(resolved.port)
-            form.jumpUsername = resolved.login.username
-            form.jumpAuthChoice = ConnectionViewModel.authChoice(for: resolved.login.authKind)
-            form.jumpKeyPath = resolved.login.keyPath ?? ""
-            form.jumpPassword = resolved.login.secret ?? ""
-            return true
-        } catch LoginResolveError.missingJumpSession {
-            form.showFailure(
-                message: L10n.string(
-                    "form.jump.session.missing", "The connection used as jump host no longer exists."),
-                field: .jumpSession)
-            return false
-        } catch LoginResolveError.jumpChainNotSupported {
-            form.showFailure(
-                message: L10n.string(
-                    "form.jump.session.chainNotSupported",
-                    "The selected jump host connects through another jump host; chains are not supported."),
-                field: .jumpSession)
-            return false
-        } catch LoginResolveError.jumpSessionNotSSH {
-            form.showFailure(
-                message: L10n.string(
-                    "form.jump.session.notSSH",
-                    "Only SSH connections can be used as a jump host."),
-                field: .jumpSession)
-            return false
-        } catch {
-            // Dangling login set on the REFERENCED session (`.missingSet`),
-            // or any other unclassified failure — same fallback wording the
-            // form's own read-only summary uses for this condition.
-            form.showFailure(
-                message: L10n.string(
-                    "loginSets.missingSet",
-                    "The stored login for this connection was not found. Choose a login or enter credentials."),
-                field: .jumpSession)
-            return false
+    /// `.jumpSessionLoginUnresolvable` reuses the `loginSets.missingSet` key:
+    /// it is the old catch-all that covered a dangling login set on the
+    /// REFERENCED session, or any other unclassified resolution failure.
+    private func message(for refusal: SubmitRefusal) -> String {
+        switch refusal {
+        case .targetSetMissing, .jumpSetMissing, .jumpSessionLoginUnresolvable:
+            return L10n.string(
+                "loginSets.missingSet",
+                "The stored login for this connection was not found. Choose a login or enter credentials.")
+        case .targetSetKindMismatch:
+            return L10n.string(
+                "form.loginSet.kindMismatch",
+                "The selected stored login belongs to a different kind of connection. "
+                    + "Choose a login for this connection's protocol, or enter the credentials here.")
+        case .jumpSetNotSSH:
+            return L10n.string(
+                "form.jump.set.notSSH",
+                "The jump host uses a stored login that is not an SSH login. "
+                    + "Choose an SSH login for the jump host, or enter its "
+                    + "user name and password here.")
+        case .jumpSessionMissing:
+            return L10n.string(
+                "form.jump.session.missing", "The connection used as jump host no longer exists.")
+        case .jumpChainNotSupported:
+            return L10n.string(
+                "form.jump.session.chainNotSupported",
+                "The selected jump host connects through another jump host; chains are not supported.")
+        case .jumpSessionNotSSH:
+            return L10n.string(
+                "form.jump.session.notSSH",
+                "Only SSH connections can be used as a jump host.")
         }
     }
 
@@ -2470,9 +2308,10 @@ struct ContentView: View {
             //
             // `form.jumpHost` (M-1 fix, final review), not `stored.jump?.
             // host`: for a session-mode jump `form.jumpHost` already holds
-            // the freshly resolved host (`resolveSelectedJumpSession` filled
-            // it before `connect()` ran, a few lines above `buildJumpSpec()`
-            // reads the very same field) -- using `stored.jump?.host`
+            // the freshly resolved host (`SessionListViewModel.
+            // resolveJumpSession` filled it before `connect()` ran, a few
+            // lines above `buildJumpSpec()` reads the very same field) --
+            // using `stored.jump?.host`
             // instead happened to read the identical value here (it's the
             // trimmed copy of this same field), but only by accident, not by
             // construction; `form.jumpHost` is the one field guaranteed to
@@ -2696,8 +2535,9 @@ struct ContentView: View {
                         // protocol (M28/T7). This is the only catch site the
                         // case can reach, because it is the only one that
                         // resolves a jump spec whose `sessionID` is nil: the
-                        // three others — `resolveSelectedJumpSession`,
-                        // `ConnectionFormView.jumpSessionSummary` and the
+                        // three others — `SessionListViewModel.
+                        // resolveJumpSession`, `ConnectionFormView.
+                        // jumpSessionSummary` and the
                         // session-mode branch just above — all build or pass
                         // a spec carrying a `sessionID`, and
                         // `LoginResolver.resolveJump(...sessions:...)` only
@@ -2720,15 +2560,16 @@ struct ContentView: View {
                         // meaningful on THIS path: it clears
                         // `jumpSelectedLoginSetID` and returns the block to
                         // Manual, so a following submit does not walk
-                        // `resolveSelectedJumpLoginSet` into `fillJumpForm`
-                        // and copy the very credentials this refusal is about
-                        // into the form. It also blanks `jumpPassword` — the
-                        // set's secret was never read. Editing such a session
+                        // `SessionListViewModel.resolveJumpLoginSet` into
+                        // `fillJumpForm` and copy the very credentials this
+                        // refusal is about into the form. It also blanks
+                        // `jumpPassword` — the set's secret was never read.
+                        // Editing such a session
                         // (`ConnectionViewModel.beginEditing`) reaches the
                         // same submit with no resolution and no fallback at
                         // all; the `kind` guard inside
-                        // `resolveSelectedJumpLoginSet` is what covers that
-                        // route.
+                        // `SessionListViewModel.resolveJumpLoginSet` is what
+                        // covers that route.
                         applyRawJumpFallback(form, from: stored)
                         form.showFailure(
                             message: L10n.string(

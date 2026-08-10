@@ -207,9 +207,10 @@ public final class ConnectionViewModel {
     /// decide whether to show the login-set picker or the manual
     /// username/password/key fields; it also fills `username`/`authChoice`/
     /// `keyPath`/`password` from the selected set right before connect/save
-    /// (`ContentView.fillForm(_:from:)`), so those fields still carry the
-    /// values the rest of this view model already knows how to validate and
-    /// connect with — `.set` needs no separate connect/validate path here.
+    /// (`SessionListViewModel.resolveTargetLoginSet(form:)`, M29-P2), so
+    /// those fields still carry the values the rest of this view model
+    /// already knows how to validate and connect with — `.set` needs no
+    /// separate connect/validate path here.
     public var loginMode: LoginMode = .manual
     /// The chosen login set in `.set` mode, `nil` while none is selected yet.
     public var selectedLoginSetID: UUID?
@@ -344,13 +345,16 @@ public final class ConnectionViewModel {
     /// The TARGET's login switcher goes with it too (M23/T7 fix round 1), and
     /// that one is worse than the jump: a login set belongs to exactly one
     /// kind, the picker filters its options by kind
-    /// (`ConnectionFormView.loginSetPicker`), and the submit gate only checks
-    /// that SOMETHING is selected. So an SSH set picked before a switch to S3
-    /// went invisible rather than being cleared, and saved a `.s3` session
-    /// bound to an SSH set — which `LoginResolver.resolve` then rejects with
-    /// `kindMismatch` on every later connect, i.e. a session that can never be
-    /// opened again. `resolveSelectedLoginSet` looks the id up by id alone, so
-    /// nothing downstream catches it either.
+    /// (`ConnectionFormView.loginSetPicker`), and at the time the submit gate
+    /// only checked that SOMETHING is selected. So an SSH set picked before a
+    /// switch to S3 went invisible rather than being cleared, and saved a
+    /// `.s3` session bound to an SSH set — which `LoginResolver.resolve` then
+    /// rejects with `kindMismatch` on every later connect, i.e. a session
+    /// that can never be opened again. The submit gate itself only started
+    /// catching a stale selection with `SessionListViewModel.
+    /// resolveTargetLoginSet`'s `kind` guard (M29-P2) — this reset here
+    /// remains the earlier line of defense, clearing the selection before
+    /// that guard is ever reached.
     ///
     /// `saveAsNewLoginSet`/`newLoginSetName` deliberately do NOT reset here.
     /// They are an intent ("also save this login"), not a reference to
@@ -722,10 +726,10 @@ public final class ConnectionViewModel {
     /// `selectJumpSourceMode`'s doc comment gives for its own.
     ///
     /// In `.set` mode the jump's manual-looking fields are not typed by the
-    /// user: the App fills `jumpUsername`/`jumpAuthChoice`/`jumpKeyPath`/
+    /// user: the caller fills `jumpUsername`/`jumpAuthChoice`/`jumpKeyPath`/
     /// `jumpPassword` from the selected login set before every submit
-    /// (`ContentView.fillJumpForm`, called from
-    /// `resolveSelectedJumpLoginSet`), because `validateJump`'s `.set` branch
+    /// (`SessionListViewModel.resolveJumpLoginSet`'s own `fillJumpForm`,
+    /// M29-P2), because `validateJump`'s `.set` branch
     /// only checks that something is SELECTED and `buildJumpConfig` builds
     /// from those fields regardless of the mode. A submit that then fails
     /// validation leaves the form filled -- `endEditing()` does not run on
@@ -758,7 +762,7 @@ public final class ConnectionViewModel {
     /// User-initiated switch of the jump's source picker (M-5 fix, final
     /// review): mirrors `selectAuthChoice`/`selectJumpAuthChoice` above --
     /// switching AWAY from `.session` clears `jumpPassword`/`jumpKeyPath`.
-    /// `resolveSelectedJumpSession` (App layer) fills both with the
+    /// `SessionListViewModel.resolveJumpSession` (M29-P2) fills both with the
     /// REFERENCED session's own resolved secret/key path right before a
     /// connect attempt; if that connect then fails and the user flips Source
     /// to Manual, the bastion's secret would otherwise sit pre-filled in the
@@ -1017,12 +1021,13 @@ public final class ConnectionViewModel {
     /// so both surfaces enforce identical rules.
     ///
     /// Set mode only checks that a set is actually SELECTED here -- like the
-    /// target's own `loginMode == .set` path, it trusts the App layer to
-    /// have already filled `jumpUsername`/`jumpAuthChoice`/`jumpKeyPath`/
-    /// `jumpPassword` from that set (`ContentView`'s `fillForm`-style
-    /// pattern) before calling into this validator; a DANGLING set
-    /// reference is an App-layer concern (spec §4a/§4c), not this
-    /// view model's -- it has no access to the actual `LoginSet` data.
+    /// target's own `loginMode == .set` path, it trusts the caller to have
+    /// already filled `jumpUsername`/`jumpAuthChoice`/`jumpKeyPath`/
+    /// `jumpPassword` from that set
+    /// (`SessionListViewModel.resolveJumpLoginSet`'s fill-before-submit
+    /// pattern, M29-P2) before calling into this validator; a DANGLING set
+    /// reference is that caller's concern (spec §4a/§4c), not this view
+    /// model's -- it has no access to the actual `LoginSet` data.
     ///
     /// `requireSecret` (final review I-1): `connect()` passes `true` -- a
     /// live connection needs an actual password/passphrase in hand.

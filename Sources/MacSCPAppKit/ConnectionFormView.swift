@@ -225,8 +225,8 @@ struct ConnectionFormView: View {
         } catch LoginResolveError.missingSet {
             // The referenced session's OWN login set is dangling — same
             // wording the target/jump login-set pickers already use for
-            // this exact condition (`resolveSelectedLoginSet`/
-            // `resolveSelectedJumpLoginSet` in ContentView).
+            // this exact condition (`SessionListViewModel.
+            // resolveTargetLoginSet`/`resolveJumpLoginSet`, M29-P2).
             return .error(L10n.string(
                 "loginSets.missingSet",
                 "The stored login for this connection was not found. Choose a login or enter credentials."))
