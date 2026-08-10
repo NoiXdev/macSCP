@@ -2089,60 +2089,16 @@ struct ContentView: View {
     /// empty field here does NOT mean "no secret": it means the session's
     /// existing keychain secret must MOVE onto the new set rather than be
     /// dropped, or the session becomes unreachable after the rewire (B1).
+    ///
     /// M17 review fix: a managed key's passphrase lives in the Keychain
     /// under its own `key.id` slot (`ManagedKeyPassphrase.resolve`'s doc
     /// comment) -- a session's or login set's own secret slot must never
-    /// duplicate it, or a later stored-session open could read the
-    /// (stale-prone) session/set slot instead of the authoritative key.id
-    /// one. True only when `form` is in the SSH private-key case AND its
-    /// current `keyPath` resolves to a managed key whose slot actually
-    /// EXISTS; password auth, S3, and unmanaged/external key paths are
-    /// unaffected.
-    ///
-    /// The slot is probed, not inferred from `ManagedKey.hasPassphrase`.
-    /// That flag says the key file is encrypted, which for a key materialized
-    /// out of a login-set export WITHOUT secrets (the default, and the common
-    /// case) is true while no slot exists. Trusting it there made
-    /// `passwordToPersist` force `""` and threw away the passphrase the user
-    /// typed -- with no other UI anywhere to store a managed key's passphrase,
-    /// that meant retyping it on every connect, forever. With no `key.id` slot
-    /// there is also nothing to duplicate, so the session/set slot is the right
-    /// home for it, exactly as it is for an external key path.
-    ///
-    /// M19: a probe that cannot be ANSWERED (an unreadable key store, a
-    /// Keychain that refuses the read) is treated as `true`, i.e. "assume the
-    /// key has its own slot". The alternative — the `try?` this used to be —
-    /// turns a transient failure into "no slot" and duplicates the typed
-    /// passphrase into the session's/set's own slot, permanently, which is
-    /// precisely what this function exists to prevent. Declining to persist is
-    /// recoverable (the user retypes it); a silent duplicate is not.
-    private func isManagedKeyWithStoredPassphrase(_ form: ConnectionViewModel) -> Bool {
-        guard form.kind == .ssh, form.authChoice == .privateKey else { return false }
-        do {
-            return try ManagedKeyPassphrase.hasStoredPassphrase(
-                keyPath: form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
-                store: ManagedKeyStore(directory: SessionStore.defaultDirectory),
-                secrets: KeychainSecretStore())
-        } catch {
-            return true
-        }
-    }
-
-    /// The value to persist under a session's OWN secret slot (`session.
-    /// id`). Empty for a managed key with a stored passphrase (see
-    /// `isManagedKeyWithStoredPassphrase` -- the transient connect-time fill
-    /// in `ConnectionFormView`'s Connect button and `connect(in:stored:)`
-    /// still resolves it from `key.id`, so nothing is lost); the active
-    /// backend's own secret otherwise.
-    ///
-    /// `resolvedSecret` (M23/T7), not `form.password`: whichever secret row the
-    /// backend actually shows -- SSH's password or passphrase, S3's secret
-    /// access key, WebDAV's password, and NOTHING for an agent login. The three
-    /// save branches this now serves each named their own field by hand.
-    private func passwordToPersist(for form: ConnectionViewModel) -> String {
-        isManagedKeyWithStoredPassphrase(form) ? "" : form.resolvedSecret
-    }
-
+    /// duplicate it. The decision of whether that applies now lives in
+    /// `SessionSecretPolicy.usesStoredManagedPassphrase` (Core), which this
+    /// function calls with the same two stores `ContentView` has always
+    /// built (`ManagedKeyStore(directory: SessionStore.defaultDirectory)`,
+    /// `KeychainSecretStore()`); see that type's doc comments for why an
+    /// unanswerable probe counts as "has a slot" rather than "does not".
     private func maybeCreateNewLoginSet(
         from form: ConnectionViewModel, editedSession: StoredSession? = nil
     ) -> UUID? {
@@ -2180,7 +2136,10 @@ struct ContentView: View {
             in: form.values, namespace: descriptor.fieldNamespace)
             .map { form.values.raw["\(descriptor.fieldNamespace).\($0.id)"] ?? "" }
         let carried: String? = typed == nil ? nil
-            : isManagedKeyWithStoredPassphrase(form) ? ""
+            : SessionSecretPolicy.usesStoredManagedPassphrase(
+                kind: form.kind, authChoice: form.authChoice, keyPath: form.keyPath,
+                keys: ManagedKeyStore(directory: SessionStore.defaultDirectory),
+                secrets: KeychainSecretStore()) ? ""
             : ((typed ?? "").isEmpty
                 ? (editedSession.flatMap { sessionListViewModel.password(for: $0) })
                 : typed)
@@ -2295,8 +2254,9 @@ struct ContentView: View {
             // What the three branches it replaces did, and where it went:
             // * S3/WebDAV built a `StoredS3Config`/`StoredWebDAVConfig` from
             //   the form -> `descriptor.apply` inside `save`.
-            // * Each named its own secret field -> `passwordToPersist`, which
-            //   now asks the schema which row is the visible secret.
+            // * Each named its own secret field -> `SessionSecretPolicy.
+            //   valueToPersist`, which now asks the schema which row is the
+            //   visible secret.
             // * The SSH branch alone passed `authKind`/`keyPath` -> both live
             //   in `form.values` and are written by SSH's own `apply`.
             // * S3/WebDAV passed NO jump and NO jump secret; the SSH branch
@@ -2310,7 +2270,11 @@ struct ContentView: View {
             let stored = sessionListViewModel.save(
                 name: form.saveName.trimmingCharacters(in: .whitespacesAndNewlines),
                 values: form.values,
-                password: passwordToPersist(for: form),
+                password: SessionSecretPolicy.valueToPersist(
+                    resolvedSecret: form.resolvedSecret, kind: form.kind, authChoice: form.authChoice,
+                    keyPath: form.keyPath,
+                    keys: ManagedKeyStore(directory: SessionStore.defaultDirectory),
+                    secrets: KeychainSecretStore()),
                 kind: form.kind,
                 groupID: form.selectedGroupID,
                 loginSetID: form.loginMode == .set ? form.selectedLoginSetID : newSetID,
