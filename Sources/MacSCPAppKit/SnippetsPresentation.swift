@@ -47,36 +47,19 @@ enum SnippetsLoad: Equatable {
 }
 
 /// Text for the Terminal menu's snippet entries.
+///
+/// TEMPORARY (Terminal-Snippets, Task 1): this type's whole purpose was
+/// marking a snippet that runs immediately in its own menu title — see the
+/// history of this doc comment for the reasoning. `Snippet.runsImmediately`
+/// no longer exists (the maintainer's call: the insert-or-execute decision
+/// now belongs at the trigger, not the model — see `Snippet`'s doc comment),
+/// so every title below is currently just the bare name. Task 5 removes this
+/// type entirely once the menu offers both actions per snippet instead of
+/// baking one choice into the entry's title.
 enum SnippetMenuEntry {
-    /// The menu title for one snippet. A snippet that runs immediately says
-    /// so **in its own title**; an inserting one is titled with its bare
-    /// name.
-    ///
-    /// This is the distinction the feature rests on — which entries fire a
-    /// command on the far host the moment they are picked — and it is here,
-    /// per item, rather than in the surrounding grouping, for a reason the
-    /// grouping cannot cover:
-    ///
-    /// - `MacSCPApp.snippetMenuItems` emits sibling `Divider()`s for the
-    ///   start of the snippet block and for "Manage Snippets…" as well, so a
-    ///   divider marks no particular band. Reading the source is enough to
-    ///   see that; the app was not launched.
-    /// - The `Section` title above the executing entries would carry it, but
-    ///   how `Section` draws a title inside a menu-bar menu has never been
-    ///   observed in this project. An unverified rendering cannot be the
-    ///   thing a safety distinction rests on.
-    /// - A title is text the menu certainly renders — every other entry in
-    ///   this menu proves it — and it survives the case where the grouping
-    ///   collapses entirely: with only executing snippets saved there is no
-    ///   second band to contrast with, and the band boundary says nothing.
-    ///
-    /// Text rather than a per-item symbol: the design rejected an icon (and
-    /// M19a's rule would ask for a hover hint a menu item cannot carry). The
-    /// sheet's row keeps its `bolt.fill` with its `.help`; that view can.
+    /// The menu title for one snippet — currently always its bare name; see
+    /// this type's doc comment for why.
     static func title(for snippet: Snippet) -> String {
-        guard snippet.runsImmediately else { return snippet.name }
-        return String(
-            format: L10n.string("menu.snippets.executingItem", "%@ (runs immediately)"),
-            snippet.name)
+        snippet.name
     }
 }

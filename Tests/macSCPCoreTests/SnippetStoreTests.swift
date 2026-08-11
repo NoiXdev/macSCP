@@ -20,12 +20,11 @@ struct SnippetStoreTests {
         #expect(try store.all().isEmpty)
     }
 
-    /// What goes in comes back out unchanged, including the flag that
-    /// decides whether the snippet executes.
+    /// What goes in comes back out unchanged, including its tags.
     @Test func aSavedSnippetSurvivesTheRoundTrip() throws {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let snippet = try #require(Snippet(name: "Disk", command: "df -h", runsImmediately: true))
+        let snippet = try #require(Snippet(name: "Disk", command: "df -h", tags: ["disk"]))
 
         try store.save(snippet)
 
@@ -36,7 +35,7 @@ struct SnippetStoreTests {
     @Test func savingTheSameIdTwiceReplaces() throws {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        var snippet = try #require(Snippet(name: "Disk", command: "df -h", runsImmediately: false))
+        var snippet = try #require(Snippet(name: "Disk", command: "df -h"))
         try store.save(snippet)
         snippet.name = "Disk usage"
 
@@ -52,8 +51,8 @@ struct SnippetStoreTests {
     @Test func replacingAnExistingIdKeepsItsPosition() throws {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        var first = try #require(Snippet(name: "First", command: "uptime", runsImmediately: false))
-        let second = try #require(Snippet(name: "Second", command: "whoami", runsImmediately: false))
+        var first = try #require(Snippet(name: "First", command: "uptime"))
+        let second = try #require(Snippet(name: "Second", command: "whoami"))
         try store.save(first)
         try store.save(second)
         first.name = "First, renamed"
@@ -66,8 +65,8 @@ struct SnippetStoreTests {
     @Test func removingAnIdLeavesTheOthers() throws {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let keep = try #require(Snippet(name: "Keep", command: "uptime", runsImmediately: false))
-        let drop = try #require(Snippet(name: "Drop", command: "whoami", runsImmediately: false))
+        let keep = try #require(Snippet(name: "Keep", command: "uptime"))
+        let drop = try #require(Snippet(name: "Drop", command: "whoami"))
         try store.save(keep)
         try store.save(drop)
 
@@ -80,8 +79,8 @@ struct SnippetStoreTests {
     /// "insert" would be a lie: every line but the last would run the
     /// moment it was inserted, with nobody pressing Return.
     @Test func aCommandWithALineBreakIsRefused() {
-        #expect(Snippet(name: "Two", command: "echo a\necho b", runsImmediately: false) == nil)
-        #expect(Snippet(name: "CR", command: "echo a\recho b", runsImmediately: false) == nil)
+        #expect(Snippet(name: "Two", command: "echo a\necho b") == nil)
+        #expect(Snippet(name: "CR", command: "echo a\recho b") == nil)
     }
 
     /// The rule is the MODEL's, not the form's: a hand-edited store file

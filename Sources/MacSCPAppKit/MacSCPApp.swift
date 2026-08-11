@@ -352,22 +352,18 @@ struct MacSCPApp: App {
     }
 
     /// The snippet half of the "Terminal" menu (Terminal-Snippets
-    /// milestone): the INSERTING snippets first, then the executing ones
-    /// under their own heading, then the management entry.
+    /// milestone): every snippet as a single list, then the management
+    /// entry.
     ///
-    /// **Which entries fire a command immediately is carried by the entries
-    /// themselves**, through `SnippetMenuEntry.title(for:)` — see that
-    /// function for why the grouping cannot carry it. The grouping stays as
-    /// an extra: it costs nothing, and it reads well if `Section` does draw
-    /// its title. It is not what the distinction rests on, and an earlier
-    /// version of this comment claiming a `Divider()` was "the part that has
-    /// to hold" was simply wrong — this function emits three sibling
-    /// dividers (before the snippet block, before the executing section,
-    /// before "Manage Snippets…"), so a divider marks no particular band.
-    ///
-    /// The middle divider is emitted only when there is something on both
-    /// sides of it, so an all-executing list no longer produces two dividers
-    /// with nothing between them.
+    /// TEMPORARY (Terminal-Snippets, Task 1): this used to split snippets
+    /// into an INSERTING group and an executing group under their own
+    /// heading, keyed off `Snippet.runsImmediately`. That flag is gone from
+    /// the model (see `Snippet`'s doc comment — the maintainer's call is
+    /// that the decision belongs at the trigger), so every snippet is
+    /// currently treated as inserting and `executing` below is always
+    /// empty; the grouping code is left in place; Task 6 replaces it with
+    /// a per-snippet "Insert"/"Execute" pair of actions instead of a
+    /// pre-decided grouping.
     ///
     /// An unreadable store is not silence: it gets a disabled notice entry
     /// (see `SnippetsLoad`). Disabled entries are this menu's existing way
@@ -377,8 +373,8 @@ struct MacSCPApp: App {
     @ViewBuilder
     private var snippetMenuItems: some View {
         let snippets = tabCommands.snippetsLoad.snippets
-        let inserting = snippets.filter { !$0.runsImmediately }
-        let executing = snippets.filter(\.runsImmediately)
+        let inserting = snippets
+        let executing: [Snippet] = []
         if !snippets.isEmpty {
             Divider()
         }

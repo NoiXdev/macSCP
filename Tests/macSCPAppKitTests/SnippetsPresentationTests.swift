@@ -34,7 +34,7 @@ struct SnippetsPresentationTests {
     @Test func aSavedSnippetLoads() throws {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let snippet = try #require(Snippet(name: "Disk", command: "df -h", runsImmediately: false))
+        let snippet = try #require(Snippet(name: "Disk", command: "df -h"))
         try store.save(snippet)
 
         #expect(SnippetsLoad(reading: store) == .loaded([snippet]))
@@ -60,20 +60,16 @@ struct SnippetsPresentationTests {
         #expect(load != .loaded([]))
     }
 
-    /// An executing entry says so in its own title; an inserting one is
-    /// titled with its bare name. This is the distinction the menu rests on,
-    /// and it must not depend on the grouping around the entry.
-    @Test func onlyAnExecutingEntryIsMarkedInItsTitle() throws {
-        let inserting = try #require(
-            Snippet(name: "Disk usage", command: "df -h", runsImmediately: false))
-        let executing = try #require(
-            Snippet(name: "Restart", command: "systemctl restart x", runsImmediately: true))
+    /// TEMPORARY (Terminal-Snippets, Task 1): `title(for:)` used to mark an
+    /// executing entry in its own title, distinguishing it from an inserting
+    /// one via the now-removed `Snippet.runsImmediately` (see
+    /// `SnippetMenuEntry`'s doc comment). With that flag gone, every title is
+    /// the bare name — this pins today's reality, not a design decision.
+    /// Task 5 removes `SnippetMenuEntry` entirely, and this test with it.
+    @Test func titleIsAlwaysTheBareNameNowThatTheFlagIsGone() throws {
+        let snippet = try #require(Snippet(name: "Restart", command: "systemctl restart x"))
 
-        #expect(SnippetMenuEntry.title(for: inserting) == "Disk usage")
-        let executingTitle = SnippetMenuEntry.title(for: executing)
-        #expect(executingTitle != executing.name)
-        #expect(executingTitle.hasPrefix("Restart"))
-        #expect(executingTitle.count > executing.name.count)
+        #expect(SnippetMenuEntry.title(for: snippet) == "Restart")
     }
 
     /// The marker comes from the catalog, not from a literal baked into the

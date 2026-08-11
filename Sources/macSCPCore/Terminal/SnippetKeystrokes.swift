@@ -26,24 +26,30 @@ public enum SnippetKeystrokes {
     /// evidence trail for both encodings and is where to re-check them.
     ///
     /// Why the byte matters at all: LF can be inert in a POSIX line
-    /// discipline, which would leave a `runsImmediately` snippet sitting
-    /// unexecuted in the input line. That is general background — the reason
-    /// the terminator was measured rather than guessed — not a claim measured
+    /// discipline, which would leave an executed snippet sitting unexecuted
+    /// in the input line. That is general background — the reason the
+    /// terminator was measured rather than guessed — not a claim measured
     /// against this app's remote shells.
+    ///
+    /// TEMPORARY (Terminal-Snippets, Task 1): unused for now. The
+    /// immediate-execution decision used to live on `Snippet.runsImmediately`
+    /// and has been removed from the model (see `Snippet`'s doc comment) —
+    /// the maintainer's call is that the decision belongs at the trigger,
+    /// where the host is visible, not at snippet-creation time. Nothing yet
+    /// re-attaches that decision here, so `bytes(for:)` below always inserts.
+    /// A later task reintroduces it as an explicit parameter and starts
+    /// appending this byte again.
     private static let terminator: UInt8 = 0x0D
 
-    /// The keystrokes for `snippet`: its command as UTF-8, followed by the
-    /// Return byte only when the snippet runs immediately. Without that byte
-    /// the text merely lands in the input line, which is what an inserting
-    /// snippet is meant to do.
+    /// The keystrokes for `snippet`: its command as UTF-8.
     ///
-    /// Exactly one terminator can be appended here, because `Snippet` rejects
-    /// a command containing `\n` or `\r` at construction.
+    /// TEMPORARY (Terminal-Snippets, Task 1): never appends a terminator.
+    /// This used to append `terminator` when the snippet's now-removed
+    /// `runsImmediately` flag was set; with that flag gone from the model,
+    /// every snippet inserts — the text lands in the input line and waits
+    /// for the user to press Return. A later task gives this function back
+    /// the ability to execute, driven by the trigger rather than the model.
     public static func bytes(for snippet: Snippet) -> [UInt8] {
-        var bytes = Array(snippet.command.utf8)
-        if snippet.runsImmediately {
-            bytes.append(terminator)
-        }
-        return bytes
+        Array(snippet.command.utf8)
     }
 }

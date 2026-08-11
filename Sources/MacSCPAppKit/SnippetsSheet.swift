@@ -162,14 +162,14 @@ struct SnippetsSheet: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
+                    // TEMPORARY (Terminal-Snippets, Task 1): the "runs
+                    // immediately" bolt marker read `snippet.runsImmediately`,
+                    // which no longer exists — the insert-or-execute decision
+                    // moved from the model to the trigger (see `Snippet`'s
+                    // doc comment). Task 5 decides what fills this row and
+                    // this freed space (the plan's own note: a tag field
+                    // belongs in the editor below, not necessarily here).
                     Text(snippet.name).font(.system(size: 13))
-                    if snippet.runsImmediately {
-                        Image(systemName: "bolt.fill")
-                            .font(.caption2)
-                            .foregroundStyle(DesignTokens.localAmber)
-                            .help(L10n.string(
-                                "snippets.runsImmediately.help", "Runs immediately when triggered"))
-                    }
                 }
                 Text(snippet.command)
                     .font(.caption)
@@ -219,11 +219,16 @@ struct SnippetsSheet: View {
     }
 }
 
-/// New/Edit sub-sheet: name, a single-line command, and the "Run
-/// immediately" toggle. Shape mirrors `SSHKeysSheet.RenameKeySheet` — it
-/// threads the store straight through and owns its own save/error/dismiss
-/// cycle, since there is no view model between this sheet and `SnippetStore`
-/// the way `LoginSetsSheet` has `SessionListViewModel`.
+/// New/Edit sub-sheet: name and a single-line command. Shape mirrors
+/// `SSHKeysSheet.RenameKeySheet` — it threads the store straight through and
+/// owns its own save/error/dismiss cycle, since there is no view model
+/// between this sheet and `SnippetStore` the way `LoginSetsSheet` has
+/// `SessionListViewModel`.
+///
+/// TEMPORARY (Terminal-Snippets, Task 1): this used to also carry a "Run
+/// immediately" toggle; it is gone along with `Snippet.runsImmediately`
+/// (see `Snippet`'s doc comment). Task 5 decides what, if anything, fills
+/// the freed space — the plan calls for a tag field there.
 ///
 /// `Snippet.init?` is failable and refuses a `command` containing `\n` or
 /// `\r` (see its own doc comment). This view does not re-check that rule
@@ -237,16 +242,19 @@ private struct SnippetEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
     @State private var command: String
-    @State private var runsImmediately: Bool
     @State private var errorMessage: String?
 
+    // TEMPORARY (Terminal-Snippets, Task 1): this editor used to carry a
+    // `runsImmediately` toggle bound to the now-removed `Snippet` flag (see
+    // `Snippet`'s doc comment — the decision moved to the trigger). Task 5
+    // decides what, if anything, fills the freed space (the plan calls for
+    // a tag field there).
     init(existing: Snippet?, store: SnippetStore, onSaved: @escaping () -> Void) {
         self.existing = existing
         self.store = store
         self.onSaved = onSaved
         _name = State(initialValue: existing?.name ?? "")
         _command = State(initialValue: existing?.command ?? "")
-        _runsImmediately = State(initialValue: existing?.runsImmediately ?? false)
     }
 
     private var isEditing: Bool { existing != nil }
@@ -275,14 +283,6 @@ private struct SnippetEditorView: View {
             FormRow(label: commandLabel) {
                 TextField(commandLabel, text: $command, prompt: Text(verbatim: ""))
             }
-            FormRow(label: "") {
-                Toggle(
-                    L10n.string("snippets.editor.runsImmediately", "Run immediately"),
-                    isOn: $runsImmediately
-                )
-                .toggleStyle(.checkbox)
-            }
-
             // Credentials note (Terminal-Snippets design doc, "Snippets
             // enthalten keine Zugangsdaten"): the reason, not a bare
             // prohibition. The store is plain JSON, so it holds no
@@ -318,7 +318,7 @@ private struct SnippetEditorView: View {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let snippet = Snippet(
             id: existing?.id ?? UUID(), name: trimmedName, command: command,
-            runsImmediately: runsImmediately)
+            tags: existing?.tags ?? [])
         else {
             errorMessage = L10n.string(
                 "snippets.editor.error.multiline", "The command can't contain a line break.")
