@@ -517,6 +517,13 @@ struct ContentView: View {
 
     /// Sends one snippet's keystrokes to the active tab's shell.
     ///
+    /// `execute` is the caller's choice, not this method's (Terminal-Snippets,
+    /// Task 6): every trigger surface offers both an Insert and an Execute
+    /// action per snippet, and `execute` says which one fired. It passes
+    /// straight through to `SnippetKeystrokes.bytes(for:execute:)`, which is
+    /// where the actual byte-level guarantee ("inserting never appends a
+    /// terminator") is pinned — this method does not re-decide it.
+    ///
     /// Capability guard as in `toggleTerminal` above: the menu entry is
     /// already disabled for a non-shell backend, and this re-checks anyway so
     /// no path can reach a silent no-op.
@@ -533,7 +540,7 @@ struct ContentView: View {
     /// `terminalPanel(_:)` renders as its error text with a "Reopen" button —
     /// the tab's existing channel for a terminal that would not start, and
     /// the reason no second message is raised here.
-    func triggerSnippet(_ snippet: Snippet) {
+    func triggerSnippet(_ snippet: Snippet, execute: Bool) {
         guard window?.isKeyWindow == true else { return }
         guard activeTabSupportsShell else {
             presentTerminalUnavailable()
@@ -542,7 +549,7 @@ struct ContentView: View {
         guard let terminal = activeTab.session?.terminal else { return }
         terminal.isVisible = true
         terminal.openIfNeeded()
-        terminal.send(SnippetKeystrokes.bytes(for: snippet, execute: false))
+        terminal.send(SnippetKeystrokes.bytes(for: snippet, execute: execute))
     }
 
     /// Title for the update-check result alert (M11b/T2, spec §4) — one per

@@ -821,5 +821,7 @@
 /* Terminal menu — snippets (Terminal-Snippets milestone) */
 "menu.snippets.manage" = "Zarządzaj fragmentami…";
 "menu.snippets.unreadable" = "Nie udało się odczytać fragmentów";
+"menu.snippets.insert" = "Wstaw";
+"menu.snippets.execute" = "Wykonaj";
 "settings.shortcuts.group.snippets" = "Fragmenty";
 "settings.shortcuts.label.insertSnippet" = "Wstaw fragment 1–3";

@@ -111,10 +111,13 @@ final class TabCommands {
     /// must not look like an empty one in the menu (see `SnippetsLoad`).
     var snippetsLoad: SnippetsLoad = .loaded([])
     /// Triggers one snippet in the active tab's shell — `ContentView` sends
-    /// `SnippetKeystrokes.bytes(for:)` to that tab's
+    /// `SnippetKeystrokes.bytes(for:execute:)` to that tab's
     /// `TerminalPanelViewModel`. Same bridge shape and key-window guard as
-    /// `toggleTerminal` above.
-    var runSnippet: ((Snippet) -> Void)?
+    /// `toggleTerminal` above. `execute` is the trigger's own choice
+    /// (Terminal-Snippets, Task 6): every snippet offers both an Insert and
+    /// an Execute action, so this bridge carries WHICH ONE fired rather than
+    /// deciding for it.
+    var runSnippet: ((Snippet, Bool) -> Void)?
     /// "Manage Snippets…" — same bridge shape/key-window guard as
     /// `showLogins` above, opens the snippet management sheet.
     var showSnippets: (() -> Void)?
@@ -351,34 +354,42 @@ struct MacSCPApp: App {
         // `MenuBarController`.
     }
 
-    /// The snippet half of the "Terminal" menu (Terminal-Snippets
-    /// milestone): every snippet as a single list, then the management
-    /// entry.
+    /// The snippet half of the "Terminal" menu (Terminal-Snippets milestone,
+    /// Task 6): renders `SnippetMenuModel` through the shared
+    /// `SnippetMenuItems` view — the SAME rendering a session's context
+    /// menu, the terminal header popover and the terminal's right-click
+    /// menu (Tasks 7/8) will reuse, so all four surfaces read one computed
+    /// model instead of four hand-guessed ones. Two actions per snippet,
+    /// "Insert" and "Execute" — never a per-snippet flag, see
+    /// `SnippetMenuItems`'s doc comment.
     ///
-    /// TEMPORARY (Terminal-Snippets, Task 1 → Task 5 review fix): this used
-    /// to split snippets into an INSERTING group and an executing group
-    /// under their own heading, keyed off `Snippet.runsImmediately`. That
-    /// flag is gone from the model (see `Snippet`'s doc comment — the
-    /// maintainer's call is that the decision belongs at the trigger), so
-    /// every snippet is currently treated as inserting; the now-always-empty
-    /// executing group and its heading (which named a catalog key Task 5
-    /// deleted) were removed rather than left dead. Task 6 is expected to
-    /// replace this single list with a per-snippet "Insert"/"Execute" pair
-    /// of actions.
+    /// `shortcutOrder` carries the STORE order (`tabCommands.snippetsLoad.
+    /// snippets`, unsorted): ⌃⌘1–3 insert the first three snippets in THAT
+    /// order, not the tag-grouped order `SnippetMenuModel.groups` presents
+    /// them in — see `SnippetMenuPlan.build`'s doc comment. Execute never
+    /// gets a shortcut at all: a keystroke that fires a command on a remote
+    /// host the instant it is pressed has no good failure mode — there is no
+    /// undo and no confirmation.
     ///
     /// An unreadable store is not silence: it gets a disabled notice entry
-    /// (see `SnippetsLoad`). Disabled entries are this menu's existing way
-    /// of saying "not available right now" — the two pre-existing entries
-    /// use them for a missing connection — and "Manage Snippets…" stays
-    /// enabled right below it, which is where the user can go look.
+    /// (see `SnippetsLoad`). That state lives only at the App layer —
+    /// `SnippetMenuModel` is built from the already-unwrapped `[Snippet]`
+    /// list, so it has no way to tell "empty" from "unreadable" apart —
+    /// which is why this check stays here instead of moving into
+    /// `SnippetMenuItems`. Disabled entries are this menu's existing way of
+    /// saying "not available right now" — the two pre-existing entries use
+    /// them for a missing connection — and "Manage Snippets…" stays enabled
+    /// right below it, which is where the user can go look.
     @ViewBuilder
     private var snippetMenuItems: some View {
-        let snippets = tabCommands.snippetsLoad.snippets
-        if !snippets.isEmpty {
-            Divider()
-        }
-        ForEach(Array(snippets.enumerated()), id: \.element.id) { index, snippet in
-            snippetButton(snippet, shortcutIndex: index)
+        let model = SnippetMenuModel.build(
+            snippets: tabCommands.snippetsLoad.snippets,
+            isConnected: tabCommands.isActiveTabConnected,
+            supportsShell: tabCommands.activeTabSupportsShell)
+        SnippetMenuItems(
+            model: model, shortcutOrder: tabCommands.snippetsLoad.snippets
+        ) { snippet, execute in
+            tabCommands.runSnippet?(snippet, execute)
         }
         Divider()
         if tabCommands.snippetsLoad.isUnreadable {
@@ -393,35 +404,4 @@ struct MacSCPApp: App {
             tabCommands.showSnippets?()
         }
     }
-
-    /// One snippet entry. Disabled by the exact condition the two
-    /// pre-existing entries of this menu use — without a connected,
-    /// shell-capable tab there is no `send` target.
-    ///
-    /// The title is the snippet's bare name — `SnippetMenuEntry`, which used
-    /// to mark an executing entry differently in its own title, is gone
-    /// (Terminal-Snippets, Task 5; see `Snippet`'s doc comment on why that
-    /// distinction moved to the trigger and no longer lives on the title).
-    ///
-    /// `shortcutIndex` is the snippet's position in the menu list; the first
-    /// three get ⌃⌘1–3. A dynamic list cannot carry stable shortcuts for
-    /// every entry — see `shortcutedSnippetCount` below.
-    @ViewBuilder
-    private func snippetButton(_ snippet: Snippet, shortcutIndex: Int?) -> some View {
-        let entry = Button(snippet.name) {
-            tabCommands.runSnippet?(snippet)
-        }
-        .disabled(!tabCommands.isActiveTabConnected || !tabCommands.activeTabSupportsShell)
-        if let shortcutIndex, shortcutIndex < Self.shortcutedSnippetCount {
-            entry.keyboardShortcut(
-                KeyEquivalent(Character("\(shortcutIndex + 1)")), modifiers: [.control, .command])
-        } else {
-            entry
-        }
-    }
-
-    /// How many snippets get a ⌃⌘n shortcut. Mirrored by the "Snippets"
-    /// group in `KeyboardShortcutsCatalog`, which spells the range out as
-    /// ⌃⌘1–3.
-    private static let shortcutedSnippetCount = 3
 }

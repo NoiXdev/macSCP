@@ -50,9 +50,12 @@ enum KeyboardShortcutsCatalog {
         ]),
         // The Terminal menu's snippet entries are built from the saved
         // snippets, so only a fixed prefix of them can carry a shortcut at
-        // all: the first three INSERTING snippets, in the order the menu
-        // lists them (see `MacSCPApp.snippetButton`). Snippets marked "run
-        // immediately" get none by design.
+        // all: the INSERT action of the first three snippets, in STORE
+        // order — not the tag-grouped order the menu displays them in (see
+        // `SnippetMenuPlan.build`). EXECUTE never gets one, by deliberate
+        // design (not a per-snippet flag): a keystroke that fires a command
+        // on a remote host the instant it is pressed has no good failure
+        // mode.
         Group(titleKey: "settings.shortcuts.group.snippets", titleDefault: "Snippets", rows: [
             Row(labelKey: "settings.shortcuts.label.insertSnippet",
                 labelDefault: "Insert snippet 1–3", shortcut: "⌃⌘1–3"),

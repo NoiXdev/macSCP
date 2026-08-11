@@ -818,5 +818,7 @@
 /* Terminal menu — snippets (Terminal-Snippets milestone) */
 "menu.snippets.manage" = "Manage Snippets…";
 "menu.snippets.unreadable" = "Snippets Couldn't Be Read";
+"menu.snippets.insert" = "Insert";
+"menu.snippets.execute" = "Execute";
 "settings.shortcuts.group.snippets" = "Snippets";
 "settings.shortcuts.label.insertSnippet" = "Insert snippet 1–3";
