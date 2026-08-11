@@ -318,3 +318,24 @@ jeweiligen Task-Umfangs lag:
 
 **Ein Satz**, wie von der Spec vorgesehen: Snippets lassen sich mit Tags
 ordnen und direkt am Host oder im Terminal einfügen oder ausführen.
+
+## Nachtrag: ein geparkter Befund aus der Fix-Wellen-Re-Review
+
+Die abschließende Re-Review fand einen Punkt, der **nicht** aus dieser Phase
+stammt, aber hier festgehalten gehört, damit er nicht mit dem
+Arbeitsverzeichnis verschwindet:
+
+**Das Kontextmenü am Host kann „keine Snippets" nicht von „Store unlesbar"
+unterscheiden.** Die Sidebar bekommt `snippetsLoad.snippets`, also die
+bereits flachgeklopfte Liste, und nie `SnippetsLoad` selbst — ihr fehlt das
+`isUnreadable`-Signal. Sie zeigt deshalb in beiden Fällen „Noch keine
+Snippets". Die Menüleiste unterscheidet korrekt und zeigt einen eigenen
+Hinweis, das Terminal-Popover ebenso.
+
+**Einordnung:** derselbe Fehlerklasse wie der Whole-Branch-Befund aus Runde 1
+— ein unlesbarer Store darf nie wie ein leerer aussehen. Hier trifft er
+**eine von vier Flächen**, und die Ursache ist die Parameterform, die älter
+ist als diese Phase. **Geparkt, nicht behoben:** die Behebung ändert eine
+Schnittstelle, auf der drei weitere Aufrufer sitzen, und gehört damit in
+einen eigenen Task mit eigenen Tests — nicht in eine Fix-Welle nach dem
+Ship-Verdikt.
