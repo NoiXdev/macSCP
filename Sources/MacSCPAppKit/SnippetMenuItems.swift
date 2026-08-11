@@ -12,8 +12,13 @@ enum SnippetMenuPlan {
         let snippet: Snippet
         let isDisabled: Bool
         /// 1-based ⌃⌘n digit for this entry's INSERT action, or `nil`. EXECUTE
-        /// never gets one — see `SnippetMenuItems`'s doc comment for why that
-        /// is not negotiable.
+        /// never gets one — see `MacSCPApp.swift`'s `snippetMenuItems` doc
+        /// comment for why that is not negotiable (a keystroke that fires a
+        /// command on a remote host the instant it is pressed has no good
+        /// failure mode). Enforced structurally here — this struct has no
+        /// field an execute shortcut could travel through — and guarded
+        /// against a hand-written regression by
+        /// `SnippetMenuItemsKeyboardShortcutGuardTests`.
         let insertShortcutDigit: Int?
         var id: Snippet.ID { snippet.id }
     }
