@@ -105,4 +105,51 @@ struct SnippetMenuModelTests {
         #expect(model.isEmpty)
         #expect(model.disabledReason == nil)
     }
+
+    /// Tags supplied out of alphabetical order still come back sorted. Every
+    /// test above happens to supply tags already in sorted order (`["a",
+    /// "b"]`, or a single tag), so none of them would notice `.sorted(by:)`
+    /// being dropped from `build` entirely. This one requires it.
+    @Test func tagsOutOfOrderComeBackSorted() throws {
+        let snippet = try #require(Snippet(name: "n", command: "c", tags: ["zebra", "apple", "mango"]))
+
+        let model = SnippetMenuModel.build(
+            snippets: [snippet], isConnected: true, supportsShell: true)
+
+        #expect(model.groups.map(\.tag) == ["apple", "mango", "zebra"])
+    }
+
+    /// Tags differing only in case sort as neighbours, not by code point.
+    /// `Snippet.tags` deliberately keeps case (`Docker` and `docker` are two
+    /// distinct tags), and the sort's whole point is a case-insensitive
+    /// comparator that lands them next to each other anyway. Under a plain,
+    /// case-sensitive `sorted()`, uppercase sorts before all lowercase, so
+    /// "Docker" would jump ahead of "apple" instead of landing beside
+    /// "docker".
+    @Test func differentlyCasedTagsSortAsNeighbours() throws {
+        let snippet = try #require(Snippet(name: "n", command: "c", tags: ["apple", "Docker", "docker"]))
+
+        let model = SnippetMenuModel.build(
+            snippets: [snippet], isConnected: true, supportsShell: true)
+
+        #expect(model.groups.map(\.tag) == ["apple", "Docker", "docker"])
+    }
+
+    /// The doc comment's "ties broken by first appearance across snippets"
+    /// clause names multiple snippets specifically — the case-neighbour test
+    /// above only exercises one snippet, where the tie order trivially
+    /// matches the given tags array. This pins the tie-break across two
+    /// snippets: `docker` appears first (on the first snippet), so it sorts
+    /// before `Docker` despite neither string being alphabetically "first"
+    /// in a way that would matter to a comparator that ignored insertion
+    /// order for ties.
+    @Test func tiedTagsAcrossSnippetsBreakByFirstAppearance() throws {
+        let first = try #require(Snippet(name: "a", command: "c", tags: ["docker"]))
+        let second = try #require(Snippet(name: "b", command: "c", tags: ["Docker"]))
+
+        let model = SnippetMenuModel.build(
+            snippets: [first, second], isConnected: true, supportsShell: true)
+
+        #expect(model.groups.map(\.tag) == ["docker", "Docker"])
+    }
 }
