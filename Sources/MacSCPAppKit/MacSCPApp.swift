@@ -409,8 +409,10 @@ struct MacSCPApp: App {
     /// pre-existing entries of this menu use — without a connected,
     /// shell-capable tab there is no `send` target.
     ///
-    /// The title comes from `SnippetMenuEntry.title(for:)`, which is where an
-    /// executing snippet is marked as one.
+    /// The title is the snippet's bare name — `SnippetMenuEntry`, which used
+    /// to mark an executing entry differently in its own title, is gone
+    /// (Terminal-Snippets, Task 5; see `Snippet`'s doc comment on why that
+    /// distinction moved to the trigger and no longer lives on the title).
     ///
     /// `shortcutIndex` is the snippet's position among the INSERTING ones;
     /// the first three of those get ⌃⌘1–3. A dynamic list cannot carry
@@ -419,7 +421,7 @@ struct MacSCPApp: App {
     /// command on the far host.
     @ViewBuilder
     private func snippetButton(_ snippet: Snippet, shortcutIndex: Int?) -> some View {
-        let entry = Button(SnippetMenuEntry.title(for: snippet)) {
+        let entry = Button(snippet.name) {
             tabCommands.runSnippet?(snippet)
         }
         .disabled(!tabCommands.isActiveTabConnected || !tabCommands.activeTabSupportsShell)

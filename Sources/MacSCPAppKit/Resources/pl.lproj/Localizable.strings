@@ -802,20 +802,23 @@
 "snippets.delete.title" = "Usunąć ten fragment?";
 "snippets.delete.confirm" = "Usuń";
 "snippets.delete.error" = "Nie udało się usunąć fragmentu.";
-"snippets.runsImmediately.help" = "Uruchamia się natychmiast po wywołaniu";
 "snippets.editor.titleNew" = "Nowy fragment";
 "snippets.editor.titleEdit" = "Edytuj fragment";
 "snippets.editor.name" = "Nazwa";
 "snippets.editor.command" = "Polecenie";
-"snippets.editor.runsImmediately" = "Uruchom natychmiast";
 "snippets.editor.credentialsNote" = "Nie umieszczaj tu danych uwierzytelniających: plik to zwykły JSON, a linia poleceń i tak jest widoczna w ps oraz w historii powłoki na zdalnym hoście.";
 "snippets.editor.error.multiline" = "Polecenie nie może zawierać znaku nowej linii.";
 "snippets.editor.error.save" = "Nie udało się zapisać fragmentu.";
 "snippets.load.error" = "Nie udało się odczytać pliku fragmentów. Plik istnieje, ale nie da się go zdekodować — żaden fragment nie został utracony i nic nie zostanie nadpisane.";
+"snippets.tags.label" = "Tagi";
+"snippets.tags.placeholder" = "Dodaj tag…";
+"snippets.tags.createNew %@" = "Utwórz „%@”";
+"snippets.tags.remove %@" = "Usuń „%@”";
+"snippets.filter.all" = "Wszystkie";
+"snippets.filter.untagged" = "Bez tagu";
+"snippets.filter.tagCount %1$@ %2$lld" = "%1$@ (%2$lld)";
 
 /* Terminal menu — snippets (Terminal-Snippets milestone) */
-"menu.snippets.runsImmediately" = "Uruchamiane natychmiast";
-"menu.snippets.executingItem" = "%@ (uruchamia się natychmiast)";
 "menu.snippets.manage" = "Zarządzaj fragmentami…";
 "menu.snippets.unreadable" = "Nie udało się odczytać fragmentów";
 "settings.shortcuts.group.snippets" = "Fragmenty";

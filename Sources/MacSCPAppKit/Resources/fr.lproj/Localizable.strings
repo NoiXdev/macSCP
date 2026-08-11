@@ -803,20 +803,23 @@
 "snippets.delete.title" = "Supprimer ce snippet ?";
 "snippets.delete.confirm" = "Supprimer";
 "snippets.delete.error" = "Impossible de supprimer le snippet.";
-"snippets.runsImmediately.help" = "S’exécute immédiatement au déclenchement";
 "snippets.editor.titleNew" = "Nouveau snippet";
 "snippets.editor.titleEdit" = "Modifier le snippet";
 "snippets.editor.name" = "Nom";
 "snippets.editor.command" = "Commande";
-"snippets.editor.runsImmediately" = "Exécuter immédiatement";
 "snippets.editor.credentialsNote" = "N’y mettez pas d’identifiants : le fichier est du JSON brut, et une ligne de commande est de toute façon visible dans ps et dans l’historique du shell sur l’hôte distant.";
 "snippets.editor.error.multiline" = "La commande ne peut pas contenir de saut de ligne.";
 "snippets.editor.error.save" = "Impossible d’enregistrer le snippet.";
 "snippets.load.error" = "Le fichier de snippets n’a pas pu être lu. Il existe mais ne peut pas être décodé — aucun snippet n’a été perdu et rien ne sera écrit par-dessus.";
+"snippets.tags.label" = "Tags";
+"snippets.tags.placeholder" = "Ajouter un tag…";
+"snippets.tags.createNew %@" = "Créer « %@ »";
+"snippets.tags.remove %@" = "Retirer « %@ »";
+"snippets.filter.all" = "Tous";
+"snippets.filter.untagged" = "Sans tag";
+"snippets.filter.tagCount %1$@ %2$lld" = "%1$@ (%2$lld)";
 
 /* Terminal menu — snippets (Terminal-Snippets milestone) */
-"menu.snippets.runsImmediately" = "S’exécute immédiatement";
-"menu.snippets.executingItem" = "%@ (s’exécute immédiatement)";
 "menu.snippets.manage" = "Gérer les snippets…";
 "menu.snippets.unreadable" = "Impossible de lire les snippets";
 "settings.shortcuts.group.snippets" = "Snippets";

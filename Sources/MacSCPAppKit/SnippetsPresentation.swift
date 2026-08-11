@@ -46,20 +46,39 @@ enum SnippetsLoad: Equatable {
     var isUnreadable: Bool { self == .unreadable }
 }
 
-/// Text for the Terminal menu's snippet entries.
-///
-/// TEMPORARY (Terminal-Snippets, Task 1): this type's whole purpose was
-/// marking a snippet that runs immediately in its own menu title — see the
-/// history of this doc comment for the reasoning. `Snippet.runsImmediately`
-/// no longer exists (the maintainer's call: the insert-or-execute decision
-/// now belongs at the trigger, not the model — see `Snippet`'s doc comment),
-/// so every title below is currently just the bare name. Task 5 removes this
-/// type entirely once the menu offers both actions per snippet instead of
-/// baking one choice into the entry's title.
-enum SnippetMenuEntry {
-    /// The menu title for one snippet — currently always its bare name; see
-    /// this type's doc comment for why.
-    static func title(for snippet: Snippet) -> String {
-        snippet.name
+/// The management sheet's tag filter row (Terminal-Snippets, Task 5): "All"
+/// (no restriction), one specific tag, or "untagged". Single-valued by
+/// construction — the filter chips are mutually exclusive, so there is no
+/// separate `Set` of active tags or an "is All selected" bool that could
+/// disagree with the rest — `.all` is both the default and what the "All"
+/// chip resets to.
+enum SnippetTagFilter: Equatable {
+    case all
+    case tag(String)
+    case untagged
+
+    /// Whether `snippet` passes this filter. `.tag` compares EXACTLY
+    /// (case-sensitive) — the same rule `Snippet.tags` itself stores by (see
+    /// that type's doc comment): a filter chip's tag string comes verbatim
+    /// from `SnippetTagSuggestions`, already in its stored case, so
+    /// comparing case-insensitively here could match a snippet whose tag
+    /// differs only in case from the one the chip names.
+    func matches(_ snippet: Snippet) -> Bool {
+        switch self {
+        case .all: return true
+        case .tag(let tag): return snippet.tags.contains(tag)
+        case .untagged: return snippet.tags.isEmpty
+        }
     }
+}
+
+/// Whether `SnippetsSheet` counts as "filtered" right now — used only to
+/// choose its empty-state wording: with neither the search text nor the tag
+/// filter active, an empty visible list means "No snippets yet."; with
+/// either active, it means "No matches." — the store itself is not empty,
+/// the filters just rule out everything it has (same distinction
+/// `SnippetsLoad.isUnreadable` draws for the read-failure case, one layer
+/// up).
+func snippetsAreFiltered(searchText: String, tagFilter: SnippetTagFilter) -> Bool {
+    !searchText.isEmpty || tagFilter != .all
 }

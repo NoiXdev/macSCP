@@ -799,20 +799,23 @@
 "snippets.delete.title" = "Delete this snippet?";
 "snippets.delete.confirm" = "Delete";
 "snippets.delete.error" = "Couldn't delete the snippet.";
-"snippets.runsImmediately.help" = "Runs immediately when triggered";
 "snippets.editor.titleNew" = "New Snippet";
 "snippets.editor.titleEdit" = "Edit Snippet";
 "snippets.editor.name" = "Name";
 "snippets.editor.command" = "Command";
-"snippets.editor.runsImmediately" = "Run immediately";
 "snippets.editor.credentialsNote" = "Don't put credentials here: the store is plain JSON, and a command line is visible in ps and in the shell history on the far host anyway.";
 "snippets.editor.error.multiline" = "The command can't contain a line break.";
 "snippets.editor.error.save" = "Couldn't save the snippet.";
 "snippets.load.error" = "The snippets file couldn't be read. It exists but can't be decoded — no snippet was lost, and nothing will be written over it.";
+"snippets.tags.label" = "Tags";
+"snippets.tags.placeholder" = "Add a tag…";
+"snippets.tags.createNew %@" = "Create “%@”";
+"snippets.tags.remove %@" = "Remove “%@”";
+"snippets.filter.all" = "All";
+"snippets.filter.untagged" = "No Tag";
+"snippets.filter.tagCount %1$@ %2$lld" = "%1$@ (%2$lld)";
 
 /* Terminal menu — snippets (Terminal-Snippets milestone) */
-"menu.snippets.runsImmediately" = "Runs Immediately";
-"menu.snippets.executingItem" = "%@ (runs immediately)";
 "menu.snippets.manage" = "Manage Snippets…";
 "menu.snippets.unreadable" = "Snippets Couldn't Be Read";
 "settings.shortcuts.group.snippets" = "Snippets";

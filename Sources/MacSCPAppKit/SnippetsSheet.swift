@@ -34,6 +34,9 @@ struct SnippetsSheet: View {
     @State private var selectedID: Snippet.ID?
     @State private var searchText = ""
     @State private var searchIsRegex = false
+    /// The filter row's current chip (Task 5): starts at `.all`, same as the
+    /// row itself always starts on the "All" chip.
+    @State private var tagFilter: SnippetTagFilter = .all
     @State private var editorTarget: SnippetEditorTarget?
     @State private var isShowingDeleteConfirm = false
     @State private var errorMessage: String?
@@ -69,7 +72,7 @@ struct SnippetsSheet: View {
         let (predicate, searchError) = sheetSearchPredicate(
             text: searchText, isRegex: searchIsRegex)
         let visibleSnippets = snippets.filter {
-            predicate.matches("\($0.name) \($0.command)")
+            predicate.matches("\($0.name) \($0.command)") && tagFilter.matches($0)
         }
 
         VStack(alignment: .leading, spacing: 14) {
@@ -80,6 +83,8 @@ struct SnippetsSheet: View {
             }
 
             SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
+
+            SnippetTagFilterRow(snippets: snippets, selection: $tagFilter)
                 .padding(.bottom, 4)
 
             if visibleSnippets.isEmpty {
@@ -90,9 +95,9 @@ struct SnippetsSheet: View {
                 // would be the sheet telling the user their snippets are
                 // gone when the file still holds every one of them.
                 if !load.isUnreadable {
-                    Text(searchText.isEmpty
-                        ? L10n.string("snippets.empty", "No snippets yet.")
-                        : L10n.string("snippets.noMatches", "No matches."))
+                    Text(snippetsAreFiltered(searchText: searchText, tagFilter: tagFilter)
+                        ? L10n.string("snippets.noMatches", "No matches.")
+                        : L10n.string("snippets.empty", "No snippets yet."))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .center)
                 }
@@ -139,7 +144,9 @@ struct SnippetsSheet: View {
         .frame(width: 720, height: 460)
         .onAppear { reload() }
         .sheet(item: $editorTarget) { target in
-            SnippetEditorView(existing: target.existing, store: store, onSaved: { reload() })
+            SnippetEditorView(
+                existing: target.existing, allSnippets: snippets, store: store,
+                onSaved: { reload() })
         }
         .confirmationDialog(
             L10n.string("snippets.delete.title", "Delete this snippet?"),
@@ -161,16 +168,7 @@ struct SnippetsSheet: View {
     private func row(_ snippet: Snippet) -> some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    // TEMPORARY (Terminal-Snippets, Task 1): the "runs
-                    // immediately" bolt marker read `snippet.runsImmediately`,
-                    // which no longer exists — the insert-or-execute decision
-                    // moved from the model to the trigger (see `Snippet`'s
-                    // doc comment). Task 5 decides what fills this row and
-                    // this freed space (the plan's own note: a tag field
-                    // belongs in the editor below, not necessarily here).
-                    Text(snippet.name).font(.system(size: 13))
-                }
+                Text(snippet.name).font(.system(size: 13))
                 Text(snippet.command)
                     .font(.caption)
                     .foregroundStyle(DesignTokens.inkSecondary)
@@ -219,16 +217,76 @@ struct SnippetsSheet: View {
     }
 }
 
-/// New/Edit sub-sheet: name and a single-line command. Shape mirrors
+/// The list's tag filter row (Task 5): "All", one chip per tag (with how
+/// many snippets carry it — `SnippetTagSuggestions.all(in:)`, the same
+/// ranking `SnippetTagField`'s suggestion list uses), then "No Tag" for
+/// snippets with no tags at all. Selecting a chip sets `selection`
+/// accordingly; `SnippetTagFilter`'s own single-case shape (see its doc
+/// comment) is what keeps this single-valued — there is nothing here to
+/// enforce beyond writing one case into the binding per tap.
+private struct SnippetTagFilterRow: View {
+    let snippets: [Snippet]
+    @Binding var selection: SnippetTagFilter
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                SnippetTagFilterChip(
+                    title: L10n.string("snippets.filter.all", "All"),
+                    isSelected: selection == .all,
+                    onSelect: { selection = .all })
+                ForEach(SnippetTagSuggestions.all(in: snippets), id: \.tag) { entry in
+                    SnippetTagFilterChip(
+                        title: String(
+                            format: L10n.string(
+                                "snippets.filter.tagCount %1$@ %2$lld", "%1$@ (%2$lld)"),
+                            entry.tag, entry.count),
+                        isSelected: selection == .tag(entry.tag),
+                        onSelect: { selection = .tag(entry.tag) })
+                }
+                let untaggedCount = snippets.filter { $0.tags.isEmpty }.count
+                if untaggedCount > 0 {
+                    SnippetTagFilterChip(
+                        title: String(
+                            format: L10n.string(
+                                "snippets.filter.tagCount %1$@ %2$lld", "%1$@ (%2$lld)"),
+                            L10n.string("snippets.filter.untagged", "No Tag"), untaggedCount),
+                        isSelected: selection == .untagged,
+                        onSelect: { selection = .untagged })
+                }
+            }
+        }
+    }
+}
+
+private struct SnippetTagFilterChip: View {
+    let title: String
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            Text(title)
+                .font(.system(size: 11.5))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(
+                    isSelected ? DesignTokens.remoteSoft : Color.clear, in: Capsule()
+                )
+                .overlay(
+                    Capsule().strokeBorder(
+                        isSelected ? Color.clear : DesignTokens.hairline, lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// New/Edit sub-sheet: name, a single-line command, and tags. Shape mirrors
 /// `SSHKeysSheet.RenameKeySheet` — it threads the store straight through and
 /// owns its own save/error/dismiss cycle, since there is no view model
 /// between this sheet and `SnippetStore` the way `LoginSetsSheet` has
 /// `SessionListViewModel`.
-///
-/// TEMPORARY (Terminal-Snippets, Task 1): this used to also carry a "Run
-/// immediately" toggle; it is gone along with `Snippet.runsImmediately`
-/// (see `Snippet`'s doc comment). Task 5 decides what, if anything, fills
-/// the freed space — the plan calls for a tag field there.
 ///
 /// `Snippet.init?` is failable and refuses a `command` containing `\n` or
 /// `\r` (see its own doc comment). This view does not re-check that rule
@@ -236,25 +294,33 @@ struct SnippetsSheet: View {
 /// surfaces a `nil` result as an inline error.
 private struct SnippetEditorView: View {
     let existing: Snippet?
+    /// The sheet's already-loaded list, passed straight through (Task 5)
+    /// rather than re-read here: it is what `SnippetTagSuggestions` needs to
+    /// suggest existing tags, and `SnippetsSheet` already has it as its own
+    /// `SnippetsLoad` outcome — reading the store a second time here would
+    /// be a second, independent read that could disagree with the parent's
+    /// (e.g. if the file changed between the two reads).
+    let allSnippets: [Snippet]
     let store: SnippetStore
     let onSaved: () -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
     @State private var command: String
+    @State private var tags: [String]
     @State private var errorMessage: String?
 
-    // TEMPORARY (Terminal-Snippets, Task 1): this editor used to carry a
-    // `runsImmediately` toggle bound to the now-removed `Snippet` flag (see
-    // `Snippet`'s doc comment — the decision moved to the trigger). Task 5
-    // decides what, if anything, fills the freed space (the plan calls for
-    // a tag field there).
-    init(existing: Snippet?, store: SnippetStore, onSaved: @escaping () -> Void) {
+    init(
+        existing: Snippet?, allSnippets: [Snippet], store: SnippetStore,
+        onSaved: @escaping () -> Void
+    ) {
         self.existing = existing
+        self.allSnippets = allSnippets
         self.store = store
         self.onSaved = onSaved
         _name = State(initialValue: existing?.name ?? "")
         _command = State(initialValue: existing?.command ?? "")
+        _tags = State(initialValue: existing?.tags ?? [])
     }
 
     private var isEditing: Bool { existing != nil }
@@ -282,6 +348,9 @@ private struct SnippetEditorView: View {
             let commandLabel = L10n.string("snippets.editor.command", "Command")
             FormRow(label: commandLabel) {
                 TextField(commandLabel, text: $command, prompt: Text(verbatim: ""))
+            }
+            FormRow(label: L10n.string("snippets.tags.label", "Tags")) {
+                SnippetTagField(tags: $tags, suggestions: tagSuggestions)
             }
             // Credentials note (Terminal-Snippets design doc, "Snippets
             // enthalten keine Zugangsdaten"): the reason, not a bare
@@ -314,11 +383,19 @@ private struct SnippetEditorView: View {
         .textFieldStyle(.roundedBorder)
     }
 
+    /// Built from `allSnippets`/`tags` on every call rather than cached —
+    /// `SnippetTagField` calls this fresh on every keystroke anyway (see its
+    /// doc comment), so there is no separate "is this stale" question to
+    /// answer.
+    private func tagSuggestions(for query: String) -> [(tag: String, count: Int)] {
+        SnippetTagSuggestions.matching(query, in: allSnippets, excluding: tags)
+    }
+
     private func save() {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let snippet = Snippet(
             id: existing?.id ?? UUID(), name: trimmedName, command: command,
-            tags: existing?.tags ?? [])
+            tags: tags)
         else {
             errorMessage = L10n.string(
                 "snippets.editor.error.multiline", "The command can't contain a line break.")
