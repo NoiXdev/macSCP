@@ -179,6 +179,7 @@
 /* Terminal-Panel */
 "terminal.ended" = "Shell beendet.";
 "terminal.reopen" = "Neu öffnen";
+"terminal.snippets.button" = "Snippets";
 
 /* Remote-Dateitabelle: Spalten */
 "filetable.column.name" = "Name";

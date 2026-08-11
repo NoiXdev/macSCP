@@ -510,35 +510,181 @@ extension ContentView {
         .id(tab.id)
     }
 
-    /// Panel content: terminal while the shell is running, otherwise an
+    /// Panel content: a narrow header (host name + snippet picker, Task 8)
+    /// above the terminal itself, which shows the running shell or an
     /// ended/empty state. `SSHTerminalView` is deliberately mounted only
     /// while the shell is active, so `onOutput` binds fresh on every reopen.
+    ///
+    /// The header is drawn for every `state` case below, INCLUDING
+    /// `.closed` — deliberately no second, narrower check here. Whether
+    /// there is a terminal to show a header for is already decided once, by
+    /// the caller in `detail` (`if session.terminal.isVisible { terminalPanel(session) … }`);
+    /// this function only ever runs under that same condition, so reusing
+    /// it (by drawing the header unconditionally inside here) cannot drift
+    /// from it the way a second, independent check inside this `switch`
+    /// could. `.closed` while `isVisible` is `true` does not actually occur
+    /// today — `TerminalPanelViewModel.toggle()`/`ContentView.triggerSnippet`
+    /// both drive `state` out of `.closed` in the same synchronous step
+    /// that sets `isVisible = true`, before SwiftUI gets a chance to render
+    /// the in-between state — but this function does not rely on that: it
+    /// would still be correct (header shown, blank content below it) even if
+    /// that ever changed. A shell-less backend (S3/WebDAV) never reaches
+    /// this function at all — `toggleTerminal`/`triggerSnippet` both refuse
+    /// to set `isVisible` for one (see `ContentView.presentTerminalUnavailable`)
+    /// — so its absence here follows the identical rule, not a special case.
     @ViewBuilder
     func terminalPanel(_ session: BrowserSession) -> some View {
-        ZStack {
-            Color(nsColor: DesignTokens.terminalBackground)
-            switch session.terminal.state {
-            case .running, .opening:
-                SSHTerminalView(viewModel: session.terminal, settingsStore: settingsStore)
-            case .ended(let message):
-                VStack(spacing: 8) {
-                    Text(message ?? L10n.string("terminal.ended", "Shell ended."))
-                        .font(.system(size: 12))
-                        .foregroundStyle(Color(nsColor: DesignTokens.terminalText))
-                    Button(L10n.string("terminal.reopen", "Reopen")) { session.terminal.openIfNeeded() }
+        VStack(spacing: 0) {
+            TerminalPanelHeader(
+                hostTitle: activeTab.displayTitle,
+                snippets: tabCommands.snippetsLoad.snippets,
+                supportsShell: activeTabSupportsShell,
+                onRunSnippet: { snippet, execute in triggerSnippet(snippet, execute: execute) }
+            )
+            ZStack {
+                Color(nsColor: DesignTokens.terminalBackground)
+                switch session.terminal.state {
+                case .running, .opening:
+                    SSHTerminalView(viewModel: session.terminal, settingsStore: settingsStore)
+                case .ended(let message):
+                    VStack(spacing: 8) {
+                        Text(message ?? L10n.string("terminal.ended", "Shell ended."))
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color(nsColor: DesignTokens.terminalText))
+                        Button(L10n.string("terminal.reopen", "Reopen")) { session.terminal.openIfNeeded() }
+                    }
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 14)
+                case .closed:
+                    Color.clear
                 }
-                .padding(.vertical, 8)
-                .padding(.horizontal, 14)
-            case .closed:
-                Color.clear
             }
         }
-        // Mockup: the terminal strip carries a hairline top border.
+        // Mockup: the terminal strip carries a hairline top border — the top
+        // of the WHOLE strip (header + terminal), same boundary against the
+        // browser panes above it as before the header existed.
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(DesignTokens.hairline)
                 .frame(height: 1)
                 .allowsHitTesting(false)
         }
+    }
+}
+
+/// The terminal panel's header row (Terminal-Snippets milestone, Task 8):
+/// the connected tab's display name on the left, a snippet picker on the
+/// right. Exists solely because the picker's popover needs somewhere to
+/// open FROM — `terminalPanel(_:)` decides WHEN this view is shown at all
+/// (see that function's own doc comment); this view only draws it.
+///
+/// Untested: this is view code with no dedicated view-testing tool in this
+/// project (the same boundary `SnippetMenuItems` and `SnippetsSheet`
+/// already document) — no test renders this body, opens the popover, or
+/// clicks the button. What IS tested is the one new decision it makes
+/// beyond what `SnippetMenuItems`/`SnippetMenuModel` already own: which
+/// snippets the search narrows the list to — `TerminalSnippetSearch`, below.
+private struct TerminalPanelHeader: View {
+    /// The active tab's display name (`SessionTab.displayTitle`) — the same
+    /// text the window title and tab strip already show for this tab.
+    let hostTitle: String
+    /// The window's saved snippets, in store order — the same list
+    /// `MacSCPApp`'s Terminal menu (Task 6) and `SessionSidebar`'s row
+    /// submenu (Task 7) read. This view narrows it by search text (see
+    /// `TerminalSnippetSearch`) and hands the NARROWED list to
+    /// `SnippetMenuModel.build` — grouping, untagged-last, and the disabled
+    /// reason all stay derived from `SnippetMenuModel`, never re-decided
+    /// here.
+    let snippets: [Snippet]
+    /// Whether the active tab's backend has a shell at all (S3/WebDAV never
+    /// do). There is no separate `isConnected` parameter: this view only
+    /// ever exists while `terminalPanel(_:)` is on screen, which only
+    /// happens for a tab that IS connected (see that function's doc
+    /// comment), so `SnippetMenuModel.build` below is called with
+    /// `isConnected: true` as a structural fact — the same literal
+    /// `SessionRowSnippetMenuPlan.build`'s `.active` case passes for the
+    /// identical reason.
+    let supportsShell: Bool
+    let onRunSnippet: (Snippet, Bool) -> Void
+
+    @State private var isSnippetPopoverPresented = false
+    @State private var searchText = ""
+    @State private var searchIsRegex = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(hostTitle)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color(nsColor: DesignTokens.terminalText))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 8)
+            Button {
+                isSnippetPopoverPresented = true
+            } label: {
+                Image(systemName: "chevron.left.forwardslash.chevron.right")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color(nsColor: DesignTokens.terminalText))
+            .help(L10n.string("terminal.snippets.button", "Snippets"))
+            .popover(isPresented: $isSnippetPopoverPresented) {
+                snippetPopover
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color(nsColor: DesignTokens.terminalBackground))
+    }
+
+    @ViewBuilder
+    private var snippetPopover: some View {
+        let (predicate, searchError) = sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)
+        let visibleSnippets = TerminalSnippetSearch.matching(snippets, predicate: predicate)
+        let model = SnippetMenuModel.build(
+            snippets: visibleSnippets, isConnected: true, supportsShell: supportsShell)
+        VStack(alignment: .leading, spacing: 8) {
+            SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
+            if model.isEmpty {
+                Text(searchText.isEmpty
+                    ? L10n.string("snippets.empty", "No snippets yet.")
+                    : L10n.string("snippets.noMatches", "No matches."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 6)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        SnippetMenuItems(model: model) { snippet, execute in
+                            onRunSnippet(snippet, execute)
+                            isSnippetPopoverPresented = false
+                        }
+                    }
+                }
+                .frame(maxHeight: 240)
+            }
+        }
+        .padding(12)
+        .frame(width: 280)
+    }
+}
+
+/// Narrows the terminal header popover's snippet list to a search predicate
+/// BEFORE handing the result to `SnippetMenuModel.build` (Task 8) — pulled
+/// out of `TerminalPanelHeader` so it is a plain function
+/// `Tests/macSCPAppKitTests/` can call directly. This is the one new
+/// decision the popover makes that `SnippetMenuItemsTests`/
+/// `SnippetMenuModelTests` do not already cover; everything downstream of
+/// its result (grouping, untagged-last, disabled reason) is
+/// `SnippetMenuModel`'s, unchanged.
+///
+/// Matches on "name command" — the same two fields `SnippetsSheet`'s own
+/// inline search filters on — so a snippet findable in the management sheet
+/// is findable here too.
+enum TerminalSnippetSearch {
+    static func matching(
+        _ snippets: [Snippet], predicate: FileSearch.FileSearchPredicate
+    ) -> [Snippet] {
+        snippets.filter { predicate.matches("\($0.name) \($0.command)") }
     }
 }

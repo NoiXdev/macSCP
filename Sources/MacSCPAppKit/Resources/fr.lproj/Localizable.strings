@@ -181,6 +181,7 @@
 /* Panneau du terminal */
 "terminal.ended" = "Shell terminé.";
 "terminal.reopen" = "Rouvrir";
+"terminal.snippets.button" = "Snippets";
 
 /* Colonnes du tableau de fichiers distant */
 "filetable.column.name" = "Nom";

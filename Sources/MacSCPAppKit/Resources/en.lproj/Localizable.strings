@@ -179,6 +179,7 @@
 /* Terminal panel */
 "terminal.ended" = "Shell ended.";
 "terminal.reopen" = "Reopen";
+"terminal.snippets.button" = "Snippets";
 
 /* Remote file table columns */
 "filetable.column.name" = "Name";

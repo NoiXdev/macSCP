@@ -181,6 +181,7 @@
 /* Panel terminala */
 "terminal.ended" = "Powłoka zakończona.";
 "terminal.reopen" = "Otwórz ponownie";
+"terminal.snippets.button" = "Fragmenty";
 
 /* Kolumny tabeli plików zdalnych */
 "filetable.column.name" = "Nazwa";
