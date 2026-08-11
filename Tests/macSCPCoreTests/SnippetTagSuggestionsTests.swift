@@ -74,4 +74,41 @@ struct SnippetTagSuggestionsTests {
 
         #expect(all.map(\.tag) == ["apple", "Banana", "cherry"])
     }
+
+    /// The exclusion is case-insensitive too, not just the prefix search: a
+    /// tag already on the snippet being edited (`docker`) must not be
+    /// offered back in a different case (`Docker`, carried by another
+    /// snippet) — offering it would let the user add both to the same
+    /// snippet, the exact near-twin this type exists to prevent.
+    /// `aTagAlreadyTakenIsNotOffered` above only exercises the exact-case
+    /// pair, which a regression to a plain `taken.contains(tag)` would still
+    /// pass; this test is the one that isolates the case-insensitive branch.
+    @Test func aTagTakenInADifferentCaseIsNotOffered() throws {
+        let snippets = [
+            try #require(Snippet(name: "a", command: "c", tags: ["docker"])),
+            try #require(Snippet(name: "b", command: "c", tags: ["Docker"])),
+        ]
+
+        let matches = SnippetTagSuggestions.matching("doc", in: snippets, excluding: ["docker"])
+
+        #expect(matches.isEmpty)
+    }
+
+    /// Differently-cased tags are counted (and offered) as separate entries,
+    /// never merged into one — that separateness is exactly what makes
+    /// `Docker` and `docker` two choices to begin with, matching
+    /// `Snippet`'s case-preserving storage. No other test exercises `all`
+    /// with the same tag in two cases across snippets, so a regression that
+    /// merged counts by a lowercased key would otherwise go unnoticed.
+    @Test func differentlyCasedTagsAreCountedSeparately() throws {
+        let snippets = [
+            try #require(Snippet(name: "a", command: "c", tags: ["Docker"])),
+            try #require(Snippet(name: "b", command: "c", tags: ["docker"])),
+        ]
+
+        let all = SnippetTagSuggestions.all(in: snippets)
+
+        #expect(Set(all.map(\.tag)) == ["Docker", "docker"])
+        #expect(all.allSatisfy { $0.count == 1 })
+    }
 }
