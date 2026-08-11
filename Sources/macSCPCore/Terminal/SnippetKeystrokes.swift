@@ -31,25 +31,26 @@ public enum SnippetKeystrokes {
     /// terminator was measured rather than guessed — not a claim measured
     /// against this app's remote shells.
     ///
-    /// TEMPORARY (Terminal-Snippets, Task 1): unused for now. The
-    /// immediate-execution decision used to live on `Snippet.runsImmediately`
-    /// and has been removed from the model (see `Snippet`'s doc comment) —
-    /// the maintainer's call is that the decision belongs at the trigger,
-    /// where the host is visible, not at snippet-creation time. Nothing yet
-    /// re-attaches that decision here, so `bytes(for:)` below always inserts.
-    /// A later task reintroduces it as an explicit parameter and starts
-    /// appending this byte again.
+    /// The immediate-execution decision used to live on the now-removed
+    /// `Snippet.runsImmediately` (see `Snippet`'s doc comment) — the
+    /// maintainer's call is that the decision belongs at the trigger, where
+    /// the host is visible, not at snippet-creation time. `bytes(for:execute:)`
+    /// below carries that decision as an explicit parameter and appends this
+    /// byte only when the caller asks for it.
     private static let terminator: UInt8 = 0x0D
 
-    /// The keystrokes for `snippet`: its command as UTF-8.
+    /// The keystrokes for `snippet`: its command as UTF-8, followed by
+    /// `terminator` only when `execute` is `true`.
     ///
-    /// TEMPORARY (Terminal-Snippets, Task 1): never appends a terminator.
-    /// This used to append `terminator` when the snippet's now-removed
-    /// `runsImmediately` flag was set; with that flag gone from the model,
-    /// every snippet inserts — the text lands in the input line and waits
-    /// for the user to press Return. A later task gives this function back
-    /// the ability to execute, driven by the trigger rather than the model.
-    public static func bytes(for snippet: Snippet) -> [UInt8] {
-        Array(snippet.command.utf8)
+    /// Inserting (`execute: false`) never appends a terminator, whatever else
+    /// changes here — the text lands in the input line exactly as if typed,
+    /// and the user still presses Return. That guarantee is asserted once, at
+    /// this seam, rather than at each surface that calls it.
+    public static func bytes(for snippet: Snippet, execute: Bool) -> [UInt8] {
+        var bytes = Array(snippet.command.utf8)
+        if execute {
+            bytes.append(terminator)
+        }
+        return bytes
     }
 }

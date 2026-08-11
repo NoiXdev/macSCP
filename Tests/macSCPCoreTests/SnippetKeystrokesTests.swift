@@ -5,33 +5,21 @@ import Testing
 
 @Suite("SnippetKeystrokes")
 struct SnippetKeystrokesTests {
-    /// Every snippet lands in the input line and waits: the user still
-    /// presses Return. Nothing may be appended.
-    ///
-    /// TEMPORARY (Terminal-Snippets, Task 1): this used to hold only for an
-    /// inserting snippet, distinguished from an executing one by the
-    /// now-removed `Snippet.runsImmediately`. With that flag gone from the
-    /// model, `bytes(for:)` never appends a terminator for ANY snippet —
-    /// see its doc comment. Task 2 reintroduces the distinction as an
-    /// explicit `execute` parameter and restores this test's original,
-    /// narrower name and scope.
+    /// Inserting (`execute: false`) lands the command in the input line and
+    /// waits: the user still presses Return. Nothing may be appended.
     @Test func aSnippetEndsWithoutATerminator() throws {
         let snippet = try #require(Snippet(name: "Disk", command: "df -h"))
 
-        #expect(SnippetKeystrokes.bytes(for: snippet) == Array("df -h".utf8))
+        #expect(SnippetKeystrokes.bytes(for: snippet, execute: false) == Array("df -h".utf8))
     }
 
-    /// Dormant: `bytes(for:)` currently has no way to produce an executing
-    /// snippet's bytes (see `aSnippetEndsWithoutATerminator`'s doc comment),
-    /// so this cannot pass today. Left disabled rather than deleted because
-    /// the assertion it makes — exactly one terminator, not two — is the one
-    /// Task 2 must restore. See `theTerminatorIsCarriageReturn` for which
-    /// byte that is and where the value was measured.
-    @Test(.disabled("Dormant until Task 2 reintroduces bytes(for:execute:)."))
-    func anExecutingSnippetAppendsExactlyOneTerminator() throws {
+    /// Executing (`execute: true`) appends exactly one terminator — see
+    /// `theTerminatorIsCarriageReturn` for which byte that is and where the
+    /// value was measured.
+    @Test func anExecutingSnippetAppendsExactlyOneTerminator() throws {
         let snippet = try #require(Snippet(name: "Disk", command: "df -h"))
 
-        let bytes = SnippetKeystrokes.bytes(for: snippet)
+        let bytes = SnippetKeystrokes.bytes(for: snippet, execute: true)
 
         #expect(bytes.dropLast() == ArraySlice("df -h".utf8))
         #expect(bytes.count == Array("df -h".utf8).count + 1)
@@ -41,7 +29,7 @@ struct SnippetKeystrokesTests {
     @Test func nonASCIICommandsAreEncodedAsUTF8() throws {
         let snippet = try #require(Snippet(name: "Echo", command: "echo Grüße"))
 
-        #expect(SnippetKeystrokes.bytes(for: snippet) == Array("echo Grüße".utf8))
+        #expect(SnippetKeystrokes.bytes(for: snippet, execute: false) == Array("echo Grüße".utf8))
     }
 
     /// The measured terminator: **CR (`0x0D`), never LF**.
@@ -63,8 +51,8 @@ struct SnippetKeystrokesTests {
     ///    selector with `send(EscapeSequences.cmdRet)`.
     /// 3. `EscapeSequences.cmdRet` is `[13]` — a single CR, no LF.
     ///
-    /// Cross-checks, because the wrong byte would make a `runsImmediately`
-    /// snippet silently do nothing:
+    /// Cross-checks, because the wrong byte would make an executing snippet
+    /// silently do nothing:
     ///
     /// - SwiftTerm also defines `EscapeSequences.cmdNewLine` (`[10]`, LF),
     ///   and no code in the library references it. LF is a byte the library
@@ -94,17 +82,42 @@ struct SnippetKeystrokesTests {
     /// report-all-keys mode is not what snippets target. If that ever changes,
     /// the terminator has to become mode-aware, and this comment is the
     /// warning.
-    ///
-    /// Dormant (Terminal-Snippets, Task 1): `bytes(for:)` cannot currently
-    /// produce a terminator for any snippet (see `aSnippetEndsWithoutATerminator`),
-    /// so this assertion cannot pass today. Disabled rather than deleted —
-    /// the measurement above is the evidence trail `SnippetKeystrokes.terminator`'s
-    /// doc comment still points to, and Task 2 is expected to re-enable this
-    /// exact test once `bytes(for:execute:)` exists.
-    @Test(.disabled("Dormant until Task 2 reintroduces bytes(for:execute:)."))
-    func theTerminatorIsCarriageReturn() throws {
+    @Test func theTerminatorIsCarriageReturn() throws {
         let snippet = try #require(Snippet(name: "Disk", command: "df -h"))
 
-        #expect(SnippetKeystrokes.bytes(for: snippet).last == 0x0D)
+        #expect(SnippetKeystrokes.bytes(for: snippet, execute: true).last == 0x0D)
+    }
+
+    /// Inserting never appends a terminator — that is the whole difference
+    /// between putting text in the input line and running it on the far host.
+    /// This holds for every caller, which is why it is asserted here and not
+    /// left to the four trigger surfaces.
+    @Test func insertingNeverAppendsATerminator() throws {
+        let snippet = try #require(Snippet(name: "n", command: "uptime"))
+
+        let bytes = SnippetKeystrokes.bytes(for: snippet, execute: false)
+
+        #expect(bytes == Array("uptime".utf8))
+    }
+
+    /// Executing appends exactly one carriage return — not zero, not two.
+    @Test func executingAppendsExactlyOneCarriageReturn() throws {
+        let snippet = try #require(Snippet(name: "n", command: "uptime"))
+
+        let bytes = SnippetKeystrokes.bytes(for: snippet, execute: true)
+
+        #expect(bytes == Array("uptime".utf8) + [0x0D])
+    }
+
+    /// The two differ in exactly one byte — a regression that made them equal
+    /// would otherwise pass whichever of the two tests above still matched.
+    @Test func theTwoCallsDifferByTheTerminatorAlone() throws {
+        let snippet = try #require(Snippet(name: "n", command: "df -h"))
+
+        let inserted = SnippetKeystrokes.bytes(for: snippet, execute: false)
+        let executed = SnippetKeystrokes.bytes(for: snippet, execute: true)
+
+        #expect(executed.count == inserted.count + 1)
+        #expect(Array(executed.dropLast()) == inserted)
     }
 }

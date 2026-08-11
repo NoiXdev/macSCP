@@ -542,7 +542,7 @@ struct ContentView: View {
         guard let terminal = activeTab.session?.terminal else { return }
         terminal.isVisible = true
         terminal.openIfNeeded()
-        terminal.send(SnippetKeystrokes.bytes(for: snippet))
+        terminal.send(SnippetKeystrokes.bytes(for: snippet, execute: false))
     }
 
     /// Title for the update-check result alert (M11b/T2, spec §4) — one per
