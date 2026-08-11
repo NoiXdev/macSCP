@@ -513,7 +513,9 @@ extension ContentView {
     /// Panel content: a narrow header (host name + snippet picker, Task 8)
     /// above the terminal itself, which shows the running shell or an
     /// ended/empty state. `SSHTerminalView` is deliberately mounted only
-    /// while the shell is active, so `onOutput` binds fresh on every reopen.
+    /// while the shell is active, so `onOutput` binds fresh on every reopen —
+    /// and, since Task 9, so is the right-click menu it carries: the
+    /// surface only offers snippets while there is a shell to send them to.
     ///
     /// The header is drawn for every `state` case below, INCLUDING
     /// `.closed` — deliberately no second, narrower check here. Whether
@@ -545,7 +547,21 @@ extension ContentView {
                 Color(nsColor: DesignTokens.terminalBackground)
                 switch session.terminal.state {
                 case .running, .opening:
-                    SSHTerminalView(viewModel: session.terminal, settingsStore: settingsStore)
+                    SSHTerminalView(
+                        viewModel: session.terminal,
+                        settingsStore: settingsStore,
+                        // Same list and the same two structural literals the
+                        // header above passes (see `TerminalPanelHeader`),
+                        // minus its search narrowing: a right-click is not a
+                        // search, so the right-click menu always offers all
+                        // of them.
+                        snippetMenu: SnippetMenuModel.build(
+                            snippets: tabCommands.snippetsLoad.snippets,
+                            isConnected: true,
+                            supportsShell: activeTabSupportsShell),
+                        onRunSnippet: { snippet, execute in
+                            triggerSnippet(snippet, execute: execute)
+                        })
                 case .ended(let message):
                     VStack(spacing: 8) {
                         Text(message ?? L10n.string("terminal.ended", "Shell ended."))

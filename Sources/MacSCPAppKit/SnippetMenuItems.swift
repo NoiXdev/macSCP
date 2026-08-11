@@ -81,29 +81,44 @@ enum SnippetMenuPlan {
 /// (see `SnippetKeystrokes.bytes(for:execute:)`'s doc comment), so both are
 /// always present and `action`'s second parameter carries which one fired.
 ///
-/// This is the SAME view the Terminal menu (this task), a session's context
-/// menu, the terminal panel's header popover, and the terminal's right-click
-/// menu (Tasks 7/8) all instantiate — the whole reason `SnippetMenuModel`
-/// exists in Core is so those four surfaces read one computed shape instead
-/// of four hand-guessed ones; this view is the other half of that promise,
-/// the one place their entries are drawn.
+/// This is the SAME view the Terminal menu (Task 6), a session's context
+/// menu (Task 7), the terminal panel's header popover (Task 8), and the
+/// terminal's right-click menu (Task 9) all instantiate — the whole reason
+/// `SnippetMenuModel` exists in Core is so those four surfaces read one
+/// computed shape instead of four hand-guessed ones; this view is the other
+/// half of that promise, the one place their entries are drawn.
 ///
-/// Untested: this is view code with no dedicated view-testing tool in this
-/// project (a pixel harness exists but only sees pure SwiftUI, never
-/// AppKit-backed menu content) — the same boundary `SnippetsSheet`'s own doc
-/// comment already documents. What IS tested is the decision this view
-/// renders: `SnippetMenuPlan`, above.
+/// Partly tested. The decision this view renders — which entry is disabled,
+/// which carries the ⌃⌘n shortcut — lives in `SnippetMenuPlan` above and is
+/// asserted directly. The BODY was untestable until Task 9: the pixel
+/// harness only sees pure SwiftUI, never AppKit-backed menu content (the
+/// same boundary `SnippetsSheet`'s doc comment documents). Task 9's
+/// `NSHostingMenu` route turns this body into a real `NSMenu` in-process, so
+/// `TerminalContextMenuTests` now asserts the rendered structure (a submenu
+/// per tag, Insert/Execute per snippet, which flag each one passes) for the
+/// no-shortcut configuration the right-click menu uses. Still unasserted:
+/// how the ⌃⌘n key equivalent behaves once attached, and anything about
+/// on-screen drawing.
 struct SnippetMenuItems: View {
     let model: SnippetMenuModel
     /// Snippets in STORE order — see `SnippetMenuPlan.build`'s doc comment
     /// for why this must not be `model`'s own tag-sorted order. Defaults to
     /// `[]`: only the Terminal menu (Task 6) passes the real store order.
     var shortcutOrder: [Snippet] = []
+    /// Whether to draw a separator ABOVE the entries. It separates them from
+    /// whatever the host surface already put there — the Terminal menu's own
+    /// items, a session row's other context-menu entries, the header
+    /// popover's search field — so it defaults to `true`. Pass `false` where
+    /// these entries are the ENTIRE menu (the terminal's right-click menu,
+    /// Task 9): a separator with nothing above it is a stray line at the top
+    /// of the popup, measured as a real leading `NSMenuItem.isSeparatorItem`
+    /// in `TerminalContextMenuTests`, not a guess about how AppKit draws it.
+    var leadingDivider: Bool = true
     let action: (Snippet, Bool) -> Void
 
     var body: some View {
         let groups = SnippetMenuPlan.build(model: model, shortcutOrder: shortcutOrder)
-        if !groups.isEmpty {
+        if leadingDivider, !groups.isEmpty {
             Divider()
         }
         ForEach(groups) { group in

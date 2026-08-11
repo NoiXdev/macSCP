@@ -11,6 +11,14 @@ struct SSHTerminalView: NSViewRepresentable {
     /// Terminal appearance settings (M9d): font family/size and cursor
     /// style/blink, applied in `makeNSView` and kept live in `updateNSView`.
     let settingsStore: SettingsStore
+    /// The snippets offered by right-clicking the terminal surface (Task 9)
+    /// — the same model the panel's header popover renders, built by the
+    /// caller so this view never reaches for a store of its own.
+    let snippetMenu: SnippetMenuModel
+    /// What an entry of that menu does. Held by the coordinator rather than
+    /// captured into the menu, so a menu built for an older render still
+    /// calls the closure of the CURRENT one.
+    let onRunSnippet: (Snippet, Bool) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(viewModel: viewModel)
@@ -35,6 +43,9 @@ struct SSHTerminalView: NSViewRepresentable {
         // needed.
         terminal.getTerminal().setCursorStyle(cursorStyle)
         context.coordinator.appliedCursorStyle = cursorStyle
+
+        context.coordinator.onRunSnippet = onRunSnippet
+        Self.attachSnippetMenu(to: terminal, model: snippetMenu, coordinator: context.coordinator)
 
         viewModel.onOutput = { [weak terminal] bytes in
             terminal?.feed(byteArray: bytes[...])
@@ -74,6 +85,57 @@ struct SSHTerminalView: NSViewRepresentable {
             terminal.getTerminal().setCursorStyle(desiredCursorStyle)
             context.coordinator.appliedCursorStyle = desiredCursorStyle
         }
+
+        // Refreshed on EVERY render, deliberately: rebuilding the menu is
+        // gated on the model below, so this is what keeps an already-built
+        // menu calling the current closure instead of a captured stale one.
+        context.coordinator.onRunSnippet = onRunSnippet
+        if context.coordinator.appliedSnippetMenu != snippetMenu {
+            Self.attachSnippetMenu(
+                to: terminal, model: snippetMenu, coordinator: context.coordinator)
+        }
+    }
+
+    /// Builds the right-click menu for `model` and attaches it, recording on
+    /// the coordinator which model it was built from.
+    @MainActor
+    private static func attachSnippetMenu(
+        to terminal: TerminalView, model: SnippetMenuModel, coordinator: Coordinator
+    ) {
+        terminal.menu = snippetContextMenu(model: model) {
+            [weak coordinator] snippet, execute in
+            coordinator?.onRunSnippet?(snippet, execute)
+        }
+        coordinator.appliedSnippetMenu = model
+    }
+
+    /// The terminal surface's right-click menu, or `nil` when there is
+    /// nothing to offer.
+    ///
+    /// Why an `NSMenu` on the hosted view rather than a SwiftUI
+    /// `.contextMenu`: what a right-click on this surface resolves to was
+    /// MEASURED (`TerminalContextMenuTests`), and only this route could be
+    /// measured. SwiftTerm's `TerminalView` inherits `rightMouseDown(with:)`,
+    /// `menu(for:)` and the `menu` property straight from `NSView` — it
+    /// overrides none of them — and a `TerminalView` asked for the menu of a
+    /// right-mouse-down event hands back exactly the `NSMenu` set on it.
+    /// `NSHostingMenu` is what keeps this a WIRING of `SnippetMenuItems`
+    /// rather than a second, hand-built copy of its entries: the same
+    /// SwiftUI view the other three trigger surfaces render becomes the
+    /// `NSMenu`'s items.
+    ///
+    /// `nil` for an empty model — an `NSHostingMenu` over an empty
+    /// `SnippetMenuModel` carries zero items (measured), and attaching an
+    /// empty menu would answer a right-click with an empty popup. With no
+    /// menu attached the surface behaves exactly as it did before this
+    /// existed, which for the right mouse button is: nothing at all.
+    @MainActor
+    static func snippetContextMenu(
+        model: SnippetMenuModel, action: @escaping (Snippet, Bool) -> Void
+    ) -> NSMenu? {
+        guard !model.isEmpty else { return nil }
+        return NSHostingMenu(
+            rootView: SnippetMenuItems(model: model, leadingDivider: false, action: action))
     }
 
     /// Resolves the configured terminal font: a custom font by its
@@ -111,6 +173,14 @@ struct SSHTerminalView: NSViewRepresentable {
         /// SwiftUI re-render doesn't reissue `setCursorStyle` (and restart
         /// the blink animation) when nothing actually changed.
         var appliedCursorStyle: CursorStyle?
+        /// Model the attached right-click menu was built from (Task 9) —
+        /// compared in `updateNSView` so a routine SwiftUI re-render does
+        /// not throw away a menu the user may have open right now.
+        var appliedSnippetMenu: SnippetMenuModel?
+        /// Set on every render; read by the attached menu when an entry
+        /// fires. Optional only because the coordinator is created before
+        /// the first render hands one over.
+        var onRunSnippet: ((Snippet, Bool) -> Void)?
 
         init(viewModel: TerminalPanelViewModel) {
             self.viewModel = viewModel
