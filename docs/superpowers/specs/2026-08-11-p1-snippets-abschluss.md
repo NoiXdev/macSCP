@@ -265,10 +265,22 @@ jeweiligen Task-Umfangs lag:
    eigenen Doc-Kommentar.
 4. **`SnippetMenuItems` rendert einen führenden `Divider()` per Default,
    sobald es Gruppen hat.** In der Menüleiste sinnvoll (trennt von den
-   bestehenden Terminal-Einträgen darüber); im Host-Kontextmenü-Untermenü
-   (Task 7) ist er die erste Zeile — ein kosmetischer Artefakt, seit Task 9
-   über den `leadingDivider`-Parameter grundsätzlich abschaltbar (genutzt vom
-   Rechtsklick), aber in Task 7s Sidebar-Untermenü nicht abgeschaltet.
+   bestehenden Terminal-Einträgen darüber). Betroffen sind aber ZWEI Flächen,
+   nicht nur eine: im Host-Kontextmenü-Untermenü (Task 7) ist er die erste
+   Zeile des Untermenüs, und in der Terminal-Kopfzeilen-Popover
+   (`TerminalPanelHeader.snippetPopover`, Task 8) zieht `SnippetMenuItems`
+   dort ebenfalls den Default `leadingDivider: true`, sodass die Zeile direkt
+   unter dem Suchfeld eine Trennlinie zieht — seit Task 9 über den
+   `leadingDivider`-Parameter grundsätzlich abschaltbar (genutzt vom
+   Rechtsklick), in Task 7 UND Task 8 aber ursprünglich nicht abgeschaltet.
+   **Nachtrag (Review-Fixrunde, siehe `final-fix-report.md`):** in Task 7s
+   Sidebar-Untermenü behoben (`leadingDivider: false`) — dort ist die
+   Trennlinie reiner Kopf-Artefakt, nichts steht in diesem Untermenü darüber.
+   In Task 8s Popover bewusst NICHT angetastet: dort trennt die Linie
+   tatsächlich das Suchfeld von der Ergebnisliste, ist also kein Artefakt
+   ohne Bezugspunkt, sondern eine plausible visuelle Trennung — eine
+   Geschmacksfrage, keine der drei feststehenden Musterantworten dieser
+   Phase, deshalb unverändert gelassen statt geraten.
 5. **Die offene Sichtprüfung aus Task 9** (Abschnitt 5/7): dass AppKit das
    Rechtsklick-Menü wirklich zeigt.
 

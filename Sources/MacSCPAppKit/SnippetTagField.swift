@@ -93,10 +93,17 @@ enum SnippetTagFieldHighlight {
     /// `index` pulled back into `0..<rowCount`, or `nil` when `rowCount` is
     /// `0` (nothing to highlight — `SnippetTagField` never calls
     /// `rows[highlighted]` in that case, since Return's handler already
-    /// guards on `highlighted != nil`).
+    /// guards on `highlighted != nil`). Clamped on BOTH ends: `min` pulls an
+    /// index past the end back to the last row (the case every caller today
+    /// actually hits — `highlightedIndex` only grows via `CandidateCycle`,
+    /// which never returns a value outside `0..<rowCount` for a non-empty
+    /// list), `max` guards a negative index no current caller passes but
+    /// that a future one could, without which it would pass through
+    /// unclamped and put `rows[highlighted]` out of bounds the same way an
+    /// over-long index would.
     static func clamped(_ index: Int, rowCount: Int) -> Int? {
         guard rowCount > 0 else { return nil }
-        return min(index, rowCount - 1)
+        return max(0, min(index, rowCount - 1))
     }
 }
 

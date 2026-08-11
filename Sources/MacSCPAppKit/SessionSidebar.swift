@@ -25,6 +25,16 @@ import macSCPCore
 /// can read, never a silent no-op — see `SessionRow`'s context menu for
 /// where that reason is rendered.
 ///
+/// That "never a silent no-op" guarantee is about THIS type's own three
+/// cases — which one `build` returns, and how `SessionRow` renders each —
+/// not about everything a click on an `.active` entry triggers afterward.
+/// `.active` still routes through `ContentView.triggerSnippet(_:execute:)`,
+/// which can itself return early and silently (its own key-window and
+/// terminal guards) if the window loses key status or the connection drops
+/// between the menu opening and the click landing. That gap is pre-existing,
+/// shared verbatim with the Terminal menu bar's identical entries, and is
+/// not something this type's routing decision touches.
+///
 /// Untested claim: that `SessionRow` actually renders `.notTheActiveTab`'s
 /// case as a disabled, non-empty menu entry rather than, say, an empty
 /// submenu — this type only proves WHICH case `build` returns for a given
@@ -607,6 +617,27 @@ private struct SessionRow: View {
             // "not the active tab" reason inside it stays reachable; only a
             // shell-less backend (S3/WebDAV) grays the whole entry, matching
             // `toggleTerminal`/`openExternalTerminal` in the Terminal menu.
+            //
+            // `.active` with zero saved snippets is its own trap: `snippets`
+            // is `[]`, `SnippetMenuModel.build` returns an empty `groups`,
+            // and `SnippetMenuItems` — correctly, per its own contract —
+            // draws nothing for an empty model, not even its leading
+            // divider. Left alone that makes THIS submenu open onto a blank
+            // popup with no way out, on a fresh install's very first
+            // right-click. Of this milestone's three other trigger surfaces,
+            // none of their answers transplants whole: the Terminal menu
+            // bar's "keep the divider and 'Manage Snippets…' below" needs a
+            // management entry this submenu has never had; the terminal
+            // right-click's "attach no menu at all" answers a right-click
+            // event, not one item inside a menu that already has Connect/
+            // Edit/Move-to/Delete around it — hiding the "Snippet" entry
+            // itself would look like the row lost a capability, not like an
+            // empty list. What DOES transplant is the terminal header
+            // popover's "No snippets yet." message, in the disabled-row
+            // idiom this very switch already uses one case up for
+            // `.notTheActiveTab` — same L10n key the popover already
+            // reads, same "explain, don't strand" shape as that case,
+            // extended to a second reason a `.active` submenu can be empty.
             Menu(L10n.string("sidebar.snippets", "Snippet")) {
                 switch snippetPlan {
                 case .backendHasNoShell:
@@ -616,8 +647,17 @@ private struct SessionRow: View {
                         "sidebar.snippets.onlyActiveTab", "Only Available for the Active Tab")
                     ) {}
                         .disabled(true)
+                case .active(let model) where model.isEmpty:
+                    Button(L10n.string("snippets.empty", "No snippets yet.")) {}
+                        .disabled(true)
                 case .active(let model):
-                    SnippetMenuItems(model: model) { snippet, execute in
+                    // No leading divider: this submenu's entries are its
+                    // ENTIRE content, with nothing of this menu's own above
+                    // them to separate from (the sidebar row's other
+                    // entries live one level up, in the parent context
+                    // menu) — same reasoning `SSHTerminalView`'s right-click
+                    // menu already applies via this same parameter.
+                    SnippetMenuItems(model: model, leadingDivider: false) { snippet, execute in
                         onRunSnippet(snippet, execute)
                     }
                 }

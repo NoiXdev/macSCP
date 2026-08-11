@@ -70,6 +70,15 @@ struct SnippetTagFieldTests {
         #expect(SnippetTagFieldHighlight.clamped(5, rowCount: 2) == 1)
     }
 
+    /// No caller passes a negative index today — `highlightedIndex` starts
+    /// at `0` and only ever moves through `CandidateCycle` — but the doc
+    /// comment promises the result lands in `0..<rowCount`, so the lower
+    /// bound must hold even for an input nothing in this codebase produces
+    /// yet.
+    @Test func clampedPullsANegativeIndexUpToTheFirstRow() {
+        #expect(SnippetTagFieldHighlight.clamped(-1, rowCount: 3) == 0)
+    }
+
     // MARK: - SnippetTagFieldRow.tag
 
     @Test func tagOfAnExistingRowIsTheStoredTagVerbatim() {
