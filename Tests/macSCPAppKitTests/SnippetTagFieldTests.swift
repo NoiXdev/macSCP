@@ -52,6 +52,34 @@ struct SnippetTagFieldTests {
         #expect(rows == [.existing(tag: "Docker", count: 2), .createNew(tag: "Docker")])
     }
 
+    // MARK: - SnippetTagFieldHighlight
+
+    @Test func clampedReturnsNilForAnEmptyRowList() {
+        #expect(SnippetTagFieldHighlight.clamped(0, rowCount: 0) == nil)
+    }
+
+    @Test func clampedKeepsAnInBoundsIndexUnchanged() {
+        #expect(SnippetTagFieldHighlight.clamped(1, rowCount: 3) == 1)
+    }
+
+    /// The claim that actually matters: a stored index from a longer,
+    /// earlier row list must come back inside the new, shorter list — not
+    /// past its end, where `rows[highlighted]` would be an out-of-bounds
+    /// crash (see `SnippetTagFieldHighlight`'s doc comment).
+    @Test func clampedPullsAnOutOfBoundsIndexBackToTheLastRow() {
+        #expect(SnippetTagFieldHighlight.clamped(5, rowCount: 2) == 1)
+    }
+
+    // MARK: - SnippetTagFieldRow.tag
+
+    @Test func tagOfAnExistingRowIsTheStoredTagVerbatim() {
+        #expect(SnippetTagFieldRow.existing(tag: "Docker", count: 3).tag == "Docker")
+    }
+
+    @Test func tagOfACreateNewRowIsTheCandidateText() {
+        #expect(SnippetTagFieldRow.createNew(tag: "docker").tag == "docker")
+    }
+
     // MARK: - SnippetTagCommit
 
     @Test func appendingANewTagAddsItAtTheEnd() {
@@ -75,6 +103,15 @@ struct SnippetTagFieldTests {
 
     @Test func removingAnAbsentTagIsANoOp() {
         #expect(SnippetTagCommit.removing("x", from: ["a", "b"]) == ["a", "b"])
+    }
+
+    /// The doc comment specifically claims "first occurrence" — not
+    /// reachable through normal use (`appending` never lets a duplicate
+    /// in), but nothing enforces that from `removing`'s own signature, so a
+    /// future caller relying on this from a duplicate-containing array
+    /// should find the FIRST one gone, not all of them and not the last.
+    @Test func removingWithADuplicateTagDropsOnlyTheFirstOccurrence() {
+        #expect(SnippetTagCommit.removing("a", from: ["a", "b", "a"]) == ["b", "a"])
     }
 
     @Test func removingLastDropsTheLastTag() {

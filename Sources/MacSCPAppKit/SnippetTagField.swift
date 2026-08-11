@@ -82,6 +82,24 @@ enum SnippetTagCommit {
     }
 }
 
+/// The row-highlight clamp `SnippetTagField` needs on every keystroke: rows
+/// are recomputed from the current query on every keystroke (see
+/// `SnippetTagField.rows`), so a `highlightedIndex` left over from a longer,
+/// earlier row list would otherwise point past the end of a list that typing
+/// just narrowed — `rows[highlighted]` (Return's commit path) would be an
+/// out-of-bounds crash, not a wrong string, which is why this is pulled out
+/// and pinned rather than left as an inline `min()` nothing exercises.
+enum SnippetTagFieldHighlight {
+    /// `index` pulled back into `0..<rowCount`, or `nil` when `rowCount` is
+    /// `0` (nothing to highlight — `SnippetTagField` never calls
+    /// `rows[highlighted]` in that case, since Return's handler already
+    /// guards on `highlighted != nil`).
+    static func clamped(_ index: Int, rowCount: Int) -> Int? {
+        guard rowCount > 0 else { return nil }
+        return min(index, rowCount - 1)
+    }
+}
+
 /// Splits typed text on commas: everything before each comma becomes a
 /// committed tag (trimmed, empty segments dropped — a bare "," or ",,"
 /// commits nothing), and the text after the LAST comma is what stays in the
@@ -130,15 +148,11 @@ struct SnippetTagField: View {
         SnippetTagFieldSuggestions.rows(typed: query, suggestions: suggestions(query))
     }
 
-    /// `highlightedIndex` clamped to the current row list, or `nil` when
-    /// there is nothing to highlight. Rows are recomputed on every
-    /// keystroke — a stored index from a longer, earlier list would
-    /// otherwise point past the end (or at the wrong row) once typing
-    /// narrows the list, rather than tracking every path that could shrink
-    /// it.
+    /// `highlightedIndex` clamped to the current row list — see
+    /// `SnippetTagFieldHighlight.clamped(_:rowCount:)` for why this can't
+    /// just be `highlightedIndex` itself.
     private var highlighted: Int? {
-        guard !rows.isEmpty else { return nil }
-        return min(highlightedIndex, rows.count - 1)
+        SnippetTagFieldHighlight.clamped(highlightedIndex, rowCount: rows.count)
     }
 
     var body: some View {

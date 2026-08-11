@@ -355,15 +355,16 @@ struct MacSCPApp: App {
     /// milestone): every snippet as a single list, then the management
     /// entry.
     ///
-    /// TEMPORARY (Terminal-Snippets, Task 1): this used to split snippets
-    /// into an INSERTING group and an executing group under their own
-    /// heading, keyed off `Snippet.runsImmediately`. That flag is gone from
-    /// the model (see `Snippet`'s doc comment — the maintainer's call is
-    /// that the decision belongs at the trigger), so every snippet is
-    /// currently treated as inserting and `executing` below is always
-    /// empty; the grouping code is left in place; Task 6 replaces it with
-    /// a per-snippet "Insert"/"Execute" pair of actions instead of a
-    /// pre-decided grouping.
+    /// TEMPORARY (Terminal-Snippets, Task 1 → Task 5 review fix): this used
+    /// to split snippets into an INSERTING group and an executing group
+    /// under their own heading, keyed off `Snippet.runsImmediately`. That
+    /// flag is gone from the model (see `Snippet`'s doc comment — the
+    /// maintainer's call is that the decision belongs at the trigger), so
+    /// every snippet is currently treated as inserting; the now-always-empty
+    /// executing group and its heading (which named a catalog key Task 5
+    /// deleted) were removed rather than left dead. Task 6 is expected to
+    /// replace this single list with a per-snippet "Insert"/"Execute" pair
+    /// of actions.
     ///
     /// An unreadable store is not silence: it gets a disabled notice entry
     /// (see `SnippetsLoad`). Disabled entries are this menu's existing way
@@ -373,23 +374,11 @@ struct MacSCPApp: App {
     @ViewBuilder
     private var snippetMenuItems: some View {
         let snippets = tabCommands.snippetsLoad.snippets
-        let inserting = snippets
-        let executing: [Snippet] = []
         if !snippets.isEmpty {
             Divider()
         }
-        ForEach(Array(inserting.enumerated()), id: \.element.id) { index, snippet in
+        ForEach(Array(snippets.enumerated()), id: \.element.id) { index, snippet in
             snippetButton(snippet, shortcutIndex: index)
-        }
-        if !executing.isEmpty {
-            if !inserting.isEmpty {
-                Divider()
-            }
-            Section(L10n.string("menu.snippets.runsImmediately", "Runs Immediately")) {
-                ForEach(executing) { snippet in
-                    snippetButton(snippet, shortcutIndex: nil)
-                }
-            }
         }
         Divider()
         if tabCommands.snippetsLoad.isUnreadable {
@@ -414,11 +403,9 @@ struct MacSCPApp: App {
     /// (Terminal-Snippets, Task 5; see `Snippet`'s doc comment on why that
     /// distinction moved to the trigger and no longer lives on the title).
     ///
-    /// `shortcutIndex` is the snippet's position among the INSERTING ones;
-    /// the first three of those get ⌃⌘1–3. A dynamic list cannot carry
-    /// stable shortcuts for every entry, and the executing ones deliberately
-    /// get none at all: a mistyped shortcut must not be able to run a
-    /// command on the far host.
+    /// `shortcutIndex` is the snippet's position in the menu list; the first
+    /// three get ⌃⌘1–3. A dynamic list cannot carry stable shortcuts for
+    /// every entry — see `shortcutedSnippetCount` below.
     @ViewBuilder
     private func snippetButton(_ snippet: Snippet, shortcutIndex: Int?) -> some View {
         let entry = Button(snippet.name) {
@@ -433,8 +420,8 @@ struct MacSCPApp: App {
         }
     }
 
-    /// How many inserting snippets get a ⌃⌘n shortcut. Mirrored by the
-    /// "Snippets" group in `KeyboardShortcutsCatalog`, which spells the
-    /// range out as ⌃⌘1–3.
+    /// How many snippets get a ⌃⌘n shortcut. Mirrored by the "Snippets"
+    /// group in `KeyboardShortcutsCatalog`, which spells the range out as
+    /// ⌃⌘1–3.
     private static let shortcutedSnippetCount = 3
 }
