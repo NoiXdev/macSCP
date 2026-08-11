@@ -234,6 +234,8 @@
 "sidebar.edit" = "Edit…";
 "sidebar.rename" = "Rename";
 "sidebar.auditLog" = "Audit Log…";
+"sidebar.snippets" = "Snippet";
+"sidebar.snippets.onlyActiveTab" = "Only Available for the Active Tab";
 "sidebar.moveTo" = "Move to";
 "sidebar.noGroup" = "No group";
 "sidebar.newGroup" = "New group…";

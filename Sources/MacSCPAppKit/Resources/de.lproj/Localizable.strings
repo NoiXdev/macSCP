@@ -235,6 +235,8 @@
 "sidebar.edit" = "Bearbeiten…";
 "sidebar.rename" = "Umbenennen";
 "sidebar.auditLog" = "Audit-Log…";
+"sidebar.snippets" = "Snippet";
+"sidebar.snippets.onlyActiveTab" = "Nur für den aktiven Tab verfügbar";
 "sidebar.moveTo" = "Verschieben nach";
 "sidebar.noGroup" = "Keine Gruppe";
 "sidebar.newGroup" = "Neue Gruppe…";

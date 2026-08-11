@@ -238,6 +238,8 @@
 "sidebar.edit" = "Modifier…";
 "sidebar.rename" = "Renommer";
 "sidebar.auditLog" = "Journal d'audit…";
+"sidebar.snippets" = "Snippet";
+"sidebar.snippets.onlyActiveTab" = "Disponible uniquement pour l'onglet actif";
 "sidebar.moveTo" = "Déplacer vers";
 "sidebar.noGroup" = "Aucun groupe";
 "sidebar.newGroup" = "Nouveau groupe…";

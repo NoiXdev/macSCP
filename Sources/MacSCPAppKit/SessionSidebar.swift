@@ -1,6 +1,68 @@
 import SwiftUI
 import macSCPCore
 
+/// What a session row's "Snippet" context-menu entry shows (Terminal-Snippets
+/// milestone, Task 7).
+///
+/// The routing question this type exists to answer: a sidebar row is NOT
+/// necessarily the active tab. Its stored session could be open in a
+/// background tab, open in no tab at all, or be exactly what is on screen
+/// right now — and `SessionSidebar` has no visibility into background tabs
+/// whatsoever. It is handed exactly one fact about tab state,
+/// `activeSessionID` (mirrored from `SessionTab.activeStoredSessionID`,
+/// which `ContentView` sets only for the ONE currently active tab), so it
+/// cannot tell a session that is connected off-screen from one that is not
+/// connected at all — both look identical from here.
+///
+/// Given that blind spot, guessing which shell "this session" should mean
+/// whenever the row is not the visible one would risk exactly the failure
+/// this milestone must not ship: the user reads the row, believes the bytes
+/// go to ITS host, and they land on a different tab's shell instead — or on
+/// nothing, if a stale reference were silently dropped. Both are worse than
+/// not offering the entry. The decision made here is therefore the narrow
+/// one: act ONLY when the row IS the active, connected tab (`.active`);
+/// every other case is `.notTheActiveTab`, disabled with a reason the user
+/// can read, never a silent no-op — see `SessionRow`'s context menu for
+/// where that reason is rendered.
+///
+/// Untested claim: that `SessionRow` actually renders `.notTheActiveTab`'s
+/// case as a disabled, non-empty menu entry rather than, say, an empty
+/// submenu — this type only proves WHICH case `build` returns for a given
+/// input, not what `SessionRow`'s `switch` draws for each case (view code,
+/// no pixel harness in this project — see `SnippetMenuItems`'s own doc
+/// comment for the same boundary).
+enum SessionRowSnippetMenuPlan: Equatable {
+    /// The backend has no shell at all (S3, WebDAV) — permanent, independent
+    /// of tab state. The caller grays out the whole submenu for this case,
+    /// the same way `toggleTerminal`/`openExternalTerminal` do in the
+    /// Terminal menu, rather than opening it to a single explanatory line.
+    case backendHasNoShell
+    /// This session is not the active tab right now: either not connected at
+    /// all, or connected in a tab that is not the one currently on screen.
+    /// The submenu itself stays enabled (see this type's own doc comment) so
+    /// the reason stays reachable instead of just greyed out.
+    case notTheActiveTab
+    /// The row IS the active, connected tab: safe to render the shared
+    /// `SnippetMenuModel` — the SAME computation the Terminal menu bar and
+    /// every other snippet trigger surface use, so this row shows one
+    /// consistent set of decisions rather than a fifth hand-guessed one.
+    case active(SnippetMenuModel)
+
+    var isBackendHasNoShell: Bool {
+        if case .backendHasNoShell = self { return true }
+        return false
+    }
+
+    static func build(
+        snippets: [Snippet], isActiveTab: Bool, supportsShell: Bool
+    ) -> SessionRowSnippetMenuPlan {
+        guard supportsShell else { return .backendHasNoShell }
+        guard isActiveTab else { return .notTheActiveTab }
+        return .active(
+            SnippetMenuModel.build(snippets: snippets, isConnected: true, supportsShell: true))
+    }
+}
+
 /// Left column: stored sessions, grouped into collapsible sections. Click
 /// connects; context menus cover connect/edit/rename/move/delete on
 /// sessions, rename/dissolve on groups, and new-connection/new-group on the
@@ -25,6 +87,21 @@ struct SessionSidebar: View {
     /// Sidebar session menu "Audit Log…" entry (M9b/T3) — opens the sheet
     /// for any stored session, connected or not.
     let onShowAuditLog: (StoredSession) -> Void
+    /// The saved snippets, in store order (Terminal-Snippets, Task 7) — same
+    /// list `MacSCPApp`'s Terminal menu reads from `tabCommands.snippetsLoad`,
+    /// handed down here so the session row's "Snippet" submenu renders the
+    /// identical `SnippetMenuModel` every other trigger surface does. See
+    /// `SessionRowSnippetMenuPlan`'s doc comment for why only the row that IS
+    /// the active, connected tab ever gets to act on it.
+    let snippets: [Snippet]
+    /// Fires one snippet against the ACTIVE tab's shell (Terminal-Snippets,
+    /// Task 7) — safe to call unconditionally because the row's own "Snippet"
+    /// submenu only ever offers an enabled entry when that row IS the active
+    /// tab (`SessionRowSnippetMenuPlan.active`); at that point "the active
+    /// tab" and "this row's session" name the same shell. Wired to
+    /// `ContentView.triggerSnippet(_:execute:)`, the same method the Terminal
+    /// menu bar (Task 6) calls.
+    let onRunSnippet: (Snippet, Bool) -> Void
     /// Background context menu "Known Hosts…" entry (M10a/T2) — opens the
     /// known-hosts management sheet.
     let onShowKnownHosts: () -> Void
@@ -244,7 +321,9 @@ struct SessionSidebar: View {
                 onRequestNewGroupMove: { beginNewGroup(forMoving: session) },
                 onRequestDelete: { sessionPendingDelete = session },
                 onExport: { onExport(.single(session)) },
-                onShowAuditLog: { onShowAuditLog(session) }
+                onShowAuditLog: { onShowAuditLog(session) },
+                snippets: snippets,
+                onRunSnippet: onRunSnippet
             )
             .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 6))
         }
@@ -411,6 +490,8 @@ private struct SessionRow: View {
     let onRequestDelete: () -> Void
     let onExport: () -> Void
     let onShowAuditLog: () -> Void
+    let snippets: [Snippet]
+    let onRunSnippet: (Snippet, Bool) -> Void
 
     @State private var isHovering = false
 
@@ -420,6 +501,21 @@ private struct SessionRow: View {
     private var kindBadgeLabel: String {
         let descriptor = BackendDescriptor.descriptor(for: session.kind)
         return L10n.string(descriptor.badgeLabelKey, descriptor.badgeLabelDefault)
+    }
+
+    /// What this row's "Snippet" submenu shows (Terminal-Snippets, Task 7) —
+    /// see `SessionRowSnippetMenuPlan`'s doc comment for the routing
+    /// decision. `isActive` (this row's session equals `activeSessionID`,
+    /// which `SessionSidebar` only ever sets to a stored session's id right
+    /// after it actually connects — see `SessionTab.activeStoredSessionID`)
+    /// stands in for BOTH "connected" and "the tab the entry would act on":
+    /// there is no third state to represent, since a row that is not the
+    /// active tab gets `.notTheActiveTab` regardless of whether its session
+    /// happens to be open in some background tab.
+    private var snippetPlan: SessionRowSnippetMenuPlan {
+        SessionRowSnippetMenuPlan.build(
+            snippets: snippets, isActiveTab: isActive,
+            supportsShell: BackendDescriptor.descriptor(for: session.kind).capabilities.supportsShell)
     }
 
     /// The backend's own `displaySummary` (M22/T11) — NOT the old hand-rolled
@@ -502,6 +598,31 @@ private struct SessionRow: View {
             }
             Divider()
             Button(L10n.string("sidebar.auditLog", "Audit Log…")) { onShowAuditLog() }
+            // "Snippet" submenu (Terminal-Snippets, Task 7): same shared
+            // `SnippetMenuItems` rendering the Terminal menu bar (Task 6)
+            // uses, gated by `snippetPlan` — see that property's and
+            // `SessionRowSnippetMenuPlan`'s doc comments for the routing
+            // decision. The submenu itself stays enabled (rather than
+            // graying out) whenever this backend HAS a shell, so the
+            // "not the active tab" reason inside it stays reachable; only a
+            // shell-less backend (S3/WebDAV) grays the whole entry, matching
+            // `toggleTerminal`/`openExternalTerminal` in the Terminal menu.
+            Menu(L10n.string("sidebar.snippets", "Snippet")) {
+                switch snippetPlan {
+                case .backendHasNoShell:
+                    EmptyView()
+                case .notTheActiveTab:
+                    Button(L10n.string(
+                        "sidebar.snippets.onlyActiveTab", "Only Available for the Active Tab")
+                    ) {}
+                        .disabled(true)
+                case .active(let model):
+                    SnippetMenuItems(model: model) { snippet, execute in
+                        onRunSnippet(snippet, execute)
+                    }
+                }
+            }
+            .disabled(snippetPlan.isBackendHasNoShell)
             Divider()
             Button(L10n.string("sidebar.delete", "Delete"), role: .destructive) {
                 onRequestDelete()

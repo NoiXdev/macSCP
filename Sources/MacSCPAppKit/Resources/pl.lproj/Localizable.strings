@@ -237,6 +237,8 @@
 "sidebar.edit" = "Edytuj…";
 "sidebar.rename" = "Zmień nazwę";
 "sidebar.auditLog" = "Dziennik audytu…";
+"sidebar.snippets" = "Fragment";
+"sidebar.snippets.onlyActiveTab" = "Dostępne tylko dla aktywnej karty";
 "sidebar.moveTo" = "Przenieś do";
 "sidebar.noGroup" = "Bez grupy";
 "sidebar.newGroup" = "Nowa grupa…";

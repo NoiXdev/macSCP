@@ -63,6 +63,15 @@ extension ContentView {
             onExport: { scope in exportSheetItem = ExportSheetItem(scope: scope) },
             onImport: { showImportFileImporter = true },
             onShowAuditLog: { stored in auditLogSession = stored },
+            // Session-row "Snippet" submenu (Terminal-Snippets, Task 7):
+            // same store list the Terminal menu bar reads via
+            // `tabCommands.snippetsLoad`, and the identical
+            // `triggerSnippet(_:execute:)` that menu calls — safe to reuse
+            // unconditionally here because the row only ever offers an
+            // enabled entry when it IS the active tab (see
+            // `SessionRowSnippetMenuPlan`'s doc comment).
+            snippets: tabCommands.snippetsLoad.snippets,
+            onRunSnippet: { snippet, execute in triggerSnippet(snippet, execute: execute) },
             onShowKnownHosts: { showKnownHostsSheet = true },
             onShowLogins: { showLoginSetsSheet = true },
             onHideImported: { host in hideImported(host) },
