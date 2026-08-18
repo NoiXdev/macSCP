@@ -28,12 +28,20 @@ import Testing
 ///   mutation it follows, or a rename of either method, defeats this. Aimed
 ///   at an accidental regression (someone deleting a line while editing
 ///   nearby code), not a hostile rewrite.
-/// - The toggle-site scanner only recognizes the THREE literal call shapes
-///   this task actually introduced (`activeTab.applyFilesToggleClick(`,
-///   `session.terminal.toggle()`, `terminal.toggle()`). A FOURTH place that
-///   starts flipping pane visibility some other way (a new call spelled
-///   differently) would not be recognized as a toggle site at all, so a
-///   missing `persistActivePaneVisibility()` there would not be caught.
+/// - The toggle-site scanner only recognizes the three literal call shapes
+///   this task introduced (`activeTab.applyFilesToggleClick(`,
+///   `session.terminal.toggle()`, `terminal.toggle()`). A place that starts
+///   flipping pane visibility some other way (a call spelled differently)
+///   would not be recognized as a toggle site at all, so a missing
+///   `persistActivePaneVisibility()` there would not be caught. That is not
+///   hypothetical: `ContentView.triggerSnippet` was exactly such a site
+///   (`terminal.isVisible = true`) for the whole of P2, and the whole-phase
+///   review found it by reading, not by this suite. The answer chosen there
+///   (Fix 3) was to delete the shape rather than teach it — the snippet
+///   path now reveals through `toggle()` like everything else — because a
+///   scanner that grows a case per spelling documents the sprawl instead of
+///   removing it. Teaching it stays the right answer only for a shape that
+///   genuinely cannot be routed through `toggle()`.
 /// - The connect-path check only looks for the substring
 ///   `restorePaneVisibility(` anywhere inside `connect(in tab: SessionTab,
 ///   stored: StoredSession)`'s body — it does not check the call is
@@ -94,25 +102,62 @@ struct PaneVisibilityWiringGuardTests {
             """)
     }
 
-    /// Each of the three call sites that flip built-in pane visibility
-    /// (the Files toolbar button, the Terminal toolbar button in `.builtIn`
-    /// mode, and the `tabCommands.toggleTerminal` menu bridge) must be
-    /// immediately followed by `persistActivePaneVisibility()` — see
+    /// Each of the FOUR call sites that flip built-in pane visibility (the
+    /// Files toolbar button, the Terminal toolbar button in `.builtIn` mode,
+    /// the `tabCommands.toggleTerminal` menu bridge, and — since the
+    /// whole-phase review's Fix 3 — `ContentView.triggerSnippet`, which
+    /// reveals the panel for a snippet) must be immediately followed by
+    /// `persistActivePaneVisibility()` — see
     /// `ContentView.persistActivePaneVisibility`'s own doc comment for why
     /// this has to run at every site rather than once centrally (there is
-    /// no single chokepoint all three funnel through before this task).
+    /// no single chokepoint all four funnel through).
+    ///
+    /// The fourth site was invisible to this scanner until Fix 3, and the
+    /// scanner was NOT taught a new shape to see it: `triggerSnippet` wrote
+    /// `terminal.isVisible = true` directly, and the fix routed it through
+    /// the same `toggle()` every other reveal path uses — after which the
+    /// existing shape list found it, and the persist it was missing became a
+    /// failure here rather than a documented blind spot. What did change is
+    /// the FILE list: `ContentView.swift` is scanned too now.
     @Test func everyToggleSiteIsFollowedByAPersist() throws {
-        let source = try String(contentsOf: Self.lifecycleFile, encoding: .utf8)
+        for (file, expected) in [(Self.lifecycleFile, 3), (Self.contentViewFile, 1)] {
+            let source = try String(contentsOf: file, encoding: .utf8)
+            let lines = source.components(separatedBy: "\n")
+            let sites = Self.userToggleSiteEndLines(in: lines)
+            #expect(sites.count == expected, """
+                expected \(expected) pane-visibility toggle site(s) in \
+                \(file.lastPathComponent), found \(sites.count)
+                """)
+            let unpersisted = sites.filter { !Self.isFollowedByPersist(afterLine: $0, in: lines) }
+            #expect(unpersisted.isEmpty, """
+                toggle site(s) in \(file.lastPathComponent) ending at line(s) \
+                \(unpersisted.map { $0 + 1 }) are not immediately followed by \
+                `persistActivePaneVisibility()` — a click there flips the in-memory \
+                state without saving it, so a reconnected session would silently lose \
+                that change.
+                """)
+        }
+    }
+
+    /// The scanner's second honesty check (the first is the transfers bar
+    /// below): `restorePaneVisibility`'s own `session.terminal.toggle()` is
+    /// the READ direction — it puts a saved value back on screen — and must
+    /// NOT be required to persist, or every reconnect would write back what
+    /// it just read. It is excluded by name, not by accident, and this test
+    /// is what makes that visible.
+    @Test func scannerIgnoresTheRestorePathsOwnToggle() throws {
+        let source = try String(contentsOf: Self.contentViewFile, encoding: .utf8)
         let lines = source.components(separatedBy: "\n")
-        let sites = Self.toggleSiteEndLines(in: lines)
-        #expect(sites.count == 3, "expected 3 pane-visibility toggle sites in ContentView+Lifecycle.swift, found \(sites.count)")
-        let unpersisted = sites.filter { !Self.isFollowedByPersist(afterLine: $0, in: lines) }
-        #expect(unpersisted.isEmpty, """
-            toggle site(s) ending at line(s) \(unpersisted.map { $0 + 1 }) are not \
-            immediately followed by `persistActivePaneVisibility()` — a click there \
-            flips the in-memory state without saving it, so a reconnected session \
-            would silently lose that change.
-            """)
+        guard let restore = Self.range(
+            ofBlockStartingWith: "func restorePaneVisibility(", in: lines)
+        else {
+            Issue.record("`func restorePaneVisibility(` not found — re-anchor this guard")
+            return
+        }
+        // The toggle really is in there (otherwise this test would pass for
+        // the wrong reason), and the exclusion really removes it.
+        #expect(Self.toggleSiteEndLines(in: lines).contains { restore.contains($0) })
+        #expect(Self.userToggleSiteEndLines(in: lines).contains { restore.contains($0) } == false)
     }
 
     /// The scanner's own honesty check: `activeTab.transfersPanelVisible.toggle()`,
@@ -265,6 +310,14 @@ struct PaneVisibilityWiringGuardTests {
     /// starts — `applyFilesToggleClick(...)` spans three lines). Recognizes
     /// exactly the three literal call shapes this task introduced (see this
     /// suite's doc comment on why a fourth shape would not be recognized).
+    /// The toggle sites a USER click reaches — every site below, minus the
+    /// one inside `restorePaneVisibility`, which restores rather than
+    /// changes (see `scannerIgnoresTheRestorePathsOwnToggle`).
+    private static func userToggleSiteEndLines(in lines: [String]) -> [Int] {
+        let restore = range(ofBlockStartingWith: "func restorePaneVisibility(", in: lines)
+        return toggleSiteEndLines(in: lines).filter { restore?.contains($0) != true }
+    }
+
     private static func toggleSiteEndLines(in lines: [String]) -> [Int] {
         let singleLineMarkers = ["session.terminal.toggle()", "terminal.toggle()"]
         var ends: [Int] = []

@@ -547,8 +547,9 @@ extension ContentView {
     /// it (by drawing the header unconditionally inside here) cannot drift
     /// from it the way a second, independent check inside this `switch`
     /// could. `.closed` while `isVisible` is `true` does not actually occur
-    /// today — `TerminalPanelViewModel.toggle()`/`ContentView.triggerSnippet`
-    /// both drive `state` out of `.closed` in the same synchronous step
+    /// today — `TerminalPanelViewModel.toggle()` (which every reveal path
+    /// goes through, `ContentView.triggerSnippet` included) drives `state`
+    /// out of `.closed` in the same synchronous step
     /// that sets `isVisible = true`, before SwiftUI gets a chance to render
     /// the in-between state — but this function does not rely on that: it
     /// would still be correct (header shown, blank content below it) even if

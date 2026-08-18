@@ -558,7 +558,19 @@ struct ContentView: View {
     ///
     /// The panel is revealed and the shell opened first, because the panel is
     /// closed until the user opens it and a snippet must work on a tab that
-    /// has just connected. `openIfNeeded()` reaches `.running` only after the
+    /// has just connected. Revealing it goes through `TerminalPanelViewModel.
+    /// toggle()` — the same call the toolbar button and the Terminal menu
+    /// make — followed by `persistActivePaneVisibility()`, exactly like
+    /// those two (whole-phase review, Fix 3). Before that this method wrote
+    /// `isVisible = true` itself and saved nothing: a snippet opened the
+    /// terminal and the session did not remember it, and being spelled
+    /// differently from every other reveal is what kept
+    /// `PaneVisibilityWiringGuardTests` from noticing.
+    ///
+    /// `openIfNeeded()` still runs unconditionally afterwards, and is not
+    /// redundant with the `toggle()` above: the panel can already be visible
+    /// with the shell in `.ended` (the "Reopen" case), where nothing would
+    /// reveal anything but the shell still has to come back up. `openIfNeeded()` reaches `.running` only after the
     /// shell channel is up, so `send(_:)` here usually runs while the shell
     /// is still opening — `TerminalPanelViewModel` holds those bytes and
     /// sends them once it runs (see `pendingBytes` there). That waiting
@@ -575,7 +587,10 @@ struct ContentView: View {
             return
         }
         guard let terminal = activeTab.session?.terminal else { return }
-        terminal.isVisible = true
+        if !terminal.isVisible {
+            terminal.toggle()
+            persistActivePaneVisibility()
+        }
         terminal.openIfNeeded()
         terminal.send(SnippetKeystrokes.bytes(for: snippet, execute: execute))
     }
