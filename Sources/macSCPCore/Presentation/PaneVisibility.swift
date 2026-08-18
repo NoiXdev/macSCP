@@ -63,10 +63,45 @@ public struct PaneVisibility: Equatable, Sendable, Codable {
     /// concrete value, so there is nothing left for it to default.
     public static let bothVisible = PaneVisibility(showsFiles: true, showsTerminal: true)
 
+    /// Decodes leniently: a value that is BROKEN rather than merely absent
+    /// falls back to `bothVisible`'s halves instead of throwing.
+    ///
+    /// This is a deliberate exception, and a narrow one. `StoredSession`'s
+    /// container is decoded as ONE document by `SessionStore.load()`, so a
+    /// throwing decode here does not cost the user this cosmetic preference
+    /// — it costs them every saved session in the file. A field that only
+    /// decides which half of a window is showing must not be able to do
+    /// that. Compare `showsFiles`/`showsTerminal` with anything the store
+    /// holds that a user could not reconstruct by looking at the window:
+    /// there is nothing to lose here worth failing a load over.
+    ///
+    /// What this explicitly does NOT license: the project rule that no
+    /// `try?` read may decide a DELETION still stands, unqualified. This
+    /// falls back to a default for a cosmetic value; it never reads
+    /// "absent/unreadable" as "the user does not want this" and acts on it.
+    ///
+    /// Each half falls back on its own, so a file that can still say one of
+    /// the two is believed on that one (`{"showsFiles":"yes",
+    /// "showsTerminal":false}` keeps the terminal half's `false`). Both
+    /// results still go through the repairing initializer above, so
+    /// leniency cannot produce "neither visible" either.
+    ///
+    /// Referring to `bothVisible` here is not recursive: that constant is
+    /// built by the memberwise initializer above, never by this one.
     public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let showsFiles = try container.decode(Bool.self, forKey: .showsFiles)
-        let showsTerminal = try container.decode(Bool.self, forKey: .showsTerminal)
+        // A `paneVisibility` that is not even an object (a string, a number,
+        // an array) leaves nothing to read per key — the whole value falls
+        // back at once.
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else {
+            self.init(
+                showsFiles: PaneVisibility.bothVisible.showsFiles,
+                showsTerminal: PaneVisibility.bothVisible.showsTerminal)
+            return
+        }
+        let showsFiles = (try? container.decode(Bool.self, forKey: .showsFiles))
+            ?? PaneVisibility.bothVisible.showsFiles
+        let showsTerminal = (try? container.decode(Bool.self, forKey: .showsTerminal))
+            ?? PaneVisibility.bothVisible.showsTerminal
         // Via the repairing initializer above — a hand-edited store file
         // that carries "both false" is repaired to "files only" rather than
         // decoded as-is, which would render an empty window with no way

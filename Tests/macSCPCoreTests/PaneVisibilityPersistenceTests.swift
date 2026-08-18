@@ -158,4 +158,82 @@ struct PaneVisibilityPersistenceTests {
         #expect(result.imported == 1)
         #expect(importedVM.sessions.first?.paneVisibility == .bothVisible)
     }
+
+    // MARK: - Malformed field must not cost the user their sessions
+
+    /// A pane-visibility object that is BROKEN rather than absent — here the
+    /// `showsTerminal` key is missing entirely — must fall back to the
+    /// default instead of throwing. The field decides which half of a window
+    /// is showing; it must never be able to take a user's whole
+    /// `sessions-v2.json` down with it, which is what a throwing decode does:
+    /// `SessionStore` decodes the file as ONE container, so one broken
+    /// cosmetic value inside one session fails the load of every session in
+    /// it.
+    ///
+    /// Deliberately against a LITERAL file written to disk, not a re-encoded
+    /// `StoredSession` — an encoder can only ever produce values its own
+    /// decoder accepts, so a round-trip could not express this input at all.
+    ///
+    /// The second session in the file is the point of the test: it is
+    /// untouched and well-formed, and it is what a throwing decode used to
+    /// take with it.
+    @Test func aMalformedPaneVisibilityDoesNotFailTheWholeStoreFile() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-pane-malformed-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let brokenID = UUID()
+        let healthyID = UUID()
+        let file = """
+            {"groups":[],"sessions":[
+             {"id":"\(brokenID.uuidString)","name":"broken","kind":"ssh",
+              "ssh":{"host":"h","port":22,"username":"u","authKind":"password"},
+              "paneVisibility":{"showsFiles":true}},
+             {"id":"\(healthyID.uuidString)","name":"healthy","kind":"ssh",
+              "ssh":{"host":"h2","port":22,"username":"u2","authKind":"password"},
+              "paneVisibility":{"showsFiles":false,"showsTerminal":true}}]}
+            """
+        try file.write(
+            to: dir.appendingPathComponent("sessions-v2.json"), atomically: true, encoding: .utf8)
+
+        let sessions = try SessionStore(directory: dir).all()
+
+        #expect(sessions.count == 2)
+        #expect(sessions.first(where: { $0.id == brokenID })?.paneVisibility == .bothVisible)
+        #expect(sessions.first(where: { $0.id == healthyID })?.paneVisibility
+            == PaneVisibility(showsFiles: false, showsTerminal: true))
+    }
+
+    /// The other malformed shape: the keys are present but carry values of
+    /// the wrong type. Each half falls back on its own, so whatever the file
+    /// could still say is kept — here the readable `showsTerminal: false`
+    /// survives while the unreadable `showsFiles` falls back to the default.
+    ///
+    /// Not a re-encode either, for the same reason as above.
+    @Test func aWrongTypedHalfFallsBackWithoutDiscardingTheReadableHalf() throws {
+        let json = """
+            {"id":"\(UUID().uuidString)","name":"typed-wrong","kind":"ssh",
+             "ssh":{"host":"h","port":22,"username":"u","authKind":"password"},
+             "paneVisibility":{"showsFiles":"yes","showsTerminal":false}}
+            """.data(using: .utf8)!
+
+        let session = try JSONDecoder().decode(StoredSession.self, from: json)
+
+        #expect(session.paneVisibility == PaneVisibility(showsFiles: true, showsTerminal: false))
+    }
+
+    /// A `paneVisibility` that is not even an object (here: a string) is the
+    /// coarsest breakage, and lands on the plain default rather than
+    /// throwing.
+    @Test func aPaneVisibilityThatIsNotAnObjectFallsBackToTheDefault() throws {
+        let json = """
+            {"id":"\(UUID().uuidString)","name":"not-an-object","kind":"ssh",
+             "ssh":{"host":"h","port":22,"username":"u","authKind":"password"},
+             "paneVisibility":"both"}
+            """.data(using: .utf8)!
+
+        let session = try JSONDecoder().decode(StoredSession.self, from: json)
+
+        #expect(session.paneVisibility == .bothVisible)
+    }
 }
