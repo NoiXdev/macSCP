@@ -256,3 +256,32 @@ Task-Umfangs lag oder als bewusste, dokumentierte Entscheidung steht:
 
 **Ein Satz:** Terminal und Dateiansicht lassen sich jetzt unabhängig
 ein- und ausblenden, und die Wahl bleibt pro gespeicherter Sitzung erhalten.
+
+---
+
+## Nachtrag: Maintainer-Ruling zum Default (Re-Review der Fixrunde)
+
+**Ein fehlendes `paneVisibility` bedeutet: nur Dateien, kein Terminal.**
+
+Der urspruengliche Default `.bothVisible` war falsch, und zwar folgenreich:
+`restorePaneVisibility` **oeffnet** bei gespeichertem sichtbarem Terminal
+das Panel und startet eine Shell — jede bestehende gespeicherte Sitzung
+haette also beim naechsten Verbinden ein Terminal bekommen. Der
+Doc-Kommentar behauptete das Gegenteil („exactly how every session behaved
+before this field existed") und war die einzige Aussage im Feld, die kein
+Test beobachtet hat.
+
+`PaneVisibility.filesOnly` ist ab `74d8c2b` die eine Schreibweise fuer
+„nichts hinterlegt" (`StoredSession`-Default und -Decode, Import-Planner,
+lenienter Decode). `bothVisible` bleibt als Wert bestehen, ist aber kein
+Default mehr. Ein **explizit** gespeichertes `showsTerminal: true` stellt
+das Terminal weiterhin her; fehlendes Feld und explizites
+`{showsFiles: true, showsTerminal: false}` sind beim Connect gleichbedeutend
+— beide Faelle sind nebeneinander gepinnt, damit daraus nicht „ein Terminal
+wird nie wiederhergestellt" wird.
+
+Ausserdem hat `restorePaneVisibility` erstmals echte Verhaltensabdeckung:
+die Entscheidung liegt jetzt in `SessionTab.applyRestoredPaneVisibility(_:
+hasShell:)`, in `ContentView` bleibt nur der `toggle()`-Aufruf. Suite nach
+der Runde: **1958 Tests / 166 Suiten**.
+
