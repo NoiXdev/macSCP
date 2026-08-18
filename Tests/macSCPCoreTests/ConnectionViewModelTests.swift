@@ -423,11 +423,14 @@ struct ConnectionViewModelTests {
         #expect(vm.state == .idle)
     }
 
-    /// `validateForEditSave` routes `tags` through `TagList.normalized`
-    /// itself (P3a/T5) rather than trusting `StoredSession.tags`'s setter —
-    /// the same rule `SessionListViewModel.save(tags:)` follows for the
-    /// new-session path, pinned here for the edit path too since the two
-    /// write paths do not share code.
+    /// `validateForEditSave` hands the form's raw `tags` straight to
+    /// `StoredSession.tags`, whose setter applies `TagList.normalized`
+    /// (P3a/T5, whole-phase fix round) — so the returned session carries the
+    /// normalized list even though this path never calls the rule itself.
+    /// Pinned for the edit path separately from
+    /// `SessionListViewModelTests.savingCarriesTagsOntoTheStoredSession`
+    /// because the two write paths do not share code and either could stop
+    /// assigning `tags` at all.
     @Test @MainActor func validateForEditSaveNormalizesTags() {
         let vm = makeVM()
         vm.beginEditing(sshSession(name: "web", host: "h", username: "u"))

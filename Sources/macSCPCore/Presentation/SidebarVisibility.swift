@@ -64,11 +64,18 @@ public struct SidebarVisibility: Equatable, Sendable {
     /// each paired with exactly the sessions to list under it.
     ///
     /// With NO active tag every group gets an entry, including one with no
-    /// sessions at all — a group is a thing the user made, and its header
-    /// carries its Rename/Export/Dissolve menu and its drop target, so a
-    /// freshly created group has to be on screen before anything is in it
-    /// and a group whose last session was just dragged out has to stay
-    /// there. Omitting an empty group is FILTER behaviour and nothing else:
+    /// sessions at all — a group is a thing the user made, so a freshly
+    /// created one is present here before anything is in it, and one whose
+    /// last session was just dragged out stays present.
+    ///
+    /// What this type decides is exactly that: presence of the section. What
+    /// a present section then affords the user — the header's context menu,
+    /// its drop target — is an App-layer property of whatever renders it,
+    /// invisible from Core and checked by a human, not by a test in this
+    /// repo. It is the REASON presence matters (an absent section offers
+    /// neither), not a promise this type can keep.
+    ///
+    /// Omitting an empty group is FILTER behaviour and nothing else:
     /// only while `activeTag` is non-nil is a group with no matching
     /// session dropped, so a narrowed sidebar does not show headers with
     /// nothing under them.

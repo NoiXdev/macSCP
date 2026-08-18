@@ -84,7 +84,7 @@ struct SessionExportTagsTests {
     /// `SessionImportPlanner.makePlanned` -- rather than through
     /// `ExportedSession`'s initializer directly. Without this, neither the
     /// export closure's `tags: session.tags` argument nor the planner's
-    /// `TagList.normalized(fileSession.tags ?? [])` line is actually
+    /// `session.tags = fileSession.tags ?? []` line is actually
     /// exercised with a NON-nil tag list: `anExportFileWithoutTheTagsKeyImportsAsUntagged`
     /// only proves the `nil` fallback, which a constant `[]` on either side
     /// would also satisfy. Mirrors
@@ -121,13 +121,16 @@ struct SessionExportTagsTests {
         #expect(importedVM.sessions.first?.tags == ["docker", "web"])
     }
 
-    /// `SessionImportPlanner.makePlanned` assigns `session.tags` as a plain
-    /// property, which bypasses BOTH the normalization `StoredSession`'s own
-    /// initializer and decoder apply on every other write path (see
-    /// `StoredSessionTagsTests.decodingNormalizesTagsSoAHandEditedFileCannotSmuggleDuplicates`
-    /// for the `StoredSession`-level pin of the same rule) -- so the planner
-    /// has to route the file's value through `TagList.normalized` itself.
-    /// Against a literal hand-edited export file, the same reasoning as
+    /// `SessionImportPlanner.makePlanned` hands the file's tag list to
+    /// `session.tags` unexamined; `StoredSession.tags`'s setter normalizes it
+    /// (see
+    /// `StoredSessionTagsTests.aDirectAssignmentNormalizesBecauseThePropertyOwnsTheRule`
+    /// for the property-level pin). The planner used to call the rule by hand
+    /// -- and in P3a/T3 was found having forgotten to, which is why the rule
+    /// moved to the property. This test does not care which of the two holds
+    /// the rule: it asserts the OUTCOME at the import boundary, so it stays
+    /// the thing that goes red if either ever stops normalizing. Against a
+    /// literal hand-edited export file, the same reasoning as
     /// `anExportFileWithoutTheTagsKeyImportsAsUntagged`.
     @Test func importNormalizesTagsSoAHandEditedExportFileCannotSmuggleDuplicates() async throws {
         let raw = """

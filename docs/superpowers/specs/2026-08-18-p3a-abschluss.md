@@ -358,3 +358,23 @@ und `.filterMatchesNothing` kann theoretisch ohne aktiven Filter gemeldet
 werden (Sitzung mit `groupID` auf eine nicht existierende Gruppe) — heute
 unerreichbar, weil `SessionStore.load` und `dissolveGroup` beide baumelnde
 IDs auf `nil` setzen.
+
+### Zwei Nachträge zur GUI-Sichtprüfliste (aus der Re-Review dieses Fix-Durchgangs)
+
+Beide betreffen genau das, worauf Fix 1 abzielt, und beide sind aus dem
+Quelltext prinzipiell nicht überprüfbar:
+
+6. **Zeichnet SwiftUI eine `Section(isExpanded:)` mit LEEREM Inhalt** in
+   einer Sidebar-`List` überhaupt — mit Kopfzeile, Aufklapp-Dreieck und
+   funktionierendem `dropDestination`? Das ist das eigentliche Ergebnis von
+   Fix 1: die leere Gruppe muss nicht nur im berechneten Wert stehen,
+   sondern sichtbar und bedienbar auf dem Bildschirm landen. Konkret: Gruppe
+   neu anlegen (erscheint sie sofort?), letzte Sitzung herausziehen (bleibt
+   Kopfzeile, Kontextmenü und Drop-Ziel erhalten?), Sitzung wieder
+   hineinziehen.
+7. **Ein Store mit null Sitzungen, aber mindestens einer Gruppe, ist jetzt
+   `.notEmpty`** — „Keine gespeicherten Verbindungen." erscheint dort also
+   nicht mehr, stattdessen steht die Gruppen-Kopfzeile allein da. Absichtlich
+   und durch `aFreshlyCreatedGroupShowsBeforeItHasAnySession` festgehalten
+   (es gibt etwas zu zeichnen), aber es ist eine UX-Änderung und verdient
+   einen Blick.

@@ -207,10 +207,11 @@ public final class ConnectionViewModel {
     /// new session (`shouldSaveSession == true`) AND while editing a stored
     /// one, mirroring `selectedGroupID` just above. Unlike `selectedGroupID`
     /// this is not itself the normalized form: the field owns the text↔list
-    /// conversion (comma-separated typing), and every WRITE path into a
-    /// `StoredSession` — `SessionListViewModel.save(tags:)`,
-    /// `validateForEditSave()` below — routes whatever ends up here through
-    /// `TagList.normalized` rather than trusting it directly.
+    /// conversion (comma-separated typing), and whatever ends up here is
+    /// handed to `StoredSession.tags` as-is by the write paths that read it
+    /// (`SessionListViewModel.save(tags:)`, `validateForEditSave()` below).
+    /// That property's own setter applies `TagList.normalized`, so neither
+    /// write path — nor a third one added later — has to remember the rule.
     public var tags: [String] = []
     /// Three-way login switcher state (M10b/T3). The App layer reads this to
     /// decide whether to show the login-set picker or the manual
