@@ -203,6 +203,15 @@ public final class ConnectionViewModel {
     /// Group assignment shown by the picker — applies while saving a new
     /// session (`shouldSaveSession == true`) AND while editing a stored one.
     public var selectedGroupID: UUID?
+    /// Tags shown by the form's tag field (P3a/T5) — applies while saving a
+    /// new session (`shouldSaveSession == true`) AND while editing a stored
+    /// one, mirroring `selectedGroupID` just above. Unlike `selectedGroupID`
+    /// this is not itself the normalized form: the field owns the text↔list
+    /// conversion (comma-separated typing), and every WRITE path into a
+    /// `StoredSession` — `SessionListViewModel.save(tags:)`,
+    /// `validateForEditSave()` below — routes whatever ends up here through
+    /// `TagList.normalized` rather than trusting it directly.
+    public var tags: [String] = []
     /// Three-way login switcher state (M10b/T3). The App layer reads this to
     /// decide whether to show the login-set picker or the manual
     /// username/password/key fields; it also fills `username`/`authChoice`/
@@ -825,6 +834,7 @@ public final class ConnectionViewModel {
         password = ""
         saveName = stored.name
         selectedGroupID = stored.groupID
+        tags = stored.tags
         // A referenced login set (M10b/T3) puts the form straight into Set
         // mode with that set preselected; a manual session goes to Manual
         // exactly as before — see the doc comment on `loginMode`.
@@ -879,6 +889,7 @@ public final class ConnectionViewModel {
         values = BackendDescriptor.descriptor(for: kind).defaultValues
         shouldSaveSession = false
         saveName = ""
+        tags = []
         saveAsNewLoginSet = false
         newLoginSetName = ""
         state = .idle
@@ -1002,6 +1013,11 @@ public final class ConnectionViewModel {
         }
         session.groupID = selectedGroupID
         session.loginSetID = loginMode == .set ? selectedLoginSetID : nil
+        // `tags` is a `var` on `StoredSession`, so this direct assignment
+        // must route through `TagList.normalized` itself rather than
+        // trusting the field's typed text — the same rule
+        // `SessionListViewModel.save(tags:)` applies for the new-session path.
+        session.tags = TagList.normalized(tags)
         descriptor.apply(values, &session)
         // AFTER `apply`, which is what creates the SSH block. A jump is an SSH
         // concept and lives inside it, so a non-SSH session correctly keeps

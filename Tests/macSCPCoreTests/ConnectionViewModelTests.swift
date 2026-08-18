@@ -383,9 +383,24 @@ struct ConnectionViewModelTests {
         #expect(vm.password.isEmpty) // never loaded from the keychain
     }
 
+    /// `beginEditing` prefills `tags` from the stored session (P3a/T5) —
+    /// mirroring `saveName`/`selectedGroupID` above, one row in the same
+    /// prefill test rather than a separate one, since it is the same
+    /// mechanism.
+    @Test @MainActor func beginEditingPrefillsTags() {
+        let vm = makeVM()
+        var stored = sshSession(name: "web", host: "h", username: "u")
+        stored.tags = ["docker", "web"]
+        vm.beginEditing(stored)
+
+        #expect(vm.tags == ["docker", "web"])
+    }
+
     @Test @MainActor func exitEditModeResetsModeAndGroupButKeepsFields() {
         let vm = makeVM()
-        vm.beginEditing(sshSession(name: "web", host: "h", username: "u", groupID: UUID()))
+        var stored = sshSession(name: "web", host: "h", username: "u", groupID: UUID())
+        stored.tags = ["docker"]
+        vm.beginEditing(stored)
         vm.exitEditMode()
 
         #expect(vm.mode == .new)
@@ -393,6 +408,7 @@ struct ConnectionViewModelTests {
         // Field values are owned by the teardown/connectStored callers,
         // which overwrite them right after — exitEditMode must not clear them.
         #expect(vm.host == "h" && vm.saveName == "web")
+        #expect(vm.tags == ["docker"])
     }
 
     @Test @MainActor func validateForEditSaveAllowsEmptyPasswordAndBuildsTheSession() {
@@ -407,6 +423,20 @@ struct ConnectionViewModelTests {
         #expect(vm.state == .idle)
     }
 
+    /// `validateForEditSave` routes `tags` through `TagList.normalized`
+    /// itself (P3a/T5) rather than trusting `StoredSession.tags`'s setter —
+    /// the same rule `SessionListViewModel.save(tags:)` follows for the
+    /// new-session path, pinned here for the edit path too since the two
+    /// write paths do not share code.
+    @Test @MainActor func validateForEditSaveNormalizesTags() {
+        let vm = makeVM()
+        vm.beginEditing(sshSession(name: "web", host: "h", username: "u"))
+        vm.tags = ["  docker ", "docker", "web"]
+
+        let result = vm.validateForEditSave()
+        #expect(result?.tags == ["docker", "web"])
+    }
+
     @Test @MainActor func validateForEditSaveRejectsInvalidPort() {
         let vm = makeVM()
         vm.beginEditing(sshSession(name: "web", host: "h", username: "u"))
@@ -418,10 +448,13 @@ struct ConnectionViewModelTests {
 
     @Test @MainActor func endEditingReturnsToNewMode() {
         let vm = makeVM()
-        vm.beginEditing(sshSession(name: "web", host: "h", username: "u"))
+        var stored = sshSession(name: "web", host: "h", username: "u")
+        stored.tags = ["docker"]
+        vm.beginEditing(stored)
         vm.endEditing()
         #expect(vm.mode == .new)
         #expect(vm.host.isEmpty && vm.saveName.isEmpty)
+        #expect(vm.tags.isEmpty)
     }
 
     /// `endEditing` must fully blank the form AND leave edit mode (via

@@ -818,7 +818,8 @@ struct ContentView: View {
                 groupID: form.selectedGroupID,
                 loginSetID: form.loginMode == .set ? form.selectedLoginSetID : newSetID,
                 jump: form.buildJumpSpec(),
-                jumpSecret: form.jumpSourceMode == .session ? nil : form.jumpPassword)
+                jumpSecret: form.jumpSourceMode == .session ? nil : form.jumpPassword,
+                tags: form.tags)
             tab.activeStoredSessionID = stored?.id
             form.shouldSaveSession = false
             titleName = stored?.name ?? titleName
@@ -986,6 +987,7 @@ struct ContentView: View {
             form.values = descriptor.defaultValues
             form.values.merge(descriptor.sessionValues(stored))
             form.saveName = stored.name
+            form.tags = stored.tags
             form.shouldSaveSession = false
 
             // Resolve what this session should actually connect with (M10b/T3):

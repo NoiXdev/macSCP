@@ -93,6 +93,8 @@
 "connection.saveToggle" = "Zapisz jako sesję";
 "connection.field.saveName" = "Nazwa sesji";
 "connection.field.saveName.placeholder" = "np. hetzner-web";
+"form.tags.label" = "Tagi";
+"form.tags.help" = "Rozdzielone przecinkami. Używane przez filtr paska bocznego.";
 "connection.hostkey.first" = "Pierwsze połączenie z %@";
 "connection.hostkey.fingerprintLabel" = "Odcisk klucza (%@):";
 "connection.hostkey.trust" = "Zaufaj i połącz";

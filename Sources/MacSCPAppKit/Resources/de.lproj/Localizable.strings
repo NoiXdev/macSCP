@@ -91,6 +91,8 @@
 "connection.saveToggle" = "Als Session speichern";
 "connection.field.saveName" = "Session-Name";
 "connection.field.saveName.placeholder" = "z.B. hetzner-web";
+"form.tags.label" = "Tags";
+"form.tags.help" = "Kommagetrennt. Wird vom Seitenleisten-Filter verwendet.";
 "connection.hostkey.first" = "Erster Verbindungsaufbau zu %@";
 "connection.hostkey.fingerprintLabel" = "Fingerprint (%@):";
 "connection.hostkey.trust" = "Vertrauen & verbinden";

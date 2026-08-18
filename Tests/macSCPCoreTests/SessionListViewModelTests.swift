@@ -39,6 +39,54 @@ struct SessionListViewModelTests {
         #expect(try secrets.password(for: stored!.id) == "geheim")
     }
 
+    /// `save(tags:)` (P3a/T5): whatever the caller passes goes through
+    /// `TagList.normalized` — trimmed, empties dropped, exact duplicates
+    /// dropped, order kept.
+    @Test func savingCarriesTagsOntoTheStoredSession() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let saved = vm.save(
+            name: "box",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "",
+            tags: ["  docker ", "docker", "web"])
+        #expect(saved?.tags == ["docker", "web"])
+    }
+
+    /// `save` matches an existing session by NAME and mutates it (see the
+    /// big comment on `save` itself) — this pins that a second save under
+    /// the same name REPLACES the tag set rather than merging into it.
+    /// Without this test, "replaces" vs. "appends" would be an unobserved
+    /// implementation choice.
+    @Test func savingAgainUnderTheSameNameReplacesTheTags() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        _ = vm.save(
+            name: "box", values: sshValues(host: "h", port: 22, username: "u"),
+            password: "", tags: ["web"])
+        let again = vm.save(
+            name: "box", values: sshValues(host: "h", port: 22, username: "u"),
+            password: "", tags: ["docker"])
+        #expect(again?.tags == ["docker"])
+    }
+
+    /// Omitting `tags:` entirely must not disturb an existing session's
+    /// tags into something unexpected — the default is `[]`, and `save`
+    /// unconditionally normalizes+assigns it, so a re-save that forgets to
+    /// pass `tags:` clears them. This is the "replaces" contract holding for
+    /// the parameter's own default, not a special case.
+    @Test func omittingTagsOnASecondSaveClearsThem() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        _ = vm.save(
+            name: "box", values: sshValues(host: "h", port: 22, username: "u"),
+            password: "", tags: ["docker"])
+        let again = vm.save(
+            name: "box", values: sshValues(host: "h", port: 22, username: "u"),
+            password: "")
+        #expect(again?.tags == [])
+    }
+
     @Test func reloadSortsByNameCaseInsensitive() {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
