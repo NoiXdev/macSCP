@@ -848,5 +848,9 @@
 "snippets.action.execute" = "Execute";
 "snippets.action.cancel" = "Cancel";
 
+/* Terminal header snippet list (P3d, Task 3) */
+"snippets.list.preview" = "Preview";
+"snippets.list.hoverHint" = "Point at a snippet to see its command.";
+
 "settings.shortcuts.group.snippets" = "Snippets";
 "settings.shortcuts.label.insertSnippet" = "Insert snippet 1–3";

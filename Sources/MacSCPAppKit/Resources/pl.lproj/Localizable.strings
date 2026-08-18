@@ -851,5 +851,9 @@
 "snippets.action.execute" = "Wykonaj";
 "snippets.action.cancel" = "Anuluj";
 
+/* Terminal header snippet list (P3d, Task 3) */
+"snippets.list.preview" = "Podgląd";
+"snippets.list.hoverHint" = "Najedź na fragment, aby zobaczyć jego polecenie.";
+
 "settings.shortcuts.group.snippets" = "Fragmenty";
 "settings.shortcuts.label.insertSnippet" = "Wstaw fragment 1–3";

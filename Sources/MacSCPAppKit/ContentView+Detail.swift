@@ -669,6 +669,23 @@ private struct TerminalPanelHeader: View {
     @State private var isSnippetPopoverPresented = false
     @State private var searchText = ""
     @State private var searchIsRegex = false
+    /// Highlight only — no action fires from a click (P3d, Task 3): the
+    /// spec's precondition for arrow-key navigation of the flat list, which
+    /// this phase does not yet wire, but which must not be foreclosed by a
+    /// click that already does something.
+    @State private var selectedSnippetID: Snippet.ID?
+    /// The row currently under the pointer, if any — drives
+    /// `commandPreviewLine(for:)`. Distinct from `previewPinnedRow`: this
+    /// one clears the instant the pointer leaves the row, the other is a
+    /// deliberate right-click choice that stays until something replaces it.
+    @State private var hoveredRow: SnippetListPlan.Row?
+    /// Set by a row's "Preview" context-menu action. Read only when
+    /// `hoveredRow` is `nil`, so a live hover always wins — see
+    /// `commandPreviewLine(for:)`'s call site.
+    @State private var previewPinnedRow: SnippetListPlan.Row?
+    /// Non-`nil` while the P3d Task 2 action window is up for this snippet
+    /// (double-click on a row). `.sheet(item:)` below owns dismissal.
+    @State private var actionSheetSnippet: Snippet?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -703,15 +720,42 @@ private struct TerminalPanelHeader: View {
         .background(Color(nsColor: DesignTokens.terminalBackground))
     }
 
+    /// The flat-list popover (P3d, Task 3) — the fourth trigger surface,
+    /// and the only one of the four that is NOT a real `NSMenu`; see this
+    /// file's own top-level doc comment and the P3d plan for why the other
+    /// three (`MacSCPApp`'s menu bar, `SSHTerminalView`'s right-click,
+    /// `SessionSidebar`'s host context menu) stay on `SnippetMenuItems`
+    /// unchanged. Renders `SnippetListPlan.build(model:)` — Task 1's
+    /// projection — instead: one row per snippet (never two, even for a
+    /// two-tag snippet — see that type's own doc comment), grouped under
+    /// the same tag headings the menus use.
+    ///
+    /// Three ways to act on a row, deliberately different speeds (the P3d
+    /// design doc's own framing): right-click for the fast path (Execute /
+    /// Insert / Preview, one gesture, no window), double-click for the
+    /// Task 2 action window (deliberate, name + command + three buttons),
+    /// hover for a look with no gesture at all. A single click does only
+    /// ONE thing — select — never an action; see `selectedSnippetID`'s doc
+    /// comment for why that precondition matters even though this phase
+    /// does not yet wire arrow-key navigation on top of it.
+    ///
+    /// Untested, like `TerminalPanelHeader.body` itself: this project has
+    /// no SwiftUI rendering harness (`TerminalPanelHeader`'s own doc
+    /// comment states the boundary already). Nothing here — the gesture
+    /// split between single/double click, the context menu's three
+    /// entries, the hover line's content, row selection highlighting — can
+    /// be observed by a test; only `SnippetListPlan` (Task 1, tested in
+    /// `macSCPCoreTests`) and `TerminalSnippetSearch` (tested below) are.
     @ViewBuilder
     private var snippetPopover: some View {
         let (predicate, searchError) = sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)
         let visibleSnippets = TerminalSnippetSearch.matching(snippets, predicate: predicate)
         let model = SnippetMenuModel.build(
             snippets: visibleSnippets, isConnected: true, supportsShell: supportsShell)
+        let sections = SnippetListPlan.build(model: model)
         VStack(alignment: .leading, spacing: 8) {
             SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
-            if model.isEmpty {
+            if sections.isEmpty {
                 Text(searchText.isEmpty
                     ? L10n.string("snippets.empty", "No snippets yet.")
                     : L10n.string("snippets.noMatches", "No matches."))
@@ -721,18 +765,156 @@ private struct TerminalPanelHeader: View {
                     .padding(.vertical, 6)
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        SnippetMenuItems(model: model) { snippet, execute in
-                            onRunSnippet(snippet, execute)
-                            isSnippetPopoverPresented = false
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(sections) { section in
+                            if let tag = section.tag {
+                                Text(tag)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.top, 4)
+                            }
+                            ForEach(section.rows) { row in
+                                snippetRow(row)
+                            }
                         }
                     }
                 }
                 .frame(maxHeight: 240)
+                // The hover line (P3d design doc): a FIXED row, not a
+                // tooltip — a tooltip is delayed, truncates, and cannot be
+                // read while the pointer is still moving toward it. Always
+                // present (never conditionally inserted) so the popover's
+                // height is the same whether or not a row is currently
+                // hovered/pinned — a line that appeared and disappeared
+                // would resize the popover on every hover change, which
+                // reads as jitter, not information. `lineLimit(1)` +
+                // `.truncationMode(.tail)` were chosen over wrapping for
+                // the same reason: wrapping would make the popover's
+                // height depend on which snippet is hovered, exactly the
+                // instability the fixed line exists to avoid.
+                commandPreviewLine
             }
         }
         .padding(12)
         .frame(width: 280)
+        .sheet(item: $actionSheetSnippet) { snippet in
+            // Task 2's action window, reused verbatim. Insert/Execute both
+            // dismiss the sheet AND the popover itself — matching what a
+            // right-click Insert/Execute already does below, so a snippet
+            // triggered via either path leaves the header in the same
+            // state afterward.
+            SnippetActionSheet(
+                snippet: snippet,
+                onInsert: {
+                    onRunSnippet(snippet, false)
+                    actionSheetSnippet = nil
+                    isSnippetPopoverPresented = false
+                },
+                onExecute: {
+                    onRunSnippet(snippet, true)
+                    actionSheetSnippet = nil
+                    isSnippetPopoverPresented = false
+                },
+                onCancel: { actionSheetSnippet = nil }
+            )
+        }
+    }
+
+    /// One row of the flat list. Single click selects only (see
+    /// `selectedSnippetID`'s doc comment); double-click opens the Task 2
+    /// action window, gated on `!row.isDisabled` the same way the menu
+    /// surfaces gate their own per-snippet `Menu` — a disabled row still
+    /// SHOWS what it would do (name, and its command via hover/Preview),
+    /// it just cannot be made to do it, matching `SnippetMenuItems`'
+    /// `.disabled(entry.isDisabled)` on its per-snippet `Menu`.
+    ///
+    /// The double/single-click split uses SwiftUI's documented
+    /// `exclusively(before:)` composition (`TapGesture(count: 2)` tried
+    /// first) rather than two independent `.onTapGesture` modifiers: the
+    /// latter fires the count-1 gesture immediately, before SwiftUI can
+    /// know a second tap is coming, so a double-click would ALSO select
+    /// first and open the action window a moment later on top of that —
+    /// visible flicker, and a spurious selection change on every
+    /// double-click. `exclusively` makes double-click win outright when it
+    /// occurs, at the cost of every single click waiting out the standard
+    /// double-click interval before selecting — an accepted trade against
+    /// that flicker, not a limit anyone measured against.
+    @ViewBuilder
+    private func snippetRow(_ row: SnippetListPlan.Row) -> some View {
+        Text(row.displayName)
+            .font(.system(size: 12))
+            .foregroundStyle(
+                Color(nsColor: DesignTokens.terminalText)
+                    .opacity(row.isDisabled ? 0.45 : 1))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(
+                selectedSnippetID == row.snippet.id
+                    ? DesignTokens.remoteSoft : Color.clear,
+                in: RoundedRectangle(cornerRadius: 4))
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                if hovering {
+                    hoveredRow = row
+                } else if hoveredRow?.id == row.id {
+                    hoveredRow = nil
+                }
+            }
+            .gesture(
+                TapGesture(count: 2)
+                    .onEnded {
+                        // A double-click always selects, same as a single
+                        // click — it only additionally opens the action
+                        // window, and only when the row's actions are
+                        // available at all.
+                        selectedSnippetID = row.snippet.id
+                        guard !row.isDisabled else { return }
+                        actionSheetSnippet = row.snippet
+                    }
+                    .exclusively(before: TapGesture(count: 1).onEnded {
+                        selectedSnippetID = row.snippet.id
+                    })
+            )
+            .contextMenu {
+                if !row.isDisabled {
+                    Button(L10n.string("menu.snippets.execute", "Execute")) {
+                        onRunSnippet(row.snippet, true)
+                        isSnippetPopoverPresented = false
+                    }
+                    Button(L10n.string("menu.snippets.insert", "Insert")) {
+                        onRunSnippet(row.snippet, false)
+                        isSnippetPopoverPresented = false
+                    }
+                }
+                // Preview stays offered even for a disabled row (no
+                // connection / no shell): it only reveals the command
+                // text, the same thing hovering already does, so there is
+                // nothing here a disabled row needs protecting from.
+                Button(L10n.string("snippets.list.preview", "Preview")) {
+                    previewPinnedRow = row
+                }
+            }
+    }
+
+    /// The fixed bottom line `snippetPopover` reserves for the hovered (or
+    /// right-click-"Preview"-pinned) row's command. A live hover always
+    /// wins over a pin — moving the pointer over a different row updates
+    /// the line immediately, the same way a real tooltip would track the
+    /// pointer, and the pin only matters again once the pointer leaves the
+    /// list entirely (`onHover`'s `else` branch above only clears
+    /// `hoveredRow`, never `previewPinnedRow`).
+    private var commandPreviewLine: some View {
+        Text(SnippetPreviewLine.row(hovered: hoveredRow, pinned: previewPinnedRow)?.snippet.command
+            ?? L10n.string("snippets.list.hoverHint", "Point at a snippet to see its command."))
+            .font(.system(.caption, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 4)
     }
 }
 
@@ -753,5 +935,26 @@ enum TerminalSnippetSearch {
         _ snippets: [Snippet], predicate: FileSearch.FileSearchPredicate
     ) -> [Snippet] {
         snippets.filter { predicate.matches("\($0.name) \($0.command)") }
+    }
+}
+
+/// Chooses which row's command the popover's fixed bottom line shows (P3d,
+/// Task 3) — pulled out of `TerminalPanelHeader` for the same reason
+/// `TerminalSnippetSearch` above was in Task 8: a plain function
+/// `Tests/macSCPAppKitTests/` can call directly, rather than a decision
+/// left inline in the view body where nothing can observe it.
+///
+/// A live hover (`hovered`) always wins over a right-click "Preview" pin
+/// (`pinned`): moving the pointer onto a different row should update the
+/// line immediately, the same way a real tooltip would track the pointer,
+/// regardless of which row was pinned earlier. The pin only surfaces again
+/// once the pointer leaves the list entirely and `hovered` goes back to
+/// `nil` — see `TerminalPanelHeader.snippetRow(_:)`'s `onHover` closure,
+/// which clears `hoveredRow` but never `previewPinnedRow`.
+enum SnippetPreviewLine {
+    static func row(
+        hovered: SnippetListPlan.Row?, pinned: SnippetListPlan.Row?
+    ) -> SnippetListPlan.Row? {
+        hovered ?? pinned
     }
 }
