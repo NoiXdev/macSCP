@@ -22,8 +22,12 @@ enum SnippetTagFieldRow: Equatable {
 /// Builds the row list `SnippetTagField` shows under its text field: the
 /// caller-supplied suggestions (already prefix-filtered and excluding
 /// already-chosen tags — see `SnippetTagSuggestions.matching`), followed by
-/// a "create new tag" row for the trimmed typed text whenever that text is
-/// non-empty.
+/// a "create new tag" row for the typed text run through `TagList.
+/// normalized` (trimmed, dropped if that leaves it empty) whenever that
+/// leaves something non-empty. Routed through the one-element array form of
+/// the shared rule rather than trimming inline, so this row's tag can never
+/// silently disagree with what `TagList` — and, downstream, `Snippet.
+/// init?` — would keep or drop for the same string.
 ///
 /// The create-new row is appended UNCONDITIONALLY whenever there is
 /// non-empty typed text — even if that text happens to exactly match a
@@ -38,8 +42,7 @@ enum SnippetTagFieldSuggestions {
         suggestions: [(tag: String, count: Int)]
     ) -> [SnippetTagFieldRow] {
         var rows = suggestions.map { SnippetTagFieldRow.existing(tag: $0.tag, count: $0.count) }
-        let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
+        if let trimmed = TagList.normalized([typed]).first {
             rows.append(.createNew(tag: trimmed))
         }
         return rows
@@ -108,21 +111,19 @@ enum SnippetTagFieldHighlight {
 }
 
 /// Splits typed text on commas: everything before each comma becomes a
-/// committed tag (trimmed, empty segments dropped — a bare "," or ",,"
-/// commits nothing), and the text after the LAST comma is what stays in the
-/// field, still being typed. Pure text processing, split out so pasting
-/// "a,b,c" and typing one comma at a time are provably the same operation
-/// applied more than once, rather than two behaviors that only happen to
-/// look alike.
+/// committed tag, run through `TagList.normalized` (trimmed, empty segments
+/// dropped — a bare "," or ",," commits nothing, and an in-batch duplicate
+/// like "a,a," commits once), and the text after the LAST comma is what
+/// stays in the field, still being typed. Pure text processing, split out
+/// so pasting "a,b,c" and typing one comma at a time are provably the same
+/// operation applied more than once, rather than two behaviors that only
+/// happen to look alike.
 enum SnippetTagFieldInput {
     static func commaSplit(_ text: String) -> (tagsToCommit: [String], remaining: String) {
         guard text.contains(",") else { return ([], text) }
         var parts = text.components(separatedBy: ",")
         let remaining = parts.removeLast()
-        let tags = parts
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        return (tags, remaining)
+        return (TagList.normalized(parts), remaining)
     }
 }
 

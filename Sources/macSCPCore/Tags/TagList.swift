@@ -9,9 +9,13 @@ import Foundation
 /// list), not this function's: folding case here would silently rewrite
 /// what the user typed.
 ///
-/// Host tags and snippet tags remain INDEPENDENT vocabularies — a host tag
-/// hides no snippet. Only the rule is shared, because two copies of one
-/// rule drift apart without any test noticing.
+/// Design intent, not yet pinned by any test: host tags and snippet tags
+/// are meant to stay INDEPENDENT vocabularies — a host tag should hide no
+/// snippet. Host tags do not exist in this codebase yet, so nothing here
+/// observes that claim; whichever later task introduces them is expected
+/// to add a test that does. Only the normalization rule below is shared
+/// today, because two copies of one rule drift apart without any test
+/// noticing.
 public enum TagList {
     public static func normalized(_ tags: [String]) -> [String] {
         var seen = Set<String>()

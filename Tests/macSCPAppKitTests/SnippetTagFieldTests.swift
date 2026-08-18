@@ -167,4 +167,37 @@ struct SnippetTagFieldTests {
         #expect(result.tagsToCommit.isEmpty)
         #expect(result.remaining.isEmpty)
     }
+
+    // MARK: - Equivalence with TagList
+
+    /// Guards against `commaSplit`'s committed segments drifting from the
+    /// shared rule in `TagList` — a later change to what counts as empty or
+    /// as whitespace there must reach this call site too, not just
+    /// `Snippet`.
+    @Test func commaSplitCommittedSegmentsAgreeWithTagListNormalized() {
+        let inputs = ["docker,", "a,b,c", "  a  , b ,", ",,", "Docker,docker,", "a,a,b,"]
+        for input in inputs {
+            let allSegments = input.components(separatedBy: ",")
+            let precedingLastSegments = Array(allSegments.dropLast())
+            #expect(
+                SnippetTagFieldInput.commaSplit(input).tagsToCommit
+                    == TagList.normalized(precedingLastSegments))
+        }
+    }
+
+    /// Guards against the create-new row's trim drifting from the same
+    /// shared rule — the row's tag is exactly what `SnippetTagCommit.
+    /// appending` puts in `tags` on commit, so it must always agree with
+    /// what `TagList` would keep or drop for that one candidate string.
+    @Test func createNewRowTagAgreesWithTagListNormalized() {
+        let inputs = ["docker", "  Docker  ", "   ", "", "a b"]
+        for input in inputs {
+            let rows = SnippetTagFieldSuggestions.rows(typed: input, suggestions: [])
+            if let expected = TagList.normalized([input]).first {
+                #expect(rows == [.createNew(tag: expected)])
+            } else {
+                #expect(rows.isEmpty)
+            }
+        }
+    }
 }
