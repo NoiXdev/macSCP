@@ -148,10 +148,18 @@ zusammen mit den bereits vorhandenen in einer Suite):
   `.unreadable`, auch wenn `visibleSnippets` (das Argument) nicht leer
   wäre — der Test, der beweist, dass die Funktion `isUnreadable` selbst
   prüft statt es nur aus Leere zu erraten.
-- `applySnippetImportPlan`: frischer Import, Replace-statt-Duplikat
-  (End-zu-Ende von Planer-Ausgabe bis Store-Zustand, vorher nur isoliert
-  getestet), ein abgebrochener Lauf schreibt nichts, ein Schreibfehler wird
-  gezählt statt zu crashen.
+- `applySnippetImportPlan`: frischer Import, Replace-statt-Duplikat, ein
+  abgebrochener Lauf schreibt nichts, ein Schreibfehler wird gezählt statt zu
+  crashen. **Korrektur (Whole-Phase-Review):** Dieser Abschnitt beschrieb
+  `applySnippetImportPlanReplacesRatherThanDuplicating` als „End-zu-Ende von
+  Planer-Ausgabe bis Store-Zustand". Das stimmt nicht — der Test baut sein
+  `PlannedSnippet` von Hand und ruft den Planer nie auf; er pinnt die
+  *Verklebung* zwischen dem dokumentierten Planer-Vertrag (Replace behält die
+  vorhandene id) und `SnippetStore.save`, nicht die Kette. Die tatsächlich
+  durchgängige Kette schreibt jetzt
+  `aRealExportRoundTripsThroughThePlannerAndTheApplierIntoTheStore`:
+  echter `encode` → `decode` → `SnippetImportPlanner.plan` →
+  `applySnippetImportPlan` → `store.all()`.
 - `snippetImportResultText`/`snippetImportErrorText`: Textvarianten je
   nach Anzahl/Fehlerart.
 

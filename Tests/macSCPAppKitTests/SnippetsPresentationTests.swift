@@ -195,6 +195,56 @@ struct SnippetsPresentationTests {
         #expect(all == [replacement])
     }
 
+    /// The one test that chains the whole exchange end to end: a real
+    /// `SnippetExportCodec.encode`, a real `decode`, the real
+    /// `SnippetImportPlanner`, `applySnippetImportPlan`, and finally a read
+    /// back off the store. Every other test in this file builds its
+    /// `PlannedSnippet` BY HAND and never calls the planner, so none of them
+    /// can see a break in the seams between those steps — a planner that
+    /// stopped carrying tags over, or stopped reusing the existing id, would
+    /// leave all of them green.
+    ///
+    /// Two properties only this chain can observe, and they pull in opposite
+    /// directions on purpose:
+    ///
+    /// * NAMES are matched CASE-INSENSITIVELY. The store holds "Prod", the
+    ///   file carries "prod", and that is a collision — the replace lands on
+    ///   the stored snippet's id, so the store keeps one entry, not two.
+    /// * TAGS are compared CASE-SENSITIVELY. `["Docker", "docker"]` is two
+    ///   tags and survives encode → decode → plan → apply as two.
+    ///   `TagList.normalized` dedupes exact strings and is idempotent, so
+    ///   the round trip does not collapse them; folding case there would,
+    ///   and nothing else along this path would notice.
+    @Test func aRealExportRoundTripsThroughThePlannerAndTheApplierIntoTheStore() async throws {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let stored = try #require(Snippet(name: "Prod", command: "echo old", tags: ["prod"]))
+        try store.save(stored)
+
+        let colliding = try #require(Snippet(
+            name: "prod", command: "docker compose up -d", tags: ["Docker", "docker"]))
+        let fresh = try #require(Snippet(name: "Disk", command: "df -h"))
+        let file = try SnippetExportCodec.encode(
+            SnippetExportPayload(snippets: [colliding, fresh]))
+        let decoded = try SnippetExportCodec.decode(file)
+
+        let arbiter = ImportConflictArbiter { _ in (resolution: .replace, applyToAll: false) }
+        let existing = try store.all()
+        let plan = await SnippetImportPlanner.plan(
+            existing: existing, incoming: decoded, arbiter: arbiter)
+        let applied = applySnippetImportPlan(plan, to: store)
+
+        #expect(plan.replaced == ["prod"])
+        #expect(applied == SnippetImportApplyResult(imported: 2, storeFailures: 0))
+        let all = try store.all()
+        #expect(all.count == 2)
+        let replaced = try #require(all.first { $0.id == stored.id })
+        #expect(replaced.name == "prod")
+        #expect(replaced.command == "docker compose up -d")
+        #expect(replaced.tags == ["Docker", "docker"])
+        #expect(all.contains { $0.name == "Disk" && $0.id != stored.id })
+    }
+
     /// Cancellation applies nothing: `SnippetImportPlanner.plan` returns
     /// `snippetsToImport: []` for a cancelled run (see its own doc
     /// comment), so this function — which writes exactly what
