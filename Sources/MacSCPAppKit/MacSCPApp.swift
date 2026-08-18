@@ -99,6 +99,40 @@ final class TabCommands {
     /// reason (this Scene doesn't see `tabsModel`). Defaults `true` so the
     /// menu behaves exactly as before this feature until the mirror runs.
     var activeTabSupportsShell = true
+    /// Pane lock (P2 terminal-chrome milestone; whole-phase review, Fix 2):
+    /// `false` while the terminal is the last visible half, so turning it off
+    /// would empty the window. `ContentView` mirrors
+    /// `SessionTab.paneToggleState(for: .terminal, …).isEnabled` here the
+    /// same way it mirrors `activeTabSupportsShell` above, and for the same
+    /// reason (this Scene cannot see `tabsModel`).
+    ///
+    /// It exists because `toggleTerminal`'s closure checks the lock and
+    /// returns — and a menu entry that is enabled and does nothing is exactly
+    /// what `PaneToggleState`'s own doc comment rules out ("disabled rather
+    /// than silently inert, so the user can see why a click does not land").
+    /// The toolbar button got this right from the start via its own
+    /// `.disabled`; the menu entry lives in another Scene and could only get
+    /// it through a mirror.
+    ///
+    /// Defaults `true` for the same reason `activeTabSupportsShell` does: the
+    /// menu must behave exactly as before until the mirror has run once. The
+    /// disconnected case is not this flag's business — `isActiveTabConnected`
+    /// already covers it.
+    var activeTabTerminalToggleIsUnlocked = true
+    /// Whether the "Show/Hide Terminal" entry can do anything at all: a
+    /// connected tab, on a backend with a shell, whose terminal half is not
+    /// the last visible one. The menu's `.disabled` reads THIS rather than
+    /// re-spelling the three conditions, so the entry and
+    /// `toggleTerminal`'s own guards cannot drift apart on what "would not
+    /// land" means.
+    ///
+    /// "Open in External Terminal" deliberately does NOT read this: that
+    /// route never touches `TerminalPanelViewModel.isVisible`, so the pane
+    /// lock has nothing to say about it (documented deliberate asymmetry,
+    /// Task 3).
+    var canToggleTerminal: Bool {
+        isActiveTabConnected && activeTabSupportsShell && activeTabTerminalToggleIsUnlocked
+    }
     /// The saved snippets, mirrored for the Terminal menu's snippet entries
     /// (Terminal-Snippets milestone) — same rationale as `hiddenImportsCount`
     /// above: this Scene cannot see `ContentView`'s `@State`, and here the
@@ -320,12 +354,15 @@ struct MacSCPApp: App {
             // connected session (`tabCommands.isActiveTabConnected`, kept in
             // sync by `ContentView`), OR the active backend has no shell
             // (`tabCommands.activeTabSupportsShell`, M12/T7b — e.g. an S3
-            // session).
+            // session). "Show/Hide Terminal" is additionally disabled while
+            // the pane lock would refuse the click (whole-phase review, Fix
+            // 2) — see `TabCommands.canToggleTerminal`; the external route
+            // is not subject to that lock.
             CommandMenu(L10n.string("menu.terminal", "Terminal")) {
                 Button(L10n.string("menu.terminal.toggle", "Show/Hide Terminal")) {
                     tabCommands.toggleTerminal?()
                 }
-                .disabled(!tabCommands.isActiveTabConnected || !tabCommands.activeTabSupportsShell)
+                .disabled(!tabCommands.canToggleTerminal)
                 Button(L10n.string("menu.terminal.openExternal", "Open in External Terminal")) {
                     tabCommands.openExternalTerminal?()
                 }

@@ -400,6 +400,26 @@ struct ContentView: View {
         BackendDescriptor.descriptor(for: activeTab.connectionViewModel.kind).capabilities.supportsShell
     }
 
+    /// Mirrored into `tabCommands.activeTabTerminalToggleIsUnlocked` via
+    /// `.onChange` below (whole-phase review, Fix 2), same
+    /// rationale/mechanism as `activeTabSupportsShell` above: the "Terminal"
+    /// menu's Show/Hide entry lives in a Scene that cannot see `tabsModel`,
+    /// and without this it stayed enabled while `toggleTerminal`'s own pane-
+    /// lock guard silently swallowed the click.
+    ///
+    /// Reads `SessionTab.paneToggleState` — the same method the toolbar's
+    /// own `.disabled` reads — so the menu entry and the toolbar button
+    /// agree by construction rather than by two spellings of one rule.
+    /// `true` while nothing is connected: the lock has no opinion there, and
+    /// `isActiveTabConnected` already disables the entry.
+    var activeTabTerminalToggleIsUnlocked: Bool {
+        guard let session = activeTab.session else { return true }
+        return activeTab.paneToggleState(
+            for: .terminal, terminalIsVisible: session.terminal.isVisible,
+            hasShell: activeTabSupportsShell
+        ).isEnabled
+    }
+
     /// The snippet store this window reads and writes (Terminal-Snippets
     /// milestone). A stateless struct over a fixed directory — the same
     /// shape and the same directory the known-hosts sheet's `KnownHostsStore`
@@ -430,6 +450,14 @@ struct ContentView: View {
             // above for the identical reason.
             .onChange(of: activeTabSupportsShell, initial: true) { _, newValue in
                 tabCommands.activeTabSupportsShell = newValue
+            }
+            // Keeps `tabCommands.activeTabTerminalToggleIsUnlocked` in sync
+            // (whole-phase review, Fix 2) — see that property's doc comment.
+            // Same mirror shape as the two above; without it the flag would
+            // sit on its `true` default forever and the menu entry would be
+            // enabled while the click cannot land.
+            .onChange(of: activeTabTerminalToggleIsUnlocked, initial: true) { _, newValue in
+                tabCommands.activeTabTerminalToggleIsUnlocked = newValue
             }
             // Mirrors `hiddenImportAliases.count` into the command bridge
             // (M11f/T2, same rationale as `isActiveTabConnected` above):

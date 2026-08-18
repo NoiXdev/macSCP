@@ -39,6 +39,12 @@ import Testing
 ///   stored: StoredSession)`'s body — it does not check the call is
 ///   reachable on every path through that `Task`, only that it appears at
 ///   all textually inside the function.
+/// - The two Fix 2 checks (the menu entry's `.disabled` and its mirror)
+///   are literal in the same way: renaming `canToggleTerminal` or
+///   `activeTabTerminalToggleIsUnlocked` re-anchors them (they say so when
+///   they cannot find their anchor), and the mirror check verifies the
+///   assignment appears inside the `.onChange` block, not that SwiftUI ever
+///   evaluates it.
 /// - `activeTab.transfersPanelVisible.toggle()` (a few lines below the
 ///   Transfers toolbar button, same file) is deliberately NOT recognized as
 ///   a pane-visibility toggle site — its trimmed text is neither
@@ -61,6 +67,8 @@ struct PaneVisibilityWiringGuardTests {
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView.swift")
     private static let lifecycleFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Lifecycle.swift")
+    private static let appFile = repoRoot
+        .appendingPathComponent("Sources/MacSCPAppKit/MacSCPApp.swift")
 
     // MARK: - The guard
 
@@ -119,6 +127,51 @@ struct PaneVisibilityWiringGuardTests {
         let sites = Self.toggleSiteEndLines(in: lines)
         let transfersLine = lines.firstIndex { $0.contains("activeTab.transfersPanelVisible.toggle()") }
         #expect(!sites.contains(transfersLine!))
+    }
+
+    // MARK: - The menu entry's enabled state (whole-phase review, Fix 2)
+
+    /// The "Show/Hide Terminal" entry must be disabled by the pane lock, not
+    /// merely refused inside `toggleTerminal`'s closure — an enabled entry
+    /// that does nothing is the silent no-op `PaneToggleState`'s doc comment
+    /// rules out. `TabCommandsTests` pins what `canToggleTerminal` decides;
+    /// this pins that the entry actually asks it.
+    @Test func theTerminalMenuEntryIsDisabledByThePaneLock() throws {
+        let source = try String(contentsOf: Self.appFile, encoding: .utf8)
+        let lines = source.components(separatedBy: "\n")
+        guard let button = lines.firstIndex(where: { $0.contains("\"menu.terminal.toggle\"") }) else {
+            Issue.record("`menu.terminal.toggle` button not found — re-anchor this guard")
+            return
+        }
+        let window = lines[button...min(button + 6, lines.count - 1)]
+        let disabled = window.first { $0.trimmingCharacters(in: .whitespaces).hasPrefix(".disabled(") }
+        #expect(disabled?.contains("canToggleTerminal") == true, """
+            the "Show/Hide Terminal" entry's `.disabled(…)` no longer reads \
+            `tabCommands.canToggleTerminal` — with the pane lock only checked \
+            inside the closure, the entry is enabled while the click cannot land.
+            """)
+    }
+
+    /// The mirror that feeds that flag. `TabCommands.
+    /// activeTabTerminalToggleIsUnlocked` defaults to `true`, so a missing
+    /// `.onChange` is invisible in every other way: the menu would simply
+    /// behave as it did before Fix 2.
+    @Test func contentViewMirrorsThePaneLockIntoTabCommands() throws {
+        let source = try String(contentsOf: Self.contentViewFile, encoding: .utf8)
+        let lines = source.components(separatedBy: "\n")
+        guard let range = Self.range(
+            ofBlockStartingWith: ".onChange(of: activeTabTerminalToggleIsUnlocked", in: lines)
+        else {
+            Issue.record("""
+                no `.onChange(of: activeTabTerminalToggleIsUnlocked …)` in ContentView.swift — \
+                the menu's pane-lock flag would keep its `true` default forever.
+                """)
+            return
+        }
+        let assigns = range.contains {
+            lines[$0].contains("tabCommands.activeTabTerminalToggleIsUnlocked = ")
+        }
+        #expect(assigns, "the mirror observes the value but does not write it into `tabCommands`")
     }
 
     // MARK: - Scanner reacts (self-tests over synthetic sources)
