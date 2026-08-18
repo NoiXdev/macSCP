@@ -101,13 +101,26 @@ enum DesignTokens {
     // The one non-color pair in this file (Terminal-Fassung P2, Task 1).
     // `DesignTokens` otherwise holds only colors, but this measurement earns
     // a place here too, for the same reason the colors above do: it is a
-    // value two independent views must agree on. `TerminalPanelHeader` and
-    // the terminal surface in `terminalPanel(_:)`
-    // (`Sources/MacSCPAppKit/ContentView+Detail.swift`) both read these two
-    // constants, so they cannot quietly drift apart the way the header's
-    // inset and the `.ended` state's own (separate, untouched) `14`/`8`
-    // padding already had before this change. Not a general spacing scale —
-    // just the one pair those two readers share.
-    static let terminalPanelInsetHorizontal: CGFloat = 12
-    static let terminalPanelInsetVertical: CGFloat = 6
+    // value multiple independent views must agree on.
+    //
+    // The value is 14/8, decided by
+    // `docs/superpowers/specs/2026-08-10-snippets-runde-2-design.md`
+    // ("P2 — Terminal-Fassung"): the panel's panes and the `.ended` text
+    // block already used 14/8 before this task, so that is the existing
+    // rhythm, not an invented one. `TerminalPanelHeader` previously used
+    // its own, different `12`/`6` — invented in P1 when the header was the
+    // only thing in that strip — and DELIBERATELY moves to 14/8 here so it
+    // and the terminal surface (which had no inset at all) do not sit two
+    // points apart. That is an intentional visual change to the header,
+    // not a regression to undo.
+    //
+    // `TerminalPanelHeader`, the terminal surface, and the `.ended` block
+    // in `terminalPanel(_:)`
+    // (`Sources/MacSCPAppKit/ContentView+Detail.swift`) all read these two
+    // constants, so none of the three can quietly drift apart again the
+    // way the header's inset and everything else's already had before this
+    // change. Not a general spacing scale — just the one pair the whole
+    // panel now shares.
+    static let terminalPanelInsetHorizontal: CGFloat = 14
+    static let terminalPanelInsetVertical: CGFloat = 8
 }

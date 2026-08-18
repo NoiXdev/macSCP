@@ -562,12 +562,12 @@ extension ContentView {
                         onRunSnippet: { snippet, execute in
                             triggerSnippet(snippet, execute: execute)
                         })
-                        // Same inset `TerminalPanelHeader` uses above (Terminal-
-                        // Fassung P2, Task 1) — the terminal surface previously
-                        // had none at all and sat flush against the panel edge;
-                        // both readers now share `DesignTokens`' one pair
-                        // instead of each carrying its own literal (see that
-                        // enum's doc comment).
+                        // Same inset `TerminalPanelHeader` and the `.ended`
+                        // block below use (Terminal-Fassung P2, Task 1) — the
+                        // terminal surface previously had none at all and sat
+                        // flush against the panel edge; all three now share
+                        // `DesignTokens`' one pair instead of each carrying
+                        // its own literal (see that enum's doc comment).
                         .padding(.horizontal, DesignTokens.terminalPanelInsetHorizontal)
                         .padding(.vertical, DesignTokens.terminalPanelInsetVertical)
                 case .ended(let message):
@@ -577,8 +577,13 @@ extension ContentView {
                             .foregroundStyle(Color(nsColor: DesignTokens.terminalText))
                         Button(L10n.string("terminal.reopen", "Reopen")) { session.terminal.openIfNeeded() }
                     }
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 14)
+                    // Already 14/8 before the rest of the panel was unified
+                    // onto it (Terminal-Fassung P2, Task 1) — now routed
+                    // through the same constants as the other two readers
+                    // rather than kept as its own matching-by-coincidence
+                    // literals. Rendered result unchanged.
+                    .padding(.vertical, DesignTokens.terminalPanelInsetVertical)
+                    .padding(.horizontal, DesignTokens.terminalPanelInsetHorizontal)
                 case .closed:
                     Color.clear
                 }
@@ -655,9 +660,14 @@ private struct TerminalPanelHeader: View {
                 snippetPopover
             }
         }
-        // Same inset the terminal surface reads below (Terminal-Fassung P2,
-        // Task 1) — the two shared `DesignTokens` inset constants below,
-        // not a literal, so this row and that surface cannot drift apart.
+        // Moves from this header's own former 12/6 to the panel's existing
+        // 14/8 rhythm (Terminal-Fassung P2, Task 1, per
+        // docs/superpowers/specs/2026-08-10-snippets-runde-2-design.md,
+        // "P2 — Terminal-Fassung") — a DELIBERATE visual change (this row
+        // gets two points wider/taller), not a regression to revert. Reads
+        // the same shared `DesignTokens` constants as the terminal surface
+        // and the `.ended` block below, so this row cannot drift apart from
+        // them again the way it did before this change.
         .padding(.horizontal, DesignTokens.terminalPanelInsetHorizontal)
         .padding(.vertical, DesignTokens.terminalPanelInsetVertical)
         .background(Color(nsColor: DesignTokens.terminalBackground))
