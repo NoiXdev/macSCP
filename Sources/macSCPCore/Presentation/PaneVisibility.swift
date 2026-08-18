@@ -21,13 +21,20 @@ import Foundation
 /// `TerminalPanelViewModel.isVisible`, the existing terminal-only toggle —
 /// reconciling the two is a later task's decision.
 public struct PaneVisibility: Equatable, Sendable, Codable {
-    public var showsFiles: Bool
-    public var showsTerminal: Bool
+    public let showsFiles: Bool
+    public let showsTerminal: Bool
 
     /// Repairs "neither half visible" by forcing `showsFiles` back on. This
     /// is the type's only entry point for its stored properties — `init(from:)`
     /// below constructs through it too — so the repair cannot be bypassed by
-    /// constructing a value directly.
+    /// constructing a value directly. `let` above is load-bearing: it is what
+    /// makes this the ONLY entry point. A `var` would let a caller mutate a
+    /// valid value in place — `v.showsFiles = false; v.showsTerminal = false`
+    /// — landing directly on "neither visible" without ever going through
+    /// the repair, the same way `Snippet.command`/`Snippet.tags` are `let`
+    /// so an in-place mutation cannot break their invariants either. Every
+    /// change to a `PaneVisibility` therefore produces a NEW value through
+    /// this initializer (see `applyingClick(on:hasShell:)`).
     public init(showsFiles: Bool, showsTerminal: Bool) {
         if !showsFiles && !showsTerminal {
             self.showsFiles = true
@@ -95,23 +102,32 @@ public struct PaneVisibility: Equatable, Sendable, Codable {
 
     /// Applies a click on `toggle`: flips that half's visibility.
     ///
+    /// `hasShell` is folded in exactly like `toggleState(for:hasShell:)`
+    /// does, so the two ask the same question in only one place rather than
+    /// each answering it independently: a terminal click on a shell-less
+    /// backend is unconditionally a no-op HERE, not merely something a
+    /// caller is expected to withhold after consulting `toggleState`. Two
+    /// consequences:
+    /// - `.terminal` with `hasShell == false` returns `self` unchanged —
+    ///   there is nothing to turn on, so the click does not land.
+    /// - `.files` folds `showsTerminal && hasShell` into the flipped value,
+    ///   so turning files off cannot leave a `showsTerminal: true` that
+    ///   `hasShell` would make ineffective anyway from standing in for a
+    ///   real second visible half; the repairing initializer sees the same
+    ///   "effectively nothing visible" `toggleState` would compute, and
+    ///   promotes files back on.
+    ///
     /// Safe to call on the toggle for the currently only visible half even
     /// though `toggleState(for:hasShell:)` reports it disabled: flipping it
     /// off lands on "neither visible", which the memberwise initializer
-    /// repairs back to files-only, so the click is a no-op rather than a way
-    /// around that lock. But this function takes no `hasShell`, so it does
-    /// NOT defend the other reason a toggle can be disabled — a click on a
-    /// shell-less backend's terminal toggle still flips `showsTerminal` on
-    /// here, same as if a shell existed. Refusing that click belongs to the
-    /// caller, which must not act on `applyingClick(on: .terminal)` when
-    /// `toggleState(for: .terminal, hasShell: false)` reported the toggle
-    /// disabled for lack of a shell — nothing in this file pins that the
-    /// caller actually does.
-    public func applyingClick(on toggle: PaneToggle) -> PaneVisibility {
+    /// repairs back to files-only, so that click is also a no-op rather than
+    /// a way around the lock.
+    public func applyingClick(on toggle: PaneToggle, hasShell: Bool) -> PaneVisibility {
         switch toggle {
         case .files:
-            return PaneVisibility(showsFiles: !showsFiles, showsTerminal: showsTerminal)
+            return PaneVisibility(showsFiles: !showsFiles, showsTerminal: showsTerminal && hasShell)
         case .terminal:
+            guard hasShell else { return self }
             return PaneVisibility(showsFiles: showsFiles, showsTerminal: !showsTerminal)
         }
     }
