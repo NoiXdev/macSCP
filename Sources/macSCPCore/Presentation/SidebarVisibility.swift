@@ -1,8 +1,8 @@
 import Foundation
 
-/// What the session sidebar shows, for a given store snapshot and an
-/// optional active tag filter — computed once, here, instead of decided
-/// piecemeal in the view body.
+/// What the session sidebar shows, for a given store snapshot, the current
+/// imported-host count, and an optional active tag filter — computed once,
+/// here, instead of decided piecemeal in the view body.
 ///
 /// This is the type P2's terminal-chrome sidebar work did not have: that
 /// milestone's pane-visibility decision lived as two loose booleans in a
@@ -11,17 +11,23 @@ import Foundation
 /// view file's source text. `SidebarVisibility.compute` exists so the same
 /// mistake is not possible here — the decision is a value a test can
 /// construct and inspect, and the view that renders it (a later task) has
-/// nothing left to decide.
+/// nothing left to decide, including whether the imported section counts
+/// toward "nothing to show": `emptiness` already folds in
+/// `importedHostsCount`, so a caller does not need its own
+/// `emptiness == .noSessionsAtAll && importedHosts.isEmpty` check.
 ///
 /// `compute` filters purely on `StoredSession.tags`; it never receives or
-/// references `Snippet` in any form. That is not an oversight — `TagList`'s
-/// doc comment states host tags and snippet tags are meant to stay
-/// independent vocabularies, and the signature below is how this task keeps
-/// that true: there is no parameter through which an active host tag could
-/// reach a snippet, so no wiring mistake inside this function can hide one.
-/// See `SidebarVisibilityTests.aHostTagNeverHidesASnippet` for the test that
-/// pins this at the boundary where it becomes observable, and this file's
-/// bottom note for the residual gap that test cannot close.
+/// references `Snippet` in any form, and `SnippetMenuModel.build` never
+/// receives `activeTag` — the two computations share no parameter, so a
+/// host tag cannot reach a snippet through this type. That separation holds
+/// by construction, not by a test in this file: a test that calls both
+/// functions independently and checks their outputs would keep passing even
+/// if `compute` were deleted entirely, since nothing here connects them.
+/// The meaningful regression test — whether a caller accidentally threads
+/// `activeTag` into the `snippets` list it hands to a trigger surface —
+/// needs `activeTag` and `snippets` in scope together, which only happens
+/// once the next task wires `SessionSidebar`/`ContentView`; that is where
+/// that pin belongs, not here.
 public struct SidebarVisibility: Equatable, Sendable {
     /// A group section the sidebar can render directly: the group header,
     /// plus the sessions to list under it. Paired rather than split into a
@@ -60,10 +66,11 @@ public struct SidebarVisibility: Equatable, Sendable {
     /// sidebar never renders an empty section header.
     public let groupSections: [GroupSection]
     /// Whether the sidebar's "IMPORTED" section (unsaved `SSHConfigHost`
-    /// entries) should render at all. `false` whenever a tag filter is
-    /// active: imported hosts carry no tags, so a host tag can never match
-    /// one, and rendering an unfilterable section next to filtered ones
-    /// would misrepresent the filter as covering everything on screen.
+    /// entries) should render at all: `activeTag == nil` (imported hosts
+    /// carry no tags, so a tag filter can never match one, and rendering an
+    /// unfilterable section next to filtered ones would misrepresent the
+    /// filter as covering everything on screen) AND `importedHostsCount > 0`
+    /// (an empty section has nothing to draw either way).
     public let showsImportedSection: Bool
     public let emptiness: Emptiness
 
@@ -80,15 +87,30 @@ public struct SidebarVisibility: Equatable, Sendable {
     }
 
     /// Computes what the sidebar shows for `sessions`/`groups` under
-    /// `activeTag`. `activeTag == nil` is "no filter": every session shows,
-    /// every group with at least one session shows, and the imported
-    /// section shows. A non-nil `activeTag` keeps only sessions whose
-    /// `tags` contain it — compared exactly, the same case-sensitive rule
-    /// `TagList.normalized` stores by and `SnippetTagFilter.matches` reads
-    /// by, so a differently-cased spelling is a non-match here too.
+    /// `activeTag`, given `importedHostsCount` unsaved `SSHConfigHost`
+    /// entries currently available to import (the sidebar's "IMPORTED"
+    /// section — `SSHConfigHost` lives outside `StoredSession`, so only its
+    /// count crosses into this decision, not the hosts themselves).
+    ///
+    /// `activeTag == nil` is "no filter": every session shows, every group
+    /// with at least one session shows, and the imported section shows
+    /// whenever `importedHostsCount > 0`. A non-nil `activeTag` keeps only
+    /// sessions whose `tags` contain it — compared exactly, the same
+    /// case-sensitive rule `TagList.normalized` stores by and
+    /// `SnippetTagFilter.matches` reads by, so a differently-cased spelling
+    /// is a non-match here too — and always hides the imported section,
+    /// regardless of `importedHostsCount`.
+    ///
+    /// `emptiness` is `.notEmpty` whenever there is at least one ungrouped
+    /// session, one non-empty group section, or a visible imported section.
+    /// Otherwise — nothing anywhere to draw — it is `.noSessionsAtAll` when
+    /// `sessions` itself was empty, or `.filterMatchesNothing` when it was
+    /// not (an active filter, or a dangling `groupID` naming no group in
+    /// `groups`, consumed everything that would otherwise have drawn).
     public static func compute(
         sessions: [StoredSession],
         groups: [StoredGroup],
+        importedHostsCount: Int,
         activeTag: String?
     ) -> SidebarVisibility {
         func passes(_ session: StoredSession) -> Bool {
@@ -104,19 +126,27 @@ public struct SidebarVisibility: Equatable, Sendable {
             return inGroup.isEmpty ? nil : GroupSection(group: group, sessions: inGroup)
         }
 
+        let showsImportedSection = activeTag == nil && importedHostsCount > 0
+
+        // Structural, not incidental: this is the actual "is there anything
+        // to draw" question, asked directly of the three things the sidebar
+        // renders, rather than inferred from `filtered.isEmpty` — which
+        // would say `.notEmpty` for a session whose `groupID` names no
+        // group in `groups` even though such a session lands in neither
+        // `ungrouped` nor any `groupSections` entry and so draws nothing.
+        let hasAnythingToDraw = !ungrouped.isEmpty || !groupSections.isEmpty || showsImportedSection
+
         let emptiness: Emptiness
-        if sessions.isEmpty {
-            emptiness = .noSessionsAtAll
-        } else if filtered.isEmpty {
-            emptiness = .filterMatchesNothing
-        } else {
+        if hasAnythingToDraw {
             emptiness = .notEmpty
+        } else {
+            emptiness = sessions.isEmpty ? .noSessionsAtAll : .filterMatchesNothing
         }
 
         return SidebarVisibility(
             ungrouped: ungrouped,
             groupSections: groupSections,
-            showsImportedSection: activeTag == nil,
+            showsImportedSection: showsImportedSection,
             emptiness: emptiness
         )
     }
@@ -134,7 +164,9 @@ public struct SidebarVisibility: Equatable, Sendable {
     /// last session with a tag being retagged or deleted) can fall back to
     /// "no filter" instead of holding a selection nothing can ever match.
     public static func resolvedTag(_ activeTag: String?, in sessions: [StoredSession]) -> String? {
-        guard let activeTag, availableTags(in: sessions).contains(activeTag) else { return nil }
+        guard let activeTag, sessions.contains(where: { $0.tags.contains(activeTag) }) else {
+            return nil
+        }
         return activeTag
     }
 }
