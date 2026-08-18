@@ -104,6 +104,21 @@ cat > "$APP/Contents/Info.plist" <<PLIST
                 </array>
             </dict>
         </dict>
+        <dict>
+            <key>UTTypeIdentifier</key><string>dev.noix.macscp.snippets</string>
+            <key>UTTypeDescription</key><string>macSCP Snippets</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.json</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>macscpsnippets</string>
+                </array>
+            </dict>
+        </dict>
     </array>
 </dict>
 </plist>
