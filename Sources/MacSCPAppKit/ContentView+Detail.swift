@@ -562,6 +562,14 @@ extension ContentView {
                         onRunSnippet: { snippet, execute in
                             triggerSnippet(snippet, execute: execute)
                         })
+                        // Same inset `TerminalPanelHeader` uses above (Terminal-
+                        // Fassung P2, Task 1) — the terminal surface previously
+                        // had none at all and sat flush against the panel edge;
+                        // both readers now share `DesignTokens`' one pair
+                        // instead of each carrying its own literal (see that
+                        // enum's doc comment).
+                        .padding(.horizontal, DesignTokens.terminalPanelInsetHorizontal)
+                        .padding(.vertical, DesignTokens.terminalPanelInsetVertical)
                 case .ended(let message):
                     VStack(spacing: 8) {
                         Text(message ?? L10n.string("terminal.ended", "Shell ended."))
@@ -647,8 +655,11 @@ private struct TerminalPanelHeader: View {
                 snippetPopover
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        // Same inset the terminal surface reads below (Terminal-Fassung P2,
+        // Task 1) — the two shared `DesignTokens` inset constants below,
+        // not a literal, so this row and that surface cannot drift apart.
+        .padding(.horizontal, DesignTokens.terminalPanelInsetHorizontal)
+        .padding(.vertical, DesignTokens.terminalPanelInsetVertical)
         .background(Color(nsColor: DesignTokens.terminalBackground))
     }
 

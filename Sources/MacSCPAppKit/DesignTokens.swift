@@ -95,4 +95,19 @@ enum DesignTokens {
     /// mockup's "paper" #F4F7FA/#0D1720, dropped as a token in M6a),
     /// precomputed per appearance so it stays a single dynamic color.
     static let sidebarSurface = Color(nsColor: dynamicNS(light: 0xFCFDFE, dark: 0x121E2A))
+
+    // MARK: - Terminal panel inset
+    //
+    // The one non-color pair in this file (Terminal-Fassung P2, Task 1).
+    // `DesignTokens` otherwise holds only colors, but this measurement earns
+    // a place here too, for the same reason the colors above do: it is a
+    // value two independent views must agree on. `TerminalPanelHeader` and
+    // the terminal surface in `terminalPanel(_:)`
+    // (`Sources/MacSCPAppKit/ContentView+Detail.swift`) both read these two
+    // constants, so they cannot quietly drift apart the way the header's
+    // inset and the `.ended` state's own (separate, untouched) `14`/`8`
+    // padding already had before this change. Not a general spacing scale —
+    // just the one pair those two readers share.
+    static let terminalPanelInsetHorizontal: CGFloat = 12
+    static let terminalPanelInsetVertical: CGFloat = 6
 }
