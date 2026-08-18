@@ -234,7 +234,75 @@ Offen bis zur Planung: ob „Terminal öffnen" einen neuen Tab aufmacht oder
 den aktiven benutzt, und was passiert, wenn die Sitzung bereits verbunden
 ist. Beides beim Planen am Code messen, nicht raten.
 
-## Nachtrag 2026-08-18: Die Snippet-Auswahl im Terminal (P3d)
+## Nachtrag 2026-08-18: Die Snippet-Auswahl im Terminal (P3d) — entschieden
+
+**Ist-Zustand, am Code gemessen (nicht aus dem Screenshot abgeleitet).** Das
+Popover in der Terminal-Kopfzeile (`ContentView+Detail.swift`) hat bereits
+ein Suchfeld mit Regex-Kästchen und rendert darunter `SnippetMenuItems`.
+Dort ist **jede Zeile ein Untermenü** mit „Einfügen" und „Ausführen":
+
+```
+Snippet-Name  ▸  Einfügen
+                 Ausführen
+```
+
+**Ein Klick löst also heute schon nichts aus.** Die Beiläufigkeit, gegen die
+das ursprüngliche Feedback zielte, existiert in dieser Auswahl nicht — sie
+wurde in Runde 2 aus demselben Grund vermieden. Dieselbe Ansicht rendern
+vier Auslöseflächen: Popover, Rechtsklick im Terminal, Host-Kontextmenü,
+Menüzeile.
+
+**Maintainer-Befund (2026-08-18):** das Problem sind die **Untermenüs** —
+aufklappen, zur Seite fahren, treffen, im engen Popover unangenehm.
+
+**Diese Phase ist damit eine Bedienbarkeits-Verbesserung, keine
+Sicherheitskorrektur.** Das ist ausdrücklich festzuhalten, damit niemand
+später glaubt, hier sei ein Loch geschlossen worden.
+
+### Was gebaut wird
+
+Die Liste wird **flach**. Die Untermenüs entfallen; die Tag-Gruppen bleiben
+als Überschriften innerhalb der flachen Liste.
+
+Drei Wege zu einer Aktion, absichtlich unterschiedlich schnell:
+
+- **Rechtsklick auf die Zeile** → Ausführen, Einfügen, Vorschau. Der
+  schnelle Weg: eine Geste, kein Fenster.
+- **Doppelklick** → Aktionsfenster mit Einfügen, Ausführen, Abbrechen, und
+  dem Befehl im Klartext darüber.
+- **Überfahren** → der Befehl erscheint als **feste Zeile unten im
+  Popover**, nicht als Tooltip. Ein Tooltip kommt verzögert, schneidet
+  lange Befehle ab und lässt sich nicht lesen, während die Maus wandert.
+
+**Ein einfacher Klick wählt nur aus** und löst nichts aus — Voraussetzung
+dafür, dass die Liste mit den Pfeiltasten bedienbar ist.
+
+### Tastenkürzel im Aktionsfenster (Maintainer-Entscheidung)
+
+- **Esc** bricht ab.
+- **Return** liegt auf **„Einfügen"**, nicht auf „Ausführen".
+- **⌘Return** führt aus.
+
+Begründung, die zur Entscheidung gehört: Return löst in einem
+macOS-Dialog den Standardknopf aus. Läge er auf „Ausführen", startete
+Doppelklick + Return einen Befehl auf einem entfernten Rechner mit zwei
+Anschlägen — beiläufiger als der heutige Weg über das Untermenü, obwohl
+dieser Umbau das Gegenteil erreichen soll. Auf „Einfügen" ist Return
+harmlos: der Text landet im Eingabefeld, und der Nutzer drückt selbst
+Return, nachdem er ihn gelesen hat.
+
+### Beim Planen zu klären
+
+Ob „Vorschau" im Kontextmenü dasselbe Fenster ohne Aktionen öffnet oder
+nur die Befehlszeile hervorhebt; wie sich die vier Auslöseflächen die neue
+Ansicht teilen (die Menüzeile **braucht** ein echtes `NSMenu` und kann
+keine flache Liste rendern — hier trennen sich die Wege vermutlich, und das
+ist am Code zu messen); und was mit dem ⌃⌘n-Kürzel geschieht, das heute nur
+am Einfügen-Eintrag hängt.
+
+---
+
+## Verworfen: die ursprüngliche Fassung dieses Nachtrags
 
 Maintainer-Feedback nach dem Dev-Build. **Nicht** Teil von P3b oder P3c.
 
