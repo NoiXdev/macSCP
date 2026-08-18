@@ -109,14 +109,24 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
     /// terminal on its next connect. Corrected by maintainer ruling
     /// (whole-phase re-review, item 1); see `PaneVisibility.filesOnly`.
     public var paneVisibility: PaneVisibility = .filesOnly
-    /// Free-form labels for the sidebar's tag filter. Normalized through
-    /// `TagList` on every write path — the initializer AND the decoder — so a
-    /// hand-edited store file cannot smuggle an untrimmed or duplicate tag
-    /// past the rule.
+    /// Free-form labels for the sidebar's tag filter. The property itself
+    /// enforces `TagList`'s rule, so a hand-edited store file cannot smuggle
+    /// an untrimmed or duplicate tag past it and no write site has to
+    /// remember to call the rule by hand — three of them did, one of which
+    /// was found having forgotten (`SessionImportPlanner.makePlanned`,
+    /// P3a/T3), and a fourth would have gone unnoticed the same way.
+    ///
+    /// Reassigning inside `didSet` does NOT re-enter the observer, so this
+    /// settles after one pass. It does mean the observer is silent during
+    /// initialization — Swift runs no property observer there — which is why
+    /// the initializer and the decoder below still normalize explicitly;
+    /// those two calls are not redundant with this one.
     ///
     /// Beside `groupID` and `paneVisibility` rather than inside `FieldValues`:
     /// a tag is a property of the saved session, not of the protocol it speaks.
-    public var tags: [String] = []
+    public var tags: [String] = [] {
+        didSet { tags = TagList.normalized(tags) }
+    }
 
     public init(
         id: UUID = UUID(),

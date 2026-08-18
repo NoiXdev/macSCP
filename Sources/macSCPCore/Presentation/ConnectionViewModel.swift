@@ -1013,11 +1013,7 @@ public final class ConnectionViewModel {
         }
         session.groupID = selectedGroupID
         session.loginSetID = loginMode == .set ? selectedLoginSetID : nil
-        // `tags` is a `var` on `StoredSession`, so this direct assignment
-        // must route through `TagList.normalized` itself rather than
-        // trusting the field's typed text — the same rule
-        // `SessionListViewModel.save(tags:)` applies for the new-session path.
-        session.tags = TagList.normalized(tags)
+        session.tags = tags
         descriptor.apply(values, &session)
         // AFTER `apply`, which is what creates the SSH block. A jump is an SSH
         // concept and lives inside it, so a non-SSH session correctly keeps

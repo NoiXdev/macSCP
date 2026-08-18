@@ -138,12 +138,7 @@ public final class SessionListViewModel {
         session.kind = kind
         session.groupID = groupID
         session.loginSetID = loginSetID
-        // `tags` is a `var` on `StoredSession`, so a direct assignment here
-        // bypasses the normalization its initializer/decoder apply —
-        // `TagList.normalized` is called explicitly, the same fix the
-        // import planner needed for the same reason (`TagList`'s own doc
-        // comment).
-        session.tags = TagList.normalized(tags)
+        session.tags = tags
         descriptor.apply(values, &session)
         // AFTER `apply`, which is what creates the SSH block for an `.ssh`
         // session (M23/T8). A jump is an SSH concept and now lives inside that

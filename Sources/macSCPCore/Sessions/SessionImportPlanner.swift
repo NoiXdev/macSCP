@@ -380,12 +380,11 @@ public enum SessionImportPlanner {
         // resolves to the same "nothing recorded" default `StoredSession`
         // itself defaults to. No remapping needed (unlike `groupID`) --
         // a tag list is a value, not a reference the caller has to resolve.
-        // Routed through `TagList.normalized` because this is a plain
-        // property assignment, not `StoredSession`'s own initializer or
-        // decoder -- those normalize on every write path, but this one
-        // bypasses both, so a hand-edited export file could otherwise
-        // smuggle an untrimmed or duplicate tag past the rule.
-        session.tags = TagList.normalized(fileSession.tags ?? [])
+        // Untouched by any rule here: `StoredSession.tags` normalizes what
+        // it is given, so a hand-edited export file's untrimmed or duplicate
+        // tag is cleaned by the property, not by this call site remembering
+        // to clean it.
+        session.tags = fileSession.tags ?? []
         if !fileSession.fields.isEmpty {
             var values = FieldValues()
             for (key, value) in fileSession.fields { values.setRaw(key, to: value) }
