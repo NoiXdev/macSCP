@@ -739,20 +739,19 @@ private struct TerminalPanelHeader: View {
     /// comment for why that precondition matters even though this phase
     /// does not yet wire arrow-key navigation on top of it.
     ///
-    /// Untested, like `TerminalPanelHeader.body` itself: this project has
-    /// no SwiftUI rendering harness (`TerminalPanelHeader`'s own doc
-    /// comment states the boundary already). Nothing here — the gesture
-    /// split between single/double click, the context menu's three
-    /// entries, the hover line's content, row selection highlighting — can
-    /// be observed by a test; only `SnippetListPlan` (Task 1, tested in
-    /// `macSCPCoreTests`) and `TerminalSnippetSearch` (tested below) are.
+    /// Mostly untested, like `TerminalPanelHeader.body` itself: this
+    /// project has no SwiftUI rendering harness (`TerminalPanelHeader`'s
+    /// own doc comment states the boundary already). The gesture split
+    /// between single/double click, the hover line's content, row
+    /// selection highlighting, and `hoveredRow`'s clearing when the search
+    /// filter drops its row cannot be observed by a test; `SnippetListPlan`
+    /// (Task 1, tested in `macSCPCoreTests`), `TerminalSnippetSearch`
+    /// (tested below), and — since the final fix pass — the row context
+    /// menu's contents (`SnippetRowContextMenu`, rendered into a real
+    /// `NSMenu` by `TerminalContextMenuTests`) are.
     @ViewBuilder
     private var snippetPopover: some View {
-        let (predicate, searchError) = sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)
-        let visibleSnippets = TerminalSnippetSearch.matching(snippets, predicate: predicate)
-        let model = SnippetMenuModel.build(
-            snippets: visibleSnippets, isConnected: true, supportsShell: supportsShell)
-        let sections = SnippetListPlan.build(model: model)
+        let (sections, searchError) = filteredSections(text: searchText, isRegex: searchIsRegex)
         VStack(alignment: .leading, spacing: 8) {
             SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
             if sections.isEmpty {
@@ -818,6 +817,46 @@ private struct TerminalPanelHeader: View {
                 onCancel: { actionSheetSnippet = nil }
             )
         }
+        // The search field (or the regex toggle beside it) can narrow
+        // `sections` out from under an active hover: `snippetRow(_:)`'s own
+        // `onHover` only clears `hoveredRow` when THAT row's view reports
+        // the pointer leaving it, and a row that just got filtered out of
+        // existence never gets the chance to report anything. Recomputed
+        // here, at the same filtered-set computation `filteredSections`
+        // already does for the body above, rather than a second piece of
+        // state tracking whether the existing one has gone stale.
+        .onChange(of: searchText) { _, _ in clearHoveredRowIfFilteredOut() }
+        .onChange(of: searchIsRegex) { _, _ in clearHoveredRowIfFilteredOut() }
+    }
+
+    /// The narrowed, grouped, per-row shape `snippetPopover` renders —
+    /// pulled out of that view's body so `clearHoveredRowIfFilteredOut()`
+    /// can recompute the identical filtered set without duplicating the
+    /// search predicate, `SnippetMenuModel.build` and `SnippetListPlan.build`
+    /// pipeline a second time.
+    private func filteredSections(
+        text: String, isRegex: Bool
+    ) -> (sections: [SnippetListPlan.Section], searchError: String?) {
+        let (predicate, searchError) = sheetSearchPredicate(text: text, isRegex: isRegex)
+        let visibleSnippets = TerminalSnippetSearch.matching(snippets, predicate: predicate)
+        let model = SnippetMenuModel.build(
+            snippets: visibleSnippets, isConnected: true, supportsShell: supportsShell)
+        return (SnippetListPlan.build(model: model), searchError)
+    }
+
+    /// `hoveredRow`'s row can vanish from `sections` when the search text
+    /// or the regex toggle changes without the pointer moving at all — see
+    /// `snippetPopover`'s `.onChange` doc comment for why `onHover` alone
+    /// cannot catch this. Leaves `hoveredRow` untouched when it is `nil`
+    /// already or its row is still present, so a hover that survives the
+    /// search narrowing keeps showing its command uninterrupted.
+    private func clearHoveredRowIfFilteredOut() {
+        guard let hovered = hoveredRow else { return }
+        let (sections, _) = filteredSections(text: searchText, isRegex: searchIsRegex)
+        let stillVisible = sections.contains { $0.rows.contains { $0.id == hovered.id } }
+        if !stillVisible {
+            hoveredRow = nil
+        }
     }
 
     /// One row of the flat list. Single click selects only (see
@@ -879,23 +918,18 @@ private struct TerminalPanelHeader: View {
                     })
             )
             .contextMenu {
-                if !row.isDisabled {
-                    Button(L10n.string("menu.snippets.execute", "Execute")) {
+                SnippetRowContextMenu(
+                    row: row,
+                    onExecute: {
                         onRunSnippet(row.snippet, true)
                         isSnippetPopoverPresented = false
-                    }
-                    Button(L10n.string("menu.snippets.insert", "Insert")) {
+                    },
+                    onInsert: {
                         onRunSnippet(row.snippet, false)
                         isSnippetPopoverPresented = false
-                    }
-                }
-                // Preview stays offered even for a disabled row (no
-                // connection / no shell): it only reveals the command
-                // text, the same thing hovering already does, so there is
-                // nothing here a disabled row needs protecting from.
-                Button(L10n.string("snippets.list.preview", "Preview")) {
-                    previewPinnedRow = row
-                }
+                    },
+                    onPreview: { previewPinnedRow = row }
+                )
             }
     }
 
@@ -915,6 +949,37 @@ private struct TerminalPanelHeader: View {
             .truncationMode(.tail)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 4)
+    }
+}
+
+/// The row context menu's content (P3d, Task 3), pulled out of
+/// `TerminalPanelHeader.snippetRow(_:)` for the same reason
+/// `TerminalSnippetSearch` and `SnippetPreviewLine` were pulled out below: a
+/// standalone type `Tests/macSCPAppKitTests/` can render on its own, rather
+/// than a menu built inline in a view body where nothing can observe its
+/// structure. `TerminalContextMenuTests` renders it into a real `NSMenu` via
+/// `NSHostingMenu`, the same technique that suite already uses for
+/// `SnippetMenuItems`.
+///
+/// Execute and Insert are gated on `!row.isDisabled` — a disabled row (no
+/// connection, or a backend with no shell) still shows what it would do,
+/// it just cannot be made to do it, matching `SnippetMenuItems`'
+/// `.disabled(entry.isDisabled)` on its own per-snippet `Menu`. Preview
+/// stays offered regardless: it only reveals the command text, the same
+/// thing hovering already does, so there is nothing here a disabled row
+/// needs protecting from.
+struct SnippetRowContextMenu: View {
+    let row: SnippetListPlan.Row
+    let onExecute: () -> Void
+    let onInsert: () -> Void
+    let onPreview: () -> Void
+
+    var body: some View {
+        if !row.isDisabled {
+            Button(L10n.string("menu.snippets.execute", "Execute"), action: onExecute)
+            Button(L10n.string("menu.snippets.insert", "Insert"), action: onInsert)
+        }
+        Button(L10n.string("snippets.list.preview", "Preview"), action: onPreview)
     }
 }
 

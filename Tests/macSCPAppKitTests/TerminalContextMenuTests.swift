@@ -203,4 +203,76 @@ struct TerminalContextMenuTests {
     func anEmptySnippetListAttachesNoMenu() {
         #expect(SSHTerminalView.snippetContextMenu(model: model([]), action: { _, _ in }) == nil)
     }
+
+    // MARK: - The flat list's per-row context menu (P3d, Task 3)
+
+    /// The flat-list popover's per-row `.contextMenu` is not an `NSMenu`
+    /// handed to AppKit directly the way `snippetContextMenu` is — it is
+    /// SwiftUI's `.contextMenu` view modifier. `SnippetRowContextMenu`
+    /// (`Sources/MacSCPAppKit/ContentView+Detail.swift`) is the extracted,
+    /// standalone content of that closure, pulled out for exactly this: it
+    /// can be handed to `NSHostingMenu` on its own, the same technique
+    /// `theMenuCarriesInsertAndExecutePerSnippet()` above already uses for
+    /// `SnippetMenuItems`, without needing to render the row's gestures or
+    /// the popover around it.
+    /// `SnippetListPlan.Row`'s own initializer is internal to `macSCPCore`
+    /// (this test target imports it, but not `@testable`), so a row comes
+    /// from `SnippetListPlan.build(model:)` — the real production path —
+    /// rather than being constructed by hand. `isConnected: !disabled`
+    /// is enough to drive `Row.isDisabled` either way; which of
+    /// `SnippetMenuModel.DisabledReason`'s two cases produced it is
+    /// `SnippetListPlanTests`' concern, not this suite's.
+    private func rowContextMenu(
+        disabled: Bool, onExecute: @escaping () -> Void = {}, onInsert: @escaping () -> Void = {},
+        onPreview: @escaping () -> Void = {}
+    ) throws -> NSMenu {
+        let built = SnippetListPlan.build(model: SnippetMenuModel.build(
+            snippets: [snippet("Tail log")], isConnected: !disabled, supportsShell: true))
+        let row = try #require(built.first?.rows.first)
+        #expect(row.isDisabled == disabled)
+        let hosted = NSHostingMenu(rootView: SnippetRowContextMenu(
+            row: row, onExecute: onExecute, onInsert: onInsert, onPreview: onPreview))
+        hosted.update()
+        return hosted
+    }
+
+    @Test("An enabled row's context menu offers Execute, Insert and Preview")
+    func enabledRowOffersExecuteInsertAndPreview() throws {
+        let menu = try rowContextMenu(disabled: false)
+        #expect(menu.items.map(\.title) == [
+            L10n.string("menu.snippets.execute", "Execute"),
+            L10n.string("menu.snippets.insert", "Insert"),
+            L10n.string("snippets.list.preview", "Preview"),
+        ])
+    }
+
+    /// A disabled row (no connection, or a backend with no shell) still
+    /// offers Preview — it only reveals command text, the same thing
+    /// hovering already shows, so a disabled row needs no protection from
+    /// it. Execute and Insert are withheld, matching the gate the menu
+    /// surfaces already apply via `.disabled(entry.isDisabled)`.
+    @Test("A disabled row's context menu withholds Execute and Insert but keeps Preview")
+    func disabledRowWithholdsExecuteAndInsertButKeepsPreview() throws {
+        let menu = try rowContextMenu(disabled: true)
+        #expect(menu.items.map(\.title) == [L10n.string("snippets.list.preview", "Preview")])
+    }
+
+    /// Firing each item proves the wiring reaches the right closure, not
+    /// just that the titles line up.
+    @Test("Each row context-menu item reaches its own closure")
+    func rowContextMenuItemsReachTheirOwnClosures() throws {
+        final class Recorder { var fired: [String] = [] }
+        let recorder = Recorder()
+        let menu = try rowContextMenu(
+            disabled: false,
+            onExecute: { recorder.fired.append("execute") },
+            onInsert: { recorder.fired.append("insert") },
+            onPreview: { recorder.fired.append("preview") })
+        for item in menu.items {
+            let action = try #require(item.action)
+            let target = try #require(item.target)
+            _ = target.perform(action, with: item)
+        }
+        #expect(recorder.fired == ["execute", "insert", "preview"])
+    }
 }

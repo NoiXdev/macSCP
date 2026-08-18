@@ -154,3 +154,64 @@ selbst am Code widerlegt:
 Alle übrigen zitierten Fakten in den drei Task-Briefs (Startzahlen,
 `SnippetMenuModel`/`SnippetMenuPlan`-Struktur, Duplizierungsregel der
 Menü-Projektion) stimmten mit dem Code überein.
+
+## Fix-Runde nach Abschluss
+
+Zwei Nachbesserungen am bereits abgeschlossenen Phasenstand, vor der
+Gesamt-Review der Branch.
+
+**Fix 1 (Kontextmenü ungetestet).** Das per-Zeile-`.contextMenu` in
+`snippetRow(_:)` (`Sources/MacSCPAppKit/ContentView+Detail.swift`) hatte
+keinen Test, obwohl die Technik dafür im Projekt schon existiert:
+`Tests/macSCPAppKitTests/TerminalContextMenuTests.swift` rendert eine
+SwiftUI-Menü-Body per `NSHostingMenu` in ein echtes `NSMenu` und prüft
+dessen Struktur — bislang nur für `SnippetMenuItems` genutzt. Der
+Menü-Inhalt wurde aus der Closure herausgezogen in einen eigenen Typ,
+`SnippetRowContextMenu` (`View`, drei Buttons: Execute/Insert gated auf
+`!row.isDisabled`, Preview ungegated), damit `NSHostingMenu` ihn direkt
+rendern kann, ohne Zeilen-Gesten oder das Popover drumherum. Drei neue
+Tests in `TerminalContextMenuTests`: eine aktivierte Zeile bietet
+Execute/Insert/Preview; eine deaktivierte Zeile bietet nur Preview; jeder
+Menüpunkt erreicht seine eigene Closure. Mutation verifiziert: das
+`!row.isDisabled`-Gate testweise entfernt (nur Execute/Insert/Preview ohne
+Bedingung) ließ den deaktivierten-Zeile-Test rot schlagen (erwartet
+`["Preview"]`, bekam `["Execute", "Insert", "Preview"]`); Gate
+zurückgesetzt, wieder grün. Nebenbefund: `snippetPopover`'s eigener
+Doku-Kommentar behauptete, „die Kontextmenü-Einträge" seien nicht
+beobachtbar — das war seit dieser Fix-Runde nicht mehr wahr und wurde
+korrigiert.
+
+**Fix 2 (Stale-Hover-Zeile, MINOR).** `hoveredRow` wurde nicht geräumt,
+wenn die Suche eine gerade gehoverte Zeile aus der Liste filtert —
+`onHover`s `else`-Zweig feuert nur, wenn die Zeilen-View noch existiert,
+und eine herausgefilterte Zeile bekommt diese Gelegenheit nie. Der lokale
+`let sections = ...`-Block in `snippetPopover` wurde in eine private
+Methode `filteredSections(text:isRegex:)` gezogen (gleiche Pipeline:
+Suchprädikat → `TerminalSnippetSearch.matching` →
+`SnippetMenuModel.build` → `SnippetListPlan.build`), damit eine zweite
+Stelle — `clearHoveredRowIfFilteredOut()` — sie ohne Duplikation erneut
+aufrufen kann. Zwei `.onChange`-Modifier (`searchText`, `searchIsRegex`)
+rufen diese Methode; sie räumt `hoveredRow`, wenn dessen Zeile im neu
+berechneten `sections` nicht mehr vorkommt. Bewusst KEIN zweites
+State-Feld (z. B. ein „isStale"-Flag) — die Weisung war, am
+Filterberechnungs-Ort selbst zu reparieren, nicht mit einem zweiten
+State-Stück daneben.
+
+**Zwei Proben vor dem Commit:**
+- Würde ein neuer Test gegen eine Konstante grün bleiben? Nein für Fix 1:
+  eine Attrappe, die immer alle drei Einträge zeigt, schlägt am
+  Disabled-Test fehl; eine Attrappe, die immer nur Preview zeigt, schlägt
+  am Enabled-Test fehl; No-Op-Closures schlagen am Wiring-Test fehl.
+- Welche Behauptung im Doc-Kommentar beobachtet kein Test? Fix 2 komplett:
+  das Räumen von `hoveredRow` bei Filterung ist SwiftUI-View-Zustand ohne
+  Rendering-Harness — dieselbe, im Projekt bereits mehrfach dokumentierte
+  Grenze wie bei `TerminalPanelHeader.body`, der Gesten-Aufteilung und der
+  Zeilen-Selektionshervorhebung. `clearHoveredRowIfFilteredOut()`s
+  Doc-Kommentar behauptet das Verhalten korrekt, aber ungeprüft.
+
+**Messung:** Ausgangsstand 2097 Tests / 181 Suiten (selbst gemessen, deckt
+sich mit dem Ledger). Nach Fix 1 (+3 Tests): 2100/181. Fix 2 fügt keine
+Tests hinzu (Begründung oben). Endstand: **2100 Tests in 181 Suiten,
+alle grün.**
+
+Commits: siehe Ledger-Eintrag und Git-Log dieser Fix-Runde.
