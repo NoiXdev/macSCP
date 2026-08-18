@@ -265,17 +265,53 @@ was das kostet: dort stand `\n` in der Spec, und richtig war `0x0D`.
 
 ---
 
-## P2 — Terminal-Fassung (Skizze)
+## P2 — Terminal-Fassung (entschieden 2026-08-12)
 
-- Der Rand ums Terminal (gemessener Ist-Wert → neuer Wert).
-- Ein **eigener Terminal-Tab-Typ**: Kontextmenü am Host → „Nur Terminal
-  öffnen" baut nur eine Shell auf, kein SFTP, keine Panes. Bei Backends
-  ohne Shell deaktiviert.
-- Ein **Umschalter im normalen Tab**, der die Dateipanes ausblendet, sodass
-  das Terminal das Fenster füllt.
+Der ursprüngliche Entwurf sah einen **eigenen Terminal-Tab-Typ** vor
+(„Nur Terminal öffnen" baut nur eine Shell auf, kein SFTP). **Verworfen.**
+Zwei Gründe, der zweite ist der bessere:
 
-Ein eigenes Fenster ist ausgeschlossen: Mehrfenster ist laut Projektregel
-erst v2.
+1. Meine Beschreibung war zu optimistisch. Der Verbindungsaufbau liefert
+   ein `RemoteFileSystem` — **das Dateisystem ist die Verbindung**;
+   `BrowserSession` wird in einem Zug daraus gebaut und das Terminal hängt
+   als Kindkanal daran. Eine Sitzung ohne SFTP wäre eine Änderung daran,
+   was „verbunden" heißt, nicht ein Flag.
+2. Der Maintainer-Vorschlag ist einfacher **und** deckt mehr ab: die
+   Sichtbarkeit beider Hälften wird in der Toolbar geschaltet, wo der
+   Terminal-Schalter (⌘T) und der Übertragungen-Schalter schon sitzen.
+   Ein reines Terminal ist dann kein Tab-**Typ**, sondern ein **Zustand**,
+   den jeder Tab annehmen und wieder verlassen kann.
+
+### Was gebaut wird
+
+- **Rand ums Terminal: 14 horizontal / 8 vertikal.** Gemessen: das Terminal
+  sitzt heute **bündig ohne jeden Rand**, während die Panes und der
+  `.ended`-Textblock im selben Panel bereits 14/8 benutzen. Der Wert ist
+  also der vorhandene Rhythmus, nicht ein erfundener. Die in P1 gebaute
+  Kopfzeile benutzt 12/6 und wird mit angeglichen, damit Kopfzeile und
+  Terminalfläche nicht um zwei Punkt auseinanderliegen.
+- **Ein zweiter Toolbar-Schalter „Dateien"** neben dem vorhandenen
+  „Terminal". Beide schalten die Sichtbarkeit ihrer Hälfte.
+- **Der letzte aktive Schalter ist gesperrt** — beide aus ergäbe ein leeres
+  Fenster. Er wird sichtbar deaktiviert, nicht stillschweigend wirkungslos.
+- **Ohne Shell gibt es keinen Terminal-Schalter** (S3, WebDAV): er bleibt
+  grau, „Dateien" ist damit der einzige und folglich gesperrt.
+
+### Der Zustand überlebt — pro gespeicherter Sitzung
+
+**Maintainer-Entscheidung 2026-08-12.** `prod-web` öffnet sich künftig so,
+wie es zuletzt stand. Das ist die nützlichste der drei Varianten (die
+anderen waren: gar nicht merken, oder ein globaler Standard) — aber es hat
+eine Konsequenz, die hier stehen muss statt später zu überraschen:
+
+**Es wandert ins `StoredSession`-Format und damit in Export/Import.** Seit
+M23-P3 ist das Format ein Feldbeutel, der Zusatzfelder ohne Migration
+verträgt, und der Import-Arbiter behandelt unbekannte Felder bereits. Es
+ist also kein Formatbruch — aber es ist auch **kein reiner View-Umbau
+mehr**, und die Export-Roundtrip-Tests müssen es mittragen.
+
+Ein eigenes Fenster bleibt ausgeschlossen: Mehrfenster ist laut
+Projektregel erst v2.
 
 ## P3 — Ordnung (Skizze)
 
