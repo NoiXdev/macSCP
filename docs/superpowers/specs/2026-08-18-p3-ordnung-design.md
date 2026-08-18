@@ -251,6 +251,20 @@ Der Grund dahinter ist derselbe wie bei „sofort ausführen" in Runde 2: ein
 Klick, der einen Befehl auf einem entfernten Rechner startet, darf keine
 Nebenwirkung eines Auswahlvorgangs sein.
 
+### Nachtrag: Tastaturbedienung im Aktionsfenster
+
+Das Kontextmenü der Zeile trägt **dieselben drei Möglichkeiten** wie das
+Fenster. Und das Fenster bekommt Tastenkürzel auf allen drei Aktionen, damit
+schnelles Arbeiten möglich bleibt — **Esc bricht ab**.
+
+**Der Konflikt, der dabei zu entscheiden ist:** in einem macOS-Dialog löst
+Return den Standardknopf aus. Läge Return auf „Ausführen", startete
+Doppelklick + Return einen Befehl auf einem entfernten Rechner mit zwei
+Anschlägen — und genau die Beiläufigkeit soll dieser Umbau ja beseitigen.
+Ein Kürzel für „Ausführen" ist damit nicht ausgeschlossen, aber es sollte
+eines sein, das man nicht versehentlich trifft. Beim Brainstorming
+entscheiden, nicht im Vorbeigehen.
+
 **Vor der Planung zu klären** (nicht raten, am Code und mit dem Maintainer):
 was ein einfacher Klick dann noch tut; ob „Vorschau" dasselbe Fenster ohne
 Aktionen ist oder etwas Eigenes; ob der Befehl beim Überfahren als Tooltip
