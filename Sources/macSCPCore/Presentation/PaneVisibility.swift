@@ -48,9 +48,19 @@ public struct PaneVisibility: Equatable, Sendable, Codable {
     /// The default a session with no recorded preference gets (P2
     /// terminal-chrome milestone, Task 4) — both halves shown, matching what
     /// every session did before this type's persistence existed. The one
-    /// spelling of that default, so `StoredSession`'s decoder, `ExportedSession`'s
-    /// decoder, and a fresh connect's restore path cannot drift apart on what
-    /// "no preference recorded" means.
+    /// spelling of that default, so its two actual consumers cannot drift
+    /// apart on what "no preference recorded" means: `StoredSession`'s
+    /// `paneVisibility` property default and its `init(from:)` (`?? .bothVisible`
+    /// on a missing key, coded like `kind`'s own `?? .ssh`), and
+    /// `SessionImportPlanner.makePlanned` (`fileSession.paneVisibility ??
+    /// .bothVisible`, same shape as its `kind ?? .ssh` a few lines above).
+    /// `ExportedSession`'s own decoder does NOT use this constant — it
+    /// deliberately decodes a missing key as `nil`, exactly like `kind`
+    /// stays `nil` there rather than being defaulted at decode time; only
+    /// the planner resolves it. `ContentView.restorePaneVisibility` does not
+    /// reference this constant either — it reads `StoredSession.
+    /// paneVisibility` after that property has already resolved to a
+    /// concrete value, so there is nothing left for it to default.
     public static let bothVisible = PaneVisibility(showsFiles: true, showsTerminal: true)
 
     public init(from decoder: Decoder) throws {

@@ -844,20 +844,29 @@ struct ContentView: View {
     /// opens are not an `AuditEvent.Kind` case) — nothing a user would
     /// experience as a surprise.
     ///
-    /// `hasShell` is folded in exactly like `SessionTab.effectivePaneVisibility`
-    /// does elsewhere: `PaneVisibility`'s own repair is reused rather than a
-    /// second `if !hasShell` check written here, so a backend with no shell
-    /// can never come up terminal-visible even if the stored file still says
-    /// `true` (e.g. the backend changed since the file was written).
+    /// `hasShell` is folded in through `tab.effectivePaneVisibility` itself —
+    /// the SAME method `paneToggleState` and the render condition call — not
+    /// a hand-rebuilt `PaneVisibility(showsFiles:showsTerminal:)` that
+    /// happens to compute the identical fold today (fix round 1: the first
+    /// draft of this method did exactly that, which is drift waiting to
+    /// happen — two call sites computing the same thing independently can
+    /// start disagreeing the moment either one changes, and
+    /// `PaneRenderConditionGuardTests` cannot see this file, only
+    /// `ContentView+Detail.swift`). Reusing the method itself means there is
+    /// only ever one place that fold is written down. `tab.showsFiles` is
+    /// set to the RAW saved value first — never the repaired one — matching
+    /// how `showsFiles` behaves everywhere else in this type: the repair is
+    /// something every read site applies fresh via `effectivePaneVisibility`,
+    /// never something baked back into the stored raw boolean.
     func restorePaneVisibility(
         for tab: SessionTab, from stored: StoredSession, descriptor: BackendDescriptor
     ) {
         guard let session = tab.session else { return }
         let saved = stored.paneVisibility
-        let hasShell = descriptor.capabilities.supportsShell
-        let effective = PaneVisibility(
-            showsFiles: saved.showsFiles, showsTerminal: saved.showsTerminal && hasShell)
-        tab.showsFiles = effective.showsFiles
+        tab.showsFiles = saved.showsFiles
+        let effective = tab.effectivePaneVisibility(
+            terminalIsVisible: saved.showsTerminal,
+            hasShell: descriptor.capabilities.supportsShell)
         if effective.showsTerminal {
             session.terminal.toggle()
         }
