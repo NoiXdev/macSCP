@@ -166,18 +166,29 @@ struct ConnectionConfigResolutionTests {
             field: .jumpPort))
     }
 
-    @Test func aBlankSaveNameYieldsTheStateConnectPublishes() async {
+    /// The save name is a rule of the FORM's save, not of the connection.
+    /// `connect()` refuses a blank one; a resolution — whose caller may not
+    /// be saving anything, and whose form may legitimately still carry
+    /// `shouldSaveSession == true` from an ad-hoc "save & connect" — is not
+    /// refused for it. Both halves are asserted here, so moving the check
+    /// into the shared function again turns this red.
+    @Test func aBlankSaveNameStopsConnectButNotResolution() async {
         let pair = makePair { vm in
             vm.shouldSaveSession = true
             vm.saveName = "   "
         }
 
-        _ = await pair.dialing.connect()
-        let resolution = pair.resolving.resolveConfigWithoutDialing()
+        let fs = await pair.dialing.connect()
 
-        #expect(failure(of: resolution) == pair.dialing.state)
+        #expect(fs == nil)
         #expect(pair.dialing.state == .failed(
             message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName))
+        let neverDialed = pair.dialed.config == nil
+        #expect(neverDialed)
+
+        let resolution = pair.resolving.resolveConfigWithoutDialing()
+
+        #expect(failure(of: resolution) == nil)
     }
 
     /// The decision this task had to make deliberately: resolving PUBLISHES

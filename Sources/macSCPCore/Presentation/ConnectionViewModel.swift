@@ -488,9 +488,13 @@ public final class ConnectionViewModel {
     /// P3c/T2 wires onto this, hands the resolved config to a launcher for a
     /// session macSCP itself never connects to. Writing those steps a second
     /// time is what the equivalence guard in
-    /// `ConnectionConfigResolutionTests` exists to prevent — it compares what
-    /// `connect()` dials against what this returns, and fails as soon as one
-    /// path grows a step the other lacks.
+    /// `ConnectionConfigResolutionTests` exists to prevent: it compares what
+    /// `connect()` dials against what this returns, and goes red if
+    /// `connect()` ever resolves anything on its own again. Measured, so it
+    /// is not sold as more than it is — it does NOT pin the behaviour of the
+    /// function below, since `connect()` delegates and a change made here
+    /// moves both sides at once; the guard's per-case assertions (the hop's
+    /// host and port, each failure's message and field) do that.
     ///
     /// PUBLISHES NOTHING. A failure comes back as the state `connect()`
     /// assigns for it, and the caller decides where it belongs: `connect()`
@@ -506,17 +510,14 @@ public final class ConnectionViewModel {
     /// second property holding a resolved config would be a second place that
     /// clearing does not reach.
     ///
-    /// Includes the save-name check `connect()` performs first, even though a
-    /// save name is form bookkeeping and not part of any config: omitting it
-    /// would make the two paths disagree for a form with the save toggle on
-    /// and a blank name. A caller that does not save never meets it — the
-    /// App's stored-session fill sets `shouldSaveSession = false`.
+    /// Answers ONE question — can this connection be resolved — and therefore
+    /// does NOT check the save name. That check stays in `connect()`, ahead
+    /// of the call: it is a rule of the form's SAVE, and a form legitimately
+    /// carries `shouldSaveSession == true` with a blank name while the user
+    /// is still typing an ad-hoc "save & connect". Refusing a caller that
+    /// saves nothing (the context-menu route) for a missing save name would
+    /// be a refusal for a reason unrelated to what it is doing.
     public func resolveConfigWithoutDialing() -> ConfigResolution {
-        if shouldSaveSession,
-           saveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return .failed(.failed(
-                message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName))
-        }
         let descriptor = BackendDescriptor.descriptor(for: kind)
         if let violation = descriptor.firstViolation(in: values, requireSecrets: true) {
             return .failed(.failed(
@@ -562,12 +563,21 @@ public final class ConnectionViewModel {
     ///
     /// Everything up to and including the resolved config comes from
     /// `resolveConfigWithoutDialing()`, the one resolution both callers share
-    /// (P3c/T1). What is left here is the dial: publishing the resolution's
-    /// failure into `state`, the `.connecting` transition, the host-key
-    /// decider, and the record of what was actually connected.
+    /// (P3c/T1). What is left here is the save name — a rule of THIS
+    /// submission, which saves, and of no other caller — plus the dial:
+    /// publishing the resolution's failure into `state`, the `.connecting`
+    /// transition, the host-key decider, and the record of what was actually
+    /// connected.
     public func connect() async -> (any RemoteFileSystem)? {
         guard state != .connecting else { return nil }
         defer { hostKeyPrompt = nil }
+
+        if shouldSaveSession,
+           saveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            state = .failed(
+                message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName)
+            return nil
+        }
 
         let dialed: ConnectionConfig
         switch resolveConfigWithoutDialing() {
