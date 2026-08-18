@@ -39,10 +39,18 @@ public enum SnippetExportCodec {
             payload, format: formatName, version: currentVersion, password: nil)
     }
 
-    /// True = encrypted. Always `false` for this format — kept for shape
-    /// parity with the other two export codecs (and because it also
-    /// validates format/version before decode would), not because a
-    /// snippet export can ever actually be encrypted.
+    /// True = encrypted — the envelope's own flag, read back verbatim. NOT a
+    /// format predicate: the format/version check runs first, inside
+    /// `ExportEnvelopeCodec`, and THROWS on a mismatch rather than reporting
+    /// it here.
+    ///
+    /// For every file this codec wrote the answer is `false`, because
+    /// `encode` always passes `password: nil`. It is NOT always `false`: a
+    /// file that merely claims this format can carry `"encrypted" : true`,
+    /// and then this returns `true` and `decode` — which has no password to
+    /// pass — refuses with `.passwordRequired`. Both halves are pinned by
+    /// `SnippetExportCodecTests
+    /// .aForeignFileClaimingEncryptionProbesTrueAndRefusesToDecode`.
     public static func probe(_ data: Data) throws -> Bool {
         try ExportEnvelopeCodec.probe(
             data, as: SnippetExportPayload.self, format: formatName,

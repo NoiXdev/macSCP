@@ -271,9 +271,16 @@ struct SnippetsSheet: View {
     /// container), then `probe`s before `decode`s, mirroring the flow both
     /// other import paths use.
     ///
-    /// Unlike those two, `probe`'s returned Bool is never read here: this
-    /// format never encrypts (see `SnippetExportCodec`'s own doc comment),
-    /// so the call's only job is to fail fast — through the SAME typed
+    /// Unlike those two, `probe`'s returned Bool is never read here — and
+    /// deliberately so, because it is not always `false`: this codec never
+    /// WRITES an encrypted file, but a foreign file claiming our format with
+    /// `"encrypted" : true` probes as `true` (see `SnippetExportCodec
+    /// .probe`'s own doc comment). Reading that Bool would only lead to a
+    /// password prompt this format has no key path for; ignoring it lets
+    /// `decode` refuse the file with `.passwordRequired`, which
+    /// `snippetImportErrorText` maps to the same generic refusal as any
+    /// other unreadable file. So the call's only job is to fail fast —
+    /// through the SAME typed
     /// `SessionExportError` `decode` would throw — on a file of the wrong
     /// kind (a session or login-set export) or one that is unreadable.
     /// `decode` would catch either case on its own, so the explicit `probe`

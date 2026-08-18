@@ -95,4 +95,35 @@ struct SnippetExportCodecTests {
             _ = try SnippetExportCodec.decode(tampered)
         }
     }
+
+    /// The one shape that DOES reach `.passwordRequired` in a format with no
+    /// password path at all: a file this app cannot have written. `encode`
+    /// is the only writer and always passes `password: nil`, so everything
+    /// this codec produces carries `"encrypted" : false` — but nothing stops
+    /// a hand-written or corrupted file from claiming our format name with
+    /// `"encrypted" : true`. `probe` reports that claim verbatim (it reads
+    /// the envelope's flag, it does not verify it), so it answers `true`
+    /// here; `decode`, which has no password to pass, then refuses with
+    /// `.passwordRequired` rather than crashing or importing a half-decoded
+    /// payload. The app maps that to the same generic refusal every other
+    /// unreadable file gets (`snippetImportErrorText`).
+    ///
+    /// Written as literal JSON for the same reason
+    /// `aFileWithADamagedSnippetFailsTheWholeDecodeRatherThanDroppingItSilently`
+    /// is: this codec cannot produce these bytes.
+    @Test func aForeignFileClaimingEncryptionProbesTrueAndRefusesToDecode() throws {
+        let json = """
+            {
+              "encrypted" : true,
+              "format" : "macscp-snippets",
+              "version" : 1
+            }
+            """
+        let data = Data(json.utf8)
+
+        #expect(try SnippetExportCodec.probe(data) == true)
+        #expect(throws: SessionExportError.passwordRequired) {
+            _ = try SnippetExportCodec.decode(data)
+        }
+    }
 }

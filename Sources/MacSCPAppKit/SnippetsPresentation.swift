@@ -160,11 +160,17 @@ func snippetImportResultText(plan: SnippetImportPlan, applied: SnippetImportAppl
 /// app" message the other two import flows already show; everything else —
 /// a file of the wrong kind (a session or login-set export) or a corrupted
 /// one — gets the one generic refusal text this task's brief asks for.
-/// `.passwordRequired`, `.wrongPasswordOrCorrupted`, and
-/// `.randomnessUnavailable` can never actually reach this format — it has
-/// no password path at all (see `SnippetExportCodec`'s own doc comment) —
-/// so they fall into that same generic bucket defensively rather than being
-/// asserted away.
+/// `.passwordRequired` DOES reach this format, from a file this app cannot
+/// have written: an envelope claiming our format name with
+/// `"encrypted" : true` makes `decode` — which has no password to pass —
+/// throw it (pinned by `SnippetExportCodecTests
+/// .aForeignFileClaimingEncryptionProbesTrueAndRefusesToDecode`). It
+/// belongs in the generic bucket on purpose rather than defensively:
+/// prompting for a password would offer a key path this format does not
+/// have, so "this file couldn't be read as macSCP snippets" is the honest
+/// answer. `.wrongPasswordOrCorrupted` and `.randomnessUnavailable` are the
+/// two that genuinely cannot arrive — both live beyond a password check
+/// that always refuses first — and they are here defensively.
 func snippetImportErrorText(for error: SessionExportError) -> String {
     switch error {
     case .unsupportedVersion:

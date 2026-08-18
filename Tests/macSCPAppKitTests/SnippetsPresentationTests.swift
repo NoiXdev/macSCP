@@ -256,10 +256,15 @@ struct SnippetsPresentationTests {
     }
 
     /// `.notAnExportFile`, `.passwordRequired`, `.wrongPasswordOrCorrupted`,
-    /// and `.randomnessUnavailable` all share the one generic refusal text —
-    /// deliberately, since only `.notAnExportFile` (a session or login-set
-    /// file, or a corrupted one) and `.unsupportedVersion` can actually
-    /// reach this format; the rest are defensive-only (see
+    /// and `.randomnessUnavailable` all share the one generic refusal text.
+    /// Three of those four are genuinely reachable or genuinely not, and it
+    /// matters which: `.notAnExportFile` (a session or login-set file, or a
+    /// corrupted one) and `.passwordRequired` (a foreign file claiming
+    /// `"encrypted" : true` under our format name — see
+    /// `SnippetExportCodecTests
+    /// .aForeignFileClaimingEncryptionProbesTrueAndRefusesToDecode`) both do
+    /// reach this mapping; `.wrongPasswordOrCorrupted` and
+    /// `.randomnessUnavailable` cannot, and are covered defensively (see
     /// `snippetImportErrorText`'s own doc comment).
     @Test func theGenericBucketCoversEveryCaseExceptUnsupportedVersion() {
         let genericCases: [SessionExportError] = [
