@@ -155,8 +155,16 @@ public struct SidebarVisibility: Equatable, Sendable {
     /// the sidebar's filter-chip row reads this so the chips stand in a
     /// stable order across refreshes rather than reshuffling with store
     /// order.
+    ///
+    /// Built on `TagSuggestionRanking.counts(tagLists:)` (Task 5, fix round
+    /// 2) rather than its own `sessions.flatMap(\.tags)` walk: that walk was
+    /// a THIRD independent collection of tags across sessions alongside
+    /// `HostTagSuggestions`' own (counts, for the suggestion list) and this
+    /// method's own (no counts, for this filter-chip row) — same data,
+    /// answering a related question, walked twice. Discarding the counts
+    /// this method doesn't need is cheaper than maintaining a second walk.
     public static func availableTags(in sessions: [StoredSession]) -> [String] {
-        Array(Set(sessions.flatMap(\.tags))).sorted()
+        Array(TagSuggestionRanking.counts(tagLists: sessions.map(\.tags)).keys).sorted()
     }
 
     /// `activeTag` if some session still carries it, `nil` otherwise — so a

@@ -14,13 +14,20 @@ import Foundation
 /// of the stored one would recreate the very duplicates this type exists to
 /// prevent.
 ///
+/// A thin adapter over `TagSuggestionRanking` (Task 5, fix round 2) — this
+/// type's own job is just handing `Snippet.tags` to the shared engine;
+/// `HostTagSuggestions` is the same adapter for `StoredSession.tags`. Kept
+/// as its own public type (rather than callers using `TagSuggestionRanking`
+/// directly) so `Snippet`, the vocabulary this type is FOR, stays out of the
+/// shared engine entirely.
+///
 /// Pure computation over the snippets handed in — no store, no I/O.
 public enum SnippetTagSuggestions {
     /// Every distinct tag across `snippets`, each paired with how many
     /// snippets carry it, sorted descending by count and, for ties,
     /// alphabetically with a case-insensitive comparison.
     public static func all(in snippets: [Snippet]) -> [(tag: String, count: Int)] {
-        rank(counts(in: snippets))
+        TagSuggestionRanking.all(tagLists: snippets.map(\.tags))
     }
 
     /// The subset of `all(in:)` whose tag starts with `prefix`
@@ -32,35 +39,6 @@ public enum SnippetTagSuggestions {
         in snippets: [Snippet],
         excluding taken: [String]
     ) -> [(tag: String, count: Int)] {
-        let lowercasedPrefix = prefix.lowercased()
-        let takenLowercased = Set(taken.map { $0.lowercased() })
-        let candidates = counts(in: snippets).filter { tag, _ in
-            tag.lowercased().hasPrefix(lowercasedPrefix) && !takenLowercased.contains(tag.lowercased())
-        }
-        return rank(candidates)
-    }
-
-    /// How many snippets carry each exact tag string. `Docker` and `docker`
-    /// are counted as separate entries, matching how `Snippet` stores them.
-    private static func counts(in snippets: [Snippet]) -> [String: Int] {
-        var counts: [String: Int] = [:]
-        for snippet in snippets {
-            for tag in snippet.tags {
-                counts[tag, default: 0] += 1
-            }
-        }
-        return counts
-    }
-
-    /// Descending by count; ties broken alphabetically, case-insensitively.
-    private static func rank(_ counts: [String: Int]) -> [(tag: String, count: Int)] {
-        counts
-            .map { (tag: $0.key, count: $0.value) }
-            .sorted { lhs, rhs in
-                if lhs.count != rhs.count {
-                    return lhs.count > rhs.count
-                }
-                return lhs.tag.localizedCaseInsensitiveCompare(rhs.tag) == .orderedAscending
-            }
+        TagSuggestionRanking.matching(prefix, tagLists: snippets.map(\.tags), excluding: taken)
     }
 }
