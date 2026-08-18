@@ -858,6 +858,15 @@ struct ContentView: View {
     /// how `showsFiles` behaves everywhere else in this type: the repair is
     /// something every read site applies fresh via `effectivePaneVisibility`,
     /// never something baked back into the stored raw boolean.
+    ///
+    /// This is the STORED-session path only, and deliberately still is
+    /// (whole-phase review, Fix 1). The ad-hoc connect path needs no
+    /// counterpart here: `showsFiles` lives on `BrowserSession` now, so a
+    /// connect with nothing saved comes up on the default because the
+    /// session it just built has never been told otherwise — not because
+    /// some second call site remembered to reset it. What this method adds
+    /// is the one thing that cannot be structural: putting a SAVED value
+    /// back.
     func restorePaneVisibility(
         for tab: SessionTab, from stored: StoredSession, descriptor: BackendDescriptor
     ) {

@@ -11,6 +11,24 @@ struct BrowserSession {
     let local: RemoteBrowserViewModel
     let remote: RemoteBrowserViewModel
     let terminal: TerminalPanelViewModel
+    /// Whether this session's local/remote file panes are shown (P2
+    /// terminal-chrome milestone; moved here from `SessionTab` by the
+    /// whole-phase review's Fix 1).
+    ///
+    /// It lives on the SESSION, not on the tab, because that is what makes
+    /// "a connect with nothing saved starts from the default" true on EVERY
+    /// connect path rather than on the paths someone remembered to reset.
+    /// Every connect builds a fresh `BrowserSession` (`ContentView.
+    /// startSession` is the only place one is constructed), so this starts
+    /// at `true` again by construction — exactly like the terminal half,
+    /// whose `TerminalPanelViewModel.isVisible` is `false` again for the
+    /// same structural reason. The two halves were asymmetric before: this
+    /// one outlived the session on the tab, and a stale `false` survived a
+    /// disconnect into the next, unrelated connection.
+    ///
+    /// Read and written through `SessionTab.showsFiles`, never directly —
+    /// see that property.
+    var showsFiles = true
     /// Owns "open in external editor" sessions for remote files double-clicked
     /// in this tab. Lifecycle is UI-owned like everything else here: see
     /// `ContentView.teardown(_:)`'s ordering (`stopAll` after `cancelAll`,
@@ -61,9 +79,25 @@ final class SessionTab: Identifiable {
     /// it (see `ContentView`). Not persisted.
     var transfersPanelVisible = false
     /// Whether the local/remote file panes are shown (P2 terminal-chrome
-    /// milestone, Task 3). Per-tab and in-memory, mirroring
-    /// `transfersPanelVisible` above — not persisted, and not reset across
-    /// reconnects on this tab, same as that flag.
+    /// milestone, Task 3). In-memory and per SESSION: the value itself lives
+    /// on `BrowserSession.showsFiles` and this is the only way in and out of
+    /// it. Unlike `transfersPanelVisible` above — which is genuinely per-tab
+    /// and deliberately survives a reconnect — a hidden files pane belongs
+    /// to the connection the user hid it in.
+    ///
+    /// That storage location is the whole point (whole-phase review, Fix 1):
+    /// a connect with no saved state starts from the default on EVERY
+    /// connect path, including the ad-hoc one that never reaches
+    /// `ContentView.restorePaneVisibility`, because a fresh session cannot
+    /// carry the previous one's value in the first place. There is no reset
+    /// call a future connect path could forget to make. `ContentView.
+    /// restorePaneVisibility` still writes the SAVED value in afterwards for
+    /// a stored session — that write lands on the new session and is kept.
+    ///
+    /// While no session is attached this reads the default and a write is
+    /// dropped: with nothing connected there are no panes to show or hide,
+    /// and both writers (the Files toolbar button and `restorePaneVisibility`)
+    /// run only on a connected tab.
     ///
     /// This is HALF of `PaneVisibility`'s two facts (`showsFiles`); the
     /// other half, `showsTerminal`, is deliberately not a second stored
@@ -77,7 +111,10 @@ final class SessionTab: Identifiable {
     /// decision — see `effectivePaneVisibility`'s doc comment for why
     /// reading it directly (as `ContentView+Detail.swift` used to) can
     /// disagree with the toolbar.
-    var showsFiles = true
+    var showsFiles: Bool {
+        get { session?.showsFiles ?? true }
+        set { session?.showsFiles = newValue }
+    }
     /// Display name while connected (stored session name or "user@host") —
     /// drives the window title of the ACTIVE tab and the tab's own label.
     var titleName: String?
@@ -195,6 +232,16 @@ final class SessionTab: Identifiable {
     /// itself as on-and-locked. Routing both the toolbar and the render
     /// through this one method closes that gap: they can no longer
     /// disagree, because they are no longer two computations.
+    ///
+    /// The repair stayed necessary after Fix 1 moved `showsFiles` onto the
+    /// session (a `hasShell` fold and a hand-edited stored value can still
+    /// produce "neither visible"), but it is no longer the only thing
+    /// standing between a reconnect and an empty window: the sequence above
+    /// no longer PRODUCES two stale `false`s, because the fresh session
+    /// brings a fresh `showsFiles` with it. Fix 1 exists because relying on
+    /// the repair there was masking the stale value rather than clearing it
+    /// — with the terminal half back on screen, the mask came off and the
+    /// file panes disappeared for a user who never hid them.
     func effectivePaneVisibility(terminalIsVisible: Bool, hasShell: Bool) -> PaneVisibility {
         PaneVisibility(showsFiles: showsFiles, showsTerminal: terminalIsVisible && hasShell)
     }
