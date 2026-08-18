@@ -409,8 +409,16 @@ struct ConnectionFormView: View {
 
                     let tagsLabel = L10n.string("form.tags.label", "Tags")
                     FormRow(label: tagsLabel) {
-                        HostTagsField(tags: $viewModel.tags)
-                            .id(editingSessionID)
+                        SnippetTagField(
+                            tags: $viewModel.tags,
+                            suggestions: { query in
+                                HostTagSuggestions.matching(
+                                    query, in: sessionList.sessions, excluding: viewModel.tags)
+                            },
+                            placeholder: L10n.string("form.tags.placeholder", "Add a tag…")
+                        )
+                        .id(editingSessionID)
+                        .help(L10n.string("form.tags.help", "Comma-separated. Used by the sidebar filter."))
                     }
 
                     let groupLabel = L10n.string("connection.field.group", "Group")
@@ -1003,52 +1011,5 @@ extension View {
                 .padding(.vertical, -5)
         )
         .animation(.easeOut(duration: 0.15), value: active)
-    }
-}
-
-/// The saved session's tag field (P3a Host Tags, Task 5): one free-text,
-/// comma-separated `TextField`, converted to `[String]` through `TagList.
-/// normalized` on every edit.
-///
-/// Deliberately NOT `SnippetTagField` (`Sources/MacSCPAppKit/
-/// SnippetTagField.swift`) reused or copied. That view's own binding shape —
-/// `@Binding var tags: [String]` plus a `suggestions: (String) -> [(tag:
-/// String, count: Int)]` closure — is generic enough that it COULD be
-/// dropped in here verbatim with `suggestions: { _ in [] }` (host tags have
-/// no analogous "known tags across sessions" data source, and `TagList`'s
-/// own doc comment keeps host and snippet vocabularies independent, so
-/// wiring one field's suggestions from the other's data would be wrong
-/// regardless). But its chip-and-suggestion-row UI answers a different brief
-/// than this one: `form.tags.help` ("Comma-separated. Used by the sidebar
-/// filter.") describes a plain text field, not a widget whose whole point is
-/// that the user never has to type a comma. Building a second, smaller field
-/// here — rather than reusing the mismatched one or copying its file — is
-/// the "split it cleanly" branch of that call.
-///
-/// `text` is local `@State`, seeded once from `tags` at this view's
-/// identity rather than continuously re-derived from `tags` on every
-/// keystroke: re-deriving would strip a just-typed trailing comma the
-/// instant `TagList.normalized` drops its trailing empty segment, making it
-/// impossible to start a second tag. The caller ties this view's identity to
-/// the session being edited (`.id(editingSessionID)`), so switching which
-/// session is being edited still reseeds `text` correctly.
-struct HostTagsField: View {
-    @Binding var tags: [String]
-    @State private var text: String
-
-    init(tags: Binding<[String]>) {
-        self._tags = tags
-        self._text = State(initialValue: tags.wrappedValue.joined(separator: ", "))
-    }
-
-    var body: some View {
-        TextField(
-            L10n.string("form.tags.label", "Tags"), text: $text,
-            prompt: Text(verbatim: "docker, web")
-        )
-        .help(L10n.string("form.tags.help", "Comma-separated. Used by the sidebar filter."))
-        .onChange(of: text) { _, newValue in
-            tags = TagList.normalized(newValue.components(separatedBy: ","))
-        }
     }
 }

@@ -144,9 +144,20 @@ enum SnippetTagFieldInput {
 /// (splitting on every comma, so a paste like "a,b,c" commits all three);
 /// Backspace in an empty field removes the last chip; a chip's own button
 /// removes exactly that chip.
+///
+/// Reused verbatim by `ConnectionFormView`'s host-tag field (P3a/T5 fix
+/// round 1) — `tags`/`suggestions` were already generic over any tag
+/// vocabulary; only `placeholder` needed pulling out of the hardcoded
+/// `"snippets.tags.placeholder"` lookup so a second caller with its own
+/// wording (and its own catalog key) does not inherit the snippets copy.
+/// Host tags and snippet tags stay independent VOCABULARIES either way
+/// (`TagList`'s own doc comment) — this is one INPUT WIDGET serving two
+/// unrelated `suggestions` closures, never one closure's data reaching the
+/// other's field.
 struct SnippetTagField: View {
     @Binding var tags: [String]
     let suggestions: (String) -> [(tag: String, count: Int)]
+    var placeholder: String = L10n.string("snippets.tags.placeholder", "Add a tag…")
 
     @State private var query = ""
     @State private var highlightedIndex = 0
@@ -172,7 +183,7 @@ struct SnippetTagField: View {
                     }
                 }
             }
-            TextField(L10n.string("snippets.tags.placeholder", "Add a tag…"), text: $query)
+            TextField(placeholder, text: $query)
                 .textFieldStyle(.roundedBorder)
                 .focused($isFieldFocused)
                 .onChange(of: query) { _, newValue in

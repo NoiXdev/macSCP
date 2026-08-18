@@ -95,6 +95,7 @@
 "connection.field.saveName.placeholder" = "np. hetzner-web";
 "form.tags.label" = "Tagi";
 "form.tags.help" = "Rozdzielone przecinkami. Używane przez filtr paska bocznego.";
+"form.tags.placeholder" = "Dodaj tag…";
 "connection.hostkey.first" = "Pierwsze połączenie z %@";
 "connection.hostkey.fingerprintLabel" = "Odcisk klucza (%@):";
 "connection.hostkey.trust" = "Zaufaj i połącz";

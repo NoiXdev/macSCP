@@ -93,6 +93,7 @@
 "connection.field.saveName.placeholder" = "e.g. hetzner-web";
 "form.tags.label" = "Tags";
 "form.tags.help" = "Comma-separated. Used by the sidebar filter.";
+"form.tags.placeholder" = "Add a tag…";
 "connection.hostkey.first" = "First connection to %@";
 "connection.hostkey.fingerprintLabel" = "Fingerprint (%@):";
 "connection.hostkey.trust" = "Trust & connect";
