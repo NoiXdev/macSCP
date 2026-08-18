@@ -258,3 +258,43 @@ oder als feste Zeile im Popover steht. Der Maintainer hat außerdem einen
 Screenshot der heutigen Auswahl geschickt (Suchfeld, „Regex"-Kästchen,
 Aufklappmenü) — der Ist-Zustand ist beim Planen **am Code zu messen**, nicht
 aus dem Bild abzuleiten.
+
+## Nachtrag 2026-08-18: Terminal-Protokoll (P3e)
+
+Maintainer-Feedback nach dem Dev-Build. Eigene Phase, **nach** P3b.
+
+Das Protokoll aus M9b (`AuditEvent`, `AuditLogStore`, Sheet) bekommt
+Terminal-Ereignisse. Gemessen: `AuditEvent.Kind` kennt heute **keinen**
+Shell-Fall — es wird erweitert, nicht neu gebaut.
+
+**Maintainer-Entscheidung:** protokolliert werden Snippet-Ausführungen
+**und** selbst getippte Befehle, letztere **über eine Einstellung
+zuschaltbar**.
+
+**Der Schutz gegen mitgeschriebene Passwörter kommt nicht aus einem
+Textfilter**, sondern aus dem Zustand des Terminals: fordert die Gegenseite
+eine verdeckte Eingabe an (Echo aus, wie bei `sudo`), schreibt das Protokoll
+nur einen Vermerk („verdeckte Eingabe") und **den Inhalt gar nicht**.
+
+Das ist die bessere Konstruktion, weil sie ein Signal benutzt statt zu
+raten. Ein Muster-Filter, der 95 % erwischt, erzeugt Vertrauen, das die
+restlichen 5 % nicht rechtfertigen — und die 5 % sind genau die Fälle, in
+denen ein Passwort in einer Datei landet.
+
+### Vor der Planung: Machbarkeit prüfen, nicht annehmen
+
+**Offen und ausdrücklich ungeklärt:** ob die Client-Seite zuverlässig
+erkennt, dass die Gegenseite das Echo abgeschaltet hat. Bei SSH schaltet
+das entfernte PTY das Echo ab; der Client bekommt die Zeichen dann schlicht
+nicht zurück. Ob SwiftTerm daraus einen belastbaren Zustand ableitet — über
+die Terminal-Modi oder anders —, ist **am Code und an der Bibliothek zu
+messen**, bevor irgendetwas geplant wird.
+
+Fällt die Prüfung negativ aus, ist die Entscheidung neu zu treffen, statt
+ersatzweise doch einen Musterfilter einzubauen. Die Rückfallmöglichkeiten
+wären dann: nur Snippets protokollieren, oder getippte Befehle nur mit
+einer ausdrücklichen Warnung im Einstellungstext.
+
+Ebenfalls beim Planen zu klären: ob eine Zeile beim Absenden oder beim
+Abschluss protokolliert wird, was mit einer Zeile passiert, die nie mit
+Return endet, und ob das Protokoll pro Sitzung oder global gelesen wird.
