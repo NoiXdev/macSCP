@@ -570,25 +570,25 @@ struct SessionSidebar: View {
 /// host tag's purpose is to narrow a short list by eye, not to report how
 /// many sessions carry it) and no "No Tag" chip (`SidebarVisibility.compute`
 /// has no untagged-only mode — a host tag filter is either "match this tag"
-/// or "no filter", never "sessions with zero tags"). The pill itself is the
-/// shared `TagFilterChip`.
+/// or "no filter", never "sessions with zero tags"). Both the pill
+/// (`TagFilterChip`) and the horizontal-scroll shell around it
+/// (`TagFilterScrollRow`) are shared with `SnippetTagFilterRow`; only the
+/// chip SEQUENCE inside differs between the two rows.
 private struct HostTagFilterRow: View {
     let tags: [String]
     @Binding var selection: String?
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+        TagFilterScrollRow {
+            TagFilterChip(
+                title: L10n.string("sidebar.filter.all", "All"),
+                isSelected: selection == nil,
+                onSelect: { selection = nil })
+            ForEach(tags, id: \.self) { tag in
                 TagFilterChip(
-                    title: L10n.string("sidebar.filter.all", "All"),
-                    isSelected: selection == nil,
-                    onSelect: { selection = nil })
-                ForEach(tags, id: \.self) { tag in
-                    TagFilterChip(
-                        title: tag,
-                        isSelected: selection == tag,
-                        onSelect: { selection = tag })
-                }
+                    title: tag,
+                    isSelected: selection == tag,
+                    onSelect: { selection = tag })
             }
         }
     }

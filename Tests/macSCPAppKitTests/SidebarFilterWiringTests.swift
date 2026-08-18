@@ -19,34 +19,60 @@ import Testing
 /// scan over `Sources/MacSCPAppKit/SessionSidebar.swift`, not a rendered-view
 /// assertion.
 ///
+/// Fix round 1 (coordinator review) tightened two of these guards after the
+/// reviewer found each one's detection narrower than its own failure
+/// message claimed:
+/// - Guard 1 originally matched only the literal spelling `let visibility =
+///   SidebarVisibility.compute(`. A second, differently-named call — `let
+///   second = SidebarVisibility.compute(...)` — left it green while the
+///   message claimed the question "must be asked in ONE place." It now
+///   counts every non-comment call to `SidebarVisibility.compute(`,
+///   regardless of what it is assigned to.
+/// - Guard 2 originally matched only the literal substring `tags.contains(`.
+///   `Set(s.tags).contains(activeTag!)` — a re-derivation with a `)` between
+///   `tags` and `.contains(` — left it green. It now flags any line that
+///   combines a `.tags` property read, `activeTag`, and `contains(`, which
+///   catches that shape (and the original one, which is a subset of it)
+///   without also flagging the legitimate `tags:`/`$activeTag` parameter
+///   uses in `HostTagFilterRow`'s own construction (see
+///   `scannerIgnoresTheLegitimateChipRowConstruction` below).
+///
 /// Known blind spots, stated up front rather than discovered later (the same
 /// honesty the four precedent guards hold themselves to):
-/// - Line-based and literal. `if activeTag == nil ? true :
-///   session.tags.contains(activeTag!)` written across several lines, a
-///   reformat, or a rename of `visibility`/`activeTag` to something else
-///   entirely would all slip past this exact pattern match. Aimed at the
-///   accidental regression (someone "simplifying" a section back to a direct
-///   `session.tags` check while editing nearby code), not a hostile rewrite.
-/// - The `tags.contains(` scan is file-wide, not scoped to `body` — broader
-///   than the precedents' single-function scope, because this file's
-///   decision-reading is split across `body`, `importedSection`, and
-///   `emptyStateRow`. That breadth is also the scan's only precision: it
+/// - Line-based and literal. A check spelled without a literal `contains(`
+///   — e.g. `.tags.firstIndex(of: activeTag) != nil`, or one split so no
+///   single line carries all three markers — would still slip past Guard 2.
+///   A rename of `SidebarVisibility` itself, or a call reached through a
+///   local alias, would slip past Guard 1. Aimed at the accidental
+///   regression (someone "simplifying" a section back to a direct check, or
+///   adding a second computation while extending nearby code), not a
+///   hostile rewrite.
+/// - Both scans are file-wide, not scoped to `body` — broader than the
+///   precedents' single-function scope, because this file's decision-
+///   reading is split across `body`, `importedSection`, and
+///   `emptyStateRow`. That breadth is also the scans' only precision: they
 ///   cannot say WHICH function a violation sits in, only that the file
-///   contains one. It also does not see a violation moved to a DIFFERENT
-///   file entirely.
-/// - `sidebarComputesVisibilityExactlyOnce` only proves the string `let
-///   visibility = SidebarVisibility.compute(` appears once; it does not
-///   verify every read below actually names THAT local rather than some
-///   other `visibility` shadowing it — the same gap
-///   `PaneRenderConditionGuardTests`'s own doc comment already names for its
-///   `detailAssemblesVisibilityFromEffectivePaneVisibility` check.
+///   contains one. Neither sees a violation moved to a DIFFERENT file
+///   entirely.
+/// - Guard 1 counts CALLS, not assignments — it does not verify every
+///   downstream read in `body` actually names the local that call's result
+///   was bound to, rather than some other `visibility` shadowing it. Guard
+///   3 narrows that gap for the specific reads it lists, the same way
+///   `PaneRenderConditionGuardTests.detailAssemblesVisibilityFromEffectivePaneVisibility`
+///   narrows the equivalent gap for `detail`.
 /// - `sessionRowsPassTheFullUnfilteredSnippetListRegardlessOfTheActiveTagFilter`
-///   (the `TagList` independence pin, below) only checks the literal
-///   argument text `snippets: snippets,` at the one `SessionRow(...)` call
-///   site that exists today. A second call site constructing a `SessionRow`
-///   some other way — or a rename of the `snippets` property — would not be
+///   (the `TagList` independence pin) only checks the literal argument text
+///   `snippets: snippets,` at the one `SessionRow(...)` call site that
+///   exists today. A second call site constructing a `SessionRow` some
+///   other way — or a rename of the `snippets` property — would not be
 ///   recognized as either compliant or a violation; it would simply not be
 ///   seen.
+/// - `activeTagNeverRoutesThroughPersistenceOrSettingsStore` (Guard 5) reads
+///   the declaration line and greps for `SettingsStore`/`@AppStorage`
+///   co-occurring with `activeTag` on the same line. A persistence path
+///   that never spells either word on a line mentioning `activeTag` (e.g.
+///   an intermediate variable renamed before being handed to a store) would
+///   not be recognized.
 @Suite("Sidebar filter wiring guard")
 struct SidebarFilterWiringTests {
     /// `#filePath` here is
@@ -65,13 +91,13 @@ struct SidebarFilterWiringTests {
 
     @Test func sidebarComputesVisibilityExactlyOnce() throws {
         let lines = try Self.sourceLines()
-        let assemblyLines = lines.filter {
-            $0.contains("let visibility = SidebarVisibility.compute(")
-        }
-        #expect(assemblyLines.count == 1, """
-            expected exactly one `let visibility = SidebarVisibility.compute(...)` in \
-            SessionSidebar.swift, found \(assemblyLines.count) — the sidebar must ask this \
-            question in ONE place, not recompute it (or a variant of it) elsewhere.
+        let callSites = Self.computeCallSites(in: lines)
+        #expect(callSites.count == 1, """
+            expected exactly one call to `SidebarVisibility.compute(...)` in \
+            SessionSidebar.swift, found \(callSites.count) at line(s) \
+            \(callSites.map { $0 + 1 }) — the sidebar must ask this question in ONE \
+            place; a second call under any variable name recomputes it instead of \
+            reading the one true answer.
             """)
     }
 
@@ -79,10 +105,10 @@ struct SidebarFilterWiringTests {
 
     @Test func sidebarNeverComparesSessionTagsDirectlyAgainstTheActiveFilter() throws {
         let lines = try Self.sourceLines()
-        let violations = Self.tagsContainsViolations(in: lines)
+        let violations = Self.sessionTagsAgainstActiveTagViolations(in: lines)
         #expect(violations.isEmpty, """
-            `SessionSidebar.swift` compares `.tags` directly at line(s) \
-            \(violations.map { $0 + 1 }) instead of reading the decision off \
+            `SessionSidebar.swift` compares session tags against `activeTag` directly at \
+            line(s) \(violations.map { $0 + 1 }) instead of reading the decision off \
             `SidebarVisibility` — see this suite's doc comment for why P2 already paid \
             for this exact regression once (a view re-deriving a display decision it \
             should only be reading).
@@ -151,7 +177,47 @@ struct SidebarFilterWiringTests {
             """)
     }
 
-    // MARK: - Guard 5: the `TagList` independence claim
+    // MARK: - Guard 5: `activeTag` stays a view-local, never persisted
+
+    /// The brief is explicit that the filter is a VIEW, not a setting: "Der
+    /// Filter ist eine Sicht, keine Einstellung" — deliberately not
+    /// persisted, never routed through `SettingsStore`. That is a brief
+    /// requirement, not a rendering detail, and — unlike the tap-behavior
+    /// and per-case-copy claims this task's report accepted as genuinely
+    /// unobservable — it is checkable with the same source-scanning idiom
+    /// the rest of this suite already uses.
+    @Test func activeTagNeverRoutesThroughPersistenceOrSettingsStore() throws {
+        let lines = try Self.sourceLines()
+        let declarationLines = lines.filter { $0.contains("var activeTag") }
+        #expect(declarationLines.count == 1, """
+            expected exactly one `activeTag` declaration in SessionSidebar.swift, found \
+            \(declarationLines.count) — re-anchor this guard.
+            """)
+        if let declaration = declarationLines.first {
+            let trimmed = declaration.trimmingCharacters(in: .whitespaces)
+            #expect(trimmed.hasPrefix("@State private var activeTag: String?"), """
+                `activeTag` is no longer declared as plain `@State private var activeTag: \
+                String?` (found `\(trimmed)`) — a wrapper like `@AppStorage` would persist \
+                the filter across relaunches, which the brief explicitly rules out.
+                """)
+        }
+        let touchesSettingsStore = lines.contains {
+            $0.contains("activeTag") && $0.contains("SettingsStore")
+        }
+        #expect(!touchesSettingsStore, """
+            a line mentions both `activeTag` and `SettingsStore` — the filter must never be \
+            routed through the settings layer; it resets to "no filter" on every relaunch.
+            """)
+        let touchesAppStorage = lines.contains {
+            $0.contains("activeTag") && $0.contains("AppStorage")
+        }
+        #expect(!touchesAppStorage, """
+            a line mentions both `activeTag` and `AppStorage` — that would persist the \
+            filter selection, which the brief explicitly rules out ("a view, not a setting").
+            """)
+    }
+
+    // MARK: - Guard 6: the `TagList` independence claim
 
     /// Pins the claim `TagList`'s doc comment states as design intent: a
     /// host tag hides no snippet. `SessionSidebar` is the one place
@@ -187,7 +253,7 @@ struct SidebarFilterWiringTests {
             """)
     }
 
-    // MARK: - Guard 5: the new catalog keys resolve
+    // MARK: - Guard 7: the new catalog keys resolve
 
     /// The four keys this task adds — a missing key would render as its own
     /// literal string in the UI rather than fail a build, same guard shape
@@ -217,7 +283,31 @@ struct SidebarFilterWiringTests {
             }
             """
         let lines = source.components(separatedBy: "\n")
-        #expect(!Self.tagsContainsViolations(in: lines).isEmpty)
+        #expect(!Self.sessionTagsAgainstActiveTagViolations(in: lines).isEmpty)
+    }
+
+    /// The reviewer's exact mutation (fix round 1): a re-derivation with a
+    /// `)` sitting between `tags` and `.contains(`, which the original
+    /// literal-substring scanner missed entirely.
+    @Test func scannerFlagsTheReviewersSetTagsContainsMutation() {
+        let source = """
+            var body: some View {
+                let visibility = SidebarVisibility.compute(
+                    sessions: viewModel.sessions, groups: viewModel.groups,
+                    importedHostsCount: importedHosts.count, activeTag: activeTag)
+                ForEach(visibility.groupSections, id: \\.group.id) { section in
+                    Section {
+                        ForEach(section.sessions.filter { s in
+                            activeTag == nil || Set(s.tags).contains(activeTag!)
+                        }) { s in
+                            EmptyView()
+                        }
+                    } header: { EmptyView() }
+                }
+            }
+            """
+        let lines = source.components(separatedBy: "\n")
+        #expect(!Self.sessionTagsAgainstActiveTagViolations(in: lines).isEmpty)
     }
 
     @Test func scannerAcceptsTheAssembledVisibilityReadsWithNoTagsComparison() {
@@ -232,7 +322,71 @@ struct SidebarFilterWiringTests {
             }
             """
         let lines = source.components(separatedBy: "\n")
-        #expect(Self.tagsContainsViolations(in: lines).isEmpty)
+        #expect(Self.sessionTagsAgainstActiveTagViolations(in: lines).isEmpty)
+    }
+
+    /// The scanner's own honesty check: `HostTagFilterRow`'s real
+    /// construction (`tags: availableTags, selection: $activeTag`) uses the
+    /// PARAMETER LABEL `tags:`, never the property access `.tags`, and must
+    /// not be mistaken for a violation just because both words "tags" and
+    /// "activeTag" appear on the line.
+    @Test func scannerIgnoresTheLegitimateChipRowConstruction() {
+        let line = "                HostTagFilterRow(tags: availableTags, selection: $activeTag)"
+        #expect(Self.sessionTagsAgainstActiveTagViolations(in: [line]).isEmpty)
+    }
+
+    /// The reviewer's other exact mutation (fix round 1): a second call to
+    /// `SidebarVisibility.compute(...)`, bound to a DIFFERENT name than
+    /// `visibility` — the original scanner's literal `let visibility = ...`
+    /// match could not see this at all.
+    @Test func scannerFlagsASecondComputeCallUnderADifferentName() {
+        let source = """
+            var body: some View {
+                let visibility = SidebarVisibility.compute(
+                    sessions: viewModel.sessions, groups: viewModel.groups,
+                    importedHostsCount: importedHosts.count, activeTag: activeTag)
+                let second = SidebarVisibility.compute(
+                    sessions: viewModel.sessions, groups: viewModel.groups,
+                    importedHostsCount: 0, activeTag: nil)
+                List {
+                    sessionRows(visibility.ungrouped)
+                }
+            }
+            """
+        let lines = source.components(separatedBy: "\n")
+        #expect(Self.computeCallSites(in: lines).count == 2)
+    }
+
+    @Test func scannerAcceptsASingleComputeCall() {
+        let source = """
+            var body: some View {
+                let visibility = SidebarVisibility.compute(
+                    sessions: viewModel.sessions, groups: viewModel.groups,
+                    importedHostsCount: importedHosts.count, activeTag: activeTag)
+                List {
+                    sessionRows(visibility.ungrouped)
+                }
+            }
+            """
+        let lines = source.components(separatedBy: "\n")
+        #expect(Self.computeCallSites(in: lines).count == 1)
+    }
+
+    /// A doc comment mentioning `SidebarVisibility.compute` in prose (this
+    /// file has several, e.g. `` `SidebarVisibility.compute`'s own doc
+    /// comment `` above) must not be counted as a call — only Guard 1's
+    /// real target, a compiled statement, is.
+    @Test func scannerIgnoresComputeMentionedInAComment() {
+        let source = """
+            var body: some View {
+                // See `SidebarVisibility.compute`'s own doc comment for the rules.
+                let visibility = SidebarVisibility.compute(
+                    sessions: viewModel.sessions, groups: viewModel.groups,
+                    importedHostsCount: importedHosts.count, activeTag: activeTag)
+            }
+            """
+        let lines = source.components(separatedBy: "\n")
+        #expect(Self.computeCallSites(in: lines).count == 1)
     }
 
     // MARK: - Scanner
@@ -243,15 +397,38 @@ struct SidebarFilterWiringTests {
         try String(contentsOf: Self.sourceFile, encoding: .utf8).components(separatedBy: "\n")
     }
 
-    /// Every line containing the literal substring `tags.contains(` — the
-    /// raw per-session tag check this file must never perform; every session
-    /// visibility decision belongs to `SidebarVisibility.compute` instead.
-    /// Comments are not stripped (same deliberate choice
+    /// Every line, EXCLUDING `//`/`///` comment lines, that starts a call to
+    /// `SidebarVisibility.compute(` — regardless of what the result is
+    /// assigned to, or whether it is assigned at all. Counting lines rather
+    /// than parenthesis-matched call spans is sufficient here: the literal
+    /// substring `SidebarVisibility.compute(` occurs exactly once per call,
+    /// on the call's own start line, never on a continuation line.
+    private static func computeCallSites(in lines: [String]) -> [Int] {
+        lines.indices.filter { index in
+            let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
+            guard !trimmed.hasPrefix("//") else { return false }
+            return trimmed.contains("SidebarVisibility.compute(")
+        }
+    }
+
+    /// Every line combining a `.tags` PROPERTY READ (dot-prefixed, so the
+    /// `tags:` parameter label in `HostTagFilterRow(tags: ..., selection:
+    /// $activeTag)` does not match), `activeTag`, and `contains(` — the
+    /// structural signature of "compare some session's tags against the
+    /// active filter directly" regardless of exact spelling
+    /// (`session.tags.contains(activeTag)`, `Set(s.tags).contains(activeTag!)`,
+    /// …). Comments are not stripped (same deliberate choice
     /// `PaneVisibilityOwnershipGuardTests` makes for its own scanner): the
     /// wrong shape should not be modelled anywhere in the file, prose
-    /// included.
-    private static func tagsContainsViolations(in lines: [String]) -> [Int] {
-        lines.indices.filter { lines[$0].contains("tags.contains(") }
+    /// included. Requiring all three markers on one line is what keeps this
+    /// from flagging `SessionSidebar.swift`'s own explanatory comments,
+    /// which mention `session.tags` and `activeTag` separately but never
+    /// alongside `contains(`.
+    private static func sessionTagsAgainstActiveTagViolations(in lines: [String]) -> [Int] {
+        lines.indices.filter { index in
+            let line = lines[index]
+            return line.contains(".tags") && line.contains("activeTag") && line.contains("contains(")
+        }
     }
 
     /// The line range of a `{ … }` block anchored by the first line

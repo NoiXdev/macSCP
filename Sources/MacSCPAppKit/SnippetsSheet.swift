@@ -225,39 +225,39 @@ struct SnippetsSheet: View {
 /// comment) is what keeps this single-valued — there is nothing here to
 /// enforce beyond writing one case into the binding per tap.
 ///
-/// The pill itself is `TagFilterChip` (P3a/T6), shared with the sidebar's
-/// host-tag filter row — this row keeps its own per-tag COUNT formatting
-/// and "No Tag" chip, which the sidebar's simpler row has no equivalent for.
+/// The pill is `TagFilterChip` and the horizontal-scroll shell is
+/// `TagFilterScrollRow` (P3a/T6 fix round 1), both shared with the
+/// sidebar's host-tag filter row — this row keeps its own per-tag COUNT
+/// formatting and "No Tag" chip as CONTENT inside that shell, which the
+/// sidebar's simpler row has no equivalent for.
 private struct SnippetTagFilterRow: View {
     let snippets: [Snippet]
     @Binding var selection: SnippetTagFilter
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+        TagFilterScrollRow {
+            TagFilterChip(
+                title: L10n.string("snippets.filter.all", "All"),
+                isSelected: selection == .all,
+                onSelect: { selection = .all })
+            ForEach(SnippetTagSuggestions.all(in: snippets), id: \.tag) { entry in
                 TagFilterChip(
-                    title: L10n.string("snippets.filter.all", "All"),
-                    isSelected: selection == .all,
-                    onSelect: { selection = .all })
-                ForEach(SnippetTagSuggestions.all(in: snippets), id: \.tag) { entry in
-                    TagFilterChip(
-                        title: String(
-                            format: L10n.string(
-                                "snippets.filter.tagCount %1$@ %2$lld", "%1$@ (%2$lld)"),
-                            entry.tag, entry.count),
-                        isSelected: selection == .tag(entry.tag),
-                        onSelect: { selection = .tag(entry.tag) })
-                }
-                let untaggedCount = snippets.filter { $0.tags.isEmpty }.count
-                if untaggedCount > 0 {
-                    TagFilterChip(
-                        title: String(
-                            format: L10n.string(
-                                "snippets.filter.tagCount %1$@ %2$lld", "%1$@ (%2$lld)"),
-                            L10n.string("snippets.filter.untagged", "No Tag"), untaggedCount),
-                        isSelected: selection == .untagged,
-                        onSelect: { selection = .untagged })
-                }
+                    title: String(
+                        format: L10n.string(
+                            "snippets.filter.tagCount %1$@ %2$lld", "%1$@ (%2$lld)"),
+                        entry.tag, entry.count),
+                    isSelected: selection == .tag(entry.tag),
+                    onSelect: { selection = .tag(entry.tag) })
+            }
+            let untaggedCount = snippets.filter { $0.tags.isEmpty }.count
+            if untaggedCount > 0 {
+                TagFilterChip(
+                    title: String(
+                        format: L10n.string(
+                            "snippets.filter.tagCount %1$@ %2$lld", "%1$@ (%2$lld)"),
+                        L10n.string("snippets.filter.untagged", "No Tag"), untaggedCount),
+                    isSelected: selection == .untagged,
+                    onSelect: { selection = .untagged })
             }
         }
     }

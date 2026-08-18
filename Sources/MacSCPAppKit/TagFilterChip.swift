@@ -30,3 +30,23 @@ struct TagFilterChip: View {
         .buttonStyle(.plain)
     }
 }
+
+/// The horizontal-scrolling shell both tag-filter rows sit inside (P3a/T6
+/// fix round 1): `SnippetTagFilterRow` and `HostTagFilterRow` lay out
+/// DIFFERENT chip sequences — different content, different count — but the
+/// scaffold around that content (`ScrollView(.horizontal) { HStack(spacing:
+/// 6) { … } }`) was, until this fix, written out identically in both files.
+/// Only the pill (`TagFilterChip`, above) was actually shared before; this
+/// closes the remaining duplication rather than leaving a comment that
+/// claimed more sharing than the code had.
+struct TagFilterScrollRow<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                content()
+            }
+        }
+    }
+}
