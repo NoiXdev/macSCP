@@ -384,6 +384,37 @@ struct SessionListViewModelTests {
         #expect(vm.sessions.first?.name == "new")
     }
 
+    /// P2 terminal-chrome milestone, Task 4: writes the toggled visibility
+    /// into the STORED session, not just the caller's local copy — a second
+    /// `sessions.first` lookup (not the `stored` value the test already
+    /// holds) is what actually proves the write landed.
+    @Test func updatePaneVisibilityPersistsToTheStoredSession() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let stored = vm.save(
+            name: "s",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "pw")!
+        #expect(stored.paneVisibility == .bothVisible)
+
+        vm.updatePaneVisibility(
+            for: stored.id, to: PaneVisibility(showsFiles: false, showsTerminal: true))
+
+        #expect(vm.sessions.first?.paneVisibility == PaneVisibility(showsFiles: false, showsTerminal: true))
+    }
+
+    /// A no-op, not a crash, when the id no longer names a stored session
+    /// (e.g. deleted between the toggle click and this write).
+    @Test func updatePaneVisibilityIsANoOpForAnUnknownID() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        vm.updatePaneVisibility(for: UUID(), to: PaneVisibility(showsFiles: false, showsTerminal: true))
+
+        #expect(vm.sessions.isEmpty)
+        #expect(vm.errorMessage == nil)
+    }
+
     @Test func updateSessionKeepsSecretWhenNewSecretIsNilOrEmpty() throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }

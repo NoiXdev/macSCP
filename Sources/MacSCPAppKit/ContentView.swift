@@ -821,6 +821,70 @@ struct ContentView: View {
             : BackendDescriptor.descriptor(for: form.kind).displaySummary(form.values)
     }
 
+    // MARK: - Pane visibility (P2 terminal-chrome milestone, Task 4)
+
+    /// Restores `tab`'s pane visibility to what was last saved for `stored`,
+    /// right after `startSession` has built a fresh `BrowserSession` for it.
+    /// A no-op when `tab.session` is somehow absent (defensive only — the
+    /// caller always calls this immediately after `startSession`, which sets
+    /// it).
+    ///
+    /// A fresh `TerminalPanelViewModel.isVisible` always starts `false`, so
+    /// making the terminal come up visible again means CALLING THE SAME
+    /// TOGGLE the toolbar's Terminal button calls in `.builtIn` mode —
+    /// `TerminalPanelViewModel.toggle()` — rather than reaching into its
+    /// `isVisible` property directly and separately deciding whether to open
+    /// a shell. There is only ever one "make the terminal appear" path; this
+    /// is that path, run once at connect time instead of by a click. Opening
+    /// a shell here is therefore the intended reading of "opens as it last
+    /// stood": the shell channel multiplexes over the connection `fs` just
+    /// established (architecture invariant — one SSH connection per window,
+    /// SFTP and the terminal share it), so this adds no second connection,
+    /// no extra host-key/TOFU prompt, and no separate audit entry (shell
+    /// opens are not an `AuditEvent.Kind` case) — nothing a user would
+    /// experience as a surprise.
+    ///
+    /// `hasShell` is folded in exactly like `SessionTab.effectivePaneVisibility`
+    /// does elsewhere: `PaneVisibility`'s own repair is reused rather than a
+    /// second `if !hasShell` check written here, so a backend with no shell
+    /// can never come up terminal-visible even if the stored file still says
+    /// `true` (e.g. the backend changed since the file was written).
+    func restorePaneVisibility(
+        for tab: SessionTab, from stored: StoredSession, descriptor: BackendDescriptor
+    ) {
+        guard let session = tab.session else { return }
+        let saved = stored.paneVisibility
+        let hasShell = descriptor.capabilities.supportsShell
+        let effective = PaneVisibility(
+            showsFiles: saved.showsFiles, showsTerminal: saved.showsTerminal && hasShell)
+        tab.showsFiles = effective.showsFiles
+        if effective.showsTerminal {
+            session.terminal.toggle()
+        }
+    }
+
+    /// Persists the active tab's current pane visibility into its stored
+    /// session, if it is connected to one (P2 terminal-chrome milestone,
+    /// Task 4) — called after every Files/Terminal toggle click, in addition
+    /// to the in-memory flip those toggles already perform, so a reopened
+    /// session comes up showing what was last on screen instead of the
+    /// default.
+    ///
+    /// Reads `SessionTab.effectivePaneVisibility` — the SAME method the
+    /// toolbar's `paneToggleState` and the render condition read — so what
+    /// gets written is exactly what is now on screen, not a re-derivation
+    /// that could disagree with it.
+    ///
+    /// A no-op for an ad-hoc (unsaved) connection, which has no
+    /// `StoredSession` to persist into.
+    func persistActivePaneVisibility() {
+        guard let sessionID = activeTab.activeStoredSessionID, let session = activeTab.session
+        else { return }
+        let visibility = activeTab.effectivePaneVisibility(
+            terminalIsVisible: session.terminal.isVisible, hasShell: activeTabSupportsShell)
+        sessionListViewModel.updatePaneVisibility(for: sessionID, to: visibility)
+    }
+
     /// Sidebar click: pick the target tab per the tab rule — the active tab
     /// when it is unconnected, otherwise a FRESH tab. A running session is
     /// therefore never torn down by a sidebar click (M8a spec 1.2).
@@ -1087,6 +1151,12 @@ struct ContentView: View {
                 let home = resolved.hasPrefix("/") ? resolved : "/"
                 startSession(in: tab, with: fs, storedName: stored.name, startPath: home)
                 tab.activeStoredSessionID = stored.id
+                // Pane visibility (P2 terminal-chrome milestone, Task 4):
+                // restore what was last shown for THIS stored session, now
+                // that `startSession` has built a fresh `BrowserSession` for
+                // it. Reuses `descriptor` (already resolved above for
+                // `stored.kind`) rather than re-deriving it.
+                restorePaneVisibility(for: tab, from: stored, descriptor: descriptor)
                 // Audit recorder (M9b/T3): this IS the stored-session connect
                 // path — attach right after `activeStoredSessionID`, once
                 // `tab.session` (set inside `startSession`) exists.

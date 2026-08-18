@@ -34,6 +34,14 @@ public struct ExportedSession: Codable, Equatable, Sendable {
     /// The protocol this session speaks (M12). `nil` on legacy payloads
     /// written before M12, which the import side maps to `.ssh`.
     public var kind: ConnectionKind?
+    /// Which window halves were last shown for this session (P2
+    /// terminal-chrome milestone, Task 4) — carried through export exactly
+    /// like `groupID` above: a fact about the session, not a connection
+    /// field, so it is NOT part of `fields`. `nil` on any payload written
+    /// before this field existed; the import side applies the same
+    /// "both visible" default `StoredSession.init(from:)` does, the same
+    /// way `kind == nil` is mapped to `.ssh` at import rather than at decode.
+    public var paneVisibility: PaneVisibility?
 
     /// Every backend field this session carries, keyed exactly as
     /// `FieldValues` keys them (`"<namespace>.<fieldID>"`).
@@ -120,6 +128,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         kind: ConnectionKind? = nil,
         fields: [String: String] = [:],
         groupID: UUID? = nil,
+        paneVisibility: PaneVisibility? = nil,
         password: String? = nil,
         jumpHost: String? = nil, jumpPort: Int? = nil, jumpUsername: String? = nil,
         jumpAuthKind: StoredSession.AuthKind? = nil, jumpKeyPath: String? = nil,
@@ -131,6 +140,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         self.kind = kind
         self.fields = fields
         self.groupID = groupID
+        self.paneVisibility = paneVisibility
         self.password = password
         self.jumpHost = jumpHost
         self.jumpPort = jumpPort
@@ -144,7 +154,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
     /// The `legacy*` cases keep v1's original key names, so a v1 file decodes
     /// unchanged while the property names say what they are.
     private enum CodingKeys: String, CodingKey {
-        case id, name, groupID, kind, fields, password
+        case id, name, groupID, kind, fields, paneVisibility, password
         case jumpHost, jumpPort, jumpUsername, jumpAuthKind, jumpKeyPath, jumpPassword
         case s3SecretAccessKey
         case legacyHost = "host"
@@ -171,6 +181,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         name = try c.decode(String.self, forKey: .name)
         groupID = try c.decodeIfPresent(UUID.self, forKey: .groupID)
         kind = try c.decodeIfPresent(ConnectionKind.self, forKey: .kind)
+        paneVisibility = try c.decodeIfPresent(PaneVisibility.self, forKey: .paneVisibility)
         fields = try c.decodeIfPresent([String: String].self, forKey: .fields) ?? [:]
         password = try c.decodeIfPresent(String.self, forKey: .password)
         jumpHost = try c.decodeIfPresent(String.self, forKey: .jumpHost)
@@ -205,6 +216,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         try c.encode(name, forKey: .name)
         try c.encodeIfPresent(groupID, forKey: .groupID)
         try c.encodeIfPresent(kind, forKey: .kind)
+        try c.encodeIfPresent(paneVisibility, forKey: .paneVisibility)
         try c.encode(fields, forKey: .fields)
         try c.encodeIfPresent(password, forKey: .password)
         try c.encodeIfPresent(jumpHost, forKey: .jumpHost)

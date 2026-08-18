@@ -44,6 +44,7 @@ extension ContentView {
                         activeTab.applyFilesToggleClick(
                             terminalIsVisible: session.terminal.isVisible,
                             hasShell: activeTabSupportsShell)
+                        persistActivePaneVisibility()
                     } label: {
                         Label(L10n.string("browser.filesToggle", "Files"), systemImage: "folder")
                     }
@@ -81,6 +82,7 @@ extension ContentView {
                                 hasShell: activeTabSupportsShell
                             ).isEnabled else { return }
                             session.terminal.toggle()
+                            persistActivePaneVisibility()
                         } else {
                             requestExternalTerminal(for: activeTab)
                         }
@@ -499,6 +501,7 @@ extension ContentView {
                 hasShell: activeTabSupportsShell
             ).isEnabled else { return }
             terminal.toggle()
+            persistActivePaneVisibility()
         }
         // Transfer-bar menu bridge (M11o) — same key-window guard as
         // the other tab commands; toggles the active tab's per-tab flag.

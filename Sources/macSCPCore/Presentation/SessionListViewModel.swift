@@ -510,6 +510,21 @@ public final class SessionListViewModel {
         updateSession(updated, newSecret: nil)
     }
 
+    /// Persists which window halves were last shown for a session (P2
+    /// terminal-chrome milestone, Task 4), so a session that is reopened
+    /// later comes up the way it was left. Looked up by id rather than
+    /// taking a `StoredSession` directly, so the caller (a toolbar/menu
+    /// toggle handler) does not need to keep its own copy of the session
+    /// around just to write one field into it — a no-op if `sessionID` no
+    /// longer names a stored session (e.g. it was deleted while its tab
+    /// stayed connected).
+    public func updatePaneVisibility(for sessionID: UUID, to visibility: PaneVisibility) {
+        guard let session = sessions.first(where: { $0.id == sessionID }) else { return }
+        var updated = session
+        updated.paneVisibility = visibility
+        updateSession(updated, newSecret: nil)
+    }
+
     /// Creates a new group (trims whitespace; an empty result creates
     /// nothing and returns `nil`).
     @discardableResult
@@ -1174,7 +1189,12 @@ public final class SessionListViewModel {
 
             return ExportedSession(
                 id: session.id, name: session.name, kind: session.kind, fields: fields.raw,
-                groupID: includeGroups ? session.groupID : nil, password: password,
+                groupID: includeGroups ? session.groupID : nil,
+                // Unconditional, unlike `groupID` above: `includeGroups`
+                // gates GROUP membership specifically, and pane visibility
+                // is not a group reference -- it travels with the session
+                // the same way `kind` or `fields` do.
+                paneVisibility: session.paneVisibility, password: password,
                 jumpHost: jumpHost, jumpPort: jumpPort, jumpUsername: jumpUsername,
                 jumpAuthKind: jumpAuthKind, jumpKeyPath: jumpKeyPath, jumpPassword: jumpPassword,
                 s3SecretAccessKey: s3SecretAccessKey)

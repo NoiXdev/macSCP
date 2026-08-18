@@ -91,6 +91,16 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
     /// `nil` for SSH/S3 sessions and on legacy JSON. The password is NOT here
     /// (Keychain only) -- this is `StoredWebDAVConfig`, not the runtime config.
     public var webdav: StoredWebDAVConfig? = nil
+    /// Which window halves (files/terminal) were last shown for this session
+    /// (P2 terminal-chrome milestone, Task 4). Belongs in the same category
+    /// as `groupID` above: a fact about the SESSION, not a connection
+    /// property, so it lives at the top level rather than in a backend's
+    /// field bag. Coded the same way `kind` is (`?? .bothVisible` below,
+    /// mirroring `kind`'s `?? .ssh`): a missing key means a file that
+    /// predates this field, or a session that was never toggled away from
+    /// the default, and either way decodes as `.bothVisible` -- exactly how
+    /// every session behaved before this field existed.
+    public var paneVisibility: PaneVisibility = .bothVisible
 
     public init(
         id: UUID = UUID(),
@@ -100,7 +110,8 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         kind: ConnectionKind = .ssh,
         ssh: StoredSSHConfig? = nil,
         s3: StoredS3Config? = nil,
-        webdav: StoredWebDAVConfig? = nil
+        webdav: StoredWebDAVConfig? = nil,
+        paneVisibility: PaneVisibility = .bothVisible
     ) {
         self.id = id
         self.name = name
@@ -110,16 +121,18 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         self.ssh = ssh
         self.s3 = s3
         self.webdav = webdav
+        self.paneVisibility = paneVisibility
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, groupID, loginSetID, kind, ssh, s3, webdav
+        case id, name, groupID, loginSetID, kind, ssh, s3, webdav, paneVisibility
     }
 
     /// Explicit rather than synthesized because `kind` needs its `?? .ssh`
     /// default: synthesized Codable does NOT apply a property default to a
     /// missing key, and a `sessions-v2.json` written by an earlier build of
-    /// this same milestone may not carry one.
+    /// this same milestone may not carry one. `paneVisibility` needs the
+    /// same treatment for the same reason.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -130,6 +143,7 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         ssh = try c.decodeIfPresent(StoredSSHConfig.self, forKey: .ssh)
         s3 = try c.decodeIfPresent(StoredS3Config.self, forKey: .s3)
         webdav = try c.decodeIfPresent(StoredWebDAVConfig.self, forKey: .webdav)
+        paneVisibility = try c.decodeIfPresent(PaneVisibility.self, forKey: .paneVisibility) ?? .bothVisible
     }
 
     // DEPRECATION INTENT: these exist to keep M23 Phase 1 reviewable. Phase 3

@@ -45,6 +45,14 @@ public struct PaneVisibility: Equatable, Sendable, Codable {
         }
     }
 
+    /// The default a session with no recorded preference gets (P2
+    /// terminal-chrome milestone, Task 4) — both halves shown, matching what
+    /// every session did before this type's persistence existed. The one
+    /// spelling of that default, so `StoredSession`'s decoder, `ExportedSession`'s
+    /// decoder, and a fresh connect's restore path cannot drift apart on what
+    /// "no preference recorded" means.
+    public static let bothVisible = PaneVisibility(showsFiles: true, showsTerminal: true)
+
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let showsFiles = try container.decode(Bool.self, forKey: .showsFiles)
