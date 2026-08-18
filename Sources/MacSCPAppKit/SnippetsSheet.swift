@@ -47,6 +47,17 @@ struct SnippetsSheet: View {
     @State private var exportDocument: SnippetExportDocument?
     @State private var showExportFileExporter = false
 
+    // MARK: - Import (P3b/T4)
+
+    @State private var showImportFileImporter = false
+    /// Feeds every naming collision through the shared `ImportConflictSheet`
+    /// — the same bridge, sheet, and arbiter shape `LoginSetsSheet`'s import
+    /// already drives (`SnippetImportPlanner`'s own doc comment: both import
+    /// flows are meant to feel identical).
+    @State private var importConflictBridge = ImportConflictBridge()
+    @State private var importResultMessage = ""
+    @State private var showImportResultAlert = false
+
     /// Wraps "new" (no existing snippet) or "edit" (a specific one) so
     /// `.sheet(item:)` has a stable identity even for the "new" case —
     /// same pattern as `LoginSetsSheet.LoginSetEditorTarget`.
@@ -143,6 +154,10 @@ struct SnippetsSheet: View {
                 }
                 .buttonStyle(.polished)
                 .disabled(!snippetsCanExport(load: load, visibleSnippets: visibleSnippets))
+                Button(L10n.string("snippets.import", "Import…")) {
+                    showImportFileImporter = true
+                }
+                .buttonStyle(.polished)
                 Button(L10n.string("common.close", "Close")) { dismiss() }
                     .buttonStyle(.polishedProminent)
                     .keyboardShortcut(.defaultAction)
@@ -186,6 +201,26 @@ struct SnippetsSheet: View {
         ) { result in
             handleExportResult(result)
         }
+        // MARK: Import (P3b/T4)
+        .fileImporter(
+            isPresented: $showImportFileImporter,
+            allowedContentTypes: [.macscpSnippets, .json],
+            allowsMultipleSelection: false
+        ) { result in
+            handleImportFileSelection(result)
+        }
+        // Same shared modifier the session and login-set imports use, so
+        // all three flows present one sheet rather than each inventing its
+        // own — see `importConflictSheet(bridge:)`.
+        .importConflictSheet(bridge: importConflictBridge)
+        .alert(
+            L10n.string("import.result.title", "Import Complete"),
+            isPresented: $showImportResultAlert
+        ) {
+            Button(L10n.string("common.ok", "OK"), role: .cancel) {}
+        } message: {
+            Text(importResultMessage)
+        }
     }
 
     private func reload() { load = SnippetsLoad(reading: store) }
@@ -226,6 +261,70 @@ struct SnippetsSheet: View {
                 String(describing: error))
         }
         exportDocument = nil
+    }
+
+    // MARK: - Import (P3b/T4)
+
+    /// `fileImporter` completion. Reads the chosen file with security-scoped
+    /// access (same reason `LoginSetsSheet.handleImportFileSelection` does —
+    /// the URL comes from an `NSOpenPanel` outside this app's own sandbox
+    /// container), then `probe`s before `decode`s, mirroring the flow both
+    /// other import paths use.
+    ///
+    /// Unlike those two, `probe`'s returned Bool is never read here: this
+    /// format never encrypts (see `SnippetExportCodec`'s own doc comment),
+    /// so the call's only job is to fail fast — through the SAME typed
+    /// `SessionExportError` `decode` would throw — on a file of the wrong
+    /// kind (a session or login-set export) or one that is unreadable.
+    /// `decode` would catch either case on its own, so the explicit `probe`
+    /// call is redundant work, kept only for shape parity with the shared
+    /// flow.
+    private func handleImportFileSelection(_ result: Result<[URL], Error>) {
+        switch result {
+        case .failure(let error):
+            errorMessage = ImportFeedbackText.readErrorMessage(error)
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            let didAccess = url.startAccessingSecurityScopedResource()
+            defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let data = try Data(contentsOf: url)
+                _ = try SnippetExportCodec.probe(data)
+                let payload = try SnippetExportCodec.decode(data)
+                errorMessage = nil
+                Task { await applyImport(payload) }
+            } catch let error as SessionExportError {
+                errorMessage = snippetImportErrorText(for: error)
+            } catch {
+                errorMessage = ImportFeedbackText.readErrorMessage(error)
+            }
+        }
+    }
+
+    /// Plan → apply through the SHARED arbiter and the one conflict sheet
+    /// both other import flows present (`LoginSetsSheet.applyImport` is the
+    /// direct precedent). A cancelled run writes nothing and shows no
+    /// result alert at all — `plan.cancelled` says so, and the `guard`
+    /// below is what keeps Cancel actually meaning "nothing happened"
+    /// rather than "whatever had already been planned got written anyway".
+    ///
+    /// The actual write (`applySnippetImportPlan`) and the result-text
+    /// composition (`snippetImportResultText`) live in
+    /// `SnippetsPresentation.swift`, not here — same reason `SnippetsLoad`
+    /// does: this file has no test target of its own to hold a View's
+    /// private methods honest.
+    private func applyImport(_ payload: SnippetExportPayload) async {
+        let bridge = importConflictBridge
+        let arbiter = ImportConflictArbiter { conflict in await bridge.ask(conflict) }
+        let plan = await SnippetImportPlanner.plan(
+            existing: snippets, incoming: payload, arbiter: arbiter)
+        guard !plan.cancelled else { return }
+
+        let applied = applySnippetImportPlan(plan, to: store)
+        reload()
+        selectedID = nil
+        importResultMessage = snippetImportResultText(plan: plan, applied: applied)
+        showImportResultAlert = true
     }
 
     @ViewBuilder

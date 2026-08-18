@@ -150,4 +150,159 @@ struct SnippetsPresentationTests {
         let snippet = try #require(Snippet(name: "Disk", command: "df -h"))
         #expect(!snippetsCanExport(load: .unreadable, visibleSnippets: [snippet]))
     }
+
+    // MARK: - applySnippetImportPlan (P3b/T4)
+
+    /// A fresh (non-colliding) planned snippet is written as a new entry.
+    @Test func applySnippetImportPlanAddsAFreshSnippet() throws {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let snippet = try #require(Snippet(name: "Disk", command: "df -h"))
+        let plan = SnippetImportPlan(
+            snippetsToImport: [PlannedSnippet(snippet: snippet, replacesExisting: false)])
+
+        let applied = applySnippetImportPlan(plan, to: store)
+
+        #expect(applied == SnippetImportApplyResult(imported: 1, storeFailures: 0))
+        #expect(try store.all() == [snippet])
+    }
+
+    /// The task's central requirement: a planned snippet with
+    /// `replacesExisting: true` carries the ORIGINAL id
+    /// (`SnippetImportPlanner` assigns it that way — see
+    /// `SnippetImportPlannerTests.replaceKeepsTheExistingIDSoTheStoreOverwritesRatherThanDuplicates`),
+    /// and `SnippetStore.save` writes over an existing id rather than
+    /// appending (see its own doc comment and
+    /// `SnippetStoreTests.savingTheSameIdTwiceReplaces`). This test proves
+    /// the GLUE between those two facts: applying a replace plan must leave
+    /// exactly one entry behind, with the new content — not two.
+    @Test func applySnippetImportPlanReplacesRatherThanDuplicating() throws {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let existing = try #require(Snippet(name: "Prod", command: "echo old"))
+        try store.save(existing)
+        let replacement = try #require(
+            Snippet(id: existing.id, name: "Prod", command: "echo new"))
+        let plan = SnippetImportPlan(
+            snippetsToImport: [PlannedSnippet(snippet: replacement, replacesExisting: true)],
+            replaced: ["Prod"])
+
+        let applied = applySnippetImportPlan(plan, to: store)
+
+        #expect(applied == SnippetImportApplyResult(imported: 1, storeFailures: 0))
+        let all = try store.all()
+        #expect(all.count == 1)
+        #expect(all == [replacement])
+    }
+
+    /// Cancellation applies nothing: `SnippetImportPlanner.plan` returns
+    /// `snippetsToImport: []` for a cancelled run (see its own doc
+    /// comment), so this function — which writes exactly what
+    /// `plan.snippetsToImport` holds — writes nothing for one either,
+    /// leaving whatever already existed untouched.
+    @Test func applySnippetImportPlanWritesNothingForACancelledPlan() throws {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let existing = try #require(Snippet(name: "Existing", command: "true"))
+        try store.save(existing)
+
+        let applied = applySnippetImportPlan(SnippetImportPlan(cancelled: true), to: store)
+
+        #expect(applied == SnippetImportApplyResult(imported: 0, storeFailures: 0))
+        #expect(try store.all() == [existing])
+    }
+
+    /// A write that fails is counted rather than crashing the import or
+    /// silently dropping the failure.
+    @Test func applySnippetImportPlanCountsAWriteFailureRatherThanCrashing() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-snippets-app-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // `dir` is a plain file, not a directory: `SnippetStore.save`'s
+        // `persist` calls `createDirectory(at: directory,...)`, which
+        // throws — the same technique
+        // `SessionListViewModelTests.applyImportReportsOnlyActuallyWrittenSessionsAndSkipsOrphanedPassword`
+        // uses to simulate an unwritable store.
+        try Data("blocked".utf8).write(to: dir)
+        let store = SnippetStore(directory: dir)
+        let snippet = try #require(Snippet(name: "Disk", command: "df -h"))
+        let plan = SnippetImportPlan(
+            snippetsToImport: [PlannedSnippet(snippet: snippet, replacesExisting: false)])
+
+        let applied = applySnippetImportPlan(plan, to: store)
+
+        #expect(applied == SnippetImportApplyResult(imported: 0, storeFailures: 1))
+    }
+
+    // MARK: - snippetImportErrorText (P3b/T4)
+
+    /// An import that failed and says nothing is indistinguishable from one
+    /// that silently did nothing — same guard shape as
+    /// `ImportFeedbackTextTests.everyExportErrorHasText`.
+    @Test func everySnippetImportErrorHasText() {
+        for error in SessionExportError.allTestCases {
+            #expect(!snippetImportErrorText(for: error).isEmpty, "\(error) has no message")
+        }
+    }
+
+    /// `.unsupportedVersion` is the one case this mapping names precisely
+    /// (reusing the shared "newer app" text) — it must read differently
+    /// from the generic wrong-kind-file/corrupted bucket the other four
+    /// cases share.
+    @Test func unsupportedVersionReadsDifferentlyFromTheGenericBucket() {
+        let versionText = snippetImportErrorText(for: .unsupportedVersion(2))
+        let genericText = snippetImportErrorText(for: .notAnExportFile)
+        #expect(versionText != genericText)
+    }
+
+    /// `.notAnExportFile`, `.passwordRequired`, `.wrongPasswordOrCorrupted`,
+    /// and `.randomnessUnavailable` all share the one generic refusal text —
+    /// deliberately, since only `.notAnExportFile` (a session or login-set
+    /// file, or a corrupted one) and `.unsupportedVersion` can actually
+    /// reach this format; the rest are defensive-only (see
+    /// `snippetImportErrorText`'s own doc comment).
+    @Test func theGenericBucketCoversEveryCaseExceptUnsupportedVersion() {
+        let genericCases: [SessionExportError] = [
+            .notAnExportFile, .passwordRequired, .wrongPasswordOrCorrupted, .randomnessUnavailable,
+        ]
+        let texts = Set(genericCases.map(snippetImportErrorText(for:)))
+        #expect(texts.count == 1, "the defensive cases should all read the same")
+    }
+
+    // MARK: - snippetImportResultText (P3b/T4)
+
+    /// The base "imported" line must vary with the count — a constant-return
+    /// function would pass an emptiness check but not this.
+    @Test func snippetImportResultTextVariesWithTheImportedCount() {
+        let plan = SnippetImportPlan()
+        let few = snippetImportResultText(
+            plan: plan, applied: SnippetImportApplyResult(imported: 1, storeFailures: 0))
+        let many = snippetImportResultText(
+            plan: plan, applied: SnippetImportApplyResult(imported: 30, storeFailures: 0))
+        #expect(few != many)
+    }
+
+    /// The replaced/renamed line is added only when the plan actually
+    /// resolved a collision.
+    @Test func snippetImportResultTextAddsAResolvedLineOnlyWhenNeeded() {
+        let applied = SnippetImportApplyResult(imported: 1, storeFailures: 0)
+        let clean = snippetImportResultText(plan: SnippetImportPlan(), applied: applied)
+        let resolved = snippetImportResultText(
+            plan: SnippetImportPlan(replaced: ["Prod"]), applied: applied)
+
+        #expect(clean.components(separatedBy: "\n").count == 1)
+        #expect(resolved.components(separatedBy: "\n").count == 2)
+    }
+
+    /// The store-failures line is added only when a write actually failed.
+    @Test func snippetImportResultTextAddsAFailureLineOnlyWhenAWriteFailed() {
+        let plan = SnippetImportPlan()
+        let clean = snippetImportResultText(
+            plan: plan, applied: SnippetImportApplyResult(imported: 1, storeFailures: 0))
+        let withFailure = snippetImportResultText(
+            plan: plan, applied: SnippetImportApplyResult(imported: 1, storeFailures: 1))
+
+        #expect(clean.components(separatedBy: "\n").count == 1)
+        #expect(withFailure.components(separatedBy: "\n").count == 2)
+    }
 }

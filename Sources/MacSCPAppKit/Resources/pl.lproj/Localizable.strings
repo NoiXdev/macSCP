@@ -420,6 +420,7 @@
 "import.conflict.connection.message" = "„%@” wskazuje na ten sam serwer co „%@”.";
 "import.conflict.kind.loginSet" = "zestaw logowania";
 "import.conflict.kind.session" = "połączenie";
+"import.conflict.kind.snippet" = "fragment";
 "import.conflict.kind.other" = "element";
 "import.conflict.skip" = "Pomiń";
 "import.conflict.replace" = "Zastąp";
@@ -816,6 +817,9 @@
 "snippets.delete.error" = "Nie udało się usunąć fragmentu.";
 "snippets.export" = "Eksportuj…";
 "snippets.export.filename" = "macSCP Snippets.macscpsnippets";
+"snippets.import" = "Importuj…";
+"snippets.import.error" = "Nie udało się odczytać tego pliku jako fragmentów macSCP. Może to być inny rodzaj eksportu albo plik jest uszkodzony.";
+"snippets.import.result %lld" = "%lld zaimportowano";
 "snippets.editor.titleNew" = "Nowy fragment";
 "snippets.editor.titleEdit" = "Edytuj fragment";
 "snippets.editor.name" = "Nazwa";

@@ -96,3 +96,84 @@ func snippetsAreFiltered(searchText: String, tagFilter: SnippetTagFilter) -> Boo
 func snippetsCanExport(load: SnippetsLoad, visibleSnippets: [Snippet]) -> Bool {
     !load.isUnreadable && !visibleSnippets.isEmpty
 }
+
+// MARK: - Import (P3b/T4)
+
+/// How many planned snippets an import actually wrote, split from how many
+/// failed to write. `SnippetsSheet.applyImport` is the only caller.
+struct SnippetImportApplyResult: Equatable {
+    var imported: Int
+    var storeFailures: Int
+}
+
+/// Writes every snippet `plan` resolved, through `SnippetStore.save`.
+///
+/// `SnippetStore.save` replaces an existing id IN PLACE rather than
+/// appending (see its own doc comment), and `SnippetImportPlanner` gives a
+/// `replacesExisting` `PlannedSnippet` the ORIGINAL snippet's id — so
+/// calling `save` for every planned snippet, replace or not, is the whole
+/// of "apply": there is no separate branch that could get replace wrong by
+/// appending instead. The caller is responsible for checking
+/// `plan.cancelled` first — this function writes whatever
+/// `plan.snippetsToImport` holds, unconditionally.
+func applySnippetImportPlan(_ plan: SnippetImportPlan, to store: SnippetStore) -> SnippetImportApplyResult {
+    var imported = 0
+    var storeFailures = 0
+    for planned in plan.snippetsToImport {
+        do {
+            try store.save(planned.snippet)
+            imported += 1
+        } catch {
+            storeFailures += 1
+        }
+    }
+    return SnippetImportApplyResult(imported: imported, storeFailures: storeFailures)
+}
+
+/// The multi-line body of the "Import Complete" alert `SnippetsSheet` shows
+/// after a non-cancelled apply. Mirrors the shape `ImportFeedbackText
+/// .importResultText` builds for sessions, reduced to what this format
+/// actually has to say: a snippet carries no secret and no key file, so
+/// there is nothing here to report beyond how many landed, how many of
+/// those were a replace/rename, and whether any write failed.
+func snippetImportResultText(plan: SnippetImportPlan, applied: SnippetImportApplyResult) -> String {
+    var lines = [String(format: L10n.string(
+        "snippets.import.result %lld", "%lld imported"), applied.imported)]
+    // Reuses the generic line the session import already shows for the same
+    // two facts — nothing snippet-specific to say about a replace or a
+    // rename.
+    if !plan.replaced.isEmpty || !plan.renamed.isEmpty {
+        lines.append(String(format: L10n.string(
+            "import.result.resolved %lld %lld", "%lld replaced, %lld renamed"),
+            plan.replaced.count, plan.renamed.count))
+    }
+    if applied.storeFailures > 0 {
+        lines.append(String(format: L10n.string(
+            "import.result.storeFailures %lld", "Not saved due to an error: %lld"),
+            applied.storeFailures))
+    }
+    return lines.joined(separator: "\n")
+}
+
+/// Maps the `SessionExportError` cases `SnippetExportCodec.probe`/`.decode`
+/// can throw to display text. `.unsupportedVersion` reuses the same "newer
+/// app" message the other two import flows already show; everything else —
+/// a file of the wrong kind (a session or login-set export) or a corrupted
+/// one — gets the one generic refusal text this task's brief asks for.
+/// `.passwordRequired`, `.wrongPasswordOrCorrupted`, and
+/// `.randomnessUnavailable` can never actually reach this format — it has
+/// no password path at all (see `SnippetExportCodec`'s own doc comment) —
+/// so they fall into that same generic bucket defensively rather than being
+/// asserted away.
+func snippetImportErrorText(for error: SessionExportError) -> String {
+    switch error {
+    case .unsupportedVersion:
+        return L10n.string(
+            "import.error.newerVersion",
+            "This file was created by a newer version of macSCP.")
+    case .notAnExportFile, .passwordRequired, .wrongPasswordOrCorrupted, .randomnessUnavailable:
+        return L10n.string(
+            "snippets.import.error",
+            "This file couldn't be read as macSCP snippets. It may be a different kind of export, or damaged.")
+    }
+}

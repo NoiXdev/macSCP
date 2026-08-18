@@ -76,10 +76,11 @@ struct LoginSetExportDocument: FileDocument {
 
 /// Write-only `FileDocument` for `.macscpsnippets` bytes — the snippet twin
 /// of `SessionExportDocument`/`LoginSetExportDocument` above, with the same
-/// read path deliberately left unimplemented. Unlike its two siblings there
-/// is no matching import codec call site YET (P3b/T4) — the read path stays
-/// unimplemented for the same reason theirs does, not because this one is
-/// somehow different.
+/// read path deliberately left unimplemented. Reading is never exercised:
+/// import goes through `SnippetExportCodec.decode` directly on `Data` read
+/// from the chosen URL (`SnippetsSheet.handleImportFileSelection`, P3b/T4),
+/// never through this type's read path — hence the empty
+/// `readableContentTypes` and the throwing `init(configuration:)`.
 struct SnippetExportDocument: FileDocument {
     static var readableContentTypes: [UTType] { [] }
     static var writableContentTypes: [UTType] { [.macscpSnippets] }

@@ -138,9 +138,10 @@ private struct ImportConflictSheet: View {
     }
 
     /// Maps Core's stable `kindLabel` identifier to localized display text.
-    /// `LoginSetImportPlanner.kindLabel` ("loginSet") and
-    /// `SessionImportPlanner.kindLabel` ("session") are the only two values
-    /// either import flow currently sets; anything else — a hypothetical
+    /// `LoginSetImportPlanner.kindLabel` ("loginSet"),
+    /// `SessionImportPlanner.kindLabel` ("session") and
+    /// `SnippetImportPlanner.kindLabel` ("snippet", P3b/T4) are the only
+    /// values any import flow currently sets; anything else — a hypothetical
     /// future planner, or a value that drifted — falls back to a neutral
     /// generic noun instead of surfacing the raw identifier to the user.
     private var kindText: String {
@@ -149,6 +150,8 @@ private struct ImportConflictSheet: View {
             return L10n.string("import.conflict.kind.loginSet", "login set")
         case SessionImportPlanner.kindLabel:
             return L10n.string("import.conflict.kind.session", "session")
+        case SnippetImportPlanner.kindLabel:
+            return L10n.string("import.conflict.kind.snippet", "snippet")
         default:
             return L10n.string("import.conflict.kind.other", "item")
         }

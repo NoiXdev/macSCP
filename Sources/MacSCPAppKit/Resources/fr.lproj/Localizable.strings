@@ -421,6 +421,7 @@
 "import.conflict.connection.message" = "« %@ » pointe vers le même serveur que « %@ ».";
 "import.conflict.kind.loginSet" = "jeu d’identifiants";
 "import.conflict.kind.session" = "connexion";
+"import.conflict.kind.snippet" = "snippet";
 "import.conflict.kind.other" = "élément";
 "import.conflict.skip" = "Ignorer";
 "import.conflict.replace" = "Remplacer";
@@ -817,6 +818,9 @@
 "snippets.delete.error" = "Impossible de supprimer le snippet.";
 "snippets.export" = "Exporter…";
 "snippets.export.filename" = "macSCP Snippets.macscpsnippets";
+"snippets.import" = "Importer…";
+"snippets.import.error" = "Ce fichier n’a pas pu être lu comme des snippets macSCP. Il s’agit peut-être d’un autre type d’export, ou le fichier est endommagé.";
+"snippets.import.result %lld" = "%lld importés";
 "snippets.editor.titleNew" = "Nouveau snippet";
 "snippets.editor.titleEdit" = "Modifier le snippet";
 "snippets.editor.name" = "Nom";
