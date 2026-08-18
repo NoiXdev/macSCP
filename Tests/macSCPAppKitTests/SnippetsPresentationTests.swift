@@ -129,4 +129,25 @@ struct SnippetsPresentationTests {
         #expect(snippetsAreFiltered(searchText: "", tagFilter: .tag("Docker")))
         #expect(snippetsAreFiltered(searchText: "", tagFilter: .untagged))
     }
+
+    // MARK: - snippetsCanExport
+
+    @Test func exportIsEnabledWhenTheStoreLoadedAndAtLeastOneRowIsVisible() throws {
+        let snippet = try #require(Snippet(name: "Disk", command: "df -h"))
+        #expect(snippetsCanExport(load: .loaded([snippet]), visibleSnippets: [snippet]))
+    }
+
+    @Test func exportIsDisabledWhenNoRowIsVisibleEvenIfTheStoreLoaded() {
+        #expect(!snippetsCanExport(load: .loaded([]), visibleSnippets: []))
+    }
+
+    /// The requirement this task is built around: an unreadable store must
+    /// never offer an export, even in a hypothetical future where
+    /// `visibleSnippets` is computed some other way and is no longer
+    /// incidentally empty for `.unreadable` — this pins the state, not just
+    /// today's derivation of it.
+    @Test func exportIsDisabledForAnUnreadableStoreEvenIfVisibleSnippetsWereNonEmpty() throws {
+        let snippet = try #require(Snippet(name: "Disk", command: "df -h"))
+        #expect(!snippetsCanExport(load: .unreadable, visibleSnippets: [snippet]))
+    }
 }

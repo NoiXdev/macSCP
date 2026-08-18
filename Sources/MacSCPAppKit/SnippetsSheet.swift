@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import macSCPCore
 
 /// Snippet management sheet (Terminal-Snippets milestone, Task 3): lists
@@ -40,6 +41,11 @@ struct SnippetsSheet: View {
     @State private var editorTarget: SnippetEditorTarget?
     @State private var isShowingDeleteConfirm = false
     @State private var errorMessage: String?
+
+    // MARK: - Export (P3b/T3)
+
+    @State private var exportDocument: SnippetExportDocument?
+    @State private var showExportFileExporter = false
 
     /// Wraps "new" (no existing snippet) or "edit" (a specific one) so
     /// `.sheet(item:)` has a stable identity even for the "new" case —
@@ -126,6 +132,17 @@ struct SnippetsSheet: View {
                 }
                 .buttonStyle(.polished)
                 .disabled(selectedSnippet == nil)
+                // Exports exactly the rows on screen — search and tag
+                // filter both narrow this, same as `visibleSnippets` above
+                // (spec P3b, Task 3). Enablement is `snippetsCanExport`
+                // (`SnippetsPresentation.swift`), which also rules out an
+                // unreadable store explicitly rather than leaning on
+                // `visibleSnippets` happening to be empty in that case too.
+                Button(L10n.string("snippets.export", "Export…")) {
+                    performExport(visibleSnippets)
+                }
+                .buttonStyle(.polished)
+                .disabled(!snippetsCanExport(load: load, visibleSnippets: visibleSnippets))
                 Button(L10n.string("common.close", "Close")) { dismiss() }
                     .buttonStyle(.polishedProminent)
                     .keyboardShortcut(.defaultAction)
@@ -160,9 +177,56 @@ struct SnippetsSheet: View {
         } message: {
             Text(deleteConfirmMessage)
         }
+        // MARK: Export (P3b/T3)
+        .fileExporter(
+            isPresented: $showExportFileExporter,
+            document: exportDocument,
+            contentType: .macscpSnippets,
+            defaultFilename: L10n.string("snippets.export.filename", "macSCP Snippets.macscpsnippets")
+        ) { result in
+            handleExportResult(result)
+        }
     }
 
     private func reload() { load = SnippetsLoad(reading: store) }
+
+    /// Builds the payload from exactly the snippets handed in (the sheet's
+    /// current search+tag-filter result, per its call site above — this
+    /// function does no filtering of its own), encodes it, and arms
+    /// `fileExporter`. Mirrors `LoginSetsSheet.performExport`, minus the
+    /// options/password step that codec has no parameter for (see
+    /// `SnippetExportCodec`'s own doc comment on why).
+    private func performExport(_ snippets: [Snippet]) {
+        do {
+            let data = try SnippetExportCodec.encode(SnippetExportPayload(snippets: snippets))
+            exportDocument = SnippetExportDocument(data: data)
+            errorMessage = nil
+            showExportFileExporter = true
+        } catch {
+            errorMessage = String(format: L10n.string(
+                "export.error.encodeFailed %@", "Could not prepare the export: %@"),
+                String(describing: error))
+        }
+    }
+
+    /// `fileExporter` completion — reuses the sheet's one error slot rather
+    /// than adding a dedicated alert (unlike `LoginSetsSheet`'s export,
+    /// which has one): there is no per-export notice to show on success
+    /// (nothing here is ever omitted the way a missing secret or an
+    /// external key file is for login sets), so the only outcome worth
+    /// surfacing at all is a write failure, and this sheet already has a
+    /// place for that.
+    private func handleExportResult(_ result: Result<URL, Error>) {
+        switch result {
+        case .success:
+            errorMessage = nil
+        case .failure(let error):
+            errorMessage = String(format: L10n.string(
+                "export.error.writeFailed %@", "Could not write the export file: %@"),
+                String(describing: error))
+        }
+        exportDocument = nil
+    }
 
     @ViewBuilder
     private func row(_ snippet: Snippet) -> some View {

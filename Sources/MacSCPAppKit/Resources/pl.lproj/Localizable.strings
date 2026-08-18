@@ -814,6 +814,8 @@
 "snippets.delete.title" = "Usunąć ten fragment?";
 "snippets.delete.confirm" = "Usuń";
 "snippets.delete.error" = "Nie udało się usunąć fragmentu.";
+"snippets.export" = "Eksportuj…";
+"snippets.export.filename" = "macSCP Snippets.macscpsnippets";
 "snippets.editor.titleNew" = "Nowy fragment";
 "snippets.editor.titleEdit" = "Edytuj fragment";
 "snippets.editor.name" = "Nazwa";

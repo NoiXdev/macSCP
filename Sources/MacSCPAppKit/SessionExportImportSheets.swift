@@ -19,6 +19,10 @@ extension UTType {
     /// `macscpSessions` above, including the matching `Info.plist` entry in
     /// `scripts/package-app`.
     static let macscpLogins = UTType(exportedAs: "dev.noix.macscp.logins", conformingTo: .json)
+    /// `.macscpsnippets` (P3b/T3) — same declaration story as the two
+    /// above, including the matching `Info.plist` entry in
+    /// `scripts/package-app`.
+    static let macscpSnippets = UTType(exportedAs: "dev.noix.macscp.snippets", conformingTo: .json)
 }
 
 /// Write-only `FileDocument` wrapper around already-encoded export bytes.
@@ -54,6 +58,31 @@ struct SessionExportDocument: FileDocument {
 struct LoginSetExportDocument: FileDocument {
     static var readableContentTypes: [UTType] { [] }
     static var writableContentTypes: [UTType] { [.macscpLogins] }
+
+    let data: Data
+
+    init(data: Data) {
+        self.data = data
+    }
+
+    init(configuration: ReadConfiguration) throws {
+        throw CocoaError(.fileReadUnsupportedScheme)
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
+    }
+}
+
+/// Write-only `FileDocument` for `.macscpsnippets` bytes — the snippet twin
+/// of `SessionExportDocument`/`LoginSetExportDocument` above, with the same
+/// read path deliberately left unimplemented. Unlike its two siblings there
+/// is no matching import codec call site YET (P3b/T4) — the read path stays
+/// unimplemented for the same reason theirs does, not because this one is
+/// somehow different.
+struct SnippetExportDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [] }
+    static var writableContentTypes: [UTType] { [.macscpSnippets] }
 
     let data: Data
 

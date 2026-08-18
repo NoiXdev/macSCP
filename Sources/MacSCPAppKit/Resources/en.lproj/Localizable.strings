@@ -811,6 +811,8 @@
 "snippets.delete.title" = "Delete this snippet?";
 "snippets.delete.confirm" = "Delete";
 "snippets.delete.error" = "Couldn't delete the snippet.";
+"snippets.export" = "Export…";
+"snippets.export.filename" = "macSCP Snippets.macscpsnippets";
 "snippets.editor.titleNew" = "New Snippet";
 "snippets.editor.titleEdit" = "Edit Snippet";
 "snippets.editor.name" = "Name";

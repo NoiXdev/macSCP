@@ -82,3 +82,17 @@ enum SnippetTagFilter: Equatable {
 func snippetsAreFiltered(searchText: String, tagFilter: SnippetTagFilter) -> Bool {
     !searchText.isEmpty || tagFilter != .all
 }
+
+/// Whether `SnippetsSheet`'s Export… button may be enabled (P3b, Task 3):
+/// there must be at least one visible row AND the store must have actually
+/// loaded. `visibleSnippets` is already empty whenever `load` is
+/// `.unreadable` (`SnippetsLoad.snippets` returns `[]` for that case), so
+/// the emptiness check alone would already keep the button disabled there —
+/// but that would be a coincidence of today's filtering logic, not a stated
+/// rule. Naming `load.isUnreadable` explicitly is what turns "no export from
+/// an unreadable store" (writing an empty file over one that still holds
+/// every snippet would be silent data loss) into something this function
+/// documents and a test can pin, rather than something that happens to hold.
+func snippetsCanExport(load: SnippetsLoad, visibleSnippets: [Snippet]) -> Bool {
+    !load.isUnreadable && !visibleSnippets.isEmpty
+}
