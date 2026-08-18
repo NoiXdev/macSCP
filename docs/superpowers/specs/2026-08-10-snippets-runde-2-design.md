@@ -313,7 +313,12 @@ mehr**, und die Export-Roundtrip-Tests müssen es mittragen.
 Ein eigenes Fenster bleibt ausgeschlossen: Mehrfenster ist laut
 Projektregel erst v2.
 
-## P3 — Ordnung (Skizze)
+## P3 — Ordnung (Skizze — abgelöst)
+
+> **Seit 2026-08-18 entschieden und aufgeteilt.** Die ausgearbeitete
+> Fassung steht in `2026-08-18-p3-ordnung-design.md` und teilt P3 in
+> **P3a** (Host-Tags + Sidebar-Filter) und **P3b** (Snippet-Austausch).
+> Die drei Festlegungen unten gelten dort unverändert weiter.
 
 - **Host-Tags** am `StoredSession`: Feld im Formular, in Export/Import
   mitgeführt, Filter in der Sidebar. Gruppen aus M5f bleiben die Ablage,
