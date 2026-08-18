@@ -94,10 +94,16 @@ final class SessionTab: Identifiable {
     /// restorePaneVisibility` still writes the SAVED value in afterwards for
     /// a stored session — that write lands on the new session and is kept.
     ///
-    /// While no session is attached this reads the default and a write is
-    /// dropped: with nothing connected there are no panes to show or hide,
-    /// and both writers (the Files toolbar button and `restorePaneVisibility`)
-    /// run only on a connected tab.
+    /// While no session is attached this reads the default; a write in that
+    /// state is a programming error and trips `assertionFailure` rather than
+    /// being dropped silently (re-review, item 4). With nothing connected
+    /// there are no panes to show or hide, and both writers (the Files
+    /// toolbar button and `applyRestoredPaneVisibility`) run only on a
+    /// connected tab — a write that arrives anyway means a new call site got
+    /// the order wrong, which is exactly the "it compiles and does nothing"
+    /// shape this phase has already paid for twice. In release builds the
+    /// write is still dropped rather than trapping: a lost pane preference
+    /// is not worth killing the app over.
     ///
     /// This is HALF of `PaneVisibility`'s two facts (`showsFiles`); the
     /// other half, `showsTerminal`, is deliberately not a second stored
@@ -113,7 +119,13 @@ final class SessionTab: Identifiable {
     /// disagree with the toolbar.
     var showsFiles: Bool {
         get { session?.showsFiles ?? true }
-        set { session?.showsFiles = newValue }
+        set {
+            guard session != nil else {
+                assertionFailure("pane visibility written on a tab with no session")
+                return
+            }
+            session?.showsFiles = newValue
+        }
     }
     /// Display name while connected (stored session name or "user@host") —
     /// drives the window title of the ACTIVE tab and the tab's own label.

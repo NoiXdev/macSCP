@@ -145,6 +145,10 @@ struct PaneVisibilityWiringGuardTests {
     /// NOT be required to persist, or every reconnect would write back what
     /// it just read. It is excluded by name, not by accident, and this test
     /// is what makes that visible.
+    ///
+    /// The exemption is FUNCTION-scoped (re-review, item 4), so the count is
+    /// asserted too: a second toggle added inside that function would
+    /// otherwise inherit the exemption without anyone deciding it should.
     @Test func scannerIgnoresTheRestorePathsOwnToggle() throws {
         let source = try String(contentsOf: Self.contentViewFile, encoding: .utf8)
         let lines = source.components(separatedBy: "\n")
@@ -156,7 +160,12 @@ struct PaneVisibilityWiringGuardTests {
         }
         // The toggle really is in there (otherwise this test would pass for
         // the wrong reason), and the exclusion really removes it.
-        #expect(Self.toggleSiteEndLines(in: lines).contains { restore.contains($0) })
+        let exempted = Self.toggleSiteEndLines(in: lines).filter { restore.contains($0) }
+        #expect(exempted.count == 1, """
+            \(exempted.count) toggle site(s) inside `restorePaneVisibility` — the exemption \
+            is FUNCTION-scoped, so a second toggle added in there would be silently exempt \
+            from the persist rule. Exactly one belongs there: the restore's own reveal.
+            """)
         #expect(Self.userToggleSiteEndLines(in: lines).contains { restore.contains($0) } == false)
     }
 

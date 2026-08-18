@@ -389,18 +389,19 @@ struct SessionTabTests {
     }
 
     /// The one claim in `showsFiles`'s doc comment that nothing else here
-    /// observes: with no session attached it reads the default and a write
-    /// is dropped. Both writers run only on a connected tab, so this is not
-    /// a state the UI produces — it is pinned so the behaviour is a decision
-    /// on record rather than an accident of where the storage moved.
-    @Test func withoutASessionTheFlagReadsTheDefaultAndAWriteIsDropped() {
+    /// observes: with no session attached the flag reads the default.
+    ///
+    /// The WRITE half of that claim is deliberately not exercised — it trips
+    /// `assertionFailure` (re-review, item 4), which aborts the test process
+    /// in a debug build rather than failing an expectation. That it is an
+    /// assertion and not a silent drop is the point: a write there means a
+    /// caller got the order wrong.
+    @Test func withoutASessionTheFlagReadsTheDefault() {
         let tab = makeTab()
 
         #expect(tab.showsFiles)
-        tab.showsFiles = false
-        #expect(tab.showsFiles)
 
-        // And a session attached afterwards is unaffected by that write.
+        // And a session attached afterwards starts on the default too.
         attachSession(to: tab)
         #expect(tab.showsFiles)
     }
