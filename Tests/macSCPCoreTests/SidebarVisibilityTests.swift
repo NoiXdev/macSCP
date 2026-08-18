@@ -133,9 +133,58 @@ struct SidebarVisibilityTests {
         #expect(v.ungrouped.map(\.name) == ["z", "a"])
     }
 
+    /// Dropping an empty group is FILTER behaviour, not general behaviour.
+    /// One store, one group nothing is in, computed twice: without a filter
+    /// the group still gets a section (an empty one), with a filter active
+    /// it is gone. Hiding it unconditionally — which is what this type did
+    /// when the sidebar body was rewired onto `groupSections` — took the
+    /// group's header off screen together with its Rename/Export/Dissolve
+    /// menu and its drop target, leaving a group that exists in the store
+    /// and in every row's "Move to" submenu but can no longer be dissolved
+    /// or dropped into.
+    @Test func anEmptyGroupIsHiddenOnlyWhileATagIsActive() {
+        let group = StoredGroup(name: "lab")
+        let sessions = [session("a", tags: ["docker"])]
+
+        let unfiltered = SidebarVisibility.compute(
+            sessions: sessions, groups: [group], importedHostsCount: 0, activeTag: nil)
+        #expect(unfiltered.groupSections.map(\.group) == [group])
+        #expect(unfiltered.groupSections.first?.sessions.isEmpty == true)
+
+        let filtered = SidebarVisibility.compute(
+            sessions: sessions, groups: [group], importedHostsCount: 0, activeTag: "docker")
+        #expect(filtered.groupSections.isEmpty)
+    }
+
+    /// The first consequence of hiding empty groups unconditionally: a
+    /// group created from the sidebar's context menu is written to the
+    /// store with no session in it, so it never appeared at all — inviting
+    /// the user to create it again, and again, accumulating groups they
+    /// could not see. It must be on screen the moment it exists, which also
+    /// makes the store non-empty for `emptiness`: there is a header to draw.
+    @Test func aFreshlyCreatedGroupShowsBeforeItHasAnySession() {
+        let group = StoredGroup(name: "lab")
+        let v = SidebarVisibility.compute(
+            sessions: [], groups: [group], importedHostsCount: 0, activeTag: nil)
+        #expect(v.groupSections.map(\.group) == [group])
+        #expect(v.emptiness == .notEmpty)
+    }
+
+    /// The second consequence: dragging the last session out of a group
+    /// used to make the group itself disappear, taking its drop target with
+    /// it — so the session could never be dragged back.
+    @Test func aGroupThatJustLostItsLastSessionStaysOnScreen() {
+        let group = StoredGroup(name: "lab")
+        let v = SidebarVisibility.compute(
+            sessions: [session("moved-out")], groups: [group],
+            importedHostsCount: 0, activeTag: nil)
+        #expect(v.groupSections.map(\.group) == [group])
+        #expect(v.ungrouped.map(\.name) == ["moved-out"])
+    }
+
     /// A group with sessions that all fail the filter is omitted entirely —
     /// not present as an empty `GroupSection` — so the sidebar never draws a
-    /// header with nothing under it.
+    /// header with nothing under it while a filter is narrowing the list.
     @Test func aGroupWhoseOnlySessionIsFilteredOutIsOmittedEntirely() {
         let empty = StoredGroup(name: "lab")
         let v = SidebarVisibility.compute(

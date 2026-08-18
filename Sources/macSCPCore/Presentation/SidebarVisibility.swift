@@ -60,10 +60,18 @@ public struct SidebarVisibility: Equatable, Sendable {
     /// Ungrouped sessions that pass the active tag filter, in `sessions`'s
     /// order.
     public let ungrouped: [StoredSession]
-    /// Groups that have at least one session passing the filter, in
-    /// `groups`'s order, each paired with exactly its matching sessions. A
-    /// group with no matching session is omitted entirely, so a filtered
-    /// sidebar never renders an empty section header.
+    /// One entry per group the sidebar should render, in `groups`'s order,
+    /// each paired with exactly the sessions to list under it.
+    ///
+    /// With NO active tag every group gets an entry, including one with no
+    /// sessions at all — a group is a thing the user made, and its header
+    /// carries its Rename/Export/Dissolve menu and its drop target, so a
+    /// freshly created group has to be on screen before anything is in it
+    /// and a group whose last session was just dragged out has to stay
+    /// there. Omitting an empty group is FILTER behaviour and nothing else:
+    /// only while `activeTag` is non-nil is a group with no matching
+    /// session dropped, so a narrowed sidebar does not show headers with
+    /// nothing under them.
     public let groupSections: [GroupSection]
     /// Whether the sidebar's "IMPORTED" section (unsaved `SSHConfigHost`
     /// entries) should render at all: `activeTag == nil` (imported hosts
@@ -93,8 +101,9 @@ public struct SidebarVisibility: Equatable, Sendable {
     /// count crosses into this decision, not the hosts themselves).
     ///
     /// `activeTag == nil` is "no filter": every session shows, every group
-    /// with at least one session shows, and the imported section shows
-    /// whenever `importedHostsCount > 0`. A non-nil `activeTag` keeps only
+    /// shows (empty ones included — see `groupSections`), and the imported
+    /// section shows whenever `importedHostsCount > 0`. A non-nil
+    /// `activeTag` keeps only
     /// sessions whose `tags` contain it — compared exactly, the same
     /// case-sensitive rule `TagList.normalized` stores by and
     /// `SnippetTagFilter.matches` reads by, so a differently-cased spelling
@@ -102,7 +111,9 @@ public struct SidebarVisibility: Equatable, Sendable {
     /// regardless of `importedHostsCount`.
     ///
     /// `emptiness` is `.notEmpty` whenever there is at least one ungrouped
-    /// session, one non-empty group section, or a visible imported section.
+    /// session, one group section (which without a filter includes an empty
+    /// group — its header is something to draw), or a visible imported
+    /// section.
     /// Otherwise — nothing anywhere to draw — it is `.noSessionsAtAll` when
     /// `sessions` itself was empty, or `.filterMatchesNothing` when it was
     /// not (an active filter, or a dangling `groupID` naming no group in
@@ -123,7 +134,13 @@ public struct SidebarVisibility: Equatable, Sendable {
         let ungrouped = filtered.filter { $0.groupID == nil }
         let groupSections: [GroupSection] = groups.compactMap { group in
             let inGroup = filtered.filter { $0.groupID == group.id }
-            return inGroup.isEmpty ? nil : GroupSection(group: group, sessions: inGroup)
+            // Gated on `activeTag`, not on `inGroup` alone: dropping an
+            // empty group is how a FILTER narrows the sidebar, not how the
+            // sidebar renders in general. Unconditionally, it deletes a
+            // just-created group from the screen and takes a drained
+            // group's header — menu and drop target with it — out of reach.
+            if activeTag != nil, inGroup.isEmpty { return nil }
+            return GroupSection(group: group, sessions: inGroup)
         }
 
         let showsImportedSection = activeTag == nil && importedHostsCount > 0
