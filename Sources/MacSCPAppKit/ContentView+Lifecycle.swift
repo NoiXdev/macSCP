@@ -32,6 +32,26 @@ extension ContentView {
                 ToolbarItemGroup(placement: .primaryAction) {
                     uploadButton(in: activeTab, session: session)
                     downloadButton(in: activeTab, session: session)
+                    // Files toggle (P2 terminal-chrome milestone, Task 3):
+                    // the pane pair's second half, next to Terminal below.
+                    // No keyboard shortcut — ⌘T stays on Terminal, and
+                    // nothing has asked for one here yet. Both toggles read
+                    // their on/enabled state from `SessionTab.paneToggleState`,
+                    // which asks `PaneVisibility` (Task 2) rather than
+                    // re-deriving the "last visible half is locked" rule —
+                    // see that method's doc comment.
+                    Button {
+                        activeTab.applyFilesToggleClick(
+                            terminalIsVisible: session.terminal.isVisible,
+                            hasShell: activeTabSupportsShell)
+                    } label: {
+                        Label(L10n.string("browser.filesToggle", "Files"), systemImage: "folder")
+                    }
+                    .disabled(!activeTab.paneToggleState(
+                        for: .files, terminalIsVisible: session.terminal.isVisible,
+                        hasShell: activeTabSupportsShell
+                    ).isEnabled)
+                    .help(L10n.string("browser.filesToggleHelp", "Show/hide files"))
                     Button {
                         // Capability guard (M12/T7b): re-checked here too,
                         // same belt-and-suspenders rationale as the
@@ -48,8 +68,18 @@ extension ContentView {
                         // this feature existed, anything else opens
                         // externally. Both routes stay reachable regardless
                         // — the "Terminal" menu (`tabCommands`) always
-                        // offers the other one too.
+                        // offers the other one too. In `.builtIn` mode this
+                        // ALSO re-checks the pane lock (Task 3): the
+                        // `.disabled` below already blocks the click when
+                        // Files is hidden and terminal is the only visible
+                        // half, but external-terminal mode never touches
+                        // `isVisible` at all, so the lock check only
+                        // matters for this branch.
                         if settingsStore.terminalTarget == .builtIn {
+                            guard activeTab.paneToggleState(
+                                for: .terminal, terminalIsVisible: session.terminal.isVisible,
+                                hasShell: activeTabSupportsShell
+                            ).isEnabled else { return }
                             session.terminal.toggle()
                         } else {
                             requestExternalTerminal(for: activeTab)
@@ -58,7 +88,12 @@ extension ContentView {
                         Label(L10n.string("browser.terminalToggle", "Terminal"), systemImage: "terminal")
                     }
                     .keyboardShortcut("t", modifiers: .command)
-                    .disabled(!activeTabSupportsShell)
+                    .disabled(settingsStore.terminalTarget == .builtIn
+                        ? !activeTab.paneToggleState(
+                            for: .terminal, terminalIsVisible: session.terminal.isVisible,
+                            hasShell: activeTabSupportsShell
+                        ).isEnabled
+                        : !activeTabSupportsShell)
                     .help(settingsStore.terminalTarget == .builtIn
                         ? L10n.string("browser.terminalToggleHelp", "Show/hide terminal (⌘T)")
                         : L10n.string("browser.terminalOpenExternalHelp", "Open in external terminal (⌘T)"))
@@ -440,13 +475,30 @@ extension ContentView {
         // `tabCommands.activeTabSupportsShell`), but this closure
         // re-checks anyway — belt-and-suspenders against any path that
         // reaches it regardless (spec: "no silent no-op").
+        //
+        // Pane-lock guard (P2 terminal-chrome milestone, Task 3): this menu
+        // entry has no `.disabled` binding tied to the pane lock the way
+        // the toolbar button does (it lives in a different Scene, wired
+        // from `MacSCPApp.swift`), so it is the one caller that MUST check
+        // `paneToggleState` itself rather than relying on a `.disabled` a
+        // caller elsewhere already applied — otherwise this is the one
+        // remaining path that could turn Terminal off while Files is
+        // hidden and empty the window. A locked click is a no-op here,
+        // same as `PaneVisibility.applyingClick` itself defines for the
+        // Files toggle: not a capability problem needing
+        // `presentTerminalUnavailable()`, just a click that doesn't land.
         tabCommands.toggleTerminal = {
             guard window?.isKeyWindow == true else { return }
             guard activeTabSupportsShell else {
                 presentTerminalUnavailable()
                 return
             }
-            activeTab.session?.terminal.toggle()
+            guard let terminal = activeTab.session?.terminal else { return }
+            guard activeTab.paneToggleState(
+                for: .terminal, terminalIsVisible: terminal.isVisible,
+                hasShell: activeTabSupportsShell
+            ).isEnabled else { return }
+            terminal.toggle()
         }
         // Transfer-bar menu bridge (M11o) — same key-window guard as
         // the other tab commands; toggles the active tab's per-tab flag.

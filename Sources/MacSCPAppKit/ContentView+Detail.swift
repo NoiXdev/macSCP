@@ -167,113 +167,123 @@ extension ContentView {
             if let session = tab.session {
                 VStack(spacing: 0) {
                     VSplitView {
-                        HSplitView {
-                            BrowserPane(
-                                title: L10n.string("browser.paneLocal", "Local"),
-                                tint: DesignTokens.localAmber,
-                                softTint: DesignTokens.localSoft,
-                                viewModel: session.local,
-                                side: .local,
-                                fileSystem: session.localFS,
-                                pasteboardWriter: { item in
-                                    item.kind == .file
-                                        ? NSURL(fileURLWithPath: item.path)
-                                        : nil
-                                },
-                                onMenuAction: { entry, selection in
-                                    switch entry {
-                                    case .transferToOtherPane:
-                                        transferSelection(
-                                            selection, from: .local, in: tab, session: session)
-                                    case .transferToSession(let target):
-                                        transferToSession(
-                                            selection, from: .local, target: target,
-                                            in: tab, session: session)
-                                    case .copyPath:
-                                        copyPaths(of: selection)
-                                    case .openInEditor:
-                                        break   // never emitted for the local pane (menu model)
-                                    case .rename, .infoAndPermissions, .newFolder, .newFile, .delete:
-                                        break   // handled inside BrowserPane, never forwarded
-                                    case .backendFileAction:
-                                        break   // never contributed on the LOCAL pane (fileActions is nil here)
-                                    }
-                                },
-                                crossSessionTargets: { CrossSessionTargets.targets(excluding: tab.id, in: tabsModel.tabs) },
-                                visibleColumns: settingsStore.visibleColumns
-                            )
-                            .frame(minWidth: 280)
+                        // Gated on `showsFiles` (P2 terminal-chrome
+                        // milestone, Task 3), the same way the terminal
+                        // panel below is already gated on ITS visibility —
+                        // `PaneVisibility`'s lock (`SessionTab.
+                        // paneToggleState`/`applyFilesToggleClick`, driven
+                        // by the toolbar's Files/Terminal buttons) is what
+                        // keeps this `VSplitView` from ever losing both
+                        // children at once.
+                        if tab.showsFiles {
+                            HSplitView {
+                                BrowserPane(
+                                    title: L10n.string("browser.paneLocal", "Local"),
+                                    tint: DesignTokens.localAmber,
+                                    softTint: DesignTokens.localSoft,
+                                    viewModel: session.local,
+                                    side: .local,
+                                    fileSystem: session.localFS,
+                                    pasteboardWriter: { item in
+                                        item.kind == .file
+                                            ? NSURL(fileURLWithPath: item.path)
+                                            : nil
+                                    },
+                                    onMenuAction: { entry, selection in
+                                        switch entry {
+                                        case .transferToOtherPane:
+                                            transferSelection(
+                                                selection, from: .local, in: tab, session: session)
+                                        case .transferToSession(let target):
+                                            transferToSession(
+                                                selection, from: .local, target: target,
+                                                in: tab, session: session)
+                                        case .copyPath:
+                                            copyPaths(of: selection)
+                                        case .openInEditor:
+                                            break   // never emitted for the local pane (menu model)
+                                        case .rename, .infoAndPermissions, .newFolder, .newFile, .delete:
+                                            break   // handled inside BrowserPane, never forwarded
+                                        case .backendFileAction:
+                                            break   // never contributed on the LOCAL pane (fileActions is nil here)
+                                        }
+                                    },
+                                    crossSessionTargets: { CrossSessionTargets.targets(excluding: tab.id, in: tabsModel.tabs) },
+                                    visibleColumns: settingsStore.visibleColumns
+                                )
+                                .frame(minWidth: 280)
 
-                            BrowserPane(
-                                title: L10n.string("browser.paneRemote", "Remote"),
-                                tint: DesignTokens.remoteBlue,
-                                softTint: DesignTokens.remoteSoft,
-                                viewModel: session.remote,
-                                side: .remote,
-                                onDropURLs: { urls in
-                                    uploadDropped(urls, in: tab, session: session)
-                                },
-                                onOpenFile: { item in
-                                    openInEditor(item, in: tab, session: session)
-                                },
-                                fileSystem: session.remoteFS,
-                                pasteboardWriter: { item in
-                                    item.kind == .file
-                                        ? remotePromiseProvider(for: item, in: tab, session: session)
-                                        : nil
-                                },
-                                onMenuAction: { entry, selection in
-                                    switch entry {
-                                    case .transferToOtherPane:
-                                        transferSelection(
-                                            selection, from: .remote, in: tab, session: session)
-                                    case .transferToSession(let target):
-                                        transferToSession(
-                                            selection, from: .remote, target: target,
-                                            in: tab, session: session)
-                                    case .openInEditor:
-                                        if let item = selection.first {
-                                            openInEditor(item, in: tab, session: session)
+                                BrowserPane(
+                                    title: L10n.string("browser.paneRemote", "Remote"),
+                                    tint: DesignTokens.remoteBlue,
+                                    softTint: DesignTokens.remoteSoft,
+                                    viewModel: session.remote,
+                                    side: .remote,
+                                    onDropURLs: { urls in
+                                        uploadDropped(urls, in: tab, session: session)
+                                    },
+                                    onOpenFile: { item in
+                                        openInEditor(item, in: tab, session: session)
+                                    },
+                                    fileSystem: session.remoteFS,
+                                    pasteboardWriter: { item in
+                                        item.kind == .file
+                                            ? remotePromiseProvider(for: item, in: tab, session: session)
+                                            : nil
+                                    },
+                                    onMenuAction: { entry, selection in
+                                        switch entry {
+                                        case .transferToOtherPane:
+                                            transferSelection(
+                                                selection, from: .remote, in: tab, session: session)
+                                        case .transferToSession(let target):
+                                            transferToSession(
+                                                selection, from: .remote, target: target,
+                                                in: tab, session: session)
+                                        case .openInEditor:
+                                            if let item = selection.first {
+                                                openInEditor(item, in: tab, session: session)
+                                            }
+                                        case .copyPath:
+                                            copyPaths(of: selection)
+                                        case .rename, .infoAndPermissions, .newFolder, .newFile, .delete:
+                                            break   // handled inside BrowserPane, never forwarded
+                                        case .backendFileAction(let action):
+                                            // Currently the only backend-contributed action is
+                                            // S3's presigned URL (M14/T5) — keyed off `action.id`
+                                            // so a future second contribution doesn't need a new
+                                            // `BrowserMenuEntry` case, just another `if` here.
+                                            // `selection.count == 1` mirrors the menu-model gate
+                                            // (`BrowserContextMenu.entries`) that only ever offers
+                                            // `backendFileAction` for a single selected file.
+                                            if action.id == "s3.presignedURL",
+                                                selection.count == 1, let file = selection.first,
+                                                let provider = session.remoteFS as? PresignedURLProvider
+                                            {
+                                                // Same "no leading slash" convention
+                                                // `S3FileSystem.objectKey(forPath:)` uses
+                                                // internally: normalize first (collapses any
+                                                // repeated slashes), then drop the single
+                                                // leading one.
+                                                let normalizedPath = RemotePath.normalizedAbsolute(file.path)
+                                                let key = normalizedPath == "/" ? "" : String(normalizedPath.dropFirst())
+                                                presignedSheetItem = PresignedSheetItem(
+                                                    itemKey: key, provider: provider)
+                                            }
                                         }
-                                    case .copyPath:
-                                        copyPaths(of: selection)
-                                    case .rename, .infoAndPermissions, .newFolder, .newFile, .delete:
-                                        break   // handled inside BrowserPane, never forwarded
-                                    case .backendFileAction(let action):
-                                        // Currently the only backend-contributed action is
-                                        // S3's presigned URL (M14/T5) — keyed off `action.id`
-                                        // so a future second contribution doesn't need a new
-                                        // `BrowserMenuEntry` case, just another `if` here.
-                                        // `selection.count == 1` mirrors the menu-model gate
-                                        // (`BrowserContextMenu.entries`) that only ever offers
-                                        // `backendFileAction` for a single selected file.
-                                        if action.id == "s3.presignedURL",
-                                            selection.count == 1, let file = selection.first,
-                                            let provider = session.remoteFS as? PresignedURLProvider
-                                        {
-                                            // Same "no leading slash" convention
-                                            // `S3FileSystem.objectKey(forPath:)` uses
-                                            // internally: normalize first (collapses any
-                                            // repeated slashes), then drop the single
-                                            // leading one.
-                                            let normalizedPath = RemotePath.normalizedAbsolute(file.path)
-                                            let key = normalizedPath == "/" ? "" : String(normalizedPath.dropFirst())
-                                            presignedSheetItem = PresignedSheetItem(
-                                                itemKey: key, provider: provider)
-                                        }
-                                    }
-                                },
-                                crossSessionTargets: { CrossSessionTargets.targets(excluding: tab.id, in: tabsModel.tabs) },
-                                fileActions: {
-                                    BackendDescriptor.descriptor(for: tab.connectionViewModel.kind)
-                                        .fileActions
-                                },
-                                visibleColumns: settingsStore.visibleColumns
-                            )
-                            .frame(minWidth: 280)
+                                    },
+                                    crossSessionTargets: { CrossSessionTargets.targets(excluding: tab.id, in: tabsModel.tabs) },
+                                    fileActions: {
+                                        BackendDescriptor.descriptor(for: tab.connectionViewModel.kind)
+                                            .fileActions
+                                    },
+                                    visibleColumns: settingsStore.visibleColumns
+                                )
+                                .frame(minWidth: 280)
+                            }
+                            .frame(minHeight: 200)
+                            .layoutPriority(1)
                         }
-                        .frame(minHeight: 200)
-                        .layoutPriority(1)
 
                         if session.terminal.isVisible {
                             terminalPanel(session)

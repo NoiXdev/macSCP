@@ -159,6 +159,8 @@
 "conflict.folderHint" = "Anulowanie zatrzymuje cały transfer folderu; skopiowane już pliki zostają zachowane.";
 
 /* Pasek narzędzi i panele przeglądarki */
+"browser.filesToggle" = "Pliki";
+"browser.filesToggleHelp" = "Pokaż/ukryj pliki";
 "browser.terminalToggle" = "Terminal";
 "browser.terminalToggleHelp" = "Pokaż/ukryj terminal (⌘T)";
 "browser.terminalOpenExternalHelp" = "Otwórz w zewnętrznym terminalu (⌘T)";

@@ -157,6 +157,8 @@
 "conflict.folderHint" = "Canceling stops the whole folder transfer; files already copied are kept.";
 
 /* Browser toolbar & panes */
+"browser.filesToggle" = "Files";
+"browser.filesToggleHelp" = "Show/hide files";
 "browser.terminalToggle" = "Terminal";
 "browser.terminalToggleHelp" = "Show/hide terminal (⌘T)";
 "browser.terminalOpenExternalHelp" = "Open in external terminal (⌘T)";

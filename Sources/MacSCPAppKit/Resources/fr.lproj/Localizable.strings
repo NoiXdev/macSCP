@@ -159,6 +159,8 @@
 "conflict.folderHint" = "L'annulation arrête tout le transfert du dossier ; les fichiers déjà copiés sont conservés.";
 
 /* Barre d'outils et volets du navigateur */
+"browser.filesToggle" = "Fichiers";
+"browser.filesToggleHelp" = "Afficher/masquer les fichiers";
 "browser.terminalToggle" = "Terminal";
 "browser.terminalToggleHelp" = "Afficher/masquer le terminal (⌘T)";
 "browser.terminalOpenExternalHelp" = "Ouvrir dans le terminal externe (⌘T)";

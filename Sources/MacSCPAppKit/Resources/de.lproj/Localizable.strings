@@ -157,6 +157,8 @@
 "conflict.folderHint" = "Abbrechen beendet die gesamte Ordner-Übertragung; bereits kopierte Dateien bleiben erhalten.";
 
 /* Browser-Toolbar & Panes */
+"browser.filesToggle" = "Dateien";
+"browser.filesToggleHelp" = "Dateien ein-/ausblenden";
 "browser.terminalToggle" = "Terminal";
 "browser.terminalToggleHelp" = "Terminal ein-/ausblenden (⌘T)";
 "browser.terminalOpenExternalHelp" = "Im externen Terminal öffnen (⌘T)";

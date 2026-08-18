@@ -113,4 +113,103 @@ struct SessionTabTests {
         tab.resetPendingPlaintextConfirmation()
         #expect(tab.pendingPlaintextConfirmation == false)
     }
+
+    // MARK: - Pane toggles (P2 terminal-chrome milestone, Task 3)
+
+    /// A fresh tab shows files and hides the terminal — the same starting
+    /// point `TerminalPanelViewModel.isVisible`'s own default (`false`)
+    /// already implies for `showsTerminal`.
+    @Test func aFreshTabShowsFilesOnly() {
+        let tab = makeTab()
+
+        #expect(tab.showsFiles)
+        #expect(
+            tab.paneToggleState(for: .files, terminalIsVisible: false, hasShell: true)
+                == PaneToggleState(isOn: true, isEnabled: false))
+        #expect(
+            tab.paneToggleState(for: .terminal, terminalIsVisible: false, hasShell: true)
+                == PaneToggleState(isOn: false, isEnabled: true))
+    }
+
+    /// With both halves visible, either toggle reads as on and enabled —
+    /// `paneToggleState` reaches all the way through to `PaneVisibility`,
+    /// not just echoing `showsFiles` back for every toggle case.
+    @Test func withBothHalvesVisibleBothTogglesAreEnabled() {
+        let tab = makeTab()
+
+        #expect(
+            tab.paneToggleState(for: .files, terminalIsVisible: true, hasShell: true)
+                == PaneToggleState(isOn: true, isEnabled: true))
+        #expect(
+            tab.paneToggleState(for: .terminal, terminalIsVisible: true, hasShell: true)
+                == PaneToggleState(isOn: true, isEnabled: true))
+    }
+
+    /// Once Files has been turned off, Terminal becomes the only visible
+    /// half — and its OWN toggle must now report itself locked too. Before
+    /// this task the terminal toggle was never locked (files could never be
+    /// hidden), so this pins the retrofit: `paneToggleState(for: .terminal,
+    /// …)` folds in the same "last visible half" rule `.files` already
+    /// gets, not a rule that only ever applies to Files.
+    @Test func withOnlyTerminalVisibleTheTerminalToggleIsLocked() {
+        let tab = makeTab()
+
+        #expect(
+            tab.paneToggleState(for: .terminal, terminalIsVisible: true, hasShell: true)
+                == PaneToggleState(isOn: true, isEnabled: true))
+
+        tab.applyFilesToggleClick(terminalIsVisible: true, hasShell: true)
+        #expect(tab.showsFiles == false)
+
+        #expect(
+            tab.paneToggleState(for: .terminal, terminalIsVisible: true, hasShell: true)
+                == PaneToggleState(isOn: true, isEnabled: false))
+    }
+
+    /// A shell-less backend disables the terminal toggle regardless of
+    /// which half is currently visible — `hasShell` is folded in by
+    /// `PaneVisibility` itself, not re-derived here.
+    @Test func withoutAShellTheTerminalToggleIsAlwaysDisabled() {
+        let tab = makeTab()
+
+        #expect(
+            tab.paneToggleState(for: .terminal, terminalIsVisible: false, hasShell: false)
+                == PaneToggleState(isOn: false, isEnabled: false))
+    }
+
+    /// A click that IS allowed actually flips `showsFiles` — the write-back
+    /// half of `applyFilesToggleClick`, not just its no-op guard.
+    @Test func aFilesClickWithBothHalvesVisibleTurnsFilesOff() {
+        let tab = makeTab()
+
+        tab.applyFilesToggleClick(terminalIsVisible: true, hasShell: true)
+
+        #expect(tab.showsFiles == false)
+    }
+
+    /// Files is the only visible half when the terminal is hidden — clicking
+    /// its toggle anyway must be a no-op (`PaneVisibility`'s lock), not a
+    /// write this tab performs unconditionally.
+    @Test func aFilesClickWithNoOtherHalfVisibleIsANoOp() {
+        let tab = makeTab()
+        #expect(tab.showsFiles)
+
+        tab.applyFilesToggleClick(terminalIsVisible: false, hasShell: true)
+
+        #expect(tab.showsFiles)
+    }
+
+    /// Turning the terminal back on (simulated here by passing
+    /// `terminalIsVisible: true` — the tab itself never writes that flag,
+    /// see `showsFiles`'s doc comment) unlocks Files again, the same way
+    /// `PaneVisibility` unlocks both toggles once a second half reappears.
+    @Test func turningTerminalBackOnUnlocksTheFilesToggleAgain() {
+        let tab = makeTab()
+        tab.applyFilesToggleClick(terminalIsVisible: true, hasShell: true)
+        #expect(tab.showsFiles == false)
+
+        #expect(
+            tab.paneToggleState(for: .files, terminalIsVisible: true, hasShell: true)
+                == PaneToggleState(isOn: false, isEnabled: true))
+    }
 }

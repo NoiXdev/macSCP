@@ -60,6 +60,22 @@ final class SessionTab: Identifiable {
     /// icon / menu / ⌘⇧Y toggle it, and a newly enqueued transfer auto-reveals
     /// it (see `ContentView`). Not persisted.
     var transfersPanelVisible = false
+    /// Whether the local/remote file panes are shown (P2 terminal-chrome
+    /// milestone, Task 3). Per-tab and in-memory, mirroring
+    /// `transfersPanelVisible` above — not persisted, and not reset across
+    /// reconnects on this tab, same as that flag.
+    ///
+    /// This is HALF of `PaneVisibility`'s two facts (`showsFiles`); the
+    /// other half, `showsTerminal`, is deliberately not a second stored
+    /// property here. `TerminalPanelViewModel.isVisible` — the terminal
+    /// panel's own, pre-existing visibility flag — already answers that
+    /// question and stays its only owner; `paneToggleState(for:
+    /// terminalIsVisible:hasShell:)` and `applyFilesToggleClick(
+    /// terminalIsVisible:hasShell:)` below both take it as a parameter,
+    /// read fresh from `session.terminal.isVisible` at the call site,
+    /// instead of mirroring it into a property this type also owns and
+    /// could drift out of sync with.
+    var showsFiles = true
     /// Display name while connected (stored session name or "user@host") —
     /// drives the window title of the ACTIVE tab and the tab's own label.
     var titleName: String?
@@ -150,4 +166,42 @@ final class SessionTab: Identifiable {
     /// connect. Same "isolated method, not a bare write" reasoning as
     /// `resetPendingPlaintextConfirmation()` above.
     func markPlaintextConfirmed() { pendingPlaintextConfirmation = true }
+
+    /// The Files/Terminal toolbar toggle pair (P2 terminal-chrome milestone,
+    /// Task 3): assembles this tab's `PaneVisibility` from `showsFiles` and
+    /// `terminalIsVisible` (always `session.terminal.isVisible` at the call
+    /// site — see `showsFiles`'s doc comment on why that is a parameter
+    /// here, not a second stored property) and asks IT for `toggle`'s
+    /// on/enabled state. Read by both toolbar buttons, so neither
+    /// re-derives the lock rule (the last visible half cannot be turned
+    /// off) or the `hasShell` rule on its own.
+    func paneToggleState(
+        for toggle: PaneToggle, terminalIsVisible: Bool, hasShell: Bool
+    ) -> PaneToggleState {
+        PaneVisibility(showsFiles: showsFiles, showsTerminal: terminalIsVisible)
+            .toggleState(for: toggle, hasShell: hasShell)
+    }
+
+    /// Applies a click on the Files toggle: flips `showsFiles` through
+    /// `PaneVisibility.applyingClick`, which folds in the same lock and
+    /// `hasShell` rule `paneToggleState` reads above, so a click that would
+    /// otherwise empty the window is a no-op inside the model itself,
+    /// not a check reimplemented here.
+    ///
+    /// The computed result's `showsTerminal` is intentionally never written
+    /// back to the terminal panel: `TerminalPanelViewModel.isVisible` only
+    /// ever changes through its own `toggle()`/`openIfNeeded()`, which own
+    /// the shell's lifecycle (opening/closing it), and a bare bool write
+    /// here would bypass that. In practice this loses nothing —
+    /// `applyingClick`'s `.files` branch can only fold `showsTerminal` DOWN
+    /// to `false`, and only when `hasShell` is `false` — a state
+    /// `terminalIsVisible` can never be `true` to begin with, since every
+    /// call site that could set it to `true` refuses first when the backend
+    /// has no shell (see `ContentView.presentTerminalUnavailable`) — so
+    /// there is nothing this would ever need to write back.
+    func applyFilesToggleClick(terminalIsVisible: Bool, hasShell: Bool) {
+        let next = PaneVisibility(showsFiles: showsFiles, showsTerminal: terminalIsVisible)
+            .applyingClick(on: .files, hasShell: hasShell)
+        showsFiles = next.showsFiles
+    }
 }
