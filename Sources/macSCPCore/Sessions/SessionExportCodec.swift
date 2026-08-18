@@ -42,6 +42,17 @@ public struct ExportedSession: Codable, Equatable, Sendable {
     /// "both visible" default `StoredSession.init(from:)` does, the same
     /// way `kind == nil` is mapped to `.ssh` at import rather than at decode.
     public var paneVisibility: PaneVisibility?
+    /// Free-form labels for the sidebar's tag filter (`StoredSession.tags`,
+    /// P3a). Carried the same way `paneVisibility` is, not the way `groupID`
+    /// is: a tag list is a fact about the session, not a reference into
+    /// something else the file also carries (there is no per-file "tag
+    /// catalog" the way `ExportedGroup` is one for `groupID`), so it needs
+    /// no id remapping on import and no `includeGroups`-style gate on
+    /// export. `nil` on any payload written before this field existed; the
+    /// import side applies `StoredSession.tags`'s own default (`[]`), the
+    /// same way `paneVisibility == nil` maps to `.filesOnly` at import
+    /// rather than at decode.
+    public var tags: [String]?
 
     /// Every backend field this session carries, keyed exactly as
     /// `FieldValues` keys them (`"<namespace>.<fieldID>"`).
@@ -129,6 +140,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         fields: [String: String] = [:],
         groupID: UUID? = nil,
         paneVisibility: PaneVisibility? = nil,
+        tags: [String]? = nil,
         password: String? = nil,
         jumpHost: String? = nil, jumpPort: Int? = nil, jumpUsername: String? = nil,
         jumpAuthKind: StoredSession.AuthKind? = nil, jumpKeyPath: String? = nil,
@@ -141,6 +153,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         self.fields = fields
         self.groupID = groupID
         self.paneVisibility = paneVisibility
+        self.tags = tags
         self.password = password
         self.jumpHost = jumpHost
         self.jumpPort = jumpPort
@@ -154,7 +167,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
     /// The `legacy*` cases keep v1's original key names, so a v1 file decodes
     /// unchanged while the property names say what they are.
     private enum CodingKeys: String, CodingKey {
-        case id, name, groupID, kind, fields, paneVisibility, password
+        case id, name, groupID, kind, fields, paneVisibility, tags, password
         case jumpHost, jumpPort, jumpUsername, jumpAuthKind, jumpKeyPath, jumpPassword
         case s3SecretAccessKey
         case legacyHost = "host"
@@ -182,6 +195,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         groupID = try c.decodeIfPresent(UUID.self, forKey: .groupID)
         kind = try c.decodeIfPresent(ConnectionKind.self, forKey: .kind)
         paneVisibility = try c.decodeIfPresent(PaneVisibility.self, forKey: .paneVisibility)
+        tags = try c.decodeIfPresent([String].self, forKey: .tags)
         fields = try c.decodeIfPresent([String: String].self, forKey: .fields) ?? [:]
         password = try c.decodeIfPresent(String.self, forKey: .password)
         jumpHost = try c.decodeIfPresent(String.self, forKey: .jumpHost)
@@ -217,6 +231,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         try c.encodeIfPresent(groupID, forKey: .groupID)
         try c.encodeIfPresent(kind, forKey: .kind)
         try c.encodeIfPresent(paneVisibility, forKey: .paneVisibility)
+        try c.encodeIfPresent(tags, forKey: .tags)
         try c.encode(fields, forKey: .fields)
         try c.encodeIfPresent(password, forKey: .password)
         try c.encodeIfPresent(jumpHost, forKey: .jumpHost)

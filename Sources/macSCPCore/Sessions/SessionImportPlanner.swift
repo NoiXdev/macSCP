@@ -375,6 +375,17 @@ public enum SessionImportPlanner {
         // value, not a reference, so the file's own value becomes the
         // imported session's directly.
         session.paneVisibility = fileSession.paneVisibility ?? .filesOnly
+        // `?? []`, same pattern as `paneVisibility ?? .filesOnly` just
+        // above: `nil` means a payload written before `tags` existed, and
+        // resolves to the same "nothing recorded" default `StoredSession`
+        // itself defaults to. No remapping needed (unlike `groupID`) --
+        // a tag list is a value, not a reference the caller has to resolve.
+        // Routed through `TagList.normalized` because this is a plain
+        // property assignment, not `StoredSession`'s own initializer or
+        // decoder -- those normalize on every write path, but this one
+        // bypasses both, so a hand-edited export file could otherwise
+        // smuggle an untrimmed or duplicate tag past the rule.
+        session.tags = TagList.normalized(fileSession.tags ?? [])
         if !fileSession.fields.isEmpty {
             var values = FieldValues()
             for (key, value) in fileSession.fields { values.setRaw(key, to: value) }

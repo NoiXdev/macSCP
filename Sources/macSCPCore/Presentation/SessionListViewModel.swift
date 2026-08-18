@@ -1194,7 +1194,11 @@ public final class SessionListViewModel {
                 // gates GROUP membership specifically, and pane visibility
                 // is not a group reference -- it travels with the session
                 // the same way `kind` or `fields` do.
-                paneVisibility: session.paneVisibility, password: password,
+                paneVisibility: session.paneVisibility,
+                // Same story as `paneVisibility` just above, not `groupID`:
+                // a tag list is a fact about this session, not a reference
+                // `includeGroups` should be able to gate.
+                tags: session.tags, password: password,
                 jumpHost: jumpHost, jumpPort: jumpPort, jumpUsername: jumpUsername,
                 jumpAuthKind: jumpAuthKind, jumpKeyPath: jumpKeyPath, jumpPassword: jumpPassword,
                 s3SecretAccessKey: s3SecretAccessKey)
