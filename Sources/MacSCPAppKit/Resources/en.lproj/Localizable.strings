@@ -840,5 +840,13 @@
 "menu.snippets.unreadable" = "Snippets Couldn't Be Read";
 "menu.snippets.insert" = "Insert";
 "menu.snippets.execute" = "Execute";
+
+/* Snippet action window (P3d, Task 2) */
+"snippets.action.title" = "Snippet";
+"snippets.action.command" = "Command";
+"snippets.action.insert" = "Insert";
+"snippets.action.execute" = "Execute";
+"snippets.action.cancel" = "Cancel";
+
 "settings.shortcuts.group.snippets" = "Snippets";
 "settings.shortcuts.label.insertSnippet" = "Insert snippet 1–3";

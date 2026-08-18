@@ -843,5 +843,13 @@
 "menu.snippets.unreadable" = "Nie udało się odczytać fragmentów";
 "menu.snippets.insert" = "Wstaw";
 "menu.snippets.execute" = "Wykonaj";
+
+/* Snippet action window (P3d, Task 2) */
+"snippets.action.title" = "Fragment";
+"snippets.action.command" = "Polecenie";
+"snippets.action.insert" = "Wstaw";
+"snippets.action.execute" = "Wykonaj";
+"snippets.action.cancel" = "Anuluj";
+
 "settings.shortcuts.group.snippets" = "Fragmenty";
 "settings.shortcuts.label.insertSnippet" = "Wstaw fragment 1–3";
