@@ -332,3 +332,29 @@ Diese Uneinheitlichkeit ist der eigentliche Entwurfspunkt der Phase und
 gehört ins Brainstorming, nicht in einen Schnellschuss: „Exportieren" darf
 an zwei Stellen nicht zwei verschiedene Umfänge bedeuten, ohne dass man es
 sieht.
+
+## Nachtrag 2026-08-18: Der Passworthinweis hält eine aufgelöste Konfiguration (P3g)
+
+Aus der Gesamtprüfung von P3c Task 2. **Eigene, kleine Phase.**
+
+`pendingPasswordHintRequest` hält eine `SSHConnectionConfig` — die ein
+Klartext-Passwort tragen kann —, solange der einmalige Passworthinweis
+offen steht. Beide Knöpfe des Hinweises löschen sie, ebenso jede
+SwiftUI-Auflösung des Dialogs. Aber `disconnect` und
+`clearRetainedSecrets` **erreichen sie nicht**.
+
+Das ist ein vorhandener Zustand aus M11d, kein neuer Fehler. P3c weitet ihn
+jedoch aus: bisher war der Weg nur aus einem **verbundenen** Tab
+erreichbar, jetzt auch für eine Sitzung, mit der sich macSCP **nie**
+verbunden hat.
+
+Es ist außerdem genau das, wovor der Doc-Kommentar von
+`resolveConfigWithoutDialing` warnt: „a second property holding a resolved
+config would be a second place that clearing does not reach."
+
+**Zu klären beim Planen:** ob die Aufräumwege sie mit erfassen sollen, ob
+der Hinweis die Konfiguration überhaupt halten muss (statt sie nach der
+Bestätigung neu aufzulösen), und ob ein Fenster, das während des Hinweises
+zugeht, einen eigenen Weg braucht. Kein Blocker — aber ein Ort, an dem ein
+Passwort länger liegt als nötig, und dieses Projekt räumt solche Orte auf,
+statt sie zu dokumentieren.
