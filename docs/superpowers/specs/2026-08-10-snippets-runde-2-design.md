@@ -31,14 +31,14 @@ werden.
 
 Das Feedback umfasst elf Punkte — drei am Datenmodell, vier am
 Fensterlayout, der Rest an Auslöseflächen. Das ist kein Meilenstein,
-sondern fünf Phasen, von denen zwei (P2, P3) hier nur skizziert sind:
+sondern fünf Phasen. P2 ist seit 2026-08-12 entschieden, P3 bleibt eine Skizze:
 
 | Phase | Inhalt | Warum diese Reihenfolge |
 |---|---|---|
 | **PV** | Vorversuch: Lassen sich SwiftUI-Views in diesem Paket überhaupt testen? | Das Ergebnis entscheidet, wie P0 aussieht — und die Frage wird beantwortet, nicht geraten |
 | **P0** | Entkernung von `ContentView`: Unter-Views in eigene Dateien, reine Logik nach Core mit Tests | P1 fügt Kopfzeile, Popover und Kontextmenü hinzu — die landen sonst **in** dem Klotz und machen ihn größer |
 | **P1** | Snippets erreichbar: Flag weg → zwei Aktionen, Tags, Kontextmenü am Host, Terminal-Kopfzeile mit Popover, Rechtsklick im Terminal | beantwortet den eigentlichen Befund |
-| **P2** | Terminal-Fassung: Rand, eigener Terminal-Tab-Typ, Umschalter für die Dateipanes | Layout-Arbeit, ohne Bezug zu Snippets |
+| **P2** | Terminal-Fassung: Rand 14/8, zwei Toolbar-Schalter für Dateien und Terminal, Zustand pro gespeicherter Sitzung | Layout-Arbeit, ohne Bezug zu Snippets — der Tab-Typ ist verworfen, siehe unten |
 | **P3** | Ordnung: Host-Tags am `StoredSession` + Sidebar-Filter, Import/Export der Snippets | zuletzt, weil P1 erst zeigt, wie sich Tags anfühlen, bevor sie ein zweites Mal ans Session-Modell wandern |
 
 Der **Massen-Runner** (Snippet auf n gefilterte Hosts, Ausgabe-Ansicht) ist
