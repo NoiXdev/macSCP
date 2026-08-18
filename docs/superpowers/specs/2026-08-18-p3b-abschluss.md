@@ -31,11 +31,13 @@ aus M19.
 
 ## Gemessene Zahlen
 
-- **Suite:** `swift test` — **2055 Tests in 176 Suiten**, 0 Fehlschläge.
-  Selbst gemessen (nicht aus einem Report übernommen), deckt sich mit dem
-  in Task 4 gemeldeten Endstand. Entwicklung über die Phase: 2029 (nach
-  Task 1) → 2042 (Task 2) → 2045 (Task 3) → 2055 (Task 4); Baseline vor der
-  Phase 2024/175.
+- **Suite:** `swift test` — **2055 Tests in 176 Suiten** am Ende der fünf
+  Tasks, 0 Fehlschläge. Selbst gemessen (nicht aus einem Report übernommen),
+  deckt sich mit dem in Task 4 gemeldeten Endstand. Entwicklung über die
+  Phase: 2029 (nach Task 1) → 2042 (Task 2) → 2045 (Task 3) → 2055
+  (Task 4); Baseline vor der Phase 2024/175. **Der Fix-Durchgang nach der
+  Whole-Phase-Review** (siehe letzter Abschnitt) hat fünf weitere Tests
+  ergänzt: Endstand **2060 Tests in 176 Suiten**, ebenfalls selbst gemessen.
 - **`.strings`:** `plutil -lint` auf alle acht Kataloge
   (`Sources/MacSCPAppKit/Resources/{en,de,fr,pl}.lproj/Localizable.strings`,
   `Sources/macSCPCore/Resources/{en,de,fr,pl}.lproj/Localizable.strings`) —
@@ -95,10 +97,15 @@ wovor ein *Aufrufer* bewahrt werden müsste, weil kein Aufrufer ein Passwort
 
 ## 2. Was `probe` tatsächlich zurückgibt — und eine Korrektur
 
-`probe` meldet das `encrypted`-Flag des Umschlags. **Es ist kein
-Format-Prädikat.** Für dieses Format ist der Rückgabewert immer `false` —
-`SnippetExportCodec` verschlüsselt nie —, unabhängig davon, ob die Datei
-tatsächlich eine Snippet-Exportdatei ist oder nicht. Was eine Datei mit
+`probe` meldet das `encrypted`-Flag des Umschlags, wörtlich zurückgelesen.
+**Es ist kein Format-Prädikat.** Für jede Datei, die *dieser Codec
+geschrieben hat*, ist der Rückgabewert `false` — `encode` übergibt immer
+`password: nil`. **Korrektur (Whole-Phase-Review):** Hier stand „immer
+`false`, unabhängig davon, ob die Datei tatsächlich eine Snippet-Exportdatei
+ist". Das ist falsch, und derselbe falsche Satz stand im Code (siehe
+letzter Abschnitt, Punkt 1): Eine **fremde** Datei, die unseren Formatnamen
+mit `"encrypted" : true` behauptet, lässt `probe` `true` melden, und
+`decode` wirft dann `.passwordRequired`. Was eine Datei mit
 falschem Format ablehnt, ist nicht `probe`s Rückgabewert, sondern
 `ExportEnvelopeCodec`s eigene Formatprüfung, die **wirft**: Die private
 Funktion `envelope(from:as:format:currentVersion:)` dekodiert zuerst nur
@@ -129,9 +136,20 @@ einer falschformatigen Datei zeigt sich als **Wurf**, nicht als `false`.
 Dieses Projekt hat kein SwiftUI-Rendering-Werkzeug (projektweite,
 dokumentierte Grenze, keine Besonderheit dieser Phase). Konkret für P3b:
 
-**Getestet** (Core: `SnippetExportCodecTests` — 5, `SnippetImportPlanner
-Tests` — 13; App: `SnippetsPresentationTests` — 17 neue über die Phase,
-zusammen mit den bereits vorhandenen in einer Suite):
+**Getestet** — neue Tests der fünf Tasks, gezählt als `+@Test`-Zeilen im
+Bereich `296cf74..b4b91d5` (Core: `SnippetExportCodecTests` — 5,
+`SnippetImportPlannerTests` — 13; App: `SnippetsPresentationTests` — **13**
+neue über die Phase, zusammen mit den bereits vorhandenen in einer Suite;
+die Suite selbst ist älter, angelegt in `429fdaf`). **Korrektur
+(Whole-Phase-Review):** Hier stand „17 neue" für
+`SnippetsPresentationTests`; der Diff fügt 13 hinzu. Die Zahl deckt sich
+mit der gemessenen Suite-Entwicklung — Task 3 brachte +3, Task 4 +10
+(2042 → 2045 → 2055). Die anderen beiden Zahlen (5 und 13) wurden
+gegengeprüft und stimmen. Der anschließende Fix-Durchgang ergänzt fünf
+weitere Tests: +1 in `SnippetExportCodecTests` (Datei danach 6), +2 in
+`SnippetImportPlannerTests` (danach 15), +2 in `SnippetsPresentationTests`
+(damit 15 neue über Phase plus Fix-Durchgang, Datei danach 26). Siehe
+letzter Abschnitt:
 
 - Der Export-Roundtrip (Name/Command/Tags), dass die Datei Klartext ist und
   `encrypted: false` trägt, dass eine beschädigte Snippet-Nutzlast den
@@ -286,3 +304,116 @@ Commit-Anzahl stimmten bis auf die oben genannte Sechs-vs-fünf-Korrektur.
   `ImportConflictSheet.swift` (`.loginSet`, `.session`) waren nie
   unit-getestet; der neue dritte Fall (`.snippet`) teilt diese Lücke, statt
   sie zu schließen.
+
+## Was die Whole-Phase-Review fand (Fix-Durchgang nach dem Abschluss)
+
+Die fünf Task-Reviews fanden je einen Task sauber; erst der Blick auf die
+ganze Phase fand das Folgende. Fünf Fixes, `5d46aab` und die drei davor
+(`6efd7fa`, `13066dc`, `ad04b48`) plus dieser Doku-Commit. Suite danach
+2060/176, selbst gemessen.
+
+### 1. Die vierte falsche Doc-Aussage dieses Meilensteins (WICHTIG)
+
+`SnippetExportCodec.probe`s Doc sagte, das Ergebnis sei „always `false` for
+this format"; `snippetImportErrorText`s Doc (und die Doc eines Tests) sagten,
+`.passwordRequired` könne dieses Format „never actually reach". Beides ist
+für eine **fremde** Datei falsch: Ein Umschlag, der `{"format":
+"macscp-snippets", "version":1, "encrypted":true}` behauptet, lässt
+`ExportEnvelopeCodec.probe` **`true`** melden, und `decode(…, password: nil)`
+läuft in `guard let password else { throw .passwordRequired }`.
+
+Das *Verhalten* war und ist richtig — generische Absage, kein Absturz, kein
+halber Import — und die Produktionsseite ist dicht, weil `encode` der
+einzige Schreiber ist und unbedingt `nil` übergibt. Falsch waren nur die drei
+Kommentare, und **niemand beobachtete das echte Verhalten**. `6efd7fa`
+korrigiert alle drei und pinnt die Tatsache mit
+`SnippetExportCodecTests.aForeignFileClaimingEncryptionProbesTrueAndRefuses
+ToDecode` (handgeschriebenes JSON, weil dieser Codec solche Bytes nicht
+erzeugen kann).
+
+**Das Muster, nicht der Einzelfall:** Das ist die vierte Doc-Aussage in
+diesem Meilenstein, die etwas Unwahres oder Nichtexistierendes behauptet
+(vorher: der `UTType.macscpSnippets`-Kommentar über den Packaging-Eintrag,
+der `SnippetExportDocument`-Kommentar über den fehlenden Import-Call-Site,
+und die vier von der Tags-Verschiebung falsifizierten Kommentare aus
+`c3296f8`). Die gemeinsame Ursache ist jedes Mal dieselbe: Der Kommentar
+beschreibt die **Absicht** („dieses Format hat keinen Krypto-Pfad"), nicht
+den **Code** („`probe` liest ein Flag, das eine fremde Datei setzen kann").
+Für künftige Runden ist die brauchbare Frage nicht „stimmt der Kommentar mit
+dem Design überein", sondern: **welche Aussage in diesem Doc-Kommentar
+beobachtet kein Test?**
+
+### 2. Der Roundtrip war in zwei getrennten Hälften bewiesen
+
+Kein Test verkettete `encode → decode → SnippetImportPlanner.plan →
+applySnippetImportPlan → store.all()`. Alle Apply-Tests bauen ihr
+`PlannedSnippet` von Hand. `13066dc` schreibt die echte Kette
+(`aRealExportRoundTripsThroughThePlannerAndTheApplierIntoTheStore`) und
+korrigiert den Satz weiter oben, der einen handgebauten Test als
+End-zu-Ende beschrieb.
+
+Der Test trägt bewusst ein Snippet mit nur case-verschiedenen Tags
+(`["Docker", "docker"]`) und einen nur case-verschiedenen Namen („prod"
+gegen gespeichertes „Prod"): Namen kollidieren case-insensitiv, Tags bleiben
+zwei Tags — die Aufspaltung, auf die sich die Phase festgelegt hat, entlang
+des ganzen Pfades sichtbar.
+
+**Korrektur am Auftrag des Fix-Durchgangs (elfter Brief-Fehler):** Der
+Auftrag begründete diesen Test damit, eine case-insensitive
+`TagList.normalized` würde „den Export-Roundtrip stillschweigend brechen,
+mit jedem heutigen Test weiterhin grün". Gegengeprüft durch Mutation
+(`seen.insert($0.lowercased())`): Es werden **vier** Tests rot, drei davon
+vorbestehend — `TagListTests.normalizationKeepsCaseSoTwoSpellingsStayTwo
+Tags`, `SnippetTests.caseIsPreserved`,
+`SnippetMenuModelTests.differentlyCasedTagsSortAsNeighbours` — plus der neue
+Kettentest. Die Eigenschaft war also nicht ungeschützt; ungeschützt war nur
+der Weg *durch Export, Import-Planer und Applier*, und genau den deckt der
+neue Test jetzt ab. Er bleibt begründet, die Begründung war überzogen.
+
+### 3. Der lokalisierte Default-Dateiname trug die Endung (MINOR)
+
+`snippets.export.filename` lautete in allen vier Katalogen identisch
+„macSCP Snippets.macscpsnippets" und war der **einzige** lokalisierte
+`defaultFilename` im Projekt; beide Geschwister setzen ihren fest. Eine
+Übersetzung, die hinter dem Punkt weiterschreibt, erzeugt eine Datei, die
+macOS nicht zuordnet und die der Importer über seine eigene
+`allowedContentTypes`-Filterung dann selbst versteckt.
+
+**Entscheidung:** den Geschwistern folgen und den Schlüssel ersatzlos
+streichen (`ad04b48`), statt nur die Endung aus der Übersetzung zu nehmen.
+Die vier Kataloge trugen ohnehin denselben unübersetzten englischen String —
+es geht nichts verloren, und das Muster ist danach im ganzen Projekt
+einheitlich statt zweigeteilt.
+
+### 4. Namenloses Snippet beim Import (MINOR)
+
+Import war der einzige Weg zu einem Snippet ohne Namen: `"name": "   "`
+trimmt zu `""` und landete unverändert im Store — leere Zeile im Sheet,
+leerer Eintrag im Terminal-Menü —, während der Editor desselben Sheets so
+einen Namen nicht speichern lässt. Zwei davon in einer Datei kollidierten
+zudem beide auf `""`, sodass das Konflikt-Sheet nach einem Eintrag *ohne
+Namen* fragte.
+
+**Entscheidung: der Planer** (`5d46aab`), nicht `Snippet.init?` und nicht
+der Applier. `Snippet.init?` prüft nur das Kommando, und `init(from:)` läuft
+durch denselben Initializer — eine Verschärfung dort würde eine
+**vorhandene** Store-Datei mit leerem Namen nicht mehr dekodierbar machen
+und aus einem kosmetischen Problem einen Store machen, den das Sheet als
+unlesbar meldet. Der Applier ist zu spät: Bis dahin hat der Planer beide
+Einträge schon auf denselben leeren Schlüssel gelegt und gefragt. Der Drop
+passiert deshalb **vor** der Schlüsselbildung; die Zahl fährt als
+`SnippetImportPlan.namelessDiscarded` mit und bekommt eine eigene Zeile im
+Ergebnis-Alert (`snippets.import.nameless %lld`, vier Kataloge), damit die
+Einträge nicht zwischen „die Datei enthielt N" und „N-1 kamen an"
+verschwinden.
+
+### Bewusst nicht gefixt (Befunde mit Urteil „so lassen")
+
+- `applySnippetImportPlan` ist **nicht transaktional**: Ein Fehler bei
+  Element *k* lässt 1…k−1 geschrieben zurück. Wird über `storeFailures`
+  gezählt und angezeigt — nichts davon ist still.
+- Unbegrenzt viele und sehr lange Tags werden wörtlich importiert. Reines
+  Layout-Problem, selbst verursacht.
+- Die Sequenziell-Abarbeitungs-Aussage im Planer-Doc — schon oben unter
+  „Bekannte, bewusst zurückgestellte Punkte" geführt, von der Review
+  bestätigt statt neu aufgemacht.
