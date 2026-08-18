@@ -25,13 +25,10 @@ public struct Snippet: Identifiable, Codable, Equatable, Sendable {
     /// `Snippet`.
     public let command: String
     /// Free-form labels that order snippets and group the trigger surfaces.
-    /// Normalized at construction: trimmed, empties dropped, exact
-    /// duplicates removed, order of first appearance kept, case left as
-    /// typed — `Docker` and `docker` are two different tags; damping that
-    /// risk is the input's job (a case-insensitive suggestion list), not
-    /// this store's. `let` for the same reason `command` is — an in-place
-    /// mutation would be a second, unchecked write path around that
-    /// normalization.
+    /// Normalized at construction via `TagList.normalized` — see that
+    /// type's doc comment for the exact rule. `let` for the same reason
+    /// `command` is — an in-place mutation would be a second, unchecked
+    /// write path around that normalization.
     public let tags: [String]
 
     /// Fails when `command` contains a line break (`\n` or `\r`) — see the
@@ -41,10 +38,7 @@ public struct Snippet: Identifiable, Codable, Equatable, Sendable {
         self.id = id
         self.name = name
         self.command = command
-        var seen = Set<String>()
-        self.tags = tags
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty && seen.insert($0).inserted }
+        self.tags = TagList.normalized(tags)
     }
 
     public init(from decoder: Decoder) throws {

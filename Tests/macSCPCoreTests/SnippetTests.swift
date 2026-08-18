@@ -58,4 +58,20 @@ struct SnippetTests {
 
         #expect(snippet.tags == ["docker"])
     }
+
+    /// Guards against the two rules drifting apart: whatever `TagList`
+    /// decides, `Snippet.tags` must land on exactly the same result.
+    @Test func snippetTagsGoThroughTheSharedRule() {
+        let inputs: [[String]] = [
+            ["  docker ", "", "web", "docker"],
+            ["Docker", "docker"],
+            [],
+            ["   "],
+            ["a", "b", "a", "b"],
+        ]
+        for input in inputs {
+            let snippet = Snippet(name: "n", command: "c", tags: input)
+            #expect(snippet?.tags == TagList.normalized(input))
+        }
+    }
 }
