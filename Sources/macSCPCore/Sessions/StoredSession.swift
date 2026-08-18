@@ -95,12 +95,20 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
     /// (P2 terminal-chrome milestone, Task 4). Belongs in the same category
     /// as `groupID` above: a fact about the SESSION, not a connection
     /// property, so it lives at the top level rather than in a backend's
-    /// field bag. Coded the same way `kind` is (`?? .bothVisible` below,
+    /// field bag. Coded the same way `kind` is (`?? .filesOnly` below,
     /// mirroring `kind`'s `?? .ssh`): a missing key means a file that
     /// predates this field, or a session that was never toggled away from
-    /// the default, and either way decodes as `.bothVisible` -- exactly how
-    /// every session behaved before this field existed.
-    public var paneVisibility: PaneVisibility = .bothVisible
+    /// the default, and either way decodes as `.filesOnly` -- files shown,
+    /// no terminal, which is how every session behaved before this field
+    /// existed.
+    ///
+    /// The earlier default here was `.bothVisible`, and the claim attached
+    /// to it ("exactly how every session behaved before this field
+    /// existed") was false: restoring a saved visible terminal OPENS one
+    /// and starts a shell, so every legacy record would have grown a
+    /// terminal on its next connect. Corrected by maintainer ruling
+    /// (whole-phase re-review, item 1); see `PaneVisibility.filesOnly`.
+    public var paneVisibility: PaneVisibility = .filesOnly
 
     public init(
         id: UUID = UUID(),
@@ -111,7 +119,7 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         ssh: StoredSSHConfig? = nil,
         s3: StoredS3Config? = nil,
         webdav: StoredWebDAVConfig? = nil,
-        paneVisibility: PaneVisibility = .bothVisible
+        paneVisibility: PaneVisibility = .filesOnly
     ) {
         self.id = id
         self.name = name
@@ -143,7 +151,7 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         ssh = try c.decodeIfPresent(StoredSSHConfig.self, forKey: .ssh)
         s3 = try c.decodeIfPresent(StoredS3Config.self, forKey: .s3)
         webdav = try c.decodeIfPresent(StoredWebDAVConfig.self, forKey: .webdav)
-        paneVisibility = try c.decodeIfPresent(PaneVisibility.self, forKey: .paneVisibility) ?? .bothVisible
+        paneVisibility = try c.decodeIfPresent(PaneVisibility.self, forKey: .paneVisibility) ?? .filesOnly
     }
 
     // DEPRECATION INTENT: these exist to keep M23 Phase 1 reviewable. Phase 3

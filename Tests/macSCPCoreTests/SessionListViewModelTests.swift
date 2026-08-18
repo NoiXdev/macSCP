@@ -395,7 +395,7 @@ struct SessionListViewModelTests {
             name: "s",
             values: sshValues(host: "h", port: 22, username: "u"),
             password: "pw")!
-        #expect(stored.paneVisibility == .bothVisible)
+        #expect(stored.paneVisibility == .filesOnly)
 
         vm.updatePaneVisibility(
             for: stored.id, to: PaneVisibility(showsFiles: false, showsTerminal: true))

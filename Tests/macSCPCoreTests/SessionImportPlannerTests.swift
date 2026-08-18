@@ -557,12 +557,13 @@ struct SessionImportPlannerTests {
     }
 
     /// A file session with no `paneVisibility` at all (legacy, pre-Task-4)
-    /// must import as `.bothVisible`, the same default `StoredSession.
-    /// paneVisibility` itself falls back to. `paneVisibility` is left nil ON
-    /// PURPOSE, mirroring `fileSessionWithoutKindImportsAsSSH` above: a
-    /// helper that filled in `.bothVisible` for every fixture would let this
-    /// pass without ever exercising `makePlanned`'s `?? .bothVisible` fallback.
-    @Test func fileSessionWithoutPaneVisibilityImportsAsBothVisible() async {
+    /// must import as `.filesOnly`, the same default `StoredSession.
+    /// paneVisibility` itself falls back to — an import cannot make a
+    /// session open a shell it never asked for. `paneVisibility` is left nil
+    /// ON PURPOSE, mirroring `fileSessionWithoutKindImportsAsSSH` above: a
+    /// helper that filled in a value for every fixture would let this pass
+    /// without ever exercising `makePlanned`'s `?? .filesOnly` fallback.
+    @Test func fileSessionWithoutPaneVisibilityImportsAsFilesOnly() async {
         let file = ExportedSession(
             id: UUID(), name: "web", kind: .ssh,
             fields: sshExportFields(host: "h", username: "root"))
@@ -572,7 +573,7 @@ struct SessionImportPlannerTests {
             existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
 
         let planned = plan.sessionsToImport[0]
-        #expect(planned.session.paneVisibility == .bothVisible)
+        #expect(planned.session.paneVisibility == .filesOnly)
     }
 
     /// A file session that DOES carry a recorded preference imports with it

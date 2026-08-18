@@ -10,7 +10,7 @@ import Testing
 /// doc comment on `paneVisibility`) and for whether export carries it
 /// (unconditionally, like `kind`/`fields` — `includeGroups` gates GROUP
 /// membership specifically, which pane visibility is not). The CODING shape
-/// — `?? .bothVisible` on a missing key — mirrors `kind`'s `?? .ssh`
+/// — `?? .filesOnly` on a missing key — mirrors `kind`'s `?? .ssh`
 /// instead, since `groupID` stays genuinely optional (a session can have no
 /// group) while every session has SOME current pane visibility once this
 /// field exists.
@@ -20,11 +20,15 @@ struct PaneVisibilityPersistenceTests {
     // MARK: - StoredSession decode
 
     /// A `sessions.json` written before this field existed must still load,
-    /// landing as "both visible" — against a LITERAL pre-Task-4 file (no
+    /// landing as "files only" — no terminal, which is what every session
+    /// did before this field existed (maintainer ruling, whole-phase
+    /// re-review; the first default here was `.bothVisible`, which would
+    /// have made every legacy record open a terminal and start a shell on
+    /// its next connect). Against a LITERAL pre-Task-4 file (no
     /// `paneVisibility` key at all), not something freshly encoded by
     /// `StoredSession` itself, which would trivially round-trip even if the
     /// decoder secretly required the key.
-    @Test func legacyJSONWithoutPaneVisibilityDecodesAsBothVisible() throws {
+    @Test func legacyJSONWithoutPaneVisibilityDecodesAsFilesOnly() throws {
         let legacy = """
             {"id":"\(UUID().uuidString)","name":"old","kind":"ssh",
              "ssh":{"host":"h","port":22,"username":"u","authKind":"password"}}
@@ -32,9 +36,9 @@ struct PaneVisibilityPersistenceTests {
 
         let session = try JSONDecoder().decode(StoredSession.self, from: legacy)
 
-        #expect(session.paneVisibility == .bothVisible)
+        #expect(session.paneVisibility == .filesOnly)
         #expect(session.paneVisibility.showsFiles == true)
-        #expect(session.paneVisibility.showsTerminal == true)
+        #expect(session.paneVisibility.showsTerminal == false)
     }
 
     /// A hand-edited (or corrupted) store file claiming "neither half
@@ -128,8 +132,8 @@ struct PaneVisibilityPersistenceTests {
         #expect(imported.paneVisibility == PaneVisibility(showsFiles: false, showsTerminal: true))
     }
 
-    /// A session that never carried a recorded preference (`.bothVisible`,
-    /// the field's own default) exports and re-imports as `.bothVisible` too
+    /// A session that never carried a recorded preference (`.filesOnly`,
+    /// the field's own default) exports and re-imports as `.filesOnly` too
     /// — the ordinary case, exercised end to end rather than assumed from
     /// the decode-level tests above alone.
     @Test func defaultPaneVisibilitySurvivesExportImportRoundtrip() async throws {
@@ -138,7 +142,7 @@ struct PaneVisibilityPersistenceTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = SessionStore(directory: dir)
         let original = sshSession(name: "default-vis", host: "h.example.com", username: "u")
-        #expect(original.paneVisibility == .bothVisible)
+        #expect(original.paneVisibility == .filesOnly)
         try store.upsert(original)
 
         let vm = SessionListViewModel(
@@ -156,7 +160,7 @@ struct PaneVisibilityPersistenceTests {
         let result = importedVM.applyImport(plan)
 
         #expect(result.imported == 1)
-        #expect(importedVM.sessions.first?.paneVisibility == .bothVisible)
+        #expect(importedVM.sessions.first?.paneVisibility == .filesOnly)
     }
 
     // MARK: - Malformed field must not cost the user their sessions
@@ -199,7 +203,7 @@ struct PaneVisibilityPersistenceTests {
         let sessions = try SessionStore(directory: dir).all()
 
         #expect(sessions.count == 2)
-        #expect(sessions.first(where: { $0.id == brokenID })?.paneVisibility == .bothVisible)
+        #expect(sessions.first(where: { $0.id == brokenID })?.paneVisibility == .filesOnly)
         #expect(sessions.first(where: { $0.id == healthyID })?.paneVisibility
             == PaneVisibility(showsFiles: false, showsTerminal: true))
     }
@@ -234,6 +238,6 @@ struct PaneVisibilityPersistenceTests {
 
         let session = try JSONDecoder().decode(StoredSession.self, from: json)
 
-        #expect(session.paneVisibility == .bothVisible)
+        #expect(session.paneVisibility == .filesOnly)
     }
 }

@@ -404,4 +404,74 @@ struct SessionTabTests {
         attachSession(to: tab)
         #expect(tab.showsFiles)
     }
+
+    // MARK: - Restoring a saved session (whole-phase re-review, items 1 + 2)
+
+    /// The maintainer's ruling, as behaviour rather than as a decoder
+    /// detail: a `sessions.json` written before this field existed carries
+    /// no preference, and a connect to it must open NO terminal. The field's
+    /// first default (`.bothVisible`) meant every saved session in every
+    /// existing installation would have opened a terminal — and started a
+    /// shell — on its next connect.
+    ///
+    /// Deliberately fed from a LITERAL legacy record decoded end to end, so
+    /// this covers the whole chain (missing key -> `StoredSession` ->
+    /// restore decision), not a `PaneVisibility` constructed in the test.
+    @Test func aLegacySessionWithoutTheFieldOpensNoTerminal() throws {
+        let legacy = """
+            {"id":"\(UUID().uuidString)","name":"old","kind":"ssh",
+             "ssh":{"host":"h","port":22,"username":"u","authKind":"password"}}
+            """.data(using: .utf8)!
+        let stored = try JSONDecoder().decode(StoredSession.self, from: legacy)
+        let tab = makeTab()
+        attachSession(to: tab)
+
+        let opensTerminal = tab.applyRestoredPaneVisibility(
+            stored.paneVisibility, hasShell: true)
+
+        #expect(opensTerminal == false)
+        #expect(tab.showsFiles)
+    }
+
+    /// The other half of the ruling, and the reason it must not collapse
+    /// into "we never restore a terminal": a session that EXPLICITLY saved a
+    /// visible terminal still gets one back.
+    @Test func aSessionThatSavedAVisibleTerminalGetsItBack() {
+        let tab = makeTab()
+        attachSession(to: tab)
+
+        let opensTerminal = tab.applyRestoredPaneVisibility(
+            PaneVisibility(showsFiles: true, showsTerminal: true), hasShell: true)
+
+        #expect(opensTerminal)
+        #expect(tab.showsFiles)
+    }
+
+    /// A saved "terminal only" restores both facts: the terminal opens AND
+    /// the file panes stay hidden.
+    @Test func aSavedTerminalOnlySessionRestoresBothHalvesOfThatChoice() {
+        let tab = makeTab()
+        attachSession(to: tab)
+
+        let opensTerminal = tab.applyRestoredPaneVisibility(
+            PaneVisibility(showsFiles: false, showsTerminal: true), hasShell: true)
+
+        #expect(opensTerminal)
+        #expect(tab.showsFiles == false)
+    }
+
+    /// `hasShell` is folded in by the single assembly point, so a session
+    /// saved with a visible terminal on a backend that has none opens
+    /// nothing — and the repair puts the file panes back rather than leaving
+    /// the window empty.
+    @Test func aSavedTerminalOnAShelllessBackendOpensNothingAndShowsFiles() {
+        let tab = makeTab()
+        attachSession(to: tab)
+
+        let opensTerminal = tab.applyRestoredPaneVisibility(
+            PaneVisibility(showsFiles: false, showsTerminal: true), hasShell: false)
+
+        #expect(opensTerminal == false)
+        #expect(tab.effectivePaneVisibility(terminalIsVisible: false, hasShell: false).showsFiles)
+    }
 }

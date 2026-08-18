@@ -282,6 +282,39 @@ final class SessionTab: Identifiable {
     /// hasShell` before this ever runs, so a stray `true` with no shell
     /// behind it already reads as `false` by the time `applyingClick` sees
     /// it, the same way it would for `paneToggleState` or the render.
+    /// Applies a stored session's SAVED pane visibility to this tab and
+    /// answers whether the terminal panel has to be revealed for it
+    /// (P2 terminal-chrome milestone; whole-phase re-review, item 2).
+    ///
+    /// The decision lives here, not in `ContentView.restorePaneVisibility`,
+    /// for the reason this whole phase is about: a decision that only exists
+    /// inside a SwiftUI view is a decision no test can reach — this project
+    /// has no view-instantiation tool, so the restore path had source
+    /// scanners and nothing else. What stays in `ContentView` is the part
+    /// that is not a decision: calling `TerminalPanelViewModel.toggle()` on
+    /// the session it just built.
+    ///
+    /// Answering a `Bool` rather than opening the terminal itself keeps this
+    /// type's existing rule intact — it never writes
+    /// `TerminalPanelViewModel.isVisible`, see `applyFilesToggleClick`
+    /// below.
+    ///
+    /// `saved.showsFiles` is written RAW, as everywhere else in this type;
+    /// the terminal half goes through `effectivePaneVisibility`, the single
+    /// assembly point, which folds in `hasShell` — so a session saved with a
+    /// terminal on a backend that no longer has one opens no terminal, and
+    /// files are promoted back on by the repair.
+    ///
+    /// A session with no recorded preference does not reach this with
+    /// "both visible": `StoredSession` resolves a missing key to
+    /// `PaneVisibility.filesOnly` (maintainer ruling, see that constant), so
+    /// an old `sessions.json` opens no shell on its next connect.
+    func applyRestoredPaneVisibility(_ saved: PaneVisibility, hasShell: Bool) -> Bool {
+        showsFiles = saved.showsFiles
+        return effectivePaneVisibility(
+            terminalIsVisible: saved.showsTerminal, hasShell: hasShell).showsTerminal
+    }
+
     func applyFilesToggleClick(terminalIsVisible: Bool, hasShell: Bool) {
         let next = effectivePaneVisibility(terminalIsVisible: terminalIsVisible, hasShell: hasShell)
             .applyingClick(on: .files, hasShell: hasShell)

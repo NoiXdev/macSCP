@@ -887,6 +887,13 @@ struct ContentView: View {
     /// opens are not an `AuditEvent.Kind` case) — nothing a user would
     /// experience as a surprise.
     ///
+    /// The DECISION — which halves the saved value means, with `hasShell`
+    /// folded in — moved to `SessionTab.applyRestoredPaneVisibility` in the
+    /// whole-phase re-review (item 2), so it can be tested at all; what is
+    /// left here is the one thing that cannot be: calling `toggle()` on the
+    /// session this method was handed. See that method for the rest of this
+    /// comment's reasoning, which now lives next to the code it describes.
+    ///
     /// `hasShell` is folded in through `tab.effectivePaneVisibility` itself —
     /// the SAME method `paneToggleState` and the render condition call — not
     /// a hand-rebuilt `PaneVisibility(showsFiles:showsTerminal:)` that
@@ -914,12 +921,9 @@ struct ContentView: View {
         for tab: SessionTab, from stored: StoredSession, descriptor: BackendDescriptor
     ) {
         guard let session = tab.session else { return }
-        let saved = stored.paneVisibility
-        tab.showsFiles = saved.showsFiles
-        let effective = tab.effectivePaneVisibility(
-            terminalIsVisible: saved.showsTerminal,
-            hasShell: descriptor.capabilities.supportsShell)
-        if effective.showsTerminal {
+        let opensTerminal = tab.applyRestoredPaneVisibility(
+            stored.paneVisibility, hasShell: descriptor.capabilities.supportsShell)
+        if opensTerminal {
             session.terminal.toggle()
         }
     }

@@ -45,26 +45,45 @@ public struct PaneVisibility: Equatable, Sendable, Codable {
         }
     }
 
-    /// The default a session with no recorded preference gets (P2
-    /// terminal-chrome milestone, Task 4) — both halves shown, matching what
-    /// every session did before this type's persistence existed. The one
-    /// spelling of that default, so its two actual consumers cannot drift
-    /// apart on what "no preference recorded" means: `StoredSession`'s
-    /// `paneVisibility` property default and its `init(from:)` (`?? .bothVisible`
-    /// on a missing key, coded like `kind`'s own `?? .ssh`), and
-    /// `SessionImportPlanner.makePlanned` (`fileSession.paneVisibility ??
-    /// .bothVisible`, same shape as its `kind ?? .ssh` a few lines above).
-    /// `ExportedSession`'s own decoder does NOT use this constant — it
-    /// deliberately decodes a missing key as `nil`, exactly like `kind`
-    /// stays `nil` there rather than being defaulted at decode time; only
-    /// the planner resolves it. `ContentView.restorePaneVisibility` does not
-    /// reference this constant either — it reads `StoredSession.
-    /// paneVisibility` after that property has already resolved to a
-    /// concrete value, so there is nothing left for it to default.
+    /// Both halves shown. A legal, storable state a session reaches by
+    /// having both panes open when it was last used — NOT the value a
+    /// session with no recorded preference resolves to; that is
+    /// `filesOnly` below.
     public static let bothVisible = PaneVisibility(showsFiles: true, showsTerminal: true)
 
+    /// What a session with NO recorded preference gets: files only, no
+    /// terminal (maintainer ruling, whole-phase re-review, item 1).
+    ///
+    /// The ruling exists because the first spelling of this default
+    /// (`bothVisible`) was wrong in a way no test observed, and its doc
+    /// comment asserted the opposite of what it did: restoring a saved
+    /// "terminal visible" OPENS the terminal and starts a shell, so a
+    /// `sessions.json` written before this field existed — every session in
+    /// every existing installation — would have opened a terminal on its
+    /// next connect. "Files only" is what those sessions actually did
+    /// before this field existed.
+    ///
+    /// The one spelling of that default, so its consumers cannot drift on
+    /// what "nothing recorded" means: `StoredSession`'s `paneVisibility`
+    /// property default and its `init(from:)` (`?? .filesOnly` on a missing
+    /// key, coded like `kind`'s own `?? .ssh`), `SessionImportPlanner.
+    /// makePlanned` for a file that carries no value, and `init(from:)`
+    /// below for a value too broken to read. `ExportedSession`'s own
+    /// decoder deliberately still decodes a missing key as `nil` — like
+    /// `kind` there — and lets the planner resolve it.
+    ///
+    /// The asymmetry this creates is deliberate: an ABSENT field and an
+    /// explicitly saved `{showsFiles: true, showsTerminal: false}` mean the
+    /// same thing at connect time. What it must not collapse into is "a
+    /// terminal is never restored" — an explicitly saved `showsTerminal:
+    /// true` still opens one, which is what `SessionTabTests.
+    /// aSessionThatSavedAVisibleTerminalGetsItBack` pins next to its
+    /// legacy counterpart.
+    public static let filesOnly = PaneVisibility(showsFiles: true, showsTerminal: false)
+
     /// Decodes leniently: a value that is BROKEN rather than merely absent
-    /// falls back to `bothVisible`'s halves instead of throwing.
+    /// falls back to `filesOnly`'s halves instead of throwing — the same
+    /// "nothing usable recorded" default a missing key gets.
     ///
     /// This is a deliberate exception, and a narrow one. `StoredSession`'s
     /// container is decoded as ONE document by `SessionStore.load()`, so a
@@ -86,7 +105,7 @@ public struct PaneVisibility: Equatable, Sendable, Codable {
     /// results still go through the repairing initializer above, so
     /// leniency cannot produce "neither visible" either.
     ///
-    /// Referring to `bothVisible` here is not recursive: that constant is
+    /// Referring to `filesOnly` here is not recursive: that constant is
     /// built by the memberwise initializer above, never by this one.
     public init(from decoder: Decoder) throws {
         // A `paneVisibility` that is not even an object (a string, a number,
@@ -94,14 +113,14 @@ public struct PaneVisibility: Equatable, Sendable, Codable {
         // back at once.
         guard let container = try? decoder.container(keyedBy: CodingKeys.self) else {
             self.init(
-                showsFiles: PaneVisibility.bothVisible.showsFiles,
-                showsTerminal: PaneVisibility.bothVisible.showsTerminal)
+                showsFiles: PaneVisibility.filesOnly.showsFiles,
+                showsTerminal: PaneVisibility.filesOnly.showsTerminal)
             return
         }
         let showsFiles = (try? container.decode(Bool.self, forKey: .showsFiles))
-            ?? PaneVisibility.bothVisible.showsFiles
+            ?? PaneVisibility.filesOnly.showsFiles
         let showsTerminal = (try? container.decode(Bool.self, forKey: .showsTerminal))
-            ?? PaneVisibility.bothVisible.showsTerminal
+            ?? PaneVisibility.filesOnly.showsTerminal
         // Via the repairing initializer above — a hand-edited store file
         // that carries "both false" is repaired to "files only" rather than
         // decoded as-is, which would render an empty window with no way

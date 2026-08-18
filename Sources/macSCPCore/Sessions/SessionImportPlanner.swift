@@ -364,15 +364,17 @@ public enum SessionImportPlanner {
         // a known, out-of-scope remainder — neither the guard nor the
         // rejection above address it.
         var session = StoredSession(id: id, name: name, groupID: groupID, kind: kind)
-        // `?? .bothVisible`, same pattern as `kind ?? .ssh` a few lines up:
+        // `?? .filesOnly`, same pattern as `kind ?? .ssh` a few lines up:
         // `nil` means a payload written before this field existed, and
-        // decodes as the same "both visible" default `StoredSession.init(
-        // from:)` applies for a legacy `sessions.json`. No remapping needed
+        // resolves to the same "nothing recorded" default `StoredSession.
+        // init(from:)` applies for a legacy `sessions.json` -- files shown,
+        // no terminal, so an import cannot make a session open a shell it
+        // never asked for (see `PaneVisibility.filesOnly`). No remapping needed
         // (unlike `groupID`, which points at a file-local group id the
         // caller has already resolved to a real one) -- pane visibility is a
         // value, not a reference, so the file's own value becomes the
         // imported session's directly.
-        session.paneVisibility = fileSession.paneVisibility ?? .bothVisible
+        session.paneVisibility = fileSession.paneVisibility ?? .filesOnly
         if !fileSession.fields.isEmpty {
             var values = FieldValues()
             for (key, value) in fileSession.fields { values.setRaw(key, to: value) }
