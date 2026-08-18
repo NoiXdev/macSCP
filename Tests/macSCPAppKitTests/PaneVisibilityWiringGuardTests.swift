@@ -219,6 +219,31 @@ struct PaneVisibilityWiringGuardTests {
         #expect(assigns, "the mirror observes the value but does not write it into `tabCommands`")
     }
 
+    /// The asymmetry `TabCommands.canToggleTerminal`'s doc comment claims,
+    /// pinned rather than asserted: "Open in External Terminal" must NOT be
+    /// gated by the pane lock. That route never touches
+    /// `TerminalPanelViewModel.isVisible`, so a locked built-in panel says
+    /// nothing about it — greying it out would take away the one way to
+    /// reach a shell in that state.
+    @Test func theExternalTerminalEntryIsNotGatedByThePaneLock() throws {
+        let source = try String(contentsOf: Self.appFile, encoding: .utf8)
+        let lines = source.components(separatedBy: "\n")
+        guard let button = lines.firstIndex(
+            where: { $0.contains("\"menu.terminal.openExternal\"") })
+        else {
+            Issue.record("`menu.terminal.openExternal` button not found — re-anchor this guard")
+            return
+        }
+        let window = lines[button...min(button + 6, lines.count - 1)]
+        let disabled = window.first { $0.trimmingCharacters(in: .whitespaces).hasPrefix(".disabled(") }
+        #expect(disabled?.contains("canToggleTerminal") == false, """
+            "Open in External Terminal" now reads `canToggleTerminal` — the pane lock \
+            would disable a route that does not touch the built-in panel at all.
+            """)
+        #expect(disabled?.contains("activeTabSupportsShell") == true,
+                "re-anchor: the external entry no longer gates on the shell capability")
+    }
+
     // MARK: - Scanner reacts (self-tests over synthetic sources)
 
     /// The exact regression this guard exists to catch: the multi-line

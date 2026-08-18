@@ -387,4 +387,21 @@ struct SessionTabTests {
         #expect(tab.showsFiles == false)
         #expect(tab.effectivePaneVisibility(terminalIsVisible: true, hasShell: true).showsFiles == false)
     }
+
+    /// The one claim in `showsFiles`'s doc comment that nothing else here
+    /// observes: with no session attached it reads the default and a write
+    /// is dropped. Both writers run only on a connected tab, so this is not
+    /// a state the UI produces — it is pinned so the behaviour is a decision
+    /// on record rather than an accident of where the storage moved.
+    @Test func withoutASessionTheFlagReadsTheDefaultAndAWriteIsDropped() {
+        let tab = makeTab()
+
+        #expect(tab.showsFiles)
+        tab.showsFiles = false
+        #expect(tab.showsFiles)
+
+        // And a session attached afterwards is unaffected by that write.
+        attachSession(to: tab)
+        #expect(tab.showsFiles)
+    }
 }
