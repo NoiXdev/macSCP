@@ -816,7 +816,6 @@
 "snippets.delete.confirm" = "Usuń";
 "snippets.delete.error" = "Nie udało się usunąć fragmentu.";
 "snippets.export" = "Eksportuj…";
-"snippets.export.filename" = "macSCP Snippets.macscpsnippets";
 "snippets.import" = "Importuj…";
 "snippets.import.error" = "Nie udało się odczytać tego pliku jako fragmentów macSCP. Może to być inny rodzaj eksportu albo plik jest uszkodzony.";
 "snippets.import.result %lld" = "%lld zaimportowano";

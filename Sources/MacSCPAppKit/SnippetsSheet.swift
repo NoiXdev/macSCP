@@ -197,7 +197,17 @@ struct SnippetsSheet: View {
             isPresented: $showExportFileExporter,
             document: exportDocument,
             contentType: .macscpSnippets,
-            defaultFilename: L10n.string("snippets.export.filename", "macSCP Snippets.macscpsnippets")
+            // NOT localized, unlike everything else in this file, and the
+            // same literal both siblings use (`ContentView+Sheets`'s
+            // "macSCP Sessions.macscpsessions", `LoginSetsSheet`'s
+            // "macSCP Logins.macscplogins"). The trailing extension is
+            // load-bearing: a translator editing past the dot produces a
+            // file macOS does not associate with this app and the importer's
+            // own `allowedContentTypes` filter then hides. It was the one
+            // localized `defaultFilename` in the project, and all four
+            // catalogs carried the identical untranslated English string
+            // anyway.
+            defaultFilename: "macSCP Snippets.macscpsnippets"
         ) { result in
             handleExportResult(result)
         }
