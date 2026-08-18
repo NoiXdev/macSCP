@@ -458,69 +458,126 @@ public final class ConnectionViewModel {
         }
     }
 
-    /// Returns the connected file system or nil; errors land in `state`.
-    /// Re-entrancy safe: calls made while `.connecting` are dropped, so a
-    /// double-click doesn't open a second (orphaned) connection.
+    /// What `connect()` resolves before it dials anything, or the failure it
+    /// would report for a form that does not resolve.
+    ///
+    /// A dedicated result rather than an optional config: the failure arm
+    /// carries the very `State` `connect()` publishes, so the ONE place that
+    /// decides which message and which highlighted field a failed resolution
+    /// means stays this view model — a caller that renders it differently
+    /// still renders the same answer.
+    public enum ConfigResolution: Equatable {
+        case resolved(ConnectionConfig)
+        case failed(State)
+    }
+
+    /// Everything `connect()` does BEFORE it dials, and nothing else: the
+    /// form rules, the jump validation, `descriptor.makeConfig`, and the jump
+    /// hop attached on top.
     ///
     /// One body for every protocol since M23. What used to be three
     /// hand-written validators is `descriptor.firstViolation`, which walks the
     /// VISIBLE fields — so SSH's "a password is required, but only under
     /// password auth, and never under agent auth" is the schema's
-    /// `visibleWhen` rather than a `switch` here.
+    /// `visibleWhen` rather than a `switch` here. Two things stay
+    /// hand-written, because they are form rules rather than backend fields:
+    /// the save name, and the jump block.
     ///
-    /// Two things stay hand-written, because they are form rules rather than
-    /// backend fields: the save name, and the jump block.
-    public func connect() async -> (any RemoteFileSystem)? {
-        guard state != .connecting else { return nil }
-        defer { hostKeyPrompt = nil }
-
+    /// Exists because a second caller needs exactly these steps and must NOT
+    /// take the fourth: the App's "Open in External Terminal" entry, which
+    /// P3c/T2 wires onto this, hands the resolved config to a launcher for a
+    /// session macSCP itself never connects to. Writing those steps a second
+    /// time is what the equivalence guard in
+    /// `ConnectionConfigResolutionTests` exists to prevent — it compares what
+    /// `connect()` dials against what this returns, and fails as soon as one
+    /// path grows a step the other lacks.
+    ///
+    /// PUBLISHES NOTHING. A failure comes back as the state `connect()`
+    /// assigns for it, and the caller decides where it belongs: `connect()`
+    /// puts it in `state`, which the connection form renders, while a
+    /// context-menu caller — with no form on screen — can raise an alert
+    /// instead. Publishing here would also let a resolution overwrite the
+    /// `state` an in-flight `connect()` owns.
+    ///
+    /// RETAINS NOTHING. The resolved config carries the plaintext secret and
+    /// is returned, never stored. `lastConnectedConfig` is written by a
+    /// SUCCESSFUL `connect()` alone, and `clearRetainedSecrets()` clears it
+    /// on disconnect so no plaintext password outlives the connection; a
+    /// second property holding a resolved config would be a second place that
+    /// clearing does not reach.
+    ///
+    /// Includes the save-name check `connect()` performs first, even though a
+    /// save name is form bookkeeping and not part of any config: omitting it
+    /// would make the two paths disagree for a form with the save toggle on
+    /// and a blank name. A caller that does not save never meets it — the
+    /// App's stored-session fill sets `shouldSaveSession = false`.
+    public func resolveConfigWithoutDialing() -> ConfigResolution {
         if shouldSaveSession,
            saveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            state = .failed(
-                message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName)
-            return nil
+            return .failed(.failed(
+                message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName))
         }
         let descriptor = BackendDescriptor.descriptor(for: kind)
         if let violation = descriptor.firstViolation(in: values, requireSecrets: true) {
-            state = .failed(
+            return .failed(.failed(
                 message: CoreL10n.string(violation.messageKey),
-                field: .schema(violation.fieldKey))
-            return nil
+                field: .schema(violation.fieldKey)))
         }
         // Unconditional, not `if kind == .ssh`: `validateJump` returns nil
         // whenever the toggle is off, and the toggle is cleared by
         // `exitEditMode` whenever `kind` changes. A guard here would be a
         // protocol branch that decides nothing.
         if let jumpFailure = validateJump(requireSecret: true) {
-            state = jumpFailure
-            return nil
+            return .failed(jumpFailure)
         }
 
         let config: ConnectionConfig
         do {
             config = try descriptor.makeConfig(values, resolvedSecret)
         } catch {
-            state = Self.failedState(for: error)
-            return nil
+            return .failed(Self.failedState(for: error))
         }
-        // Bound once and used for BOTH the dial and `lastConnectedConfig`:
-        // the latter is what the external-terminal launcher turns into an
-        // `ssh -J` command line (M11d/T2), so recording the pre-jump config
-        // here would make "Open in External Terminal" dial a bastion-only
+        // The hop belongs to the RESOLUTION, not to the dial: what comes back
+        // here is what `connect()` hands the connector AND what it records as
+        // `lastConnectedConfig`, which the external-terminal launcher turns
+        // into an `ssh -J` command line (M11d/T2) — returning the pre-jump
+        // config would make "Open in External Terminal" dial a bastion-only
         // target directly.
         //
-        // Attached BEFORE `state = .connecting`, and its throw is a hard stop:
-        // a jump `SSHConnectionConfig.init` rejects must fail the connect
-        // rather than fall back to a hop-less config, or a session that may
-        // only be reached through its bastion would dial the target directly
-        // with nothing reported (M23/T5 fix round 1).
-        let dialed: ConnectionConfig
+        // The throw is a hard stop rather than a fallback: a jump
+        // `SSHConnectionConfig.init` rejects must fail the whole resolution
+        // instead of yielding a hop-less config, or a session that may only
+        // be reached through its bastion would be dialled directly with
+        // nothing reported (M23/T5 fix round 1).
         do {
-            dialed = try attachingJump(to: config)
+            return .resolved(try attachingJump(to: config))
         } catch {
-            state = jumpAwareFailedState(for: error)
-            return nil
+            return .failed(jumpAwareFailedState(for: error))
         }
+    }
+
+    /// Returns the connected file system or nil; errors land in `state`.
+    /// Re-entrancy safe: calls made while `.connecting` are dropped, so a
+    /// double-click doesn't open a second (orphaned) connection.
+    ///
+    /// Everything up to and including the resolved config comes from
+    /// `resolveConfigWithoutDialing()`, the one resolution both callers share
+    /// (P3c/T1). What is left here is the dial: publishing the resolution's
+    /// failure into `state`, the `.connecting` transition, the host-key
+    /// decider, and the record of what was actually connected.
+    public func connect() async -> (any RemoteFileSystem)? {
+        guard state != .connecting else { return nil }
+        defer { hostKeyPrompt = nil }
+
+        let dialed: ConnectionConfig
+        switch resolveConfigWithoutDialing() {
+        case .failed(let failure):
+            state = failure
+            return nil
+        case .resolved(let config):
+            dialed = config
+        }
+
         state = .connecting
         do {
             // The decider is handed to EVERY backend by the `Connector`
@@ -532,6 +589,8 @@ public final class ConnectionViewModel {
                 await self?.presentHostKeyPrompt(for: candidate) ?? false
             }
             state = .idle
+            // The DIALED config, hop included: `lastConnectedConfig` is what
+            // the external-terminal launcher reproduces the connection from.
             if case .ssh(let ssh) = dialed { lastConnectedConfig = ssh }
             return fs
         } catch {
