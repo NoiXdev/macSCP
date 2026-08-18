@@ -212,4 +212,52 @@ struct SessionTabTests {
             tab.paneToggleState(for: .files, terminalIsVisible: true, hasShell: true)
                 == PaneToggleState(isOn: false, isEnabled: true))
     }
+
+    /// Review round 1, Critical: reproduces "hide Files, disconnect,
+    /// reconnect" and pins that the RENDER decision (`effectivePaneVisibility`,
+    /// which `detail` now reads instead of the two raw booleans it used to)
+    /// never lands on "neither visible", and never disagrees with what the
+    /// toolbar's `paneToggleState` reports for the SAME inputs.
+    ///
+    /// Before `effectivePaneVisibility` existed, `detail` read
+    /// `tab.showsFiles`/`session.terminal.isVisible` directly. Both are
+    /// `false` after this exact sequence — `showsFiles` because step 1 hid
+    /// it, `terminalIsVisible` because a freshly reconnected
+    /// `TerminalPanelViewModel` (step 3) defaults `isVisible` to `false`
+    /// just like the one `shutdown()` (step 2) left behind — and reading
+    /// them straight into two independent `if`s rendered NEITHER half,
+    /// while `paneToggleState`, which already went through
+    /// `PaneVisibility`'s repair, reported Files as on-and-locked. This
+    /// test fails to build against the pre-fix `SessionTab` (no
+    /// `effectivePaneVisibility` method existed) and would fail its own
+    /// assertions against a version of that method which forwarded
+    /// `terminalIsVisible` straight through without repairing it.
+    @Test func reconnectAfterHidingFilesNeverRendersNeitherHalf() {
+        let tab = makeTab()
+
+        // 1. Hide Files while Terminal is shown -- allowed, the lock permits it.
+        tab.applyFilesToggleClick(terminalIsVisible: true, hasShell: true)
+        #expect(tab.showsFiles == false)
+
+        // 2 + 3. Disconnect (`shutdown()` sets `isVisible = false`, nothing
+        // resets `showsFiles`) and reconnect (`startSession` builds a
+        // fresh `TerminalPanelViewModel`, whose `isVisible` also defaults
+        // to `false`). Both steps collapse to the same observable fact for
+        // this test: the terminal is now reporting `isVisible == false`,
+        // same as `showsFiles`.
+        let reconnectedTerminalIsVisible = false
+
+        let rendered = tab.effectivePaneVisibility(
+            terminalIsVisible: reconnectedTerminalIsVisible, hasShell: true)
+        let filesToggle = tab.paneToggleState(
+            for: .files, terminalIsVisible: reconnectedTerminalIsVisible, hasShell: true)
+
+        // The window must show at least one half.
+        #expect(rendered.showsFiles || rendered.showsTerminal)
+        // And the render must agree with what the toolbar says: the Files
+        // toggle reporting itself "on" while the render shows nothing is
+        // exactly the bug this pins, even if the "not neither" assertion
+        // above alone happened to pass.
+        #expect(rendered.showsFiles == filesToggle.isOn)
+    }
 }

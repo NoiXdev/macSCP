@@ -165,17 +165,26 @@ extension ContentView {
         let bridge = tab.conflictBridge
         Group {
             if let session = tab.session {
+                // The ONE decision both render conditions below read (P2
+                // terminal-chrome milestone, Task 3 review round 1) —
+                // `SessionTab.effectivePaneVisibility`, the SAME method the
+                // toolbar's `paneToggleState` reads. Neither branch below
+                // reads `tab.showsFiles`/`session.terminal.isVisible`
+                // directly any more: those two raw booleans can disagree
+                // (hide Files, disconnect, reconnect — `showsFiles` stays
+                // `false` while a fresh `TerminalPanelViewModel` also
+                // starts at `isVisible == false`), and reading them
+                // straight into two independent `if`s rendered NEITHER
+                // half while the toolbar's Files button, which DID go
+                // through `PaneVisibility`'s repair, showed itself as
+                // on-and-locked. Computing `visibility` once here and
+                // reading `.showsFiles`/`.showsTerminal` off it closes that
+                // gap — see `effectivePaneVisibility`'s own doc comment.
+                let visibility = tab.effectivePaneVisibility(
+                    terminalIsVisible: session.terminal.isVisible, hasShell: activeTabSupportsShell)
                 VStack(spacing: 0) {
                     VSplitView {
-                        // Gated on `showsFiles` (P2 terminal-chrome
-                        // milestone, Task 3), the same way the terminal
-                        // panel below is already gated on ITS visibility —
-                        // `PaneVisibility`'s lock (`SessionTab.
-                        // paneToggleState`/`applyFilesToggleClick`, driven
-                        // by the toolbar's Files/Terminal buttons) is what
-                        // keeps this `VSplitView` from ever losing both
-                        // children at once.
-                        if tab.showsFiles {
+                        if visibility.showsFiles {
                             HSplitView {
                                 BrowserPane(
                                     title: L10n.string("browser.paneLocal", "Local"),
@@ -285,7 +294,7 @@ extension ContentView {
                             .layoutPriority(1)
                         }
 
-                        if session.terminal.isVisible {
+                        if visibility.showsTerminal {
                             terminalPanel(session)
                                 .frame(minHeight: 120, idealHeight: 220)
                         }
@@ -530,7 +539,10 @@ extension ContentView {
     /// The header is drawn for every `state` case below, INCLUDING
     /// `.closed` — deliberately no second, narrower check here. Whether
     /// there is a terminal to show a header for is already decided once, by
-    /// the caller in `detail` (`if session.terminal.isVisible { terminalPanel(session) … }`);
+    /// the caller in `detail` (`if visibility.showsTerminal { terminalPanel(session) … }`,
+    /// `visibility` being `SessionTab.effectivePaneVisibility` — see that
+    /// method's doc comment for why this reads it instead of
+    /// `session.terminal.isVisible` directly);
     /// this function only ever runs under that same condition, so reusing
     /// it (by drawing the header unconditionally inside here) cannot drift
     /// from it the way a second, independent check inside this `switch`
