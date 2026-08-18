@@ -203,3 +203,33 @@ beschrieben. Das App-Target hat kein View-Instanziierungswerkzeug; in P2
 blieb dafür nur ein Quelltext-Wächter, dessen Grenzen dokumentiert sind.
 Diese Punkte gehören in die Sichtprüfung des Maintainers am Phasenende und
 werden dort namentlich aufgeführt, nicht stillschweigend übergangen.
+
+---
+
+## Nachtrag 2026-08-18: Terminal aus dem Host-Kontextmenü (P3c)
+
+Maintainer-Feedback nach dem Dev-Build von P3a. **Nicht** Teil von P3b; eine
+eigene kleine Phase.
+
+Das Kontextmenü einer gespeicherten Sitzung bekommt unter „Verbinden" zwei
+Einträge:
+
+- **„Terminal öffnen"** — verbindet in macSCP und kommt **ohne Dateibrowser**
+  hoch, also nur das Terminal. Die Mechanik dafür steht seit P2: eine
+  Sitzung kann ihre sichtbaren Hälften selbst bestimmen.
+- **„In externem Terminal öffnen"** — übergibt an das eingestellte
+  Terminalprogramm; macSCP baut dabei **keine** eigene Verbindung auf.
+
+**Beide sind eigene Einträge**, nicht ein Eintrag, der der Einstellung
+„Terminal-Ziel" folgt (Maintainer-Entscheidung): die Entscheidung fällt pro
+Klick, nicht vorab in den Einstellungen. Die Einstellung bleibt, wofür sie
+da ist — was der Terminal-Knopf in der Symbolleiste tut.
+
+**Beide erscheinen nur, wenn die Sitzung eine Shell hat.** Für S3 und WebDAV
+sagt `BackendDescriptor.capabilities.supportsShell` nein, und dann gibt es
+die Einträge nicht — nicht ausgegraut, sondern gar nicht, weil ein
+dauerhaft toter Eintrag an einem S3-Bucket nichts erklärt.
+
+Offen bis zur Planung: ob „Terminal öffnen" einen neuen Tab aufmacht oder
+den aktiven benutzt, und was passiert, wenn die Sitzung bereits verbunden
+ist. Beides beim Planen am Code messen, nicht raten.
