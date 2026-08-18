@@ -312,3 +312,23 @@ einer ausdrücklichen Warnung im Einstellungstext.
 Ebenfalls beim Planen zu klären: ob eine Zeile beim Absenden oder beim
 Abschluss protokolliert wird, was mit einer Zeile passiert, die nie mit
 Return endet, und ob das Protokoll pro Sitzung oder global gelesen wird.
+
+## Nachtrag 2026-08-18: Export aus dem Kontextmenü, überall (P3f)
+
+Maintainer-Feedback. Eigene Phase.
+
+Exportieren soll nicht nur über Knöpfe in Sheets gehen, sondern **überall
+über das Kontextmenü** — an der Zeile, an der man ohnehin steht.
+
+**Vor der Planung am Code zu messen**, welche Listen heute exportierbare
+Dinge zeigen und was ihr Kontextmenü bereits kann: Sitzungen und Gruppen in
+der Sidebar, Login-Sets, Snippets, ggf. SSH-Schlüssel. Für jede Stelle ist
+zu klären, ob „Exportieren" dort dasselbe meint wie der vorhandene Knopf
+(Auswahl, Filter, Umfang) oder etwas Engeres — ein Kontextmenü an *einer*
+Zeile legt „nur dieses eine" nahe, der Knopf im Sheet exportiert heute die
+sichtbare Menge.
+
+Diese Uneinheitlichkeit ist der eigentliche Entwurfspunkt der Phase und
+gehört ins Brainstorming, nicht in einen Schnellschuss: „Exportieren" darf
+an zwei Stellen nicht zwei verschiedene Umfänge bedeuten, ohne dass man es
+sieht.
