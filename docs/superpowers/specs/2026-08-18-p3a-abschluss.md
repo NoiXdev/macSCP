@@ -256,3 +256,105 @@ ansehen:
 - Task 5: Der Plan behauptete, der Edit-Speicherpfad liefe über `save`; er
   läuft über `updateSession`. Ohne die Korrektur hätte das Tag-Feld für
   jede bereits existierende Sitzung ein No-Op ergeben.
+
+## Nachtrag: Was die Ganz-Phasen-Review gefunden hat
+
+Nach Abschluss aller sieben Tasks (und ihrer je eigenen Reviews) lief eine
+Review über die **ganze** Phase. Sie fand drei Dinge, die keine der
+Task-Reviews strukturell finden konnte — eine davon eine echte, in dieser
+Phase eingeführte Regression. Fix-Commits: `b0abc1f`, `4c4e9e0`, `e78c97a`.
+Suite danach: **2024 Tests in 174 Suiten**, 0 Fehlschläge (Basislinie vor
+dem Durchgang: 2018/174, selbst gemessen).
+
+### 1. Regression (kritisch): leere Gruppen verschwanden aus der UNGEFILTERTEN Sidebar
+
+`SidebarVisibility.compute` verwarf jede Gruppe ohne passende Sitzung
+**bedingungslos** (`groups.compactMap { … inGroup.isEmpty ? nil : … }`).
+Solange ein Tag aktiv ist, ist das genau das Gewünschte. Task 6 hat den
+Sidebar-`body` aber von `ForEach(viewModel.groups)` auf
+`ForEach(visibility.groupSections)` umgestellt — womit die Regel **auch
+ohne aktiven Filter** griff. Vor dieser Phase rendete die Sidebar jede
+Gruppe, leer oder nicht.
+
+Zwei nutzer-sichtbare Folgen:
+
+1. Eine über das Kontextmenü **neu angelegte Gruppe** wurde nach
+   `sessions-v2.json` geschrieben und erschien **nie** — der Nutzer legt
+   sie erneut an, und erneut, und sammelt unsichtbare Geister-Gruppen an.
+2. Zieht man die **letzte Sitzung aus einer Gruppe heraus**, verschwindet
+   deren Kopfzeile — und mit ihr das Menü (Umbenennen / Exportieren /
+   Auflösen) **und das Drop-Ziel**. Die Gruppe existiert dann nur noch im
+   Store und im „Verschieben nach"-Untermenü jeder Zeile: sie lässt sich
+   weder auflösen noch wieder befüllen.
+
+**Warum keiner der Wächter das gefangen hat — der eigentliche Merksatz.**
+Alle sieben quelltext-lesenden Wächter der Phase pinnen, **dass**
+`SidebarVisibility.compute` aufgerufen wird, nie **was es entscheidet**.
+Ein Textscanner kann diese Klasse Fehler prinzipiell nicht sehen. Die
+Antwort darauf ist deshalb ausdrücklich **kein achter Scanner**, sondern
+ein Verhaltenstest gegen den berechneten Wert: `compute` zweimal auf
+demselben Store, einmal mit und einmal ohne `activeTag`, und der
+Unterschied ist die Zusicherung
+(`SidebarVisibilityTests.anEmptyGroupIsHiddenOnlyWhileATagIsActive`, plus
+je ein Test für die beiden oben genannten Folgen). Rot/grün bewiesen.
+
+Zusätzlich hat der Doc-Kommentar des Typs die Auslassung selbst als
+Filter-Verhalten gerahmt („so a *filtered* sidebar never renders an empty
+section header") — was erklärt, warum **vier** Reviewer die Zeile als
+spec-konform gelesen haben. Der Kommentar sagt jetzt, was der Code tut.
+
+**Für eine künftige Phase:** Verhalten, das nur unter einem Filter gelten
+soll, gehört an die Filter-Bedingung, nicht an das Symptom
+(`inGroup.isEmpty`). Und wenn eine View-Schleife von einer Modell-Liste
+auf ein berechnetes Ergebnis umgestellt wird, ändert sich die Bedeutung
+jeder Bedingung in dieser Berechnung — auch der, die vorher unstrittig war.
+
+### 2. `StoredSession.tags` war ein nacktes `var` (wichtig)
+
+Drei Schreibstellen riefen `TagList.normalized` von Hand auf, jede mit
+einem eigenen erklärenden Kommentar: `SessionListViewModel.save`,
+`ConnectionViewModel.buildUpdatedSession` und
+`SessionImportPlanner.makePlanned` — letztere war in Task 3 als **echter
+Fehler** aufgefallen, weil sie es zunächst vergessen hatte. Eine vierte
+Schreibstelle hätte es genauso vergessen, und nichts wäre rot geworden.
+
+Die Regel liegt jetzt an der Eigenschaft selbst
+(`public var tags: [String] = [] { didSet { tags = TagList.normalized(tags) } }`).
+Geprüft, nicht angenommen: eine Zuweisung **innerhalb** von `didSet` löst
+den Observer nicht erneut aus (keine Rekursion), und Property-Observer
+laufen **nicht während der Initialisierung** — deshalb bleiben die
+expliziten Aufrufe im Initializer und im Decoder stehen und sind *nicht*
+redundant. Ein eigener Test hält genau das fest.
+
+Die drei expliziten Aufrufe wurden **entfernt**, nicht als doppelter Boden
+belassen: sie wären eine zweite Kopie einer Regel, die jetzt einen Ort hat,
+und ihre Kommentare wären mit dem Fix falsch geworden. Als Zugabe deckt der
+Observer auch die In-Place-Mutation (`tags.append(…)`) ab, die keine der
+drei Schreibstellen je abgedeckt hat.
+
+### 3. Drei Doc-Kommentare (klein)
+
+- `TagList`: „Only the normalization rule below is shared today" war seit
+  der `TagSuggestionRanking`-Extraktion (Task 5, Runde 2) falsch — das
+  Ranking ist ebenfalls geteilt. Benennt jetzt beides, und was **nicht**
+  geteilt ist (die Tag-Daten selbst).
+- `SidebarVisibility`: ein Core-Kommentar berief sich auf
+  `SnippetTagFilter.matches` — einen Typ im App-Target, und dazu aus dem
+  *anderen* Vokabular. Die Aussage stimmte, die Richtung nicht. Formuliert
+  jetzt die Regel in Cores eigenen Begriffen.
+- Die Ranking-Äquivalenz-Pin behauptete breitere Deckung, als sie hat: alle
+  Fälle laufen mit `prefix: ""`. Der Kommentar benennt jetzt den Umfang
+  (Zählen und Ranking, nicht Präfix-Matching) und wo Präfix-Matching
+  stattdessen abgedeckt ist.
+
+### Weiterhin zurückgestellt (bestätigte Rulings, nicht angefasst)
+
+Die vier Punkte aus „Bekannte, bewusst zurückgestellte Kleinigkeiten"
+bleiben stehen; dazu kommen aus der Ganz-Phasen-Review als **ausdrücklich
+zurückgestellt**: `TagList` kappt weder Tag-Länge noch Tag-Anzahl (ein
+handbearbeitetes Import-File kann die Chip-Reihe fluten — reines
+Layout-Problem, selbst zugefügt, ein Clamp ist eine eigene Entscheidung),
+und `.filterMatchesNothing` kann theoretisch ohne aktiven Filter gemeldet
+werden (Sitzung mit `groupID` auf eine nicht existierende Gruppe) — heute
+unerreichbar, weil `SessionStore.load` und `dissolveGroup` beide baumelnde
+IDs auf `nil` setzen.
