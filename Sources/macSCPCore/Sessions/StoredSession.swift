@@ -109,6 +109,14 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
     /// terminal on its next connect. Corrected by maintainer ruling
     /// (whole-phase re-review, item 1); see `PaneVisibility.filesOnly`.
     public var paneVisibility: PaneVisibility = .filesOnly
+    /// Free-form labels for the sidebar's tag filter. Normalized through
+    /// `TagList` on every write path — the initializer AND the decoder — so a
+    /// hand-edited store file cannot smuggle an untrimmed or duplicate tag
+    /// past the rule.
+    ///
+    /// Beside `groupID` and `paneVisibility` rather than inside `FieldValues`:
+    /// a tag is a property of the saved session, not of the protocol it speaks.
+    public var tags: [String] = []
 
     public init(
         id: UUID = UUID(),
@@ -119,7 +127,8 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         ssh: StoredSSHConfig? = nil,
         s3: StoredS3Config? = nil,
         webdav: StoredWebDAVConfig? = nil,
-        paneVisibility: PaneVisibility = .filesOnly
+        paneVisibility: PaneVisibility = .filesOnly,
+        tags: [String] = []
     ) {
         self.id = id
         self.name = name
@@ -130,17 +139,21 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         self.s3 = s3
         self.webdav = webdav
         self.paneVisibility = paneVisibility
+        self.tags = TagList.normalized(tags)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, groupID, loginSetID, kind, ssh, s3, webdav, paneVisibility
+        case id, name, groupID, loginSetID, kind, ssh, s3, webdav, paneVisibility, tags
     }
 
     /// Explicit rather than synthesized because `kind` needs its `?? .ssh`
     /// default: synthesized Codable does NOT apply a property default to a
     /// missing key, and a `sessions-v2.json` written by an earlier build of
     /// this same milestone may not carry one. `paneVisibility` needs the
-    /// same treatment for the same reason.
+    /// same treatment for the same reason. `tags` additionally routes
+    /// through `TagList.normalized` here, not just in the initializer above,
+    /// so a hand-edited store file cannot smuggle an untrimmed or duplicate
+    /// tag past the rule by skipping the initializer.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -152,6 +165,7 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         s3 = try c.decodeIfPresent(StoredS3Config.self, forKey: .s3)
         webdav = try c.decodeIfPresent(StoredWebDAVConfig.self, forKey: .webdav)
         paneVisibility = try c.decodeIfPresent(PaneVisibility.self, forKey: .paneVisibility) ?? .filesOnly
+        tags = TagList.normalized(try c.decodeIfPresent([String].self, forKey: .tags) ?? [])
     }
 
     // DEPRECATION INTENT: these exist to keep M23 Phase 1 reviewable. Phase 3

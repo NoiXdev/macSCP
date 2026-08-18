@@ -11,11 +11,12 @@ import Foundation
 ///
 /// Design intent, not yet pinned by any test: host tags and snippet tags
 /// are meant to stay INDEPENDENT vocabularies — a host tag should hide no
-/// snippet. Host tags do not exist in this codebase yet, so nothing here
-/// observes that claim; whichever later task introduces them is expected
-/// to add a test that does. Only the normalization rule below is shared
-/// today, because two copies of one rule drift apart without any test
-/// noticing.
+/// snippet. `StoredSession.tags` exists now, but nothing yet reads it to
+/// filter or hide anything, so there is still no behavior for a test to
+/// observe the claim against; whichever later task adds the sidebar filter
+/// is expected to add a test that does. Only the normalization rule below
+/// is shared today, because two copies of one rule drift apart without any
+/// test noticing.
 public enum TagList {
     public static func normalized(_ tags: [String]) -> [String] {
         var seen = Set<String>()
