@@ -233,3 +233,28 @@ dauerhaft toter Eintrag an einem S3-Bucket nichts erklärt.
 Offen bis zur Planung: ob „Terminal öffnen" einen neuen Tab aufmacht oder
 den aktiven benutzt, und was passiert, wenn die Sitzung bereits verbunden
 ist. Beides beim Planen am Code messen, nicht raten.
+
+## Nachtrag 2026-08-18: Die Snippet-Auswahl im Terminal (P3d)
+
+Maintainer-Feedback nach dem Dev-Build. **Nicht** Teil von P3b oder P3c.
+
+Die Auswahl im Terminal soll aufhören, eine Liste zu sein, die beim Klick
+sofort etwas tut. Stattdessen:
+
+- **Doppelklick auf eine Zeile** öffnet ein Fenster mit den Aktionen
+  **Einfügen**, **Ausführen** und **Abbrechen** — die Entscheidung fällt
+  also nach dem Sehen, nicht davor.
+- **Beim Überfahren** zeigt die Zeile den Befehl, der laufen würde.
+- **Kontextmenü auf jeder Zeile** mit Ausführen, Einfügen, Vorschau.
+
+Der Grund dahinter ist derselbe wie bei „sofort ausführen" in Runde 2: ein
+Klick, der einen Befehl auf einem entfernten Rechner startet, darf keine
+Nebenwirkung eines Auswahlvorgangs sein.
+
+**Vor der Planung zu klären** (nicht raten, am Code und mit dem Maintainer):
+was ein einfacher Klick dann noch tut; ob „Vorschau" dasselbe Fenster ohne
+Aktionen ist oder etwas Eigenes; ob der Befehl beim Überfahren als Tooltip
+oder als feste Zeile im Popover steht. Der Maintainer hat außerdem einen
+Screenshot der heutigen Auswahl geschickt (Suchfeld, „Regex"-Kästchen,
+Aufklappmenü) — der Ist-Zustand ist beim Planen **am Code zu messen**, nicht
+aus dem Bild abzuleiten.
