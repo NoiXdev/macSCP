@@ -224,6 +224,10 @@ struct SnippetsSheet: View {
 /// accordingly; `SnippetTagFilter`'s own single-case shape (see its doc
 /// comment) is what keeps this single-valued — there is nothing here to
 /// enforce beyond writing one case into the binding per tap.
+///
+/// The pill itself is `TagFilterChip` (P3a/T6), shared with the sidebar's
+/// host-tag filter row — this row keeps its own per-tag COUNT formatting
+/// and "No Tag" chip, which the sidebar's simpler row has no equivalent for.
 private struct SnippetTagFilterRow: View {
     let snippets: [Snippet]
     @Binding var selection: SnippetTagFilter
@@ -231,12 +235,12 @@ private struct SnippetTagFilterRow: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                SnippetTagFilterChip(
+                TagFilterChip(
                     title: L10n.string("snippets.filter.all", "All"),
                     isSelected: selection == .all,
                     onSelect: { selection = .all })
                 ForEach(SnippetTagSuggestions.all(in: snippets), id: \.tag) { entry in
-                    SnippetTagFilterChip(
+                    TagFilterChip(
                         title: String(
                             format: L10n.string(
                                 "snippets.filter.tagCount %1$@ %2$lld", "%1$@ (%2$lld)"),
@@ -246,7 +250,7 @@ private struct SnippetTagFilterRow: View {
                 }
                 let untaggedCount = snippets.filter { $0.tags.isEmpty }.count
                 if untaggedCount > 0 {
-                    SnippetTagFilterChip(
+                    TagFilterChip(
                         title: String(
                             format: L10n.string(
                                 "snippets.filter.tagCount %1$@ %2$lld", "%1$@ (%2$lld)"),
@@ -256,29 +260,6 @@ private struct SnippetTagFilterRow: View {
                 }
             }
         }
-    }
-}
-
-private struct SnippetTagFilterChip: View {
-    let title: String
-    let isSelected: Bool
-    let onSelect: () -> Void
-
-    var body: some View {
-        Button(action: onSelect) {
-            Text(title)
-                .font(.system(size: 11.5))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(
-                    isSelected ? DesignTokens.remoteSoft : Color.clear, in: Capsule()
-                )
-                .overlay(
-                    Capsule().strokeBorder(
-                        isSelected ? Color.clear : DesignTokens.hairline, lineWidth: 1)
-                )
-        }
-        .buttonStyle(.plain)
     }
 }
 

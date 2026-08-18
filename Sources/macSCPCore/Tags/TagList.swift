@@ -9,13 +9,20 @@ import Foundation
 /// list), not this function's: folding case here would silently rewrite
 /// what the user typed.
 ///
-/// Design intent, not yet pinned by any test: host tags and snippet tags
-/// are meant to stay INDEPENDENT vocabularies — a host tag should hide no
-/// snippet. `StoredSession.tags` exists now, but nothing yet reads it to
-/// filter or hide anything, so there is still no behavior for a test to
-/// observe the claim against; whichever later task adds the sidebar filter
-/// is expected to add a test that does. Only the normalization rule below
-/// is shared today, because two copies of one rule drift apart without any
+/// Design intent: host tags and snippet tags stay INDEPENDENT vocabularies —
+/// a host tag hides no snippet. Pinned by
+/// `SidebarFilterWiringTests.sessionRowsPassTheFullUnfilteredSnippetListRegardlessOfTheActiveTagFilter`
+/// (P3a/T6): `SessionSidebar` is the one place `StoredSession.tags`
+/// (filtering which sessions show) and `Snippet` (what a row's "Snippet"
+/// submenu offers) are both in scope, so that is where the claim finally
+/// became observable — `SidebarVisibility.compute` itself never receives a
+/// `Snippet` in any form (see its own doc comment), so there was nothing to
+/// pin against it directly. That test is a SOURCE-TEXT scan, not a
+/// behavioral one (no view-instantiation tool in this project — see
+/// `SessionSidebar`'s other guards for the same boundary): it pins that the
+/// row constructor is handed the unfiltered `snippets` array verbatim, not
+/// something derived from `activeTag`. Only the normalization rule below is
+/// shared today, because two copies of one rule drift apart without any
 /// test noticing.
 public enum TagList {
     public static func normalized(_ tags: [String]) -> [String] {

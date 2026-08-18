@@ -138,6 +138,15 @@ struct SessionSidebar: View {
     /// Not persisted — resets to "all expanded" on relaunch.
     @State private var collapsedGroups: Set<UUID> = []
 
+    /// The sidebar's host-tag filter (P3a/T6): `nil` means "show everything".
+    /// A VIEW, not a setting — deliberately not persisted and not routed
+    /// through `SettingsStore`, so it always starts cleared on relaunch and
+    /// never desyncs from whatever the store's sessions/tags currently are.
+    /// Fed to `SidebarVisibility.compute(activeTag:)` below, the ONE place
+    /// this value is interpreted; nothing else in this file re-derives what
+    /// it means.
+    @State private var activeTag: String?
+
     /// Shared inline-rename state: works for both session rows and group
     /// headers, since only one row can be renaming at a time.
     @State private var renamingID: UUID?
@@ -158,6 +167,23 @@ struct SessionSidebar: View {
     @State private var jumpRestoreErrorMessage: String?
 
     var body: some View {
+        // The ONE place this decides what the sidebar shows (P3a/T6) — every
+        // section, row list, imported-section gate, and empty state below
+        // reads from `visibility`; nothing else in this file re-derives any
+        // part of that decision from `session.tags` or `activeTag` directly.
+        // See `SidebarVisibility.compute`'s own doc comment for the rules.
+        let visibility = SidebarVisibility.compute(
+            sessions: viewModel.sessions,
+            groups: viewModel.groups,
+            importedHostsCount: importedHosts.count,
+            activeTag: activeTag)
+        // Not part of `visibility`: whether the filter-chip ROW itself draws
+        // at all is a separate question from what the row's chips filter —
+        // `SidebarVisibility.compute` has no opinion on the row's own
+        // visibility, only on what an already-chosen `activeTag` does to the
+        // session list.
+        let availableTags = SidebarVisibility.availableTags(in: viewModel.sessions)
+
         VStack(alignment: .leading, spacing: 0) {
             Text(L10n.string("sidebar.header", "SESSIONS"))
                 .font(.system(size: 10.5, weight: .semibold))
@@ -172,29 +198,50 @@ struct SessionSidebar: View {
                     handleDrop(items, toGroup: nil)
                 }
 
+            // Empty-store or filter-cleared: no session carries any tag, so
+            // an empty chip row would be a frame drawn over nothing.
+            if !availableTags.isEmpty {
+                HostTagFilterRow(tags: availableTags, selection: $activeTag)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 6)
+            }
+
             List {
                 Button(action: onNew) {
                     Label(L10n.string("sidebar.newConnection", "New connection"), systemImage: "plus")
                 }
                 .buttonStyle(.plain)
 
-                sessionRows(viewModel.sessions(inGroup: nil))
+                switch visibility.emptiness {
+                case .notEmpty:
+                    sessionRows(visibility.ungrouped)
 
-                ForEach(viewModel.groups) { group in
-                    Section(isExpanded: Binding(
-                        get: { !collapsedGroups.contains(group.id) },
-                        set: { expanded in
-                            if expanded { collapsedGroups.remove(group.id) }
-                            else { collapsedGroups.insert(group.id) }
+                    ForEach(visibility.groupSections, id: \.group.id) { section in
+                        Section(isExpanded: Binding(
+                            get: { !collapsedGroups.contains(section.group.id) },
+                            set: { expanded in
+                                if expanded { collapsedGroups.remove(section.group.id) }
+                                else { collapsedGroups.insert(section.group.id) }
+                            }
+                        )) {
+                            sessionRows(section.sessions)
+                        } header: {
+                            groupHeader(section.group)
                         }
-                    )) {
-                        sessionRows(viewModel.sessions(inGroup: group.id))
-                    } header: {
-                        groupHeader(group)
                     }
-                }
 
-                importedSection
+                    if visibility.showsImportedSection {
+                        importedSection
+                    }
+                case .noSessionsAtAll:
+                    emptyStateRow(
+                        message: L10n.string("sidebar.empty.noSessions", "No saved connections yet."),
+                        showsClearFilter: false)
+                case .filterMatchesNothing:
+                    emptyStateRow(
+                        message: L10n.string("sidebar.empty.noMatches", "No connection has this tag."),
+                        showsClearFilter: true)
+                }
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
@@ -208,6 +255,12 @@ struct SessionSidebar: View {
                 if newValue == nil, renamingID != nil {
                     renamingID = nil
                 }
+            }
+            .onChange(of: viewModel.sessions) { _, sessions in
+                // The active tag's last carrier was deleted, or retagged
+                // away from it: fall back to "no filter" rather than hold a
+                // selection nothing can ever match again.
+                activeTag = SidebarVisibility.resolvedTag(activeTag, in: sessions)
             }
 
             if let errorMessage = viewModel.errorMessage {
@@ -376,37 +429,63 @@ struct SessionSidebar: View {
         }
     }
 
+    /// Gated at the call site by `visibility.showsImportedSection` (P3a/T6)
+    /// — no `!importedHosts.isEmpty` check of its own any more, so there is
+    /// exactly one place deciding whether this draws, not two that could
+    /// disagree.
     @ViewBuilder
     private var importedSection: some View {
-        if !importedHosts.isEmpty {
-            Section {
-                ForEach(importedHosts, id: \.alias) { host in
-                    HStack(spacing: 8) {
-                        Image(systemName: "arrow.down.doc")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(host.alias)
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture { onSelectImported(host) }
-                    .help(L10n.string(
-                        "sidebar.importedHelp",
-                        "From ~/.ssh/config — fills the form (secrets are not imported)"))
-                    .contextMenu {
-                        Button(L10n.string("sidebar.imported.hide", "Hide")) {
-                            onHideImported(host)
-                        }
+        Section {
+            ForEach(importedHosts, id: \.alias) { host in
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.down.doc")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(host.alias)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { onSelectImported(host) }
+                .help(L10n.string(
+                    "sidebar.importedHelp",
+                    "From ~/.ssh/config — fills the form (secrets are not imported)"))
+                .contextMenu {
+                    Button(L10n.string("sidebar.imported.hide", "Hide")) {
+                        onHideImported(host)
                     }
                 }
-            } header: {
-                Text(L10n.string("sidebar.importedHeader", "IMPORTED"))
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .tracking(1.0)
-                    .foregroundStyle(DesignTokens.inkTertiary)
+            }
+        } header: {
+            Text(L10n.string("sidebar.importedHeader", "IMPORTED"))
+                .font(.system(size: 10.5, weight: .semibold))
+                .tracking(1.0)
+                .foregroundStyle(DesignTokens.inkTertiary)
+        }
+    }
+
+    /// The sidebar's empty state (P3a/T6) — this sidebar had none before:
+    /// an empty store or a filter matching nothing both used to render as
+    /// just the "New connection" button sitting above a blank list. Reads
+    /// only `visibility.emptiness`'s two empty cases; the copy differs
+    /// because the invitation differs (create a session vs. clear the
+    /// filter), and only the filter case offers the clear-filter button.
+    @ViewBuilder
+    private func emptyStateRow(message: String, showsClearFilter: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(message)
+                .foregroundStyle(.secondary)
+                .font(.callout)
+            if showsClearFilter {
+                Button(L10n.string("sidebar.empty.clearFilter", "Show all")) {
+                    activeTag = nil
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(DesignTokens.remoteBlue)
             }
         }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 4)
     }
 
     @ViewBuilder
@@ -478,6 +557,40 @@ struct SessionSidebar: View {
         guard let session = viewModel.sessions.first(where: { $0.id == sessionID }) else { return false }
         viewModel.moveSession(session, toGroup: groupID)
         return true
+    }
+}
+
+/// The sidebar's host-tag filter row (P3a/T6): "All" plus one chip per tag
+/// carried by any saved session (`tags`, already deduplicated and sorted by
+/// `SidebarVisibility.availableTags` — this view does neither itself).
+/// `selection == nil` reads as "All"; tapping a tag chip sets `selection` to
+/// it, tapping it again does nothing special (tap "All" to clear).
+///
+/// Deliberately simpler than `SnippetTagFilterRow`: no per-tag counts (a
+/// host tag's purpose is to narrow a short list by eye, not to report how
+/// many sessions carry it) and no "No Tag" chip (`SidebarVisibility.compute`
+/// has no untagged-only mode — a host tag filter is either "match this tag"
+/// or "no filter", never "sessions with zero tags"). The pill itself is the
+/// shared `TagFilterChip`.
+private struct HostTagFilterRow: View {
+    let tags: [String]
+    @Binding var selection: String?
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                TagFilterChip(
+                    title: L10n.string("sidebar.filter.all", "All"),
+                    isSelected: selection == nil,
+                    onSelect: { selection = nil })
+                ForEach(tags, id: \.self) { tag in
+                    TagFilterChip(
+                        title: tag,
+                        isSelected: selection == tag,
+                        onSelect: { selection = tag })
+                }
+            }
+        }
     }
 }
 
