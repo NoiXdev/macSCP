@@ -22,16 +22,23 @@ public struct SnippetImportPlan: Equatable, Sendable {
     public var skipped: [String]
     public var replaced: [String]
     public var renamed: [String]
+    /// How many incoming snippets were dropped for having no name at all
+    /// (see `SnippetImportPlanner.plan`). A COUNT rather than a list,
+    /// because the only thing there is to say about such an entry is that
+    /// it existed — it has no name to list it under.
+    public var namelessDiscarded: Int
     public var cancelled: Bool
 
     public init(
         snippetsToImport: [PlannedSnippet] = [], skipped: [String] = [],
-        replaced: [String] = [], renamed: [String] = [], cancelled: Bool = false
+        replaced: [String] = [], renamed: [String] = [], namelessDiscarded: Int = 0,
+        cancelled: Bool = false
     ) {
         self.snippetsToImport = snippetsToImport
         self.skipped = skipped
         self.replaced = replaced
         self.renamed = renamed
+        self.namelessDiscarded = namelessDiscarded
         self.cancelled = cancelled
     }
 }
@@ -47,6 +54,18 @@ public struct SnippetImportPlan: Equatable, Sendable {
 /// deliberately case-sensitive (`TagList.normalized`). A snippet's *name*
 /// plays the role a login set's name plays, not the role a tag plays, and
 /// the two import flows are meant to feel identical.
+///
+/// An incoming snippet whose name is empty after trimming is DROPPED before
+/// anything else happens to it, and counted in `namelessDiscarded`. Import
+/// thereby agrees with the editor, which refuses to save such a name
+/// (`SnippetEditorView.isSaveDisabled`); only a hand-edited file can carry
+/// one, since `Snippet.init?` itself validates the command, not the name.
+/// The drop lives HERE rather than in `Snippet` or in the applier: tightening
+/// `Snippet.init?` would make an existing store file holding a blank name
+/// fail to decode, turning a cosmetic problem into a store the sheet reports
+/// as unreadable, and the applier is too late — by then this planner would
+/// already have keyed two such entries on the same empty string and asked
+/// the user to resolve a conflict over an item with no name.
 ///
 /// `takenNames` is seeded from `existing` and grown with every name this run
 /// commits to (imported-unchanged, replaced, or renamed), so two renamed
@@ -77,6 +96,7 @@ public enum SnippetImportPlanner {
         var skipped: [String] = []
         var replaced: [String] = []
         var renamed: [String] = []
+        var namelessDiscarded = 0
 
         // Names are never enforced unique in the store, so `existing` can
         // legitimately contain two entries that collide under
@@ -90,6 +110,12 @@ public enum SnippetImportPlanner {
 
         for fileSnippet in incoming.snippets {
             let trimmedName = fileSnippet.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Before the collision key, so two nameless entries never meet
+            // as a conflict the user is asked about (see the type doc).
+            guard !trimmedName.isEmpty else {
+                namelessDiscarded += 1
+                continue
+            }
             let key = normalizedKey(fileSnippet.name)
 
             guard takenNames.contains(key) else {
@@ -152,7 +178,7 @@ public enum SnippetImportPlanner {
 
         return SnippetImportPlan(
             snippetsToImport: snippetsToImport, skipped: skipped, replaced: replaced,
-            renamed: renamed, cancelled: false)
+            renamed: renamed, namelessDiscarded: namelessDiscarded, cancelled: false)
     }
 
     private static func normalizedKey(_ name: String) -> String {

@@ -349,6 +349,20 @@ struct SnippetsPresentationTests {
         #expect(resolved.components(separatedBy: "\n").count == 2)
     }
 
+    /// A snippet the planner dropped for having no name is reported, not
+    /// swallowed — same rule the store-failure line follows: an import that
+    /// silently imported fewer entries than the file held would be
+    /// indistinguishable from one that worked.
+    @Test func snippetImportResultTextAddsANamelessLineOnlyWhenOneWasDropped() {
+        let applied = SnippetImportApplyResult(imported: 1, storeFailures: 0)
+        let clean = snippetImportResultText(plan: SnippetImportPlan(), applied: applied)
+        let dropped = snippetImportResultText(
+            plan: SnippetImportPlan(namelessDiscarded: 1), applied: applied)
+
+        #expect(clean.components(separatedBy: "\n").count == 1)
+        #expect(dropped.components(separatedBy: "\n").count == 2)
+    }
+
     /// The store-failures line is added only when a write actually failed.
     @Test func snippetImportResultTextAddsAFailureLineOnlyWhenAWriteFailed() {
         let plan = SnippetImportPlan()

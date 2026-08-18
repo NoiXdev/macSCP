@@ -817,6 +817,7 @@
 "snippets.delete.error" = "Nie udało się usunąć fragmentu.";
 "snippets.export" = "Eksportuj…";
 "snippets.import" = "Importuj…";
+"snippets.import.nameless %lld" = "Nie zaimportowano bez nazwy: %lld";
 "snippets.import.error" = "Nie udało się odczytać tego pliku jako fragmentów macSCP. Może to być inny rodzaj eksportu albo plik jest uszkodzony.";
 "snippets.import.result %lld" = "%lld zaimportowano";
 "snippets.editor.titleNew" = "Nowy fragment";

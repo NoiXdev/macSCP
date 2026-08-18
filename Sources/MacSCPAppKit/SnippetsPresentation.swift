@@ -135,7 +135,8 @@ func applySnippetImportPlan(_ plan: SnippetImportPlan, to store: SnippetStore) -
 /// .importResultText` builds for sessions, reduced to what this format
 /// actually has to say: a snippet carries no secret and no key file, so
 /// there is nothing here to report beyond how many landed, how many of
-/// those were a replace/rename, and whether any write failed.
+/// those were a replace/rename, how many the planner refused for having no
+/// name, and whether any write failed.
 func snippetImportResultText(plan: SnippetImportPlan, applied: SnippetImportApplyResult) -> String {
     var lines = [String(format: L10n.string(
         "snippets.import.result %lld", "%lld imported"), applied.imported)]
@@ -146,6 +147,14 @@ func snippetImportResultText(plan: SnippetImportPlan, applied: SnippetImportAppl
         lines.append(String(format: L10n.string(
             "import.result.resolved %lld %lld", "%lld replaced, %lld renamed"),
             plan.replaced.count, plan.renamed.count))
+    }
+    // Not a write failure and not a user decision: the planner refused
+    // these outright (see `SnippetImportPlanner.plan`), so the count would
+    // otherwise vanish between "the file held N" and "N-1 landed".
+    if plan.namelessDiscarded > 0 {
+        lines.append(String(format: L10n.string(
+            "snippets.import.nameless %lld", "Not imported without a name: %lld"),
+            plan.namelessDiscarded))
     }
     if applied.storeFailures > 0 {
         lines.append(String(format: L10n.string(

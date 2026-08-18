@@ -236,6 +236,45 @@ struct SnippetImportPlannerTests {
         #expect(plan.snippetsToImport[0].snippet.name == "Prod")
     }
 
+    /// Import agrees with the editor about names. `SnippetEditorView`
+    /// refuses to save a whitespace-only name (its Save button is disabled
+    /// on the trimmed-empty check), but a hand-edited file can carry one —
+    /// `Snippet.init?` only rejects a multi-line command, not a blank name.
+    /// Such an entry would otherwise import as a blank row in the sheet and
+    /// a blank Terminal-menu entry, so the planner drops it before it can
+    /// become one, and counts it so the applier's result text can say so.
+    ///
+    /// Two of them in one file would ALSO both key on the empty string, and
+    /// the second would have raised a conflict sheet asking the user about
+    /// an item with no name at all — hence the drop happens before the
+    /// collision key is computed, which `arbiterThatMustNotBeAsked` pins.
+    @Test func aNamelessSnippetIsDroppedRatherThanImportedOrArbitrated() async {
+        let nameless = Snippet(name: "   ", command: "echo one")!
+        let alsoNameless = Snippet(name: "", command: "echo two")!
+        let real = snippet("Prod")
+
+        let plan = await SnippetImportPlanner.plan(
+            existing: [], incoming: payload([nameless, alsoNameless, real]),
+            arbiter: arbiterThatMustNotBeAsked())
+
+        #expect(plan.snippetsToImport.map(\.snippet.name) == ["Prod"])
+        #expect(plan.namelessDiscarded == 2)
+        #expect(plan.skipped.isEmpty)
+        #expect(!plan.cancelled)
+    }
+
+    /// The counter-probe to the test above: a file whose every entry has a
+    /// name reports zero, so the count cannot be a constant and the app's
+    /// result alert (`snippetImportResultText`) stays a single line for an
+    /// ordinary import.
+    @Test func namelessDiscardedIsZeroWhenEveryImportedSnippetHasAName() async {
+        let plan = await SnippetImportPlanner.plan(
+            existing: [], incoming: payload([snippet("Prod")]),
+            arbiter: arbiterThatMustNotBeAsked())
+
+        #expect(plan.namelessDiscarded == 0)
+    }
+
     @Test func tagsRideAlongUnchangedThroughEveryResolution() async {
         let taggedIncoming = Snippet(name: "Prod", command: "echo hi", tags: ["ops", "prod"])!
         let existing = [snippet("Prod")]
