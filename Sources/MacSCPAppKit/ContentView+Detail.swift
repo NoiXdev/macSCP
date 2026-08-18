@@ -60,6 +60,13 @@ extension ContentView {
             onNew: { newConnection() },
             onSelectImported: { fillFromImported($0) },
             onEdit: { stored in editStored(stored) },
+            // The two terminal entries (P3c/T2). "Open Terminal" is
+            // `connectFromSidebar` with one argument added, so it cannot
+            // drift from what `onSelect` above does; "Open in External
+            // Terminal" resolves the session and launches without macSCP
+            // connecting at all.
+            onOpenTerminal: { stored in openTerminalFromSidebar(stored) },
+            onOpenExternalTerminal: { stored in openExternalTerminalFromSidebar(stored) },
             onExport: { scope in exportSheetItem = ExportSheetItem(scope: scope) },
             onImport: { showImportFileImporter = true },
             onShowAuditLog: { stored in auditLogSession = stored },

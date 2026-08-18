@@ -241,6 +241,8 @@
 
 /* Session manager (M5f) */
 "sidebar.connect" = "Connect";
+"sidebar.openTerminal" = "Open Terminal";
+"sidebar.openExternalTerminal" = "Open in External Terminal";
 "sidebar.edit" = "Edit…";
 "sidebar.rename" = "Rename";
 "sidebar.auditLog" = "Audit Log…";

@@ -73,6 +73,50 @@ enum SessionRowSnippetMenuPlan: Equatable {
     }
 }
 
+/// Whether a session row offers the two terminal entries — "Open Terminal"
+/// and "Open in External Terminal" (P3c/T2).
+///
+/// A type rather than an `if` in the context menu's body, for the reason
+/// this project has now paid for twice: a visibility decision that only
+/// exists inside a SwiftUI body is a decision no test can reach. In P2 that
+/// shape produced an empty window, and in P3a it made non-empty groups
+/// disappear; both were found by reading, not by a red test. The `if` in
+/// `SessionRow`'s menu is left with nothing to decide — it only renders the
+/// case this answers.
+///
+/// HIDDEN, not disabled, for a backend without a shell: a permanently dead
+/// "Open Terminal" on an S3 bucket explains nothing about why it is dead,
+/// and unlike the "Snippet" submenu one case up there is no reason inside it
+/// to keep reachable. The asymmetry with `SessionRowSnippetMenuPlan`'s
+/// `.backendHasNoShell` (which greys the submenu rather than removing it) is
+/// deliberate: that entry can be dead for a SECOND, temporary reason — the
+/// row is not the active tab — so it has something to say; these two are
+/// dead only ever permanently, per backend.
+///
+/// Takes the `ConnectionKind`, not a `supportsShell` boolean, so the whole
+/// decision — including the descriptor lookup that answers it — is inside
+/// the tested function. `SessionRowSnippetMenuPlan.build` takes the boolean
+/// and leaves that lookup in the view; here the lookup IS the rule, and
+/// nothing else about the row is involved.
+///
+/// Untested claim, stated rather than implied: that `SessionRow` really
+/// renders both entries for `.shown` and neither for `.hidden`. This type
+/// only proves WHICH case a kind maps to — the drawing is view code, and
+/// this project has no rendering harness (same boundary
+/// `SessionRowSnippetMenuPlan` states for itself).
+enum SessionRowTerminalMenuPlan: Equatable {
+    /// The backend has no shell (S3, WebDAV): neither entry is drawn at all.
+    case hidden
+    /// The backend has a shell (SSH): both entries are offered.
+    case shown
+
+    var isShown: Bool { self == .shown }
+
+    static func build(for kind: ConnectionKind) -> SessionRowTerminalMenuPlan {
+        BackendDescriptor.descriptor(for: kind).capabilities.supportsShell ? .shown : .hidden
+    }
+}
+
 /// Left column: stored sessions, grouped into collapsible sections. Click
 /// connects; context menus cover connect/edit/rename/move/delete on
 /// sessions, rename/dissolve on groups, and new-connection/new-group on the
@@ -90,6 +134,17 @@ struct SessionSidebar: View {
     let onNew: () -> Void
     let onSelectImported: (SSHConfigHost) -> Void
     let onEdit: (StoredSession) -> Void
+    /// Session-row "Open Terminal" entry (P3c/T2) — connects exactly the way
+    /// `onSelect` does and differs from it in the pane layout alone (the
+    /// session comes up showing the terminal instead of the file browser).
+    /// Only ever offered when the backend has a shell — see
+    /// `SessionRowTerminalMenuPlan`.
+    let onOpenTerminal: (StoredSession) -> Void
+    /// Session-row "Open in External Terminal" entry (P3c/T2) — resolves the
+    /// session's configuration and hands it to the external terminal;
+    /// macSCP itself does NOT connect. Same visibility rule as
+    /// `onOpenTerminal` above.
+    let onOpenExternalTerminal: (StoredSession) -> Void
     /// Sidebar export entries (M9a/T3): session/group/background context
     /// menus all funnel into this one callback with the scope they cover.
     let onExport: (SessionListViewModel.ExportScope) -> Void
@@ -377,6 +432,8 @@ struct SessionSidebar: View {
                 groups: viewModel.groups,
                 onSelect: { onSelect(session) },
                 onEdit: { onEdit(session) },
+                onOpenTerminal: { onOpenTerminal(session) },
+                onOpenExternalTerminal: { onOpenExternalTerminal(session) },
                 onStartRename: { startRename(id: session.id, currentName: session.name) },
                 onCommitRename: { commitSessionRename(session) },
                 onCancelRename: cancelRename,
@@ -605,6 +662,8 @@ private struct SessionRow: View {
     let groups: [StoredGroup]
     let onSelect: () -> Void
     let onEdit: () -> Void
+    let onOpenTerminal: () -> Void
+    let onOpenExternalTerminal: () -> Void
     let onStartRename: () -> Void
     let onCommitRename: () -> Void
     let onCancelRename: () -> Void
@@ -635,6 +694,14 @@ private struct SessionRow: View {
     /// there is no third state to represent, since a row that is not the
     /// active tab gets `.notTheActiveTab` regardless of whether its session
     /// happens to be open in some background tab.
+    /// Whether this row offers the two terminal entries (P3c/T2) — the whole
+    /// decision, descriptor lookup included, lives in
+    /// `SessionRowTerminalMenuPlan.build`; see its doc comment for why it is
+    /// a type and why the entries are hidden rather than disabled.
+    private var terminalPlan: SessionRowTerminalMenuPlan {
+        SessionRowTerminalMenuPlan.build(for: session.kind)
+    }
+
     private var snippetPlan: SessionRowSnippetMenuPlan {
         SessionRowSnippetMenuPlan.build(
             snippets: snippets, isActiveTab: isActive,
@@ -697,6 +764,18 @@ private struct SessionRow: View {
         .draggable(session.id.uuidString)
         .contextMenu {
             Button(L10n.string("sidebar.connect", "Connect")) { onSelect() }
+            // The two terminal entries (P3c/T2), directly under "Connect"
+            // because that is what they are: "Open Terminal" IS a connect
+            // and differs only in which half of the window comes up, and
+            // "Open in External Terminal" is the same host reached another
+            // way. Whether they appear at all is `terminalPlan`'s decision,
+            // not this `if`'s — see `SessionRowTerminalMenuPlan`.
+            if terminalPlan.isShown {
+                Button(L10n.string("sidebar.openTerminal", "Open Terminal")) { onOpenTerminal() }
+                Button(L10n.string("sidebar.openExternalTerminal", "Open in External Terminal")) {
+                    onOpenExternalTerminal()
+                }
+            }
             Button(L10n.string("sidebar.edit", "Edit…")) { onEdit() }
             Button(L10n.string("export.menu.single", "Export…")) { onExport() }
             Button(L10n.string("sidebar.rename", "Rename")) { onStartRename() }

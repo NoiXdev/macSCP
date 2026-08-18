@@ -245,6 +245,8 @@
 
 /* Gestionnaire de sessions (M5f) */
 "sidebar.connect" = "Se connecter";
+"sidebar.openTerminal" = "Ouvrir le terminal";
+"sidebar.openExternalTerminal" = "Ouvrir dans un terminal externe";
 "sidebar.edit" = "Modifier…";
 "sidebar.rename" = "Renommer";
 "sidebar.auditLog" = "Journal d'audit…";

@@ -461,6 +461,22 @@ struct SessionTabTests {
         #expect(tab.showsFiles == false)
     }
 
+    /// What the sidebar's "Open Terminal" entry means, taken through the
+    /// same restore path an ordinary connect uses (P3c/T2): the terminal is
+    /// revealed AND the file panes stay hidden. Fed the named constant that
+    /// entry actually passes, not a hand-built value that merely matches it
+    /// today — the test above already covers the hand-built shape, and the
+    /// point of this one is that `PaneVisibility.terminalOnly` IS it.
+    @Test func openTerminalsPaneChoiceRevealsTheTerminalAndHidesTheFiles() {
+        let tab = makeTab()
+        attachSession(to: tab)
+
+        let opensTerminal = tab.applyRestoredPaneVisibility(.terminalOnly, hasShell: true)
+
+        #expect(opensTerminal)
+        #expect(tab.showsFiles == false)
+    }
+
     /// `hasShell` is folded in by the single assembly point, so a session
     /// saved with a visible terminal on a backend that has none opens
     /// nothing — and the repair puts the file panes back rather than leaving

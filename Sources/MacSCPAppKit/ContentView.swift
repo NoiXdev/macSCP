@@ -916,14 +916,21 @@ struct ContentView: View {
     /// connect with nothing saved comes up on the default because the
     /// session it just built has never been told otherwise — not because
     /// some second call site remembered to reset it. What this method adds
-    /// is the one thing that cannot be structural: putting a SAVED value
-    /// back.
+    /// is the one thing that cannot be structural: putting a DECIDED value
+    /// on screen.
+    ///
+    /// Which value that is, it does not decide (P3c/T2): the caller passes
+    /// it — the session's saved one for an ordinary connect, or
+    /// `PaneVisibility.terminalOnly` for the sidebar's "Open Terminal"
+    /// entry. Taking a `PaneVisibility` rather than the `StoredSession` is
+    /// what keeps this method the single reveal path for both instead of
+    /// growing a second one beside it.
     func restorePaneVisibility(
-        for tab: SessionTab, from stored: StoredSession, descriptor: BackendDescriptor
+        for tab: SessionTab, visibility: PaneVisibility, descriptor: BackendDescriptor
     ) {
         guard let session = tab.session else { return }
         let opensTerminal = tab.applyRestoredPaneVisibility(
-            stored.paneVisibility, hasShell: descriptor.capabilities.supportsShell)
+            visibility, hasShell: descriptor.capabilities.supportsShell)
         if opensTerminal {
             session.terminal.toggle()
         }
@@ -960,9 +967,36 @@ struct ContentView: View {
         connect(in: target, stored: stored)
     }
 
+    /// Sidebar row "Open Terminal" (P3c/T2): the SAME connect a sidebar
+    /// click performs, differing in one argument — the session comes up
+    /// showing the terminal instead of the file browser.
+    ///
+    /// The tab rule (`sidebarConnectTarget`), the in-flight guard, an
+    /// already-connected session, and every failure path are therefore not
+    /// "the same as Connect" by inspection but by construction: this method
+    /// is `connectFromSidebar` plus `paneVisibility:`. Two entries that
+    /// behaved differently for no reason would only confuse.
+    func openTerminalFromSidebar(_ stored: StoredSession) {
+        let target = tabsModel.sidebarConnectTarget(
+            activeTabIsConnected: activeTab.isConnected, makeTab: makeTab)
+        connect(in: target, stored: stored, paneVisibility: .terminalOnly)
+    }
+
     /// Fills the tab's form from the store + keychain and connects right
     /// away. No teardown of any other tab.
-    func connect(in tab: SessionTab, stored: StoredSession) {
+    ///
+    /// `paneVisibility` overrides which halves the session comes up showing
+    /// (P3c/T2). `nil` — every caller but one — means "whatever this session
+    /// saved", the P2 behaviour; the sidebar's "Open Terminal" entry passes
+    /// `.terminalOnly`. That override is the ONLY thing that entry changes
+    /// about a connect: it comes through this same method, so the tab rule,
+    /// the reconnect guard, the fill, the failure handling and the audit
+    /// record are not a second implementation that could drift from this
+    /// one. Nothing is persisted either way — see `PaneVisibility
+    /// .terminalOnly`.
+    func connect(
+        in tab: SessionTab, stored: StoredSession, paneVisibility: PaneVisibility? = nil
+    ) {
         guard !tab.isReconnecting else { return }
         tab.isReconnecting = true // synchronous — locks this tab immediately, before the first await
         Task {
@@ -972,243 +1006,12 @@ struct ContentView: View {
             // session down first, never anyone else's.
             if tab.isConnected { await teardown(tab) }
             let form = tab.connectionViewModel
-            // ONE fill for every protocol (M23/T7). `kind` FIRST (M22/T8):
-            // assigning it resets `values` to that backend's defaults, so a
-            // fill that ran before it would be wiped by the protocol switch;
-            // the explicit reset below is what covers the case where `kind`
-            // does NOT change (two SSH sessions in a row) and its guarded
-            // `didSet` therefore does nothing.
-            //
-            // `sessionValues` replaces the three per-protocol field lists --
-            // and never copies `host`/`username` for an S3 or WebDAV session,
-            // which is where the `"unused"` placeholder used to enter the form.
-            form.kind = stored.kind
             let descriptor = BackendDescriptor.descriptor(for: stored.kind)
-            form.values = descriptor.defaultValues
-            form.values.merge(descriptor.sessionValues(stored))
-            form.saveName = stored.name
-            form.tags = stored.tags
-            form.shouldSaveSession = false
-
-            // Resolve what this session should actually connect with (M10b/T3):
-            // its own data for a manual session, or its set's credentials --
-            // a dangling `loginSetID` throws rather than silently falling
-            // back (`LoginResolver`'s doc comment). Identical for all three
-            // backends since M22/T9; only the SECRET field differed, which
-            // `fillSecret` now names for whichever backend is active (the S3
-            // branch filled `s3SecretAccessKey`, the other two `password`).
-            do {
-                if let resolved = try sessionListViewModel.resolvedCredentials(for: stored) {
-                    form.applyResolvedCredentials(resolved)
-                } else if descriptor.requiresSecret(form.values) {
-                    // M-6: an agent login reads no keychain at all -- avoid
-                    // the residual lookup on this path too. `requiresSecret`
-                    // is false for exactly that case and true for S3/WebDAV,
-                    // which is what the `authKind != .agent` guard meant.
-                    form.fillSecret(sessionListViewModel.password(for: stored) ?? "")
-                }
-                // M17: if this key is a managed key with a stored
-                // passphrase and none was typed, resolve it from the
-                // Keychain so the user need not re-enter it. Inert outside
-                // SSH: no other backend has a private-key auth choice.
-                if form.authChoice == .privateKey {
-                    form.password = ManagedKeyPassphrase.resolve(
-                        keyPath: form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
-                        typed: form.password,
-                        store: ManagedKeyStore(directory: SessionStore.defaultDirectory),
-                        secrets: KeychainSecretStore())
-                }
-                form.loginMode = stored.loginSetID != nil ? .set : .manual
-                form.selectedLoginSetID = stored.loginSetID
-            } catch is LoginResolveError {
-                // Missing set (target, M10c/T3): do NOT connect -- show the
-                // form instead, with the mismatch surfaced through its
-                // existing error field (spec §2/§6). The user picks a login
-                // or enters credentials. Falls back to the session's own raw
-                // values so the form isn't left half-filled: the same
-                // defaults + `sessionValues` merge as above, which leaves
-                // every secret field blank because `defaultValues` does.
-                //
-                // Kept in its OWN do/catch, independent of the jump's below
-                // (final review M-1): sharing one catch meant a JUMP-only
-                // `.missingSet` also reset this (valid) target resolution --
-                // a dangling jump set discarded a perfectly good target
-                // login pick.
-                form.values = descriptor.defaultValues
-                form.values.merge(descriptor.sessionValues(stored))
-                form.loginMode = .manual
-                form.selectedLoginSetID = nil
-                // A stale jump block from a DIFFERENT session's form must not
-                // survive this early return (F-1 fix): the jump `do`/`catch`
-                // below is never reached on this path, so apply the same
-                // raw-jump fallback it would have applied. The S3 and WebDAV
-                // branches this replaces returned WITHOUT it and so leaked a
-                // stale jump into the form on a dangling-set stop.
-                applyRawJumpFallback(form, from: stored)
-                form.showFailure(message: L10n.string(
-                    "loginSets.missingSet",
-                    "The stored login for this connection was not found. Choose a login or enter credentials."))
-                return
-            }
-
-            // Jump (M10c/T3, extended M11a/T3): same resolution as above,
-            // for the jump's OWN login — `resolvedJumpLogin` is `nil` only
-            // when the session has no jump at all; a resolved jump fills
-            // the manual-looking fields regardless of whether it came from
-            // a set or the jump's own manual secret, exactly like the
-            // target's resolution above. In its OWN do/catch (final review
-            // M-1, see comment above): a jump-only failure must fall back on
-            // the JUMP side only, leaving the target fields resolved above
-            // untouched.
-            //
-            // Session mode (`jump.sessionID` non-nil, spec §4b) branches
-            // FIRST: host/port and the login all come from the REFERENCED
-            // session via `resolvedJump(for:)`, unlike the manual/set branch
-            // below which only ever resolves the jump's OWN fields via
-            // `resolvedJumpLogin`. Each branch keeps its OWN nested do/catch
-            // (rather than one shared catch for both) so a session-mode
-            // failure highlights `.jumpSession` — the only field the
-            // session-mode UI actually renders — while a manual/set failure
-            // keeps highlighting `.jumpHost` exactly as before this feature.
-            if let jump = stored.jump {
-                form.jumpEnabled = true
-                if let sessionID = jump.sessionID {
-                    // Set BEFORE the throwing call below: on a failure the
-                    // form stays in session mode with this selection intact,
-                    // so the picker and the `.jumpSession` highlight the
-                    // failure attaches to are both visible — switching back
-                    // to manual with raw fallback values would hide the very
-                    // field the error is about.
-                    form.jumpSourceMode = .session
-                    form.jumpSessionID = sessionID
-                    do {
-                        if let resolved = try sessionListViewModel.resolvedJump(for: stored) {
-                            form.jumpHost = resolved.host
-                            form.jumpPort = String(resolved.port)
-                            form.jumpUsername = resolved.login.username
-                            form.jumpAuthChoice = ConnectionViewModel.authChoice(for: resolved.login.authKind)
-                            form.jumpKeyPath = resolved.login.keyPath ?? ""
-                            form.jumpPassword = resolved.login.secret ?? ""
-                        }
-                    } catch LoginResolveError.missingJumpSession {
-                        form.showFailure(
-                            message: L10n.string(
-                                "form.jump.session.missing",
-                                "The connection used as jump host no longer exists."),
-                            field: .jumpSession)
-                        return
-                    } catch LoginResolveError.jumpChainNotSupported {
-                        form.showFailure(
-                            message: L10n.string(
-                                "form.jump.session.chainNotSupported",
-                                "The selected jump host connects through another jump host; "
-                                    + "chains are not supported."),
-                            field: .jumpSession)
-                        return
-                    } catch LoginResolveError.jumpSessionNotSSH {
-                        form.showFailure(
-                            message: L10n.string(
-                                "form.jump.session.notSSH",
-                                "Only SSH connections can be used as a jump host."),
-                            field: .jumpSession)
-                        return
-                    } catch is LoginResolveError {
-                        // The REFERENCED session's own login set is dangling
-                        // (`.missingSet`) -- same wording the login-set
-                        // dangling-reference paths already use elsewhere.
-                        form.showFailure(
-                            message: L10n.string(
-                                "loginSets.missingSet",
-                                "The stored login for this connection was not found. "
-                                    + "Choose a login or enter credentials."),
-                            field: .jumpSession)
-                        return
-                    }
-                } else {
-                    form.jumpSourceMode = .manual
-                    form.jumpSessionID = nil
-                    form.jumpHost = jump.host
-                    form.jumpPort = String(jump.port)
-                    form.jumpLoginMode = jump.loginSetID != nil ? .set : .manual
-                    form.jumpSelectedLoginSetID = jump.loginSetID
-                    do {
-                        if let resolvedJump = try sessionListViewModel.resolvedJumpLogin(for: stored) {
-                            form.jumpUsername = resolvedJump.username
-                            form.jumpAuthChoice = ConnectionViewModel.authChoice(for: resolvedJump.authKind)
-                            form.jumpKeyPath = resolvedJump.keyPath ?? ""
-                            form.jumpPassword = resolvedJump.secret ?? ""
-                        }
-                    } catch LoginResolveError.jumpSetNotSSH {
-                        // The jump is bound to a login set of another
-                        // protocol (M28/T7). This is the only catch site the
-                        // case can reach, because it is the only one that
-                        // resolves a jump spec whose `sessionID` is nil: the
-                        // three others —
-                        // `SessionListViewModel.resolveJumpSession`,
-                        // `ConnectionFormView.jumpSessionSummary` and the
-                        // session-mode branch just above — all build or pass
-                        // a spec carrying a `sessionID`, and
-                        // `LoginResolver.resolveJump(...sessions:...)` only
-                        // delegates to the throwing overload when that is
-                        // nil; with a `sessionID` it resolves the REFERENCED
-                        // session's own login instead, where a set of the
-                        // wrong kind is `.kindMismatch`. (The remaining catch
-                        // above is the TARGET's resolution, not a jump's.)
-                        //
-                        // Only the CATCH sites are enumerated above, not the
-                        // call sites: `SessionListViewModel.exportPayload`
-                        // calls the same overload with a possibly-nil
-                        // `sessionID` too, but swallows the throw with `try?`
-                        // and falls back to the spec's raw values, so the
-                        // export writes no jump password and counts the jump
-                        // under its missing-password tally instead of
-                        // surfacing a refusal.
-                        //
-                        // The raw fallback is what keeps the refusal
-                        // meaningful on THIS path: it clears
-                        // `jumpSelectedLoginSetID` and returns the block to
-                        // Manual, so a following submit does not walk
-                        // `SessionListViewModel.resolveJumpLoginSet` into
-                        // `fillJumpForm` and copy the very credentials this
-                        // refusal is about into the form. It also blanks
-                        // `jumpPassword` — the set's secret was never read.
-                        // Editing such a session
-                        // (`ConnectionViewModel.beginEditing`) reaches the
-                        // same submit with no resolution and no fallback at
-                        // all; the `kind` guard inside
-                        // `SessionListViewModel.resolveJumpLoginSet` is what
-                        // covers that route.
-                        applyRawJumpFallback(form, from: stored)
-                        form.showFailure(
-                            message: L10n.string(
-                                "form.jump.set.notSSH",
-                                "The jump host uses a stored login that is not an SSH login. "
-                                    + "Choose an SSH login for the jump host, or enter its "
-                                    + "user name and password here."),
-                            field: .jumpHost)
-                        return
-                    } catch is LoginResolveError {
-                        // Missing set (jump only): the target fields resolved
-                        // above stay untouched — only the jump falls back to
-                        // its raw manual-looking values, and `field:
-                        // .jumpHost` (not the target's `.host`) highlights
-                        // the right row. Shares the fallback with the target
-                        // catch above (F-1 fix) so both early-return paths
-                        // leave the jump block in the identical,
-                        // fully-reset-or-fully-raw state.
-                        applyRawJumpFallback(form, from: stored)
-                        form.showFailure(
-                            message: L10n.string(
-                                "loginSets.missingSet",
-                                "The stored login for this connection was not found. "
-                                    + "Choose a login or enter credentials."),
-                            field: .jumpHost)
-                        return
-                    }
-                }
-            } else {
-                form.clearJumpFields()
-            }
+            // ONE fill for every protocol, shared with the sidebar's
+            // "Open in External Terminal" entry — see `fillForm`. A `false`
+            // means it already published the reason on THIS form, which is
+            // on screen, so there is nothing more to show here.
+            guard try fillForm(form, from: stored) else { return }
 
             if let fs = await form.connect() {
                 // Accept only usable absolute paths (M9d final review): an
@@ -1223,7 +1026,16 @@ struct ContentView: View {
                 // that `startSession` has built a fresh `BrowserSession` for
                 // it. Reuses `descriptor` (already resolved above for
                 // `stored.kind`) rather than re-deriving it.
-                restorePaneVisibility(for: tab, from: stored, descriptor: descriptor)
+                //
+                // `paneVisibility ?? stored.paneVisibility` (P3c/T2): the
+                // caller's override wins, and with none — the ordinary
+                // Connect — this is byte-for-byte the saved value P2 put
+                // back. Resolved HERE rather than inside
+                // `restorePaneVisibility`, which stays the "put a value
+                // back" step and gains no opinion about where it came from.
+                restorePaneVisibility(
+                    for: tab, visibility: paneVisibility ?? stored.paneVisibility,
+                    descriptor: descriptor)
                 // Audit recorder (M9b/T3): this IS the stored-session connect
                 // path — attach right after `activeStoredSessionID`, once
                 // `tab.session` (set inside `startSession`) exists.
@@ -1248,6 +1060,275 @@ struct ContentView: View {
                     viaJumpHost: form.jumpEnabled ? form.jumpHost : nil)
             }
         }
+    }
+
+
+    /// Fills `form` from a stored session — the ONE fill both callers of a
+    /// stored session's data share (P3c/T2): the connect below, and the
+    /// sidebar's "Open in External Terminal" entry, which resolves the very
+    /// same form and hands the result to a launcher instead of dialling it.
+    /// Writing these steps a second time for the second caller is the defect
+    /// this milestone exists to avoid; `ConnectionViewModel
+    /// .resolveConfigWithoutDialing()` is its Core-side half.
+    ///
+    /// Returns `false` when it refused, having published the reason on
+    /// `form` (`showFailure`) exactly as this code did when it was inline —
+    /// so the caller that HAS this form on screen needs to do nothing, and
+    /// the caller that does not can read the message back off `form.state`
+    /// and put it somewhere the user can see. The `field:` each refusal
+    /// carries is meaningful only to the on-screen form; nothing is lost by
+    /// the other caller ignoring it.
+    ///
+    /// Every branch here is the code that used to live inline in
+    /// `connect(in:stored:paneVisibility:)`, moved unchanged — the comments
+    /// below still describe their own decisions and their own review
+    /// history.
+    ///
+    /// `throws` because it always could: the resolution calls inside catch
+    /// `LoginResolveError` and nothing else, and anything else they raise
+    /// (a keychain read, say) travelled straight out of the enclosing `Task`
+    /// when this code was inline. Declaring it keeps that shape visible
+    /// instead of turning it into a `try?` that would swallow the difference
+    /// between "refused for a reason" and "something went wrong".
+    func fillForm(_ form: ConnectionViewModel, from stored: StoredSession) throws -> Bool {
+        // ONE fill for every protocol (M23/T7). `kind` FIRST (M22/T8):
+        // assigning it resets `values` to that backend's defaults, so a
+        // fill that ran before it would be wiped by the protocol switch;
+        // the explicit reset below is what covers the case where `kind`
+        // does NOT change (two SSH sessions in a row) and its guarded
+        // `didSet` therefore does nothing.
+        //
+        // `sessionValues` replaces the three per-protocol field lists --
+        // and never copies `host`/`username` for an S3 or WebDAV session,
+        // which is where the `"unused"` placeholder used to enter the form.
+        form.kind = stored.kind
+        let descriptor = BackendDescriptor.descriptor(for: stored.kind)
+        form.values = descriptor.defaultValues
+        form.values.merge(descriptor.sessionValues(stored))
+        form.saveName = stored.name
+        form.tags = stored.tags
+        form.shouldSaveSession = false
+
+        // Resolve what this session should actually connect with (M10b/T3):
+        // its own data for a manual session, or its set's credentials --
+        // a dangling `loginSetID` throws rather than silently falling
+        // back (`LoginResolver`'s doc comment). Identical for all three
+        // backends since M22/T9; only the SECRET field differed, which
+        // `fillSecret` now names for whichever backend is active (the S3
+        // branch filled `s3SecretAccessKey`, the other two `password`).
+        do {
+            if let resolved = try sessionListViewModel.resolvedCredentials(for: stored) {
+                form.applyResolvedCredentials(resolved)
+            } else if descriptor.requiresSecret(form.values) {
+                // M-6: an agent login reads no keychain at all -- avoid
+                // the residual lookup on this path too. `requiresSecret`
+                // is false for exactly that case and true for S3/WebDAV,
+                // which is what the `authKind != .agent` guard meant.
+                form.fillSecret(sessionListViewModel.password(for: stored) ?? "")
+            }
+            // M17: if this key is a managed key with a stored
+            // passphrase and none was typed, resolve it from the
+            // Keychain so the user need not re-enter it. Inert outside
+            // SSH: no other backend has a private-key auth choice.
+            if form.authChoice == .privateKey {
+                form.password = ManagedKeyPassphrase.resolve(
+                    keyPath: form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
+                    typed: form.password,
+                    store: ManagedKeyStore(directory: SessionStore.defaultDirectory),
+                    secrets: KeychainSecretStore())
+            }
+            form.loginMode = stored.loginSetID != nil ? .set : .manual
+            form.selectedLoginSetID = stored.loginSetID
+        } catch is LoginResolveError {
+            // Missing set (target, M10c/T3): do NOT connect -- show the
+            // form instead, with the mismatch surfaced through its
+            // existing error field (spec §2/§6). The user picks a login
+            // or enters credentials. Falls back to the session's own raw
+            // values so the form isn't left half-filled: the same
+            // defaults + `sessionValues` merge as above, which leaves
+            // every secret field blank because `defaultValues` does.
+            //
+            // Kept in its OWN do/catch, independent of the jump's below
+            // (final review M-1): sharing one catch meant a JUMP-only
+            // `.missingSet` also reset this (valid) target resolution --
+            // a dangling jump set discarded a perfectly good target
+            // login pick.
+            form.values = descriptor.defaultValues
+            form.values.merge(descriptor.sessionValues(stored))
+            form.loginMode = .manual
+            form.selectedLoginSetID = nil
+            // A stale jump block from a DIFFERENT session's form must not
+            // survive this early return (F-1 fix): the jump `do`/`catch`
+            // below is never reached on this path, so apply the same
+            // raw-jump fallback it would have applied. The S3 and WebDAV
+            // branches this replaces returned WITHOUT it and so leaked a
+            // stale jump into the form on a dangling-set stop.
+            applyRawJumpFallback(form, from: stored)
+            form.showFailure(message: L10n.string(
+                "loginSets.missingSet",
+                "The stored login for this connection was not found. Choose a login or enter credentials."))
+            return false
+        }
+
+        // Jump (M10c/T3, extended M11a/T3): same resolution as above,
+        // for the jump's OWN login — `resolvedJumpLogin` is `nil` only
+        // when the session has no jump at all; a resolved jump fills
+        // the manual-looking fields regardless of whether it came from
+        // a set or the jump's own manual secret, exactly like the
+        // target's resolution above. In its OWN do/catch (final review
+        // M-1, see comment above): a jump-only failure must fall back on
+        // the JUMP side only, leaving the target fields resolved above
+        // untouched.
+        //
+        // Session mode (`jump.sessionID` non-nil, spec §4b) branches
+        // FIRST: host/port and the login all come from the REFERENCED
+        // session via `resolvedJump(for:)`, unlike the manual/set branch
+        // below which only ever resolves the jump's OWN fields via
+        // `resolvedJumpLogin`. Each branch keeps its OWN nested do/catch
+        // (rather than one shared catch for both) so a session-mode
+        // failure highlights `.jumpSession` — the only field the
+        // session-mode UI actually renders — while a manual/set failure
+        // keeps highlighting `.jumpHost` exactly as before this feature.
+        if let jump = stored.jump {
+            form.jumpEnabled = true
+            if let sessionID = jump.sessionID {
+                // Set BEFORE the throwing call below: on a failure the
+                // form stays in session mode with this selection intact,
+                // so the picker and the `.jumpSession` highlight the
+                // failure attaches to are both visible — switching back
+                // to manual with raw fallback values would hide the very
+                // field the error is about.
+                form.jumpSourceMode = .session
+                form.jumpSessionID = sessionID
+                do {
+                    if let resolved = try sessionListViewModel.resolvedJump(for: stored) {
+                        form.jumpHost = resolved.host
+                        form.jumpPort = String(resolved.port)
+                        form.jumpUsername = resolved.login.username
+                        form.jumpAuthChoice = ConnectionViewModel.authChoice(for: resolved.login.authKind)
+                        form.jumpKeyPath = resolved.login.keyPath ?? ""
+                        form.jumpPassword = resolved.login.secret ?? ""
+                    }
+                } catch LoginResolveError.missingJumpSession {
+                    form.showFailure(
+                        message: L10n.string(
+                            "form.jump.session.missing",
+                            "The connection used as jump host no longer exists."),
+                        field: .jumpSession)
+                    return false
+                } catch LoginResolveError.jumpChainNotSupported {
+                    form.showFailure(
+                        message: L10n.string(
+                            "form.jump.session.chainNotSupported",
+                            "The selected jump host connects through another jump host; "
+                                + "chains are not supported."),
+                        field: .jumpSession)
+                    return false
+                } catch LoginResolveError.jumpSessionNotSSH {
+                    form.showFailure(
+                        message: L10n.string(
+                            "form.jump.session.notSSH",
+                            "Only SSH connections can be used as a jump host."),
+                        field: .jumpSession)
+                    return false
+                } catch is LoginResolveError {
+                    // The REFERENCED session's own login set is dangling
+                    // (`.missingSet`) -- same wording the login-set
+                    // dangling-reference paths already use elsewhere.
+                    form.showFailure(
+                        message: L10n.string(
+                            "loginSets.missingSet",
+                            "The stored login for this connection was not found. "
+                                + "Choose a login or enter credentials."),
+                        field: .jumpSession)
+                    return false
+                }
+            } else {
+                form.jumpSourceMode = .manual
+                form.jumpSessionID = nil
+                form.jumpHost = jump.host
+                form.jumpPort = String(jump.port)
+                form.jumpLoginMode = jump.loginSetID != nil ? .set : .manual
+                form.jumpSelectedLoginSetID = jump.loginSetID
+                do {
+                    if let resolvedJump = try sessionListViewModel.resolvedJumpLogin(for: stored) {
+                        form.jumpUsername = resolvedJump.username
+                        form.jumpAuthChoice = ConnectionViewModel.authChoice(for: resolvedJump.authKind)
+                        form.jumpKeyPath = resolvedJump.keyPath ?? ""
+                        form.jumpPassword = resolvedJump.secret ?? ""
+                    }
+                } catch LoginResolveError.jumpSetNotSSH {
+                    // The jump is bound to a login set of another
+                    // protocol (M28/T7). This is the only catch site the
+                    // case can reach, because it is the only one that
+                    // resolves a jump spec whose `sessionID` is nil: the
+                    // three others —
+                    // `SessionListViewModel.resolveJumpSession`,
+                    // `ConnectionFormView.jumpSessionSummary` and the
+                    // session-mode branch just above — all build or pass
+                    // a spec carrying a `sessionID`, and
+                    // `LoginResolver.resolveJump(...sessions:...)` only
+                    // delegates to the throwing overload when that is
+                    // nil; with a `sessionID` it resolves the REFERENCED
+                    // session's own login instead, where a set of the
+                    // wrong kind is `.kindMismatch`. (The remaining catch
+                    // above is the TARGET's resolution, not a jump's.)
+                    //
+                    // Only the CATCH sites are enumerated above, not the
+                    // call sites: `SessionListViewModel.exportPayload`
+                    // calls the same overload with a possibly-nil
+                    // `sessionID` too, but swallows the throw with `try?`
+                    // and falls back to the spec's raw values, so the
+                    // export writes no jump password and counts the jump
+                    // under its missing-password tally instead of
+                    // surfacing a refusal.
+                    //
+                    // The raw fallback is what keeps the refusal
+                    // meaningful on THIS path: it clears
+                    // `jumpSelectedLoginSetID` and returns the block to
+                    // Manual, so a following submit does not walk
+                    // `SessionListViewModel.resolveJumpLoginSet` into
+                    // `fillJumpForm` and copy the very credentials this
+                    // refusal is about into the form. It also blanks
+                    // `jumpPassword` — the set's secret was never read.
+                    // Editing such a session
+                    // (`ConnectionViewModel.beginEditing`) reaches the
+                    // same submit with no resolution and no fallback at
+                    // all; the `kind` guard inside
+                    // `SessionListViewModel.resolveJumpLoginSet` is what
+                    // covers that route.
+                    applyRawJumpFallback(form, from: stored)
+                    form.showFailure(
+                        message: L10n.string(
+                            "form.jump.set.notSSH",
+                            "The jump host uses a stored login that is not an SSH login. "
+                                + "Choose an SSH login for the jump host, or enter its "
+                                + "user name and password here."),
+                        field: .jumpHost)
+                    return false
+                } catch is LoginResolveError {
+                    // Missing set (jump only): the target fields resolved
+                    // above stay untouched — only the jump falls back to
+                    // its raw manual-looking values, and `field:
+                    // .jumpHost` (not the target's `.host`) highlights
+                    // the right row. Shares the fallback with the target
+                    // catch above (F-1 fix) so both early-return paths
+                    // leave the jump block in the identical,
+                    // fully-reset-or-fully-raw state.
+                    applyRawJumpFallback(form, from: stored)
+                    form.showFailure(
+                        message: L10n.string(
+                            "loginSets.missingSet",
+                            "The stored login for this connection was not found. "
+                                + "Choose a login or enter credentials."),
+                        field: .jumpHost)
+                    return false
+                }
+            }
+        } else {
+            form.clearJumpFields()
+        }
+        return true
     }
 
     /// Fills the jump block from the session's own raw JumpSpec values (no set
@@ -1446,6 +1527,87 @@ struct ContentView: View {
         // in practice — a connected tab always has one, set by
         // `ConnectionViewModel.connect()` on success): nothing to open.
         guard tab.isConnected, let config = tab.connectionViewModel.lastConnectedConfig else { return }
+        requestExternalTerminal(config: config)
+    }
+
+    /// Sidebar row "Open in External Terminal" (P3c/T2): resolves what this
+    /// session WOULD connect with and hands it to the external terminal.
+    /// macSCP itself does not connect, opens no tab, and touches no other
+    /// tab's form.
+    ///
+    /// The form is a throwaway, built here and gone when this method
+    /// returns. Two reasons it is not a tab's form: filling a visible form
+    /// would overwrite whatever the user has typed into the unconnected tab
+    /// on screen, and — the reason that matters more — the resolved config
+    /// carries a plaintext secret, so the object holding it must not outlive
+    /// the call. `disconnect` clears `lastConnectedConfig` for exactly that
+    /// reason (`ConnectionViewModel.clearRetainedSecrets`), and this route
+    /// deliberately creates no second place clearing would have to reach.
+    /// Its connector throws rather than dialling: the one path that could
+    /// turn this into a connection is closed structurally, not by
+    /// convention. Nothing here calls it.
+    ///
+    /// Both refusals — the fill's (a dangling login set, a jump that no
+    /// longer resolves) and the resolution's (a missing secret, a jump the
+    /// config rejects) — are shown, in the same alert an
+    /// `ExternalTerminalLauncher.LaunchError` uses. They have to be shown
+    /// HERE: `resolveConfigWithoutDialing` publishes nothing by design
+    /// (P3c/T1), and the throwaway form the fill publishes onto is on no
+    /// screen, so an ignored failure would be a silent no-op.
+    func openExternalTerminalFromSidebar(_ stored: StoredSession) {
+        let form = ConnectionViewModel(connector: { _, _ in
+            throw RemoteFSError.connectionFailed(
+                reason: "the external-terminal route resolves a configuration and never dials it")
+        })
+        do {
+            guard try fillForm(form, from: stored) else {
+                presentExternalTerminalFailure(form.state)
+                return
+            }
+        } catch {
+            // Not a refusal but a failure (see `fillForm`'s `throws`). The
+            // connect path lets this escape its `Task` and shows nothing;
+            // here there is a place to put it, so it goes there — same
+            // `localizedDescription` fallback `performExternalOpen` uses for
+            // an error it has no specific wording for.
+            externalTerminalErrorMessage = error.localizedDescription
+            return
+        }
+        switch form.resolveConfigWithoutDialing() {
+        case .failed(let failure):
+            presentExternalTerminalFailure(failure)
+        case .resolved(let config):
+            // Defensive: the entry is hidden for every backend without a
+            // shell (`SessionRowTerminalMenuPlan`), and SSH is the only one
+            // that has one, so a non-SSH config cannot arrive here.
+            guard case .ssh(let ssh) = config else { return }
+            requestExternalTerminal(config: ssh)
+        }
+    }
+
+    /// Puts a `ConnectionViewModel.State` that refused into the external
+    /// terminal's own error alert (P3c/T2) — the same surface a launch
+    /// failure uses, so the sidebar route has no failure display of its own.
+    ///
+    /// The `field:` such a state carries is dropped on purpose: it names a
+    /// row of a connection form, and this route has none on screen. Only the
+    /// message is shown, and a message never contains a secret (Core builds
+    /// them from `CoreL10n` keys). A state that is not `.failed` cannot
+    /// reach here, and would show nothing if it did.
+    private func presentExternalTerminalFailure(_ state: ConnectionViewModel.State) {
+        guard case .failed(let message, _) = state else { return }
+        externalTerminalErrorMessage = message
+    }
+
+    /// The shared body of both external-terminal routes (P3c/T2): picks the
+    /// app to launch and shows the password hint before the first launch of
+    /// a password login, or opens straight away.
+    ///
+    /// Split out of `requestExternalTerminal(for:)` rather than duplicated,
+    /// so the sidebar route cannot bypass that hint — the whole point of the
+    /// hint is that the password ends up in a launch script, which is as
+    /// true for a session macSCP never connected to as for one it did.
+    func requestExternalTerminal(config: SSHConnectionConfig) {
         // The menu route ignores `terminalTarget` (it always means
         // "external"); the toolbar route already checked it before calling
         // here, but `.builtIn` still needs a concrete target to launch.

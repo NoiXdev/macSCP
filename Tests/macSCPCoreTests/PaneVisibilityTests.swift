@@ -4,6 +4,18 @@ import Testing
 
 @Suite("PaneVisibility")
 struct PaneVisibilityTests {
+    /// `terminalOnly` (P3c/T2) really is the terminal WITHOUT the file
+    /// panes — the layout the sidebar's "Open Terminal" entry names. Both
+    /// halves are pinned, not just the terminal one: a value that turned out
+    /// to be `bothVisible` under another name would still open a terminal
+    /// and would silently keep the file browser the entry exists to omit.
+    /// It is also a legal value on its own — `showsTerminal` survives the
+    /// repairing initializer, which only ever fires for "neither visible".
+    @Test func terminalOnlyIsTheTerminalWithoutTheFilePanes() {
+        #expect(PaneVisibility.terminalOnly.showsTerminal)
+        #expect(PaneVisibility.terminalOnly.showsFiles == false)
+    }
+
     /// Both halves visible is the ordinary state, and both toggles are live.
     @Test func withBothVisibleEitherCanBeTurnedOff() {
         let visibility = PaneVisibility(showsFiles: true, showsTerminal: true)

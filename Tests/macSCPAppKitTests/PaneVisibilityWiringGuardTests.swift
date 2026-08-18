@@ -88,10 +88,13 @@ struct PaneVisibilityWiringGuardTests {
         let source = try String(contentsOf: Self.contentViewFile, encoding: .utf8)
         let lines = source.components(separatedBy: "\n")
         guard let range = Self.range(
-            ofBlockStartingWith: "func connect(in tab: SessionTab, stored: StoredSession) {",
+            ofBlockStartingWith: "in tab: SessionTab, stored: StoredSession, paneVisibility:",
             in: lines)
         else {
-            Issue.record("`connect(in tab: SessionTab, stored: StoredSession) {` not found — re-anchor this guard")
+            Issue.record("""
+                `connect(in:stored:paneVisibility:)`'s parameter line not found — re-anchor \
+                this guard
+                """)
             return
         }
         let callsRestorePaneVisibility = range.contains { lines[$0].contains("restorePaneVisibility(") }

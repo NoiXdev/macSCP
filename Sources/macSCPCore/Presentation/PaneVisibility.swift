@@ -81,6 +81,30 @@ public struct PaneVisibility: Equatable, Sendable, Codable {
     /// legacy counterpart.
     public static let filesOnly = PaneVisibility(showsFiles: true, showsTerminal: false)
 
+    /// The terminal alone, no file panes: the layout a session comes up in
+    /// when it was opened through the sidebar row's "Open Terminal" entry
+    /// (P3c/T2).
+    ///
+    /// A named constant rather than a `PaneVisibility(showsFiles: false,
+    /// showsTerminal: true)` spelled out at the one call site, for the same
+    /// reason `filesOnly` above is one: this is what a feature MEANS, and a
+    /// second call site that ever wants the same layout must not have to
+    /// re-derive which two booleans express it.
+    ///
+    /// NOT a stored default and never written to `StoredSession`: the entry
+    /// picks this layout for the connect it starts, and the session's own
+    /// saved `paneVisibility` is left exactly as it was — only a later
+    /// toggle click persists anything (see `ContentView.
+    /// persistActivePaneVisibility`).
+    ///
+    /// Safe on a backend without a shell even though nothing here folds
+    /// `hasShell` in: `SessionTab.applyRestoredPaneVisibility` runs the
+    /// terminal half through `effectivePaneVisibility`, which forces
+    /// `showsTerminal` off without a shell and lets the repairing
+    /// initializer promote files back on. The entry that produces this value
+    /// is hidden for such a backend anyway (`SessionRowTerminalMenuPlan`).
+    public static let terminalOnly = PaneVisibility(showsFiles: false, showsTerminal: true)
+
     /// Decodes leniently: a value that is BROKEN rather than merely absent
     /// falls back to `filesOnly`'s halves instead of throwing — the same
     /// "nothing usable recorded" default a missing key gets.

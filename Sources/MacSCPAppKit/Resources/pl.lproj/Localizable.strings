@@ -244,6 +244,8 @@
 
 /* Menedżer sesji (M5f) */
 "sidebar.connect" = "Połącz";
+"sidebar.openTerminal" = "Otwórz terminal";
+"sidebar.openExternalTerminal" = "Otwórz w zewnętrznym terminalu";
 "sidebar.edit" = "Edytuj…";
 "sidebar.rename" = "Zmień nazwę";
 "sidebar.auditLog" = "Dziennik audytu…";
