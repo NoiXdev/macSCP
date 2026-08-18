@@ -15,6 +15,13 @@ import Testing
 /// against `TagSuggestionRanking` directly, and against each other on
 /// identical tag data, so a drift in either direction fails here even if it
 /// fails nowhere else.
+///
+/// Scope, precisely: every case below passes `prefix: ""`, so what is
+/// pinned is drift in COUNTING and RANKING, not in prefix matching. A
+/// caller that reimplemented prefix filtering differently would slip past
+/// this suite; that is caught instead by each type's own prefix tests
+/// (`HostTagSuggestionsTests`, `SnippetTagSuggestionsTests`), which is why
+/// broadening this suite would duplicate coverage rather than add it.
 @Suite("Tag suggestion ranking equivalence")
 struct TagSuggestionRankingEquivalenceTests {
     private static let sampleTagLists = [["Docker", "rare"], ["docker", "common"], ["common"]]

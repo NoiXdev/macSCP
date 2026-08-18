@@ -102,13 +102,15 @@ public struct SidebarVisibility: Equatable, Sendable {
     ///
     /// `activeTag == nil` is "no filter": every session shows, every group
     /// shows (empty ones included — see `groupSections`), and the imported
-    /// section shows whenever `importedHostsCount > 0`. A non-nil
-    /// `activeTag` keeps only
-    /// sessions whose `tags` contain it — compared exactly, the same
-    /// case-sensitive rule `TagList.normalized` stores by and
-    /// `SnippetTagFilter.matches` reads by, so a differently-cased spelling
-    /// is a non-match here too — and always hides the imported section,
-    /// regardless of `importedHostsCount`.
+    /// section shows whenever `importedHostsCount > 0`.
+    ///
+    /// A non-nil `activeTag` keeps only sessions whose `tags` contain it,
+    /// compared exactly — against the case `TagList.normalized` deliberately
+    /// preserves instead of folding, so a differently-cased spelling is a
+    /// non-match here. Damping near-duplicates is the input control's job (a
+    /// case-insensitive suggestion list), which is what lets this comparison
+    /// stay exact. A non-nil `activeTag` also always hides the imported
+    /// section, regardless of `importedHostsCount`.
     ///
     /// `emptiness` is `.notEmpty` whenever there is at least one ungrouped
     /// session, one group section (which without a filter includes an empty

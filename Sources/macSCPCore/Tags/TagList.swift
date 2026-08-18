@@ -21,9 +21,17 @@ import Foundation
 /// behavioral one (no view-instantiation tool in this project — see
 /// `SessionSidebar`'s other guards for the same boundary): it pins that the
 /// row constructor is handed the unfiltered `snippets` array verbatim, not
-/// something derived from `activeTag`. Only the normalization rule below is
-/// shared today, because two copies of one rule drift apart without any
-/// test noticing.
+/// something derived from `activeTag`.
+///
+/// Independent VOCABULARIES, shared MACHINERY: two things now serve both
+/// sides — the normalization rule below, and `TagSuggestionRanking`, the
+/// counting-and-ranking engine behind both suggestion lists (extracted in
+/// P3a/T5, which also folded the sidebar's filter-chip row onto it). Both
+/// are shared for the same reason, that two copies of one rule drift apart
+/// without any test noticing, and both carry an equivalence pin against
+/// exactly that drift (`TagListTests`, `TagSuggestionRankingEquivalenceTests`).
+/// What is NOT shared is the tag data itself: a host tag and a snippet tag
+/// never meet.
 public enum TagList {
     public static func normalized(_ tags: [String]) -> [String] {
         var seen = Set<String>()
