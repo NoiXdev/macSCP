@@ -3,10 +3,11 @@ import Testing
 import macSCPCore
 @testable import MacSCPAppKit
 
-/// The password hint is the one place in the app where a resolved config
-/// outlives the call that produced it. It must not carry a secret while it
-/// waits: view state is reached by neither `disconnect` nor
-/// `clearRetainedSecrets`.
+/// The password hint is one of two places in the app where a resolved config
+/// outlives the call that produced it -- the other being
+/// `ConnectionViewModel.lastConnectedConfig`, redacted the same way at
+/// assignment. It must not carry a secret while it waits: view state is
+/// reached by neither `disconnect` nor `clearRetainedSecrets`.
 ///
 /// `@MainActor` mirrors `ExternalTerminalLauncherTests`: `ContentView` is a
 /// SwiftUI `View`, and its main-actor isolation is the kind of thing that

@@ -1642,13 +1642,23 @@ struct ContentView: View {
             target = settingsStore.terminalTarget
         }
 
-        if case .password = config.auth, !settingsStore.externalTerminalPasswordHintShown {
+        // Redacted once, up front, and used on BOTH branches below: neither
+        // reads a secret (`ExternalTerminalLauncher.open` only ever hands
+        // `config` to `SSHCommandBuilder`, which reads host/port/username/key
+        // *path*/jump — never a password or passphrase, `ssh` prompts for it
+        // itself), so there is no reason for only the hint branch to redact.
+        // The `if case .password` gate below still works after redaction:
+        // `redactingSecrets()` keeps the auth CASE, only emptying the
+        // payload.
+        let redacted = config.redactingSecrets()
+
+        if case .password = redacted.auth, !settingsStore.externalTerminalPasswordHintShown {
             pendingPasswordHintRequest = ExternalTerminalRequest(
-                config: config, target: target, customPath: customPath)
+                config: redacted, target: target, customPath: customPath)
             return
         }
         Task {
-            await performExternalOpen(config: config, target: target, customPath: customPath)
+            await performExternalOpen(config: redacted, target: target, customPath: customPath)
         }
     }
 
