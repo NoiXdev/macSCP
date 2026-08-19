@@ -620,15 +620,20 @@ struct ContentView: View {
             persistActivePaneVisibility()
         }
         terminal.openIfNeeded()
-        terminal.send(SnippetKeystrokes.bytes(for: snippet, execute: execute))
 
         // Only an EXECUTION is an event: an inserted snippet still sits in
-        // the prompt and can be edited before it runs. Recorded after the
-        // send CALL, not after delivery -- `TerminalPanelViewModel.send(_:)`
-        // gives no delivery guarantee, so a shell that fails to open still
-        // drops the buffered bytes while this entry stands.
-        if execute {
-            activeTab.auditRecorder?.recordAction(
+        // the prompt and can be edited before it runs. Recorded from
+        // `send`'s delivery callback rather than after the call, so a shell
+        // that never opens -- the bytes buffered and then discarded -- leaves
+        // no entry claiming the snippet ran.
+        let bytes = SnippetKeystrokes.bytes(for: snippet, execute: execute)
+        guard execute else {
+            terminal.send(bytes)
+            return
+        }
+        let recorder = activeTab.auditRecorder
+        terminal.send(bytes) {
+            recorder?.recordAction(
                 AuditEvent(kind: .snippetExecuted, detail: SnippetAuditDetail.text(for: snippet)))
         }
     }

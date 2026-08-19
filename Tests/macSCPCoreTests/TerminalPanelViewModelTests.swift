@@ -474,3 +474,63 @@ actor ShellFactory {
         return shell
     }
 }
+
+/// `send(_:onDelivered:)` exists so a caller can record what actually went
+/// out. The audit log's snippet entry hangs on it: before P5 the entry was
+/// written right after the send CALL, so a shell that failed to open left an
+/// entry claiming a snippet ran when its bytes were buffered and discarded.
+@Suite("TerminalPanelViewModel delivery callback")
+@MainActor
+struct TerminalPanelViewModelDeliveryTests {
+    private final class Box: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _count = 0
+        var count: Int { lock.lock(); defer { lock.unlock() }; return _count }
+        func bump() { lock.lock(); _count += 1; lock.unlock() }
+    }
+
+    @Test func firesOnceWhenTheShellIsRunning() async throws {
+        let shell = MockShell()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
+        vm.openIfNeeded()
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        let delivered = Box()
+        vm.send([0x61]) { delivered.bump() }
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        #expect(delivered.count == 1)
+    }
+
+    @Test func waitsForTheFlushWhenTheShellIsStillOpening() async throws {
+        let shell = MockShell()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in
+            try await Task.sleep(nanoseconds: 80_000_000)
+            return shell
+        })
+        vm.openIfNeeded()
+
+        let delivered = Box()
+        vm.send([0x61]) { delivered.bump() }
+        // Still buffered: the shell has not opened yet.
+        #expect(delivered.count == 0)
+
+        try await Task.sleep(nanoseconds: 250_000_000)
+        #expect(delivered.count == 1)
+    }
+
+    @Test func neverFiresWhenTheOpenFails() async throws {
+        struct OpenFailure: Error {}
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in throw OpenFailure() })
+        vm.openIfNeeded()
+
+        let delivered = Box()
+        vm.send([0x61]) { delivered.bump() }
+        try await Task.sleep(nanoseconds: 200_000_000)
+
+        #expect(delivered.count == 0)
+        if case .ended = vm.state {} else {
+            Issue.record("expected the panel to end after a failed open, got \(vm.state)")
+        }
+    }
+}

@@ -46,6 +46,14 @@ public final class TerminalPanelViewModel {
     private var pendingBytes: [UInt8] = []
     private static let maxPendingBytes = 64 * 1024
 
+    /// Delivery callbacks belonging to the bytes in `pendingBytes`, kept
+    /// beside them because the buffer is a flat byte array: several buffered
+    /// `send(_:onDelivered:)` calls merge into one, so their callbacks
+    /// cannot be recovered from it. Discarded together with the bytes
+    /// wherever an open attempt gives up -- a caller that never got its
+    /// bytes out must not be told they went.
+    private var pendingDeliveries: [@MainActor () -> Void] = []
+
     private let openShell: ShellOpener
     private var shell: (any RemoteShell)?
     private var readTask: Task<Void, Never>?
@@ -77,7 +85,7 @@ public final class TerminalPanelViewModel {
         state = .opening
         replayBuffer = []
         replayBytes = 0
-        pendingBytes = []
+        discardPendingInput()
         cancelPendingSends()
         generation += 1
         let myGeneration = generation
@@ -125,7 +133,7 @@ public final class TerminalPanelViewModel {
                 // releasing up to `maxPendingBytes` now instead of at the
                 // next `openIfNeeded()`/`shutdown()`. The `.ended` message
                 // below is what actually tells the user the input is gone.
-                pendingBytes = []
+                discardPendingInput()
                 state = .ended(String(
                     format: CoreL10n.string("core.terminal.openFailed %@"),
                     error.localizedDescription))
@@ -149,7 +157,7 @@ public final class TerminalPanelViewModel {
         guard generation == readGeneration else { return }
         shell = nil
         readTask = nil
-        pendingBytes = []
+        discardPendingInput()
         cancelPendingSends()
         state = .ended(message)
     }
@@ -177,11 +185,25 @@ public final class TerminalPanelViewModel {
     /// later `send(_:)` can slip in front of the buffered bytes: order is
     /// preserved without touching the `sendTask` chain, which takes over from
     /// here.
+    /// Drops buffered input AND the callbacks that belong to it. One helper
+    /// rather than two assignments at each site, so a later drop path cannot
+    /// clear the bytes and leave a callback behind that would then report a
+    /// delivery which never happened.
+    private func discardPendingInput() {
+        pendingBytes = []
+        pendingDeliveries = []
+    }
+
     private func flushPendingBytes() {
         guard !pendingBytes.isEmpty else { return }
         let buffered = pendingBytes
-        pendingBytes = []
-        send(buffered)
+        let deliveries = pendingDeliveries
+        discardPendingInput()
+        if deliveries.isEmpty {
+            send(buffered)
+        } else {
+            send(buffered) { for fire in deliveries { fire() } }
+        }
     }
 
     /// Sends keyboard bytes to the shell. Calls are chained in FIFO order —
@@ -193,18 +215,26 @@ public final class TerminalPanelViewModel {
     /// as it runs (see `pendingBytes`). In every other shell-less state
     /// (`.closed`, `.ended`) they are dropped: nothing is on its way that
     /// could ever deliver them.
-    public func send(_ bytes: [UInt8]) {
+    public func send(_ bytes: [UInt8], onDelivered: (@MainActor () -> Void)? = nil) {
         guard let shell else {
             if state == .opening {
                 pendingBytes.append(
                     contentsOf: bytes.prefix(Self.maxPendingBytes - pendingBytes.count))
+                if let onDelivered { pendingDeliveries.append(onDelivered) }
             }
             return
         }
         let previous = sendTask
         sendTask = Task {
             await previous?.value
-            try? await shell.send(bytes)
+            do {
+                try await shell.send(bytes)
+                onDelivered?()
+            } catch {
+                // Swallowed as before -- a send error ends the read loop
+                // anyway. It is deliberately NOT a delivery: the callback
+                // exists so a caller can record what actually went out.
+            }
         }
     }
 
@@ -239,7 +269,7 @@ public final class TerminalPanelViewModel {
         // the just-closed shell and may simply run out or no-op — otherwise
         // `shutdown()` could block on a hanging `send()`.
         cancelPendingSends()
-        pendingBytes = []
+        discardPendingInput()
         replayBuffer = []
         replayBytes = 0
         state = .closed
