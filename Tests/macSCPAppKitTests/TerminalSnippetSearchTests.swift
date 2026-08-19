@@ -19,15 +19,15 @@ struct TerminalSnippetSearchTests {
     }
 
     @Test func emptyQueryMatchesEverySnippet() throws {
-        let a = try #require(Snippet(name: "a", command: "df -h"))
-        let b = try #require(Snippet(name: "b", command: "uptime"))
+        let a = Snippet(name: "a", command: "df -h")
+        let b = Snippet(name: "b", command: "uptime")
 
         #expect(TerminalSnippetSearch.matching([a, b], predicate: predicate("")) == [a, b])
     }
 
     @Test func matchesByNameCaseInsensitively() throws {
-        let disk = try #require(Snippet(name: "Disk usage", command: "df -h"))
-        let uptime = try #require(Snippet(name: "Uptime", command: "uptime"))
+        let disk = Snippet(name: "Disk usage", command: "df -h")
+        let uptime = Snippet(name: "Uptime", command: "uptime")
 
         #expect(
             TerminalSnippetSearch.matching([disk, uptime], predicate: predicate("disk")) == [disk])
@@ -37,22 +37,22 @@ struct TerminalSnippetSearchTests {
     /// "name command" — the same two fields `SnippetsSheet`'s own inline
     /// search filters on (see that view's search line).
     @Test func matchesByCommandNotJustName() throws {
-        let disk = try #require(Snippet(name: "Disk usage", command: "df -h"))
-        let load = try #require(Snippet(name: "Load", command: "uptime"))
+        let disk = Snippet(name: "Disk usage", command: "df -h")
+        let load = Snippet(name: "Load", command: "uptime")
 
         #expect(
             TerminalSnippetSearch.matching([disk, load], predicate: predicate("uptime")) == [load])
     }
 
     @Test func noMatchYieldsAnEmptyList() throws {
-        let snippet = try #require(Snippet(name: "a", command: "b"))
+        let snippet = Snippet(name: "a", command: "b")
 
         #expect(TerminalSnippetSearch.matching([snippet], predicate: predicate("zzz")).isEmpty)
     }
 
     @Test func regexQueriesAreHonored() throws {
-        let matching = try #require(Snippet(name: "restart-nginx", command: "systemctl restart nginx"))
-        let other = try #require(Snippet(name: "uptime", command: "uptime"))
+        let matching = Snippet(name: "restart-nginx", command: "systemctl restart nginx")
+        let other = Snippet(name: "uptime", command: "uptime")
 
         let regexPredicate = predicate("^restart", isRegex: true)
 
@@ -67,8 +67,8 @@ struct TerminalSnippetSearchTests {
     /// own grouping tests failed, that would mean the two disagree; it does
     /// not re-prove `build`'s grouping rules itself.
     @Test func theNarrowedListStillGroupsThroughSnippetMenuModel() throws {
-        let match = try #require(Snippet(name: "match", command: "c", tags: ["x"]))
-        let other = try #require(Snippet(name: "other", command: "c", tags: ["x"]))
+        let match = Snippet(name: "match", command: "c", tags: ["x"])
+        let other = Snippet(name: "other", command: "c", tags: ["x"])
 
         let narrowed = TerminalSnippetSearch.matching([match, other], predicate: predicate("match"))
         let model = SnippetMenuModel.build(snippets: narrowed, isConnected: true, supportsShell: true)

@@ -43,7 +43,7 @@ struct TagSuggestionRankingEquivalenceTests {
 
     @Test func snippetTagSuggestionsAgreesWithTheSharedRankingEngine() throws {
         let snippets = try Self.sampleTagLists.enumerated().map { index, tags in
-            try #require(Snippet(name: "s\(index)", command: "c", tags: tags))
+            Snippet(name: "s\(index)", command: "c", tags: tags)
         }
 
         let expected = TagSuggestionRanking.matching("", tagLists: Self.sampleTagLists, excluding: ["rare"])
@@ -70,7 +70,7 @@ struct TagSuggestionRankingEquivalenceTests {
     /// same engine underneath a different element type.
     @Test func snippetAndHostSuggestionsAgreeOnIdenticalTagData() throws {
         let snippets = try Self.sampleTagLists.enumerated().map { index, tags in
-            try #require(Snippet(name: "s\(index)", command: "c", tags: tags))
+            Snippet(name: "s\(index)", command: "c", tags: tags)
         }
         let sessions = Self.sampleTagLists.enumerated().map { index, tags -> StoredSession in
             var session = sshSession(name: "h\(index)", host: "h", username: "u")

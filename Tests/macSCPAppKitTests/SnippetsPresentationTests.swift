@@ -35,21 +35,22 @@ struct SnippetsPresentationTests {
     @Test func aSavedSnippetLoads() throws {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let snippet = try #require(Snippet(name: "Disk", command: "df -h"))
+        let snippet = Snippet(name: "Disk", command: "df -h")
         try store.save(snippet)
 
         #expect(SnippetsLoad(reading: store) == .loaded([snippet]))
     }
 
     /// The whole point: a file that exists and cannot be decoded is NOT an
-    /// empty list. One hand-edited multi-line command is enough to get there
-    /// — the same file shape `aHandEditedMultiLineCommandDoesNotDecode`
-    /// makes `SnippetStore.all()` throw on.
+    /// empty list. A missing `command` field is enough to get there — a
+    /// multi-line command, by contrast, decodes fine now (snippet editor,
+    /// part 2), so it no longer serves as the "undecodable" shape this test
+    /// needs.
     @Test func anUndecodableStoreIsUnreadableRatherThanEmpty() throws {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let json = #"[{"id":"\#(UUID().uuidString)","name":"x","command":"a\nb","runsImmediately":false}]"#
+        let json = #"[{"id":"\#(UUID().uuidString)","name":"x","runsImmediately":false}]"#
         try Data(json.utf8).write(to: dir.appendingPathComponent("snippets.json"))
 
         let load = SnippetsLoad(reading: store)
@@ -82,16 +83,16 @@ struct SnippetsPresentationTests {
     // MARK: - SnippetTagFilter
 
     @Test func allMatchesEverySnippetRegardlessOfTags() throws {
-        let tagged = try #require(Snippet(name: "a", command: "a", tags: ["x"]))
-        let untagged = try #require(Snippet(name: "b", command: "b"))
+        let tagged = Snippet(name: "a", command: "a", tags: ["x"])
+        let untagged = Snippet(name: "b", command: "b")
 
         #expect(SnippetTagFilter.all.matches(tagged))
         #expect(SnippetTagFilter.all.matches(untagged))
     }
 
     @Test func tagMatchesOnlyASnippetCarryingThatExactTag() throws {
-        let docker = try #require(Snippet(name: "a", command: "a", tags: ["Docker"]))
-        let other = try #require(Snippet(name: "b", command: "b", tags: ["compose"]))
+        let docker = Snippet(name: "a", command: "a", tags: ["Docker"])
+        let other = Snippet(name: "b", command: "b", tags: ["compose"])
 
         #expect(SnippetTagFilter.tag("Docker").matches(docker))
         #expect(!SnippetTagFilter.tag("Docker").matches(other))
@@ -102,14 +103,14 @@ struct SnippetsPresentationTests {
     /// match a differently-cased tag that happens to be a different snippet
     /// entirely as far as the store is concerned.
     @Test func tagComparesCaseSensitively() throws {
-        let lowercase = try #require(Snippet(name: "a", command: "a", tags: ["docker"]))
+        let lowercase = Snippet(name: "a", command: "a", tags: ["docker"])
 
         #expect(!SnippetTagFilter.tag("Docker").matches(lowercase))
     }
 
     @Test func untaggedMatchesOnlyASnippetWithNoTagsAtAll() throws {
-        let untagged = try #require(Snippet(name: "a", command: "a"))
-        let tagged = try #require(Snippet(name: "b", command: "b", tags: ["x"]))
+        let untagged = Snippet(name: "a", command: "a")
+        let tagged = Snippet(name: "b", command: "b", tags: ["x"])
 
         #expect(SnippetTagFilter.untagged.matches(untagged))
         #expect(!SnippetTagFilter.untagged.matches(tagged))
@@ -133,7 +134,7 @@ struct SnippetsPresentationTests {
     // MARK: - snippetsCanExport
 
     @Test func exportIsEnabledWhenTheStoreLoadedAndAtLeastOneRowIsVisible() throws {
-        let snippet = try #require(Snippet(name: "Disk", command: "df -h"))
+        let snippet = Snippet(name: "Disk", command: "df -h")
         #expect(snippetsCanExport(load: .loaded([snippet]), visibleSnippets: [snippet]))
     }
 
@@ -147,7 +148,7 @@ struct SnippetsPresentationTests {
     /// incidentally empty for `.unreadable` — this pins the state, not just
     /// today's derivation of it.
     @Test func exportIsDisabledForAnUnreadableStoreEvenIfVisibleSnippetsWereNonEmpty() throws {
-        let snippet = try #require(Snippet(name: "Disk", command: "df -h"))
+        let snippet = Snippet(name: "Disk", command: "df -h")
         #expect(!snippetsCanExport(load: .unreadable, visibleSnippets: [snippet]))
     }
 
@@ -157,7 +158,7 @@ struct SnippetsPresentationTests {
     @Test func applySnippetImportPlanAddsAFreshSnippet() throws {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let snippet = try #require(Snippet(name: "Disk", command: "df -h"))
+        let snippet = Snippet(name: "Disk", command: "df -h")
         let plan = SnippetImportPlan(
             snippetsToImport: [PlannedSnippet(snippet: snippet, replacesExisting: false)])
 
@@ -179,10 +180,9 @@ struct SnippetsPresentationTests {
     @Test func applySnippetImportPlanReplacesRatherThanDuplicating() throws {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let existing = try #require(Snippet(name: "Prod", command: "echo old"))
+        let existing = Snippet(name: "Prod", command: "echo old")
         try store.save(existing)
-        let replacement = try #require(
-            Snippet(id: existing.id, name: "Prod", command: "echo new"))
+        let replacement = Snippet(id: existing.id, name: "Prod", command: "echo new")
         let plan = SnippetImportPlan(
             snippetsToImport: [PlannedSnippet(snippet: replacement, replacesExisting: true)],
             replaced: ["Prod"])
@@ -218,12 +218,12 @@ struct SnippetsPresentationTests {
     @Test func aRealExportRoundTripsThroughThePlannerAndTheApplierIntoTheStore() async throws {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let stored = try #require(Snippet(name: "Prod", command: "echo old", tags: ["prod"]))
+        let stored = Snippet(name: "Prod", command: "echo old", tags: ["prod"])
         try store.save(stored)
 
-        let colliding = try #require(Snippet(
-            name: "prod", command: "docker compose up -d", tags: ["Docker", "docker"]))
-        let fresh = try #require(Snippet(name: "Disk", command: "df -h"))
+        let colliding = Snippet(
+            name: "prod", command: "docker compose up -d", tags: ["Docker", "docker"])
+        let fresh = Snippet(name: "Disk", command: "df -h")
         let file = try SnippetExportCodec.encode(
             SnippetExportPayload(snippets: [colliding, fresh]))
         let decoded = try SnippetExportCodec.decode(file)
@@ -253,7 +253,7 @@ struct SnippetsPresentationTests {
     @Test func applySnippetImportPlanWritesNothingForACancelledPlan() throws {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let existing = try #require(Snippet(name: "Existing", command: "true"))
+        let existing = Snippet(name: "Existing", command: "true")
         try store.save(existing)
 
         let applied = applySnippetImportPlan(SnippetImportPlan(cancelled: true), to: store)
@@ -275,7 +275,7 @@ struct SnippetsPresentationTests {
         // uses to simulate an unwritable store.
         try Data("blocked".utf8).write(to: dir)
         let store = SnippetStore(directory: dir)
-        let snippet = try #require(Snippet(name: "Disk", command: "df -h"))
+        let snippet = Snippet(name: "Disk", command: "df -h")
         let plan = SnippetImportPlan(
             snippetsToImport: [PlannedSnippet(snippet: snippet, replacesExisting: false)])
 

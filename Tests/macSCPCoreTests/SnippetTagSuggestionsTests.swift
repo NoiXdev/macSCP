@@ -9,7 +9,7 @@ struct SnippetTagSuggestionsTests {
     /// existing differently-cased tag, so the user picks it instead of creating
     /// a second one. The store keeps the case; only the search ignores it.
     @Test func aLowercasePrefixFindsADifferentlyCasedTag() throws {
-        let snippets = [try #require(Snippet(name: "n", command: "c", tags: ["Docker"]))]
+        let snippets = [Snippet(name: "n", command: "c", tags: ["Docker"])]
 
         let matches = SnippetTagSuggestions.matching("doc", in: snippets, excluding: [])
 
@@ -18,7 +18,7 @@ struct SnippetTagSuggestionsTests {
 
     /// A tag already on the snippet being edited is not offered again.
     @Test func aTagAlreadyTakenIsNotOffered() throws {
-        let snippets = [try #require(Snippet(name: "n", command: "c", tags: ["docker"]))]
+        let snippets = [Snippet(name: "n", command: "c", tags: ["docker"])]
 
         let matches = SnippetTagSuggestions.matching("doc", in: snippets, excluding: ["docker"])
 
@@ -28,8 +28,8 @@ struct SnippetTagSuggestionsTests {
     /// Counts drive the order, so the tags in heaviest use come first.
     @Test func theMostUsedTagComesFirst() throws {
         let snippets = [
-            try #require(Snippet(name: "a", command: "c", tags: ["rare", "common"])),
-            try #require(Snippet(name: "b", command: "c", tags: ["common"])),
+            Snippet(name: "a", command: "c", tags: ["rare", "common"]),
+            Snippet(name: "b", command: "c", tags: ["common"]),
         ]
 
         let all = SnippetTagSuggestions.all(in: snippets)
@@ -41,7 +41,7 @@ struct SnippetTagSuggestionsTests {
     /// An empty prefix offers everything not already taken — that is what the
     /// list shows when the field is focused but empty.
     @Test func anEmptyPrefixOffersEverythingUntaken() throws {
-        let snippets = [try #require(Snippet(name: "n", command: "c", tags: ["a", "b"]))]
+        let snippets = [Snippet(name: "n", command: "c", tags: ["a", "b"])]
 
         let matches = SnippetTagSuggestions.matching("", in: snippets, excluding: ["a"])
 
@@ -54,7 +54,7 @@ struct SnippetTagSuggestionsTests {
     /// would fail if `matching` ignored the prefix entirely and only applied
     /// `excluding`. This test exists to close that gap.
     @Test func aPrefixExcludesNonMatchingTags() throws {
-        let snippets = [try #require(Snippet(name: "n", command: "c", tags: ["docker", "vim"]))]
+        let snippets = [Snippet(name: "n", command: "c", tags: ["docker", "vim"])]
 
         let matches = SnippetTagSuggestions.matching("doc", in: snippets, excluding: [])
 
@@ -67,7 +67,7 @@ struct SnippetTagSuggestionsTests {
     /// capitalized tag before every lowercase one).
     @Test func tiedCountsBreakAlphabeticallyCaseInsensitively() throws {
         let snippets = [
-            try #require(Snippet(name: "a", command: "c", tags: ["Banana", "apple", "cherry"])),
+            Snippet(name: "a", command: "c", tags: ["Banana", "apple", "cherry"]),
         ]
 
         let all = SnippetTagSuggestions.all(in: snippets)
@@ -85,8 +85,8 @@ struct SnippetTagSuggestionsTests {
     /// pass; this test is the one that isolates the case-insensitive branch.
     @Test func aTagTakenInADifferentCaseIsNotOffered() throws {
         let snippets = [
-            try #require(Snippet(name: "a", command: "c", tags: ["docker"])),
-            try #require(Snippet(name: "b", command: "c", tags: ["Docker"])),
+            Snippet(name: "a", command: "c", tags: ["docker"]),
+            Snippet(name: "b", command: "c", tags: ["Docker"]),
         ]
 
         let matches = SnippetTagSuggestions.matching("doc", in: snippets, excluding: ["docker"])
@@ -102,8 +102,8 @@ struct SnippetTagSuggestionsTests {
     /// merged counts by a lowercased key would otherwise go unnoticed.
     @Test func differentlyCasedTagsAreCountedSeparately() throws {
         let snippets = [
-            try #require(Snippet(name: "a", command: "c", tags: ["Docker"])),
-            try #require(Snippet(name: "b", command: "c", tags: ["docker"])),
+            Snippet(name: "a", command: "c", tags: ["Docker"]),
+            Snippet(name: "b", command: "c", tags: ["docker"]),
         ]
 
         let all = SnippetTagSuggestions.all(in: snippets)

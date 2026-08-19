@@ -67,23 +67,4 @@ struct SnippetHighlighterTests {
         #expect(spans(text, .command) == ["cp"])
         #expect(spans(text, .plain) == ["source", "target"])
     }
-
-    // --- newline rejection ----------------------------------------------
-
-    /// `Snippet.init?` refuses any newline, and an `NSTextView` accepts
-    /// Return by default. Pasting a two-line command must therefore become
-    /// one line rather than a value the model rejects on save.
-    @Test func newlinesBecomeSpaces() {
-        #expect(SnippetCommandInput.sanitized("a\nb") == "a b")
-    }
-
-    /// CRLF is ONE `Character` in Swift, so a naive `contains("\n")` misses
-    /// it -- the same trap `Snippet.init?` was fixed for in P3e.
-    @Test func aCarriageReturnLineFeedAlsoBecomesOneSpace() {
-        #expect(SnippetCommandInput.sanitized("a\r\nb") == "a b")
-    }
-
-    @Test func textWithoutNewlinesIsUnchanged() {
-        #expect(SnippetCommandInput.sanitized("docker ps -a") == "docker ps -a")
-    }
 }

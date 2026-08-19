@@ -6,7 +6,7 @@ import Testing
 struct SnippetExportCodecTests {
     @Test func aRoundTripPreservesNameCommandAndTags() throws {
         let snippet = Snippet(name: "Clean up", command: "docker system prune -f",
-                              tags: ["docker"])!
+                              tags: ["docker"])
         let data = try SnippetExportCodec.encode(SnippetExportPayload(snippets: [snippet]))
         let restored = try SnippetExportCodec.decode(data)
         #expect(restored.snippets == [snippet])
@@ -18,7 +18,7 @@ struct SnippetExportCodecTests {
     /// truthfully labeled `"encrypted" : false` rather than silently
     /// omitting the field.
     @Test func theWrittenFileIsPlainTextAndSaysSoInsteadOfClaimingEncryption() throws {
-        let snippet = Snippet(name: "Clean up", command: "docker system prune -f")!
+        let snippet = Snippet(name: "Clean up", command: "docker system prune -f")
         let data = try SnippetExportCodec.encode(SnippetExportPayload(snippets: [snippet]))
         let text = String(decoding: data, as: UTF8.self)
         #expect(text.contains("docker system prune -f"))
@@ -51,14 +51,16 @@ struct SnippetExportCodecTests {
         }
     }
 
-    /// `Snippet.init(from:)` refuses a multi-line command (see that type's
-    /// doc comment), so this shape can never come out of `SnippetExportCodec
-    /// .encode` itself — it can only arrive as a hand-edited or corrupted
-    /// file. Built as literal JSON, not re-encoded, for exactly that reason.
+    /// A command missing its `command` field can never come out of
+    /// `SnippetExportCodec.encode` itself — it can only arrive as a
+    /// hand-edited or corrupted file. Built as literal JSON, not re-encoded,
+    /// for exactly that reason. (A multi-line command, by contrast, decodes
+    /// fine now — see `SnippetTests.multilineCommandSurvivesEncoding` — so
+    /// it no longer serves as the "damaged" shape this test needs.)
     ///
     /// `ExportEnvelopeCodec`'s private `envelope(from:)` decodes the whole
     /// `Envelope<P>` (header AND nested payload) through a single `try?`, so
-    /// a payload-level failure — the damaged snippet, in this case — comes
+    /// a payload-level failure — the missing field, in this case — comes
     /// out as `.notAnExportFile`, the same generic "not a recognizable
     /// export" error as a garbled file, not as the underlying `DecodingError`
     /// and not as a partial result with the bad entry dropped.
@@ -70,7 +72,6 @@ struct SnippetExportCodecTests {
               "payload" : {
                 "snippets" : [
                   {
-                    "command" : "echo one\\necho two",
                     "id" : "11111111-1111-1111-1111-111111111111",
                     "name" : "Broken",
                     "tags" : [ ]

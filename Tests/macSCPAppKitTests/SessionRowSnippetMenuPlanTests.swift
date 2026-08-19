@@ -14,7 +14,7 @@ import macSCPCore
 @Suite("SessionRowSnippetMenuPlan")
 struct SessionRowSnippetMenuPlanTests {
     private func snippet(_ name: String) -> Snippet {
-        Snippet(name: name, command: "echo \(name)")!
+        Snippet(name: name, command: "echo \(name)")
     }
 
     @Test func aShellLessBackendWinsRegardlessOfTabState() {

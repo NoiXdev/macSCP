@@ -15,21 +15,17 @@ import macSCPCore
 ///    undoes colours instead of text.
 /// 3. **Binding loop.** text change → binding → `updateNSView` → text
 ///    change. The guard is comparing the string before assigning it.
-/// 4. **Newlines.** `Snippet.init?` refuses them; `SnippetCommandInput`
-///    turns them into spaces before the binding ever sees them. Newlines
-///    can reach this field two ways: pasted as part of a multi-line
-///    string, or typed as Return. A pasted newline hits
-///    `shouldChangeTextIn:replacementString:` below, which sanitizes it to
-///    a space. A typed Return is handled separately: the `Coordinator`
-///    claims `insertNewline(_:)` in `doCommandBy:` and returns `true`
-///    without inserting anything, so *if* this text view is the one to
-///    receive the keystroke, it does nothing. Whether the text view is the
-///    one to receive it is a different, unverified question: AppKit may
-///    instead route the unmodified Return to the sheet's
-///    `.keyboardShortcut(.defaultAction)` Save button before this view
-///    ever sees it. Both outcomes are acceptable for a single-line field —
-///    the keystroke either does nothing here or triggers Save — but which
-///    one actually happens was not confirmed by running the app.
+/// 4. **Newlines.** A command may now span lines (snippet editor, part 2),
+///    so a pasted multi-line string is accepted as-is. A typed Return is
+///    still handled separately: the `Coordinator` claims `insertNewline(_:)`
+///    in `doCommandBy:` and returns `true` without inserting anything, so
+///    *if* this text view is the one to receive the keystroke, it does
+///    nothing. Whether the text view is the one to receive it is a
+///    different, unverified question: AppKit may instead route the
+///    unmodified Return to the sheet's `.keyboardShortcut(.defaultAction)`
+///    Save button before this view ever sees it. Reconciling typed Return
+///    with a field that now accepts multi-line content is a later task in
+///    this milestone.
 /// 5. **Automatic substitutions.** An `NSTextField`'s field editor disables
 ///    smart quotes, smart dashes, automatic text replacement, spelling
 ///    correction, and smart insert/delete by default; a raw `NSTextView`
@@ -132,20 +128,6 @@ struct SnippetCommandEditor: NSViewRepresentable {
         var parent: SnippetCommandEditor
 
         init(_ parent: SnippetCommandEditor) { self.parent = parent }
-
-        /// Hazard 4: a pasted multi-line command becomes spaces before
-        /// anything else sees them. A typed Return does not reach here —
-        /// `doCommandBy:` below claims `insertNewline(_:)` first.
-        func textView(
-            _ textView: NSTextView, shouldChangeTextIn range: NSRange,
-            replacementString: String?
-        ) -> Bool {
-            guard let replacement = replacementString else { return true }
-            let cleaned = SnippetCommandInput.sanitized(replacement)
-            guard cleaned != replacement else { return true }
-            textView.insertText(cleaned, replacementRange: range)
-            return false
-        }
 
         /// Hazard 6: a raw `NSTextView` inserts a literal tab character for
         /// both selectors by default; claim them here instead so Tab (and

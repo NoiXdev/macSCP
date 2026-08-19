@@ -12,7 +12,7 @@ import macSCPCore
 @Suite("SnippetMenuPlan")
 struct SnippetMenuItemsTests {
     private func snippet(_ name: String, tags: [String] = []) -> Snippet {
-        Snippet(name: name, command: "echo \(name)", tags: tags)!
+        Snippet(name: name, command: "echo \(name)", tags: tags)
     }
 
     @Test func firstThreeSnippetsInStoreOrderGetInsertShortcuts() {

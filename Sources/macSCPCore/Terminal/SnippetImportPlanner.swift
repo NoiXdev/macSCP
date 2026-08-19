@@ -59,13 +59,14 @@ public struct SnippetImportPlan: Equatable, Sendable {
 /// anything else happens to it, and counted in `namelessDiscarded`. Import
 /// thereby agrees with the editor, which refuses to save such a name
 /// (`SnippetEditorView.isSaveDisabled`); only a hand-edited file can carry
-/// one, since `Snippet.init?` itself validates the command, not the name.
-/// The drop lives HERE rather than in `Snippet` or in the applier: tightening
-/// `Snippet.init?` would make an existing store file holding a blank name
-/// fail to decode, turning a cosmetic problem into a store the sheet reports
-/// as unreadable, and the applier is too late — by then this planner would
-/// already have keyed two such entries on the same empty string and asked
-/// the user to resolve a conflict over an item with no name.
+/// one, since `Snippet`'s initializer performs no validation of its own.
+/// The drop lives HERE rather than in `Snippet` or in the applier: adding
+/// name validation to `Snippet` would make an existing store file holding a
+/// blank name fail to decode, turning a cosmetic problem into a store the
+/// sheet reports as unreadable, and the applier is too late — by then this
+/// planner would already have keyed two such entries on the same empty
+/// string and asked the user to resolve a conflict over an item with no
+/// name.
 ///
 /// `takenNames` is seeded from `existing` and grown with every name this run
 /// commits to (imported-unchanged, replaced, or renamed), so two renamed
@@ -198,12 +199,8 @@ public enum SnippetImportPlanner {
     }
 
     /// Rebuilds `fileSnippet` under a possibly-new id and name, carrying its
-    /// command and tags over unchanged. The force-unwrap is safe:
-    /// `Snippet.init?` only fails on a multi-line command, and
-    /// `fileSnippet.command` already passed that check when `fileSnippet`
-    /// itself was constructed (decode goes through the same failable init),
-    /// so re-wrapping the same command can never fail here.
+    /// command and tags over unchanged.
     private static func makeSnippet(from fileSnippet: Snippet, id: UUID, name: String) -> Snippet {
-        Snippet(id: id, name: name, command: fileSnippet.command, tags: fileSnippet.tags)!
+        Snippet(id: id, name: name, command: fileSnippet.command, tags: fileSnippet.tags)
     }
 }

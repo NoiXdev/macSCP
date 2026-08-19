@@ -23,7 +23,7 @@ private actor CapturedConflict {
 @Suite("SnippetImportPlanner")
 struct SnippetImportPlannerTests {
     private func snippet(_ name: String, _ command: String = "echo hi") -> Snippet {
-        Snippet(name: name, command: command)!
+        Snippet(name: name, command: command)
     }
 
     private func payload(_ snippets: [Snippet]) -> SnippetExportPayload {
@@ -180,7 +180,7 @@ struct SnippetImportPlannerTests {
     /// property.
     @Test func replaceNeverBindsTwoIncomingSnippetsToTheSameExistingID() async {
         let existingID = UUID()
-        let existing = [Snippet(id: existingID, name: "Prod", command: "echo hi")!]
+        let existing = [Snippet(id: existingID, name: "Prod", command: "echo hi")]
         let plan = await SnippetImportPlanner.plan(
             existing: existing,
             incoming: payload([snippet("Prod", "echo alice"), snippet("prod", "echo bob")]),
@@ -239,18 +239,19 @@ struct SnippetImportPlannerTests {
     /// Import agrees with the editor about names. `SnippetEditorView`
     /// refuses to save a whitespace-only name (its Save button is disabled
     /// on the trimmed-empty check), but a hand-edited file can carry one —
-    /// `Snippet.init?` only rejects a multi-line command, not a blank name.
-    /// Such an entry would otherwise import as a blank row in the sheet and
-    /// a blank Terminal-menu entry, so the planner drops it before it can
-    /// become one, and counts it so the applier's result text can say so.
+    /// `Snippet`'s initializer performs no validation of its own; it just
+    /// stores what it is given. Such an entry would otherwise import as a
+    /// blank row in the sheet and a blank Terminal-menu entry, so the
+    /// planner drops it before it can become one, and counts it so the
+    /// applier's result text can say so.
     ///
     /// Two of them in one file would ALSO both key on the empty string, and
     /// the second would have raised a conflict sheet asking the user about
     /// an item with no name at all — hence the drop happens before the
     /// collision key is computed, which `arbiterThatMustNotBeAsked` pins.
     @Test func aNamelessSnippetIsDroppedRatherThanImportedOrArbitrated() async {
-        let nameless = Snippet(name: "   ", command: "echo one")!
-        let alsoNameless = Snippet(name: "", command: "echo two")!
+        let nameless = Snippet(name: "   ", command: "echo one")
+        let alsoNameless = Snippet(name: "", command: "echo two")
         let real = snippet("Prod")
 
         let plan = await SnippetImportPlanner.plan(
@@ -276,7 +277,7 @@ struct SnippetImportPlannerTests {
     }
 
     @Test func tagsRideAlongUnchangedThroughEveryResolution() async {
-        let taggedIncoming = Snippet(name: "Prod", command: "echo hi", tags: ["ops", "prod"])!
+        let taggedIncoming = Snippet(name: "Prod", command: "echo hi", tags: ["ops", "prod"])
         let existing = [snippet("Prod")]
         let plan = await SnippetImportPlanner.plan(
             existing: existing, incoming: payload([taggedIncoming]),

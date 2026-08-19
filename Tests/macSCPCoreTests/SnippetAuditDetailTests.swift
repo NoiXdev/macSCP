@@ -5,7 +5,7 @@ import Testing
 @Suite("SnippetAuditDetail")
 struct SnippetAuditDetailTests {
     private func snippet(name: String, command: String) -> Snippet {
-        Snippet(name: name, command: command, tags: [])!
+        Snippet(name: name, command: command, tags: [])
     }
 
     @Test func namesTheSnippetAndQuotesItsCommand() {
@@ -32,5 +32,18 @@ struct SnippetAuditDetailTests {
     @Test func aNamelessSnippetIsDescribedByItsCommandAlone() {
         let text = SnippetAuditDetail.text(for: snippet(name: "   ", command: "uptime"))
         #expect(text == "ran snippet: uptime")
+    }
+
+    /// The audit log is one line per event. `SnippetAuditDetail` already
+    /// collapsed whitespace when a command could not contain a newline —
+    /// this pins that the rule actually covers newlines, now that a command
+    /// can carry them. In Swift every `isNewline` character is also
+    /// `isWhitespace`, which is why the existing rule suffices.
+    @Test("a multi-line command is logged on a single line")
+    func multilineCommandLogsOnOneLine() {
+        let snippet = Snippet(name: "deploy", command: "cd /srv\nmake all")
+        let text = SnippetAuditDetail.text(for: snippet)
+        #expect(!text.contains { $0.isNewline })
+        #expect(text.contains("cd /srv make all"))
     }
 }

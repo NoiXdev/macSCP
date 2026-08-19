@@ -8,7 +8,7 @@ struct SnippetKeystrokesTests {
     /// Inserting (`execute: false`) lands the command in the input line and
     /// waits: the user still presses Return. Nothing may be appended.
     @Test func aSnippetEndsWithoutATerminator() throws {
-        let snippet = try #require(Snippet(name: "Disk", command: "df -h"))
+        let snippet = Snippet(name: "Disk", command: "df -h")
 
         #expect(SnippetKeystrokes.bytes(for: snippet, execute: false) == Array("df -h".utf8))
     }
@@ -17,7 +17,7 @@ struct SnippetKeystrokesTests {
     /// `theTerminatorIsCarriageReturn` for which byte that is and where the
     /// value was measured.
     @Test func anExecutingSnippetAppendsExactlyOneTerminator() throws {
-        let snippet = try #require(Snippet(name: "Disk", command: "df -h"))
+        let snippet = Snippet(name: "Disk", command: "df -h")
 
         let bytes = SnippetKeystrokes.bytes(for: snippet, execute: true)
 
@@ -27,7 +27,7 @@ struct SnippetKeystrokesTests {
 
     /// Non-ASCII survives as UTF-8 — paths and messages are not ASCII-only.
     @Test func nonASCIICommandsAreEncodedAsUTF8() throws {
-        let snippet = try #require(Snippet(name: "Echo", command: "echo Grüße"))
+        let snippet = Snippet(name: "Echo", command: "echo Grüße")
 
         #expect(SnippetKeystrokes.bytes(for: snippet, execute: false) == Array("echo Grüße".utf8))
     }
@@ -83,7 +83,7 @@ struct SnippetKeystrokesTests {
     /// the terminator has to become mode-aware, and this comment is the
     /// warning.
     @Test func theTerminatorIsCarriageReturn() throws {
-        let snippet = try #require(Snippet(name: "Disk", command: "df -h"))
+        let snippet = Snippet(name: "Disk", command: "df -h")
 
         #expect(SnippetKeystrokes.bytes(for: snippet, execute: true).last == 0x0D)
     }
@@ -93,7 +93,7 @@ struct SnippetKeystrokesTests {
     /// This holds for every caller, which is why it is asserted here and not
     /// left to the four trigger surfaces.
     @Test func insertingNeverAppendsATerminator() throws {
-        let snippet = try #require(Snippet(name: "n", command: "uptime"))
+        let snippet = Snippet(name: "n", command: "uptime")
 
         let bytes = SnippetKeystrokes.bytes(for: snippet, execute: false)
 
@@ -102,7 +102,7 @@ struct SnippetKeystrokesTests {
 
     /// Executing appends exactly one carriage return — not zero, not two.
     @Test func executingAppendsExactlyOneCarriageReturn() throws {
-        let snippet = try #require(Snippet(name: "n", command: "uptime"))
+        let snippet = Snippet(name: "n", command: "uptime")
 
         let bytes = SnippetKeystrokes.bytes(for: snippet, execute: true)
 
@@ -112,7 +112,7 @@ struct SnippetKeystrokesTests {
     /// The two differ in exactly one byte — a regression that made them equal
     /// would otherwise pass whichever of the two tests above still matched.
     @Test func theTwoCallsDifferByTheTerminatorAlone() throws {
-        let snippet = try #require(Snippet(name: "n", command: "df -h"))
+        let snippet = Snippet(name: "n", command: "df -h")
 
         let inserted = SnippetKeystrokes.bytes(for: snippet, execute: false)
         let executed = SnippetKeystrokes.bytes(for: snippet, execute: true)

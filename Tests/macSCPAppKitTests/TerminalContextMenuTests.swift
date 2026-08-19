@@ -38,7 +38,7 @@ struct TerminalContextMenuTests {
     // MARK: - Helpers
 
     private func snippet(_ name: String, tags: [String] = []) -> Snippet {
-        Snippet(name: name, command: "echo \(name)", tags: tags)!
+        Snippet(name: name, command: "echo \(name)", tags: tags)
     }
 
     private func model(_ snippets: [Snippet]) -> SnippetMenuModel {

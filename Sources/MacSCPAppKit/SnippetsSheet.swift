@@ -624,15 +624,9 @@ private struct SnippetEditorView: View {
 
     private func save() {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        // `Snippet.init?` can only fail when `command` contains a newline,
-        // and `SnippetCommandEditor` sanitizes every newline into a space
-        // before it ever reaches `command` (that file's Hazard 4) — so this
-        // can never fail here. Force-unwrapping states that invariant
-        // directly, instead of a `guard let ... else` branch nothing can
-        // ever reach.
         let snippet = Snippet(
             id: existing?.id ?? UUID(), name: trimmedName, command: command,
-            tags: tags)!
+            tags: tags)
         do {
             try store.save(snippet)
             onSaved()

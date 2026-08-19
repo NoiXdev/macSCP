@@ -4,9 +4,9 @@ import macSCPCore
 /// The outcome of reading `snippets.json`, in the two shapes the UI has to
 /// tell apart: a list (possibly empty) or a store that could not be read.
 ///
-/// `SnippetStore.all()` throws for a file it cannot decode, and one
-/// hand-edited multi-line `command` is enough to get there — `Snippet`'s
-/// decoder refuses it, which `aHandEditedMultiLineCommandDoesNotDecode`
+/// `SnippetStore.all()` throws for a file it cannot decode — a missing
+/// required field is enough to get there, which
+/// `SnippetsPresentationTests.anUndecodableStoreIsUnreadableRatherThanEmpty`
 /// pins. Both readers of the store used to collapse that into `[]`, so an
 /// unreadable store looked exactly like an empty one: the Terminal menu
 /// showed no snippet entries, and the management sheet said "No snippets

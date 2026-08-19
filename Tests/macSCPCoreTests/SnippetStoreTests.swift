@@ -24,7 +24,7 @@ struct SnippetStoreTests {
     @Test func aSavedSnippetSurvivesTheRoundTrip() throws {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let snippet = try #require(Snippet(name: "Disk", command: "df -h", tags: ["disk"]))
+        let snippet = Snippet(name: "Disk", command: "df -h", tags: ["disk"])
 
         try store.save(snippet)
 
@@ -35,7 +35,7 @@ struct SnippetStoreTests {
     @Test func savingTheSameIdTwiceReplaces() throws {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        var snippet = try #require(Snippet(name: "Disk", command: "df -h"))
+        var snippet = Snippet(name: "Disk", command: "df -h")
         try store.save(snippet)
         snippet.name = "Disk usage"
 
@@ -51,8 +51,8 @@ struct SnippetStoreTests {
     @Test func replacingAnExistingIdKeepsItsPosition() throws {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        var first = try #require(Snippet(name: "First", command: "uptime"))
-        let second = try #require(Snippet(name: "Second", command: "whoami"))
+        var first = Snippet(name: "First", command: "uptime")
+        let second = Snippet(name: "Second", command: "whoami")
         try store.save(first)
         try store.save(second)
         first.name = "First, renamed"
@@ -65,8 +65,8 @@ struct SnippetStoreTests {
     @Test func removingAnIdLeavesTheOthers() throws {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let keep = try #require(Snippet(name: "Keep", command: "uptime"))
-        let drop = try #require(Snippet(name: "Drop", command: "whoami"))
+        let keep = Snippet(name: "Keep", command: "uptime")
+        let drop = Snippet(name: "Drop", command: "whoami")
         try store.save(keep)
         try store.save(drop)
 
@@ -75,38 +75,17 @@ struct SnippetStoreTests {
         #expect(try store.all() == [keep])
     }
 
-    /// A command with an embedded line break is refused. Without this,
-    /// "insert" would be a lie: every line but the last would run the
-    /// moment it was inserted, with nobody pressing Return.
-    @Test func aCommandWithALineBreakIsRefused() {
-        #expect(Snippet(name: "Two", command: "echo a\necho b") == nil)
-        #expect(Snippet(name: "CR", command: "echo a\recho b") == nil)
-    }
-
-    /// Swift treats `"\r\n"` as ONE grapheme cluster, so a two-string
-    /// `contains("\n")`/`contains("\r")` check does not see it -- a CRLF
-    /// command would pass construction and put a raw 0x0D in the middle of
-    /// what the terminal receives.
-    @Test func aCommandWithACRLFIsRefused() {
-        #expect(Snippet(name: "CRLF", command: "echo a\r\necho b") == nil)
-    }
-
-    /// `Character.isNewline` covers more than `\n` and `\r` -- a vertical
-    /// tab must be refused too, or the two-string guard undercounts what
-    /// the terminal treats as a line break.
-    @Test func aCommandWithAVerticalTabIsRefused() {
-        #expect(Snippet(name: "VT", command: "echo a\u{000B}echo b") == nil)
-    }
-
-    /// The rule is the MODEL's, not the form's: a hand-edited store file
-    /// must not smuggle a multi-line command past it either.
-    @Test func aHandEditedMultiLineCommandDoesNotDecode() throws {
+    /// A command with an embedded line break survives the store round trip
+    /// unchanged — a command may now span lines (snippet editor, part 2);
+    /// see `SnippetTests.multilineCommandSurvivesEncoding` for the model-level
+    /// version of this guarantee.
+    @Test func aCommandWithALineBreakSurvivesTheRoundTrip() throws {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let json = #"[{"id":"\#(UUID().uuidString)","name":"x","command":"a\nb","runsImmediately":false}]"#
-        try Data(json.utf8).write(to: dir.appendingPathComponent("snippets.json"))
+        let snippet = Snippet(name: "Two", command: "echo a\necho b")
 
-        #expect(throws: (any Error).self) { try store.all() }
+        try store.save(snippet)
+
+        #expect(try store.all() == [snippet])
     }
 }

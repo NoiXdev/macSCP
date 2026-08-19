@@ -19,8 +19,8 @@ struct SnippetPreviewLineTests {
     /// with two distinctly named snippets, exactly like
     /// `SnippetListPlanTests` builds its own fixtures.
     private func tworows() -> (hovered: SnippetListPlan.Row, pinned: SnippetListPlan.Row) {
-        let hovered = Snippet(name: "hovered", command: "echo hovered")!
-        let pinned = Snippet(name: "pinned", command: "echo pinned")!
+        let hovered = Snippet(name: "hovered", command: "echo hovered")
+        let pinned = Snippet(name: "pinned", command: "echo pinned")
         let model = SnippetMenuModel.build(
             snippets: [hovered, pinned], isConnected: true, supportsShell: true)
         let rows = SnippetListPlan.build(model: model).flatMap(\.rows)

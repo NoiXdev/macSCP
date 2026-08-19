@@ -6,14 +6,14 @@ import Testing
 struct SnippetTests {
     /// Whitespace around a tag is typing noise, not part of the tag.
     @Test func aTagIsTrimmed() throws {
-        let snippet = try #require(Snippet(name: "n", command: "c", tags: ["  docker  "]))
+        let snippet = Snippet(name: "n", command: "c", tags: ["  docker  "])
         #expect(snippet.tags == ["docker"])
     }
 
     /// A tag that is only whitespace carries no meaning and would render as an
     /// empty chip nobody can aim at.
     @Test func anEmptyTagIsDropped() throws {
-        let snippet = try #require(Snippet(name: "n", command: "c", tags: ["docker", "   ", ""]))
+        let snippet = Snippet(name: "n", command: "c", tags: ["docker", "   ", ""])
         #expect(snippet.tags == ["docker"])
     }
 
@@ -21,14 +21,13 @@ struct SnippetTests {
     /// two tags, and the suggestion list (not the store) is what keeps users
     /// from creating both by accident.
     @Test func caseIsPreserved() throws {
-        let snippet = try #require(Snippet(name: "n", command: "c", tags: ["Docker", "docker"]))
+        let snippet = Snippet(name: "n", command: "c", tags: ["Docker", "docker"])
         #expect(snippet.tags == ["Docker", "docker"])
     }
 
     /// Exact duplicates collapse; order is the order they were entered in.
-    @Test func exactDuplicatesCollapseAndOrderSurvives() throws {
-        let snippet = try #require(
-            Snippet(name: "n", command: "c", tags: ["b", "a", "b"]))
+    @Test func exactDuplicatesCollapseAndOrderSurvives() {
+        let snippet = Snippet(name: "n", command: "c", tags: ["b", "a", "b"])
         #expect(snippet.tags == ["b", "a"])
     }
 
@@ -71,7 +70,24 @@ struct SnippetTests {
         ]
         for input in inputs {
             let snippet = Snippet(name: "n", command: "c", tags: input)
-            #expect(snippet?.tags == TagList.normalized(input))
+            #expect(snippet.tags == TagList.normalized(input))
         }
+    }
+
+    /// Part 2: a snippet may span lines. `"\r\n"` is ONE `Character` in
+    /// Swift, so it gets its own case — a rule written with
+    /// `contains("\n")` would not see it.
+    @Test("a multi-line command is accepted and kept verbatim")
+    func multilineCommandIsKept() {
+        let snippet = Snippet(name: "deploy", command: "cd /srv\r\nmake all\n")
+        #expect(snippet.command == "cd /srv\r\nmake all\n")
+    }
+
+    @Test("a multi-line command survives a store round trip")
+    func multilineCommandSurvivesEncoding() throws {
+        let original = Snippet(name: "deploy", command: "cd /srv\r\nmake all")
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Snippet.self, from: data)
+        #expect(decoded.command == original.command)
     }
 }
