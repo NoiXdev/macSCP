@@ -98,4 +98,34 @@ struct SnippetVariableSubstitutionTests {
             command: #"echo "start" {{DB}}"#, variables: [placeholder("DB")])
         #expect(problem == nil)
     }
+
+    /// The bug an earlier review found by reproducing it: chaining
+    /// `replacingOccurrences` calls re-scans an already-substituted value
+    /// for the next variable's token. Here A's value literally contains
+    /// `{{B}}`; a chained implementation would substitute inside A's
+    /// already-emitted quotes and break them open. The expected output is
+    /// exactly what a shell reads as two separate quoted words -- A's quotes
+    /// still hold its `{{B}}` text as inert literal characters, and B is
+    /// quoted on its own.
+    @Test("an earlier placeholder's value cannot smuggle in a later placeholder's token")
+    func chainedPlaceholderValueCannotEscapeQuotes() {
+        let resolved = SnippetVariableSubstitution.resolve(
+            command: "echo {{A}} {{B}}",
+            variables: [placeholder("A"), placeholder("B")],
+            values: ["A": "x {{B}} y", "B": "PWNED; touch /tmp/pwned"])
+        #expect(resolved == "echo 'x {{B}} y' 'PWNED; touch /tmp/pwned'")
+    }
+
+    /// Pins the documented limitation on `firstDeclarationProblem`: only the
+    /// first occurrence of a repeated `{{NAME}}` is checked for quote
+    /// context, so a second occurrence sitting inside quotes is not flagged
+    /// here. Not a hole -- `resolve` quotes every occurrence uniformly, so
+    /// the unflagged second occurrence still ends up as an inert literal,
+    /// never unquoted shell text.
+    @Test("only the first occurrence of a repeated placeholder governs the quote-context check")
+    func onlyFirstOccurrenceGovernsQuoteContext() {
+        let problem = SnippetVariableSubstitution.firstDeclarationProblem(
+            command: #"echo {{DB}} "{{DB}}""#, variables: [placeholder("DB")])
+        #expect(problem == nil)
+    }
 }

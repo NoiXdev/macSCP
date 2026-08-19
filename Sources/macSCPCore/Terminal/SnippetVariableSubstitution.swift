@@ -23,28 +23,67 @@ public enum SnippetVariableSubstitution {
     /// A missing value is treated as the empty string rather than skipped —
     /// leaving `{{NAME}}` in a command that then runs would be worse than an
     /// empty argument.
+    ///
+    /// Placeholder substitution is a single left-to-right pass over the
+    /// ORIGINAL `command`, not a chain of `replacingOccurrences` calls run
+    /// one after another on the accumulating result. Chaining would re-scan
+    /// an already-substituted value for the *next* variable's token: if an
+    /// earlier value happened to contain a later `{{NAME}}` literally (a
+    /// user can type anything into a prompt), that later pass would match it
+    /// and substitute inside the first value's quotes, breaking them open.
+    /// Scanning the original text once means a substituted value is only
+    /// ever appended as literal output, never re-examined.
     public static func resolve(
         command: String, variables: [SnippetVariable], values: [String: String]
     ) -> String {
-        var resolved = command
+        var quotedByName: [String: String] = [:]
         for variable in variables where variable.placement == .placeholder {
-            resolved = resolved.replacingOccurrences(
-                of: "{{\(variable.name)}}",
-                with: PosixQuoting.singleQuoted(values[variable.name] ?? ""))
+            quotedByName[variable.name] = PosixQuoting.singleQuoted(values[variable.name] ?? "")
+        }
+
+        var substituted = ""
+        var index = command.startIndex
+        while index < command.endIndex {
+            if let closing = closingBraces(in: command, afterOpeningAt: index) {
+                let nameStart = command.index(index, offsetBy: 2)
+                let name = command[nameStart..<closing.lowerBound]
+                if let quoted = quotedByName[String(name)] {
+                    substituted += quoted
+                    index = closing.upperBound
+                    continue
+                }
+            }
+            substituted.append(command[index])
+            index = command.index(after: index)
         }
 
         let assignments = variables
             .filter { $0.placement == .environment }
             .map { "\($0.name)=\(PosixQuoting.singleQuoted(values[$0.name] ?? ""))" }
-        guard !assignments.isEmpty else { return resolved }
+        guard !assignments.isEmpty else { return substituted }
 
         // A leading `NAME=value command` assignment scopes to that ONE
         // command. For a multi-line body that would set it for the first
         // line only, so it becomes its own line instead -- which is why the
         // variable then outlives the run in that session, a fact the editor's
         // hint text states.
-        let separator = resolved.contains(where: \.isNewline) ? "\n" : " "
-        return assignments.joined(separator: " ") + separator + resolved
+        let separator = substituted.contains(where: \.isNewline) ? "\n" : " "
+        return assignments.joined(separator: " ") + separator + substituted
+    }
+
+    /// If `command[index...]` opens with `{{`, the range of the matching
+    /// `}}` that follows it -- otherwise `nil`. A plain brace-pair finder,
+    /// not a shell tokenizer: `resolve` only needs to recognise `{{NAME}}`
+    /// spans, and undeclared ones (a Go template, say) are left untouched by
+    /// the caller regardless of what this returns for their contents.
+    private static func closingBraces(
+        in command: String, afterOpeningAt index: String.Index
+    ) -> Range<String.Index>? {
+        guard command[index] == "{" else { return nil }
+        let next = command.index(after: index)
+        guard next < command.endIndex, command[next] == "{" else { return nil }
+        let searchStart = command.index(after: next)
+        return command.range(of: "}}", range: searchStart..<command.endIndex)
     }
 
     /// The first thing that would make these declarations wrong, or `nil`.
@@ -54,6 +93,16 @@ public enum SnippetVariableSubstitution {
     /// precisely that the command never mentions the name — `DB='x'
     /// ./backup.sh` sets it for a script that reads it itself. Checking for
     /// `$NAME` there would reject the natural usage.
+    ///
+    /// The quote-context check looks at the FIRST `{{NAME}}` occurrence
+    /// only, and that is deliberate rather than partial: `resolve` (above)
+    /// substitutes every occurrence of a declared name with the same quoted
+    /// value, uniformly, regardless of the quote context each one sits in.
+    /// So a second occurrence hiding inside quotes cannot smuggle unquoted
+    /// text past the shell the way the first-occurrence case can — it can
+    /// only produce a redundantly quoted literal (`"'value'"`), which is odd
+    /// output, not an injection. Checking every occurrence would add a scan
+    /// for a case that is not a safety gap.
     public static func firstDeclarationProblem(
         command: String, variables: [SnippetVariable]
     ) -> Problem? {
