@@ -613,7 +613,9 @@ struct ContentView: View {
 
         // Only an EXECUTION is an event: an inserted snippet still sits in
         // the prompt and can be edited before it runs. Recorded after the
-        // send, so the log says what actually went out.
+        // send CALL, not after delivery -- `TerminalPanelViewModel.send(_:)`
+        // gives no delivery guarantee, so a shell that fails to open still
+        // drops the buffered bytes while this entry stands.
         if execute {
             activeTab.auditRecorder?.recordAction(
                 AuditEvent(kind: .snippetExecuted, detail: SnippetAuditDetail.text(for: snippet)))
