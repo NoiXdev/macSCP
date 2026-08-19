@@ -29,10 +29,13 @@ struct SnippetRowExportMenuGuardTests {
         #expect(text.contains("\"snippets.export\""))
     }
 
-    @Test func theDestructiveEntryStaysLastInTheRowMenu() throws {
+    /// Right-clicking a row that is not the selected one must still act on
+    /// the row under the cursor. Every entry in this menu therefore sets the
+    /// selection before it does anything, and the new one is no exception.
+    @Test func theRowMenuSelectsTheRowBeforeExportingIt() throws {
         let text = try source()
-        let exportIndex = try #require(text.range(of: "performExport([snippet])")).lowerBound
-        let deleteIndex = try #require(text.range(of: "isShowingDeleteConfirm = true")).lowerBound
-        #expect(exportIndex < deleteIndex)
+        let call = try #require(text.range(of: "performExport([snippet])"))
+        let preceding = text[text.startIndex..<call.lowerBound].suffix(120)
+        #expect(preceding.contains("selectedID = snippet.id"))
     }
 }
