@@ -3479,6 +3479,23 @@ struct SessionListViewModelTests {
         #expect(throws: KeychainError.self) { try vm.setCoversItsLogin(set) }
         #expect(secrets.peek(set.id) != nil)
     }
+
+    /// M30: the value demanded when a session leaves Set mode must REPLACE
+    /// the stored one. Without that, the new validation rule would be
+    /// pointless -- the user types a password and the old one stays anyway.
+    @Test func aNewSecretOnEditReplacesTheStoredOne() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let session = sshSession(name: "web", host: "h", username: "u")
+        try secrets.savePassword("old", for: session.id)
+
+        vm.updateSession(session, newSecret: "new")
+
+        // Hoisted into a Bool first: `#expect` expands its receiver, and a
+        // secret must never reach a failure message.
+        let replaced = try secrets.password(for: session.id) == "new"
+        #expect(replaced)
+    }
 }
 
 private final class FailingSecretStore: SecretStore, @unchecked Sendable {

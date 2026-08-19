@@ -1400,6 +1400,79 @@ struct ConnectionViewModelTests {
         vm.password = ""
         #expect(vm.validateForEditSave() != nil)
     }
+
+    /// M30: leaving Set mode is the one moment where an empty secret field
+    /// does NOT mean "leave the stored one unchanged". Without this rule the
+    /// password of the previous configuration stays in the keychain and is
+    /// silently used again on the next connect.
+    ///
+    /// The other direction -- a manual session that does not switch mode at
+    /// all -- is held by `validateForEditSaveAllowsEmptyPasswordAndBuildsTheSession`
+    /// earlier in this file. Together the two pin the rule in BOTH
+    /// directions: a hardcoded `true` or `false` turns one of them red.
+    @Test @MainActor func leavingLoginSetModeWithAnEmptyPasswordIsRefused() {
+        let vm = makeVM()
+        vm.beginEditing(sshSession(name: "web", host: "h", username: "u",
+                                   loginSetID: UUID()))
+        vm.loginMode = .manual
+        vm.password = ""
+
+        #expect(vm.validateForEditSave() == nil)
+        #expect(vm.state == .failed(
+            message: CoreL10n.string("core.connect.passwordEmpty"),
+            field: .schema("\(SSHField.namespace).\(SSHField.password.rawValue)")))
+    }
+
+    @Test @MainActor func leavingLoginSetModeWithATypedPasswordSaves() {
+        let vm = makeVM()
+        vm.beginEditing(sshSession(name: "web", host: "h", username: "u",
+                                   loginSetID: UUID()))
+        vm.loginMode = .manual
+        vm.password = "typed"
+
+        let result = vm.validateForEditSave()
+        #expect(result?.loginSetID == nil)
+        #expect(vm.state == .idle)
+    }
+
+    /// False-refusal guard. The SSH passphrase is deliberately NOT declared
+    /// required in `SSHFieldSchema.credential` -- an unencrypted key has
+    /// none. Should that ever change, it surfaces here rather than at the
+    /// user.
+    @Test @MainActor func leavingLoginSetModeWithAKeyLoginNeedsNoPassphrase() {
+        let vm = makeVM()
+        vm.beginEditing(sshSession(name: "web", host: "h", username: "u",
+                                   authKind: .privateKey, keyPath: "/k",
+                                   loginSetID: UUID()))
+        vm.loginMode = .manual
+        vm.password = ""
+
+        #expect(vm.validateForEditSave() != nil)
+    }
+
+    /// Second false-refusal guard: an agent login shows no secret field at
+    /// all, so `requireSecrets` has nothing to demand there.
+    @Test @MainActor func leavingLoginSetModeWithAnAgentLoginNeedsNoSecret() {
+        let vm = makeVM()
+        vm.beginEditing(sshSession(name: "web", host: "h", username: "u",
+                                   authKind: .agent, loginSetID: UUID()))
+        vm.loginMode = .manual
+        vm.password = ""
+
+        #expect(vm.validateForEditSave() != nil)
+    }
+
+    /// Moving from one set to another is not leaving: there is no manual mode
+    /// in which an old slot could become live again.
+    @Test @MainActor func switchingBetweenLoginSetsNeedsNoSecret() {
+        let vm = makeVM()
+        vm.beginEditing(sshSession(name: "web", host: "h", username: "u",
+                                   loginSetID: UUID()))
+        vm.selectedLoginSetID = UUID()
+        vm.password = ""
+
+        #expect(vm.validateForEditSave() != nil)
+    }
 }
 
 private actor CallCounter {

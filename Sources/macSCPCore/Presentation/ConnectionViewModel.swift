@@ -1071,7 +1071,20 @@ public final class ConnectionViewModel {
             return nil
         }
         let descriptor = BackendDescriptor.descriptor(for: kind)
-        if let violation = descriptor.firstViolation(in: values, requireSecrets: false) {
+        // M30: leaving Set mode is the one moment where an empty secret field
+        // does NOT mean "leave the stored one unchanged". The stored one
+        // belongs to a configuration the user is walking away from, so letting
+        // it stand silently reactivates it on the next connect. Demanding the
+        // secret here makes the write path overwrite that slot, which is why
+        // this fix deletes nothing -- every earlier attempt deleted on BINDING
+        // instead and was reverted for destroying the only copy of a
+        // credential.
+        //
+        // Read from `editingOriginal`, not from the local `session` copy: that
+        // copy is mutated further down, and reordering those mutations would
+        // otherwise change this answer without touching this line.
+        let leftLoginSet = editingOriginal?.loginSetID != nil && loginMode == .manual
+        if let violation = descriptor.firstViolation(in: values, requireSecrets: leftLoginSet) {
             state = .failed(
                 message: CoreL10n.string(violation.messageKey),
                 field: .schema(violation.fieldKey))
