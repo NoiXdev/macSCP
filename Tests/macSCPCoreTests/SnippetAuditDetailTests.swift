@@ -46,4 +46,19 @@ struct SnippetAuditDetailTests {
         #expect(!text.contains { $0.isNewline })
         #expect(text.contains("cd /srv make all"))
     }
+
+    /// The audit log records the TEMPLATE, never a value. This is free today
+    /// — `SnippetAuditDetail` reads `snippet.command`, which is the template
+    /// — and a rule that is free is broken for free at the next rework.
+    @Test("a variable value never reaches the audit text")
+    func variableValuesStayOutOfTheAuditLog() {
+        let variable = SnippetVariable(
+            name: "DB", prompt: "Database", kind: .freeText, placement: .placeholder,
+            defaultValue: "", remembersLastValue: false)
+        let snippet = Snippet(
+            name: "dump", command: "mysqldump {{DB}}", variables: [variable])
+        let text = SnippetAuditDetail.text(for: snippet)
+        #expect(text.contains("{{DB}}"))
+        #expect(!text.contains("kunden"))
+    }
 }

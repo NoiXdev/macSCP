@@ -850,6 +850,9 @@
 "snippets.variables.error.duplicateName" = "Zwei Variablen haben denselben Namen.";
 "snippets.variables.error.unusedPlaceholder %@" = "„%@“ kommt im Kommando nicht vor.";
 "snippets.variables.error.quotedPlaceholder %@" = "„%@“ steht in Anführungszeichen. Nimm sie weg — der Wert wird für dich gequotet.";
+"snippets.variables.promptTitle %@" = "Werte für „%@“";
+"snippets.variables.promptRun" = "Ausführen";
+"snippets.variables.promptNoOptions" = "Für diese Variable sind keine Optionen hinterlegt.";
 "snippets.load.error" = "Die Snippet-Datei konnte nicht gelesen werden. Sie ist vorhanden, lässt sich aber nicht decodieren — es ging kein Snippet verloren, und es wird nichts darüber geschrieben.";
 "snippets.tags.label" = "Tags";
 "snippets.tags.placeholder" = "Tag hinzufügen…";

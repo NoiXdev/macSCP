@@ -853,6 +853,9 @@
 "snippets.variables.error.duplicateName" = "Deux variables portent le même nom.";
 "snippets.variables.error.unusedPlaceholder %@" = "« %@ » n’apparaît jamais dans la commande.";
 "snippets.variables.error.quotedPlaceholder %@" = "« %@ » se trouve entre guillemets. Retirez-les — la valeur est protégée pour vous.";
+"snippets.variables.promptTitle %@" = "Valeurs pour « %@ »";
+"snippets.variables.promptRun" = "Exécuter";
+"snippets.variables.promptNoOptions" = "Aucune option n’est configurée pour cette variable.";
 "snippets.load.error" = "Le fichier de snippets n’a pas pu être lu. Il existe mais ne peut pas être décodé — aucun snippet n’a été perdu et rien ne sera écrit par-dessus.";
 "snippets.tags.label" = "Tags";
 "snippets.tags.placeholder" = "Ajouter un tag…";

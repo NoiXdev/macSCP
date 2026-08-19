@@ -852,6 +852,9 @@
 "snippets.variables.error.duplicateName" = "Dwie zmienne mają tę samą nazwę.";
 "snippets.variables.error.unusedPlaceholder %@" = "„%@” nie występuje w poleceniu.";
 "snippets.variables.error.quotedPlaceholder %@" = "„%@” znajduje się w cudzysłowie. Usuń go — wartość zostanie zacytowana za Ciebie.";
+"snippets.variables.promptTitle %@" = "Wartości dla „%@”";
+"snippets.variables.promptRun" = "Wykonaj";
+"snippets.variables.promptNoOptions" = "Dla tej zmiennej nie skonfigurowano żadnych opcji.";
 "snippets.load.error" = "Nie udało się odczytać pliku fragmentów. Plik istnieje, ale nie da się go zdekodować — żaden fragment nie został utracony i nic nie zostanie nadpisane.";
 "snippets.tags.label" = "Tagi";
 "snippets.tags.placeholder" = "Dodaj tag…";

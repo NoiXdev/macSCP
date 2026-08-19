@@ -849,6 +849,9 @@
 "snippets.variables.error.duplicateName" = "Two variables share a name.";
 "snippets.variables.error.unusedPlaceholder %@" = "“%@” is never used in the command.";
 "snippets.variables.error.quotedPlaceholder %@" = "“%@” sits inside quotes. Remove them — the value is quoted for you.";
+"snippets.variables.promptTitle %@" = "Values for “%@”";
+"snippets.variables.promptRun" = "Run";
+"snippets.variables.promptNoOptions" = "No options are configured for this variable.";
 "snippets.load.error" = "The snippets file couldn't be read. It exists but can't be decoded — no snippet was lost, and nothing will be written over it.";
 "snippets.tags.label" = "Tags";
 "snippets.tags.placeholder" = "Add a tag…";

@@ -280,6 +280,28 @@ struct ContentView: View {
     /// dismissal or "Execute" action.
     @State var pendingMultilineInsertRefusal: Snippet?
 
+    /// One snippet-variable prompt waiting for the user's values
+    /// (Snippet-Variablen, Task 6) — drives `SnippetVariablePromptSheet`
+    /// below. Non-nil only between `triggerSnippet` finding at least one
+    /// declaration and the sheet's own "Run"/"Cancel" action; a snippet
+    /// with no declarations never sets this at all, which is exactly what
+    /// keeps that case sheet-free.
+    struct PendingSnippetVariablePrompt: Identifiable {
+        let id = UUID()
+        let snippet: Snippet
+        /// The caller's original Insert/Execute choice — carried through
+        /// the prompt so confirming it can hand the SAME choice to
+        /// `runSnippet`, unchanged by the detour through this sheet.
+        let execute: Bool
+        /// One entry per declaration: the remembered value if
+        /// `SnippetVariableMemoryStore` had one, else `defaultValue` —
+        /// computed once by `triggerSnippet` before presenting the sheet,
+        /// not looked up again inside it.
+        let initialValues: [String: String]
+    }
+
+    @State var pendingSnippetVariablePrompt: PendingSnippetVariablePrompt?
+
     // MARK: - Session export/import (M9a/T3)
 
     /// Wraps `ExportScope` so it can drive `.sheet(item:)` — `ExportScope`
@@ -463,6 +485,33 @@ struct ContentView: View {
         SnippetStore(directory: SessionStore.defaultDirectory)
     }
 
+    /// The remembered-variable-values store this window reads and writes
+    /// (Snippet-Variablen, Task 6). `SnippetVariableMemoryStore` is a
+    /// class, not a struct like `SnippetStore` above (see that type's own
+    /// doc comment for why) — but it is held the SAME way: constructed
+    /// fresh every time it is needed, never cached across calls. That is a
+    /// deliberate choice, not an oversight (Task 4's report flagged this
+    /// exact question for this task to decide): every access here runs
+    /// synchronously on the main actor, triggered by one discrete user
+    /// action — opening the prompt (`triggerSnippet` reading `value`) or
+    /// confirming it (`rememberOptedInValues` writing `remember`) — so
+    /// there is never a second access from this window in flight at the
+    /// same time to race against. `AuditLogStore`'s private serial queue
+    /// exists because an in-memory cache is shared across MULTIPLE
+    /// long-lived holders (`SessionListViewModel`, every `AuditRecorder`)
+    /// that can append concurrently; nothing here shares an instance at
+    /// all. A future caller that DOES need a cached, shared instance
+    /// (repeated reads outside a single user action) should add that
+    /// queue then, deliberately, instead of this property growing one by
+    /// accident. `nil` when the file exists but fails to decode — the
+    /// prompt still opens, it just has nothing remembered to pre-fill with
+    /// (falls back to `defaultValue`), and a remember write on confirm is
+    /// silently skipped rather than blocking the command that was just
+    /// confirmed.
+    var snippetVariableMemoryStore: SnippetVariableMemoryStore? {
+        try? SnippetVariableMemoryStore(directory: SessionStore.defaultDirectory)
+    }
+
     var body: some View {
         // Split from `mainContent` (M11d/T2 build fix): the External
         // Terminal `.onChange`/two `.alert`s below, chained directly onto
@@ -585,6 +634,24 @@ struct ContentView: View {
                     "snippets.insert.multilineRefused.body",
                     "The remote shell cannot take a multi-line command without running it. Execute it instead?"))
             }
+            // Snippet-variables prompt (Snippet-Variablen, Task 6): shown
+            // instead of sending anything the moment `triggerSnippet` sees a
+            // declaration. Cancelling clears the pending state and reaches
+            // neither `rememberOptedInValues` nor `runSnippet` — nothing is
+            // sent. Confirming remembers the opted-in values FIRST, then
+            // resolves and sends — see `PendingSnippetVariablePrompt`'s doc
+            // comment for why `execute` travels through unchanged.
+            .sheet(item: $pendingSnippetVariablePrompt) { prompt in
+                SnippetVariablePromptSheet(
+                    snippet: prompt.snippet, initialValues: prompt.initialValues,
+                    onConfirm: { values in
+                        pendingSnippetVariablePrompt = nil
+                        rememberOptedInValues(for: prompt.snippet, values: values)
+                        runSnippet(prompt.snippet, execute: prompt.execute, values: values)
+                    },
+                    onCancel: { pendingSnippetVariablePrompt = nil }
+                )
+            }
     }
 
     /// Re-reads `snippets.json` into the command bridge (Terminal-Snippets
@@ -639,12 +706,49 @@ struct ContentView: View {
     /// `terminalPanel(_:)` renders as its error text with a "Reopen" button —
     /// the tab's existing channel for a terminal that would not start, and
     /// the reason no second message is raised here.
+    ///
+    /// A snippet with declared variables (Snippet-Variablen, Task 6) is
+    /// intercepted BEFORE any of the above: instead of opening the panel
+    /// and sending anything, `pendingSnippetVariablePrompt` is set and this
+    /// method returns. `SnippetVariablePromptSheet`'s own "Run" action
+    /// (wired in `body` below) is what eventually calls `runSnippet` with
+    /// the confirmed values — see that sheet's doc comment for why
+    /// cancelling it reaches neither `runSnippet` nor a remembered write.
+    /// A snippet with NO declarations skips this branch entirely and falls
+    /// straight through to `runSnippet` with an empty `values` dictionary
+    /// — the exact same path (and, since `SnippetVariableSubstitution
+    /// .resolve` returns `command` verbatim when `variables` is empty, the
+    /// exact same resolved text) this method sent before variables existed.
     func triggerSnippet(_ snippet: Snippet, execute: Bool) {
         guard window?.isKeyWindow == true else { return }
         guard activeTabSupportsShell else {
             presentTerminalUnavailable()
             return
         }
+        guard activeTab.session?.terminal != nil else { return }
+        guard snippet.variables.isEmpty else {
+            let store = snippetVariableMemoryStore
+            var initialValues: [String: String] = [:]
+            for variable in snippet.variables {
+                initialValues[variable.name] =
+                    store?.value(snippetID: snippet.id, name: variable.name) ?? variable.defaultValue
+            }
+            pendingSnippetVariablePrompt = PendingSnippetVariablePrompt(
+                snippet: snippet, execute: execute, initialValues: initialValues)
+            return
+        }
+        runSnippet(snippet, execute: execute, values: [:])
+    }
+
+    /// The part of `triggerSnippet` from the resolved command onward —
+    /// unchanged in shape since before snippet variables existed, just
+    /// extracted so `SnippetVariablePromptSheet`'s "Run" action can reach
+    /// it too, with the confirmed `values` in hand. Reveals the panel,
+    /// resolves `snippet.command` against `values` (a no-op substitution
+    /// when `snippet.variables` is empty — see `SnippetVariableSubstitution
+    /// .resolve`'s own doc comment), and sends it exactly as `triggerSnippet`
+    /// always has.
+    func runSnippet(_ snippet: Snippet, execute: Bool, values: [String: String]) {
         guard let terminal = activeTab.session?.terminal else { return }
         if !terminal.isVisible {
             terminal.toggle()
@@ -652,13 +756,19 @@ struct ContentView: View {
         }
         terminal.openIfNeeded()
 
+        let resolvedCommand = SnippetVariableSubstitution.resolve(
+            command: snippet.command, variables: snippet.variables, values: values)
+
         // Only an EXECUTION is an event: an inserted snippet still sits in
         // the prompt and can be edited before it runs. Recorded from
         // `send`'s delivery callback rather than after the call, so a shell
         // that never opens -- the bytes buffered and then discarded -- leaves
-        // no entry claiming the snippet ran.
+        // no entry claiming the snippet ran. `SnippetAuditDetail.text(for:)`
+        // reads `snippet.command` — the TEMPLATE, never `resolvedCommand` —
+        // so a typed value never reaches the audit log; see
+        // `SnippetAuditDetailTests.variableValuesStayOutOfTheAuditLog`.
         let plan = SnippetSendPlanner.plan(
-            command: snippet.command, execute: execute,
+            command: resolvedCommand, execute: execute,
             bracketedPaste: terminal.remoteWantsBracketedPaste)
         guard case .send(let bytes) = plan else {
             // The remote cannot take a multi-line paste without running it,
@@ -675,6 +785,24 @@ struct ContentView: View {
         terminal.send(bytes) {
             recorder?.recordAction(
                 AuditEvent(kind: .snippetExecuted, detail: SnippetAuditDetail.text(for: snippet)))
+        }
+    }
+
+    /// Persists every opted-in value (`SnippetVariable.remembersLastValue
+    /// == true`) from a just-confirmed prompt, called from that sheet's
+    /// "Run" action before `runSnippet`. Best-effort: `snippetVariableMemoryStore`
+    /// being `nil` (an unreadable `snippet-variables.json`) or `remember`
+    /// itself throwing (a failed write) is swallowed rather than blocking
+    /// the command the user just confirmed — the same swallowed-write
+    /// posture `SnippetStore.remove(id:)`'s cleanup step already takes for
+    /// this same store (see its `VariableCleanupOutcome` doc comment): a
+    /// remembered value is a convenience for NEXT time, never a
+    /// precondition for running the command THIS time.
+    func rememberOptedInValues(for snippet: Snippet, values: [String: String]) {
+        guard let store = snippetVariableMemoryStore else { return }
+        for variable in snippet.variables where variable.remembersLastValue {
+            guard let value = values[variable.name] else { continue }
+            try? store.remember(value, snippetID: snippet.id, name: variable.name)
         }
     }
 
