@@ -821,6 +821,8 @@
 "snippets.delete.confirm" = "Supprimer";
 "snippets.delete.error" = "Impossible de supprimer le snippet.";
 "snippets.export" = "Exporter…";
+"snippets.export.confirm.title" = "Exporter les snippets ?";
+"snippets.export.confirm.message %lld" = "%lld snippets seront écrits dans le fichier.";
 "snippets.import" = "Importer…";
 "snippets.import.nameless %lld" = "Non importés faute de nom : %lld";
 "snippets.import.error" = "Ce fichier n’a pas pu être lu comme des snippets macSCP. Il s’agit peut-être d’un autre type d’export, ou le fichier est endommagé.";

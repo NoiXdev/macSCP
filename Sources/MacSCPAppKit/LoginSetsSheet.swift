@@ -85,19 +85,6 @@ struct LoginSetsSheet: View {
         sessionList.loginSets.first { $0.id == selectedID }
     }
 
-    /// What the footer's "Export…" covers: the selection when it is one of the
-    /// rows on screen, otherwise every row on screen. `selectedSet` reads from
-    /// the FULL list, so the membership check is what keeps a selection that
-    /// the search has filtered away from silently widening — or narrowing —
-    /// the scope. The export sheet then states the count before anything is
-    /// written.
-    private func exportScope(within visibleSets: [LoginSet]) -> [LoginSet] {
-        if let selectedSet, visibleSets.contains(where: { $0.id == selectedSet.id }) {
-            return [selectedSet]
-        }
-        return visibleSets
-    }
-
     var body: some View {
         // Hoisted out of the VStack's own scope (M19/T8 review, leftover 5)
         // so `.onChange(of: visibleSets)` below — attached to the VStack
@@ -159,18 +146,18 @@ struct LoginSetsSheet: View {
                 }
                 .buttonStyle(.polished)
                 .disabled(selectedSet == nil)
-                // Export scope (M19/T8, corrected in review): the selected set
-                // when there is one, otherwise everything the LIST CURRENTLY
-                // SHOWS — never everything that exists. With an active search
-                // the two differ, and M18's regression fix above clears the
-                // selection as soon as the selected row is filtered out, so
-                // "no selection" is the NORMAL state while searching: falling
-                // back to `sessionList.loginSets` meant filtering 60 logins
-                // down to 3, hitting "Export…", and writing all 60 — with
-                // their passwords, if that switch was on. Edit and Delete were
+                // Export scope (M19/T8, corrected in review; the rule itself
+                // now lives at `ExportScope`): with an active search, M18's
+                // regression fix above clears the selection as soon as the
+                // selected row is filtered out, so "no selection" is the
+                // NORMAL state while searching — falling back to the full
+                // `sessionList.loginSets` meant filtering 60 logins down to
+                // 3, hitting "Export…", and writing all 60 — with their
+                // passwords, if that switch was on. Edit and Delete were
                 // hardened against exactly this in M18; export was not.
                 Button(L10n.string("logins.export.action", "Export…")) {
-                    exportTarget = ExportTarget(sets: exportScope(within: visibleSets))
+                    exportTarget = ExportTarget(sets: ExportScope.resolve(
+                        selectedID: selectedID, from: visibleSets))
                 }
                 .buttonStyle(.polished)
                 .disabled(visibleSets.isEmpty)
@@ -191,10 +178,10 @@ struct LoginSetsSheet: View {
         // `selectedSet`, which reads the FULL `sessionList.loginSets`, so
         // with the search showing "No matches" they stayed enabled and acted
         // on (and the delete dialog named) a row the user could no longer
-        // see — Export was already immune via `exportScope`'s own membership
-        // check. Attaching to the VStack instead covers both branches of the
-        // `if visibleSets.isEmpty` above, so the selection is cleared
-        // whichever one is on screen.
+        // see — Export was already immune via `ExportScope.resolve`'s own
+        // membership check. Attaching to the VStack instead covers both
+        // branches of the `if visibleSets.isEmpty` above, so the selection
+        // is cleared whichever one is on screen.
         .onChange(of: visibleSets) { _, newValue in
             if let selectedID, !newValue.contains(where: { $0.id == selectedID }) {
                 self.selectedID = nil

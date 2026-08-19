@@ -7,10 +7,12 @@ import Testing
 /// the destructive entry stays last), the Export entry sets `selectedID`
 /// before calling `performExport([snippet])` (so it always acts on the
 /// right-clicked snippet, not whatever was selected before), and
-/// `"snippets.export"` occurs exactly twice across the whole file — once for
-/// the footer button, once for the row. That count is what actually catches
-/// the regression a plain `contains` cannot: a second, drifted key added
-/// just for the row would leave a `contains` check green.
+/// `"snippets.export"` occurs exactly three times across the whole file —
+/// once for the footer button that arms the export confirmation, once for
+/// that confirmation's own confirming button, once for the row. That count
+/// is what actually catches the regression a plain `contains` cannot: a
+/// second, drifted key added just for the row would leave a `contains`
+/// check green.
 ///
 /// Known blind spots, same shape as `SnippetActionSheetKeyboardShortcutGuardTests`
 /// and `SnippetMenuItemsKeyboardShortcutGuardTests`, whose block-isolation
@@ -56,14 +58,15 @@ struct SnippetRowExportMenuGuardTests {
             """)
     }
 
-    @Test func exportLabelKeyIsSharedByExactlyFooterAndRow() throws {
+    @Test func exportLabelKeyIsSharedByExactlyFooterConfirmAndRow() throws {
         let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
         let count = Self.occurrenceCount(of: "\"snippets.export\"", in: source)
-        #expect(count == 2, """
-            "snippets.export" must appear exactly twice in SnippetsSheet.swift \
-            -- once for the footer button, once for the row -- found \(count). \
-            A new, drifted key for the row would leave the other assertions in \
-            this suite green.
+        #expect(count == 3, """
+            "snippets.export" must appear exactly three times in \
+            SnippetsSheet.swift -- once for the footer button, once for the \
+            export confirmation's own confirming button, once for the row -- \
+            found \(count). A new, drifted key for the row would leave the \
+            other assertions in this suite green.
             """)
     }
 

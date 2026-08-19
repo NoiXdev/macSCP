@@ -46,6 +46,10 @@ struct SnippetsSheet: View {
 
     @State private var exportDocument: SnippetExportDocument?
     @State private var showExportFileExporter = false
+    /// Non-nil while the export confirmation is up: the snippets the user
+    /// is about to write, held rather than recomputed so what was confirmed
+    /// is exactly what gets written even if the filter changes underneath.
+    @State private var pendingExport: [Snippet]?
 
     // MARK: - Import (P3b/T4)
 
@@ -143,14 +147,18 @@ struct SnippetsSheet: View {
                 }
                 .buttonStyle(.polished)
                 .disabled(selectedSnippet == nil)
-                // Exports exactly the rows on screen — search and tag
-                // filter both narrow this, same as `visibleSnippets` above
-                // (spec P3b, Task 3). Enablement is `snippetsCanExport`
+                // Exports the resolved scope — the selection when it is one
+                // of the rows on screen, otherwise every row on screen, per
+                // `ExportScope`. Enablement is `snippetsCanExport`
                 // (`SnippetsPresentation.swift`), which also rules out an
                 // unreadable store explicitly rather than leaning on
                 // `visibleSnippets` happening to be empty in that case too.
                 Button(L10n.string("snippets.export", "Export…")) {
-                    performExport(visibleSnippets)
+                    // `snippetsCanExport` already rules out an empty visible
+                    // list, so the resolved scope always has at least one
+                    // snippet in it.
+                    pendingExport = ExportScope.resolve(
+                        selectedID: selectedID, from: visibleSnippets)
                 }
                 .buttonStyle(.polished)
                 .disabled(!snippetsCanExport(load: load, visibleSnippets: visibleSnippets))
@@ -193,6 +201,27 @@ struct SnippetsSheet: View {
             Text(deleteConfirmMessage)
         }
         // MARK: Export (P3b/T3)
+        .alert(
+            L10n.string("snippets.export.confirm.title", "Export snippets?"),
+            isPresented: Binding(
+                get: { pendingExport != nil },
+                set: { if !$0 { pendingExport = nil } })
+        ) {
+            Button(L10n.string("snippets.export", "Export…")) {
+                if let pendingExport { performExport(pendingExport) }
+                pendingExport = nil
+            }
+            .keyboardShortcut(.defaultAction)
+            Button(L10n.string("common.cancel", "Cancel"), role: .cancel) {
+                pendingExport = nil
+            }
+        } message: {
+            Text(String(
+                format: L10n.string(
+                    "snippets.export.confirm.message %lld",
+                    "%lld snippets will be written to the file."),
+                pendingExport?.count ?? 0))
+        }
         .fileExporter(
             isPresented: $showExportFileExporter,
             document: exportDocument,
