@@ -370,6 +370,8 @@ EOF
 - Modify: `Tests/macSCPCoreTests/SnippetHighlighterTests.swift` (drei
   `SnippetCommandInput`-Tests entfallen)
 - Modify: alle Dateien mit `Snippet(`-Aufrufen (siehe Schritt 4)
+- Modify: `Sources/MacSCPAppKit/SnippetCommandEditor.swift` (nur der
+  Sanitizer-Aufruf, siehe Schritt 5)
 - Modify: `Tests/macSCPCoreTests/SnippetTests.swift`,
   `Tests/macSCPCoreTests/SnippetAuditDetailTests.swift`
 
@@ -488,11 +490,20 @@ Entferne die drei `SnippetCommandInput`-Zeilen aus
 `Tests/macSCPCoreTests/SnippetHighlighterTests.swift` samt der Testfunktionen,
 die sie tragen, und deren Doc-Kommentaren.
 
+Entferne im selben Zug den einen verbleibenden Aufruf in
+`Sources/MacSCPAppKit/SnippetCommandEditor.swift`: die Delegate-Methode
+`textView(_:shouldChangeTextIn:replacementString:)` tat nichts anderes als
+zu sanitisieren und entfällt vollständig. **Nur diese Methode** — der Rest
+des Editors gehört Task 3.
+
+Das gehört hierher und nicht in Task 3, damit jeder Commit dieses Zweigs für
+sich baut; ein Commit, der die App-Schicht nicht übersetzt, ist an den
+CI-Gates dieses Projekts kein zulässiger Zwischenstand. Der Editor nimmt
+damit ab jetzt eingefügte Umbrüche an, während eine getippte Eingabetaste
+noch verschluckt wird — ein stimmiger Zwischenzustand, den Task 3 auflöst.
+
 Run: `grep -rn 'SnippetCommandInput' Sources/ Tests/`
-Expected: **nur noch** der Treffer in
-`Sources/MacSCPAppKit/SnippetCommandEditor.swift` — den räumt Task 3 ab. Bis
-dahin baut die App-Schicht nicht; das ist erwartet und der Grund, warum
-Task 3 unmittelbar folgt.
+Expected: **keine Treffer.**
 
 - [ ] **Schritt 6: Die zwei Doc-Kommentare korrigieren, die jetzt falsch sind**
 
@@ -510,10 +521,11 @@ und schreibe sie auf das um, was der jeweilige Test tatsächlich prüft. Prüfe
 im selben Durchgang, ob der zugehörige Test noch etwas beweist — tut er es
 nicht mehr, melde das, statt ihn stillschweigend stehen zu lassen.
 
-- [ ] **Schritt 7: Grün laufen lassen**
+- [ ] **Schritt 7: Bauen und die volle Suite laufen lassen**
 
-Run: `swift test --filter macSCPCoreTests 2>&1 | tail -3`
-Expected: grün.
+Run: `swift build && swift test 2>&1 | tail -3`
+Expected: grün — **die ganze Suite, nicht nur Core.** Baut die App-Schicht
+nicht, ist Schritt 5 unvollständig.
 
 - [ ] **Schritt 8: Committen**
 
