@@ -977,12 +977,14 @@ public final class ConnectionViewModel {
         state = .idle
     }
 
-    /// Leaves edit mode WITHOUT touching the form fields. Two paths call
-    /// this: the app's tab teardown and the sidebar's import fill
-    /// (`fillFromImported`) -- a reconnect reaches it only through that
-    /// teardown. A stale `.edit` target surviving them would make a later
-    /// Save overwrite the wrong stored session, while the field values are
-    /// owned by whatever fills the form next.
+    /// Leaves edit mode WITHOUT touching the form fields. Three paths call
+    /// this: the app's tab teardown, the sidebar's import fill
+    /// (`fillFromImported`), and `endEditing()` above, which adds the full
+    /// field reset for the form's Save/Cancel and the sidebar's "New
+    /// connection" -- a reconnect reaches it only through that teardown. A
+    /// stale `.edit` target surviving them would make a later Save overwrite
+    /// the wrong stored session, while the field values are owned by
+    /// whatever fills the form next.
     /// Jump fields reset entirely here rather than only in `endEditing()`
     /// (M10c/T3, same sticky-toggle lesson M10b learned for `loginMode`/
     /// `selectedLoginSetID` above): `jumpEnabled` is itself a MODE switch,
