@@ -434,9 +434,10 @@ public final class ConnectionViewModel {
     }
 
     /// Maps the form's `AuthChoice` to the persisted `StoredSession.AuthKind`
-    /// (M10d/T3) -- the single place both the target's and the jump's
-    /// choice-to-kind mapping go through, so a third auth kind only needs
-    /// updating here instead of at every call site. Public (M10d/T4), though
+    /// (M10d/T3) -- the one place the JUMP's choice-to-kind mapping goes
+    /// through, so a third auth kind only needs updating here instead of at
+    /// every jump call site. The target's own choice reaches the store
+    /// through `SSHFieldSchema` instead. Public (M10d/T4), though
     /// the App layer currently has no external caller of its own: it
     /// round-trips the raw `AuthKind` value through `SSHFieldSchema` instead
     /// of going through this mapping.
@@ -450,9 +451,9 @@ public final class ConnectionViewModel {
 
     /// The reverse of `storedAuthKind(for:)` -- used by `beginEditing` to
     /// prefill the jump's auth choice from a persisted `AuthKind`. Public
-    /// (M10d/T4): the App layer's own jump-prefill paths
-    /// (`ContentView`, `SessionListViewModel+Submit`) call this across the
-    /// module boundary.
+    /// (M10d/T4): `ContentView`'s jump-prefill paths call this across the
+    /// module boundary. `SessionListViewModel+Submit` calls it too, but that
+    /// file lives in this module and needs no access beyond `internal`.
     public static func authChoice(for kind: StoredSession.AuthKind) -> AuthChoice {
         switch kind {
         case .password: return .password
@@ -990,8 +991,8 @@ public final class ConnectionViewModel {
     ///
     /// `kind`/S3/WebDAV fields reset here too (M12/T7a, M21/T9, same
     /// lesson): `kind` is itself a MODE switch, so a stale `.s3`/`.webdav`
-    /// from a previous edit must not survive into whatever the caller fills
-    /// in next.
+    /// from a previous edit must not survive into whatever gets filled in
+    /// next -- a teardown, an import, or the next form the user opens.
     public func exitEditMode() {
         mode = .new
         editingOriginal = nil
@@ -1012,10 +1013,10 @@ public final class ConnectionViewModel {
     /// jump toggle, its host/port/login fields, the source switcher, and the
     /// internal existing-secret bookkeeping. The single source of truth for
     /// "no jump block survives here" — used by `exitEditMode()`,
-    /// `beginEditing()`'s no-jump branch, and (via `ContentView`'s
-    /// `applyRawJumpFallback`) three of `ContentView.fillForm`'s
-    /// early-return failure paths, so a jump block typed for one session's
-    /// form can never leak into another's.
+    /// `beginEditing()`'s no-jump branch, the `kind` switch's own `didSet`,
+    /// and (via `ContentView`'s `applyRawJumpFallback`) all three of
+    /// `ContentView.fillForm`'s early-return failure paths, so a jump block
+    /// typed for one session's form can never leak into another's.
     ///
     /// `jumpSourceMode`/`jumpSessionID` reset here too (M11a/T3, the same
     /// sticky-toggle lesson M10b learned for `loginMode`/

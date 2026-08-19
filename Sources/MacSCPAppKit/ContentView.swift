@@ -155,8 +155,10 @@ struct ContentView: View {
     /// Menu-bar status bridge (M11n), created once in `MacSCPApp` (no
     /// singleton, same pattern as the stores above) and shared with the
     /// AppKit `MenuBarController` there. This view mirrors `tabsModel.tabs`
-    /// into it and sets its window-raising closures in `wireMenuBarBridge()`
-    /// (run from `performWindowSetup()`) and `.onChange` below — see
+    /// into it — once in `wireMenuBarBridge()` and again from the
+    /// `.onChange(of: tabIDs)` beside it — and sets its window-raising
+    /// closures in `wireMenuBarBridge()` alone (both in
+    /// `ContentView+Lifecycle.swift`, run from `performWindowSetup()`); see
     /// `MenuBarStatusModel`'s doc comment.
     let menuBarModel: MenuBarStatusModel
     /// Assigned in `init` (not a bare default value) so it can pass
@@ -1368,8 +1370,9 @@ struct ContentView: View {
 
     /// Fills the jump block from the session's own raw JumpSpec values (no set
     /// resolution), or clears it entirely when the session has no jump. Used by
-    /// BOTH early-return failure paths so a stale jump block from a previous form
-    /// state can never survive into a different session's connect.
+    /// all three of `fillForm`'s early-return failure paths so a stale jump
+    /// block from a previous form state can never survive into a different
+    /// session's connect.
     ///
     /// `jumpSourceMode`/`jumpSessionID` are also reset here (F-2 fix, final
     /// review): the `if let jump` branch below fills only the manual-looking
