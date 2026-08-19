@@ -1557,9 +1557,9 @@ struct ContentView: View {
     /// would overwrite whatever the user has typed into the unconnected tab
     /// on screen, and — the reason that matters more — the resolved config
     /// carries a plaintext secret, so the object holding it must not outlive
-    /// the call. `disconnect` clears `lastConnectedConfig` for exactly that
-    /// reason (`ConnectionViewModel.clearRetainedSecrets`), and this route
-    /// deliberately creates no second place clearing would have to reach.
+    /// the call. The two places that DO hold a config past their call keep no
+    /// secret in it: `lastConnectedConfig` and the password hint's request
+    /// both store `redactingSecrets()`. This route creates no third one.
     /// Its connector throws rather than dialling: the one path that could
     /// turn this into a connection is closed structurally, not by
     /// convention. Nothing here calls it.

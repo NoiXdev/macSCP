@@ -206,10 +206,10 @@ struct ConnectionConfigResolutionTests {
         #expect(pair.resolving.state == .idle)
     }
 
-    /// `disconnect`/`clearRetainedSecrets` clear `lastConnectedConfig` so no
-    /// plaintext password outlives a connection. Resolving must not open a
-    /// second place a resolved config lives on: it retains nothing, and the
-    /// returned value is the caller's to hold for the length of its call.
+    /// `lastConnectedConfig` stores its config redacted, so no plaintext
+    /// password outlives the dial. Resolving must not open a second place a
+    /// resolved config lives on: it retains nothing, and the returned value
+    /// is the caller's to hold for the length of its call.
     @Test func resolvingRetainsNothing() {
         let pair = makePair { _ in }
 

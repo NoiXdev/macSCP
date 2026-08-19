@@ -508,10 +508,10 @@ public final class ConnectionViewModel {
     ///
     /// RETAINS NOTHING. The resolved config carries the plaintext secret and
     /// is returned, never stored. `lastConnectedConfig` is written by a
-    /// SUCCESSFUL `connect()` alone, and `clearRetainedSecrets()` clears it
-    /// on disconnect so no plaintext password outlives the connection; a
-    /// second property holding a resolved config would be a second place that
-    /// clearing does not reach.
+    /// SUCCESSFUL `connect()` alone, and it stores `redactingSecrets()`, so
+    /// no plaintext password outlives the dial that produced it; a second
+    /// property holding an UNREDACTED resolved config would be a place no
+    /// clearing reaches.
     ///
     /// Answers ONE question — can this connection be resolved — and therefore
     /// does NOT check the save name. That check stays in `connect()`, ahead
