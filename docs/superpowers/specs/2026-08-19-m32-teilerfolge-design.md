@@ -12,18 +12,19 @@ Der Backlog führte fünf technische Punkte. Nachgemessen am Branch:
 | `applyMerge` liest mit `try?` und löscht trotzdem | **erledigt** in M28/T2 — der Lesevorgang wirft, mit ausführlicher Begründung im Code. Die Notiz war veraltet. |
 | Jump-Bindung, dieselbe Bauart | **nicht gefunden** — die Bindestellen schreiben mit `try`, nicht `try?` |
 | `applyMerge`-Rewire-Schleife | **echt**, siehe unten |
-| Waisen aus der Schlüssel-Erzeugung | **echt**, siehe unten |
+| Waisen aus der Schlüssel-Erzeugung | **erledigt** — der `catch` um `store.add` entfernt beide Dateien und wirft den ursprünglichen Fehler weiter. Beim ersten Schreiben dieser Spec falsch als offen geführt, weil nur die Reihenfolge der Aufrufe gelesen wurde, nicht ihr `catch`. |
 | Testsuite-Hänger | nicht auf Zuruf lösbar (280 Läufe ohne Reproduktion); Werkzeug liegt bereit |
 
 Ein Backlog-Eintrag ist derselbe Fall wie ein Kommentar: eine Behauptung mit
-Verfallsdatum. Zwei von fünf waren abgelaufen.
+Verfallsdatum. **Drei von fünf waren abgelaufen** — der dritte fiel erst
+beim Planschreiben auf, nachdem diese Spec ihn bereits als offen geführt
+hatte. Die Lehre gilt also auch für diese Spec selbst: eine Reihenfolge von
+Aufrufen zu lesen ist keine Messung, solange der `catch` daneben ungelesen
+bleibt.
 
-## Die zwei echten Fundstellen
+## Die eine echte Fundstelle
 
-Beide sind **dieselbe Bauart**: eine mehrschrittige Operation, deren
-späterer Schritt läuft, obwohl ein früherer fehlschlug.
-
-### 1. `applyMerge` — kostet ein Zugangsdatum
+### `applyMerge` — kostet ein Zugangsdatum
 
 ```swift
 for session in groupSessions {
@@ -44,15 +45,6 @@ wörtlich „both are `try?`, so a store-write failure for one session does not
 stop that session's secret from being deleted." Es war gesehen und
 hingenommen.
 
-### 2. Schlüssel-Erzeugung — kostet eine Datei
-
-`SSHKeyGenerator.generate(…)` schreibt die Schlüsseldateien, danach schreibt
-`store.add(key)` die Metadaten. Wirft der zweite Schritt, liegen die Dateien
-ohne Eintrag im Schlüsselverzeichnis. Sie stehen in keiner Liste, keine
-Ansicht zeigt sie, und ihre IDs stehen nirgends.
-
-Deutlich milder als Fall 1 — verloren geht nichts, was jemand kennt.
-
 ## Die Regel
 
 **Ein Schritt, der etwas wegnimmt, läuft nur, wenn der Schritt, der seinen
@@ -62,14 +54,15 @@ Ersatz schafft, nachweislich geglückt ist.**
   Write, wird der Slot dieser Sitzung **nicht** gelöscht; sie behält
   Geheimnis und Un-Bindung und bleibt damit funktionsfähig. Die Schleife
   läuft für die übrigen Mitglieder weiter — ein Fehlschlag bei einem
-  Mitglied darf die anderen nicht mit sich reißen —, und am Ende nennt eine
-  Meldung, wie viele Sitzungen nicht umgehängt wurden. Der Rückgabewert
+  Mitglied darf die anderen nicht mit sich reißen —, und am Ende sagt eine
+  Meldung, dass Sitzungen nicht umgehängt wurden und ihr eigenes Passwort
+  behalten haben. **Ohne Anzahl:** Plurale brauchen `.stringsdict`, das es
+  nur in `MacSCPAppKit` gibt, während diese Meldung in Cores Katalog liegt —
+  eine Zahl wäre hier Plural-Infrastruktur für einen Satz. Der Rückgabewert
   bleibt das erzeugte Set: es existiert, und die geglückten Mitglieder
   zeigen darauf.
-- **Schlüssel-Erzeugung:** wirft `store.add`, werden die eben geschriebenen
-  Dateien wieder entfernt. Das Entfernen ist best-effort und darf den
-  ursprünglichen Fehler nicht verdecken — er ist der, den der Nutzer sehen
-  muss.
+Die Schlüssel-Erzeugung erfüllt diese Regel bereits und bleibt unberührt;
+ihr `catch` ist das Muster, dem `applyMerge` folgt.
 
 ## Tests
 
@@ -83,10 +76,6 @@ tatsächlich zu einem Fehler führt, statt das anzunehmen.
 - **Positivkontrolle:** ohne Schreibschutz wird das Geheimnis sehr wohl
   gelöscht und die Sitzung zeigt aufs Set. Ohne diesen zweiten Test bliebe
   der erste auch dann grün, wenn `applyMerge` gar nichts mehr löscht.
-
-**Schlüssel-Erzeugung.** Dieselbe Bauart: ein Zustand, in dem `store.add`
-scheitert, und die Prüfung, dass danach keine Schlüsseldatei zurückbleibt —
-plus die Positivkontrolle, dass im Normalfall beide Dateien liegen bleiben.
 
 ## Was nicht dazugehört
 
