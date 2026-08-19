@@ -489,15 +489,30 @@ struct TerminalPanelViewModelDeliveryTests {
         func bump() { lock.lock(); _count += 1; lock.unlock() }
     }
 
+    /// Polls instead of sleeping a fixed span: the same fixed wait that is
+    /// ample when this suite runs alone is not when the whole suite runs in
+    /// parallel, and a timing-dependent test that only fails under load is
+    /// worse than no test.
+    private func waitUntil(
+        _ condition: @MainActor () -> Bool, timeout: Duration = .seconds(5)
+    ) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            if condition() { return true }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        return condition()
+    }
+
     @Test func firesOnceWhenTheShellIsRunning() async throws {
         let shell = MockShell()
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
         vm.openIfNeeded()
-        try await Task.sleep(nanoseconds: 50_000_000)
+        _ = await waitUntil { if case .running = vm.state { return true } else { return false } }
 
         let delivered = Box()
         vm.send([0x61]) { delivered.bump() }
-        try await Task.sleep(nanoseconds: 50_000_000)
+        _ = await waitUntil { delivered.count == 1 }
 
         #expect(delivered.count == 1)
     }
@@ -512,10 +527,11 @@ struct TerminalPanelViewModelDeliveryTests {
 
         let delivered = Box()
         vm.send([0x61]) { delivered.bump() }
-        // Still buffered: the shell has not opened yet.
+        // Still buffered: the shell has not opened yet. Checked synchronously,
+        // before any suspension, so no amount of load can make it flaky.
         #expect(delivered.count == 0)
 
-        try await Task.sleep(nanoseconds: 250_000_000)
+        _ = await waitUntil { delivered.count == 1 }
         #expect(delivered.count == 1)
     }
 
@@ -526,7 +542,7 @@ struct TerminalPanelViewModelDeliveryTests {
 
         let delivered = Box()
         vm.send([0x61]) { delivered.bump() }
-        try await Task.sleep(nanoseconds: 200_000_000)
+        _ = await waitUntil { if case .ended = vm.state { return true } else { return false } }
 
         #expect(delivered.count == 0)
         if case .ended = vm.state {} else {
