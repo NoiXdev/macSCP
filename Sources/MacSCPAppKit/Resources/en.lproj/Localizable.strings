@@ -743,6 +743,7 @@
 "presigned.error" = "Couldn't create the link.";
 
 /* SSH Keys sheet (M17/T4, M18/T5) — generate/manage macSCP-managed SSH keys */
+"keys.load.error" = "The keys file couldn't be read. It exists but can't be decoded — no key was lost, and nothing will be written over it.";
 "keys.empty" = "No keys yet. Generate one to get started.";
 "keys.generate" = "Generate…";
 "keys.generate.title" = "Generate SSH Key";

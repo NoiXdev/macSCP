@@ -17,7 +17,10 @@ import macSCPCore
 struct SSHKeysSheet: View {
     @Environment(\.dismiss) private var dismiss
 
-    @State private var keys: [ManagedKey] = []
+    /// The READ, not just its result: an unreadable store must not render as
+    /// "No keys yet." on the one screen whose job is to answer which keys
+    /// exist (see `ManagedKeysLoad`).
+    @State private var load: ManagedKeysLoad = .loaded([])
     @State private var searchText = ""
     @State private var searchIsRegex = false
 
@@ -77,15 +80,13 @@ struct SSHKeysSheet: View {
             SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
                 .padding(.bottom, 4)
 
-            let visibleKeys = keys.filter {
+            let visibleKeys = load.keys.filter {
                 predicate.matches("\($0.name) \($0.comment) \($0.fingerprint)")
             }
 
             if visibleKeys.isEmpty {
                 Spacer(minLength: 0)
-                Text(searchText.isEmpty
-                    ? L10n.string("keys.empty", "No keys yet. Generate one to get started.")
-                    : L10n.string("keys.noMatches", "No matches."))
+                Text(emptyStateText)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
                 Spacer(minLength: 0)
@@ -193,7 +194,21 @@ struct SSHKeysSheet: View {
         }
     }
 
-    private func reload() { keys = (try? store.all()) ?? [] }
+    private func reload() { load = ManagedKeysLoad(reading: store) }
+
+    /// What stands in place of the list. The unreadable case comes FIRST and
+    /// is not a variant of "empty": the file is there and still holds every
+    /// key, so both other sentences would be false.
+    private var emptyStateText: String {
+        if load.isUnreadable {
+            return L10n.string(
+                "keys.load.error",
+                "The keys file couldn't be read. It exists but can't be decoded \u{2014} no key was lost, and nothing will be written over it.")
+        }
+        return searchText.isEmpty
+            ? L10n.string("keys.empty", "No keys yet. Generate one to get started.")
+            : L10n.string("keys.noMatches", "No matches.")
+    }
 
     @ViewBuilder
     private func row(_ key: ManagedKey) -> some View {

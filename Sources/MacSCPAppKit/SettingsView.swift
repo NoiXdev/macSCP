@@ -872,7 +872,7 @@ private struct SSHSettingsSection: View {
 /// here cannot leave the other window stale. `SSHKeysSheet` is presented
 /// here because it always has been (this section only inherited it from the
 /// "SSH" section); note that the connection form's key picker
-/// (`ConnectionFormView.connectableManagedKeys()`) IS derived state, so
+/// (`ManagedKeysLoad.connectableKeys()`) IS derived state, so
 /// deleting a key here can leave an open form holding a dead
 /// `managedKeyID` — pre-existing behaviour, unchanged by this section.
 ///

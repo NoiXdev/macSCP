@@ -746,6 +746,7 @@
 "presigned.error" = "Nie udało się utworzyć linku.";
 
 /* Arkusz „Klucze SSH” (M17/T4, M18/T5) — generowanie/zarządzanie kluczami SSH macSCP */
+"keys.load.error" = "Nie udało się odczytać pliku kluczy. Plik istnieje, ale nie da się go zdekodować — żaden klucz nie został utracony i nic nie zostanie nadpisane.";
 "keys.empty" = "Brak kluczy. Wygeneruj pierwszy, aby zacząć.";
 "keys.generate" = "Generuj…";
 "keys.generate.title" = "Generuj klucz SSH";

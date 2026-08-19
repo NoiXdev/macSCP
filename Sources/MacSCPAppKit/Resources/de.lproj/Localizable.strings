@@ -744,6 +744,7 @@
 "presigned.error" = "Der Link konnte nicht erzeugt werden.";
 
 /* SSH-Schlüssel-Sheet (M17/T4, M18/T5) — macSCP-verwaltete SSH-Schlüssel erzeugen/verwalten */
+"keys.load.error" = "Die Schlüsseldatei konnte nicht gelesen werden. Sie ist vorhanden, lässt sich aber nicht decodieren — es ging kein Schlüssel verloren, und es wird nichts darüber geschrieben.";
 "keys.empty" = "Noch keine Schlüssel. Erzeuge einen, um loszulegen.";
 "keys.generate" = "Erzeugen…";
 "keys.generate.title" = "SSH-Schlüssel erzeugen";

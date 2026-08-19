@@ -352,7 +352,7 @@ struct ConnectionFormView: View {
         // deliberately leaves the typed path alone.
         .onChange(of: viewModel.values.raw[Self.managedKeyKey] ?? "") { _, newID in
             guard !newID.isEmpty,
-                  let key = Self.connectableManagedKeys()
+                  let key = ManagedKeysLoad.connectableKeys()
                       .first(where: { $0.id.uuidString == newID })
             else { return }
             viewModel.keyPath = Self.managedKeyPath(for: key)
@@ -795,7 +795,7 @@ struct ConnectionFormView: View {
         case .managedKeys:
             // Same filter the hand-written SSH key picker uses: only ed25519
             // keys with a resolvable file are offerable.
-            return Self.connectableManagedKeys().map { key in
+            return ManagedKeysLoad.connectableKeys().map { key in
                 FieldOption(
                     id: key.id.uuidString, labelKey: "",
                     labelDefault: "\(key.name) — \(Self.shortFingerprint(key.fingerprint))")
@@ -942,22 +942,11 @@ struct ConnectionFormView: View {
 }
 
 private extension ConnectionFormView {
-    /// Managed ed25519 keys available to fill `keyPath` from (M17/T5).
-    /// Filters on `KeyType.isConnectable` — `SSHPrivateKeyLoader` can only
-    /// load ed25519, so rsa/ecdsa keys never appear in the picker menu.
-    static func connectableManagedKeys() -> [ManagedKey] {
-        let store = ManagedKeyStore(directory: SessionStore.defaultDirectory)
-        // A key whose stored `fileName` does not address a file inside the
-        // key directory has no usable path, so it is not offerable either.
-        return (try? store.all())?
-            .filter { $0.type.isConnectable && store.privateKeyURL(for: $0) != nil } ?? []
-    }
-
     /// The private-key file path a managed key resolves to, in the shape
     /// `keyPath` expects (absolute, not percent-encoded). Empty — i.e. "no
     /// key" — for a key whose stored `fileName` does not address a file
-    /// inside the key directory; `connectableManagedKeys` already keeps
-    /// those out of the picker.
+    /// inside the key directory; `ManagedKeysLoad.connectableKeys` already
+    /// keeps those out of the picker.
     static func managedKeyPath(for key: ManagedKey) -> String {
         ManagedKeyStore(directory: SessionStore.defaultDirectory)
             .privateKeyURL(for: key)?.path(percentEncoded: false) ?? ""
