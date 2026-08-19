@@ -49,6 +49,29 @@
   continuations, `cancelAll` leaves no orphaned shells/transfers, group
   `onCompleted` fires exactly once.
 
+## Kommentare über anderen Code
+
+Zwei Regeln, gemessen im Kommentar-Audit vom 2026-08-19
+(`docs/superpowers/specs/2026-08-19-p4-kommentar-audit.md`): 15 % der
+Aussagen über Aufrufer waren falsch — aber nur in Dateien, die zuletzt
+umgebaut wurden. In einer seit einem Meilenstein stillen Datei: null.
+
+1. **Wer eine Funktion extrahiert, umbenennt oder ihren Aufruferkreis
+   ändert, sucht im selben Zug nach Kommentaren, die diese Aufrufer
+   benennen — auch in Dateien, die der Diff nicht berührt.** Genau dort
+   entsteht der Schaden: der Kommentar wird falsch, ohne im Diff
+   aufzutauchen.
+
+2. **Wer in einem Kommentar eine Zahl oder eine Aufzählung von
+   Aufrufstellen schreibt, zählt sie im selben Moment nach.** Über vier
+   Korrekturrunden hinweg saß *jeder* Folgefehler in einer Zahl oder einer
+   Liste; Prosa ohne Kardinalität blieb fehlerfrei. „Drei Aufrufstellen"
+   ist eine Behauptung über den Rest des Projekts und klingt beim
+   Schreiben immer plausibel.
+
+Gilt auch für Reviews: eine Zahl in einem Kommentar ist ein Prüfauftrag,
+kein Beleg.
+
 ## Git
 
 - Conventional Commits (enforced by CI); commit messages in English.
