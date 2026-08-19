@@ -65,7 +65,7 @@ public enum SSHCommandBuilder {
     /// take effect, because it is always a value inside `'...'`, never
     /// unquoted shell syntax.
     public static func shellCommand(for config: SSHConnectionConfig) -> String {
-        let quotedArguments = arguments(for: config).map(posixSingleQuote)
+        let quotedArguments = arguments(for: config).map(PosixQuoting.singleQuoted)
         return (["ssh"] + quotedArguments).joined(separator: " ")
     }
 
@@ -97,13 +97,5 @@ public enum SSHCommandBuilder {
             return "\(jump.username)@\(host):\(jump.port)"
         }
         return "\(jump.username)@\(host)"
-    }
-
-    /// Wraps `value` in single quotes for a POSIX shell, escaping any
-    /// embedded `'` as `'\''` (close quote, escaped literal quote, reopen
-    /// quote) — the standard technique for making an arbitrary string safe
-    /// as a single shell word.
-    private static func posixSingleQuote(_ value: String) -> String {
-        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }
