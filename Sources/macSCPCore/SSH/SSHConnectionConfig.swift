@@ -217,16 +217,27 @@ public struct SSHConnectionConfig: Equatable, Sendable {
         self.jump = jump
     }
 
-    /// A copy with every plaintext secret emptied, for the one situation
+    /// A copy with every plaintext secret emptied, for the two situations
     /// where a config must outlive the call that resolved it: the
     /// external-terminal password hint holds one in view state while its
-    /// alert is open, and neither `disconnect` nor
-    /// `ConnectionViewModel.clearRetainedSecrets()` reaches view state.
+    /// alert is open, and `ConnectionViewModel.lastConnectedConfig` holds one
+    /// for the whole duration of a connected session -- neither `disconnect`
+    /// nor `ConnectionViewModel.clearRetainedSecrets()` reaches the former,
+    /// and the latter is exactly what `clearRetainedSecrets()` used to exist
+    /// to scrub before this redaction existed.
     ///
-    /// Nothing is lost by handing the redacted copy to that path:
+    /// Nothing is lost by handing the redacted copy to either path:
     /// `SSHCommandBuilder` reads only host, port, username, key *path* and
     /// jump destination, and passes no secret to `ssh` at all (see its own
     /// doc comment) — `ssh` prompts for the password itself.
+    ///
+    /// MUST NEVER be handed to a connector/dialer. The result looks like a
+    /// usable config -- same host, port, username, jump, and auth CASE -- but
+    /// cannot authenticate: `.password("")` in particular would not fail to
+    /// dial, it would dial WITH an empty password, producing a real login
+    /// attempt against the server that fails confusingly and counts against
+    /// the user server-side (e.g. a fail2ban strike) instead of failing
+    /// locally and obviously the way a missing config would.
     public func redactingSecrets() -> SSHConnectionConfig {
         SSHConnectionConfig(
             validatedHost: host, port: port, username: username,

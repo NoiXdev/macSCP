@@ -194,12 +194,15 @@ struct ConnectionViewModelTests {
         #expect(vm.password == "aus-dem-schluesselbund")
     }
 
-    /// Review finding (M11d fix round 1): `lastConnectedConfig` carries the
-    /// same raw secret as `password`/`keyPath` (it's built from them in
-    /// `connect()`), so the disconnect-time scrub must forget it too --
+    /// Review finding (M11d fix round 1): the disconnect-time scrub must
+    /// forget `lastConnectedConfig` too, not just the form's own password --
     /// otherwise it survives in `SessionTab.connectionViewModel` across every
-    /// later disconnect/reconnect in that tab, defeating `clearPassword()`'s
-    /// own purpose for exactly this secret.
+    /// later disconnect/reconnect in that tab. Since fix round 2,
+    /// `lastConnectedConfig` no longer carries a raw secret at all -- it is
+    /// redacted at assignment (`SSHConnectionConfig.redactingSecrets()`) --
+    /// so this test now covers the property becoming `nil`, not a plaintext
+    /// secret it once held; see `lastConnectedConfigCarriesNoPlaintextPassword`
+    /// below for that guarantee.
     @Test func clearRetainedSecretsForgetsPasswordAndLastConnectedConfig() async {
         let vm = makeVM()
         _ = await vm.connect()
@@ -209,6 +212,30 @@ struct ConnectionViewModelTests {
         vm.clearRetainedSecrets()
         #expect(vm.password.isEmpty)
         #expect(vm.lastConnectedConfig == nil)
+    }
+
+    /// Whole-phase review finding (fix round 2): `lastConnectedConfig` used
+    /// to retain the DIALED config verbatim, plaintext password included, for
+    /// as long as the tab stayed connected -- hours, not the seconds an
+    /// alert is open. `connect()` now stores it via
+    /// `SSHConnectionConfig.redactingSecrets()`, so a successful password
+    /// login must leave no plaintext password reachable through this
+    /// property, even while the session is still connected (i.e. before
+    /// `clearRetainedSecrets()` ever runs).
+    @Test func lastConnectedConfigCarriesNoPlaintextPassword() async {
+        let vm = makeVM()
+        _ = await vm.connect()
+
+        // Hoisted into a Bool: `#expect` expands its receiver, and no
+        // expansion may be able to print a password.
+        let isEmptiedPassword: Bool
+        if case .password(let value) = vm.lastConnectedConfig?.auth {
+            isEmptiedPassword = value.isEmpty
+        } else {
+            isEmptiedPassword = false
+        }
+        #expect(vm.lastConnectedConfig != nil)
+        #expect(isEmptiedPassword)
     }
 
     @Test func secondConnectWhileConnectingIsRejected() async {

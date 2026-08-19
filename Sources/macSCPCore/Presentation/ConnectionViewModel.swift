@@ -107,10 +107,13 @@ public final class ConnectionViewModel {
     }
 
     /// The `SSHConnectionConfig` behind the most recently SUCCESSFUL
-    /// `connect()` — including the already-resolved jump, exactly as the
-    /// connector used it (M11d/T2: the external-terminal launcher needs
-    /// these same values to reproduce the connection in a disposable
-    /// script). `nil` until the first successful connect; a failed attempt
+    /// `connect()` — including the already-resolved jump, as the connector
+    /// used it EXCEPT for its secrets (M11d/T2: the external-terminal
+    /// launcher needs these same values to reproduce the connection in a
+    /// disposable script; fix round 2 redacts the password/passphrase at
+    /// assignment time, since the launcher reads neither and this property
+    /// otherwise outlives the connection by hours, not the seconds an alert
+    /// is open). `nil` until the first successful connect; a failed attempt
     /// leaves the previous value untouched, since a failed connect never
     /// changes what session (if any) is actually active.
     public private(set) var lastConnectedConfig: SSHConnectionConfig?
@@ -601,7 +604,11 @@ public final class ConnectionViewModel {
             state = .idle
             // The DIALED config, hop included: `lastConnectedConfig` is what
             // the external-terminal launcher reproduces the connection from.
-            if case .ssh(let ssh) = dialed { lastConnectedConfig = ssh }
+            // Stored with its secrets redacted -- that path reads none (see
+            // `SSHConnectionConfig.redactingSecrets()`'s own doc comment),
+            // and reproducing the connection means `ssh` prompting for the
+            // password itself, not macSCP replaying a saved one.
+            if case .ssh(let ssh) = dialed { lastConnectedConfig = ssh.redactingSecrets() }
             return fs
         } catch {
             state = jumpAwareFailedState(for: error)
@@ -761,19 +768,23 @@ public final class ConnectionViewModel {
 
     /// Full disconnect-time scrub (review finding, M11d fix round 1): clears
     /// the form's own plaintext password AND the retained
-    /// `lastConnectedConfig` -- the external-terminal launcher's copy of the
-    /// SAME raw secret, which lives in a separate property `clearPassword()`
-    /// alone never touches. `ContentView.teardown(_:)` calls this instead of
-    /// `clearPassword()` directly: `SessionTab.connectionViewModel` survives
-    /// for the tab's whole lifetime, so without this the first connect's
-    /// plaintext password would keep sitting in `lastConnectedConfig` across
-    /// every later disconnect/reconnect in that tab, defeating
-    /// `clearPassword()`'s own purpose for exactly this secret. The other
-    /// `clearPassword()` call sites (`selectAuthChoice` above,
-    /// `ContentView.fillFromImported`) run only on a form that's already
-    /// disconnected -- no live `lastConnectedConfig` there beyond what
-    /// teardown already cleared -- so they keep using the narrower
-    /// `clearPassword()`.
+    /// `lastConnectedConfig`. Since fix round 2, `lastConnectedConfig` itself
+    /// no longer carries a plaintext secret -- it is written already redacted
+    /// (`SSHConnectionConfig.redactingSecrets()`) -- so clearing it here is no
+    /// longer what keeps a password out of memory; that job is done at
+    /// assignment, in `connect()`. What clearing it still buys: the
+    /// non-secret fields (host, username, jump destination) are worth
+    /// forgetting on disconnect too, and doing it here keeps the invariant
+    /// local to this method rather than relying on every caller to remember
+    /// it. `ContentView.teardown(_:)` calls this instead of `clearPassword()`
+    /// directly, since `SessionTab.connectionViewModel` survives for the
+    /// tab's whole lifetime and would otherwise keep a stale
+    /// `lastConnectedConfig` sitting around across every later
+    /// disconnect/reconnect in that tab. The other `clearPassword()` call
+    /// sites (`selectAuthChoice` above, `ContentView.fillFromImported`) run
+    /// only on a form that's already disconnected -- no live
+    /// `lastConnectedConfig` there beyond what teardown already cleared --
+    /// so they keep using the narrower `clearPassword()`.
     public func clearRetainedSecrets() {
         clearPassword()
         lastConnectedConfig = nil
