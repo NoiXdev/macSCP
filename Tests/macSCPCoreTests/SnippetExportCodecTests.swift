@@ -145,12 +145,19 @@ struct SnippetExportCodecTests {
     /// Pins the reason `SnippetVariableMemoryStore` exists as a store
     /// separate from `Snippet` (see that type's doc comment): a value
     /// someone typed and opted to have remembered must never travel with
-    /// an export. This does not go through `SnippetVariableMemoryStore` at
-    /// all — the payload is built straight from `[Snippet]`, so there is no
-    /// code path by which a remembered value COULD reach `encode`. What
-    /// this test guards against is a future stored property on `Snippet`
-    /// (or on the export payload) that would quietly reintroduce one; today
-    /// it only pins the type-level separation the doc comment argues from.
+    /// an export.
+    ///
+    /// Asserts BOTH halves, not just the absence: first, that
+    /// `remember` genuinely put the value on disk in
+    /// `snippet-variables.json` — without that half, the second assertion
+    /// would pass even if `remember` were deleted entirely, since `encode`
+    /// never touches that file and `Snippet` has no field to carry the
+    /// value regardless of whether anything was ever remembered. Verified
+    /// by hand: commenting out the `remember` call turns the FIRST
+    /// assertion red (not the second), confirming the test actually
+    /// exercises the store rather than passing vacuously. The second half
+    /// is what guards against a future stored property on `Snippet` (or on
+    /// the export payload) quietly reintroducing the value into an export.
     @Test("a remembered value never appears in the export bytes")
     func rememberedValueNeverReachesTheExport() throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -165,9 +172,12 @@ struct SnippetExportCodecTests {
         try SnippetVariableMemoryStore(directory: dir)
             .remember(secretRememberedValue, snippetID: snippet.id, name: "DB")
 
-        let data = try SnippetExportCodec.encode(SnippetExportPayload(snippets: [snippet]))
+        let variablesFileText = try String(
+            contentsOf: dir.appendingPathComponent("snippet-variables.json"), encoding: .utf8)
+        #expect(variablesFileText.contains(secretRememberedValue))
 
-        let text = String(decoding: data, as: UTF8.self)
-        #expect(!text.contains(secretRememberedValue))
+        let data = try SnippetExportCodec.encode(SnippetExportPayload(snippets: [snippet]))
+        let exportText = String(decoding: data, as: UTF8.self)
+        #expect(!exportText.contains(secretRememberedValue))
     }
 }

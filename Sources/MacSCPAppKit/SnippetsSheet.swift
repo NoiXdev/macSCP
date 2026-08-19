@@ -41,6 +41,14 @@ struct SnippetsSheet: View {
     @State private var editorTarget: SnippetEditorTarget?
     @State private var isShowingDeleteConfirm = false
     @State private var errorMessage: String?
+    /// Set by `performDelete` when `SnippetStore.remove(id:)` returns
+    /// `.skipped`: the snippet itself is gone, but its remembered variable
+    /// values could not be cleared (a corrupt or unwritable
+    /// `snippet-variables.json`). Kept separate from `errorMessage` because
+    /// the deletion did NOT fail — showing this in the same red "action
+    /// failed" slot would tell the user their delete didn't work when it
+    /// did.
+    @State private var variablesCleanupWarning: String?
 
     // MARK: - Export (P3b/T3)
 
@@ -102,6 +110,12 @@ struct SnippetsSheet: View {
 
             if let displayedError {
                 Text(displayedError).font(.caption).foregroundStyle(.red).lineLimit(2)
+            }
+            // Orange, not red (same distinction `TransferQueueBar` draws for
+            // `.interrupted`): the delete itself succeeded, this only warns
+            // that a follow-up cleanup step did not.
+            if let variablesCleanupWarning {
+                Text(variablesCleanupWarning).font(.caption).foregroundStyle(.orange).lineLimit(2)
             }
 
             SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
@@ -279,6 +293,7 @@ struct SnippetsSheet: View {
             let data = try SnippetExportCodec.encode(SnippetExportPayload(snippets: snippets))
             exportDocument = SnippetExportDocument(data: data)
             errorMessage = nil
+            variablesCleanupWarning = nil
             showExportFileExporter = true
         } catch {
             errorMessage = String(format: L10n.string(
@@ -298,6 +313,7 @@ struct SnippetsSheet: View {
         switch result {
         case .success:
             errorMessage = nil
+            variablesCleanupWarning = nil
         case .failure(let error):
             errorMessage = String(format: L10n.string(
                 "export.error.writeFailed %@", "Could not write the export file: %@"),
@@ -342,6 +358,7 @@ struct SnippetsSheet: View {
                 _ = try SnippetExportCodec.probe(data)
                 let payload = try SnippetExportCodec.decode(data)
                 errorMessage = nil
+                variablesCleanupWarning = nil
                 Task { await applyImport(payload) }
             } catch let error as SessionExportError {
                 errorMessage = snippetImportErrorText(for: error)
@@ -441,10 +458,17 @@ struct SnippetsSheet: View {
     private func performDelete() {
         guard let selectedSnippet else { return }
         do {
-            try store.remove(id: selectedSnippet.id)
+            let outcome = try store.remove(id: selectedSnippet.id)
             errorMessage = nil
+            variablesCleanupWarning =
+                outcome == .skipped
+                ? L10n.string(
+                    "snippets.delete.variablesError",
+                    "The snippet was deleted, but its remembered values couldn't be cleared.")
+                : nil
         } catch {
             errorMessage = L10n.string("snippets.delete.error", "Couldn't delete the snippet.")
+            variablesCleanupWarning = nil
         }
         selectedID = nil
         reload()

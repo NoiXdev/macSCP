@@ -820,6 +820,7 @@
 "snippets.delete.title" = "Dieses Snippet löschen?";
 "snippets.delete.confirm" = "Löschen";
 "snippets.delete.error" = "Das Snippet konnte nicht gelöscht werden.";
+"snippets.delete.variablesError" = "Das Snippet wurde gelöscht, aber seine gemerkten Werte konnten nicht entfernt werden.";
 "snippets.export" = "Exportieren…";
 "snippets.export.confirm.title" = "Snippets exportieren?";
 "snippets.export.confirm" = "Exportieren";

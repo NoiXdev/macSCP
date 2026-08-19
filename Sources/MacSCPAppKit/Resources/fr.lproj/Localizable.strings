@@ -823,6 +823,7 @@
 "snippets.delete.title" = "Supprimer ce snippet ?";
 "snippets.delete.confirm" = "Supprimer";
 "snippets.delete.error" = "Impossible de supprimer le snippet.";
+"snippets.delete.variablesError" = "Le snippet a été supprimé, mais ses valeurs mémorisées n’ont pas pu être effacées.";
 "snippets.export" = "Exporter…";
 "snippets.export.confirm.title" = "Exporter les snippets ?";
 "snippets.export.confirm" = "Exporter";

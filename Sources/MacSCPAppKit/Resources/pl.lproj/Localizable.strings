@@ -822,6 +822,7 @@
 "snippets.delete.title" = "Usunąć ten fragment?";
 "snippets.delete.confirm" = "Usuń";
 "snippets.delete.error" = "Nie udało się usunąć fragmentu.";
+"snippets.delete.variablesError" = "Fragment został usunięty, ale jego zapamiętane wartości nie mogły zostać wyczyszczone.";
 "snippets.export" = "Eksportuj…";
 "snippets.export.confirm.title" = "Wyeksportować fragmenty?";
 "snippets.export.confirm" = "Eksportuj";
