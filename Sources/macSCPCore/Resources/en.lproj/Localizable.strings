@@ -93,4 +93,5 @@
 "core.login.saveFailed %@" = "Failed to save login: %@";
 "core.login.deleteFailed %@" = "Failed to delete login: %@";
 "core.login.mergeFailed %@" = "Failed to merge logins: %@";
+"core.login.mergePartial" = "Some sessions could not be linked to the new login set. They kept their own password.";
 "core.login.mergeConflictingSecrets" = "they store different credentials";

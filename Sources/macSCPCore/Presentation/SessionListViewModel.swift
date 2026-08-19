@@ -844,9 +844,10 @@ public final class SessionListViewModel {
     /// secret. A failing read is a failed carry and not an empty one, which
     /// is what keeps a locked keychain from looking like a group with
     /// nothing to carry (M28/T2). Once the carry succeeds, each session
-    /// is rewired and has its own secret deleted in the same iteration —
-    /// both are `try?`, so a store-write failure for one session does not
-    /// stop that session's secret from being deleted.
+    /// is rewired and, ONLY if that write succeeded, has its own secret
+    /// deleted in the same iteration (M32). A member whose write fails keeps
+    /// both its binding and its secret and is reported; the others still
+    /// merge.
     public func applyMerge(_ candidate: LoginMergeCandidate, name: String) -> LoginSet? {
         let groupSessions = candidate.sessionIDs.compactMap { id in
             sessions.first { $0.id == id }
@@ -963,11 +964,27 @@ public final class SessionListViewModel {
             return nil
         }
 
+        var unlinkedCount = 0
         for session in groupSessions {
             var updated = session
             updated.loginSetID = set.id
-            try? store.upsert(updated)
+            do {
+                try store.upsert(updated)
+            } catch {
+                // M32: the delete below hangs on THIS write. Without that, a
+                // refused write left the session unbound -- still resolving
+                // its login from its own slot -- and then deleted exactly
+                // that slot, leaving it with no credential at all. Skipping
+                // both keeps this member exactly as it was; the others are
+                // unaffected, which is why the loop continues rather than
+                // aborting.
+                unlinkedCount += 1
+                continue
+            }
             try? secrets.deletePassword(for: session.id)
+        }
+        if unlinkedCount > 0 {
+            errorMessage = CoreL10n.string("core.login.mergePartial")
         }
 
         reload()

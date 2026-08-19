@@ -3508,6 +3508,79 @@ struct SessionListViewModelTests {
         let replaced = try secrets.password(for: session.id) == "new"
         #expect(replaced)
     }
+
+    /// M32: a failed session write must not take the session's secret with
+    /// it. Before this, the loop rewired and deleted with two `try?` in a
+    /// row, so a store that refused the write left the session unbound --
+    /// still resolving its login from its own slot -- and deleted exactly
+    /// that slot.
+    ///
+    /// The failure is PRODUCED, not simulated: the session directory is made
+    /// read-only, so `upsert` genuinely fails. `SessionStore.persist` writes
+    /// with `.atomic`, which renames a temp file into place, so locking the
+    /// FILE would not do it -- the directory has to go. The login-set store
+    /// gets its own writable directory, because `applyMerge` writes the set
+    /// first and would otherwise fail before reaching the loop.
+    @Test func aFailedRewireKeepsTheSessionsOwnSecret() throws {
+        let sessionDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-m32-sessions-\(UUID().uuidString)")
+        let loginDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-m32-logins-\(UUID().uuidString)")
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o700], ofItemAtPath: sessionDir.path)
+            try? FileManager.default.removeItem(at: sessionDir)
+            try? FileManager.default.removeItem(at: loginDir)
+        }
+        let secrets = InMemorySecretStore()
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: sessionDir), secrets: secrets,
+            loginSetStore: LoginSetStore(directory: loginDir))
+
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "the-only-copy")!
+
+        // Locked only AFTER the session exists, or there would be nothing to
+        // merge.
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o500], ofItemAtPath: sessionDir.path)
+
+        let candidate = LoginMergeCandidate(
+            kind: .ssh, values: sshValues(host: "h", port: 22, username: "u"),
+            displayLabel: "u", sessionIDs: [stored.id])
+        _ = vm.applyMerge(candidate, name: "Shared")
+
+        // Hoisted into a Bool first: `#expect` expands its receiver, and a
+        // secret must never reach a failure message.
+        let keptItsSecret = try secrets.password(for: stored.id) == "the-only-copy"
+        #expect(keptItsSecret)
+    }
+
+    /// Positive control for the test above: with a writable directory the
+    /// merge does its job -- the session is rewired and its own slot goes.
+    /// Without this, a version of `applyMerge` that deleted nothing at all
+    /// would satisfy the first test.
+    @Test func aSuccessfulRewireStillTakesTheSessionsOwnSecret() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let stored = vm.save(
+            name: "web",
+            values: sshValues(host: "h", port: 22, username: "u"),
+            password: "carried")!
+        let candidate = LoginMergeCandidate(
+            kind: .ssh, values: sshValues(host: "h", port: 22, username: "u"),
+            displayLabel: "u", sessionIDs: [stored.id])
+
+        let set = vm.applyMerge(candidate, name: "Shared")
+
+        #expect(set != nil)
+        let slotIsGone = try secrets.password(for: stored.id) == nil
+        #expect(slotIsGone)
+        #expect(vm.sessions.first { $0.id == stored.id }?.loginSetID == set?.id)
+    }
 }
 
 private final class FailingSecretStore: SecretStore, @unchecked Sendable {

@@ -95,4 +95,5 @@
 "core.login.saveFailed %@" = "Nie udało się zapisać loginu: %@";
 "core.login.deleteFailed %@" = "Nie udało się usunąć loginu: %@";
 "core.login.mergeFailed %@" = "Nie udało się scalić loginów: %@";
+"core.login.mergePartial" = "Niektórych sesji nie udało się powiązać z nowym zestawem logowania. Zachowały własne hasło.";
 "core.login.mergeConflictingSecrets" = "przechowują różne dane uwierzytelniające";
