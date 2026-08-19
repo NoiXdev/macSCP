@@ -16,18 +16,20 @@ import macSCPCore
 /// 3. **Binding loop.** text change → binding → `updateNSView` → text
 ///    change. The guard is comparing the string before assigning it.
 /// 4. **Newlines.** `Snippet.init?` refuses them; `SnippetCommandInput`
-///    turns them into spaces before the binding ever sees them. Return
-///    itself never reaches the sheet's Save button either way: a plain,
-///    unmodified Return is not a "key equivalent" in AppKit's sense (that
-///    path is reserved for characters typed with a modifier, or Shift-only,
-///    and is checked by `NSApplication` based on the event's modifier
-///    flags — see Apple's Event Handling Guide). With no modifier at all,
-///    the event goes straight to whichever view is first responder, and
-///    while this text view holds that role, its own `keyDown:` routes
-///    Return through `insertNewline:` into the same text-editing pipeline
-///    `shouldChangeTextIn:replacementString:` below intercepts. The sheet's
-///    `.keyboardShortcut(.defaultAction)` Save button is never consulted
-///    while this field has focus.
+///    turns them into spaces before the binding ever sees them. Newlines
+///    can reach this field two ways: pasted as part of a multi-line
+///    string, or typed as Return. A pasted newline hits
+///    `shouldChangeTextIn:replacementString:` below, which sanitizes it to
+///    a space. A typed Return is handled separately: the `Coordinator`
+///    claims `insertNewline(_:)` in `doCommandBy:` and returns `true`
+///    without inserting anything, so *if* this text view is the one to
+///    receive the keystroke, it does nothing. Whether the text view is the
+///    one to receive it is a different, unverified question: AppKit may
+///    instead route the unmodified Return to the sheet's
+///    `.keyboardShortcut(.defaultAction)` Save button before this view
+///    ever sees it. Both outcomes are acceptable for a single-line field —
+///    the keystroke either does nothing here or triggers Save — but which
+///    one actually happens was not confirmed by running the app.
 /// 5. **Automatic substitutions.** An `NSTextField`'s field editor disables
 ///    smart quotes, smart dashes, automatic text replacement, spelling
 ///    correction, and smart insert/delete by default; a raw `NSTextView`
@@ -111,8 +113,9 @@ struct SnippetCommandEditor: NSViewRepresentable {
 
         init(_ parent: SnippetCommandEditor) { self.parent = parent }
 
-        /// Hazard 4: Return, and a pasted multi-line command, become spaces
-        /// before anything else sees them.
+        /// Hazard 4: a pasted multi-line command becomes spaces before
+        /// anything else sees them. A typed Return does not reach here —
+        /// `doCommandBy:` below claims `insertNewline(_:)` first.
         func textView(
             _ textView: NSTextView, shouldChangeTextIn range: NSRange,
             replacementString: String?
@@ -137,6 +140,14 @@ struct SnippetCommandEditor: NSViewRepresentable {
                 return true
             case #selector(NSResponder.insertBacktab(_:)):
                 textView.window?.selectPreviousKeyView(nil)
+                return true
+            case #selector(NSResponder.insertNewline(_:)):
+                // Hazard 4: this field is single-line, so a typed Return
+                // has nothing to insert. Claiming the selector (and
+                // returning `true` without calling through) swallows it
+                // deterministically here, if this view is the one that
+                // receives the keystroke at all -- see the doc comment
+                // above this type.
                 return true
             default:
                 return false
@@ -183,10 +194,10 @@ struct SnippetCommandEditor: NSViewRepresentable {
             case .option: return NSColor(DesignTokens.agentGreen)
             case .string: return NSColor(DesignTokens.localAmber)
             // Its own hue (whole-branch review, finding 7): `.command` and
-            // `.variable` used to share `remoteBlue`, which rendered six
-            // declared kinds as only four distinct colours. `s3Violet` is an
-            // existing design token (M15's S3 login-set badge), not a new
-            // hex value invented for this file.
+            // `.variable` used to share `remoteBlue`, the only collision
+            // among the declared kinds. `s3Violet` is an existing design
+            // token (M15's S3 login-set badge), not a new hex value invented
+            // for this file.
             case .variable: return NSColor(DesignTokens.s3Violet)
             case .comment: return DesignTokens.inkTertiaryNS
             case .operator: return DesignTokens.inkSecondaryNS

@@ -1,8 +1,8 @@
 import Foundation
 import Testing
 
-/// Guards three properties of `SnippetCommandEditor.swift` and its wiring in
-/// `SnippetsSheet.swift`, all three raised by the whole-branch review of the
+/// Guards four properties of `SnippetCommandEditor.swift` and its wiring in
+/// `SnippetsSheet.swift`, all raised by the whole-branch review of the
 /// snippet syntax-highlighting feature and none of them provable any other
 /// way in this project (no test here renders an `NSViewRepresentable` — see
 /// `SnippetsSheet.swift`'s own doc comment on that boundary):
@@ -25,6 +25,12 @@ import Testing
 ///    in `SnippetCommandEditor` or the call-site argument in
 ///    `SnippetsSheet` — leaves the command field with no accessible name at
 ///    all, silently, since nothing else in this project exercises VoiceOver.
+/// 4. **Return swallowed at the command layer.** This field is single-line,
+///    so a typed Return has nothing to insert. Losing the `Coordinator`'s
+///    `insertNewline(_:)` case in `textView(_:doCommandBy:)` (or its
+///    `return true`) means a typed Return, if this text view receives the
+///    keystroke, falls through to AppKit's default handling instead of
+///    being swallowed deterministically here.
 ///
 /// Each is a SOURCE-TEXT scan, same shape and same blind spots as
 /// `SnippetActionSheetKeyboardShortcutGuardTests`/
@@ -150,6 +156,59 @@ struct SnippetCommandEditorGuardTests {
             """
         let tabCase = Self.linesAfterMarker("#selector(NSResponder.insertTab(_:))", in: body)
         #expect(tabCase.contains { $0.trimmingCharacters(in: .whitespaces) == "return true" })
+    }
+
+    // MARK: - Finding 5: Return swallowed via insertNewline
+
+    @Test func insertNewlineIsClaimedInDoCommandBy() throws {
+        let source = try String(contentsOf: Self.editorSourceFile, encoding: .utf8)
+        let body = try Self.functionBody(containing: "doCommandBy selector", in: source)
+        #expect(body.contains("#selector(NSResponder.insertNewline(_:))"), """
+            The insertNewline: command selector must be matched explicitly in \
+            textView(_:doCommandBy:) -- otherwise, if this text view receives a typed Return, \
+            AppKit's default handling inserts a newline instead of it being swallowed \
+            deterministically at the command layer. Scanned body: \(body)
+            """)
+        let newlineCase = Self.linesAfterMarker(
+            "#selector(NSResponder.insertNewline(_:))", in: body)
+        #expect(
+            newlineCase.contains { $0.trimmingCharacters(in: .whitespaces) == "return true" }, """
+            The insertNewline: case must return true (claiming the command) rather than falling \
+            through to `default: return false`, which re-enables the default newline-insertion \
+            behaviour. Case lines: \(newlineCase)
+            """)
+    }
+
+    @Test func scannerFlagsTheRegressionWhereInsertNewlineIsNotClaimed() {
+        let body = """
+            func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+                switch selector {
+                case #selector(NSResponder.insertTab(_:)):
+                    textView.window?.selectNextKeyView(nil)
+                    return true
+                default:
+                    return false
+                }
+            }
+            """
+        #expect(!body.contains("#selector(NSResponder.insertNewline(_:))"),
+            "the scanner must see that insertNewline: is not even matched in the regressed source")
+    }
+
+    @Test func scannerAcceptsTheCorrectInsertNewlineHandling() {
+        let body = """
+            func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+                switch selector {
+                case #selector(NSResponder.insertNewline(_:)):
+                    return true
+                default:
+                    return false
+                }
+            }
+            """
+        let newlineCase = Self.linesAfterMarker(
+            "#selector(NSResponder.insertNewline(_:))", in: body)
+        #expect(newlineCase.contains { $0.trimmingCharacters(in: .whitespaces) == "return true" })
     }
 
     // MARK: - Finding 4: accessibility label
