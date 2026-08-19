@@ -56,6 +56,14 @@ public struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
         case newFile
         case editUpload
         case crossSessionTransfer
+        /// A snippet the user ran in the session's terminal (P3e). Only
+        /// EXECUTIONS are recorded: an inserted snippet still sits in the
+        /// prompt and can be edited before it runs, so logging it as run
+        /// would be a false entry. Free-typed input is never recorded --
+        /// the client cannot tell a password prompt from any other input
+        /// (see the P3e feasibility note in the design spec), so there is
+        /// no honest way to log it.
+        case snippetExecuted
         /// The user confirmed connecting over an unencrypted (`http://`)
         /// endpoint despite `PlaintextTransportGate.requiresConfirmation`
         /// (M21/T10) — recorded once the connect succeeds, at the same spot
