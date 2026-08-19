@@ -6,14 +6,18 @@ ziehen wie gewohnt je ~4,8–5,2 s).
 
 ## Was umgesetzt wurde
 
-Zwei Commits, beide bereits auf `develop`:
+Vier Commits, alle bereits auf `develop` (plus dieser Abschlussbericht als
+fünfter):
 
-- `8d99797` — Core: `SnippetHighlighter.tokens(in:language:)`, ein reiner
+- `c63be88` — Plan-Dokument für dieses Vorhaben.
+- `0920bf5` — Core: `SnippetHighlighter.tokens(in:language:)`, ein reiner
   Shell-Tokenizer, der `.command/.option/.string/.variable/.comment/
   .operator/.plain`-Bereiche liefert, ohne Farben — `SnippetLanguage` ist
   ein Parameter, kein gespeichertes Feld. Dazu
   `SnippetCommandInput.sanitized(_:)`: jeder Zeilenumbruch wird zu einem
   Leerzeichen, bevor er das Binding erreicht. 13 Tests.
+- `8d99797` — Doc-Korrektur an `SnippetHighlighter.tokens(in:language:)`
+  (siehe „Review-Befunde" unten).
 - `b37d3cf` — App: `SnippetCommandEditor`, ein `NSTextView` in einem
   `NSViewRepresentable`, das während des Tippens einfärbt, plus der
   Austausch des bisherigen einfachen `TextField` im Snippet-Editor-Sheet.

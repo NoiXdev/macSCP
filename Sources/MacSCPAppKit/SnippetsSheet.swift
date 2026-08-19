@@ -496,8 +496,12 @@ private struct SnippetTagFilterRow: View {
 ///
 /// `Snippet.init?` is failable and refuses a `command` containing any
 /// character Swift considers a newline (see its own doc comment). This view
-/// does not re-check that rule itself — it constructs the `Snippet` through
-/// the same initializer and surfaces a `nil` result as an inline error.
+/// enforces that rule upstream instead of re-checking it at save time:
+/// `command` is bound to `SnippetCommandEditor`, whose `Coordinator`
+/// sanitizes every newline — typed Return or a pasted multi-line string
+/// alike — into a space before it ever reaches this view's `command` state
+/// (see that file's Hazard 4). By the time `save()` calls `Snippet.init?`,
+/// `command` cannot contain a newline, so that call cannot fail.
 private struct SnippetEditorView: View {
     let existing: Snippet?
     /// The sheet's already-loaded list, passed straight through (Task 5)
@@ -531,10 +535,11 @@ private struct SnippetEditorView: View {
 
     private var isEditing: Bool { existing != nil }
 
-    /// Only the required-fields check — NOT the single-line rule, which
-    /// `save()` finds out by asking `Snippet.init?` itself. Disabling Save
-    /// pre-emptively for a pasted-in line break would silently discard the
-    /// signal this view is supposed to surface.
+    /// Only the required-fields check. The single-line rule needs no check
+    /// of its own here: `SnippetCommandEditor` already turns every newline
+    /// — typed or pasted — into a space before it reaches `command` (that
+    /// file's Hazard 4), so `command` can never contain one by the time
+    /// this is evaluated.
     private var isSaveDisabled: Bool {
         name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -557,8 +562,11 @@ private struct SnippetEditorView: View {
                 // TextField cannot colour text while it is being typed.
                 // Single-line stays the rule -- `SnippetCommandEditor`
                 // turns Return into a space, since `Snippet.init?` refuses
-                // newlines.
-                SnippetCommandEditor(text: $command)
+                // newlines. `accessibilityLabel` hands it the same
+                // localized string this row's own (VoiceOver-hidden) label
+                // uses, so the field keeps an accessible name of its own
+                // (`FormRow`'s doc comment, M6a).
+                SnippetCommandEditor(text: $command, accessibilityLabel: commandLabel)
                     .frame(height: 24)
             }
             FormRow(label: L10n.string("snippets.tags.label", "Tags")) {
@@ -609,14 +617,15 @@ private struct SnippetEditorView: View {
 
     private func save() {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let snippet = Snippet(
+        // `Snippet.init?` can only fail when `command` contains a newline,
+        // and `SnippetCommandEditor` sanitizes every newline into a space
+        // before it ever reaches `command` (that file's Hazard 4) — so this
+        // can never fail here. Force-unwrapping states that invariant
+        // directly, instead of a `guard let ... else` branch nothing can
+        // ever reach.
+        let snippet = Snippet(
             id: existing?.id ?? UUID(), name: trimmedName, command: command,
-            tags: tags)
-        else {
-            errorMessage = L10n.string(
-                "snippets.editor.error.multiline", "The command can't contain a line break.")
-            return
-        }
+            tags: tags)!
         do {
             try store.save(snippet)
             onSaved()

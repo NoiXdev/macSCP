@@ -833,7 +833,6 @@
 "snippets.editor.name" = "Name";
 "snippets.editor.command" = "Kommando";
 "snippets.editor.credentialsNote" = "Keine Zugangsdaten hier eintragen: Die Ablage ist reines JSON, eine Kommandozeile ist ohnehin in ps und in der Shell-History der Gegenseite sichtbar, und beim Ausführen landet das Kommando zusätzlich im Sitzungsprotokoll.";
-"snippets.editor.error.multiline" = "Das Kommando darf keinen Zeilenumbruch enthalten.";
 "snippets.editor.error.save" = "Das Snippet konnte nicht gespeichert werden.";
 "snippets.load.error" = "Die Snippet-Datei konnte nicht gelesen werden. Sie ist vorhanden, lässt sich aber nicht decodieren — es ging kein Snippet verloren, und es wird nichts darüber geschrieben.";
 "snippets.tags.label" = "Tags";

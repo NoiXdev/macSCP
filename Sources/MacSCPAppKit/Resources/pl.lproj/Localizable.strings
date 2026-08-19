@@ -835,7 +835,6 @@
 "snippets.editor.name" = "Nazwa";
 "snippets.editor.command" = "Polecenie";
 "snippets.editor.credentialsNote" = "Nie umieszczaj tu danych uwierzytelniających: plik to zwykły JSON, linia poleceń i tak jest widoczna w ps oraz w historii powłoki na zdalnym hoście, a jej uruchomienie zapisuje też polecenie w dzienniku tej sesji.";
-"snippets.editor.error.multiline" = "Polecenie nie może zawierać znaku nowej linii.";
 "snippets.editor.error.save" = "Nie udało się zapisać fragmentu.";
 "snippets.load.error" = "Nie udało się odczytać pliku fragmentów. Plik istnieje, ale nie da się go zdekodować — żaden fragment nie został utracony i nic nie zostanie nadpisane.";
 "snippets.tags.label" = "Tagi";
