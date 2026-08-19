@@ -449,10 +449,10 @@ private struct SnippetTagFilterRow: View {
 /// between this sheet and `SnippetStore` the way `LoginSetsSheet` has
 /// `SessionListViewModel`.
 ///
-/// `Snippet.init?` is failable and refuses a `command` containing `\n` or
-/// `\r` (see its own doc comment). This view does not re-check that rule
-/// itself — it constructs the `Snippet` through the same initializer and
-/// surfaces a `nil` result as an inline error.
+/// `Snippet.init?` is failable and refuses a `command` containing any
+/// character Swift considers a newline (see its own doc comment). This view
+/// does not re-check that rule itself — it constructs the `Snippet` through
+/// the same initializer and surfaces a `nil` result as an inline error.
 private struct SnippetEditorView: View {
     let existing: Snippet?
     /// The sheet's already-loaded list, passed straight through (Task 5)
@@ -521,7 +521,11 @@ private struct SnippetEditorView: View {
             // far host, so hiding it here would not actually protect it.
             Text(L10n.string(
                 "snippets.editor.credentialsNote",
-                "Don't put credentials here: the store is plain JSON, and a command line is visible in ps and in the shell history on the far host anyway."))
+                """
+                Don't put credentials here: the store is plain JSON, a command line is \
+                visible in ps and in the shell history on the far host anyway, and \
+                running it also keeps the command in this session's log.
+                """))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
