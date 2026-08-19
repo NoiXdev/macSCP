@@ -549,6 +549,10 @@ private struct SnippetEditorView: View {
     @State private var name: String
     @State private var command: String
     @State private var tags: [String]
+    /// Variable declarations, held as editable drafts rather than
+    /// `SnippetVariable` directly — see `VariableDraft`'s own doc comment for
+    /// why.
+    @State private var variableDrafts: [VariableDraft]
     @State private var errorMessage: String?
 
     init(
@@ -562,18 +566,71 @@ private struct SnippetEditorView: View {
         _name = State(initialValue: existing?.name ?? "")
         _command = State(initialValue: existing?.command ?? "")
         _tags = State(initialValue: existing?.tags ?? [])
+        _variableDrafts = State(
+            initialValue: (existing?.variables ?? []).map(VariableDraft.init(variable:)))
     }
 
     private var isEditing: Bool { existing != nil }
 
-    /// Only the required-fields check. `command` may contain a newline by
-    /// the time this is evaluated — both a pasted multi-line string and a
-    /// typed Return reach `SnippetCommandEditor`'s bound `command` as one —
-    /// but nothing here needs to reject that; `Snippet`'s initializer
-    /// accepts it too.
+    /// The declarations `variableDrafts` currently resolves to — recomputed
+    /// from the drafts on every access rather than cached, the same "no
+    /// separate staleness question" reasoning `tagSuggestions` already
+    /// documents for its own per-keystroke rebuild.
+    private var variables: [SnippetVariable] { variableDrafts.map(\.variable) }
+
+    /// What is wrong with the current variable declarations, or `nil`. Both
+    /// checks named in the brief: an invalid or duplicate name is caught
+    /// here directly (`SnippetVariable.isValidName` has no caller before
+    /// this one — names are validated where they are authored), and
+    /// `SnippetVariableSubstitution.firstDeclarationProblem` catches the
+    /// command-side mistakes (an unused placeholder, one sitting inside
+    /// quotes). An empty `variableDrafts` short-circuits every check below to
+    /// `nil`, matching a snippet with no variables at all.
+    private var variablesError: String? {
+        for draft in variableDrafts {
+            let trimmedName = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !SnippetVariable.isValidName(trimmedName) {
+                return L10n.string(
+                    "snippets.variables.error.invalidName",
+                    "A variable name must start with a letter or underscore and may contain only letters, digits and underscores.")
+            }
+        }
+        let trimmedNames = variableDrafts.map {
+            $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if Set(trimmedNames).count != trimmedNames.count {
+            return L10n.string(
+                "snippets.variables.error.duplicateName", "Two variables share a name.")
+        }
+        guard
+            let problem = SnippetVariableSubstitution.firstDeclarationProblem(
+                command: command, variables: variables)
+        else { return nil }
+        switch problem {
+        case .unusedPlaceholder(let name):
+            return String(
+                format: L10n.string(
+                    "snippets.variables.error.unusedPlaceholder %@",
+                    "“%@” is never used in the command."),
+                name)
+        case .placeholderInsideQuotes(let name):
+            return String(
+                format: L10n.string(
+                    "snippets.variables.error.quotedPlaceholder %@",
+                    "“%@” sits inside quotes. Remove them — the value is quoted for you."),
+                name)
+        }
+    }
+
+    /// Only the required-fields check plus the two `variablesError` can
+    /// raise (Task 5). `command` may contain a newline by the time this is
+    /// evaluated — both a pasted multi-line string and a typed Return reach
+    /// `SnippetCommandEditor`'s bound `command` as one — but nothing here
+    /// needs to reject that; `Snippet`'s initializer accepts it too.
     private var isSaveDisabled: Bool {
         name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || variablesError != nil
     }
 
     var body: some View {
@@ -607,6 +664,9 @@ private struct SnippetEditorView: View {
                         RoundedRectangle(cornerRadius: 6)
                             .strokeBorder(DesignTokens.hairline, lineWidth: 1))
             }
+
+            variablesSection
+
             FormRow(label: L10n.string("snippets.tags.label", "Tags")) {
                 SnippetTagField(tags: $tags, suggestions: tagSuggestions)
             }
@@ -657,7 +717,7 @@ private struct SnippetEditorView: View {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let snippet = Snippet(
             id: existing?.id ?? UUID(), name: trimmedName, command: command,
-            tags: tags)
+            tags: tags, variables: variables)
         do {
             try store.save(snippet)
             onSaved()
@@ -665,5 +725,199 @@ private struct SnippetEditorView: View {
         } catch {
             errorMessage = L10n.string("snippets.editor.error.save", "Couldn't save the snippet.")
         }
+    }
+
+    // MARK: - Variables (Task 5)
+
+    /// The variables section: one card per declaration (`variableRow`), an
+    /// add button, the hint text the brief requires (a value becomes a
+    /// single shell word; an environment variable outlives a multi-line
+    /// run), and — whenever `variablesError` is non-nil — the reason Save is
+    /// disabled. That last text is the point of this whole block: a greyed-
+    /// out Save button alone does not say WHY, and a user who cannot tell
+    /// why does not experiment, they give up (brief, Step 2).
+    @ViewBuilder
+    private var variablesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(L10n.string("snippets.variables.title", "Variables"))
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(DesignTokens.inkSecondary)
+                Spacer()
+                Button {
+                    variableDrafts.append(VariableDraft())
+                } label: {
+                    Label(
+                        L10n.string("snippets.variables.add", "Add variable"),
+                        systemImage: "plus")
+                }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .foregroundStyle(DesignTokens.inkSecondary)
+            }
+
+            ForEach($variableDrafts) { draft in
+                variableRow(draft) {
+                    variableDrafts.removeAll { $0.id == draft.wrappedValue.id }
+                }
+            }
+
+            Text(L10n.string(
+                "snippets.variables.hint",
+                "A value is inserted as a single shell word. An environment variable in a multi-line command stays set in the session after the run."))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            if let variablesError {
+                Text(variablesError).font(.caption).foregroundStyle(.red).lineLimit(2)
+            }
+        }
+    }
+
+    /// One declaration's card: name + kind + remove on the first line,
+    /// prompt on its own line, the allowed-values field only for `.selection`
+    /// (comma-separated — this row has no nested list editor of its own),
+    /// placement + default value together, then the remember checkbox.
+    /// Chrome matches `SnippetCommandEditor`'s card (`DesignTokens.card` +
+    /// hairline border) so the two multi-field blocks in this sheet read as
+    /// the same kind of thing.
+    @ViewBuilder
+    private func variableRow(
+        _ draft: Binding<VariableDraft>, onRemove: @escaping () -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                TextField(
+                    L10n.string("snippets.variables.name", "Name"), text: draft.name,
+                    prompt: Text(L10n.string("snippets.variables.name", "Name")))
+                Picker("", selection: draft.isSelection) {
+                    Text(L10n.string("snippets.variables.kind.freeText", "Free text")).tag(false)
+                    Text(L10n.string("snippets.variables.kind.selection", "Choice")).tag(true)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 150)
+                Button(action: onRemove) {
+                    Image(systemName: "minus.circle")
+                }
+                .buttonStyle(.plain)
+                // Reuses the app's one generic "Remove" word
+                // (`SettingsView`'s file-association rows use the very same
+                // key for the very same minus-circle affordance) rather than
+                // adding a near-duplicate string for one more icon-only
+                // button.
+                .accessibilityLabel(L10n.string("settings.openWith.rules.remove", "Remove"))
+                .help(L10n.string("settings.openWith.rules.remove", "Remove"))
+            }
+
+            TextField(
+                L10n.string("snippets.variables.prompt", "Prompt"), text: draft.prompt,
+                prompt: Text(L10n.string("snippets.variables.prompt", "Prompt")))
+
+            if draft.wrappedValue.isSelection {
+                TextField(
+                    "", text: draft.selectionValuesText,
+                    prompt: Text(verbatim: "a, b, c"))
+            }
+
+            HStack(spacing: 8) {
+                Picker("", selection: draft.placement) {
+                    Text(L10n.string(
+                        "snippets.variables.placement.placeholder", "Placeholder in the command"))
+                        .tag(SnippetVariable.Placement.placeholder)
+                    Text(L10n.string(
+                        "snippets.variables.placement.environment", "Environment variable"))
+                        .tag(SnippetVariable.Placement.environment)
+                }
+                .labelsHidden()
+                TextField(
+                    L10n.string("snippets.variables.default", "Default"), text: draft.defaultValue,
+                    prompt: Text(L10n.string("snippets.variables.default", "Default")))
+            }
+
+            Toggle(
+                L10n.string("snippets.variables.remember", "Remember last value"),
+                isOn: draft.remembersLastValue)
+                .toggleStyle(.checkbox)
+                .font(.caption)
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 6).fill(DesignTokens.card))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6).strokeBorder(DesignTokens.hairline, lineWidth: 1))
+    }
+}
+
+/// One variable declaration while it is being edited (Task 5).
+///
+/// `SnippetVariable`'s own stored properties are `let` — deliberately, so
+/// nothing later in the app can mutate a declaration in place — which means
+/// SwiftUI's controls cannot bind straight into one. This draft is the
+/// mutable stand-in: `variableRow` binds its fields, and `variable` converts
+/// back to the immutable type the store and `Snippet` actually hold.
+///
+/// Carries its own `id`, separate from `name`, so `ForEach` keeps a stable
+/// identity for a row even while two drafts temporarily share a name — the
+/// exact state `variablesError`'s duplicate-name check exists to let the
+/// user be in while they fix it. Using `name` itself as the `ForEach` id
+/// would instead make SwiftUI's identity collide at the same moment the
+/// error text appears.
+private struct VariableDraft: Identifiable {
+    let id = UUID()
+    var name = ""
+    var prompt = ""
+    /// Whether this draft is `.selection` rather than `.freeText` — kept as
+    /// a separate flag instead of switching on `SnippetVariable.Kind`
+    /// directly, because `selectionValuesText` needs somewhere to live even
+    /// while `.freeText` is selected (the user may flip back and forth
+    /// without losing what they typed).
+    var isSelection = false
+    /// The allowed values for `.selection`, as one comma-separated field —
+    /// this row has no per-option list editor of its own. Split, trimmed and
+    /// emptied entries dropped in `variable`.
+    var selectionValuesText = ""
+    var placement: SnippetVariable.Placement = .placeholder
+    var defaultValue = ""
+    var remembersLastValue = false
+
+    init() {}
+
+    init(variable: SnippetVariable) {
+        name = variable.name
+        prompt = variable.prompt
+        placement = variable.placement
+        defaultValue = variable.defaultValue
+        remembersLastValue = variable.remembersLastValue
+        switch variable.kind {
+        case .freeText:
+            isSelection = false
+        case .selection(let options):
+            isSelection = true
+            selectionValuesText = options.joined(separator: ", ")
+        }
+    }
+
+    /// The declaration this draft resolves to — built fresh from the current
+    /// field values, not cached, the same reasoning `SnippetEditorView
+    /// .variables` documents for its own rebuild-on-access. `name`/`prompt`
+    /// are trimmed here so a save cannot carry leading/trailing whitespace
+    /// that `SnippetVariable.isValidName` would have rejected outright had
+    /// it been part of `name` itself.
+    var variable: SnippetVariable {
+        let kind: SnippetVariable.Kind
+        if isSelection {
+            let options = selectionValuesText
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            kind = .selection(options)
+        } else {
+            kind = .freeText
+        }
+        return SnippetVariable(
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines),
+            kind: kind, placement: placement, defaultValue: defaultValue,
+            remembersLastValue: remembersLastValue)
     }
 }

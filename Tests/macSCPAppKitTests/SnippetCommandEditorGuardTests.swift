@@ -1,11 +1,13 @@
 import Foundation
 import Testing
 
-/// Guards five properties of `SnippetCommandEditor.swift` and its wiring in
-/// `SnippetsSheet.swift`, all raised by the whole-branch review of the
-/// snippet syntax-highlighting feature and none of them provable any other
-/// way in this project (no test here renders an `NSViewRepresentable` — see
-/// `SnippetsSheet.swift`'s own doc comment on that boundary):
+/// Guards six properties of `SnippetsSheet.swift`'s snippet editor: five in
+/// `SnippetCommandEditor.swift`'s own wiring, raised by the whole-branch
+/// review of the snippet syntax-highlighting feature, plus a sixth
+/// (variable-declaration Save-gating, Task 5) in `SnippetEditorView` itself.
+/// None of the six are provable any other way in this project (no test here
+/// renders an `NSViewRepresentable` or a `View` body — see `SnippetsSheet
+/// .swift`'s own doc comment on that boundary):
 ///
 /// 1. **Automatic substitutions disabled.** An `NSTextField`'s field editor
 ///    disables smart quotes/dashes/text-replacement/spelling/insert-delete
@@ -37,6 +39,16 @@ import Testing
 ///    button that reverted to `.defaultAction` would take Return back and
 ///    make line breaks untypeable, and the failure would present as "the
 ///    editor saves when I try to add a line".
+/// 6. **Variable declarations gate Save, and say why (Task 5).**
+///    `isSaveDisabled` must also test `variablesError != nil`, and
+///    `variablesError` must actually run `SnippetVariable.isValidName`, a
+///    duplicate-name check and `SnippetVariableSubstitution
+///    .firstDeclarationProblem` — losing any one would let Save write a
+///    snippet with an invalid, duplicate, unused or mis-quoted declaration.
+///    Separately, `variablesSection` must render `variablesError` as its own
+///    `Text` whenever it is non-nil: the brief is explicit that a greyed-out
+///    Save button must not be the only signal, because a user who cannot
+///    tell why does not experiment, they give up.
 ///
 /// Each is a SOURCE-TEXT scan, same shape and same blind spots as
 /// `SnippetActionSheetKeyboardShortcutGuardTests`/
@@ -294,6 +306,108 @@ struct SnippetCommandEditorGuardTests {
         #expect(
             !source.contains("SnippetCommandEditor(text: $command, accessibilityLabel: commandLabel)"),
             "the scanner must see that the pre-fix call site (no accessibilityLabel argument) does not match")
+    }
+
+    // MARK: - Finding 6: variable declarations gate Save, and say why (Task 5)
+
+    @Test("isSaveDisabled also gates on the variables error")
+    func isSaveDisabledGatesOnVariablesError() throws {
+        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let body = try Self.functionBody(
+            containing: "private var isSaveDisabled: Bool {", in: source)
+        #expect(body.contains("variablesError != nil"), """
+            isSaveDisabled must also test variablesError != nil -- Task 5 requires Save to \
+            stay disabled while a variable name is invalid or duplicate, or while \
+            SnippetVariableSubstitution.firstDeclarationProblem finds a problem. Scanned body: \
+            \(body)
+            """)
+    }
+
+    @Test("the isSaveDisabled scan reacts to a reverted, variables-blind gate")
+    func isSaveDisabledScanReactsToRegression() throws {
+        let reverted = """
+            private var isSaveDisabled: Bool {
+                name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            """
+        let body = try Self.functionBody(
+            containing: "private var isSaveDisabled: Bool {", in: reverted)
+        #expect(!body.contains("variablesError != nil"))
+    }
+
+    /// `SnippetVariable.isValidName` has no caller before this feature (see
+    /// `SnippetVariable`'s own doc comment) -- this scan is what keeps that
+    /// true going forward, alongside the duplicate-name check and
+    /// `firstDeclarationProblem`, which together are the two things Step 2
+    /// of the brief names explicitly.
+    @Test("variablesError runs all three declaration checks")
+    func variablesErrorRunsAllThreeChecks() throws {
+        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let body = try Self.functionBody(
+            containing: "private var variablesError: String? {", in: source)
+        #expect(body.contains("SnippetVariable.isValidName("), """
+            variablesError must call SnippetVariable.isValidName -- an invalid variable name \
+            (Step 2 of the brief) would otherwise reach Snippet.save unchecked. Scanned body: \
+            \(body)
+            """)
+        #expect(body.contains("Set(trimmedNames).count != trimmedNames.count"), """
+            variablesError must detect two variables sharing a name (Step 2 of the brief). \
+            Scanned body: \(body)
+            """)
+        #expect(body.contains("SnippetVariableSubstitution.firstDeclarationProblem("), """
+            variablesError must call SnippetVariableSubstitution.firstDeclarationProblem -- \
+            an unused placeholder or one sitting inside quotes (Step 2 of the brief) would \
+            otherwise reach Snippet.save unchecked. Scanned body: \(body)
+            """)
+    }
+
+    @Test("the variablesError scan reacts to a check silently dropped")
+    func variablesErrorScanReactsToADroppedCheck() throws {
+        let missingIsValidName = """
+            private var variablesError: String? {
+                let trimmedNames = variableDrafts.map { $0.name }
+                if Set(trimmedNames).count != trimmedNames.count { return "duplicate" }
+                if let problem = SnippetVariableSubstitution.firstDeclarationProblem(
+                    command: command, variables: variables) { return "problem" }
+                return nil
+            }
+            """
+        let body = try Self.functionBody(
+            containing: "private var variablesError: String? {", in: missingIsValidName)
+        #expect(!body.contains("SnippetVariable.isValidName("))
+    }
+
+    /// A greyed-out Save button alone does not say why (brief, Step 2) --
+    /// this proves the reason is rendered as its own `Text`, not only used
+    /// to compute `isSaveDisabled`.
+    @Test("the variables section renders variablesError, not only uses it to disable Save")
+    func variablesSectionRendersTheError() throws {
+        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let body = try Self.functionBody(
+            containing: "private var variablesSection: some View {", in: source)
+        #expect(body.contains("if let variablesError {"), """
+            variablesSection must show variablesError as its own Text whenever it is \
+            non-nil -- otherwise the only signal a blocked save gives is a disabled button, \
+            which the brief calls out by name as not enough. Scanned body: \(body)
+            """)
+    }
+
+    @Test("the rendered-error scan reacts to the text silently removed")
+    func variablesSectionScanReactsToARemovedErrorText() throws {
+        let withoutErrorText = """
+            private var variablesSection: some View {
+                VStack {
+                    Text("Variables")
+                    ForEach($variableDrafts) { draft in
+                        variableRow(draft) {}
+                    }
+                }
+            }
+            """
+        let body = try Self.functionBody(
+            containing: "private var variablesSection: some View {", in: withoutErrorText)
+        #expect(!body.contains("if let variablesError {"))
     }
 
     // MARK: - Scanner (shared)

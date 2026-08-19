@@ -76,6 +76,9 @@ struct IconTooltipLintTests {
             file: "SessionSidebar.swift", symbol: "plus",
             reason: "Inside a `Label` whose visible title is \"New connection\" — the button is not icon-only."),
         DecorativeIcon(
+            file: "SnippetsSheet.swift", symbol: "plus",
+            reason: "Inside a `Label` whose visible title is \"Add variable\" — the button is not icon-only."),
+        DecorativeIcon(
             file: "SessionSidebar.swift", symbol: "checkmark",
             reason: "Marks the session's current group in the \"Move to\" menu; a menu item's own text is its explanation."),
         DecorativeIcon(
