@@ -825,7 +825,7 @@
 "snippets.editor.titleEdit" = "Edit Snippet";
 "snippets.editor.name" = "Name";
 "snippets.editor.command" = "Command";
-"snippets.editor.credentialsNote" = "Don't put credentials here: the store is plain JSON, and a command line is visible in ps and in the shell history on the far host anyway.";
+"snippets.editor.credentialsNote" = "Don't put credentials here: the store is plain JSON, a command line is visible in ps and in the shell history on the far host anyway, and running it also keeps the command in this session's log.";
 "snippets.editor.error.multiline" = "The command can't contain a line break.";
 "snippets.editor.error.save" = "Couldn't save the snippet.";
 "snippets.load.error" = "The snippets file couldn't be read. It exists but can't be decoded — no snippet was lost, and nothing will be written over it.";

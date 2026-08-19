@@ -829,7 +829,7 @@
 "snippets.editor.titleEdit" = "Modifier le snippet";
 "snippets.editor.name" = "Nom";
 "snippets.editor.command" = "Commande";
-"snippets.editor.credentialsNote" = "N’y mettez pas d’identifiants : le fichier est du JSON brut, et une ligne de commande est de toute façon visible dans ps et dans l’historique du shell sur l’hôte distant.";
+"snippets.editor.credentialsNote" = "N’y mettez pas d’identifiants : le fichier est du JSON brut, une ligne de commande est de toute façon visible dans ps et dans l’historique du shell sur l’hôte distant, et son exécution conserve aussi la commande dans le journal de cette session.";
 "snippets.editor.error.multiline" = "La commande ne peut pas contenir de saut de ligne.";
 "snippets.editor.error.save" = "Impossible d’enregistrer le snippet.";
 "snippets.load.error" = "Le fichier de snippets n’a pas pu être lu. Il existe mais ne peut pas être décodé — aucun snippet n’a été perdu et rien ne sera écrit par-dessus.";
