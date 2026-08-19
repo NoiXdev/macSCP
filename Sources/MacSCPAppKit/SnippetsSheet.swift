@@ -366,6 +366,10 @@ struct SnippetsSheet: View {
                 selectedID = snippet.id
                 editorTarget = SnippetEditorTarget(existing: snippet)
             }
+            Button(L10n.string("snippets.export", "Export…")) {
+                selectedID = snippet.id
+                performExport([snippet])
+            }
             Button(L10n.string("snippets.delete", "Delete…"), role: .destructive) {
                 selectedID = snippet.id
                 isShowingDeleteConfirm = true
