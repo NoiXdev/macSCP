@@ -141,4 +141,33 @@ struct SnippetExportCodecTests {
         let decoded = try SnippetExportCodec.decode(data)
         #expect(decoded.snippets.first?.variables == [variable])
     }
+
+    /// Pins the reason `SnippetVariableMemoryStore` exists as a store
+    /// separate from `Snippet` (see that type's doc comment): a value
+    /// someone typed and opted to have remembered must never travel with
+    /// an export. This does not go through `SnippetVariableMemoryStore` at
+    /// all — the payload is built straight from `[Snippet]`, so there is no
+    /// code path by which a remembered value COULD reach `encode`. What
+    /// this test guards against is a future stored property on `Snippet`
+    /// (or on the export payload) that would quietly reintroduce one; today
+    /// it only pins the type-level separation the doc comment argues from.
+    @Test("a remembered value never appears in the export bytes")
+    func rememberedValueNeverReachesTheExport() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-snippet-export-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let variable = SnippetVariable(
+            name: "DB", prompt: "Database", kind: .freeText,
+            placement: .placeholder, defaultValue: "", remembersLastValue: true)
+        let snippet = Snippet(name: "psql", command: "psql {{DB}}", variables: [variable])
+        let secretRememberedValue = "unmistakably-secret-kunden-db"
+        try SnippetVariableMemoryStore(directory: dir)
+            .remember(secretRememberedValue, snippetID: snippet.id, name: "DB")
+
+        let data = try SnippetExportCodec.encode(SnippetExportPayload(snippets: [snippet]))
+
+        let text = String(decoding: data, as: UTF8.self)
+        #expect(!text.contains(secretRememberedValue))
+    }
 }

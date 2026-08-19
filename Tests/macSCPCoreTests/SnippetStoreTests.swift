@@ -92,11 +92,39 @@ struct SnippetStoreTests {
         try variables.remember("kept db", snippetID: keep.id, name: "DB")
         try variables.remember("dropped db", snippetID: drop.id, name: "DB")
 
-        try store.remove(id: drop.id)
+        let outcome = try store.remove(id: drop.id)
 
+        #expect(outcome == .forgotten)
         let reopened = try SnippetVariableMemoryStore(directory: dir)
         #expect(reopened.value(snippetID: drop.id, name: "DB") == nil)
         #expect(reopened.value(snippetID: keep.id, name: "DB") == "kept db")
+    }
+
+    /// A corrupt `snippet-variables.json` must not block deleting a
+    /// snippet. That file covers every snippet's remembered values, not
+    /// just the one being removed, so letting
+    /// `SnippetVariableMemoryStore.init`'s decode failure abort `remove`
+    /// here — as it used to — would make ANY deletion impossible,
+    /// including one for a snippet that never had a remembered value,
+    /// until someone fixed an unrelated file. `ManagedKeyStore.remove`'s
+    /// Keychain step does not have this shape: it touches exactly the one
+    /// item for the id being removed, so its failure is specific to that
+    /// id and is right to abort. Here the cleanup step is caught instead,
+    /// and its failure comes back as `.skipped` rather than vanishing
+    /// unreported — a swallowed read that only skips cleanup, never one
+    /// that decides whether the deletion happens.
+    @Test func removingASnippetSurvivesACorruptVariablesFile() throws {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let snippet = Snippet(name: "Drop", command: "whoami")
+        try store.save(snippet)
+        try Data("not valid json".utf8)
+            .write(to: dir.appendingPathComponent("snippet-variables.json"))
+
+        let outcome = try store.remove(id: snippet.id)
+
+        #expect(outcome == .skipped)
+        #expect(try store.all().isEmpty)
     }
 
     /// A command with an embedded line break survives the store round trip
