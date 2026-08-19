@@ -17,12 +17,14 @@ public enum SnippetAuditDetail {
         return "ran snippet \u{201C}\(name)\u{201D}: \(command)"
     }
 
-    /// Tabs and runs of spaces become a single space. Newlines cannot occur
-    /// here because `Snippet` rejects them at construction, but the predicate
-    /// includes `isNewline` as a defensive belt-and-braces check.
+    /// Tabs and runs of spaces become a single space. `isWhitespace` alone
+    /// is the whole rule: in Swift every character with `isNewline` also has
+    /// `isWhitespace`, so naming both would add no case -- and newlines
+    /// cannot reach here anyway, since `Snippet` rejects a command
+    /// containing one at construction.
     private static func collapsingWhitespace(in command: String) -> String {
         command
-            .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+            .split(whereSeparator: { $0.isWhitespace })
             .joined(separator: " ")
     }
 
