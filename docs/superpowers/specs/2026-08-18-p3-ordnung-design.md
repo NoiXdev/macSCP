@@ -426,3 +426,29 @@ Bestätigung neu aufzulösen), und ob ein Fenster, das während des Hinweises
 zugeht, einen eigenen Weg braucht. Kein Blocker — aber ein Ort, an dem ein
 Passwort länger liegt als nötig, und dieses Projekt räumt solche Orte auf,
 statt sie zu dokumentieren.
+
+## Nachtrag 2026-08-19: Machbarkeit „verdeckte Eingabe erkennen" (P3e) — beantwortet
+
+Die offene Frage der P3e-Spec lautete: erkennt die Client-Seite überhaupt,
+dass die Gegenseite das Echo abgeschaltet hat (also ein Passwortprompt
+läuft)? **Antwort: nein, nicht verlässlich.**
+
+- SSH handelt Echo nicht aus (anders als Telnet). Ein `sudo`-Prompt schaltet
+  serverseitig das `ECHO`-Flag der Pty per `termios`-ioctl ab — auf der
+  Leitung unsichtbar. Der Client sieht nur, dass keine Ausgabebytes mehr
+  kommen.
+- SwiftTerm führt darüber nicht Buch: SRM (Modus 12, „Local Echo") ist im
+  `Terminal` ausdrücklich ein Stub, `setMode` hat den Zweig auskommentiert,
+  und es feuert kein `TerminalDelegate`-Rückruf. Selbst mit Implementierung
+  brächte es nichts: `sudo`/`login` schicken keine SRM-Sequenzen.
+- Ein „kommen meine Bytes zurück?"-Vergleich wäre eine Heuristik mit
+  geratener Zeitschranke — Banner, Tab-Vervollständigung und Prompt-Redraws
+  brechen jede naive Zuordnung. Also derselbe Mustervergleich, der schon
+  einmal verworfen wurde, nur als Timing verkleidet.
+
+**Folge für P3e:** freie Tastatureingabe kann nicht inhaltlich protokolliert
+werden, ohne genau das Leck zu bauen, das der Filter verhindern sollte.
+Zu entscheiden ist damit: Snippet-Ausführungen inhaltlich protokollieren
+(der Text ist bekannt und laut Regel geheimnisfrei), getippte Eingabe nur
+als Metadaten (Zeitpunkt, Umfang, kein Inhalt) — oder gar nicht.
+Das ist eine Produktentscheidung, keine technische mehr.
