@@ -94,15 +94,24 @@ public enum SnippetVariableSubstitution {
     /// ./backup.sh` sets it for a script that reads it itself. Checking for
     /// `$NAME` there would reject the natural usage.
     ///
-    /// The quote-context check looks at the FIRST `{{NAME}}` occurrence
-    /// only, and that is deliberate rather than partial: `resolve` (above)
-    /// substitutes every occurrence of a declared name with the same quoted
-    /// value, uniformly, regardless of the quote context each one sits in.
-    /// So a second occurrence hiding inside quotes cannot smuggle unquoted
-    /// text past the shell the way the first-occurrence case can — it can
-    /// only produce a redundantly quoted literal (`"'value'"`), which is odd
-    /// output, not an injection. Checking every occurrence would add a scan
-    /// for a case that is not a safety gap.
+    /// The quote-context check inspects EVERY occurrence of a declared
+    /// `{{NAME}}`, not just the first. An earlier version of this function
+    /// checked only the first occurrence, on the reasoning that `resolve`
+    /// quotes every occurrence the same way, so a later occurrence inside
+    /// quotes seemed like it could only yield a harmless doubled-up literal.
+    /// That reasoning was wrong: `PosixQuoting.singleQuoted` protects a
+    /// value by wrapping it in single quotes, and single quotes have no
+    /// special meaning to a shell once they are already *inside* the
+    /// template's own double quotes -- they show up as literal characters
+    /// there, while anything the value contained that IS special inside
+    /// double quotes, such as `$(...)` command substitution, stays live and
+    /// executes. `echo {{DB}} "{{DB}}"` with `DB = $(touch /tmp/marker)`
+    /// resolves to `echo '$(touch /tmp/marker)' "'$(touch /tmp/marker)'"`,
+    /// and bash runs the substitution in the second, double-quoted copy.
+    /// The shape is ordinary, not contrived -- `scp -i {{KEY}} … && echo
+    /// "used {{KEY}}"` is a completely normal thing to write. So every
+    /// occurrence is checked, and the first one found inside a `.string`
+    /// token rejects the declaration.
     public static func firstDeclarationProblem(
         command: String, variables: [SnippetVariable]
     ) -> Problem? {
@@ -112,11 +121,17 @@ public enum SnippetVariableSubstitution {
 
         for variable in variables where variable.placement == .placeholder {
             let needle = "{{\(variable.name)}}"
-            guard let first = command.range(of: needle) else {
-                return .unusedPlaceholder(name: variable.name)
+            var searchRange = command.startIndex..<command.endIndex
+            var foundAny = false
+            while let occurrence = command.range(of: needle, range: searchRange) {
+                foundAny = true
+                if stringRanges.contains(where: { $0.contains(occurrence.lowerBound) }) {
+                    return .placeholderInsideQuotes(name: variable.name)
+                }
+                searchRange = occurrence.upperBound..<command.endIndex
             }
-            if stringRanges.contains(where: { $0.contains(first.lowerBound) }) {
-                return .placeholderInsideQuotes(name: variable.name)
+            guard foundAny else {
+                return .unusedPlaceholder(name: variable.name)
             }
         }
         return nil

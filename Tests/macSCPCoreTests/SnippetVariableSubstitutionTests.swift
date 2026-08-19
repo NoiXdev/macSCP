@@ -116,16 +116,31 @@ struct SnippetVariableSubstitutionTests {
         #expect(resolved == "echo 'x {{B}} y' 'PWNED; touch /tmp/pwned'")
     }
 
-    /// Pins the documented limitation on `firstDeclarationProblem`: only the
-    /// first occurrence of a repeated `{{NAME}}` is checked for quote
-    /// context, so a second occurrence sitting inside quotes is not flagged
-    /// here. Not a hole -- `resolve` quotes every occurrence uniformly, so
-    /// the unflagged second occurrence still ends up as an inert literal,
-    /// never unquoted shell text.
-    @Test("only the first occurrence of a repeated placeholder governs the quote-context check")
-    func onlyFirstOccurrenceGovernsQuoteContext() {
+    /// The exploit a review found by executing it, not reasoning about it:
+    /// `PosixQuoting.singleQuoted` only protects a value in an UNQUOTED
+    /// position. When the same declared name also occurs a second time
+    /// inside the template's own double quotes, the value's emitted single
+    /// quotes are literal characters there, while anything in the value
+    /// that IS special inside double quotes -- `$(...)` command
+    /// substitution -- stays live and runs. `scp -i {{KEY}} … && echo
+    /// "used {{KEY}}"` is exactly this shape and an entirely ordinary thing
+    /// to write, which is why every occurrence is checked, not just the
+    /// first.
+    @Test("a placeholder repeated once bare and once inside quotes is a problem")
+    func repeatedPlaceholderInsideQuotesOnSecondOccurrenceIsRejected() {
         let problem = SnippetVariableSubstitution.firstDeclarationProblem(
             command: #"echo {{DB}} "{{DB}}""#, variables: [placeholder("DB")])
+        #expect(problem == .placeholderInsideQuotes(name: "DB"))
+    }
+
+    /// Guards against the fix overcorrecting into "any command containing
+    /// quotes is rejected": two different placeholders, one of them right
+    /// next to quoted text but never inside it, must both stay fine.
+    @Test("two different placeholders near quotes, neither inside them, are fine")
+    func twoDifferentPlaceholdersNearQuotesAreFine() {
+        let problem = SnippetVariableSubstitution.firstDeclarationProblem(
+            command: #"scp -i {{KEY}} host:/path && echo "done" {{MSG}}"#,
+            variables: [placeholder("KEY"), placeholder("MSG")])
         #expect(problem == nil)
     }
 }
