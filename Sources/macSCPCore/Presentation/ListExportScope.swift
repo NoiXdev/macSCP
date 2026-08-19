@@ -11,7 +11,7 @@ import Foundation
 /// Lives here rather than in a sheet so the two sheets that offer this
 /// button cannot drift apart: a second copy is how "Export" came to mean
 /// two different things in the first place.
-public enum ExportScope {
+public enum ListExportScope {
     public static func resolve<Item: Identifiable>(
         selectedID: Item.ID?, from visible: [Item]
     ) -> [Item] {

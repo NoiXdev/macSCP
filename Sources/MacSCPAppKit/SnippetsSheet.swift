@@ -149,7 +149,7 @@ struct SnippetsSheet: View {
                 .disabled(selectedSnippet == nil)
                 // Exports the resolved scope — the selection when it is one
                 // of the rows on screen, otherwise every row on screen, per
-                // `ExportScope`. Enablement is `snippetsCanExport`
+                // `ListExportScope`. Enablement is `snippetsCanExport`
                 // (`SnippetsPresentation.swift`), which also rules out an
                 // unreadable store explicitly rather than leaning on
                 // `visibleSnippets` happening to be empty in that case too.
@@ -157,7 +157,7 @@ struct SnippetsSheet: View {
                     // `snippetsCanExport` already rules out an empty visible
                     // list, so the resolved scope always has at least one
                     // snippet in it.
-                    pendingExport = ExportScope.resolve(
+                    pendingExport = ListExportScope.resolve(
                         selectedID: selectedID, from: visibleSnippets)
                 }
                 .buttonStyle(.polished)

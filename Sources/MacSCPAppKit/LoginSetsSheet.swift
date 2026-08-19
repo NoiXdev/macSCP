@@ -147,7 +147,7 @@ struct LoginSetsSheet: View {
                 .buttonStyle(.polished)
                 .disabled(selectedSet == nil)
                 // Export scope (M19/T8, corrected in review; the rule itself
-                // now lives at `ExportScope`): with an active search, M18's
+                // now lives at `ListExportScope`): with an active search, M18's
                 // regression fix above clears the selection as soon as the
                 // selected row is filtered out, so "no selection" is the
                 // NORMAL state while searching — falling back to the full
@@ -156,7 +156,7 @@ struct LoginSetsSheet: View {
                 // passwords, if that switch was on. Edit and Delete were
                 // hardened against exactly this in M18; export was not.
                 Button(L10n.string("logins.export.action", "Export…")) {
-                    exportTarget = ExportTarget(sets: ExportScope.resolve(
+                    exportTarget = ExportTarget(sets: ListExportScope.resolve(
                         selectedID: selectedID, from: visibleSets))
                 }
                 .buttonStyle(.polished)
@@ -178,7 +178,7 @@ struct LoginSetsSheet: View {
         // `selectedSet`, which reads the FULL `sessionList.loginSets`, so
         // with the search showing "No matches" they stayed enabled and acted
         // on (and the delete dialog named) a row the user could no longer
-        // see — Export was already immune via `ExportScope.resolve`'s own
+        // see — Export was already immune via `ListExportScope.resolve`'s own
         // membership check. Attaching to the VStack instead covers both
         // branches of the `if visibleSets.isEmpty` above, so the selection
         // is cleared whichever one is on screen.
