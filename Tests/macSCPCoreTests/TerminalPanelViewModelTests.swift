@@ -482,6 +482,39 @@ actor ShellFactory {
 @Suite("TerminalPanelViewModel delivery callback")
 @MainActor
 struct TerminalPanelViewModelDeliveryTests {
+    /// Lets the test decide WHEN the shell finishes opening, instead of
+    /// racing a fixed sleep against however loaded the machine is. The
+    /// previous version of this suite slept 80 ms inside `openShell` and
+    /// waited for the flush afterwards; that passed alone and failed inside
+    /// the full suite, which is the worst way for a test to be wrong.
+    private final class OpenGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<Void, Never>?
+        private var isOpen = false
+
+        func waitUntilOpened() async {
+            await withCheckedContinuation { c in
+                lock.lock()
+                if isOpen {
+                    lock.unlock()
+                    c.resume()
+                    return
+                }
+                continuation = c
+                lock.unlock()
+            }
+        }
+
+        func open() {
+            lock.lock()
+            isOpen = true
+            let pending = continuation
+            continuation = nil
+            lock.unlock()
+            pending?.resume()
+        }
+    }
+
     private final class Box: @unchecked Sendable {
         private let lock = NSLock()
         private var _count = 0
@@ -519,20 +552,26 @@ struct TerminalPanelViewModelDeliveryTests {
 
     @Test func waitsForTheFlushWhenTheShellIsStillOpening() async throws {
         let shell = MockShell()
+        let gate = OpenGate()
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in
-            try await Task.sleep(nanoseconds: 80_000_000)
+            await gate.waitUntilOpened()
             return shell
         })
         vm.openIfNeeded()
 
         let delivered = Box()
         vm.send([0x61]) { delivered.bump() }
-        // Still buffered: the shell has not opened yet. Checked synchronously,
-        // before any suspension, so no amount of load can make it flaky.
+        // Still buffered: the shell cannot have opened, because only the
+        // line below lets it. Checked synchronously, before any suspension.
         #expect(delivered.count == 0)
 
+        gate.open()
         _ = await waitUntil { delivered.count == 1 }
-        #expect(delivered.count == 1)
+        // Reports which half is missing when this fails: bytes at the shell
+        // but no callback is a callback bug; neither is a flush bug.
+        #expect(
+            delivered.count == 1,
+            "callback \(delivered.count), shell received \(shell.sent.count) chunk(s), state \(vm.state)")
     }
 
     @Test func neverFiresWhenTheOpenFails() async throws {
