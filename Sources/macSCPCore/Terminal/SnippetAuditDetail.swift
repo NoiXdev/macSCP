@@ -2,10 +2,10 @@ import Foundation
 
 /// Builds the audit log's plain-text line for a snippet execution.
 ///
-/// The audit log is a list to skim, not a transcript: the text is forced
-/// onto ONE line and capped, so a multi-line or very long command cannot
-/// blow up a row. `AuditEvent.detail` is finished English by contract --
-/// the UI localizes only the event kind's label.
+/// The audit log is a list to skim, not a transcript: whitespace is
+/// normalized and the command is capped, so an oddly-spaced or very long
+/// command stays scannable in a row. `AuditEvent.detail` is finished
+/// English by contract -- the UI localizes only the event kind's label.
 public enum SnippetAuditDetail {
     /// Characters of command text kept before the ellipsis.
     private static let commandLimit = 200
@@ -17,8 +17,9 @@ public enum SnippetAuditDetail {
         return "ran snippet \u{201C}\(name)\u{201D}: \(command)"
     }
 
-    /// Newlines, tabs and runs of spaces all become a single space, so a
-    /// two-line command reads as one sentence rather than breaking the row.
+    /// Tabs and runs of spaces become a single space. Newlines cannot occur
+    /// here because `Snippet` rejects them at construction, but the predicate
+    /// includes `isNewline` as a defensive belt-and-braces check.
     private static func collapsingWhitespace(in command: String) -> String {
         command
             .split(whereSeparator: { $0.isWhitespace || $0.isNewline })

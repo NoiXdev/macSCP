@@ -5,21 +5,13 @@ import Testing
 @Suite("SnippetAuditDetail")
 struct SnippetAuditDetailTests {
     private func snippet(name: String, command: String) -> Snippet {
-        let normalized = command.replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
-        return Snippet(name: name, command: normalized, tags: [])!
+        Snippet(name: name, command: command, tags: [])!
     }
 
     @Test func namesTheSnippetAndQuotesItsCommand() {
         let text = SnippetAuditDetail.text(
             for: snippet(name: "Restart nginx", command: "systemctl restart nginx"))
         #expect(text == "ran snippet \u{201C}Restart nginx\u{201D}: systemctl restart nginx")
-    }
-
-    @Test func collapsesAMultiLineCommandOntoOneLine() {
-        let text = SnippetAuditDetail.text(
-            for: snippet(name: "Two steps", command: "cd /srv\nls -la"))
-        #expect(text == "ran snippet \u{201C}Two steps\u{201D}: cd /srv ls -la")
     }
 
     @Test func collapsesRunsOfWhitespaceAndTrims() {
