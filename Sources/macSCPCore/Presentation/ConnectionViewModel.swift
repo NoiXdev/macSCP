@@ -977,17 +977,17 @@ public final class ConnectionViewModel {
         state = .idle
     }
 
-    /// Leaves edit mode WITHOUT touching the form fields. The app's tab
-    /// teardown and every sidebar-navigation path (connect stored, import
-    /// fill, disconnect) call this: a stale `.edit` target surviving those
-    /// paths would make a later Save overwrite the wrong stored session,
-    /// while the field values are owned by the caller (teardown/connect set
-    /// them explicitly right after).
+    /// Leaves edit mode WITHOUT touching the form fields. Two paths call
+    /// this: the app's tab teardown and the sidebar's import fill
+    /// (`fillFromImported`) -- a reconnect reaches it only through that
+    /// teardown. A stale `.edit` target surviving them would make a later
+    /// Save overwrite the wrong stored session, while the field values are
+    /// owned by whatever fills the form next.
     /// Jump fields reset entirely here rather than only in `endEditing()`
     /// (M10c/T3, same sticky-toggle lesson M10b learned for `loginMode`/
     /// `selectedLoginSetID` above): `jumpEnabled` is itself a MODE switch,
     /// so a stale "on" from a previous edit must not survive into whatever
-    /// the caller (teardown/`connect(in:stored:)`/import) fills in next.
+    /// gets filled in next.
     ///
     /// `kind`/S3/WebDAV fields reset here too (M12/T7a, M21/T9, same
     /// lesson): `kind` is itself a MODE switch, so a stale `.s3`/`.webdav`
@@ -1014,9 +1014,10 @@ public final class ConnectionViewModel {
     /// internal existing-secret bookkeeping. The single source of truth for
     /// "no jump block survives here" — used by `exitEditMode()`,
     /// `beginEditing()`'s no-jump branch, the `kind` switch's own `didSet`,
-    /// and (via `ContentView`'s `applyRawJumpFallback`) all three of
-    /// `ContentView.fillForm`'s early-return failure paths, so a jump block
-    /// typed for one session's form can never leak into another's.
+    /// `ContentView.fillForm`'s own no-jump branch, and (via that file's
+    /// `applyRawJumpFallback`) three of `fillForm`'s seven early-return
+    /// failure paths, so a jump block typed for one session's form can never
+    /// leak into another's.
     ///
     /// `jumpSourceMode`/`jumpSessionID` reset here too (M11a/T3, the same
     /// sticky-toggle lesson M10b learned for `loginMode`/

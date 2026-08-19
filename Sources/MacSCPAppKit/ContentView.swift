@@ -155,11 +155,12 @@ struct ContentView: View {
     /// Menu-bar status bridge (M11n), created once in `MacSCPApp` (no
     /// singleton, same pattern as the stores above) and shared with the
     /// AppKit `MenuBarController` there. This view mirrors `tabsModel.tabs`
-    /// into it — once in `wireMenuBarBridge()` and again from the
-    /// `.onChange(of: tabIDs)` beside it — and sets its window-raising
+    /// into it — once in `wireMenuBarBridge()`, run from
+    /// `performWindowSetup()`, and again whenever the `.onChange(of: tabIDs)`
+    /// in the same file's modifier chain fires — and sets its window-raising
     /// closures in `wireMenuBarBridge()` alone (both in
-    /// `ContentView+Lifecycle.swift`, run from `performWindowSetup()`); see
-    /// `MenuBarStatusModel`'s doc comment.
+    /// `ContentView+Lifecycle.swift`); see `MenuBarStatusModel`'s doc
+    /// comment.
     let menuBarModel: MenuBarStatusModel
     /// Assigned in `init` (not a bare default value) so it can pass
     /// `auditStore` through — mirrors `_tabsModel` below.
@@ -1370,9 +1371,12 @@ struct ContentView: View {
 
     /// Fills the jump block from the session's own raw JumpSpec values (no set
     /// resolution), or clears it entirely when the session has no jump. Used by
-    /// all three of `fillForm`'s early-return failure paths so a stale jump
-    /// block from a previous form state can never survive into a different
-    /// session's connect.
+    /// three of `fillForm`'s seven early-return failure paths — the target's
+    /// dangling-set stop and the two jump-LOGIN-set failures — so a stale
+    /// jump block from a previous form state can never survive into a
+    /// different session's connect. The four jump-SESSION failures skip it
+    /// on purpose: they leave the form in session mode so the user can see
+    /// which reference broke.
     ///
     /// `jumpSourceMode`/`jumpSessionID` are also reset here (F-2 fix, final
     /// review): the `if let jump` branch below fills only the manual-looking
