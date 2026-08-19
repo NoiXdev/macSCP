@@ -25,12 +25,19 @@ means THIS row."* Der Zeileneintrag setzt außerdem vorher die Auswahl, damit
 sichtbare Auswahl und wirksamer Umfang nie auseinanderlaufen. Diese Phase
 überträgt genau dieses Muster — sie erfindet keine zweite Regel.
 
-**Bewusst NICHT in dieser Phase:** die Fußzeilen der beiden Sheets meinen
-Verschiedenes (Login-Sets: die Auswahl, sonst die sichtbaren, mit
-Anzahl-Bestätigung; Snippets: immer die sichtbaren, ohne Bestätigung). Das
-ist vorbestehend, betrifft keinen Kontextmenü-Eintrag und ist eine
-Verhaltensänderung an ausgeliefertem Code — sie gehört in eine eigene
-Entscheidung, nicht in diese.
+**Bewusst NICHT in dieser Phase:** die Fußzeilen der beiden Sheets meinen bei
+Auswahl vs. sichtbar Verschiedenes (Login-Sets: die Auswahl, sonst die
+sichtbaren; Snippets: immer die sichtbaren). Das ist vorbestehend, betrifft
+keinen Kontextmenü-Eintrag und ist eine Verhaltensänderung an ausgeliefertem
+Code — sie gehört in eine eigene Entscheidung, nicht in diese.
+
+Die Bestätigungsstufe unterscheidet sich dagegen bei BEIDEN Auslösern
+(Fußzeile und Zeile), nicht nur bei der Fußzeile: Login-Sets öffnet in
+beiden Fällen sein Export-Sheet (Optionen + Anzahl), Snippets geht in
+beiden Fällen direkt zum Sichern-Dialog. Das ist begründet und
+vorbestehend — `SnippetExportCodec` hat weder Optionen noch ein
+Passwort-Argument (siehe `performExport`s eigenen Kommentar dazu), ein
+Optionen-Sheet hätte dort also nichts zu zeigen.
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), SwiftPM, Swift Testing.
 

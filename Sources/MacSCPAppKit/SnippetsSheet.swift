@@ -235,9 +235,10 @@ struct SnippetsSheet: View {
 
     private func reload() { load = SnippetsLoad(reading: store) }
 
-    /// Builds the payload from exactly the snippets handed in (the sheet's
-    /// current search+tag-filter result, per its call site above — this
-    /// function does no filtering of its own), encodes it, and arms
+    /// Builds the payload from exactly the snippets handed in — this
+    /// function does no filtering of its own. The footer button passes the
+    /// sheet's current search+tag-filter result; the row menu passes exactly
+    /// the one right-clicked snippet. Encodes the payload and arms
     /// `fileExporter`. Mirrors `LoginSetsSheet.performExport`, minus the
     /// options/password step that codec has no parameter for (see
     /// `SnippetExportCodec`'s own doc comment on why).
@@ -366,6 +367,14 @@ struct SnippetsSheet: View {
                 selectedID = snippet.id
                 editorTarget = SnippetEditorTarget(existing: snippet)
             }
+            // Single-snippet export (P3f) — the footer button covers the
+            // current search+tag-filter result; this one always means THIS
+            // row.
+            //
+            // No `snippetsCanExport` guard needed here: a row only exists
+            // when `visibleSnippets` is non-empty, and an unreadable store
+            // yields no snippets at all — so both of that guard's
+            // conditions already hold whenever this menu can be opened.
             Button(L10n.string("snippets.export", "Export…")) {
                 selectedID = snippet.id
                 performExport([snippet])
