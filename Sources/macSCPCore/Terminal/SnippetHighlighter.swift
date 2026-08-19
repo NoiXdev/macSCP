@@ -29,8 +29,9 @@ public struct SnippetToken: Equatable, Sendable {
 
 public enum SnippetHighlighter {
     /// Splits `text` into coloured runs. Single pass, left to right; every
-    /// character lands in exactly one token, so the App layer can colour
-    /// the whole string without gaps.
+    /// non-whitespace character lands in exactly one token, whitespace is not
+    /// tokenised, and the App layer is expected to paint a base colour first
+    /// rather than rely on full coverage.
     public static func tokens(in text: String, language: SnippetLanguage) -> [SnippetToken] {
         switch language {
         case .shell: return shellTokens(in: text)
