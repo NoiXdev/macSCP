@@ -2463,6 +2463,13 @@ struct SessionListViewModelTests {
         form.jumpPassword = shareSecret
 
         form.selectJumpLoginMode(.manual)
+        // M30: leaving Set mode now demands the jump's own secret, and
+        // `selectJumpLoginMode` has just cleared the field -- so a real user
+        // types one here. A DIFFERENT value than the share's on purpose: it
+        // sharpens what this test proves, from "the share's secret does not
+        // land in the jump slot when nothing is typed" to "it does not land
+        // there even when something else is".
+        form.jumpPassword = "typed-by-the-user"
 
         let updated = form.validateForEditSave()!
         vm.updateSession(updated, newSecret: nil, jumpSecret: form.jumpPassword)
@@ -2471,7 +2478,12 @@ struct SessionListViewModelTests {
         // Compared as a Bool so no secret can reach a failure message.
         let jumpSlotHoldsTheSharesSecret = secrets.peek(jumpSlot) == shareSecret
         #expect(jumpSlotHoldsTheSharesSecret == false)
-        #expect(secrets.storedIDs.contains(jumpSlot) == false)
+        // Was "no slot written at all", which only held while the field was
+        // empty. Under M30 the user must type something, so the sharper
+        // question is WHAT the slot holds: exactly what they typed, and
+        // nothing carried over from the share.
+        let jumpSlotHoldsWhatTheUserTyped = secrets.peek(jumpSlot) == "typed-by-the-user"
+        #expect(jumpSlotHoldsWhatTheUserTyped)
         // The share's own slot is untouched -- this is about copying, not
         // moving.
         #expect(secrets.storedIDs.contains(share.id))

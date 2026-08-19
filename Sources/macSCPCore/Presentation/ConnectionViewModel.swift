@@ -1090,9 +1090,14 @@ public final class ConnectionViewModel {
                 field: .schema(violation.fieldKey))
             return nil
         }
-        // requireSecret: false for the same reason as above — see
-        // `validateJump`'s own doc comment.
-        if let jumpFailure = validateJump(requireSecret: false) {
+        // M30: the jump's own half of the rule above. Its `loginSetID` and
+        // its `secretID` slot mirror the session's, so it has the same way
+        // back into a stale credential. A session-mode jump cannot reach this
+        // at all -- `validateJump` returns early for it, and such a jump owns
+        // no secret. Outside that transition the requirement stays false, for
+        // the reason `validateJump`'s own doc comment gives.
+        let jumpLeftLoginSet = editingOriginal?.jump?.loginSetID != nil && jumpLoginMode == .manual
+        if let jumpFailure = validateJump(requireSecret: jumpLeftLoginSet) {
             state = jumpFailure
             return nil
         }

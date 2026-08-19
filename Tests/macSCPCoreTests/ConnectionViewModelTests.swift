@@ -1473,6 +1473,38 @@ struct ConnectionViewModelTests {
 
         #expect(vm.validateForEditSave() != nil)
     }
+
+    /// M30, the jump's half of the same rule: the jump owns a keychain slot
+    /// and the same set binding, so it has the same way back into a stale
+    /// credential. The session itself stays unbound here so this test
+    /// measures the jump rule alone rather than the session one.
+    @Test @MainActor func aJumpLeavingLoginSetModeWithAnEmptyPasswordIsRefused() {
+        let vm = makeVM()
+        vm.beginEditing(sshSession(
+            name: "web", host: "h", username: "u",
+            jump: StoredSession.JumpSpec(host: "bastion", username: "j",
+                                         loginSetID: UUID())))
+        vm.jumpLoginMode = .manual
+        vm.jumpPassword = ""
+
+        #expect(vm.validateForEditSave() == nil)
+        #expect(vm.state == .failed(
+            message: CoreL10n.string("core.connect.jumpPasswordEmpty"),
+            field: .jumpPassword))
+    }
+
+    @Test @MainActor func aJumpLeavingLoginSetModeWithATypedPasswordSaves() {
+        let vm = makeVM()
+        vm.beginEditing(sshSession(
+            name: "web", host: "h", username: "u",
+            jump: StoredSession.JumpSpec(host: "bastion", username: "j",
+                                         loginSetID: UUID())))
+        vm.jumpLoginMode = .manual
+        vm.jumpPassword = "typed"
+
+        #expect(vm.validateForEditSave() != nil)
+        #expect(vm.state == .idle)
+    }
 }
 
 private actor CallCounter {
