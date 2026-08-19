@@ -168,9 +168,38 @@ Muster und nagelt die Ersetzungssperre, die Tab-Behandlung, die
 Bedienhilfen-Beschriftung und den `insertNewline`-Anspruch fest — jeweils
 fail-closed und durch Mutation rot geprüft.
 
-**Zusätzlich sichtzuprüfen** (aus diesen Wellen): ein Befehl, der breiter
-ist als das Feld, muss waagerecht scrollen statt umzubrechen —
-etwa `docker run --rm -it -v $PWD:/work -w /work alpine sh -c 'echo hi'`.
+## Sichtprüfung durchgeführt (Maintainer, 2026-08-19)
+
+Am laufenden Build geprüft und bestätigt: Einfärbung, runde Umrandung
+passend zu den Nachbarfeldern, und waagerechtes Scrollen bei einem
+Befehl, der breiter ist als das Feld.
+
+Der Weg dorthin ging über zwei weitere Fehler, beide aus der
+Härtungswelle, beide erst durch Hinsehen gefunden:
+
+1. **Der Scroller fraß die Zeile.** `hasHorizontalScroller = true` ohne
+   Autohide blendet den Balken dauerhaft ein; in einer 24-pt-Zeile nimmt
+   er rund zwei Drittel der Höhe und zeichnet sich als dunkle Kapsel quer
+   durchs leere Feld. Das Feld sah aus wie ein kaputtes Steuerelement.
+   Balken entfernt — die Clip-Ansicht folgt der Einfügemarke auch ohne
+   ihn, genau wie beim ersetzten `TextField`.
+2. **Die Breite war festgenagelt.** `autoresizingMask` enthielt `.width`,
+   band also die Breite der Textansicht an die der Clip-Ansicht. Ihr
+   Rahmen konnte nie über die sichtbare Breite hinauswachsen, und wo
+   nichts breiter ist, gibt es nichts zu scrollen: der Befehl endete am
+   rechten Rand, der Rest war unerreichbar. Dazu fehlte `maxSize`. Jetzt
+   trackt nur die Höhe die Zeile.
+
+**Die Lektion dahinter.** Beide Fehler standen in derselben Änderung, die
+den Umbruch abschalten sollte, und beide waren aus dem Diff nicht zu
+sehen — das Schluss-Review hat den Umbruch korrekt als Befund erkannt,
+und der Fix hat ihn durch zwei neue Fehler ersetzt, die *ebenfalls*
+plausibel aussahen. Für `NSViewRepresentable` gilt in diesem Projekt
+weiterhin: der Beweis ist der Blick auf die laufende App, nicht die
+grüne Suite und nicht das Review.
+
+**Weiterhin ungeprüft:** wer die Eingabetaste bekommt (siehe oben) und
+der Theme-Wechsel bei offenem, unberührtem Sheet.
 
 ## Lektion: eine Zahl im Review-Befund ist auch ein Prüfauftrag
 
