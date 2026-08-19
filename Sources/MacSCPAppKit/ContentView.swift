@@ -339,6 +339,23 @@ struct ContentView: View {
         let config: SSHConnectionConfig
         let target: TerminalTarget
         let customPath: String?
+
+        /// Stores the config with its plaintext secrets emptied.
+        ///
+        /// The launch path reads none of them — `SSHCommandBuilder` passes
+        /// no secret to `ssh`, which is exactly what the hint tells the
+        /// user — so holding one here would buy nothing and cost a
+        /// plaintext password sitting in view state for as long as the
+        /// alert stays open, in a place neither `disconnect` nor
+        /// `ConnectionViewModel.clearRetainedSecrets()` reaches. Redacting
+        /// on the way in makes that state unrepresentable, instead of
+        /// adding a third clearing path that every later change would have
+        /// to remember.
+        init(config: SSHConnectionConfig, target: TerminalTarget, customPath: String?) {
+            self.config = config.redactingSecrets()
+            self.target = target
+            self.customPath = customPath
+        }
     }
 
     /// Non-nil while the "external terminals can't receive a saved password"
@@ -1604,9 +1621,10 @@ struct ContentView: View {
     /// a password login, or opens straight away.
     ///
     /// Split out of `requestExternalTerminal(for:)` rather than duplicated,
-    /// so the sidebar route cannot bypass that hint — the whole point of the
-    /// hint is that the password ends up in a launch script, which is as
-    /// true for a session macSCP never connected to as for one it did.
+    /// so the sidebar route cannot bypass that hint — the point of the hint
+    /// is that an external terminal gets NO saved password and `ssh` will
+    /// prompt for it there, which is as true for a session macSCP never
+    /// connected to as for one it did.
     func requestExternalTerminal(config: SSHConnectionConfig) {
         // The menu route ignores `terminalTarget` (it always means
         // "external"); the toolbar route already checked it before calling
