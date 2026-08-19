@@ -83,6 +83,21 @@ struct SnippetStoreTests {
         #expect(Snippet(name: "CR", command: "echo a\recho b") == nil)
     }
 
+    /// Swift treats `"\r\n"` as ONE grapheme cluster, so a two-string
+    /// `contains("\n")`/`contains("\r")` check does not see it -- a CRLF
+    /// command would pass construction and put a raw 0x0D in the middle of
+    /// what the terminal receives.
+    @Test func aCommandWithACRLFIsRefused() {
+        #expect(Snippet(name: "CRLF", command: "echo a\r\necho b") == nil)
+    }
+
+    /// `Character.isNewline` covers more than `\n` and `\r` -- a vertical
+    /// tab must be refused too, or the two-string guard undercounts what
+    /// the terminal treats as a line break.
+    @Test func aCommandWithAVerticalTabIsRefused() {
+        #expect(Snippet(name: "VT", command: "echo a\u{000B}echo b") == nil)
+    }
+
     /// The rule is the MODEL's, not the form's: a hand-edited store file
     /// must not smuggle a multi-line command past it either.
     @Test func aHandEditedMultiLineCommandDoesNotDecode() throws {

@@ -19,10 +19,12 @@ import Foundation
 public struct Snippet: Identifiable, Codable, Equatable, Sendable {
     public let id: UUID
     public var name: String
-    /// A single command line — never contains `\n` or `\r`. Kept `let` so
-    /// this invariant cannot be broken by an in-place mutation after
-    /// construction; changing the command means constructing a new
-    /// `Snippet`.
+    /// A single command line — never contains a character for which
+    /// `Character.isNewline` is true (that covers `\n`, `\r`, `\r\n` as one
+    /// grapheme cluster, and a handful of other line/paragraph separators —
+    /// see the initializer). Kept `let` so this invariant cannot be broken
+    /// by an in-place mutation after construction; changing the command
+    /// means constructing a new `Snippet`.
     public let command: String
     /// Free-form labels that order snippets and group the trigger surfaces.
     /// Normalized at construction via `TagList.normalized` — see that
@@ -31,10 +33,14 @@ public struct Snippet: Identifiable, Codable, Equatable, Sendable {
     /// write path around that normalization.
     public let tags: [String]
 
-    /// Fails when `command` contains a line break (`\n` or `\r`) — see the
-    /// type's doc comment for why a snippet must be a single line.
+    /// Fails when `command` contains any character Swift considers a
+    /// newline (`Character.isNewline`) — see the type's doc comment for why
+    /// a snippet must be a single line. Checking per-character rather than
+    /// with `contains("\n")`/`contains("\r")` matters: Swift's `String`
+    /// compares grapheme clusters, and `"\r\n"` is ONE grapheme cluster, so
+    /// those two substring checks do not see a CRLF command at all.
     public init?(id: UUID = UUID(), name: String, command: String, tags: [String] = []) {
-        guard !command.contains("\n"), !command.contains("\r") else { return nil }
+        guard !command.contains(where: \.isNewline) else { return nil }
         self.id = id
         self.name = name
         self.command = command
@@ -61,7 +67,7 @@ public struct Snippet: Identifiable, Codable, Equatable, Sendable {
         guard let snippet = Self(id: id, name: name, command: command, tags: tags) else {
             throw DecodingError.dataCorruptedError(
                 forKey: .command, in: container,
-                debugDescription: "Snippet command must be a single line, without \\n or \\r."
+                debugDescription: "Snippet command must be a single line, with no newline character."
             )
         }
         self = snippet
