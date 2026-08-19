@@ -497,6 +497,8 @@
 "menu.serverCertificates" = "Server-Zertifikate…";
 "menu.logins" = "Logins…";
 "menu.sshKeys" = "SSH-Schlüssel…";
+"menu.adHocAuditLog" = "Protokoll der Ad-hoc-Verbindungen…";
+"audit.adhoc.name" = "Ad-hoc-Verbindungen";
 "menu.hiddenImports" = "Ausgeblendete Importe…";
 "menu.hiddenImports %@" = "Ausgeblendete Importe (%@)…";
 "menu.exportAllSessions" = "Alle Sitzungen exportieren…";

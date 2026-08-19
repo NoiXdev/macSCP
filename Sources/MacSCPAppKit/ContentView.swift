@@ -821,6 +821,9 @@ struct ContentView: View {
         }
 
         var titleName = storedName
+        // M31: hoisted out of the branch below so the audit recorder can be
+        // attached for BOTH cases -- see the comment at the attach itself.
+        var storedSession: StoredSession?
         if form.shouldSaveSession {
             // Set mode: reference the picked set directly. Manual mode +
             // "Save as new login set": create the set FIRST, then reference
@@ -863,37 +866,46 @@ struct ContentView: View {
                 jump: form.buildJumpSpec(),
                 jumpSecret: form.jumpSourceMode == .session ? nil : form.jumpPassword,
                 tags: form.tags)
+            storedSession = stored
             tab.activeStoredSessionID = stored?.id
             form.shouldSaveSession = false
             titleName = stored?.name ?? titleName
-            // Audit recorder (M9b/T3): this "Save & connect" path just
-            // turned an ad-hoc connect into a stored session — attach the
-            // recorder here, mirroring `connect(in:stored:)` below.
-            //
-            // `form.jumpHost` (M-1 fix, final review), not `stored.jump?.
-            // host`: for a session-mode jump `form.jumpHost` already holds
-            // the freshly resolved host
-            // (`SessionListViewModel.resolveJumpSession` filled it before
-            // `connect()` ran, a few lines above `buildJumpSpec()` reads
-            // the very same field) -- using `stored.jump?.host`
-            // instead happened to read the identical value here (it's the
-            // trimmed copy of this same field), but only by accident, not by
-            // construction; `form.jumpHost` is the one field guaranteed to
-            // be current in both connect paths.
-            if let stored {
-                // `displaySummary` (M22/T11), not `stored.host`/`stored.username`
-                // directly: a legacy S3 or WebDAV session still carries the
-                // `"unused"` placeholder in those two (a freshly saved one no
-                // longer does, since M23/T7), which is what used to leave
-                // "connected to unused as unused" in the audit trail for
-                // anything but SSH.
-                let descriptor = BackendDescriptor.descriptor(for: stored.kind)
-                attachAuditRecorder(
-                    to: tab, sessionID: stored.id,
-                    summary: descriptor.displaySummary(descriptor.sessionValues(stored)),
-                    viaJumpHost: form.jumpEnabled ? form.jumpHost : nil)
-            }
         }
+
+        // Audit recorder (M9b/T3, un-nested in M31). This used to sit INSIDE
+        // the branch above, so the audit trail depended on whether the
+        // connection was SAVED rather than on whether it happened: an
+        // unsaved connect logged nothing at all -- not even the M21
+        // plaintext-transport note, which `attachAuditRecorder` writes.
+        // `AdHocAudit.logSessionID` supplies the fixed id for that case.
+        //
+        // `displaySummary` (M22/T11), not host/username directly: a legacy S3
+        // or WebDAV session still carries the `"unused"` placeholder in those
+        // two (a freshly saved one no longer does, since M23/T7), which is
+        // what used to leave "connected to unused as unused" in the audit
+        // trail for anything but SSH. The saved case keeps reading it from
+        // the SESSION verbatim, so nothing about an existing session's log
+        // changes; only the ad-hoc case reads the form, which is its only
+        // source.
+        //
+        // `form.jumpHost` (M-1 fix, final review), not `stored.jump?.host`:
+        // for a session-mode jump `form.jumpHost` already holds the freshly
+        // resolved host (`SessionListViewModel.resolveJumpSession` filled it
+        // before `connect()` ran, a few lines above `buildJumpSpec()` reads
+        // the very same field) -- using `stored.jump?.host` instead happened
+        // to read the identical value here (it's the trimmed copy of this
+        // same field), but only by accident, not by construction;
+        // `form.jumpHost` is the one field guaranteed to be current in both
+        // connect paths.
+        let auditDescriptor = BackendDescriptor.descriptor(
+            for: storedSession?.kind ?? form.kind)
+        attachAuditRecorder(
+            to: tab,
+            sessionID: AdHocAudit.logSessionID(storedID: storedSession?.id),
+            summary: storedSession.map {
+                auditDescriptor.displaySummary(auditDescriptor.sessionValues($0))
+            } ?? auditDescriptor.displaySummary(form.values),
+            viaJumpHost: form.jumpEnabled ? form.jumpHost : nil)
 
         // Tab/window title: a stored session's name when this connection is
         // actually backed by one (just saved above, or passed in by

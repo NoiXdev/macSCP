@@ -499,6 +499,8 @@
 "menu.serverCertificates" = "Certyfikaty serwera…";
 "menu.logins" = "Loginy…";
 "menu.sshKeys" = "Klucze SSH…";
+"menu.adHocAuditLog" = "Dziennik połączeń doraźnych…";
+"audit.adhoc.name" = "Połączenia doraźne";
 "menu.hiddenImports" = "Ukryte importy…";
 "menu.hiddenImports %@" = "Ukryte importy (%@)…";
 "menu.exportAllSessions" = "Eksportuj wszystkie sesje…";

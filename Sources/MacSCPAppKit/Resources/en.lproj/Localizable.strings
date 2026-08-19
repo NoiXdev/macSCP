@@ -496,6 +496,8 @@
 "menu.serverCertificates" = "Server Certificates…";
 "menu.logins" = "Logins…";
 "menu.sshKeys" = "SSH Keys…";
+"menu.adHocAuditLog" = "Ad-hoc Connection Log…";
+"audit.adhoc.name" = "Ad-hoc connections";
 "menu.hiddenImports" = "Hidden Imports…";
 "menu.hiddenImports %@" = "Hidden Imports (%@)…";
 "menu.exportAllSessions" = "Export All Sessions…";

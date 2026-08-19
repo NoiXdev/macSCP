@@ -34,6 +34,10 @@ final class TabCommands {
     /// `showKnownHosts`/`showLogins`/`showHiddenImports` above, opens the
     /// SSH-key management sheet (replaces the M17 Settings tab).
     var showSSHKeys: (() -> Void)?
+    /// Opens the ad-hoc connection log (M31). Its own entry rather than a
+    /// parameter on the existing audit hook, because there is no session to
+    /// pass -- the ad-hoc log's session is a value the App layer builds.
+    var showAdHocAuditLog: (() -> Void)?
     /// Settings-window route to the login-sets sheet ("Manage Data" section).
     ///
     /// Deliberately a SEPARATE closure from `showLogins` above, and the only
@@ -335,6 +339,12 @@ struct MacSCPApp: App {
                     tabCommands.showHiddenImports?()
                 }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
+                // "Ad-hoc Connection Log…" (M31): the audit trail of every
+                // connection that was never saved. It has no sidebar row to
+                // open it from -- its session is a value, not a record.
+                Button(L10n.string("menu.adHocAuditLog", "Ad-hoc Connection Log…")) {
+                    tabCommands.showAdHocAuditLog?()
+                }
                 Divider()
                 Button(L10n.string("menu.exportAllSessions", "Export All Sessions…")) {
                     tabCommands.exportAllSessions?()

@@ -446,6 +446,19 @@ extension ContentView {
             guard window?.isKeyWindow == true else { return }
             showHiddenImportsSheet = true
         }
+        // "Ad-hoc Connection Log…" (M31): the audit trail of connections that
+        // were never saved. It is reached from the menu rather than from a
+        // sidebar row, because its session is a VALUE, not a record -- there
+        // is no row to right-click. `AuditLogSheet` needs nothing from that
+        // session but its id and its name, so building one here is enough;
+        // nothing persists it.
+        tabCommands.showAdHocAuditLog = {
+            guard window?.isKeyWindow == true else { return }
+            auditLogSession = StoredSession(
+                id: AdHocAudit.sessionID,
+                name: L10n.string("audit.adhoc.name", "Ad-hoc connections"),
+                kind: .ssh)
+        }
         // "SSH Keys…" (M18/T5) — same key-window guard, opens the
         // SSH-key management sheet.
         tabCommands.showSSHKeys = {

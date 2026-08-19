@@ -500,6 +500,8 @@
 "menu.serverCertificates" = "Certificats serveur…";
 "menu.logins" = "Logins…";
 "menu.sshKeys" = "Clés SSH…";
+"menu.adHocAuditLog" = "Journal des connexions ad hoc…";
+"audit.adhoc.name" = "Connexions ad hoc";
 "menu.hiddenImports" = "Imports masqués…";
 "menu.hiddenImports %@" = "Imports masqués (%@)…";
 "menu.exportAllSessions" = "Exporter toutes les sessions…";
