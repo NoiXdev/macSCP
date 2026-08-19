@@ -22,6 +22,14 @@ public final class TerminalPanelViewModel {
     public var isVisible = false
     /// Set by the view; receives output bytes on the MainActor.
     public var onOutput: (([UInt8]) -> Void)?
+    /// Whether the remote has bracketed paste (mode 2004) on, as the local
+    /// emulator has observed it. Set by the terminal view, the same way
+    /// `onOutput` is; `nil` while no view is attached, which reads as "off"
+    /// — the conservative answer, since it only ever costs a refusal or a
+    /// line-by-line send, never an unexpected execution.
+    public var bracketedPasteQuery: (() -> Bool)?
+    /// `bracketedPasteQuery`'s answer, defaulting to `false`.
+    public var remoteWantsBracketedPaste: Bool { bracketedPasteQuery?() ?? false }
     /// Most recently received output chunks (max. 256 KiB) — replayed when the
     /// panel is shown again, so ⌘T doesn't discard the visible screen.
     public private(set) var replayBuffer: [[UInt8]] = []

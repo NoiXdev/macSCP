@@ -842,6 +842,9 @@
 "snippets.filter.untagged" = "No Tag";
 "snippets.filter.tagCount %1$@ %2$lld" = "%1$@ (%2$lld)";
 "snippets.command.moreLines %lld" = "+%lld more";
+"snippets.insert.multilineRefused.title" = "This snippet has several lines";
+"snippets.insert.multilineRefused.body" = "The remote shell cannot take a multi-line command without running it. Execute it instead?";
+"snippets.insert.multilineRefused.execute" = "Execute";
 
 /* Terminal menu — snippets (Terminal-Snippets milestone) */
 "menu.snippets.manage" = "Manage Snippets…";

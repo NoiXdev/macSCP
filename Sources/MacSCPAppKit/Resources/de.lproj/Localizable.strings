@@ -843,6 +843,9 @@
 "snippets.filter.untagged" = "Ohne Tag";
 "snippets.filter.tagCount %1$@ %2$lld" = "%1$@ (%2$lld)";
 "snippets.command.moreLines %lld" = "+%lld weitere";
+"snippets.insert.multilineRefused.title" = "Dieses Snippet hat mehrere Zeilen";
+"snippets.insert.multilineRefused.body" = "Die Gegenstelle kann einen mehrzeiligen Befehl nicht übernehmen, ohne ihn auszuführen. Stattdessen ausführen?";
+"snippets.insert.multilineRefused.execute" = "Ausführen";
 
 /* Terminal menu — snippets (Terminal-Snippets milestone) */
 "menu.snippets.manage" = "Snippets verwalten…";

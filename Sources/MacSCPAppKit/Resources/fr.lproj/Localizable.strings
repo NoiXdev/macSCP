@@ -846,6 +846,9 @@
 "snippets.filter.untagged" = "Sans tag";
 "snippets.filter.tagCount %1$@ %2$lld" = "%1$@ (%2$lld)";
 "snippets.command.moreLines %lld" = "+%lld de plus";
+"snippets.insert.multilineRefused.title" = "Cet extrait comporte plusieurs lignes";
+"snippets.insert.multilineRefused.body" = "L’interpréteur distant ne peut pas recevoir une commande multiligne sans l’exécuter. L’exécuter à la place ?";
+"snippets.insert.multilineRefused.execute" = "Exécuter";
 
 /* Terminal menu — snippets (Terminal-Snippets milestone) */
 "menu.snippets.manage" = "Gérer les snippets…";

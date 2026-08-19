@@ -274,6 +274,12 @@ struct ContentView: View {
     /// reads and writes `snippetStore` directly.
     @State var showSnippetsSheet = false
 
+    /// The snippet a multi-line insert was just refused for — drives the
+    /// refusal alert below. Non-nil only between `triggerSnippet` hitting
+    /// `SnippetSendPlan.refusedMultilineInsert` and the alert's own
+    /// dismissal or "Execute" action.
+    @State var pendingMultilineInsertRefusal: Snippet?
+
     // MARK: - Session export/import (M9a/T3)
 
     /// Wraps `ExportScope` so it can drive `.sheet(item:)` — `ExportScope`
@@ -555,6 +561,30 @@ struct ContentView: View {
             } message: {
                 Text(terminalUnavailableAlertMessage ?? "")
             }
+            // Multi-line insert refused (Snippet-Mehrzeilig, Task 4): the
+            // remote has no bracketed paste, and inserting a multi-line
+            // command as plain keystrokes would run its leading lines. Offer
+            // to execute the whole thing instead, since that path is always
+            // safe — see `SnippetSendPlan`.
+            .alert(
+                L10n.string("snippets.insert.multilineRefused.title", "This snippet has several lines"),
+                isPresented: Binding(
+                    get: { pendingMultilineInsertRefusal != nil },
+                    set: { if !$0 { pendingMultilineInsertRefusal = nil } }),
+                presenting: pendingMultilineInsertRefusal
+            ) { snippet in
+                Button(L10n.string("snippets.insert.multilineRefused.execute", "Execute")) {
+                    pendingMultilineInsertRefusal = nil
+                    triggerSnippet(snippet, execute: true)
+                }
+                Button(L10n.string("common.cancel", "Cancel"), role: .cancel) {
+                    pendingMultilineInsertRefusal = nil
+                }
+            } message: { _ in
+                Text(L10n.string(
+                    "snippets.insert.multilineRefused.body",
+                    "The remote shell cannot take a multi-line command without running it. Execute it instead?"))
+            }
     }
 
     /// Re-reads `snippets.json` into the command bridge (Terminal-Snippets
@@ -576,9 +606,10 @@ struct ContentView: View {
     /// `execute` is the caller's choice, not this method's (Terminal-Snippets,
     /// Task 6): every trigger surface offers both an Insert and an Execute
     /// action per snippet, and `execute` says which one fired. It passes
-    /// straight through to `SnippetKeystrokes.bytes(for:execute:)`, which is
-    /// where the actual byte-level guarantee ("inserting never appends a
-    /// terminator") is pinned — this method does not re-decide it.
+    /// straight through to `SnippetSendPlanner.plan(command:execute:
+    /// bracketedPaste:)`, which is where the actual byte-level guarantee
+    /// ("inserting never appends a terminator") and the multi-line refusal
+    /// decision are pinned — this method does not re-decide either.
     ///
     /// Capability guard as in `toggleTerminal` above: the menu entry is
     /// already disabled for a non-shell backend, and this re-checks anyway so
@@ -626,7 +657,16 @@ struct ContentView: View {
         // `send`'s delivery callback rather than after the call, so a shell
         // that never opens -- the bytes buffered and then discarded -- leaves
         // no entry claiming the snippet ran.
-        let bytes = SnippetKeystrokes.bytes(for: snippet, execute: execute)
+        let plan = SnippetSendPlanner.plan(
+            command: snippet.command, execute: execute,
+            bracketedPaste: terminal.remoteWantsBracketedPaste)
+        guard case .send(let bytes) = plan else {
+            // The remote cannot take a multi-line paste without running it,
+            // and this entry promised to insert. Explain instead of sending
+            // bytes that would execute -- see `SnippetSendPlan`.
+            pendingMultilineInsertRefusal = snippet
+            return
+        }
         guard execute else {
             terminal.send(bytes)
             return

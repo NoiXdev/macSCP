@@ -50,6 +50,9 @@ struct SSHTerminalView: NSViewRepresentable {
         viewModel.onOutput = { [weak terminal] bytes in
             terminal?.feed(byteArray: bytes[...])
         }
+        viewModel.bracketedPasteQuery = { [weak terminal] in
+            terminal?.getTerminal().bracketedPasteMode ?? false
+        }
         // Replay buffered output on (re-)show, so a remount (⌘T off/on)
         // doesn't discard the existing screen.
         for chunk in viewModel.replayBuffer {
