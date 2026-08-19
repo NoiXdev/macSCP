@@ -75,6 +75,30 @@ struct SnippetStoreTests {
         #expect(try store.all() == [keep])
     }
 
+    /// `remove` couples to `SnippetVariableMemoryStore` internally (Task 4):
+    /// deleting a snippet forgets any remembered variable values for it,
+    /// the same coupling deleting a session has with its Keychain entry.
+    /// A snippet not involved in the deletion keeps its own remembered
+    /// values, proving the forget is scoped to the removed id and not a
+    /// blanket wipe.
+    @Test func removingASnippetForgetsItsRememberedVariables() throws {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let keep = Snippet(name: "Keep", command: "uptime")
+        let drop = Snippet(name: "Drop", command: "whoami")
+        try store.save(keep)
+        try store.save(drop)
+        let variables = try SnippetVariableMemoryStore(directory: dir)
+        try variables.remember("kept db", snippetID: keep.id, name: "DB")
+        try variables.remember("dropped db", snippetID: drop.id, name: "DB")
+
+        try store.remove(id: drop.id)
+
+        let reopened = try SnippetVariableMemoryStore(directory: dir)
+        #expect(reopened.value(snippetID: drop.id, name: "DB") == nil)
+        #expect(reopened.value(snippetID: keep.id, name: "DB") == "kept db")
+    }
+
     /// A command with an embedded line break survives the store round trip
     /// unchanged — a command may now span lines (snippet editor, part 2);
     /// see `SnippetTests.multilineCommandSurvivesEncoding` for the model-level

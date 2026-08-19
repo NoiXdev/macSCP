@@ -39,9 +39,23 @@ public struct SnippetStore: Sendable {
         try persist(snippets)
     }
 
-    /// Removes the snippet with `id`, if any. Idempotent: a missing id is
-    /// not an error.
+    /// Removes the snippet with `id`, if any, and forgets any variable
+    /// values remembered for it (`SnippetVariableMemoryStore`, next to
+    /// `snippets.json` in the same directory) — the same coupling deleting
+    /// a session has with its Keychain entry: a remembered value that
+    /// outlives the snippet it belonged to is an orphan nothing will ever
+    /// look up again, since every lookup goes through a snippet id resolved
+    /// from the still-listed snippet.
+    ///
+    /// Forgetting runs FIRST, mirroring `ManagedKeyStore.remove`'s
+    /// Keychain-first order: on a `forget` failure this throws before
+    /// touching `snippets.json`, leaving the snippet fully listed — visible
+    /// and retryable — rather than gone while its values are stranded on
+    /// disk.
+    ///
+    /// Idempotent: a missing id is not an error.
     public func remove(id: UUID) throws {
+        try SnippetVariableMemoryStore(directory: directory).forget(snippetID: id)
         var snippets = try all()
         snippets.removeAll { $0.id == id }
         try persist(snippets)
