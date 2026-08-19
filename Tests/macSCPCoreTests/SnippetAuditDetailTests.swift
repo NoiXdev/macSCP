@@ -50,6 +50,29 @@ struct SnippetAuditDetailTests {
     /// The audit log records the TEMPLATE, never a value. This is free today
     /// — `SnippetAuditDetail` reads `snippet.command`, which is the template
     /// — and a rule that is free is broken for free at the next rework.
+    ///
+    /// Fix round 1: the original version of this test asserted
+    /// `!text.contains("kunden")` without ever putting `"kunden"` anywhere
+    /// near the input — the review proved by mutation (rewiring
+    /// `ContentView.runSnippet`'s audit call to log the resolved command
+    /// instead of the template, full suite still green) that the assertion
+    /// could not fail on its own terms. This version actually resolves
+    /// `"kunden"` into a command via `SnippetVariableSubstitution.resolve`
+    /// first, so `resolved` genuinely carries it — proving the substitution
+    /// step really would leak the value into the text it produces — and only
+    /// then checks that `SnippetAuditDetail.text(for:)`, built from the
+    /// UNMODIFIED `snippet` (never from `resolved`), does not.
+    ///
+    /// This still cannot see `ContentView.runSnippet`'s own call site — no
+    /// Core-layer test can, since `SnippetAuditDetail.text(for:)` takes a
+    /// `Snippet`, not a resolved string, and the wrong-argument mistake the
+    /// review demonstrated lives entirely in the App layer. That half of the
+    /// property is pinned separately, by
+    /// `SnippetVariablePromptWiringGuardTests.runSnippetAuditsTheTemplateNotTheResolvedCommand`
+    /// in the App-layer test target — a source-text scan of the actual call
+    /// site, the shape this project already uses (`SnippetAuditWiringGuardTests`,
+    /// `PaneVisibilityWiringGuardTests`) for exactly this "no functional test
+    /// can reach it" boundary.
     @Test("a variable value never reaches the audit text")
     func variableValuesStayOutOfTheAuditLog() {
         let variable = SnippetVariable(
@@ -57,6 +80,11 @@ struct SnippetAuditDetailTests {
             defaultValue: "", remembersLastValue: false)
         let snippet = Snippet(
             name: "dump", command: "mysqldump {{DB}}", variables: [variable])
+        let resolved = SnippetVariableSubstitution.resolve(
+            command: snippet.command, variables: snippet.variables, values: ["DB": "kunden"])
+        // The value genuinely reaches a resolved command -- so the check
+        // below is not vacuous: there is now something for it to catch.
+        #expect(resolved.contains("kunden"))
         let text = SnippetAuditDetail.text(for: snippet)
         #expect(text.contains("{{DB}}"))
         #expect(!text.contains("kunden"))
