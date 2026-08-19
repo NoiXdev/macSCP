@@ -49,7 +49,7 @@ struct AuditLogSheet: View {
     /// cross-cut — "Errors" and "Transfers" are mutually exclusive choices
     /// here even though a failed transfer is both.
     private enum Filter: CaseIterable {
-        case all, transfers, fileOps, connection, errors
+        case all, transfers, fileOps, terminal, connection, errors
     }
 
     /// `dd.MM. HH:mm:ss`, local time zone (spec M9b §5) — `en_US_POSIX`
@@ -88,6 +88,7 @@ struct AuditLogSheet: View {
                 Text(L10n.string("audit.filter.all", "All")).tag(Filter.all)
                 Text(L10n.string("audit.filter.transfers", "Transfers")).tag(Filter.transfers)
                 Text(L10n.string("audit.filter.fileOps", "File Ops")).tag(Filter.fileOps)
+                Text(L10n.string("audit.filter.terminal", "Terminal")).tag(Filter.terminal)
                 Text(L10n.string("audit.filter.connection", "Connection")).tag(Filter.connection)
                 Text(L10n.string("audit.filter.errors", "Errors")).tag(Filter.errors)
             }
@@ -227,6 +228,13 @@ struct AuditLogSheet: View {
         case .fileOps:
             switch event.kind {
             case .rename, .delete, .permissions, .newFolder, .newFile:
+                return true
+            default:
+                return false
+            }
+        case .terminal:
+            switch event.kind {
+            case .snippetExecuted:
                 return true
             default:
                 return false

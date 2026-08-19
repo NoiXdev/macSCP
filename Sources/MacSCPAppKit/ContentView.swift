@@ -610,6 +610,14 @@ struct ContentView: View {
         }
         terminal.openIfNeeded()
         terminal.send(SnippetKeystrokes.bytes(for: snippet, execute: execute))
+
+        // Only an EXECUTION is an event: an inserted snippet still sits in
+        // the prompt and can be edited before it runs. Recorded after the
+        // send, so the log says what actually went out.
+        if execute {
+            activeTab.auditRecorder?.recordAction(
+                AuditEvent(kind: .snippetExecuted, detail: SnippetAuditDetail.text(for: snippet)))
+        }
     }
 
     /// Title for the update-check result alert (M11b/T2, spec §4) — one per

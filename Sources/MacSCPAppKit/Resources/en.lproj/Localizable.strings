@@ -458,6 +458,7 @@
 "audit.filter.all" = "All";
 "audit.filter.transfers" = "Transfers";
 "audit.filter.fileOps" = "File Ops";
+"audit.filter.terminal" = "Terminal";
 "audit.filter.connection" = "Connection";
 "audit.filter.errors" = "Errors";
 "audit.column.time" = "Time";
@@ -487,6 +488,7 @@
 "audit.kind.newFile" = "New file";
 "audit.kind.editUpload" = "Editor upload";
 "audit.kind.plaintextConfirmed" = "Connected without encryption";
+"audit.kind.snippetExecuted" = "Snippet run";
 
 /* Sessions menu (M10a/T2, M10b/T3) */
 "menu.sessions" = "Sessions";

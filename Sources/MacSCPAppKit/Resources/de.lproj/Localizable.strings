@@ -459,6 +459,7 @@
 "audit.filter.all" = "Alle";
 "audit.filter.transfers" = "Transfers";
 "audit.filter.fileOps" = "Datei-Ops";
+"audit.filter.terminal" = "Terminal";
 "audit.filter.connection" = "Verbindung";
 "audit.filter.errors" = "Fehler";
 "audit.column.time" = "Zeit";
@@ -488,6 +489,7 @@
 "audit.kind.newFile" = "Neue Datei";
 "audit.kind.editUpload" = "Editor-Upload";
 "audit.kind.plaintextConfirmed" = "Unverschlüsselt verbunden";
+"audit.kind.snippetExecuted" = "Snippet ausgeführt";
 
 /* Sessions-Menü (M10a/T2, M10b/T3) */
 "menu.sessions" = "Sessions";
