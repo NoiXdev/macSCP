@@ -129,3 +129,72 @@ struct SessionSecretPolicyTests {
         #expect(paddedAnswer == trimmedAnswer)
     }
 }
+
+/// The edit-save path used to write `secrets.savePassword` unconditionally,
+/// so editing a private-key login in place duplicated a passphrase that
+/// already lived under the managed key's own slot into the session's slot as
+/// well. `SessionSecretPolicy`'s own doc comment named that gap; these pin
+/// that `updateSession` now asks the same question the new-session path does.
+@Suite("updateSession honours the managed-key slot")
+@MainActor
+struct UpdateSessionManagedPassphraseTests {
+    private func fixture() throws -> (dir: URL, keys: ManagedKeyStore, secrets: InMemorySecretStore) {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return (dir, ManagedKeyStore(directory: dir), InMemorySecretStore())
+    }
+
+    private func managedKey(in keys: ManagedKeyStore) throws -> String {
+        let key = ManagedKey(
+            name: "k", comment: "", type: .ed25519, fingerprint: "SHA256:x",
+            publicKeyOpenSSH: "ssh-ed25519 AAAA", createdAt: Date(),
+            hasPassphrase: true, fileName: "kf")
+        try keys.add(key)
+        return keys.keyDirectory.appendingPathComponent("kf").path
+    }
+
+    /// Uses the suite-wide `sshSession` fixture rather than building the
+    /// block by hand, so a later change to `StoredSSHConfig` reaches this
+    /// test the same way it reaches every other.
+    private func privateKeySession(keyPath: String) -> StoredSession {
+        sshSession(name: "s", authKind: .privateKey, keyPath: keyPath)
+    }
+
+    @Test func aPassphraseAlreadyUnderTheKeysSlotIsNotCopiedIntoTheSessions() throws {
+        let (dir, keys, secrets) = try fixture()
+        let keyPath = try managedKey(in: keys)
+        let store = SessionStore(directory: dir)
+        let vm = SessionListViewModel(store: store, secrets: secrets, keys: keys)
+
+        var session = privateKeySession(keyPath: keyPath)
+        try store.upsert(session)
+        // The key's OWN slot already holds it -- that is what makes this the
+        // duplication case rather than an ordinary first write.
+        let keyID = try #require(keys.all().first?.id)
+        try secrets.savePassword("from-the-key", for: keyID)
+
+        session.name = "renamed"
+        vm.updateSession(session, newSecret: "typed-again")
+
+        let sessionSlot = try? secrets.password(for: session.id)
+        #expect(sessionSlot == nil, "the session's own slot must stay empty")
+    }
+
+    @Test func aManagedKeyWithoutAStoredPassphraseStillGetsTheSessionSlot() throws {
+        let (dir, keys, secrets) = try fixture()
+        let keyPath = try managedKey(in: keys)
+        let store = SessionStore(directory: dir)
+        let vm = SessionListViewModel(store: store, secrets: secrets, keys: keys)
+
+        var session = privateKeySession(keyPath: keyPath)
+        try store.upsert(session)
+        // No slot under the key: the passphrase has nowhere else to live.
+
+        session.name = "renamed"
+        vm.updateSession(session, newSecret: "typed-again")
+
+        let sessionSlot = try? secrets.password(for: session.id)
+        #expect(sessionSlot == "typed-again")
+    }
+}

@@ -62,6 +62,25 @@ public enum SessionSecretPolicy {
         }
     }
 
+    /// The same question asked of a session that already exists — the
+    /// edit-save path's shape, where there is no form to read.
+    ///
+    /// Reads the persisted `AuthKind` directly instead of routing through
+    /// `ConnectionViewModel.authChoice(for:)`: that mapping is main-actor
+    /// isolated, and a rule about which Keychain slot owns a passphrase has
+    /// no business being tied to the presentation layer's isolation. Anything
+    /// that is not an SSH private-key login is refused here, so the delegation
+    /// below always passes the pair the base function's own guard expects.
+    public static func usesStoredManagedPassphrase(
+        session: StoredSession, keys: ManagedKeyStore, secrets: any SecretStore
+    ) -> Bool {
+        guard session.kind == .ssh, session.ssh?.authKind == .privateKey else { return false }
+        return usesStoredManagedPassphrase(
+            kind: .ssh, authChoice: .privateKey,
+            keyPath: session.ssh?.keyPath ?? "",
+            keys: keys, secrets: secrets)
+    }
+
     /// The value to persist under a session's (or new login set's) OWN
     /// secret slot when a NEW session is created — see this type's own doc
     /// comment for which paths actually call this and which one (edit-save

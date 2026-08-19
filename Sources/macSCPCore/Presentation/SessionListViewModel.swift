@@ -34,16 +34,23 @@ public final class SessionListViewModel {
     /// Login-set persistence (M10b). Defaulted so existing call sites don't
     /// need to know about it.
     private let loginSetStore: LoginSetStore
+    /// Managed SSH keys (M17), needed by `updateSession` alone: it is the one
+    /// write path that must ask whether a private-key login's passphrase
+    /// already lives under the KEY's own Keychain slot before writing it into
+    /// the session's. Defaulted like the two stores above.
+    private let keys: ManagedKeyStore
 
     public init(
         store: SessionStore, secrets: any SecretStore,
         auditStore: AuditLogStore = AuditLogStore(directory: AuditLogStore.defaultDirectory),
-        loginSetStore: LoginSetStore = LoginSetStore(directory: SessionStore.defaultDirectory)
+        loginSetStore: LoginSetStore = LoginSetStore(directory: SessionStore.defaultDirectory),
+        keys: ManagedKeyStore = ManagedKeyStore(directory: SessionStore.defaultDirectory)
     ) {
         self.store = store
         self.secrets = secrets
         self.auditStore = auditStore
         self.loginSetStore = loginSetStore
+        self.keys = keys
         reload()
     }
 
@@ -487,7 +494,17 @@ public final class SessionListViewModel {
             if BackendDescriptor.descriptor(for: updated.kind)
                 .visibleSecretField(for: updated) == nil {
                 try? secrets.deletePassword(for: updated.id)
-            } else if let newSecret, !newSecret.isEmpty {
+            } else if let newSecret, !newSecret.isEmpty,
+                      !SessionSecretPolicy.usesStoredManagedPassphrase(
+                          session: updated, keys: keys, secrets: secrets) {
+                // The guard the NEW-session path gets from
+                // `SessionSecretPolicy.valueToPersist`, applied here too:
+                // without it, editing a private-key login in place copies a
+                // passphrase that already lives under the managed key's own
+                // slot into the session's as well, and a later edit of one
+                // copy leaves the other stale. Enforced HERE rather than at
+                // the caller, for the reason the jump's own guard below
+                // gives -- a future caller cannot forget it.
                 try secrets.savePassword(newSecret, for: updated.id)
             }
             // Same invariant as `save` above: a session-referencing jump never
