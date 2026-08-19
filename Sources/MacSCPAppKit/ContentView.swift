@@ -143,7 +143,8 @@ struct ContentView: View {
     let auditStore: AuditLogStore
     /// Command bridge (M8a/T4): `MacSCPApp` holds no reference to
     /// `ContentView`, so the menu's Cmd-N/Cmd-W/Cmd-1…9 items call into the
-    /// closures this view assigns in `.task` below.
+    /// closures `performWindowSetup()` assigns, run from the `.task` in
+    /// `ContentView+Detail.swift`.
     let tabCommands: TabCommands
     /// App-global update-check state (M11b/T2), created once in
     /// `MacSCPApp` (no singleton, same pattern as the stores above). Its
@@ -154,8 +155,9 @@ struct ContentView: View {
     /// Menu-bar status bridge (M11n), created once in `MacSCPApp` (no
     /// singleton, same pattern as the stores above) and shared with the
     /// AppKit `MenuBarController` there. This view mirrors `tabsModel.tabs`
-    /// into it and sets its window-raising closures in `.task`/`.onChange`
-    /// below — see `MenuBarStatusModel`'s doc comment.
+    /// into it and sets its window-raising closures in `wireMenuBarBridge()`
+    /// (run from `performWindowSetup()`) and `.onChange` below — see
+    /// `MenuBarStatusModel`'s doc comment.
     let menuBarModel: MenuBarStatusModel
     /// Assigned in `init` (not a bare default value) so it can pass
     /// `auditStore` through — mirrors `_tabsModel` below.
@@ -168,7 +170,8 @@ struct ContentView: View {
     @State var tabsModel: TabsViewModel<SessionTab>
     @State var importedHosts: [SSHConfigHost] = []
     /// The full, unfiltered `~/.ssh/config` parse (M11f/T2) — read from disk
-    /// exactly once in `.task` below. `refreshImportedHosts()` re-derives
+    /// exactly once in `performWindowSetup()`, run from the `.task` in
+    /// `ContentView+Detail.swift`. `refreshImportedHosts()` re-derives
     /// `importedHosts`/`hiddenImportAliases` from THIS, never by re-reading
     /// the config file, so hiding/unhiding an entry can never race a
     /// concurrent edit of the file the user made in a text editor.
@@ -221,17 +224,20 @@ struct ContentView: View {
     // MARK: - Server certificates
 
     /// Drives the server-certificate management sheet — opened from the
-    /// Sessions menu. Same no-item-payload shape as `showKnownHostsSheet`
-    /// above; the certificate list used to be a second section inside that
-    /// sheet and is now its own overlay (see `ServerCertificatesSheet`).
+    /// Sessions menu, and from Settings' "Manage Data"
+    /// (`presentServerCertificatesFromSettings`). Same no-item-payload shape
+    /// as `showKnownHostsSheet` above; the certificate list used to be a
+    /// second section inside that sheet and is now its own overlay (see
+    /// `ServerCertificatesSheet`).
     @State var showServerCertificatesSheet = false
 
     // MARK: - Login sets (M10b/T3)
 
     /// Drives the login-sets management sheet — opened from the Sessions
-    /// menu (⌘⇧L) and the sidebar's background context menu. Same
-    /// no-item-payload shape as `showKnownHostsSheet` above (always the same
-    /// window-wide `sessionListViewModel`).
+    /// menu (⌘⇧L), the sidebar's background context menu, and Settings'
+    /// "Manage Data" (`presentLoginSetsFromSettings`). Same no-item-payload
+    /// shape as `showKnownHostsSheet` above (always the same window-wide
+    /// `sessionListViewModel`).
     @State var showLoginSetsSheet = false
     /// Arms the login-sets sheet to open its file picker straight away
     /// (M19/T8): the Sessions menu's "Import Logins…" opens the SAME sheet the
@@ -243,7 +249,8 @@ struct ContentView: View {
     // MARK: - Hidden imports (M11f/T2)
 
     /// Drives the hidden-imports management sheet — opened from the
-    /// Sessions menu (⌘⇧I) and the sidebar's background context menu. Same
+    /// Sessions menu (⌘⇧I), the sidebar's background context menu, and
+    /// Settings' "Manage Data" (`presentHiddenImportsFromSettings`). Same
     /// no-item-payload shape as `showKnownHostsSheet`/`showLoginSetsSheet`
     /// above: the sheet always reflects `fullImportedHosts` plus a fresh
     /// `HiddenImportStore` read of its own.
@@ -301,9 +308,10 @@ struct ContentView: View {
     }
 
     @State var presignedSheetItem: PresignedSheetItem?
-    /// Set by `performExport` right before `showExportFileExporter` — the
-    /// `fileExporter` completion handler reads it to decide whether the
-    /// "exported without password" alert is needed (spec M9a §3.3).
+    /// Set by `performExport` right before `showExportFileExporter`, and
+    /// cleared by the `fileExporter` completion handler — which decides
+    /// whether the "exported without password" alert is needed (spec M9a
+    /// §3.3) from `exportMissingPasswordCount`, not from this property.
     @State var exportDocument: SessionExportDocument?
     @State var showExportFileExporter = false
     @State var exportMissingPasswordCount = 0
@@ -334,7 +342,7 @@ struct ContentView: View {
 
     /// One requested external-terminal open, captured between the moment the
     /// toolbar button/menu entry fires and the moment the password hint (if
-    /// shown) is answered — `performExternalOpen` needs all four values.
+    /// shown) is answered — `performExternalOpen` needs all three values.
     struct ExternalTerminalRequest {
         let config: SSHConnectionConfig
         let target: TerminalTarget
