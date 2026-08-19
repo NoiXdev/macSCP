@@ -553,7 +553,13 @@ private struct SnippetEditorView: View {
             }
             let commandLabel = L10n.string("snippets.editor.command", "Command")
             FormRow(label: commandLabel) {
-                TextField(commandLabel, text: $command, prompt: Text(verbatim: ""))
+                // Snippet editor part 1: an NSTextView, because a SwiftUI
+                // TextField cannot colour text while it is being typed.
+                // Single-line stays the rule -- `SnippetCommandEditor`
+                // turns Return into a space, since `Snippet.init?` refuses
+                // newlines.
+                SnippetCommandEditor(text: $command)
+                    .frame(height: 24)
             }
             FormRow(label: L10n.string("snippets.tags.label", "Tags")) {
                 SnippetTagField(tags: $tags, suggestions: tagSuggestions)
