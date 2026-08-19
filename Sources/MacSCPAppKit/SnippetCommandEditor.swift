@@ -62,7 +62,7 @@ struct SnippetCommandEditor: NSViewRepresentable {
         textView.isRichText = false
         textView.allowsUndo = true
         textView.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        textView.textContainerInset = NSSize(width: 4, height: 4)
+        textView.textContainerInset = NSSize(width: 6, height: 4)
         textView.drawsBackground = false
         textView.setAccessibilityLabel(accessibilityLabel)
         // Hazard 5: an `NSTextField`'s field editor disables all five of
@@ -91,10 +91,19 @@ struct SnippetCommandEditor: NSViewRepresentable {
         textView.isHorizontallyResizable = true
         textView.isVerticallyResizable = true
         textView.autoresizingMask = [.width, .height]
-        scroll.hasHorizontalScroller = true
+        // No scroller and no border: this is a single-line form field
+        // pretending to be the `TextField` it replaced. A permanently
+        // visible horizontal scroller ate roughly two thirds of the row's
+        // height and drew as a dark capsule across the empty field; the
+        // clip view still follows the caret past the right edge without
+        // one, which is exactly what the `TextField` did. The rounded
+        // chrome comes from the call site, because AppKit's `NSBorderType`
+        // has no rounded member and the neighbouring fields in this sheet
+        // are all `.roundedBorder`.
+        scroll.hasHorizontalScroller = false
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = false
-        scroll.borderType = .bezelBorder
+        scroll.borderType = .noBorder
         context.coordinator.apply(text, to: textView)
         return scroll
     }

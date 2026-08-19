@@ -566,8 +566,15 @@ private struct SnippetEditorView: View {
                 // localized string this row's own (VoiceOver-hidden) label
                 // uses, so the field keeps an accessible name of its own
                 // (`FormRow`'s doc comment, M6a).
+                // The chrome lives here, not in the representable: it has
+                // to match the `.roundedBorder` fields above and below,
+                // and an `NSScrollView` cannot draw a rounded border.
                 SnippetCommandEditor(text: $command, accessibilityLabel: commandLabel)
                     .frame(height: 24)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(DesignTokens.card))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(DesignTokens.hairline, lineWidth: 1))
             }
             FormRow(label: L10n.string("snippets.tags.label", "Tags")) {
                 SnippetTagField(tags: $tags, suggestions: tagSuggestions)
