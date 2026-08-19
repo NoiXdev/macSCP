@@ -804,15 +804,24 @@ private struct TerminalPanelHeader: View {
             // state afterward.
             SnippetActionSheet(
                 snippet: snippet,
+                // Dismissals run BEFORE the trigger, not after (whole-branch
+                // review, finding 4): `onRunSnippet` can itself request a NEW
+                // presentation (the multi-line-insert refusal alert, via
+                // `ContentView.triggerSnippet`'s `pendingMultilineInsertRefusal`),
+                // and requesting one while a sheet AND a popover are being
+                // dismissed in the same SwiftUI update cycle is exactly the
+                // situation where the new presentation gets silently dropped.
+                // Dismissing both here first, then triggering, keeps the
+                // alert's presentation request in its own update cycle.
                 onInsert: {
-                    onRunSnippet(snippet, false)
                     actionSheetSnippet = nil
                     isSnippetPopoverPresented = false
+                    onRunSnippet(snippet, false)
                 },
                 onExecute: {
-                    onRunSnippet(snippet, true)
                     actionSheetSnippet = nil
                     isSnippetPopoverPresented = false
+                    onRunSnippet(snippet, true)
                 },
                 onCancel: { actionSheetSnippet = nil }
             )
@@ -920,13 +929,18 @@ private struct TerminalPanelHeader: View {
             .contextMenu {
                 SnippetRowContextMenu(
                     row: row,
+                    // Same reordering, and the same reason, as the action
+                    // sheet's onInsert/onExecute above (whole-branch review,
+                    // finding 4): dismiss the popover first, trigger after,
+                    // so a refusal alert `onRunSnippet` requests is not
+                    // competing with that dismissal in the same update cycle.
                     onExecute: {
-                        onRunSnippet(row.snippet, true)
                         isSnippetPopoverPresented = false
+                        onRunSnippet(row.snippet, true)
                     },
                     onInsert: {
-                        onRunSnippet(row.snippet, false)
                         isSnippetPopoverPresented = false
+                        onRunSnippet(row.snippet, false)
                     },
                     onPreview: { previewPinnedRow = row }
                 )

@@ -45,7 +45,11 @@ struct SnippetCommandEditor: NSViewRepresentable {
 
     /// How tall this field wants to be for `text`: one line's height per
     /// line, plus the container insets, clamped so a long script cannot push
-    /// the sheet off screen. Beyond the clamp the view scrolls vertically.
+    /// the sheet off screen. Beyond the clamp the view scrolls vertically —
+    /// which depends on `makeNSView`'s `isVerticallyResizable`/
+    /// `autoresizingMask` configuration below actually letting the text
+    /// view's frame grow past this clamp; the clamp on its own decides
+    /// nothing about whether the overflow is reachable.
     ///
     /// The bounds are estimates and belong in the maintainer's visual check
     /// — no test in this project draws an `NSViewRepresentable`.
@@ -93,17 +97,20 @@ struct SnippetCommandEditor: NSViewRepresentable {
         textView.textContainer?.containerSize = NSSize(
             width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.isHorizontallyResizable = true
-        // `.width` in the mask pins the text view's width to the clip
-        // view's, so the frame can never grow past the visible width and
-        // there is nothing for the scroll view to scroll -- a long command
-        // just stopped at the right edge, unreachable. Only the height
-        // tracks the clip view; the width is left to `maxSize`, which is
-        // the ceiling the frame grows toward as text is laid out. The
-        // vertical axis is fixed instead of self-sizing because the row
-        // decides the height; the view reports how tall it would like to
-        // be through `intrinsicHeight` below.
-        textView.isVerticallyResizable = false
-        textView.autoresizingMask = [.height]
+        // `isVerticallyResizable = true` lets the text view's FRAME -- not
+        // just its container -- grow past `intrinsicHeight`'s clamp as text
+        // is laid out; without it the frame stays pinned at its initial
+        // height forever; an `NSScrollView` only ever scrolls as far as its
+        // document view's frame, so a pinned frame leaves the overflow laid
+        // out but unreachable no matter what the scroller flags below say
+        // (measured with an AppKit probe: at 5/12/30/60 lines the frame
+        // stayed at 150pt while the text needed 88/200/488/968). `.width` in
+        // the mask, not `.height`, is the counterpart to that: it tracks the
+        // clip view's WIDTH, so the horizontal axis stays governed by the
+        // `isHorizontallyResizable`/`maxSize` configuration above and does
+        // not fight it.
+        textView.isVerticallyResizable = true
+        textView.autoresizingMask = [.width]
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(
             width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
@@ -115,8 +122,13 @@ struct SnippetCommandEditor: NSViewRepresentable {
         // The rounded chrome comes from the call site, because AppKit's
         // `NSBorderType` has no rounded member and the neighbouring fields
         // in this sheet are all `.roundedBorder`. The vertical scroller, by
-        // contrast, is turned ON: a command past `intrinsicHeight`'s clamp
-        // below must still be reachable, not just cropped.
+        // contrast, is turned ON: paired with `isVerticallyResizable = true`
+        // and `autoresizingMask = [.width]` above -- which are what actually
+        // let the frame grow past `intrinsicHeight`'s clamp -- a command
+        // past that clamp is reachable, not just cropped. The scroller flag
+        // alone cannot do that: an `NSScrollView` only scrolls as far as its
+        // document view's frame, and without the resizing configuration
+        // above that frame never grows.
         scroll.hasHorizontalScroller = false
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true

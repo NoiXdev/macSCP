@@ -60,8 +60,17 @@ public enum SnippetKeystrokes {
     /// Inserting (`execute: false`) never appends a terminator, whatever else
     /// changes here — the text lands in the input line exactly as if typed,
     /// and the user still presses Return. That guarantee is asserted once, at
-    /// this seam, rather than at each surface that calls it.
-    public static func bytes(for snippet: Snippet, execute: Bool) -> [UInt8] {
+    /// this seam, rather than re-derived by each caller.
+    ///
+    /// No production call site: the production path goes through
+    /// `SnippetSendPlanner`, which handles a multi-line command correctly
+    /// (bracketed paste, the line-by-line fallback, or `refusedMultilineInsert`
+    /// for an unsafe insert) instead of emitting a multi-line command's raw
+    /// embedded newlines as keystrokes the way this function does. `internal`
+    /// rather than deleted: `SnippetSendPlanTests` compares against it to
+    /// prove the planner's single-line path is byte-identical to what this
+    /// function has always produced, and that comparison is worth keeping.
+    static func bytes(for snippet: Snippet, execute: Bool) -> [UInt8] {
         bytes(forLine: snippet.command, execute: execute)
     }
 }

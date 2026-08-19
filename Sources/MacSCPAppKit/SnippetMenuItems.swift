@@ -78,7 +78,7 @@ enum SnippetMenuPlan {
 /// directly, with no wrapping submenu), and — per snippet — TWO actions,
 /// "Insert" and "Execute", both always offered. There is no per-snippet flag
 /// deciding which one a snippet gets; the decision belongs at the trigger
-/// (see `SnippetKeystrokes.bytes(for:execute:)`'s doc comment), so both are
+/// (see `SnippetSendPlanner`'s doc comment), so both are
 /// always present and `action`'s second parameter carries which one fired.
 ///
 /// This is the SAME view the Terminal menu (Task 6), a session's context

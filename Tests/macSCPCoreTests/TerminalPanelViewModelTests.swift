@@ -588,4 +588,31 @@ struct TerminalPanelViewModelDeliveryTests {
             Issue.record("expected the panel to end after a failed open, got \(vm.state)")
         }
     }
+
+    // MARK: - Finding 3: remoteWantsBracketedPaste
+
+    /// `remoteWantsBracketedPaste` must answer exactly what `bracketedPasteQuery`
+    /// returns -- both `true` and `false`, so a stuck-`true` regression (which
+    /// would send bracket sequences to a shell that shows them literally
+    /// instead of running the pasted text as intended) is caught the same as a
+    /// stuck-`false` one.
+    @Test func remoteWantsBracketedPasteAnswersWhatTheClosureReturns() {
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in MockShell() })
+        vm.bracketedPasteQuery = { true }
+        #expect(vm.remoteWantsBracketedPaste == true)
+        vm.bracketedPasteQuery = { false }
+        #expect(vm.remoteWantsBracketedPaste == false)
+    }
+
+    /// The load-bearing case: with no view attached, `bracketedPasteQuery` is
+    /// `nil`, and `remoteWantsBracketedPaste` must read that as `false` -- the
+    /// conservative answer, per its own doc comment. Guessing "on" here would
+    /// make `SnippetSendPlanner` bracket-wrap a multi-line snippet for a shell
+    /// that never negotiated mode 2004, which shows the escape sequences as
+    /// literal text instead of pasting.
+    @Test func remoteWantsBracketedPasteIsFalseWithNoQuerySet() {
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in MockShell() })
+        #expect(vm.bracketedPasteQuery == nil)
+        #expect(vm.remoteWantsBracketedPaste == false)
+    }
 }

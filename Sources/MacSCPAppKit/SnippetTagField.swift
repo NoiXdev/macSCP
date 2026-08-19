@@ -26,8 +26,8 @@ enum SnippetTagFieldRow: Equatable {
 /// normalized` (trimmed, dropped if that leaves it empty) whenever that
 /// leaves something non-empty. Routed through the one-element array form of
 /// the shared rule rather than trimming inline, so this row's tag can never
-/// silently disagree with what `TagList` — and, downstream, `Snippet.
-/// init?` — would keep or drop for the same string.
+/// silently disagree with what `TagList` would keep or drop for the same
+/// string.
 ///
 /// The create-new row is appended UNCONDITIONALLY whenever there is
 /// non-empty typed text — even if that text happens to exactly match a

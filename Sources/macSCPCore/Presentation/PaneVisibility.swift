@@ -11,11 +11,9 @@ import Foundation
 /// visible is empty and offers no way back, so that combination cannot be
 /// represented as a live value. Both the memberwise initializer and
 /// `init(from:)` funnel through the same repair (files wins) instead of each
-/// guarding it separately — the same shape as `Snippet`'s single-line rule,
-/// which lives in one initializer that both the public API and `Decodable`
-/// call through, so a hand-edited `sessions.json` cannot smuggle "nothing
-/// visible" past the rule the way a second, unchecked write path would let
-/// it.
+/// guarding it separately, so a hand-edited `sessions.json` cannot smuggle
+/// "nothing visible" past the rule the way a second, unchecked write path
+/// would let it.
 ///
 /// This type only decides WHICH halves are visible. It says nothing about
 /// `TerminalPanelViewModel.isVisible`, the existing terminal-only toggle —
