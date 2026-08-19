@@ -488,20 +488,18 @@ private struct SnippetTagFilterRow: View {
     }
 }
 
-/// New/Edit sub-sheet: name, a single-line command, and tags. Shape mirrors
-/// `SSHKeysSheet.RenameKeySheet` — it threads the store straight through and
-/// owns its own save/error/dismiss cycle, since there is no view model
-/// between this sheet and `SnippetStore` the way `LoginSetsSheet` has
-/// `SessionListViewModel`.
+/// New/Edit sub-sheet: name, a command that may now span lines (snippet
+/// editor, part 2), and tags. Shape mirrors `SSHKeysSheet.RenameKeySheet` —
+/// it threads the store straight through and owns its own save/error/dismiss
+/// cycle, since there is no view model between this sheet and `SnippetStore`
+/// the way `LoginSetsSheet` has `SessionListViewModel`.
 ///
-/// `Snippet.init?` is failable and refuses a `command` containing any
-/// character Swift considers a newline (see its own doc comment). This view
-/// enforces that rule upstream instead of re-checking it at save time:
-/// `command` is bound to `SnippetCommandEditor`, whose `Coordinator`
-/// sanitizes every newline — typed Return or a pasted multi-line string
-/// alike — into a space before it ever reaches this view's `command` state
-/// (see that file's Hazard 4). By the time `save()` calls `Snippet.init?`,
-/// `command` cannot contain a newline, so that call cannot fail.
+/// `Snippet`'s initializer is not failable and performs no validation of its
+/// own — it just stores what it is given, `command` included. `command` is
+/// bound to `SnippetCommandEditor`, which accepts a pasted multi-line string
+/// as-is; a typed Return is still swallowed there (see that file's own doc
+/// comment). Reconciling typed Return with a field that now accepts
+/// multi-line content is a later task in this milestone.
 private struct SnippetEditorView: View {
     let existing: Snippet?
     /// The sheet's already-loaded list, passed straight through (Task 5)
@@ -535,11 +533,10 @@ private struct SnippetEditorView: View {
 
     private var isEditing: Bool { existing != nil }
 
-    /// Only the required-fields check. The single-line rule needs no check
-    /// of its own here: `SnippetCommandEditor` already turns every newline
-    /// — typed or pasted — into a space before it reaches `command` (that
-    /// file's Hazard 4), so `command` can never contain one by the time
-    /// this is evaluated.
+    /// Only the required-fields check. `command` may contain a newline by
+    /// the time this is evaluated — a pasted multi-line string reaches
+    /// `SnippetCommandEditor`'s bound `command` unchanged — but nothing
+    /// here needs to reject that; `Snippet`'s initializer accepts it too.
     private var isSaveDisabled: Bool {
         name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -559,13 +556,14 @@ private struct SnippetEditorView: View {
             let commandLabel = L10n.string("snippets.editor.command", "Command")
             FormRow(label: commandLabel) {
                 // Snippet editor part 1: an NSTextView, because a SwiftUI
-                // TextField cannot colour text while it is being typed.
-                // Single-line stays the rule -- `SnippetCommandEditor`
-                // turns Return into a space, since `Snippet.init?` refuses
-                // newlines. `accessibilityLabel` hands it the same
-                // localized string this row's own (VoiceOver-hidden) label
-                // uses, so the field keeps an accessible name of its own
-                // (`FormRow`'s doc comment, M6a).
+                // TextField cannot colour text while it is being typed. The
+                // command may now span lines (snippet editor, part 2); a
+                // typed Return is still swallowed here, but this field no
+                // longer keeps `command` single-line on its own -- see
+                // `SnippetCommandEditor`'s own doc comment. `accessibilityLabel`
+                // hands it the same localized string this row's own
+                // (VoiceOver-hidden) label uses, so the field keeps an
+                // accessible name of its own (`FormRow`'s doc comment, M6a).
                 // The chrome lives here, not in the representable: it has
                 // to match the `.roundedBorder` fields above and below,
                 // and an `NSScrollView` cannot draw a rounded border.
