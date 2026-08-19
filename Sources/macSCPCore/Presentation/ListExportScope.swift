@@ -9,8 +9,8 @@ import Foundation
 /// its filter.
 ///
 /// Lives here rather than in a sheet so the two sheets that offer this
-/// button cannot drift apart: a second copy is how "Export" came to mean
-/// two different things in the first place.
+/// button cannot drift apart: a rule that lived in only one of the two
+/// sheets is how "Export" came to mean two different things.
 public enum ListExportScope {
     public static func resolve<Item: Identifiable>(
         selectedID: Item.ID?, from visible: [Item]

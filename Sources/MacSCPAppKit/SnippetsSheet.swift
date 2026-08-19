@@ -47,8 +47,9 @@ struct SnippetsSheet: View {
     @State private var exportDocument: SnippetExportDocument?
     @State private var showExportFileExporter = false
     /// Non-nil while the export confirmation is up: the snippets the user
-    /// is about to write, held rather than recomputed so what was confirmed
-    /// is exactly what gets written even if the filter changes underneath.
+    /// is about to write, held rather than recomputed so the confirmed set
+    /// and the written set are the SAME array — not two separate
+    /// evaluations of `ListExportScope.resolve(...)` that could disagree.
     @State private var pendingExport: [Snippet]?
 
     // MARK: - Import (P3b/T4)
@@ -147,12 +148,13 @@ struct SnippetsSheet: View {
                 }
                 .buttonStyle(.polished)
                 .disabled(selectedSnippet == nil)
-                // Exports the resolved scope — the selection when it is one
-                // of the rows on screen, otherwise every row on screen, per
-                // `ListExportScope`. Enablement is `snippetsCanExport`
-                // (`SnippetsPresentation.swift`), which also rules out an
-                // unreadable store explicitly rather than leaning on
-                // `visibleSnippets` happening to be empty in that case too.
+                // Arms the export confirmation with the resolved scope — the
+                // selection when it is one of the rows on screen, otherwise
+                // every row on screen, per `ListExportScope`. Enablement is
+                // `snippetsCanExport` (`SnippetsPresentation.swift`), which
+                // also rules out an unreadable store explicitly rather than
+                // leaning on `visibleSnippets` happening to be empty in that
+                // case too.
                 Button(L10n.string("snippets.export", "Export…")) {
                     // `snippetsCanExport` already rules out an empty visible
                     // list, so the resolved scope always has at least one
@@ -265,12 +267,13 @@ struct SnippetsSheet: View {
     private func reload() { load = SnippetsLoad(reading: store) }
 
     /// Builds the payload from exactly the snippets handed in — this
-    /// function does no filtering of its own. The footer button passes the
-    /// sheet's current search+tag-filter result; the row menu passes exactly
-    /// the one right-clicked snippet. Encodes the payload and arms
-    /// `fileExporter`. Mirrors `LoginSetsSheet.performExport`, minus the
-    /// options/password step that codec has no parameter for (see
-    /// `SnippetExportCodec`'s own doc comment on why).
+    /// function does no filtering of its own. Two callers reach it: the
+    /// export confirmation's own button, passing the resolved scope held in
+    /// `pendingExport`, and the row menu, passing exactly the one
+    /// right-clicked snippet. Encodes the payload and arms `fileExporter`.
+    /// Mirrors `LoginSetsSheet.performExport`, minus the options/password
+    /// step that codec has no parameter for (see `SnippetExportCodec`'s own
+    /// doc comment on why).
     private func performExport(_ snippets: [Snippet]) {
         do {
             let data = try SnippetExportCodec.encode(SnippetExportPayload(snippets: snippets))
@@ -396,9 +399,9 @@ struct SnippetsSheet: View {
                 selectedID = snippet.id
                 editorTarget = SnippetEditorTarget(existing: snippet)
             }
-            // Single-snippet export (P3f) — the footer button covers the
-            // current search+tag-filter result; this one always means THIS
-            // row.
+            // Single-snippet export (P3f) — the footer covers the resolved
+            // scope and confirms first; this one always means THIS row,
+            // unconfirmed.
             //
             // No `snippetsCanExport` guard needed here: a row only exists
             // when `visibleSnippets` is non-empty, and an unreadable store
