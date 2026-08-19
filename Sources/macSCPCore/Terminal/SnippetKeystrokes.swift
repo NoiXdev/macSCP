@@ -37,7 +37,22 @@ public enum SnippetKeystrokes {
     /// the host is visible, not at snippet-creation time. `bytes(for:execute:)`
     /// below carries that decision as an explicit parameter and appends this
     /// byte only when the caller asks for it.
-    private static let terminator: UInt8 = 0x0D
+    static let terminator: UInt8 = 0x0D
+
+    /// The keystrokes for a single command line: `line` as UTF-8, followed
+    /// by `terminator` only when `execute` is `true`.
+    ///
+    /// `bytes(for:execute:)` below is this function applied to a snippet's
+    /// whole command, which is the right thing only while that command is a
+    /// single line. `SnippetSendPlanner` calls this one per line for the
+    /// multi-line fallback.
+    public static func bytes(forLine line: String, execute: Bool) -> [UInt8] {
+        var bytes = Array(line.utf8)
+        if execute {
+            bytes.append(terminator)
+        }
+        return bytes
+    }
 
     /// The keystrokes for `snippet`: its command as UTF-8, followed by
     /// `terminator` only when `execute` is `true`.
@@ -47,10 +62,6 @@ public enum SnippetKeystrokes {
     /// and the user still presses Return. That guarantee is asserted once, at
     /// this seam, rather than at each surface that calls it.
     public static func bytes(for snippet: Snippet, execute: Bool) -> [UInt8] {
-        var bytes = Array(snippet.command.utf8)
-        if execute {
-            bytes.append(terminator)
-        }
-        return bytes
+        bytes(forLine: snippet.command, execute: execute)
     }
 }
