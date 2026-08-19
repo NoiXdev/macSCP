@@ -44,6 +44,17 @@ auflöst. Löst es nichts auf — Set ohne Secret, Set gelöscht, Schema ohne
 sichtbares Geheimfeld —, bleibt der Slot liegen. Er ist dann nämlich
 möglicherweise die einzige Kopie.
 
+**Womit geprüft wird — nachgemessen 2026-08-19.**
+`SessionListViewModel.resolvedCredentials(for:)` ist genau dieser Wächter:
+sie löst über das Set auf, liefert die Werte samt Geheimnis und **wirft**
+bei einer baumelnden `loginSetID`, statt still auf die eigenen Daten der
+Sitzung zurückzufallen (Spec §2 aus M22/T9). Ein Fehlschlag ist damit
+strukturell von „das Set hält nichts" unterscheidbar — die Unterscheidung,
+an der alle vier Anläufe gescheitert sind. Ob das aufgelöste Geheimnis
+nicht-leer ist, beantwortet
+`BackendDescriptor.visibleSecretField(for: session)` über den zugehörigen
+Schlüssel im Feldbeutel.
+
 **Fehlgeschlagene Lesevorgänge sind kein „nichts da".** Jeder Lesefehler
 führt zum Überspringen dieses Kandidaten, nie zu einer Löschung. Das ist
 dieselbe Regel, die M28/T2 für `applyMerge` durchgesetzt hat: ein
