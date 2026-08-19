@@ -202,4 +202,56 @@ public struct SSHConnectionConfig: Equatable, Sendable {
         self.auth = auth
         self.jump = jump
     }
+
+    /// Non-throwing initializer for values DERIVED from an already-valid
+    /// config. It skips validation deliberately: every stored field either
+    /// comes through unchanged from a value the throwing init already
+    /// validated, or is a secret payload that no validation rule inspects.
+    /// Private, so the throwing init stays the ONE gate for externally
+    /// supplied values.
+    private init(validatedHost host: String, port: Int, username: String, auth: AuthMethod, jump: Jump?) {
+        self.host = host
+        self.port = port
+        self.username = username
+        self.auth = auth
+        self.jump = jump
+    }
+
+    /// A copy with every plaintext secret emptied, for the one situation
+    /// where a config must outlive the call that resolved it: the
+    /// external-terminal password hint holds one in view state while its
+    /// alert is open, and neither `disconnect` nor
+    /// `ConnectionViewModel.clearRetainedSecrets()` reaches view state.
+    ///
+    /// Nothing is lost by handing the redacted copy to that path:
+    /// `SSHCommandBuilder` reads only host, port, username, key *path* and
+    /// jump destination, and passes no secret to `ssh` at all (see its own
+    /// doc comment) — `ssh` prompts for the password itself.
+    public func redactingSecrets() -> SSHConnectionConfig {
+        SSHConnectionConfig(
+            validatedHost: host, port: port, username: username,
+            auth: auth.redactingSecret(),
+            jump: jump.map {
+                Jump(
+                    host: $0.host, port: $0.port, username: $0.username,
+                    auth: $0.auth.redactingSecret())
+            })
+    }
+}
+
+extension SSHConnectionConfig.AuthMethod {
+    /// Empties the plaintext payload while keeping the case itself: callers
+    /// branch on WHICH method a config uses (`if case .password`), so
+    /// erasing the case would change behaviour, whereas erasing the payload
+    /// cannot — only the dialer ever reads it.
+    fileprivate func redactingSecret() -> SSHConnectionConfig.AuthMethod {
+        switch self {
+        case .password:
+            return .password("")
+        case .privateKey(let keyPath, _):
+            return .privateKey(keyPath: keyPath, passphrase: nil)
+        case .agent:
+            return .agent
+        }
+    }
 }
