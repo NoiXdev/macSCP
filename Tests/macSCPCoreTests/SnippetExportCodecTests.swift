@@ -127,4 +127,18 @@ struct SnippetExportCodecTests {
             _ = try SnippetExportCodec.decode(data)
         }
     }
+
+    /// The export payload is `[Snippet]`, so declarations travel without the
+    /// codec knowing about them. This test exists because that is easy to
+    /// break later by narrowing the payload, and nothing else would notice.
+    @Test("declarations survive an export round trip")
+    func declarationsSurviveExport() throws {
+        let variable = SnippetVariable(
+            name: "HOST", prompt: "Host", kind: .freeText,
+            placement: .placeholder, defaultValue: "", remembersLastValue: false)
+        let snippet = Snippet(name: "ping", command: "ping {{HOST}}", variables: [variable])
+        let data = try SnippetExportCodec.encode(SnippetExportPayload(snippets: [snippet]))
+        let decoded = try SnippetExportCodec.decode(data)
+        #expect(decoded.snippets.first?.variables == [variable])
+    }
 }
