@@ -1,13 +1,14 @@
 # Snippet-Syntax-Highlighting — Abschluss
 
-**Stand:** fertig. Suite 2183 Tests in 195 Suiten, grün (`swift test`,
+**Stand:** fertig. Suite 2197 Tests in 196 Suiten, grün (`swift test`,
 lokale Laufzeit ca. 5 s für die schnelle Mehrheit, Transfer-/Queue-Tests
 ziehen wie gewohnt je ~4,8–5,2 s).
 
 ## Was umgesetzt wurde
 
-Vier Commits, alle bereits auf `develop` (plus dieser Abschlussbericht als
-fünfter):
+Vier Commits für das Vorhaben selbst, alle auf `develop` (dieser
+Abschlussbericht ist der fünfte; die beiden Korrekturwellen aus dem
+Schluss-Review stehen unten):
 
 - `c63be88` — Plan-Dokument für dieses Vorhaben.
 - `0920bf5` — Core: `SnippetHighlighter.tokens(in:language:)`, ein reiner
@@ -113,6 +114,78 @@ in der laufenden App zu prüfen, nicht durch die Suite belegt:
   unberührtem Sheet** — färben sich Tokens nach, wenn nicht, ob das im
   laufenden Betrieb auffällt.
 
-Die `.frame(height: 24)` an der Einbindungsstelle
-(`SnippetsSheet.swift:561`) ist ein erster Schätzwert; die Sichtprüfung
-entscheidet, ob er passt oder angepasst werden muss.
+Die `.frame(height: 24)` an der Einbindungsstelle in `SnippetsSheet.swift`
+ist ein erster Schätzwert; die Sichtprüfung entscheidet, ob er passt oder
+angepasst werden muss. (Der frühere Zeilenverweis an dieser Stelle war
+binnen zweier Commits falsch — ein Beleg für die Hausregel, keine
+Zeilennummern in Fließtext über Code zu schreiben.)
+
+## Korrekturwellen aus dem Schluss-Review
+
+Das Schluss-Review über den ganzen Zweig kam mit „nicht mergefähig"
+zurück: fünf wichtige Befunde, alle in der Naht zwischen dem getesteten
+Core-Teil und der ungetesteten View. `401cbc2` hat sie in einem Zug
+behoben, `11fd0b0` zwei Reste aus der Nachprüfung.
+
+- **Automatische Ersetzungen.** `NSTextView` ließ alle fünf auf
+  Vorgabe: „intelligente" Anführungszeichen hätten `echo "hi"` in
+  typografische Zeichen verwandelt, `--` in einen Halbgeviertstrich — der
+  Befehl wäre still verfälscht in `snippets.json` gelandet. Das ersetzte
+  `NSTextField` hatte das Problem nie, weil sein Field Editor die
+  Ersetzungen von sich aus abschaltet. Jetzt explizit abgeschaltet.
+- **Tabulator.** Tab fügte ein `\t` ein, statt den Fokus
+  weiterzureichen. `\t` ist kein `Character.isNewline`, überlebte also
+  Sanitizer, `Snippet.init?` und Tokenizer — unsichtbar gespeichert und
+  später an die Shell geschickt. Tab und Umschalt-Tab wandern jetzt.
+- **Umbruch.** Die Ansicht brach im 24-pt-Kasten um, ohne Scroller; lange
+  Befehle verschwanden aus dem Blick. Entscheidung des Maintainers:
+  einzeilig erzwingen und waagerecht scrollen, wie es das ersetzte
+  `TextField` tat.
+- **Bedienhilfen-Beschriftung.** Ging beim Austausch verloren. `FormRow`
+  blendet die sichtbare Beschriftung genau deshalb aus, weil das
+  eingebettete Steuerelement seine eigene trägt (Invariante aus M6a).
+  Wiederhergestellt aus derselben lokalisierten Zeichenkette.
+- **Toter Fehlerpfad.** Der Sanitizer behält recht: die Prüfung auf
+  mehrzeilige Eingabe beim Speichern war unerreichbar geworden. Pfad und
+  Schlüssel `snippets.editor.error.multiline` sind aus allen vier
+  Katalogen entfernt.
+
+**Die offene Frage, die offen bleibt.** Wer die Eingabetaste bekommt — das
+Textfeld oder der Speichern-Knopf mit `.keyboardShortcut(.defaultAction)` —
+ließ sich hier nicht beobachten, weil die App in dieser Umgebung nicht
+gestartet wird. Statt die Frage mit einer plausibel klingenden Behauptung
+zu schließen, ist das Verhalten von ihr unabhängig gemacht: der
+`Coordinator` beansprucht `insertNewline(_:)` und fügt nichts ein. Bekommt
+das Textfeld die Taste, passiert nichts; bekommt sie der Knopf, wird
+gespeichert. Beides ist für ein einzeiliges Feld richtig. Der
+Doc-Kommentar nennt beide Möglichkeiten und sagt ausdrücklich, dass
+ungeprüft ist, welche eintritt.
+
+**Neue Tests.** Der Einwand des Prüfers gegen den Satz „hier ist nichts
+testbar" war berechtigt: für diese Sheet-Familie gibt es bereits
+quelltext-prüfende Wächter. `SnippetCommandEditorGuardTests` folgt dem
+Muster und nagelt die Ersetzungssperre, die Tab-Behandlung, die
+Bedienhilfen-Beschriftung und den `insertNewline`-Anspruch fest — jeweils
+fail-closed und durch Mutation rot geprüft.
+
+**Zusätzlich sichtzuprüfen** (aus diesen Wellen): ein Befehl, der breiter
+ist als das Feld, muss waagerecht scrollen statt umzubrechen —
+etwa `docker run --rm -it -v $PWD:/work -w /work alpine sh -c 'echo hi'`.
+
+## Lektion: eine Zahl im Review-Befund ist auch ein Prüfauftrag
+
+Die falschen Zahlen im Farb-Kommentar („sechs Arten … vier Farben"; es sind
+sieben und sechs) stammten nicht vom Implementierer. Sie standen im Befund
+des Schluss-Reviews, wanderten ungeprüft in das Ledger des Koordinators und
+von dort wörtlich in den Fix-Auftrag — bis sie als Behauptung im Quelltext
+standen.
+
+Die Hausregel in `CLAUDE.md` sagt bisher: wer eine Zahl in einen Kommentar
+schreibt, zählt sie im selben Moment nach. Dieser Durchgang erweitert sie um
+die Gegenrichtung: **auch eine Zahl in einem Review-Befund ist ein
+Prüfauftrag.** Wer sie weiterreicht, ohne zu zählen, ist das Transportmittel
+des Fehlers — der Befund klingt beim Weitergeben genauso plausibel wie der
+Kommentar beim Schreiben.
+
+Es ist der vierte Fall derselben Klasse in dieser Sitzung. Alle vier saßen
+in einer Zahl oder einer Aufzählung; keiner in Fließtext ohne Kardinalität.
