@@ -89,8 +89,19 @@ struct SnippetCommandEditor: NSViewRepresentable {
         textView.textContainer?.containerSize = NSSize(
             width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.isHorizontallyResizable = true
-        textView.isVerticallyResizable = true
-        textView.autoresizingMask = [.width, .height]
+        // `.width` in the mask pins the text view's width to the clip
+        // view's, so the frame can never grow past the visible width and
+        // there is nothing for the scroll view to scroll -- a long command
+        // just stopped at the right edge, unreachable. Only the height
+        // tracks the clip view; the width is left to `maxSize`, which is
+        // the ceiling the frame grows toward as text is laid out. The
+        // vertical axis is fixed instead of self-sizing because this is a
+        // one-line field whose height comes from the row, not the text.
+        textView.isVerticallyResizable = false
+        textView.autoresizingMask = [.height]
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         // No scroller and no border: this is a single-line form field
         // pretending to be the `TextField` it replaced. A permanently
         // visible horizontal scroller ate roughly two thirds of the row's
