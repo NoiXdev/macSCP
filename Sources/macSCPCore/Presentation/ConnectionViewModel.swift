@@ -35,10 +35,10 @@ public final class ConnectionViewModel {
     }
 
     /// An SSH field as a `Field.schema` key (M23) — the namespaced form
-    /// `SchemaFormView` matches its rows against. Spelled once here so the
-    /// remaining SSH-only failure sites (`failedState`'s `ConfigError`
-    /// mappings, the edit-save validator) cannot drift from the key the
-    /// schema actually stores the value under.
+    /// `SchemaFormView` matches its rows against. Spelled once here so
+    /// `failedState`'s `ConfigError` mappings, the remaining SSH-only
+    /// failure site, cannot drift from the key the schema actually stores
+    /// the value under.
     static func sshField(_ field: SSHField) -> Field {
         .schema("\(SSHField.namespace).\(field.rawValue)")
     }
@@ -162,7 +162,7 @@ public final class ConnectionViewModel {
     /// The form's one secret slot, mapped onto whichever field the active
     /// backend and auth kind actually mean by it. `ManagedKeyPassphrase.resolve`
     /// -- its only remaining external callers (`ConnectionFormView`,
-    /// `ContentView`'s `fillFromStored`), both reached only under
+    /// `ContentView`'s `fillForm(_:from:)`), both reached only under
     /// `authChoice == .privateKey` -- is the reason this stays SSH-flavored
     /// vocabulary rather than being renamed `secret`; every other call site
     /// already prefers `resolvedSecret`/`fillSecret(_:)` by name.
@@ -436,11 +436,10 @@ public final class ConnectionViewModel {
     /// Maps the form's `AuthChoice` to the persisted `StoredSession.AuthKind`
     /// (M10d/T3) -- the single place both the target's and the jump's
     /// choice-to-kind mapping go through, so a third auth kind only needs
-    /// updating here instead of at every call site. Public (M10d/T4): the
-    /// App layer's own three-way mappings (login-set prefill, "save as new
-    /// login set", edit-session prefill) reuse this SAME mapping instead of
-    /// re-deriving their own two-way `.privateKey ? : .password` ternary that
-    /// would silently misdisplay `.agent` as `.password`.
+    /// updating here instead of at every call site. Public (M10d/T4), though
+    /// the App layer currently has no external caller of its own: it
+    /// round-trips the raw `AuthKind` value through `SSHFieldSchema` instead
+    /// of going through this mapping.
     public static func storedAuthKind(for choice: AuthChoice) -> StoredSession.AuthKind {
         switch choice {
         case .password: return .password
@@ -450,9 +449,10 @@ public final class ConnectionViewModel {
     }
 
     /// The reverse of `storedAuthKind(for:)` -- used by `beginEditing` to
-    /// prefill the form's auth choice (target and jump) from a persisted
-    /// `AuthKind`. Public (M10d/T4): same App-layer reuse rationale as
-    /// `storedAuthKind(for:)` above.
+    /// prefill the jump's auth choice from a persisted `AuthKind`. Public
+    /// (M10d/T4): the App layer's own jump-prefill paths
+    /// (`ContentView`, `SessionListViewModel+Submit`) call this across the
+    /// module boundary.
     public static func authChoice(for kind: StoredSession.AuthKind) -> AuthChoice {
         switch kind {
         case .password: return .password
@@ -792,7 +792,7 @@ public final class ConnectionViewModel {
 
     /// User-initiated mode switch (picker): clears the secret so the
     /// password/passphrase doesn't carry over into the other mode.
-    /// Programmatic restore (connectStored) sets authChoice directly —
+    /// Programmatic restore (`connect(in:stored:)`) sets authChoice directly —
     /// without clearing (review finding M3c Task 0).
     public func selectAuthChoice(_ choice: AuthChoice) {
         guard choice != authChoice else { return }
@@ -812,8 +812,8 @@ public final class ConnectionViewModel {
 
     /// User-initiated switch of the jump's login-MODE picker (M28 final
     /// review, Critical): the third of the jump's three switchers to get a
-    /// clearing path, after `selectJumpAuthChoice` and `selectJumpSourceMode`
-    /// above -- and it needs one for exactly the reason
+    /// clearing path, after `selectJumpAuthChoice` above and
+    /// `selectJumpSourceMode` below -- and it needs one for exactly the reason
     /// `selectJumpSourceMode`'s doc comment gives for its own.
     ///
     /// In `.set` mode the jump's manual-looking fields are not typed by the
@@ -986,7 +986,7 @@ public final class ConnectionViewModel {
     /// (M10c/T3, same sticky-toggle lesson M10b learned for `loginMode`/
     /// `selectedLoginSetID` above): `jumpEnabled` is itself a MODE switch,
     /// so a stale "on" from a previous edit must not survive into whatever
-    /// the caller (teardown/connectStored/import) fills in next.
+    /// the caller (teardown/`connect(in:stored:)`/import) fills in next.
     ///
     /// `kind`/S3/WebDAV fields reset here too (M12/T7a, M21/T9, same
     /// lesson): `kind` is itself a MODE switch, so a stale `.s3`/`.webdav`
@@ -1013,9 +1013,9 @@ public final class ConnectionViewModel {
     /// internal existing-secret bookkeeping. The single source of truth for
     /// "no jump block survives here" — used by `exitEditMode()`,
     /// `beginEditing()`'s no-jump branch, and (via `ContentView`'s
-    /// `applyRawJumpFallback`) both of `connect(in:stored:)`'s early-return
-    /// failure paths, so a jump block typed for one session's form can never
-    /// leak into another's.
+    /// `applyRawJumpFallback`) three of `ContentView.fillForm`'s
+    /// early-return failure paths, so a jump block typed for one session's
+    /// form can never leak into another's.
     ///
     /// `jumpSourceMode`/`jumpSessionID` reset here too (M11a/T3, the same
     /// sticky-toggle lesson M10b learned for `loginMode`/
@@ -1193,9 +1193,11 @@ public final class ConnectionViewModel {
     /// target's own `auth` above ignores `loginMode`, trusting the App layer
     /// to have already filled those fields from the selected set in Set
     /// mode. `validateJump()` has already guaranteed these are non-empty
-    /// where required, so this never needs to fail -- true because this
-    /// method's only caller is `connect()`, which always validates with
-    /// `requireSecret: true` (see `validateJump`'s own doc comment).
+    /// where required, so this never needs to fail -- true because its
+    /// direct caller `attachingJump(to:)` is reached only through
+    /// `resolveConfigWithoutDialing()`, which always validates with
+    /// `requireSecret: true` regardless of which of its two callers invoked
+    /// it (see `validateJump`'s own doc comment).
     private func buildJumpConfig() -> SSHConnectionConfig.Jump? {
         guard jumpEnabled else { return nil }
         let auth: SSHConnectionConfig.AuthMethod
