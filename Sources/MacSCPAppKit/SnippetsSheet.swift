@@ -382,7 +382,16 @@ struct SnippetsSheet: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(snippet.name).font(.system(size: 13))
-                Text(snippet.command)
+                let summary = SnippetCommandSummary.firstLine(of: snippet.command)
+                HStack(spacing: 4) {
+                    Text(summary.text)
+                    if summary.moreLines > 0 {
+                        Text(String(
+                            format: L10n.string("snippets.command.moreLines %lld", "+%lld more"),
+                            summary.moreLines))
+                            .foregroundStyle(DesignTokens.inkTertiary)
+                    }
+                }
                     .font(.caption)
                     .foregroundStyle(DesignTokens.inkSecondary)
                     .lineLimit(1)
@@ -497,9 +506,9 @@ private struct SnippetTagFilterRow: View {
 /// `Snippet`'s initializer is not failable and performs no validation of its
 /// own — it just stores what it is given, `command` included. `command` is
 /// bound to `SnippetCommandEditor`, which accepts a pasted multi-line string
-/// as-is; a typed Return is still swallowed there (see that file's own doc
-/// comment). Reconciling typed Return with a field that now accepts
-/// multi-line content is a later task in this milestone.
+/// as-is and now inserts a typed Return as a line break too (see that
+/// file's own doc comment) — Save moved off plain Return onto ⌘Return so
+/// the two no longer collide.
 private struct SnippetEditorView: View {
     let existing: Snippet?
     /// The sheet's already-loaded list, passed straight through (Task 5)
@@ -534,9 +543,10 @@ private struct SnippetEditorView: View {
     private var isEditing: Bool { existing != nil }
 
     /// Only the required-fields check. `command` may contain a newline by
-    /// the time this is evaluated — a pasted multi-line string reaches
-    /// `SnippetCommandEditor`'s bound `command` unchanged — but nothing
-    /// here needs to reject that; `Snippet`'s initializer accepts it too.
+    /// the time this is evaluated — both a pasted multi-line string and a
+    /// typed Return reach `SnippetCommandEditor`'s bound `command` as one —
+    /// but nothing here needs to reject that; `Snippet`'s initializer
+    /// accepts it too.
     private var isSaveDisabled: Bool {
         name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -558,17 +568,16 @@ private struct SnippetEditorView: View {
                 // Snippet editor part 1: an NSTextView, because a SwiftUI
                 // TextField cannot colour text while it is being typed. The
                 // command may now span lines (snippet editor, part 2); a
-                // typed Return is still swallowed here, but this field no
-                // longer keeps `command` single-line on its own -- see
-                // `SnippetCommandEditor`'s own doc comment. `accessibilityLabel`
-                // hands it the same localized string this row's own
-                // (VoiceOver-hidden) label uses, so the field keeps an
+                // typed Return inserts one, the same as a pasted multi-line
+                // string -- see `SnippetCommandEditor`'s own doc comment.
+                // `accessibilityLabel` hands it the same localized string
+                // this row's own (VoiceOver-hidden) label uses, so the field keeps an
                 // accessible name of its own (`FormRow`'s doc comment, M6a).
                 // The chrome lives here, not in the representable: it has
                 // to match the `.roundedBorder` fields above and below,
                 // and an `NSScrollView` cannot draw a rounded border.
                 SnippetCommandEditor(text: $command, accessibilityLabel: commandLabel)
-                    .frame(height: 24)
+                    .frame(height: SnippetCommandEditor.intrinsicHeight(for: command))
                     .background(RoundedRectangle(cornerRadius: 6).fill(DesignTokens.card))
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
@@ -603,7 +612,7 @@ private struct SnippetEditorView: View {
                     .buttonStyle(.polished)
                 Button(L10n.string("common.save", "Save")) { save() }
                     .buttonStyle(.polishedProminent)
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(.return, modifiers: .command)
                     .disabled(isSaveDisabled)
             }
         }

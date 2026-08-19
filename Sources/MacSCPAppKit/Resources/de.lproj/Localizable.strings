@@ -842,6 +842,7 @@
 "snippets.filter.all" = "Alle";
 "snippets.filter.untagged" = "Ohne Tag";
 "snippets.filter.tagCount %1$@ %2$lld" = "%1$@ (%2$lld)";
+"snippets.command.moreLines %lld" = "+%lld weitere";
 
 /* Terminal menu — snippets (Terminal-Snippets milestone) */
 "menu.snippets.manage" = "Snippets verwalten…";

@@ -941,8 +941,22 @@ private struct TerminalPanelHeader: View {
     /// list entirely (`onHover`'s `else` branch above only clears
     /// `hoveredRow`, never `previewPinnedRow`).
     private var commandPreviewLine: some View {
-        Text(SnippetPreviewLine.row(hovered: hoveredRow, pinned: previewPinnedRow)?.snippet.command
-            ?? L10n.string("snippets.list.hoverHint", "Point at a snippet to see its command."))
+        let text: String
+        if let command = SnippetPreviewLine.row(hovered: hoveredRow, pinned: previewPinnedRow)?
+            .snippet.command
+        {
+            let summary = SnippetCommandSummary.firstLine(of: command)
+            if summary.moreLines > 0 {
+                text = summary.text + " " + String(
+                    format: L10n.string("snippets.command.moreLines %lld", "+%lld more"),
+                    summary.moreLines)
+            } else {
+                text = summary.text
+            }
+        } else {
+            text = L10n.string("snippets.list.hoverHint", "Point at a snippet to see its command.")
+        }
+        return Text(text)
             .font(.system(.caption, design: .monospaced))
             .foregroundStyle(.secondary)
             .lineLimit(1)

@@ -15,17 +15,11 @@ import macSCPCore
 ///    undoes colours instead of text.
 /// 3. **Binding loop.** text change → binding → `updateNSView` → text
 ///    change. The guard is comparing the string before assigning it.
-/// 4. **Newlines.** A command may now span lines (snippet editor, part 2),
-///    so a pasted multi-line string is accepted as-is. A typed Return is
-///    still handled separately: the `Coordinator` claims `insertNewline(_:)`
-///    in `doCommandBy:` and returns `true` without inserting anything, so
-///    *if* this text view is the one to receive the keystroke, it does
-///    nothing. Whether the text view is the one to receive it is a
-///    different, unverified question: AppKit may instead route the
-///    unmodified Return to the sheet's `.keyboardShortcut(.defaultAction)`
-///    Save button before this view ever sees it. Reconciling typed Return
-///    with a field that now accepts multi-line content is a later task in
-///    this milestone.
+/// 4. **Line breaks are content.** Part 2 made a snippet command
+///    multi-line: a typed Return inserts, a pasted multi-line string is
+///    kept as it stands, and `Snippet` stores both verbatim. What reaches
+///    the shell is `SnippetSendPlanner`'s decision, made at trigger time
+///    from the remote's bracketed-paste mode — not this view's.
 /// 5. **Automatic substitutions.** An `NSTextField`'s field editor disables
 ///    smart quotes, smart dashes, automatic text replacement, spelling
 ///    correction, and smart insert/delete by default; a raw `NSTextView`
@@ -49,6 +43,20 @@ struct SnippetCommandEditor: NSViewRepresentable {
     /// wrapped control is expected to carry its own accessibility label).
     let accessibilityLabel: String
 
+    /// How tall this field wants to be for `text`: one line's height per
+    /// line, plus the container insets, clamped so a long script cannot push
+    /// the sheet off screen. Beyond the clamp the view scrolls vertically.
+    ///
+    /// The bounds are estimates and belong in the maintainer's visual check
+    /// — no test in this project draws an `NSViewRepresentable`.
+    static func intrinsicHeight(for text: String) -> CGFloat {
+        let lineHeight: CGFloat = 16
+        let insets: CGFloat = 8
+        let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).count
+        let clamped = min(max(lines, 1), 8)
+        return CGFloat(clamped) * lineHeight + insets
+    }
+
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -71,10 +79,10 @@ struct SnippetCommandEditor: NSViewRepresentable {
         textView.isAutomaticTextReplacementEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = false
         textView.smartInsertDeleteEnabled = false
-        // Single-line is enforced (the `TextField` this replaced never
-        // wrapped either): `scrollableTextView()` starts out configured to
-        // WRAP, which in a 24pt-tall box lets a long command wrap out of
-        // sight with no scroller at all. This is Apple's own recipe for a
+        // Word-wrap stays off (the `TextField` this replaced never wrapped
+        // either): `scrollableTextView()` starts out configured to WRAP,
+        // which lets a long line wrap out of sight with no horizontal
+        // scroller at all. This is Apple's own recipe for a
         // horizontally-scrolling, non-wrapping text view ("Putting an
         // NSTextView Object in an NSScrollView"): the container must not
         // track the view's width and must be effectively unbounded, and the
@@ -91,25 +99,27 @@ struct SnippetCommandEditor: NSViewRepresentable {
         // just stopped at the right edge, unreachable. Only the height
         // tracks the clip view; the width is left to `maxSize`, which is
         // the ceiling the frame grows toward as text is laid out. The
-        // vertical axis is fixed instead of self-sizing because this is a
-        // one-line field whose height comes from the row, not the text.
+        // vertical axis is fixed instead of self-sizing because the row
+        // decides the height; the view reports how tall it would like to
+        // be through `intrinsicHeight` below.
         textView.isVerticallyResizable = false
         textView.autoresizingMask = [.height]
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(
             width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        // No scroller and no border: this is a single-line form field
-        // pretending to be the `TextField` it replaced. A permanently
+        // No horizontal scroller, and still no border: a permanently
         // visible horizontal scroller ate roughly two thirds of the row's
         // height and drew as a dark capsule across the empty field; the
         // clip view still follows the caret past the right edge without
-        // one, which is exactly what the `TextField` did. The rounded
-        // chrome comes from the call site, because AppKit's `NSBorderType`
-        // has no rounded member and the neighbouring fields in this sheet
-        // are all `.roundedBorder`.
+        // one, which is exactly what the `TextField` this replaced did.
+        // The rounded chrome comes from the call site, because AppKit's
+        // `NSBorderType` has no rounded member and the neighbouring fields
+        // in this sheet are all `.roundedBorder`. The vertical scroller, by
+        // contrast, is turned ON: a command past `intrinsicHeight`'s clamp
+        // below must still be reachable, not just cropped.
         scroll.hasHorizontalScroller = false
         scroll.drawsBackground = false
-        scroll.hasVerticalScroller = false
+        scroll.hasVerticalScroller = true
         scroll.borderType = .noBorder
         context.coordinator.apply(text, to: textView)
         return scroll
@@ -142,14 +152,6 @@ struct SnippetCommandEditor: NSViewRepresentable {
                 return true
             case #selector(NSResponder.insertBacktab(_:)):
                 textView.window?.selectPreviousKeyView(nil)
-                return true
-            case #selector(NSResponder.insertNewline(_:)):
-                // Hazard 4: this field is single-line, so a typed Return
-                // has nothing to insert. Claiming the selector (and
-                // returning `true` without calling through) swallows it
-                // deterministically here, if this view is the one that
-                // receives the keystroke at all -- see the doc comment
-                // above this type.
                 return true
             default:
                 return false

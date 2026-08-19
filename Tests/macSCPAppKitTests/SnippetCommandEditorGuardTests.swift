@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-/// Guards four properties of `SnippetCommandEditor.swift` and its wiring in
+/// Guards five properties of `SnippetCommandEditor.swift` and its wiring in
 /// `SnippetsSheet.swift`, all raised by the whole-branch review of the
 /// snippet syntax-highlighting feature and none of them provable any other
 /// way in this project (no test here renders an `NSViewRepresentable` — see
@@ -25,12 +25,18 @@ import Testing
 ///    in `SnippetCommandEditor` or the call-site argument in
 ///    `SnippetsSheet` — leaves the command field with no accessible name at
 ///    all, silently, since nothing else in this project exercises VoiceOver.
-/// 4. **Return swallowed at the command layer.** This field is single-line,
-///    so a typed Return has nothing to insert. Losing the `Coordinator`'s
-///    `insertNewline(_:)` case in `textView(_:doCommandBy:)` (or its
-///    `return true`) means a typed Return, if this text view receives the
-///    keystroke, falls through to AppKit's default handling instead of
-///    being swallowed deterministically here.
+/// 4. **Return inserts a line break.** Part 2 made a snippet command
+///    multi-line, so a typed Return has something to insert and must NOT be
+///    claimed at the command layer. A reappearing `insertNewline(_:)` case
+///    in `textView(_:doCommandBy:)` would silently make the field
+///    single-line again, and the failure would look like "Return does
+///    nothing" rather than like a bug.
+/// 5. **Save moved to command-Return.** The Save button's own shortcut is
+///    `.keyboardShortcut(.return, modifiers: .command)`, not the plain
+///    default action: Return now belongs to the command field. A Save
+///    button that reverted to `.defaultAction` would take Return back and
+///    make line breaks untypeable, and the failure would present as "the
+///    editor saves when I try to add a line".
 ///
 /// Each is a SOURCE-TEXT scan, same shape and same blind spots as
 /// `SnippetActionSheetKeyboardShortcutGuardTests`/
@@ -158,28 +164,37 @@ struct SnippetCommandEditorGuardTests {
         #expect(tabCase.contains { $0.trimmingCharacters(in: .whitespaces) == "return true" })
     }
 
-    // MARK: - Finding 5: Return swallowed via insertNewline
+    // MARK: - Finding 4: Return inserts a line break (insertNewline not claimed)
 
-    @Test func insertNewlineIsClaimedInDoCommandBy() throws {
+    @Test func insertNewlineIsNotClaimedInDoCommandBy() throws {
         let source = try String(contentsOf: Self.editorSourceFile, encoding: .utf8)
         let body = try Self.functionBody(containing: "doCommandBy selector", in: source)
-        #expect(body.contains("#selector(NSResponder.insertNewline(_:))"), """
-            The insertNewline: command selector must be matched explicitly in \
-            textView(_:doCommandBy:) -- otherwise, if this text view receives a typed Return, \
-            AppKit's default handling inserts a newline instead of it being swallowed \
-            deterministically at the command layer. Scanned body: \(body)
-            """)
-        let newlineCase = Self.linesAfterMarker(
-            "#selector(NSResponder.insertNewline(_:))", in: body)
-        #expect(
-            newlineCase.contains { $0.trimmingCharacters(in: .whitespaces) == "return true" }, """
-            The insertNewline: case must return true (claiming the command) rather than falling \
-            through to `default: return false`, which re-enables the default newline-insertion \
-            behaviour. Case lines: \(newlineCase)
+        #expect(!body.contains("#selector(NSResponder.insertNewline(_:))"), """
+            The insertNewline: command selector must NOT be matched in \
+            textView(_:doCommandBy:) -- a snippet command may now span lines (part 2), so a \
+            typed Return must fall through to AppKit's default handling and actually insert \
+            the line break. A reappearing case here would silently claim it again and make the \
+            field single-line, and the failure would look like "Return does nothing" rather \
+            than like a bug. Scanned body: \(body)
             """)
     }
 
-    @Test func scannerFlagsTheRegressionWhereInsertNewlineIsNotClaimed() {
+    @Test func scannerFlagsTheRegressionWhereInsertNewlineIsClaimedAgain() {
+        let body = """
+            func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+                switch selector {
+                case #selector(NSResponder.insertNewline(_:)):
+                    return true
+                default:
+                    return false
+                }
+            }
+            """
+        #expect(body.contains("#selector(NSResponder.insertNewline(_:))"),
+            "the scanner must see that insertNewline: is matched again in the regressed source")
+    }
+
+    @Test func scannerAcceptsTheCorrectMissingInsertNewlineHandling() {
         let body = """
             func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
                 switch selector {
@@ -191,24 +206,54 @@ struct SnippetCommandEditorGuardTests {
                 }
             }
             """
-        #expect(!body.contains("#selector(NSResponder.insertNewline(_:))"),
-            "the scanner must see that insertNewline: is not even matched in the regressed source")
+        #expect(!body.contains("#selector(NSResponder.insertNewline(_:))"))
     }
 
-    @Test func scannerAcceptsTheCorrectInsertNewlineHandling() {
-        let body = """
-            func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-                switch selector {
-                case #selector(NSResponder.insertNewline(_:)):
-                    return true
-                default:
-                    return false
+    // MARK: - Save moved to command-Return
+
+    /// The snippet editor's Save button carries ⌘Return, not the plain
+    /// default action: Return belongs to the command field now, which is
+    /// multi-line. A Save button that reverted to `.defaultAction` would
+    /// take Return back and make line breaks untypeable — and the failure
+    /// would present as "the editor saves when I try to add a line".
+    ///
+    /// The scan is anchored on the struct declaration, not on
+    /// `SnippetCommandEditor(` itself: `functionBody`'s brace counter walks
+    /// forward from the marker's own line, so a marker that is a call site
+    /// buried inside one `FormRow` closure among several sibling closures
+    /// hits a spurious depth-zero the moment the PRECEDING closure's `}` is
+    /// cancelled out by the FOLLOWING closure's `{` — long before the Save
+    /// button is reached. The struct's own declaration line carries its
+    /// opening brace right there, so the walk is balanced from a true depth
+    /// of zero and correctly spans the whole `SnippetEditorView` body,
+    /// editor call site and Save button included.
+    @Test("the snippet editor saves on command-Return")
+    func snippetEditorSavesOnCommandReturn() throws {
+        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let body = try Self.functionBody(
+            containing: "private struct SnippetEditorView: View {", in: source)
+        #expect(body.contains("SnippetCommandEditor("), """
+            Sanity check: the scanned struct body must still contain the editor call site, or \
+            this test would pass for the wrong reason (a struct that no longer builds the \
+            editor at all).
+            """)
+        #expect(body.contains("keyboardShortcut(.return, modifiers: .command)"))
+        #expect(!body.contains("keyboardShortcut(.defaultAction)"))
+    }
+
+    @Test("the command-Return scan reacts to a reverted shortcut")
+    func commandReturnScanReactsToRegression() throws {
+        let reverted = """
+            private struct SnippetEditorView: View {
+                var body: some View {
+                    SnippetCommandEditor(text: $command)
+                    Button("Save") { save() }.keyboardShortcut(.defaultAction)
                 }
             }
             """
-        let newlineCase = Self.linesAfterMarker(
-            "#selector(NSResponder.insertNewline(_:))", in: body)
-        #expect(newlineCase.contains { $0.trimmingCharacters(in: .whitespaces) == "return true" })
+        let body = try Self.functionBody(
+            containing: "private struct SnippetEditorView: View {", in: reverted)
+        #expect(!body.contains("keyboardShortcut(.return, modifiers: .command)"))
     }
 
     // MARK: - Finding 4: accessibility label
