@@ -244,7 +244,7 @@ das ist ein Fehler, den Schritt 5 findet. Siehe dort.
 
 - [ ] **Schritt 4: Rot laufen lassen**
 
-Run: `swift test --filter SnippetSendPlanner 2>&1 | tail -20`
+Run: `swift test --filter SnippetSendPlan 2>&1 | tail -20`
 Expected: Compile-Fehler — `SnippetSendPlanner` und `SnippetSendPlan` gibt es
 nicht.
 
@@ -254,7 +254,7 @@ nicht.
 ausgeführt — ein Test, der nichts beweist, ist schlimmer als keiner. Setze
 `@Test("a CRLF command counts as two lines")` davor.
 
-Run danach: `swift test --filter SnippetSendPlanner 2>&1 | grep -c 'Test .* passed\|Test .* failed'`
+Run danach: `swift test --filter SnippetSendPlan 2>&1 | grep -c 'Test .* passed\|Test .* failed'`
 Expected: **10** Testfunktionen werden gezählt (nicht 9).
 
 - [ ] **Schritt 6: Die minimale Implementierung schreiben**
@@ -335,7 +335,7 @@ public enum SnippetSendPlanner {
 
 - [ ] **Schritt 7: Grün laufen lassen**
 
-Run: `swift test --filter SnippetSendPlanner 2>&1 | tail -5`
+Run: `swift test --filter SnippetSendPlan 2>&1 | tail -5`
 Expected: alle 10 grün.
 
 - [ ] **Schritt 8: Die Konstant-Rückgabe-Probe von Hand fahren**
@@ -343,7 +343,7 @@ Expected: alle 10 grün.
 Ersetze den Rumpf von `plan` vorübergehend durch
 `return .send(Array(command.utf8))` und lasse die Suite laufen.
 
-Run: `swift test --filter SnippetSendPlanner 2>&1 | grep -c 'failed'`
+Run: `swift test --filter SnippetSendPlan 2>&1 | grep -c 'failed'`
 Expected: **mindestens 5** Tests scheitern. Scheitern weniger, prüfen die
 Tests zu wenig — melde das, statt weiterzugehen. Stelle den Rumpf danach
 wieder her und lasse die Suite erneut grün laufen.
