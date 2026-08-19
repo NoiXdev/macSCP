@@ -209,7 +209,7 @@ struct SnippetsSheet: View {
                 get: { pendingExport != nil },
                 set: { if !$0 { pendingExport = nil } })
         ) {
-            Button(L10n.string("snippets.export", "Export…")) {
+            Button(L10n.string("snippets.export.confirm", "Export")) {
                 if let pendingExport { performExport(pendingExport) }
                 pendingExport = nil
             }

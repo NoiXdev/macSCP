@@ -10,13 +10,17 @@ import Testing
 /// 1. the footer button no longer calls `performExport(` with
 ///    `visibleSnippets` directly, but sets the confirmation state instead;
 /// 2. the confirming button calls `performExport(` with the resolved scope;
-/// 3. `ExportScope.resolve(` occurs in the file;
-/// 4. the row menu still calls `performExport([snippet])` unconfirmed.
+/// 3. the footer button's own block resolves that scope through
+///    `ListExportScope.resolve(`, the one shared rule both export footers
+///    use;
+/// 4. the exact call `performExport([snippet])` appears somewhere in the
+///    file (`SnippetRowExportMenuGuardTests` is what pins it to the row).
 ///
 /// Known blind spots, same shape as `SnippetRowExportMenuGuardTests`: a
 /// SOURCE-TEXT scan, fooled by commented-out code or an unusual reformat; it
-/// confirms which call sits where, not that the closure each button runs
-/// actually calls the SwiftUI APIs its text implies.
+/// confirms which call sits where for 1-3, but assertion 4 is a file-wide
+/// `contains` check -- it pins neither the row's placement nor that the call
+/// is reached unconfirmed.
 @Suite("Snippet export confirmation")
 struct SnippetExportConfirmGuardTests {
     /// `#filePath` here is
@@ -55,20 +59,25 @@ struct SnippetExportConfirmGuardTests {
             """)
     }
 
-    @Test func exportScopeResolveIsUsed() throws {
+    @Test func footerBlockResolvesThroughListExportScope() throws {
         let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
-        #expect(source.contains("ExportScope.resolve("), """
-            SnippetsSheet.swift must resolve the footer's export scope via \
-            ExportScope.resolve(, the one shared rule both export footers use.
+        let block = try Self.footerExportButtonBlock(in: source)
+        #expect(block.contains("ListExportScope.resolve("), """
+            The footer's Export… button's own block must resolve its scope \
+            via ListExportScope.resolve(, the one shared rule both export \
+            footers use -- scoped to the footer's own block so a stray \
+            mention elsewhere in the file cannot satisfy this check.
             """)
     }
 
-    @Test func rowMenuStillExportsUnconfirmed() throws {
+    @Test func performExportWithExactlyTheSnippetStillAppearsInTheFile() throws {
         let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
         #expect(source.contains("performExport([snippet])"), """
-            The row's context-menu Export entry must keep exporting exactly \
-            the right-clicked snippet without going through the \
-            confirmation -- narrowing to one row already IS the confirmation.
+            The exact call performExport([snippet]) must still appear \
+            somewhere in SnippetsSheet.swift. This is a file-wide check: it \
+            does not prove the call sits in the row's block or that it runs \
+            unconfirmed -- SnippetRowExportMenuGuardTests is what pins the \
+            row's own block.
             """)
     }
 
@@ -82,7 +91,7 @@ struct SnippetExportConfirmGuardTests {
 
     @Test func scannerAcceptsTheCorrectFooterBody() throws {
         let source = Self.syntheticSource(
-            footerBody: "pendingExport = ExportScope.resolve(selectedID: selectedID, from: visibleSnippets)")
+            footerBody: "pendingExport = ListExportScope.resolve(selectedID: selectedID, from: visibleSnippets)")
         let block = try Self.footerExportButtonBlock(in: source)
         #expect(!block.contains("performExport(visibleSnippets)"))
         #expect(block.contains("pendingExport ="))

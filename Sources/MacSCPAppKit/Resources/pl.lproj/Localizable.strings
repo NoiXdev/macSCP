@@ -821,6 +821,7 @@
 "snippets.delete.error" = "Nie udało się usunąć fragmentu.";
 "snippets.export" = "Eksportuj…";
 "snippets.export.confirm.title" = "Wyeksportować fragmenty?";
+"snippets.export.confirm" = "Eksportuj";
 "snippets.export.confirm.message %lld" = "Fragmenty zapisane do pliku: %lld.";
 "snippets.import" = "Importuj…";
 "snippets.import.nameless %lld" = "Nie zaimportowano bez nazwy: %lld";

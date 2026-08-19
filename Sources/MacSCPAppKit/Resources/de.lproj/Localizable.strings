@@ -819,6 +819,7 @@
 "snippets.delete.error" = "Das Snippet konnte nicht gelöscht werden.";
 "snippets.export" = "Exportieren…";
 "snippets.export.confirm.title" = "Snippets exportieren?";
+"snippets.export.confirm" = "Exportieren";
 "snippets.export.confirm.message %lld" = "%lld Snippets werden in die Datei geschrieben.";
 "snippets.import" = "Importieren…";
 "snippets.import.nameless %lld" = "Ohne Namen nicht importiert: %lld";
