@@ -49,28 +49,27 @@
   continuations, `cancelAll` leaves no orphaned shells/transfers, group
   `onCompleted` fires exactly once.
 
-## Kommentare über anderen Code
+## Comments that describe other code
 
-Zwei Regeln, gemessen im Kommentar-Audit vom 2026-08-19
-(`docs/superpowers/specs/2026-08-19-p4-kommentar-audit.md`): 15 % der
-Aussagen über Aufrufer waren falsch — aber nur in Dateien, die zuletzt
-umgebaut wurden. In einer seit einem Meilenstein stillen Datei: null.
+Two rules, measured in the comment audit of 2026-08-19
+(`docs/superpowers/specs/2026-08-19-p4-kommentar-audit.md`): 15% of the
+statements about callers were wrong — but only in files that had recently
+been restructured. In a file untouched since a milestone: none.
 
-1. **Wer eine Funktion extrahiert, umbenennt oder ihren Aufruferkreis
-   ändert, sucht im selben Zug nach Kommentaren, die diese Aufrufer
-   benennen — auch in Dateien, die der Diff nicht berührt.** Genau dort
-   entsteht der Schaden: der Kommentar wird falsch, ohne im Diff
-   aufzutauchen.
+1. **Extracting a function, renaming it, or changing who calls it means
+   searching, in the same pass, for comments that name those callers —
+   including in files the diff does not touch.** That is exactly where the
+   damage happens: the comment becomes wrong without ever showing up in the
+   diff.
 
-2. **Wer in einem Kommentar eine Zahl oder eine Aufzählung von
-   Aufrufstellen schreibt, zählt sie im selben Moment nach.** Über vier
-   Korrekturrunden hinweg saß *jeder* Folgefehler in einer Zahl oder einer
-   Liste; Prosa ohne Kardinalität blieb fehlerfrei. „Drei Aufrufstellen"
-   ist eine Behauptung über den Rest des Projekts und klingt beim
-   Schreiben immer plausibel.
+2. **Writing a number or an enumeration of call sites into a comment means
+   counting them in that same moment.** Across four correction rounds,
+   *every* follow-on error sat in a number or a list; prose without
+   cardinality stayed correct. "Three call sites" is a claim about the rest
+   of the project, and it always sounds plausible while you write it.
 
-Gilt auch für Reviews: eine Zahl in einem Kommentar ist ein Prüfauftrag,
-kein Beleg.
+Applies to reviews too: a number in a comment is something to verify, not
+evidence.
 
 ## Git
 
