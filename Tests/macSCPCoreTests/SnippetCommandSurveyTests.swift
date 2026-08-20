@@ -58,6 +58,61 @@ struct SnippetCommandSurveyTests {
         #expect(placement(of: "{{X}}", in: "echo hi;# {{X}}") == .comment)
     }
 
+    /// Where one command ends and the next begins, asked of the state that
+    /// decides it.
+    ///
+    /// `.reparsedArgument` is scoped to the command whose NAME re-parses,
+    /// and "the command" is `beginCommand` — the same answer the reader
+    /// already gives `expectsCommandName`, not a second one. These pin the
+    /// shapes where the two could plausibly disagree: a body inside
+    /// `if`/`then`, `while`/`do` and `{ … }`, where an introducer keeps the
+    /// command name still to come; an assignment prefix in front of the
+    /// name; the `&&`, `||` and `|` spellings, which reach `beginCommand`
+    /// as two scalars or one; a line feed; and the precommand words `time`
+    /// and `exec`, after which the re-parsing name is still the name.
+    ///
+    /// Both directions on purpose. A test that only pinned the refusals
+    /// would stay green if every argument in the file became
+    /// `.reparsedArgument`.
+    @Test func aReparsedArgumentStopsWhereTheCommandDoes() {
+        // The placeholder is in a HARMLESS command; the re-parsing name is
+        // somewhere else in the same template.
+        #expect(placement(of: "{{X}}", in: "if [ -f a ]; then echo {{X}}; fi") == .argument)
+        #expect(placement(of: "{{X}}", in: "while [ -f a ]; do echo {{X}}; done") == .argument)
+        #expect(placement(of: "{{X}}", in: "for f in a b; do echo {{X}}; break; done") == .argument)
+        #expect(placement(of: "{{X}}", in: "{ echo {{X}}; exit 0; }") == .argument)
+        #expect(placement(of: "{{X}}", in: "printf 'a' && ls {{X}}") == .argument)
+        #expect(placement(of: "{{X}}", in: "printf 'a' || ls {{X}}") == .argument)
+        #expect(placement(of: "{{X}}", in: "printf 'a' | grep {{X}}") == .argument)
+        #expect(placement(of: "{{X}}", in: "printf 'a'\nls {{X}}") == .argument)
+        #expect(placement(of: "{{X}}", in: "exit 0; ls {{X}}") == .argument)
+        #expect(placement(of: "{{X}}", in: "FOO=1 ls {{X}}") == .argument)
+
+        // The placeholder is an argument of the re-parsing command itself,
+        // reached through the same constructs.
+        #expect(
+            placement(of: "{{X}}", in: "if [ -f a ]; then printf '%s' {{X}}; fi")
+                == .reparsedArgument)
+        #expect(
+            placement(of: "{{X}}", in: "while :; do exit {{X}}; done") == .reparsedArgument)
+        #expect(placement(of: "{{X}}", in: "{ exit {{X}}; }") == .reparsedArgument)
+        #expect(placement(of: "{{X}}", in: "ls; printf '%s' {{X}}") == .reparsedArgument)
+        #expect(placement(of: "{{X}}", in: "ls && printf '%s' {{X}}") == .reparsedArgument)
+        #expect(placement(of: "{{X}}", in: "ls | printf '%s' {{X}}") == .reparsedArgument)
+        #expect(placement(of: "{{X}}", in: "ls\nprintf '%s' {{X}}") == .reparsedArgument)
+        // An assignment prefix leaves the command name still to come, so
+        // the name after it is what decides — and the value side of the
+        // prefix itself is command-name text either way.
+        #expect(placement(of: "{{X}}", in: "FOO=1 export BAR={{X}}") == .reparsedArgument)
+        // A precommand word does not end the command, so the re-parsing
+        // name that follows it still owns the arguments after it.
+        #expect(placement(of: "{{X}}", in: "time printf '%s' {{X}}") == .reparsedArgument)
+        #expect(placement(of: "{{X}}", in: "exec printf '%s' {{X}}") == .reparsedArgument)
+        // A redirection target belongs to no argument list, and keeps
+        // saying so inside a re-parsing command.
+        #expect(placement(of: "{{X}}", in: "printf '%s' a > {{X}}") == .redirectionTarget)
+    }
+
     // MARK: - Placements that are not safe
 
     @Test(
@@ -422,7 +477,13 @@ struct SnippetCommandSurveyTests {
     ///
     /// **And it cannot be completed.** That is a conclusion, not a to-do. A
     /// later review injected four more compiling spellings and every one of
-    /// them stayed green: `starts(with:)` next to a banned `hasPrefix`,
+    /// them stayed green — and the round after that found the `switch` rule
+    /// itself letting one through, not because the rule was wrong but
+    /// because it never forgot the subject it had seen (see the comment on
+    /// the loop). A guard that remembers is a guard that has to be told when
+    /// to stop remembering, and that is a second way for one to be
+    /// incomplete on top of the three below. The four spellings were:
+    /// `starts(with:)` next to a banned `hasPrefix`,
     /// `firstRange(of:)` next to a banned `range(of:)`, `replacing(` next to
     /// a banned `replacingOccurrences(` — and `switch c { case "=": }`,
     /// which compares a cluster against a literal while containing no
@@ -467,15 +528,51 @@ struct SnippetCommandSurveyTests {
             // the subject rather than along the `case`. Injected as
             // `switch c { case "=": … }`, that spelling passed every pattern
             // below: it carries no comparison operator to match on.
+            //
+            // The subject is REMEMBERED, so it also has to be forgotten. A
+            // review injected `if case "=" = e as? String` into
+            // `ShellScalar.swift` and this guard stayed green: the file's
+            // one `switch scalar {` had set the subject hundreds of lines
+            // earlier and nothing ever cleared it, so every later `case` in
+            // the file — in any function, belonging to any switch or to
+            // none — inherited the word "scalar" from it. The same
+            // injection in `SnippetCommandSurvey.swift`, a file with no
+            // `switch` at all, went red. Two things close that:
+            //
+            // 1. The subject is dropped at the first non-blank line
+            //    indented LESS than its own `switch` line. Swift puts a
+            //    `case` at the same indentation as its `switch` and the
+            //    closing brace with it, so equal indentation cannot end the
+            //    block — but the enclosing function's brace is one level
+            //    out, and that is where the memory has to stop. Dropping
+            //    the subject can only make this guard stricter, which is
+            //    the direction to be wrong in.
+            // 2. `if case` / `guard case` / `while case` are pattern
+            //    matches that bring no `switch` of their own, so they never
+            //    borrow a subject. They must name the scalar on their own
+            //    line.
             var subjectOfEnclosingSwitch = ""
+            var indentOfEnclosingSwitch = 0
             for line in lines {
-                if line.range(of: #"\bswitch\b"#, options: .regularExpression) != nil {
+                let indent = line.count - line.drop(while: { $0 == " " }).count
+                if !line.trimmingCharacters(in: .whitespaces).isEmpty,
+                   indent < indentOfEnclosingSwitch {
+                    subjectOfEnclosingSwitch = ""
+                    indentOfEnclosingSwitch = 0
+                }
+                let isPatternMatch =
+                    line.range(of: #"\b(if|guard|while)\s+case\b"#, options: .regularExpression)
+                    != nil
+                if !isPatternMatch,
+                   line.range(of: #"\bswitch\b"#, options: .regularExpression) != nil {
                     subjectOfEnclosingSwitch = line
+                    indentOfEnclosingSwitch = indent
                 }
                 if line.range(of: #"\bcase\s+""#, options: .regularExpression) != nil {
+                    let subject = isPatternMatch ? "" : subjectOfEnclosingSwitch
                     #expect(
                         line.lowercased().contains("scalar")
-                            || subjectOfEnclosingSwitch.lowercased().contains("scalar"), """
+                            || subject.lowercased().contains("scalar"), """
                             \(file.lastPathComponent) matches shell text against a literal in a \
                             case pattern whose switch subject does not name a scalar. On a String \
                             or a Character that is a cluster comparison wearing no operator, so \

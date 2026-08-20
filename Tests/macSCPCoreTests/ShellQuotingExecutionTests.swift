@@ -68,10 +68,30 @@ struct ShellQuotingExecutionTests {
     /// previous version of this test read the same enumeration as a proof of
     /// completeness while three `-v` shapes ran on the other side.
     private func bashWords(_ compgenFlag: String) throws -> [String] {
+        try shellWords(binary: "/bin/bash", arguments: ["-c", "compgen \(compgenFlag)"])
+    }
+
+    /// The same question asked of any locally installed shell.
+    ///
+    /// `bash` is not the only shell macOS ships, and since the table's scope
+    /// widened past bash and zsh it is not the only lower bound worth
+    /// having: `/bin/zsh` and `/bin/ksh` are both here, and `/bin/ksh` is an
+    /// AT&T 93u+ whose builtin list contains names — `alarm`, `vmap`,
+    /// `vpath`, `login`, `newgrp` — that no bash and no zsh has ever
+    /// reported. A name absent from the table is a name this reader treats
+    /// as an ordinary command, so asking every shell that is actually
+    /// installed costs one process and closes that gap on the machine the
+    /// tests run on.
+    ///
+    /// Names containing a `/` are dropped: ksh93 reports several builtins
+    /// bound to a path (`/opt/ast/bin/cat`), and a path is not a name this
+    /// table classifies — a template using one is read as an ordinary
+    /// command name, which is what it is.
+    private func shellWords(binary: String, arguments: [String]) throws -> [String] {
         let process = Process()
         let pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = ["-c", "compgen \(compgenFlag)"]
+        process.executableURL = URL(fileURLWithPath: binary)
+        process.arguments = arguments
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         process.standardInput = FileHandle.nullDevice
@@ -79,9 +99,9 @@ struct ShellQuotingExecutionTests {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return (String(data: data, encoding: .utf8) ?? "")
-            .split(separator: "\n")
+            .split(whereSeparator: { $0 == "\n" || $0 == " " })
             .map(String.init)
-            .filter { !$0.isEmpty }
+            .filter { !$0.isEmpty && !$0.contains("/") }
     }
 
     /// Runs `command` with `bash` in `directory`, with no stdin and no
@@ -446,15 +466,32 @@ struct ShellQuotingExecutionTests {
         let keywords = try bashWords("-k")
         #expect(builtins.count > 30, "compgen -b returned nothing usable")
         #expect(keywords.count > 10, "compgen -k returned nothing usable")
-        for word in builtins + keywords {
+
+        // Every OTHER shell this machine has, for the reason `shellWords`
+        // states: the table's scope is no longer bash and zsh, and the two
+        // other shells macOS ships know names neither of them reports.
+        // Absent rather than required, so the suite does not depend on a
+        // layout of /bin — but present on macOS 15, which is what CI runs.
+        var otherWords: [String] = []
+        if FileManager.default.isExecutableFile(atPath: "/bin/zsh") {
+            otherWords += try shellWords(
+                binary: "/bin/zsh",
+                arguments: ["-fc", "print -l ${(k)builtins} ${(k)reswords}"])
+        }
+        if FileManager.default.isExecutableFile(atPath: "/bin/ksh") {
+            otherWords += try shellWords(binary: "/bin/ksh", arguments: ["-c", "builtin"])
+        }
+
+        for word in builtins + keywords + otherWords {
             #expect(SnippetCommandSurvey.classifiedShellWords.contains(word), """
-                the installed bash reports a word this project has never classified: \(word). \
-                Add it to SnippetCommandSurvey.shellVocabulary with evidence — and get the \
-                evidence from the shells a SERVER runs, not from this one. Put a payload in \
-                every argument shape (a substitution, an array subscript, an assignment through \
-                a subscript, a bare command word) under every option letter, run it in bash 3.2, \
-                bash 5.x and zsh, and look for the marker. If any of them re-parses, the verdict \
-                is .reparses; being harmless here is not evidence.
+                a shell installed on this machine reports a word this project has never \
+                classified: \(word). Add it to SnippetCommandSurvey.shellVocabulary with \
+                evidence — and get the evidence from the shells a SERVER runs, not only from \
+                this one. Put a payload in every argument shape (a substitution, an array \
+                subscript, an assignment through a subscript, a bare command word) under every \
+                option letter, run it in bash 3.2, bash 5.x, zsh, mksh and ksh93, and look for \
+                the marker. If any of them re-parses, the verdict is .reparses; being harmless \
+                here is not evidence.
                 """)
         }
     }
@@ -470,34 +507,127 @@ struct ShellQuotingExecutionTests {
         #expect(seen.count == SnippetCommandSurvey.classifiedShellWords.count)
     }
 
-    /// A verdict of "harmless" has to rest on a measurement. `.reasoned` is
-    /// the label for a behaviour no shell here can demonstrate, and it is
-    /// only ever a reason to REFUSE — a name talked into the accepted set
-    /// without a sweep behind it is the finding of this round in a new
-    /// spelling.
+    /// A verdict of "harmless" has to rest on a measurement that came out
+    /// inert. Two labels are not that, and both were in the accepted set:
+    ///
+    /// - `.reasoned` is the label for a behaviour no shell here can
+    ///   demonstrate, and it is only ever a reason to REFUSE. A name talked
+    ///   into the accepted set without a sweep behind it is the finding of
+    ///   an earlier round in a new spelling.
+    /// - `.executed` means A MARKER WAS CREATED, which is the opposite of
+    ///   harmless. Six reserved words carried it while their own strings
+    ///   said "no marker" — a review found the mislabel by reading, because
+    ///   this test could not see it: the evidence said "measured, it fired"
+    ///   and the verdict said "measured, it is safe", and nothing compared
+    ///   the two. `.probedInert` is the label those six needed, and this
+    ///   half is what makes the next such mislabel fail instead of read
+    ///   oddly.
     @Test func nothingIsCalledHarmlessOnAReason() {
         for fact in SnippetCommandSurvey.shellVocabulary
         where fact.verdict == .doesNotReparse || fact.verdict == .takesAWordNotACommandName {
-            if case .reasoned(let reason) = fact.evidence {
+            switch fact.evidence {
+            case .reasoned(let reason):
                 Issue.record("""
                     \(fact.name) is classified as harmless on a reason rather than a \
-                    measurement (\(reason)). Sweep it against bash 3.2, bash 5.x and zsh, or \
-                    refuse it.
+                    measurement (\(reason)). Sweep it against bash 3.2, bash 5.x, zsh, mksh and \
+                    ksh93, or refuse it.
                     """)
+            case .executed(let shape):
+                Issue.record("""
+                    \(fact.name) is classified as harmless while carrying .executed (\(shape)), \
+                    which means a marker was created. Either the verdict is wrong, or the \
+                    measurement came out inert and the label should be .probedInert.
+                    """)
+            case .sweptInert, .probedInert:
+                break
             }
         }
     }
 
+    /// The reach is a property of re-parsing names and of nothing else, and
+    /// the two derived sets are one set and a subset of it.
+    ///
+    /// `Verdict.reparses` carries its `Reach` as an associated value, so
+    /// "harmless with a reach" is already unwritable; what this pins is the
+    /// half a type cannot: that the template-wide names are a SUBSET of the
+    /// re-parsing ones. Two independent lists would eventually disagree, and
+    /// the disagreement that costs something is a name in the template-wide
+    /// list that the reader never looks up because it is not in the other.
+    @Test func theTemplateWideNamesAreASubsetOfTheReparsingOnes() {
+        #expect(!SnippetCommandSurvey.templateWideReparsingCommands.isEmpty)
+        #expect(
+            SnippetCommandSurvey.templateWideReparsingCommands
+                .isSubset(of: SnippetCommandSurvey.reparsingCommands),
+            "a name is refused template-wide that the reader does not recognise at all")
+        #expect(
+            SnippetCommandSurvey.templateWideReparsingCommands
+                != SnippetCommandSurvey.reparsingCommands,
+            """
+            every re-parsing name refuses the whole template again; the narrowing to the \
+            placeholder's own command has been undone
+            """)
+    }
 
-    /// A re-parsing command in command-name position is refused, whatever
-    /// else the template does. The pure half; the executing half is below.
-    @Test func everyReparsingCommandIsRefusedAsACommandName() {
+
+    /// What the gate must answer when the placeholder is an argument OF
+    /// `name` — derived from the table's reach rather than written out, so
+    /// the expectation cannot drift from the classification it is checking.
+    private func expectedRefusal(
+        forAnArgumentOf name: String
+    ) -> SnippetVariableSubstitution.Problem {
+        SnippetCommandSurvey.templateWideReparsingCommands.contains(name)
+            ? .unanalyzableContext(kind: .evaluation)
+            : .placeholderIsReparsedByItsCommand(name: "X")
+    }
+
+    /// A placeholder in the argument list of a re-parsing command is refused
+    /// — every one of them, and by the mechanism its reach calls for. The
+    /// pure half; the executing half is below.
+    @Test func everyReparsingCommandRefusesAPlaceholderAmongItsArguments() {
         for name in SnippetCommandSurvey.reparsingCommands {
             #expect(
                 SnippetVariableSubstitution.firstDeclarationProblem(
                     command: "\(name) {{X}}", variables: [placeholder("X")])
-                    == .unanalyzableContext(kind: .evaluation),
-                "a command classified as re-parsing was accepted as a command name")
+                    == expectedRefusal(forAnArgumentOf: name),
+                "a command classified as re-parsing accepted a value in its own argument list")
+        }
+    }
+
+    /// The other direction of the same rule, and the one that was too wide
+    /// before: a re-parsing name somewhere ELSE in the template does not
+    /// refuse a placeholder that never reaches it.
+    ///
+    /// The maintainer agreed to a price of three templates in which the
+    /// placeholder is an argument TO the re-parsing command. What was
+    /// actually charged was every template mentioning one of forty-five
+    /// names anywhere — `tar czf {{OUT}} /srv && printf 'done\n'` was
+    /// refused over a `printf` the value never goes near. A `printf` in a
+    /// different command of the same line protects nothing, so it may not
+    /// cost anything either.
+    ///
+    /// Built from the table, one template per name, so a name added later is
+    /// covered without anybody remembering to add it. The names whose reach
+    /// is the whole template are the exception and stay refused — after
+    /// `eval` or `alias` or `hash -p`, "which command is this an argument
+    /// of" has no honest answer.
+    @Test func aReparsingNameElsewhereInTheTemplateDoesNotRefuseTheValue() {
+        for name in SnippetCommandSurvey.reparsingCommands {
+            let command = "echo {{X}}; \(name) z"
+            let problem = SnippetVariableSubstitution.firstDeclarationProblem(
+                command: command, variables: [placeholder("X")])
+            if SnippetCommandSurvey.templateWideReparsingCommands.contains(name) {
+                #expect(
+                    problem == .unanalyzableContext(kind: .evaluation), """
+                    \(name) can change what a later word runs, so a placeholder anywhere in the \
+                    same template has to stay refused
+                    """)
+            } else {
+                #expect(problem == nil, """
+                    \(name) re-parses its own arguments only, and the placeholder here is an \
+                    argument of echo. Refusing it is the over-wide refusal this test exists to \
+                    keep closed.
+                    """)
+            }
         }
     }
 
@@ -571,12 +701,27 @@ struct ShellQuotingExecutionTests {
             ReparseCase(
                 template: "alias {{X}}", value: "reparse_alias=touch MARKER",
                 prefix: "shopt -s expand_aliases\n", suffix: "\nreparse_alias"),
+            // `hash -p` sat in the ACCEPTED set until a review ran it. It
+            // takes a PATH, which is what a `{{PATH}}` placeholder holds,
+            // and what it does with the path outlives the command: every
+            // later `zzz` in the session runs it. That is why its reach is
+            // the whole template rather than its own argument list.
+            ReparseCase(
+                template: "hash -p {{X}} zzz", value: "./reparse_hashed.sh",
+                prefix: "printf '#!/bin/sh\\ntouch MARKER\\n' > reparse_hashed.sh\n"
+                    + "chmod +x reparse_hashed.sh\n",
+                suffix: "\nzzz"),
         ])
     func aReparsingBuiltinIsRefusedAndWouldOtherwiseRun(testCase: ReparseCase) throws {
+        // The command name is the template's first word in every case here,
+        // and the reach of that name decides which refusal is the right one
+        // — the whole template for `eval` and `source`, this command's
+        // argument list for `let` and `declare`.
+        let commandName = String(testCase.template.split(separator: " ")[0])
         #expect(
             SnippetVariableSubstitution.firstDeclarationProblem(
                 command: testCase.template, variables: [placeholder("X")])
-                == .unanalyzableContext(kind: .evaluation),
+                == expectedRefusal(forAnArgumentOf: commandName),
             "the gate accepted a template whose command name re-parses its arguments")
 
         let resolved = SnippetVariableSubstitution.resolve(
@@ -653,12 +798,18 @@ struct ShellQuotingExecutionTests {
             "return {{X}}",
             "mapfile -C {{X}} -c 1 arr",
             "zstyle -g {{X}}",
+            "ulimit {{X}}",
+            "ulimit -n {{X}}",
+            "nameref y={{X}}",
+            "readonly {{X}}",
+            "integer {{X}}",
         ])
     func theTemplatesThisShellCannotDisproveAreStillRefused(command: String) {
+        let commandName = String(command.split(separator: " ")[0])
         #expect(
             SnippetVariableSubstitution.firstDeclarationProblem(
                 command: command, variables: [placeholder("X")])
-                == .unanalyzableContext(kind: .evaluation),
+                == expectedRefusal(forAnArgumentOf: commandName),
             """
             the gate accepted a template whose command name re-parses on a shell macSCP may \
             well be talking to. This machine cannot show the marker; that is the reason the \
@@ -675,12 +826,69 @@ struct ShellQuotingExecutionTests {
     /// have to get right — and a reader that gets it wrong accepts. This
     /// test exists so the cost shows up as a decision somebody made, not as
     /// a surprise in a bug report.
+    ///
+    /// These are the templates the maintainer accepted as refused, and the
+    /// placeholder is that command's OWN argument in every one of them.
+    /// That is what makes them the right pin for the narrowing below: the
+    /// narrowing scopes a refusal to the placeholder's own command, and
+    /// here the placeholder's own command is the re-parsing one — so the
+    /// narrowing may not reach them, and this test fails if it ever does.
     @Test func theUnionPostureRefusesEverydayTemplatesAndSaysSo() {
         for command in ["[ -f {{X}} ]", "test -f {{X}}", "printf '%s' {{X}}", "export FOO={{X}}"] {
             #expect(
                 SnippetVariableSubstitution.firstDeclarationProblem(
-                    command: command, variables: [placeholder("X")]) != nil,
+                    command: command, variables: [placeholder("X")])
+                    == .placeholderIsReparsedByItsCommand(name: "X"),
                 "\(command) is accepted again; the union posture has been softened somewhere")
+        }
+    }
+
+    /// And the cost that was NOT agreed, now not charged.
+    ///
+    /// Each of these has its placeholder in an ordinary command and a
+    /// re-parsing name somewhere else on the line. Every one of them was
+    /// refused before the refusal was narrowed to the placeholder's own
+    /// command, and the reason each was refused — `printf`, `[`, `exit`,
+    /// `set`, `return`, `break` — never sees the value at all.
+    ///
+    /// The second half is the one that makes this more than a preference:
+    /// each template is resolved with a payload in the value and run, and
+    /// the marker must NOT appear. An accepted template that executes its
+    /// payload is the failure this whole area exists to prevent, and the
+    /// narrowing is exactly the kind of change that could introduce one.
+    ///
+    /// EXECUTES THE PAYLOAD, on purpose, in a fresh scratch directory.
+    @Test(
+        "a re-parsing name in another command of the same template costs nothing",
+        arguments: [
+            "tar czf out.tgz {{X}} && printf 'done\\n'",
+            "cd /tmp && [ -d .git ] && ls {{X}}",
+            "rsync -a {{X}} /backup; exit 0",
+            "cat {{X}} | head -n 100; return 0",
+            "echo {{X}}; set -e",
+            "echo {{X}}; test -f /etc/hosts",
+            "for f in a b; do echo {{X}}; break; done",
+            "if [ -d /tmp ]; then echo {{X}}; fi",
+            "printf 'start\\n'; ls {{X}}",
+            "export FOO=1; ls {{X}}",
+        ])
+    func aNarrowedRefusalAcceptsAndStaysSafe(command: String) throws {
+        #expect(
+            SnippetVariableSubstitution.firstDeclarationProblem(
+                command: command, variables: [placeholder("X")]) == nil,
+            """
+            \(command) is refused although the placeholder is an argument of a harmless \
+            command. This is the over-wide refusal the narrowing removed.
+            """)
+
+        let resolved = SnippetVariableSubstitution.resolve(
+            command: command, variables: [placeholder("X")],
+            values: ["X": "$(touch MARKER)"])
+        try withScratchDirectory { directory in
+            try runInBash(resolved, in: directory)
+            #expect(
+                !markerExists("MARKER", in: directory),
+                "an accepted template executed its value; the narrowing opened a hole")
         }
     }
 }

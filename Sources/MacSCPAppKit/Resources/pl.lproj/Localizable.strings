@@ -855,6 +855,7 @@
 "snippets.variables.error.heredoc" = "To polecenie używa dokumentu wbudowanego (<<). macSCP nie widzi, które jego części są w cudzysłowie, więc nie potrafi ustalić, gdzie trafiłaby wartość — i żadnej tam nie wstawi.";
 "snippets.variables.error.unbalancedQuoting" = "Cudzysłów w tym poleceniu nie zamyka się w tym samym wierszu, w którym się otwiera. macSCP nie potrafi ustalić, czy wartość trafiłaby w cudzysłów, więc żadnej tam nie wstawi.";
 "snippets.variables.error.placeholderPosition %@" = "„%@” nie jest prostym argumentem polecenia. Tylko tam macSCP potrafi zabezpieczyć wartość — usuń go z nazwy polecenia, celu przekierowania lub komentarza.";
+"snippets.variables.error.reparsedArgument %@" = "Polecenie, do którego należy „%@”, odczytuje swoje argumenty z powrotem jako kod powłoki (np. [, test, printf -v lub exit). Cudzysłowy nie zabezpieczą tam wartości, więc macSCP żadnej nie wstawi.";
 "snippets.variables.error.commandSubstitution" = "To polecenie uruchamia w sobie inne polecenie ($(…), odwrócone apostrofy lub podpowłokę). macSCP nie potrafi ustalić, gdzie trafiłaby tam wartość, więc żadnej nie wstawi.";
 "snippets.variables.error.expansion" = "To polecenie używa rozwinięcia, którego macSCP nie potrafi odczytać (${…}, $((…)) lub $'…'). Nie potrafi ustalić, gdzie trafiłaby wartość, więc żadnej nie wstawi.";
 "snippets.variables.error.evaluation" = "To polecenie przekazuje swoje argumenty z powrotem do powłoki (eval). Cudzysłowy nie zabezpieczą tam wartości, więc macSCP żadnej nie wstawi.";

@@ -852,6 +852,7 @@
 "snippets.variables.error.heredoc" = "This command uses a here-document (<<). macSCP can't see which parts of it are quoted, so it can't tell where a value would end up — and won't place one there.";
 "snippets.variables.error.unbalancedQuoting" = "A quote in this command doesn't close on the line it opens. macSCP can't tell whether a value would end up inside quotes, so it won't place one there.";
 "snippets.variables.error.placeholderPosition %@" = "“%@” isn't a plain argument of the command. macSCP can only keep a value safe there — take it out of the command name, a redirection target or a comment.";
+"snippets.variables.error.reparsedArgument %@" = "The command “%@” belongs to reads its arguments back as shell code (like [, test, printf -v or exit). Quoting can't keep a value safe there, so macSCP won't place one.";
 "snippets.variables.error.commandSubstitution" = "This command runs another command inside itself ($(…), backticks or a subshell). macSCP can't tell where a value would end up in there, so it won't place one.";
 "snippets.variables.error.expansion" = "This command uses an expansion macSCP can't read (${…}, $((…)) or $'…'). It can't tell where a value would end up, so it won't place one.";
 "snippets.variables.error.evaluation" = "This command hands its arguments back to the shell (eval). Quoting can't keep a value safe there, so macSCP won't place one.";

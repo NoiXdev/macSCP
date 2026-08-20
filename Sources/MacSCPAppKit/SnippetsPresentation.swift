@@ -244,6 +244,12 @@ func snippetVariableProblemText(for problem: SnippetVariableSubstitution.Problem
                 "snippets.variables.error.placeholderPosition %@",
                 "“%@” isn't a plain argument of the command. macSCP can only keep a value safe there — take it out of the command name, a redirection target or a comment."),
             name)
+    case .placeholderIsReparsedByItsCommand(let name):
+        return String(
+            format: L10n.string(
+                "snippets.variables.error.reparsedArgument %@",
+                "The command “%@” belongs to reads its arguments back as shell code (like [, test, printf -v or exit). Quoting can't keep a value safe there, so macSCP won't place one."),
+            name)
     case .unanalyzableContext(.commandSubstitution):
         return L10n.string(
             "snippets.variables.error.commandSubstitution",

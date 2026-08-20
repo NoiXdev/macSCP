@@ -32,6 +32,18 @@ public enum SnippetVariableSubstitution {
         /// all land here, because acceptance requires a positive answer and
         /// there was none.
         case placeholderNotInArgumentPosition(name: String)
+        /// The placeholder IS a plain unquoted argument — of a command that
+        /// hands its own arguments back to the shell. `[ -f {{PATH}} ]`,
+        /// `printf '%s' {{X}}`, `export FOO={{VALUE}}`, `exit {{CODE}}`.
+        /// Quoting produces one literal word and the shell evaluates that
+        /// word anyway, so this is the one refusal that is about the
+        /// COMMAND rather than about the position.
+        ///
+        /// Separate from `placeholderNotInArgumentPosition` because the
+        /// advice differs: there is nothing to move the placeholder out of,
+        /// and the sentence that says "take it out of the command name, a
+        /// redirection target or a comment" would be wrong here.
+        case placeholderIsReparsedByItsCommand(name: String)
 
         /// Which unsurveyable construct was found. Named, because a refusal
         /// that does not say what it saw cannot be acted on. The recogniser
@@ -235,6 +247,15 @@ public enum SnippetVariableSubstitution {
     /// construct the recogniser did not understand, and not understanding
     /// meant accepting.
     ///
+    /// `.reparsedArgument` is the one placement that is a plain argument and
+    /// still fails. It is what the survey emits for the arguments of a
+    /// command whose NAME re-parses them — `[`, `printf`, `exit` — and it
+    /// exists so that such a name refuses the placeholder standing in ITS
+    /// argument list rather than every placeholder in the template. The
+    /// names that can change what a LATER word means (`eval`, `alias`,
+    /// `hash -p`) do not come through here at all: the survey refuses those
+    /// whole, and they arrive as `.unanalyzableContext(.evaluation)`.
+    ///
     /// A `nil` placement — the occurrence lies in no single recognised span
     /// — is the structural default and lands on
     /// `placeholderNotInArgumentPosition` through the `default` arm below.
@@ -271,6 +292,8 @@ public enum SnippetVariableSubstitution {
                     break
                 case .quoted:
                     return .placeholderInsideQuotes(name: variable.name)
+                case .reparsedArgument:
+                    return .placeholderIsReparsedByItsCommand(name: variable.name)
                 default:
                     return .placeholderNotInArgumentPosition(name: variable.name)
                 }
