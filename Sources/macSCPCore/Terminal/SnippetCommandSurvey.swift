@@ -931,6 +931,25 @@ extension SnippetCommandSurvey {
                     }
                     continue
                 }
+                // `{fd}>f cmd …`: bash from 4.1 and ksh93 read `{NAME}`
+                // running straight into a `<` or a `>` as a
+                // DESCRIPTOR-VARIABLE assignment, which means the command
+                // name is the word BEHIND the redirection. This reader took
+                // `{fd}` for the name and never looked the real one up —
+                // the same hole the digit spelling had, one spelling over:
+                // `{fd}>f eval 'touch MARKER'` creates the marker in
+                // bash 4.4, 5.0 and 5.2.37 and in both ksh93 builds.
+                //
+                // Refused rather than consumed like the digit prefix,
+                // because `{` also opens a group command (`{ echo x; }`)
+                // and telling the two apart is one more lexical role in the
+                // reader that has produced this branch's last two critical
+                // findings. Consuming it would buy nothing anyway:
+                // `sawRedirection` refuses a placeholder behind the
+                // operator either way.
+                if scalar == "{", opensDescriptorVariable() {
+                    return .refused(.unrecognizedSyntax)
+                }
                 if let refusal = readWord() {
                     return .refused(refusal)
                 }
@@ -999,6 +1018,29 @@ extension SnippetCommandSurvey {
             guard scan < scalars.endIndex, scalars[scan] == "<" || scalars[scan] == ">"
             else { return nil }
             return scan
+        }
+
+        /// Whether `index` sits on the `{` of a `{NAME}` that runs straight
+        /// into a `<` or a `>` — bash's and ksh93's descriptor-variable
+        /// spelling of a file-descriptor prefix. `NAME` is the identifier
+        /// those shells accept there, and nothing else: `{ echo x; }` has a
+        /// blank after the brace and `{1}>f` has no identifier, so neither
+        /// is one.
+        ///
+        /// Only ever asked from the top of `read()`, which is a word
+        /// boundary — the same condition that makes the digit prefix right.
+        private func opensDescriptorVariable() -> Bool {
+            var scan = scalars.index(after: index)
+            guard scan < scalars.endIndex, ShellScalar.isASCIILetterOrUnderscore(scalars[scan])
+            else { return false }
+            while scan < scalars.endIndex,
+                  ShellScalar.isASCIILetterOrUnderscore(scalars[scan])
+                  || ShellScalar.isASCIIDigit(scalars[scan]) {
+                scan = scalars.index(after: scan)
+            }
+            guard scan < scalars.endIndex, scalars[scan] == "}" else { return false }
+            scan = scalars.index(after: scan)
+            return scan < scalars.endIndex && (scalars[scan] == "<" || scalars[scan] == ">")
         }
 
         /// ONE redirection operator, read as a unit.

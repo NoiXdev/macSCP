@@ -1065,4 +1065,38 @@ struct ShellQuotingExecutionTests {
             }
         }
     }
+    /// `{fd}>` is bash's and ksh93's descriptor-VARIABLE prefix, and the
+    /// command name is the word behind it — so the reader that took `{fd}`
+    /// for the name never compared the real one against anything.
+    ///
+    /// Measured: `{fd}>f eval 'touch MARKER'` creates the marker in bash
+    /// 4.4, bash 5.0, bash 5.2.37, ksh93u+m 1.0.4 and ksh93u+ 2012, and
+    /// `{fd}>f declare 'x[$(touch MARKER)]=1'` in the three bash builds.
+    /// The template was ACCEPTED before this round. `/bin/bash` on macOS is
+    /// 3.2.57, which does not have the syntax at all — `/bin/ksh` is the
+    /// shell on THIS machine that demonstrates it.
+    ///
+    /// EXECUTES THE PAYLOAD, on purpose, in a fresh scratch directory.
+    @Test func aDescriptorVariablePrefixIsRefusedAndWouldOtherwiseRun() throws {
+        #expect(
+            SnippetVariableSubstitution.firstDeclarationProblem(
+                command: "{fd}>f eval {{X}}", variables: [placeholder("X")])
+                == .unanalyzableContext(kind: .unrecognizedSyntax))
+
+        guard FileManager.default.isExecutableFile(atPath: "/bin/ksh") else {
+            Issue.record("""
+                /bin/ksh is not on this machine, so the shell that demonstrates `{fd}>` here                 could not be asked. The refusal above is pinned; the execution behind it is                 not.
+                """)
+            return
+        }
+        let resolved = SnippetVariableSubstitution.resolve(
+            command: "{fd}>f eval {{X}}", variables: [placeholder("X")],
+            values: ["X": "touch MARKER"])
+        try withScratchDirectory { directory in
+            try run(resolved, with: "/bin/ksh", in: directory)
+            #expect(
+                markerExists("MARKER", in: directory),
+                "/bin/ksh no longer runs the command behind a `{fd}>` prefix")
+        }
+    }
 }

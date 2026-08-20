@@ -239,6 +239,33 @@ struct SnippetCommandSurveyTests {
         #expect(placement(of: "{{X}}", in: "ls & echo {{X}}") == .argument)
     }
 
+    /// `{fd}>` is bash's and ksh93's descriptor-VARIABLE prefix, and the
+    /// command name is the word behind it.
+    ///
+    /// Refused rather than modelled. The reader used to take `{fd}` for the
+    /// command name and hand the real one on as an ordinary argument, which
+    /// is the digit spelling's hole one spelling over:
+    /// `{fd}>f eval 'touch MARKER'` creates the marker in bash 4.4, 5.0 and
+    /// 5.2.37 and in both ksh93 builds.
+    ///
+    /// Only that shape is refused. A `{` that opens a group command has a
+    /// blank behind it and keeps working, and a brace anywhere else in a
+    /// word is ordinary content.
+    @Test func aDescriptorVariablePrefixIsRefused() {
+        for command in [
+            "{fd}>f eval {{X}}", "{fd}>f ls {{X}}", "{fd}>>f declare {{X}}",
+            "{fd}<f ls {{X}}", "{_x9}>f eval {{X}}", "ls {fd}>f {{X}}",
+        ] {
+            #expect(
+                refusal(command) == .unrecognizedSyntax,
+                "\(command) reads `{fd}>` as a command name again")
+        }
+        #expect(placement(of: "{{X}}", in: "{ echo {{X}}; exit 0; }") == .argument)
+        #expect(placement(of: "{{X}}", in: "A=1 a{b}>f {{X}}") == .afterRedirection)
+        #expect(placement(of: "{{X}}", in: "echo {} {{X}}") == .argument)
+        #expect(placement(of: "{{X}}", in: "echo {fd} {{X}}") == .argument)
+    }
+
     // MARK: - Placements that are not safe
 
     @Test(
