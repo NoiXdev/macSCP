@@ -248,7 +248,7 @@ func snippetVariableProblemText(for problem: SnippetVariableSubstitution.Problem
         return String(
             format: L10n.string(
                 "snippets.variables.error.reparsedArgument %@",
-                "The command “%@” belongs to reads its arguments back as shell code (like [, test, printf -v or exit). Quoting can't keep a value safe there, so macSCP won't place one."),
+                "The command that “%@” belongs to reads its arguments back as shell code (like [, test, printf -v or exit). Quoting can't keep a value safe there, so macSCP won't place one."),
             name)
     case .unanalyzableContext(.commandSubstitution):
         return L10n.string(

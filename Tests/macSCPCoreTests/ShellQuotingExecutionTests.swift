@@ -717,6 +717,14 @@ struct ShellQuotingExecutionTests {
             ReparseCase(template: "declare 2>&1 {{X}}", value: "x[$(touch MARKER)]=1"),
             ReparseCase(template: "let >&2 {{X}}", value: "a[$(touch MARKER)]"),
             ReparseCase(template: "read 2>&1 {{X}}", value: "a[$(touch MARKER)]"),
+            // `jobs -x` sat in the accepted set on the argument that
+            // `jobs -x 'touch M'` finds no program of that name. A value is
+            // one word, and a path is one word: `jobs -x './ev.sh'` runs
+            // it, here and now rather than at some later command.
+            ReparseCase(
+                template: "jobs -x {{X}}", value: "./reparse_jobbed.sh",
+                prefix: "printf '#!/bin/sh\\ntouch MARKER\\n' > reparse_jobbed.sh\n"
+                    + "chmod +x reparse_jobbed.sh\n"),
             ReparseCase(
                 template: "hash -p {{X}} zzz", value: "./reparse_hashed.sh",
                 prefix: "printf '#!/bin/sh\\ntouch MARKER\\n' > reparse_hashed.sh\n"
@@ -769,6 +777,52 @@ struct ShellQuotingExecutionTests {
         let resolved = SnippetVariableSubstitution.resolve(
             command: command, variables: [placeholder("X")],
             values: ["X": "a[$(touch MARKER)]"])
+        try withScratchDirectory { directory in
+            try runInBash(resolved, in: directory)
+            #expect(
+                markerExists("MARKER", in: directory), """
+                this template no longer executes its payload; the refusal above may now be \
+                defending nothing
+                """)
+        }
+    }
+
+    /// `function` is the other reserved word whose body this reader cannot
+    /// see into, and the second half of that sentence is what made it
+    /// dangerous rather than merely unmodelled.
+    ///
+    /// It was classified as taking a WORD and read as an ordinary command,
+    /// so `expectsCommandName` was false from the `function` onwards and
+    /// every word of the body — `f`, `{`, and the command name of the first
+    /// command inside it — came out an argument. The command name in the
+    /// body was compared against nothing at all, which is how
+    /// `function f { printf -v {{X}} '%s' y; }; f` was accepted (it fires
+    /// on bash 4.4, bash 5.2 and zsh 5.9) and how the shape below runs on
+    /// this machine's bash 3.2.57. `f() { … }` was never affected: `(`
+    /// refuses.
+    ///
+    /// The verdict is `.unmodelledSyntax` by decision, not by inability —
+    /// see the case's own comment for what modelling the body would have
+    /// cost. The price paid instead is stated in the second assertion: a
+    /// template that defines a function is refused whole, in both
+    /// spellings, even when its body is harmless.
+    ///
+    /// EXECUTES THE PAYLOAD, on purpose, in a fresh scratch directory.
+    @Test func aFunctionDefinitionIsRefusedAndWouldOtherwiseRun() throws {
+        let command = "function f { eval {{X}}; }; f"
+        #expect(
+            SnippetVariableSubstitution.firstDeclarationProblem(
+                command: command, variables: [placeholder("X")])
+                == .unanalyzableContext(kind: .unrecognizedSyntax),
+            "the gate read a function body as an argument list")
+        #expect(
+            SnippetVariableSubstitution.firstDeclarationProblem(
+                command: "function f { echo {{X}}; }; f", variables: [placeholder("X")])
+                == .unanalyzableContext(kind: .unrecognizedSyntax),
+            "the cost of refusing `function` outright is a harmless body refused with it")
+
+        let resolved = SnippetVariableSubstitution.resolve(
+            command: command, variables: [placeholder("X")], values: ["X": "touch MARKER"])
         try withScratchDirectory { directory in
             try runInBash(resolved, in: directory)
             #expect(

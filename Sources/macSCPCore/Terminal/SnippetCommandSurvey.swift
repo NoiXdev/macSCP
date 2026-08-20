@@ -298,10 +298,13 @@ extension SnippetCommandSurvey {
     /// ## What `compgen` does now
     ///
     /// It is a LOWER BOUND and never a licence. `everyLocalShellWordIsInTheTable`
-    /// asks the installed `bash` for its builtins and reserved words and
-    /// fails if any of them is missing from this table, so a name macSCP has
-    /// never seen still goes red. It cannot make a name safe: safety comes
-    /// from an entry with evidence, written by a person who ran something.
+    /// asks every shell installed on the machine running the tests — `bash`
+    /// through `compgen -b` and `-k`, `zsh` through `${(k)builtins}` and
+    /// `${(k)reswords}`, `ksh` through `builtin` — and fails if any name
+    /// they report is missing from this table, so a name macSCP has never
+    /// seen still goes red. It cannot make a name safe: safety comes from
+    /// an entry with evidence, written by a person who ran something, and
+    /// on a shell a SERVER runs rather than this one.
     ///
     /// ## The boundary this table does NOT reach
     ///
@@ -313,21 +316,35 @@ extension SnippetCommandSurvey {
     /// by standing decision.
     ///
     /// Two BUILTINS have that shape, counted by trying them: `jobs -x` and
-    /// `hash -p`. `jobs -x ./evil` execs the program the value names, and it
-    /// is still classified as not re-parsing, because that is what it does —
-    /// the shell parses nothing again and the value stays exactly one word,
-    /// so `jobs -x 'touch M'` looks for a program called `touch M` and finds
-    /// none. `hash -p` was measured after a review found it in this same
-    /// accepted set, and it is the worse of the two in both directions: the
-    /// argument it takes IS a path, which is what a `{{PATH}}` placeholder
-    /// naturally holds, and the effect outlives the command —
+    /// `hash -p`. Both are refused, and the second one is the reason the
+    /// first is.
+    ///
+    /// `hash -p` was measured after a review found it in the accepted set:
+    /// the argument it takes IS a path, which is what a `{{PATH}}`
+    /// placeholder naturally holds, and the effect outlives the command —
     /// `hash -p ./ev.sh ls` makes every later `ls` in that session run
-    /// `./ev.sh` (measured, bash 3.2.57 and 5.2.37). That second half is
-    /// what moves it out of the accepted set: it does not re-read its own
-    /// argument, it changes what a LATER command name means, which is the
-    /// `.theWholeTemplate` reach. So `jobs -x` is now the ONE accepted
-    /// builtin that puts a value in command-name position, and this
-    /// paragraph rather than its verdict is where that is written down.
+    /// `./ev.sh` (measured, bash 3.2.57 and 5.2.37). It does not re-read
+    /// its own argument; it changes what a LATER command name means, which
+    /// is the `.theWholeTemplate` reach.
+    ///
+    /// `jobs -x` was kept in the accepted set on the argument that
+    /// `jobs -x 'touch M'` looks for a program called `touch M` and finds
+    /// none. That sentence is true and it does not carry: a `{{PATH}}` or
+    /// `{{SCRIPT}}` value is ONE word and one path, and
+    /// `jobs -x './ev.sh'` runs it (measured, bash 3.2.57, 4.4 and 5.2.37).
+    /// It is the same argument that moved `hash -p`, so it gets the same
+    /// answer. The reach is `.theWholeTemplate` rather than
+    /// `.itsOwnArguments` because of what `.itsOwnArguments` promises: that
+    /// nothing installed by the re-parse can outlive the command. A program
+    /// the value names can do anything, and "anything" is not confined to
+    /// an argument list — so the narrow reach is not available here, whether
+    /// or not the shell parses a second time. The cost is that a template
+    /// naming `jobs` in command-name position is refused whole.
+    ///
+    /// No accepted builtin now puts a value in command-name position.
+    /// Counted in the pass that wrote this paragraph, that is a set of
+    /// zero, and this paragraph rather than either verdict is where the
+    /// reasoning for both is written down.
     /// How far one re-parsing name's danger reaches, and therefore how much
     /// of the template its presence refuses.
     ///
@@ -370,9 +387,29 @@ extension SnippetCommandSurvey {
         /// Reserved-word syntax this reader does not model at all. Refused
         /// rather than read on, because reading on is what turns "no rule
         /// for this" into acceptance.
+        ///
+        /// `function` is here by decision rather than by inability. Its
+        /// body could be modelled — a `{` after `function NAME` opens a
+        /// region where command names resume — but this reader models no
+        /// other block, `f() { … }` is already refused because `(` is, and
+        /// a reader that starts modelling ONE block is a reader that has to
+        /// be right about where that block ends. The cost is stated where
+        /// it falls: a snippet that DEFINES a function cannot carry a
+        /// placeholder anywhere in it, in either spelling.
         case unmodelledSyntax
         /// A reserved word that takes a WORD rather than a command name.
         /// Read as an ordinary command, which is what it behaves like here.
+        ///
+        /// The condition on that "here" is load-bearing, and `function`
+        /// used to be in this set while breaking it: the word it takes is
+        /// followed by a `{` that opens a BODY, and a body is full of
+        /// command names. Reading it as an ordinary command left
+        /// `expectsCommandName` false across the whole body, so
+        /// `function f { printf -v {{X}} '%s' y; }; f` was accepted with
+        /// its `printf` never compared against anything. A reserved word
+        /// belongs here only while nothing between it and the next
+        /// separator is a command name; where a command name follows, the
+        /// verdict is `.unmodelledSyntax`.
         case takesAWordNotACommandName
         /// Measured not to turn an argument into shell code.
         case doesNotReparse
@@ -413,10 +450,18 @@ extension SnippetCommandSurvey {
         }
     }
 
-    /// The checked-in classification. Its scope is the union of the builtins
-    /// and reserved words of bash 3.2, bash 4.4, bash 5.x and zsh — a name
-    /// only one of them has still belongs here, because the shell on the
-    /// other end may be that one.
+    /// The checked-in classification. Its scope is the union of the
+    /// builtins and reserved words of every shell this project has measured
+    /// — counted here, eight: bash 3.2.57, bash 4.4, bash 5.2.37, zsh 5.9,
+    /// mksh R59, ksh93u+m 1.0.4, dash 0.5.12 and posh 0.14 — and a name
+    /// only ONE of them has still belongs here, because the shell on the
+    /// other end may be that one. `nameref`, `hist`, `alarm`, `compound`,
+    /// `enum`, `login`, `newgrp`, `realpath`, `rename`, `redirect`,
+    /// `sleep`, `stop`, `vmap` and `vpath` are in the list for exactly that
+    /// reason: neither bash nor zsh has ever reported one of them, and
+    /// `nameref y='a[$(touch M)]'` creates the marker in mksh. Anyone
+    /// adding a fifteenth name reads this sentence first, so it says the
+    /// scope the entries below actually have.
     static let shellVocabulary: [Fact] = [
         Fact("eval", .reparses(.theWholeTemplate), .executed("every shell: eval '$(touch M)'")),
         Fact("command", .reparses(.theWholeTemplate),
@@ -434,6 +479,8 @@ extension SnippetCommandSurvey {
              .executed("zsh 5.9: emulate zsh -c 'touch M'")),
         Fact("hash", .reparses(.theWholeTemplate),
              .executed("bash 3.2/4.4/5.2: hash -p ./ev.sh zzz, then zzz runs it; zsh: hash zzz=")),
+        Fact("jobs", .reparses(.theWholeTemplate),
+             .executed("bash 3.2/4.4/5.2: jobs -x ./ev.sh runs the program the value names")),
         Fact("compgen", .reparses(.theWholeTemplate),
              .executed("every bash: compgen -C 'touch M' / -W '$(touch M)'")),
         Fact("mapfile", .reparses(.theWholeTemplate),
@@ -545,7 +592,7 @@ extension SnippetCommandSurvey {
         Fact("return", .reparses(.itsOwnArguments),
              .executed("zsh 5.9: return 'x[$(touch M)]=1' — likewise")),
         Fact("shift", .reparses(.itsOwnArguments),
-             .executed("zsh 5.9, mksh, posh: shift 'x[$(touch M)]=1' — likewise")),
+             .executed("zsh 5.9, mksh, posh, ksh93u+: shift 'x[$(touch M)]=1' — likewise")),
         Fact("exit", .reparses(.itsOwnArguments),
              .executed("zsh 5.9: exit 'x[$(touch M)]=1' — likewise")),
         Fact("logout", .reparses(.itsOwnArguments),
@@ -553,7 +600,7 @@ extension SnippetCommandSurvey {
         Fact("bye", .reparses(.itsOwnArguments),
              .executed("zsh 5.9: bye 'x[$(touch M)]=1' — likewise")),
         Fact("ulimit", .reparses(.itsOwnArguments),
-             .executed("mksh R59: ulimit 'a[$(touch M)]' — the count is arithmetic")),
+             .executed("mksh R59, ksh93u+: ulimit 'a[$(touch M)]' — the count is arithmetic")),
         Fact("vared", .reparses(.itsOwnArguments),
              .reasoned("edits a named parameter, the shape read is measured on")),
         Fact("float", .reparses(.itsOwnArguments),
@@ -600,8 +647,8 @@ extension SnippetCommandSurvey {
              .probedInert("for 'a[$(touch M)]' in x — a syntax error wherever it was tried")),
         Fact("select", .takesAWordNotACommandName,
              .probedInert("select 'a[$(touch M)]' in x; do break; done")),
-        Fact("function", .takesAWordNotACommandName,
-             .probedInert("function 'a[$(touch M)]' { :; }")),
+        Fact("function", .unmodelledSyntax,
+             .executed("bash 3.2/5.2, zsh, ksh93: function f { eval 'touch M'; }; f")),
         Fact("foreach", .takesAWordNotACommandName,
              .probedInert("zsh's for: foreach 'a[$(touch M)]' (x) … end")),
         Fact(":", .doesNotReparse, .sweptInert),
@@ -619,7 +666,6 @@ extension SnippetCommandSurvey {
         Fact("false", .doesNotReparse, .sweptInert),
         Fact("fg", .doesNotReparse, .sweptInert),
         Fact("help", .doesNotReparse, .sweptInert),
-        Fact("jobs", .doesNotReparse, .sweptInert),
         Fact("kill", .doesNotReparse, .sweptInert),
         Fact("limit", .doesNotReparse, .sweptInert),
         Fact("log", .doesNotReparse, .sweptInert),
