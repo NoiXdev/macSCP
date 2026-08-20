@@ -130,9 +130,22 @@ public enum SnippetCommandSurvey {
         /// inert: a value containing a newline ends the comment, and
         /// everything after the newline is code again.
         case comment
-        /// The word after a redirection operator. Not an argument of the
-        /// command, and refused rather than reasoned about.
-        case redirectionTarget
+        /// A word standing after a redirection operator: the target
+        /// itself, and every word behind it to the end of the command.
+        /// Not an argument, and refused rather than reasoned about.
+        ///
+        /// It reaches past the target because of what a redirection does
+        /// to the question "whose arguments am I reading". Between a
+        /// command name and a placeholder, an operator is exactly where
+        /// the plausible shells stop agreeing — bash's `{fd}>` puts the
+        /// real command name AFTER it, and `&>` is a whole operator in
+        /// bash, zsh and mksh while dash, posh, yash and ksh93u+ 2012 read
+        /// its `&` as a background separator and start a new command at
+        /// the `>`. Two rounds of this branch tried to model each shape
+        /// and each time one spelling was modelled the wrong way round.
+        /// So no word behind an operator is called an argument, whatever
+        /// the operator turns out to have been.
+        case afterRedirection
     }
 
     /// One recognised span of `command`.
@@ -759,8 +772,27 @@ extension SnippetCommandSurvey {
         var spans: [Span] = []
         /// True where the next word would be the command a shell runs.
         var expectsCommandName = true
-        /// True immediately after a redirection operator.
+        /// True immediately after a redirection operator, for the ONE word
+        /// that is its target. It has to beat `expectsCommandName`: in
+        /// `>f eval {{X}}` the `f` is the target and `eval` is still the
+        /// command name, and a reader that let `f` be the name would hand
+        /// `eval` on as an ordinary argument.
         var expectsRedirectionTarget = false
+        /// True from a redirection operator to the end of that command.
+        ///
+        /// Unlike `expectsRedirectionTarget` this one does not stop at the
+        /// target, and it deliberately does NOT stop at a command name
+        /// either. It is the answer to a class of finding rather than to a
+        /// shape: where the plausible shells disagree about an operator,
+        /// they disagree about WHICH COMMAND the words behind it belong to,
+        /// and every version of this reader that picked one reading was
+        /// wrong for some measured shell. `declare &>f x {{X}}` is the case
+        /// that makes the "not at a command name" part load-bearing — dash
+        /// reads `x` as a command name and `{{X}}` as its argument, bash
+        /// reads both as arguments of `declare`, and
+        /// `declare &>f x 'x[$(touch M)]=1'` creates the marker in bash
+        /// 3.2.57, 4.4, 5.0 and 5.2.37 and in zsh 5.9.
+        var sawRedirection = false
         /// True between a command NAME that re-parses its own arguments and
         /// the end of that command.
         ///
@@ -768,12 +800,8 @@ extension SnippetCommandSurvey {
         /// command starts: it is `beginCommand`, which is what already
         /// answers that question for `expectsCommandName`. Counted in the
         /// pass that wrote this sentence, `read()` calls it from three
-        /// branches: a line feed, a `;` or a `)`, and a `&` or a `|` that
-        /// is not part of a redirection operator. That last qualification is
-        /// the whole of a critical finding: while `&` and `|` ended a
-        /// command unconditionally, the `&` of `2>&1` began one, cleared
-        /// this flag, and handed the placeholder behind it to a command name
-        /// the shell never read. The `&&` and `||` spellings arrive as two
+        /// branches: a line feed, a `;` or a `)`, and a `&` or a `|`.
+        /// The `&&` and `||` spellings arrive as two
         /// `&` or two `|` and reset twice, which is the same answer said
         /// twice. `if`, `then`, `while`, `do` and the other introducers do
         /// NOT reset it, and must not: they leave the command name still to
@@ -850,20 +878,32 @@ extension SnippetCommandSurvey {
                     beginCommand()
                     continue
                 }
-                // A `&` or a `|` ends a simple command — unless it is part
-                // of a REDIRECTION OPERATOR, and `&>` and `&>>` are the two
-                // that begin with one. Reading the `&` of `&>f` as a
-                // separator is the mirror image of the defect
-                // `readRedirectionOperator` exists to close: it starts a
-                // command a shell never started, and the placeholder after
-                // it is judged against the wrong command name.
+                // A `&` or a `|` ends a simple command, and a `&` does so
+                // even when a `>` follows it.
+                //
+                // `&>` was read here as one operator for exactly one round.
+                // Measured on the eight shells this project's table is
+                // scoped to plus ksh93u+ 2012 and yash, `&>` is an operator
+                // in bash 3.2.57, bash 4.4, bash 5.0, bash 5.2.37, zsh 5.9,
+                // mksh R59 and ksh93u+m 1.0.4, and NOT one in dash 0.5.12,
+                // posh 0.14, yash and macOS `/bin/ksh` — there the `&` is
+                // the background separator, `>out.log` opens a new command,
+                // and `ls &>out.log './ev.sh'` runs the script the value
+                // names. Every other operator form this reader knows is an
+                // operator in all of them; `&>` and `&>>` are the only two
+                // the shells split on.
+                //
+                // Where they split, this reader takes the reading that
+                // refuses more, and given `sawRedirection` the separator
+                // reading is that reading in both directions: it keeps
+                // `>out.log` a redirection, so nothing behind it is an
+                // argument either way, AND it puts the next word in
+                // command-name position, where `eval`, `alias` and the rest
+                // of the table are looked up. The operator reading looked
+                // them up nowhere: `ls &>f eval {{X}}` came out ACCEPTED
+                // under it, and `ls &>f eval 'touch MARKER'` creates the
+                // marker in dash 0.5.12, posh, yash and ksh93u+ 2012.
                 if scalar == "&" || scalar == "|" {
-                    if scalar == "&", peek(after: index) == ">" {
-                        if let refusal = readRedirectionOperator() {
-                            return .refused(refusal)
-                        }
-                        continue
-                    }
                     advance()
                     beginCommand()
                     continue
@@ -905,6 +945,7 @@ extension SnippetCommandSurvey {
         private mutating func beginCommand() {
             expectsCommandName = true
             expectsRedirectionTarget = false
+            sawRedirection = false
             commandReparsesItsArguments = false
         }
 
@@ -946,15 +987,6 @@ extension SnippetCommandSurvey {
             scalars[start..<end].contains { $0 == "=" }
         }
 
-        /// The scalar at `position`'s successor, or `nil` at the end of the
-        /// text. A lookahead that cannot run off the end, so the operator
-        /// reader below can ask what follows without repeating the bounds
-        /// check at every step.
-        private func peek(after position: String.Index) -> Unicode.Scalar? {
-            let next = scalars.index(after: position)
-            return next < scalars.endIndex ? scalars[next] : nil
-        }
-
         /// Where the redirection operator starts when `index` is on the
         /// first digit of a file-descriptor prefix, or `nil` when the digits
         /// are an ordinary word. Only the digits are skipped; the operator
@@ -984,15 +1016,21 @@ extension SnippetCommandSurvey {
         ///
         /// So every `&` and `|` that belongs to an operator is consumed
         /// HERE, and the shapes are enumerated rather than pattern-guessed.
-        /// Counted while writing this list, there are nine: `>`, `>>` and
+        /// Counted while writing this list, there are seven: `>`, `>>` and
         /// `<`; the read-write `<>`; the descriptor duplications `>&` and
-        /// `<&`; the clobbering `>|`; and `&>` and `&>>`, the two whose
-        /// first scalar is the `&`. The seven that open with `<` or `>` are
-        /// also reached with a file-descriptor digit run already consumed by
-        /// the caller, which is what `2>&1`, `1>&2` and `0<&-` are. What
-        /// follows a duplication — the `-` of `>&-`, the `m` of `n>&m` — is
-        /// read as an ordinary word, and a word after a redirection is
-        /// `.redirectionTarget`, never an argument.
+        /// `<&`; and the clobbering `>|`. Every one of the seven opens with
+        /// a `<` or a `>`, so every one of them is also reached with a
+        /// file-descriptor digit run already consumed by the caller, which
+        /// is what `2>&1`, `1>&2` and `0<&-` are. What follows a
+        /// duplication — the `-` of `>&-`, the `m` of `n>&m` — is read as an
+        /// ordinary word, and a word after a redirection is
+        /// `.afterRedirection`, never an argument.
+        ///
+        /// `&>` and `&>>` were an eighth and a ninth form for one round and
+        /// are not forms here at all any more: the shells split on them, and
+        /// `read()` says at its `&` branch which way the split went and why
+        /// the separator reading is the refusing one. What reaches this
+        /// method from a `&>` is the bare `>` behind a command boundary.
         ///
         /// Everything else FAILS CLOSED. A `&` or a `|` still standing
         /// after the operator has been read is a shape this reader does not
@@ -1009,8 +1047,6 @@ extension SnippetCommandSurvey {
         /// its own: it is left for the loop, which refuses every `(` as
         /// `.commandSubstitution`.
         private mutating func readRedirectionOperator() -> Refusal? {
-            let bothStreams = scalars[index] == "&"
-            if bothStreams { advance() }
             let openerScalar = scalars[index]
             advance()
             if openerScalar == "<" {
@@ -1021,7 +1057,7 @@ extension SnippetCommandSurvey {
             } else if index < scalars.endIndex {
                 if scalars[index] == ">" {
                     advance()
-                } else if !bothStreams, scalars[index] == "&" || scalars[index] == "|" {
+                } else if scalars[index] == "&" || scalars[index] == "|" {
                     advance()
                 }
             }
@@ -1029,6 +1065,7 @@ extension SnippetCommandSurvey {
                 return .unrecognizedSyntax
             }
             expectsRedirectionTarget = true
+            sawRedirection = true
             return nil
         }
 
@@ -1043,10 +1080,21 @@ extension SnippetCommandSurvey {
         /// whole would put the tail of a command NAME into argument
         /// position, which is the wrong side to be wrong on.
         private mutating func readWord() -> Refusal? {
+            // The order is the rule. `expectsRedirectionTarget` beats the
+            // command name so that `f` in `>f eval {{X}}` is a target and
+            // `eval` is still the name; `expectsCommandName` beats
+            // `sawRedirection` for the same reason, one word further on —
+            // reading `eval` there as "just something behind a redirection"
+            // would refuse the placeholder but skip the lookup that refuses
+            // the TEMPLATE, and `>f alias x=eval; x {{X}}` needs the lookup.
+            // `sawRedirection` comes last: an argument behind an operator is
+            // still an argument of a re-parsing command when there is one,
+            // and `.reparsedArgument` says which command that was.
             let placement: Placement =
-                expectsRedirectionTarget ? .redirectionTarget
+                expectsRedirectionTarget ? .afterRedirection
                 : expectsCommandName ? .commandName
-                : commandReparsesItsArguments ? .reparsedArgument : .argument
+                : commandReparsesItsArguments ? .reparsedArgument
+                : sawRedirection ? .afterRedirection : .argument
             let wordStart = index
             var runStart: String.Index? = index
             var isPlainLiteral = true

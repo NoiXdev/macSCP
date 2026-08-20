@@ -109,8 +109,17 @@ struct ShellQuotingExecutionTests {
     /// purpose: a payload that fails to run and a payload that runs are both
     /// interesting only through the marker file.
     private func runInBash(_ command: String, in directory: URL) throws {
+        try run(command, with: "/bin/bash", in: directory)
+    }
+
+    /// The same, with a shell named explicitly. macOS ships more than one,
+    /// and the findings that made this file what it is were not all
+    /// reproducible in `bash`: `&>` is an operator there and a background
+    /// separator in `/bin/dash` and `/bin/ksh`, and `{fd}>` is syntax
+    /// `/bin/bash` 3.2.57 does not have at all.
+    private func run(_ command: String, with shell: String, in directory: URL) throws {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = ["-c", command]
         process.currentDirectoryURL = directory
         process.standardInput = FileHandle.nullDevice
@@ -937,15 +946,15 @@ struct ShellQuotingExecutionTests {
             "printf 'start\\n'; ls {{X}}",
             "export FOO=1; ls {{X}}",
             // The redirection shapes, from the accepting side. A snippet
-            // that logs its own errors writes `2>&1`, and the placeholder
-            // after it is an argument of the harmless command in front —
-            // which is exactly what the reader must say, without the `&`
-            // making it forget which command that is.
-            "ls 2>&1 {{X}}",
+            // that logs its own errors writes `2>&1`, and it costs the
+            // placeholder nothing as long as the placeholder is not BEHIND
+            // the operator — before it in the same command, or in another
+            // command of the same line. What being behind one costs is
+            // charged in `aRedirectionBeforeThePlaceholderRefusesIt`.
             "cat {{X}} 2>&1 | head -n 100",
             "printf 'a\\n' >&2; ls {{X}}",
-            "ls &>out.log {{X}}",
-            "2>&1 ls {{X}}",
+            "ls {{X}} 2>&1",
+            "ls {{X}} > out.log 2>&1",
         ])
     func aNarrowedRefusalAcceptsAndStaysSafe(command: String) throws {
         #expect(
@@ -964,6 +973,96 @@ struct ShellQuotingExecutionTests {
             #expect(
                 !markerExists("MARKER", in: directory),
                 "an accepted template executed its value; the narrowing opened a hole")
+        }
+    }
+
+    /// What the redirection rule costs, charged where it falls.
+    ///
+    /// Nothing behind a redirection operator is an argument any more, even
+    /// when the command in front of it is as harmless as `ls`. That is a
+    /// real price on a real shape — `ls 2>&1 {{X}}` was accepted for one
+    /// round — and it is paid for the reason the placement's own comment
+    /// gives: behind an operator the plausible shells stop agreeing about
+    /// which command the following words belong to, and two rounds of
+    /// modelling each spelling produced one critical finding each.
+    ///
+    /// A placeholder BEFORE the operator, or in another command of the same
+    /// line, costs nothing; `aNarrowedRefusalAcceptsAndStaysSafe` holds
+    /// that half.
+    @Test func aRedirectionBeforeThePlaceholderRefusesIt() {
+        for command in [
+            "ls 2>&1 {{X}}", "2>&1 ls {{X}}", "ls > out.log {{X}}",
+            "ls &>out.log {{X}}", "ls >>> f {{X}}", "ls 2> >f {{X}}",
+        ] {
+            #expect(
+                SnippetVariableSubstitution.firstDeclarationProblem(
+                    command: command, variables: [placeholder("X")])
+                    == .placeholderNotInArgumentPosition(name: "X"),
+                "\(command) puts a placeholder behind a redirection and is accepted again")
+        }
+    }
+
+    /// `&>` is a redirection operator in some plausible shells and a
+    /// background separator in others, and where it is a separator the
+    /// value is a COMMAND NAME.
+    ///
+    /// Measured with one probe per shell — `./argv.sh &>o.txt './ev.sh'` in
+    /// a fresh directory — across eleven builds: an operator in bash
+    /// 3.2.57, 4.4, 5.0 and 5.2.37, zsh 5.9, mksh R59 and ksh93u+m 1.0.4;
+    /// a separator in dash 0.5.12, posh 0.14, yash and ksh93u+ 2012. Both
+    /// templates below were ACCEPTED while the reader took `&>` for one
+    /// operator, and both run their value in the four that split it.
+    ///
+    /// The second template is the one that says why the separator reading
+    /// is the refusing one rather than merely a different one: reading the
+    /// `&` as a separator puts `eval` in command-name position, where the
+    /// table is consulted. The operator reading consulted it nowhere.
+    ///
+    /// macOS ships two of the four splitting shells. Absent rather than
+    /// required, the way the vocabulary test treats `/bin/ksh` — but if
+    /// neither is here the execution did not happen, and this says so
+    /// instead of passing quietly.
+    ///
+    /// EXECUTES THE PAYLOAD, on purpose, in a fresh scratch directory.
+    @Test func anOperatorTheShellsSplitOnIsRefusedAndWouldOtherwiseRun() throws {
+        #expect(
+            SnippetVariableSubstitution.firstDeclarationProblem(
+                command: "ls &>out.log {{X}}", variables: [placeholder("X")])
+                == .placeholderNotInArgumentPosition(name: "X"))
+        #expect(
+            SnippetVariableSubstitution.firstDeclarationProblem(
+                command: "ls &>out.log eval {{X}}", variables: [placeholder("X")])
+                == .unanalyzableContext(kind: .evaluation))
+
+        let shells = ["/bin/dash", "/bin/ksh"].filter {
+            FileManager.default.isExecutableFile(atPath: $0)
+        }
+        #expect(!shells.isEmpty, """
+            neither /bin/dash nor /bin/ksh is on this machine, so no shell that reads the `&`             of `&>` as a separator could be asked. The refusals above are pinned; the             execution behind them is not.
+            """)
+
+        for shell in shells {
+            try withScratchDirectory { directory in
+                let resolved = SnippetVariableSubstitution.resolve(
+                    command: "ls &>out.log {{X}}", variables: [placeholder("X")],
+                    values: ["X": "./split_operator.sh"])
+                try run(
+                    "printf '#!/bin/sh\\ntouch MARKER\\n' > split_operator.sh\n"
+                        + "chmod +x split_operator.sh\n" + resolved,
+                    with: shell, in: directory)
+                #expect(
+                    markerExists("MARKER", in: directory),
+                    "\(shell) no longer runs the value as a command name behind `&>`")
+            }
+            try withScratchDirectory { directory in
+                let resolved = SnippetVariableSubstitution.resolve(
+                    command: "ls &>out.log eval {{X}}", variables: [placeholder("X")],
+                    values: ["X": "touch MARKER"])
+                try run(resolved, with: shell, in: directory)
+                #expect(
+                    markerExists("MARKER", in: directory),
+                    "\(shell) no longer reaches the `eval` behind `&>`")
+            }
         }
     }
 }

@@ -27,10 +27,10 @@ public enum SnippetVariableSubstitution {
         case placeholderInsideQuotes(name: String)
         /// The placeholder was reached but is not in the one position a
         /// single-quoted value survives: an unquoted argument of a
-        /// top-level command. Command-name position, a redirection target,
-        /// inside a comment, or straddling a boundary no rule classifies —
-        /// all land here, because acceptance requires a positive answer and
-        /// there was none.
+        /// top-level command. Command-name position, anywhere behind a
+        /// redirection operator, inside a comment, or straddling a boundary
+        /// no rule classifies — all land here, because acceptance requires a
+        /// positive answer and there was none.
         case placeholderNotInArgumentPosition(name: String)
         /// The placeholder IS a plain unquoted argument — of a command that
         /// hands its own arguments back to the shell. `[ -f {{PATH}} ]`,
@@ -42,7 +42,7 @@ public enum SnippetVariableSubstitution {
         /// Separate from `placeholderNotInArgumentPosition` because the
         /// advice differs: there is nothing to move the placeholder out of,
         /// and the sentence that says "take it out of the command name, a
-        /// redirection target or a comment" would be wrong here.
+        /// redirection or a comment" would be wrong here.
         case placeholderIsReparsedByItsCommand(name: String)
 
         /// Which unsurveyable construct was found. Named, because a refusal

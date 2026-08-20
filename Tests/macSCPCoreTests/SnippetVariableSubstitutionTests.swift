@@ -215,7 +215,7 @@ struct SnippetVariableSubstitutionTests {
     /// it is decided.
     ///
     /// Every entry in the corpus above lands on a span that EXISTS
-    /// (`.commandName`, `.comment`, `.redirectionTarget`, `.quoted`), so not
+    /// (`.commandName`, `.comment`, `.afterRedirection`, `.quoted`), so not
     /// one of them produced a `nil` placement, and two mutations that switch
     /// the rule off — containment relaxed to `overlaps`, and an uncovered
     /// position accepted alongside `.argument` — both left the whole suite
