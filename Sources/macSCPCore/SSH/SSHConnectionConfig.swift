@@ -117,10 +117,28 @@ public struct SSHConnectionConfig: Equatable, Sendable {
     /// Characters rejected outright anywhere in a control character check:
     /// whitespace, newlines, and ASCII control characters (including NUL
     /// and DEL) — shared by both target predicates below.
+    /// Walked over `Unicode.Scalar`s, not `Character`s — see `ShellScalar`.
+    /// A space carrying a combining mark is one `Character` whose
+    /// `isWhitespace` is false, and a check that misses it is a check an
+    /// attacker chooses the input for.
     private static func hasWhitespaceOrControlCharacter(_ value: String) -> Bool {
-        value.contains { char in
-            char.isWhitespace || char.isNewline || (char.asciiValue.map { $0 < 0x20 || $0 == 0x7F } ?? false)
+        value.unicodeScalars.contains { scalar in
+            ShellScalar.isWhitespace(scalar) || scalar.value < 0x20 || scalar.value == 0x7F
         }
+    }
+
+    /// Scalars no target host or username may contain. A **ban** list, which
+    /// is why it is matched scalar by scalar: an allow list survives being
+    /// read in the wrong alphabet (a decorated character simply is not on
+    /// it — which is why the two jump whitelists above need no change),
+    /// while a ban list read in `Character`s silently lets through every
+    /// banned character that carries a combining mark. `'` followed by
+    /// U+0308 is one `Character` that is not in a `Set<Character>` of
+    /// metacharacters, and it is an apostrophe to every shell there is.
+    private static func containsBannedScalar(
+        _ value: String, banned: Set<Unicode.Scalar>
+    ) -> Bool {
+        value.unicodeScalars.contains { banned.contains($0) }
     }
 
     /// Ban list for the target `host` (M11d fix3, finding I-3): rejects an
@@ -137,11 +155,11 @@ public struct SSHConnectionConfig: Equatable, Sendable {
     private static func isValidTargetHost(_ value: String) -> Bool {
         guard let first = value.first, first != "-" else { return false }
         guard !hasWhitespaceOrControlCharacter(value) else { return false }
-        let bannedCharacters: Set<Character> = [
+        let banned: Set<Unicode.Scalar> = [
             "'", "\"", "`", "$", "&", ";", "|", "<", ">", "(", ")", "{", "}", "[", "]",
             "\\", ",", "*", "?", "!", "#", "~", "^", "=", "@", "/",
         ]
-        return !value.contains { bannedCharacters.contains($0) }
+        return !containsBannedScalar(value, banned: banned)
     }
 
     /// Ban list for the target `username` (M11d fix3, finding I-3): the
@@ -156,11 +174,11 @@ public struct SSHConnectionConfig: Equatable, Sendable {
     private static func isValidTargetUsername(_ value: String) -> Bool {
         guard let first = value.first, first != "-" else { return false }
         guard !hasWhitespaceOrControlCharacter(value) else { return false }
-        let bannedCharacters: Set<Character> = [
+        let banned: Set<Unicode.Scalar> = [
             "'", "\"", "`", "$", "&", ";", "|", "<", ">", "(", ")", "{", "}", "[", "]",
             ",", "*", "?", "!", "#", "~", "^", "/",
         ]
-        return !value.contains { bannedCharacters.contains($0) }
+        return !containsBannedScalar(value, banned: banned)
     }
 
     public let host: String

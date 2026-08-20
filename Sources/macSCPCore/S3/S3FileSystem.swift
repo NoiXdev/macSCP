@@ -625,16 +625,32 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     }
 
     /// Escapes the five XML predefined entities — the only characters that
-    /// are structurally significant inside an element's text content. "&"
-    /// MUST be replaced first, or escaping the other four would re-escape
-    /// the "&" those replacements themselves introduce.
+    /// are structurally significant inside an element's text content.
+    ///
+    /// One pass over `Unicode.Scalar`s, deliberately not a chain of
+    /// `replacingOccurrences` calls. Two reasons, and the second is the one
+    /// that made this worth rewriting: chained replacement has to order "&"
+    /// first or it re-escapes the ampersands the later replacements
+    /// introduce (a correctness trap that only ordering hides), and
+    /// `replacingOccurrences` matches on extended grapheme clusters, so a
+    /// key holding "&" or "<" followed by a combining mark is not an
+    /// occurrence to it and goes into the request body unescaped. A key can
+    /// hold anything — an object named "a&b.txt" is ordinary. Deciding one
+    /// scalar at a time has neither problem.
     private static func xmlEscape(_ string: String) -> String {
-        string
-            .replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
-            .replacingOccurrences(of: "\"", with: "&quot;")
-            .replacingOccurrences(of: "'", with: "&apos;")
+        var escaped = ""
+        escaped.reserveCapacity(string.unicodeScalars.count)
+        for scalar in string.unicodeScalars {
+            switch scalar {
+            case "&": escaped += "&amp;"
+            case "<": escaped += "&lt;"
+            case ">": escaped += "&gt;"
+            case "\"": escaped += "&quot;"
+            case "'": escaped += "&apos;"
+            default: escaped.unicodeScalars.append(scalar)
+            }
+        }
+        return escaped
     }
 
     /// Maps an absolute browser path to the S3 object key used for a FILE

@@ -181,12 +181,14 @@ public struct CLIToolInstaller: Sendable {
     /// `/usr/local/bin`. **Displayed for copying, never executed** — the app
     /// spawns no process for it and holds no elevated rights.
     ///
-    /// The tool path is single-quoted (embedded `'` escaped as `'\''`, the
-    /// standard technique, same as `SSHCommandBuilder`) so an app installed
-    /// under a path containing a space or a shell metacharacter still yields
-    /// one correct command.
+    /// The tool path is single-quoted through `PosixQuoting`, the same one
+    /// place `SSHCommandBuilder` and the snippet substitution use, so an app
+    /// installed under a path containing a space or a shell metacharacter
+    /// still yields one correct command. This used to be a private copy of
+    /// the two-line rule; the copy was subtly wrong in exactly the way the
+    /// original was, which is the argument against copies.
     public var systemWideInstallCommand: String {
-        let quoted = Self.posixSingleQuote(toolURL.path(percentEncoded: false))
+        let quoted = PosixQuoting.singleQuoted(toolURL.path(percentEncoded: false))
         return "sudo mkdir -p /usr/local/bin && sudo ln -sf \(quoted) /usr/local/bin/\(Self.toolName)"
     }
 
@@ -211,7 +213,4 @@ public struct CLIToolInstaller: Sendable {
         url.standardizedFileURL.resolvingSymlinksInPath().path(percentEncoded: false)
     }
 
-    private static func posixSingleQuote(_ value: String) -> String {
-        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
 }

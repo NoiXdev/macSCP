@@ -223,35 +223,149 @@ struct SnippetCommandSurveyTests {
         #expect(refusal("echo {{X}} \\") == .unrecognizedSyntax)
     }
 
+    // MARK: - The alphabet the reader works in
+
+    /// A quote carrying a combining mark is one Swift `Character` that
+    /// compares unequal to `"'"`. Reading shell text in `Character`s
+    /// therefore walked straight past it, stayed in the unquoted state, and
+    /// emitted an `.argument` span over a placeholder a shell reads as
+    /// quoted — fourteen templates of this shape were accepted and executed
+    /// their payload. Positive recognition is no defence when the span
+    /// itself is wrong, which is why the reader now works in
+    /// `Unicode.Scalar`s (see `ShellScalar`).
+    @Test(
+        "a quote carrying a combining mark still opens a quoted span",
+        arguments: ["\u{0308}", "\u{FE0F}", "\u{200D}", "\u{0300}", "\u{20E3}", "\u{1AB0}"])
+    func aDecoratedQuoteIsSeen(mark: String) {
+        #expect(placement(of: "{{X}}", in: "echo x'\(mark){{X}}'\(mark)") == .quoted)
+        #expect(placement(of: "{{X}}", in: "echo x\"\(mark){{X}}\"\(mark)") == .quoted)
+    }
+
+    /// The other half of that: reading in scalars is not "refuse anything
+    /// containing a combining mark". A mark on ordinary text changes
+    /// nothing, and marking only ONE quote of a pair still leaves a
+    /// perfectly balanced pair — the mark is content, exactly as a shell
+    /// reads it. (Under the old `Character` reading a single marked quote
+    /// looked like an odd number of quotes and came out `.unbalancedQuoting`
+    /// by accident, which is a right answer for a wrong reason.)
+    @Test func aCombiningMarkIsOtherwiseOrdinaryContent() {
+        #expect(placement(of: "{{X}}", in: "echo mu\u{0308}nchen {{X}}") == .argument)
+        #expect(placement(of: "{{X}}", in: "echo x\u{0308} {{X}}") == .argument)
+        #expect(refusal("echo x'\u{0308}{{X}}'") == nil)
+        #expect(placement(of: "{{X}}", in: "echo x'\u{0308}{{X}}'") == .quoted)
+        #expect(placement(of: "{{X}}", in: "echo x'{{X}}'\u{0308}") == .quoted)
+    }
+
+    /// The line-handling check the scalar decision owes: `"\r\n"` is one
+    /// `Character` and two scalars, so a scalar walk sees two line breaks
+    /// where a character walk saw one. Both are state resets, so the
+    /// outcomes are unchanged — verified here rather than assumed.
+    @Test func carriageReturnsAreStillLineBreaks() {
+        #expect(refusal("echo \"a\r\nb\" {{X}}") == .unbalancedQuoting)
+        #expect(refusal("echo \"a\rb\" {{X}}") == .unbalancedQuoting)
+        #expect(placement(of: "{{X}}", in: "echo foo\r\necho {{X}}") == .argument)
+        #expect(placement(of: "{{X}}", in: "echo foo\recho {{X}}") == .argument)
+        #expect(placement(of: "{{X}}", in: "echo hi # note\r\necho {{X}}") == .argument)
+    }
+
+    // MARK: - Containment, not overlap
+
+    /// `placement(of:in:)` requires containment in ONE span, and two spans
+    /// that abut do not add up to one. Built by hand because the shapes that
+    /// produce it through `survey` are few: a range covering the end of one
+    /// span and the start of the next is exactly the "classified by no
+    /// rule" case, and it must come out `nil` rather than picking whichever
+    /// span it happens to touch first.
+    @Test func aRangeStraddlingTwoAbuttingSpansIsUnclassified() {
+        let text = "abcdef"
+        let middle = text.index(text.startIndex, offsetBy: 3)
+        let spans = [
+            SnippetCommandSurvey.Span(placement: .argument, range: text.startIndex..<middle),
+            SnippetCommandSurvey.Span(placement: .argument, range: middle..<text.endIndex),
+        ]
+        let straddling =
+            text.index(text.startIndex, offsetBy: 2)..<text.index(text.startIndex, offsetBy: 4)
+        #expect(SnippetCommandSurvey.placement(of: straddling, in: spans) == nil)
+        #expect(
+            SnippetCommandSurvey.placement(of: text.startIndex..<middle, in: spans) == .argument)
+    }
+
     // MARK: - The gate is not the highlighter
 
-    /// Three review rounds travelled the path "a change made for colouring
-    /// moved a security verdict". They cannot any more, because the two
-    /// share no code — and this test is what keeps that structural, rather
-    /// than a thing somebody remembers.
+    /// Review rounds travelled the path "a change made for colouring moved a
+    /// security verdict". They cannot any more, because the gate shares no
+    /// code with the highlighter — and this test is what keeps that
+    /// structural, rather than a thing somebody remembers.
+    ///
+    /// The scope is DERIVED, not listed: every Swift file under
+    /// `Sources/macSCPCore` except the highlighter's own is scanned, so a
+    /// third file introduced into the gate path is covered the moment it
+    /// exists. An earlier version named two files, and a helper the survey
+    /// delegated to would have slipped between them. The App layer is out of
+    /// scope on purpose — colouring a text field is the highlighter's job
+    /// and `SnippetCommandEditor` is supposed to call it.
     ///
     /// A source scan, in the idiom the App layer's wiring guards already
     /// use: `#filePath` is `<repoRoot>/Tests/macSCPCoreTests/…`, so three
     /// `deletingLastPathComponent()` calls recover the repo root regardless
-    /// of `swift test`'s working directory.
-    @Test func neitherTheRecogniserNorTheGateCallsTheHighlighter() throws {
+    /// of `swift test`'s working directory. Fail-closed: if the directory
+    /// cannot be walked, the test errors rather than passing.
+    @Test func noCoreFileButTheHighlighterItselfNamesTheHighlighter() throws {
+        let files = try Self.coreSourceFiles()
+        #expect(!files.isEmpty, "the Core source tree could not be walked")
+        for file in files where file.lastPathComponent != "SnippetHighlighter.swift" {
+            let code = try Self.codeLines(of: file)
+            #expect(!code.contains { $0.contains("SnippetHighlighter") }, """
+                \(file.lastPathComponent) reaches into SnippetHighlighter. The highlighter is a \
+                colouring tokenizer whose approximations are invisible when colouring and \
+                load-bearing when gating; sharing it is how review round after review round got \
+                a payload past this check.
+                """)
+        }
+    }
+
+    /// The comparison-unit decision, kept structural in the same way.
+    ///
+    /// `replacingOccurrences(of:with:)` matches on extended grapheme
+    /// clusters and canonical equivalence, so escaping a shell or markup
+    /// metacharacter with it silently misses every occurrence that carries a
+    /// combining mark — which is how a value broke out of the single quotes
+    /// the quoter had just put around it. Also derived rather than listed:
+    /// the whole Core tree is scanned for the shape, so a new copy of the
+    /// mistake anywhere in Core fails here rather than waiting for a review.
+    @Test func noCoreFileEscapesAMetacharacterWithReplacingOccurrences() throws {
+        let metacharacters = ["'", "\\\"", "`", "$", "&", "<", ">", ";", "|", "#", "\\\\"]
+        let needles = metacharacters.map { #"replacingOccurrences(of: ""# + $0 + "\"" }
+        for file in try Self.coreSourceFiles() {
+            let code = try Self.codeLines(of: file)
+            for needle in needles {
+                #expect(!code.contains { $0.contains(needle) }, """
+                    \(file.lastPathComponent) escapes a metacharacter with \
+                    replacingOccurrences, which matches on grapheme clusters and misses any \
+                    occurrence carrying a combining mark. Decide it one Unicode.Scalar at a \
+                    time instead — see ShellScalar.
+                    """)
+            }
+        }
+    }
+
+    /// Every `.swift` file under `Sources/macSCPCore`.
+    private static func coreSourceFiles() throws -> [URL] {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
-        for relativePath in [
-            "Sources/macSCPCore/Terminal/SnippetCommandSurvey.swift",
-            "Sources/macSCPCore/Terminal/SnippetVariableSubstitution.swift",
-        ] {
-            let source = try String(
-                contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8)
-            let code = source
-                .components(separatedBy: "\n")
-                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
-            #expect(!code.contains { $0.contains("SnippetHighlighter") }, """
-                \(relativePath) reaches into SnippetHighlighter. The highlighter is a colouring \
-                tokenizer whose approximations are invisible when colouring and load-bearing \
-                when gating; sharing it is how four review rounds got a payload past this check.
-                """)
-        }
+        let core = repoRoot.appendingPathComponent("Sources/macSCPCore")
+        let contents = try FileManager.default.subpathsOfDirectory(atPath: core.path)
+        return contents
+            .filter { $0.hasSuffix(".swift") }
+            .map { core.appendingPathComponent($0) }
+    }
+
+    /// The lines of `file` that are not whole-line comments — so a doc
+    /// comment may name what the code may not.
+    private static func codeLines(of file: URL) throws -> [String] {
+        try String(contentsOf: file, encoding: .utf8)
+            .components(separatedBy: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
     }
 }

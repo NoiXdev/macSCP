@@ -10,11 +10,11 @@ import Foundation
 /// `SnippetHighlighter` answers a colouring question, and a colouring
 /// question tolerates approximation: a token boundary a shade off is
 /// invisible. This type answers a security question, where the same
-/// approximation decides whether a typed value is data or code. Four review
-/// rounds broke the gate through exactly that gap — the tokenizer did not
-/// understand a construct, and *not understanding meant accepting*. Sharing
-/// one recogniser between the two meant a change made for colour could move
-/// the gate, silently.
+/// approximation decides whether a typed value is data or code. Every review
+/// round that broke this gate broke it through exactly that gap — the
+/// tokenizer did not understand a construct, and *not understanding meant
+/// accepting*. Sharing one recogniser between the two meant a change made
+/// for colour could move the gate, silently.
 ///
 /// So there is no shared code with `SnippetHighlighter`, on purpose. The
 /// duplication (both know what a quoted span is) is the price of the two
@@ -38,6 +38,16 @@ import Foundation
 /// words, separators, redirections, comments, quoted spans — and refuses
 /// everything else. Nesting of any kind is a refusal rather than a
 /// recursion.
+///
+/// ## The alphabet it reads in
+///
+/// `Unicode.Scalar`, for the reasons `ShellScalar` sets out. Reading shell
+/// text in `Character`s meant a quote carrying a combining mark was one
+/// symbol that compared unequal to `"'"`, so this type stayed in the
+/// unquoted state across it and emitted an `.argument` span over a
+/// placeholder a shell reads as quoted. Positive recognition does not save
+/// you there: the span is not missing, it is *wrong*. Containment in one
+/// span can only be as good as the span.
 public enum SnippetCommandSurvey {
     /// What stopped the reading. Each case names a construct, not a
     /// mistake: every one of these is a perfectly good thing to write in a
@@ -140,23 +150,25 @@ extension SnippetCommandSurvey {
     /// derived quoting state from a token list produced elsewhere, and the
     /// gap between "how the tokenizer split it" and "how a shell reads it"
     /// is where every past escape lived.
+    ///
+    /// It holds the command's `String.UnicodeScalarView` and NOT the
+    /// `String`, so the unit `ShellScalar` settles on is the only unit
+    /// available in here: a `Character` comparison cannot be written against
+    /// this cursor without first putting the `String` back as a property,
+    /// which is a visible edit rather than a slip. Scalar-view indices are
+    /// `String.Index` values, so the spans handed out stay comparable with
+    /// ranges a caller found by ordinary text search.
     private struct Reader {
-        let text: String
+        let scalars: String.UnicodeScalarView
         var index: String.Index
         var spans: [Span] = []
-        /// True where a `#` would begin a comment, exactly as a shell has
-        /// it: at the start of the text, after unquoted whitespace or a
-        /// newline, or after a separator. NOT in the middle of a word —
-        /// `echo a#b` passes a literal `a#b`, and reading that `#` as a
-        /// comment is what let fifteen templates through a previous round.
-        var atWordStart = true
         /// True where the next word would be the command a shell runs.
         var expectsCommandName = true
         /// True immediately after a redirection operator.
         var expectsRedirectionTarget = false
 
         init(text: String) {
-            self.text = text
+            self.scalars = text.unicodeScalars
             self.index = text.startIndex
         }
 
@@ -180,35 +192,47 @@ extension SnippetCommandSurvey {
         static let reparsingCommands: Set<String> = ["eval", "command", "builtin"]
 
         mutating func read() -> Reading {
-            while index < text.endIndex {
-                let character = text[index]
+            while index < scalars.endIndex {
+                let scalar = scalars[index]
 
-                if character.isNewline {
+                if ShellScalar.isNewline(scalar) {
                     advance()
                     beginCommand()
                     continue
                 }
-                if character.isWhitespace {
+                if ShellScalar.isWhitespace(scalar) {
                     advance()
-                    atWordStart = true
                     continue
                 }
-                if character == "#", atWordStart {
+                // A `#` that reaches the top of this loop always begins a
+                // comment, exactly as a shell has it, because every path
+                // back to the top is a word boundary: the start of the
+                // text, a line break, unquoted whitespace, a separator, a
+                // redirection operator. A `#` in the MIDDLE of a word never
+                // arrives here — `readWord` does not treat `#` as a word
+                // terminator, so it is consumed inside the word and
+                // `echo a#b` passes a literal `a#b`. That, and nothing
+                // else, is what stops a mid-word `#` from being read as a
+                // comment; reading it as one is what let fifteen templates
+                // through a previous round.
+                if scalar == "#" {
                     let start = index
-                    while index < text.endIndex, !text[index].isNewline { advance() }
+                    while index < scalars.endIndex, !ShellScalar.isNewline(scalars[index]) {
+                        advance()
+                    }
                     spans.append(Span(placement: .comment, range: start..<index))
                     continue
                 }
-                if character == ";" || character == "&" || character == "|" || character == ")" {
+                if scalar == ";" || scalar == "&" || scalar == "|" || scalar == ")" {
                     advance()
                     beginCommand()
                     continue
                 }
-                if character == "(" || character == "`" {
+                if scalar == "(" || scalar == "`" {
                     return .refused(.commandSubstitution)
                 }
-                if character == "<" || character == ">" {
-                    if let refusal = readRedirectionOperator(character) {
+                if scalar == "<" || scalar == ">" {
+                    if let refusal = readRedirectionOperator(scalar) {
                         return .refused(refusal)
                     }
                     continue
@@ -221,28 +245,35 @@ extension SnippetCommandSurvey {
         }
 
         private mutating func advance() {
-            index = text.index(after: index)
+            index = scalars.index(after: index)
         }
 
         private mutating func beginCommand() {
-            atWordStart = true
             expectsCommandName = true
             expectsRedirectionTarget = false
+        }
+
+        /// The scalars of `start..<end` as a `String`. Built through the
+        /// scalar view rather than by subscripting the original `String`,
+        /// because a scalar-aligned index need not sit on a grapheme
+        /// cluster boundary and slicing a `String` at one is not a
+        /// well-defined thing to ask for.
+        private func text(from start: String.Index, to end: String.Index) -> String {
+            String(String.UnicodeScalarView(scalars[start..<end]))
         }
 
         /// `<`, `<<`, `<<<`, `>`, `>>` and the process substitutions that
         /// open with them. `<<` in any of its forms is a here-document —
         /// the two characters are read here, in the unquoted state, so a
         /// `<<` inside a string or a comment never reaches this branch.
-        private mutating func readRedirectionOperator(_ character: Character) -> Refusal? {
-            let next = text.index(after: index)
-            if next < text.endIndex {
-                if character == "<", text[next] == "<" { return .heredoc }
-                if text[next] == "(" { return .commandSubstitution }
+        private mutating func readRedirectionOperator(_ scalar: Unicode.Scalar) -> Refusal? {
+            let next = scalars.index(after: index)
+            if next < scalars.endIndex {
+                if scalar == "<", scalars[next] == "<" { return .heredoc }
+                if scalars[next] == "(" { return .commandSubstitution }
             }
             advance()
-            if character == ">", index < text.endIndex, text[index] == ">" { advance() }
-            atWordStart = true
+            if scalar == ">", index < scalars.endIndex, scalars[index] == ">" { advance() }
             expectsRedirectionTarget = true
             return nil
         }
@@ -260,33 +291,33 @@ extension SnippetCommandSurvey {
             var runStart: String.Index? = index
             var isPlainLiteral = true
 
-            while index < text.endIndex {
-                let character = text[index]
-                if character.isWhitespace || character == ";" || character == "&"
-                    || character == "|" || character == "<" || character == ">"
-                    || character == "(" || character == ")" || character == "`" {
+            while index < scalars.endIndex {
+                let scalar = scalars[index]
+                if ShellScalar.isWhitespace(scalar) || scalar == ";" || scalar == "&"
+                    || scalar == "|" || scalar == "<" || scalar == ">"
+                    || scalar == "(" || scalar == ")" || scalar == "`" {
                     break
                 }
-                if character == "'" || character == "\"" {
+                if scalar == "'" || scalar == "\"" {
                     closeRun(&runStart, placement: placement)
                     isPlainLiteral = false
-                    if let refusal = readQuotedSpan(quote: character) { return refusal }
+                    if let refusal = readQuotedSpan(quote: scalar) { return refusal }
                     runStart = index
                     continue
                 }
-                if character == "\\" {
+                if scalar == "\\" {
                     closeRun(&runStart, placement: placement)
                     isPlainLiteral = false
-                    let escaped = text.index(after: index)
+                    let escaped = scalars.index(after: index)
                     // A backslash with nothing after it is the text running
                     // out mid-construct, which is a refusal and not a
                     // literal backslash.
-                    guard escaped < text.endIndex else { return .unrecognizedSyntax }
-                    index = text.index(after: escaped)
+                    guard escaped < scalars.endIndex else { return .unrecognizedSyntax }
+                    index = scalars.index(after: escaped)
                     runStart = index
                     continue
                 }
-                if character == "$" {
+                if scalar == "$" {
                     closeRun(&runStart, placement: placement)
                     isPlainLiteral = false
                     if let refusal = readExpansion() { return refusal }
@@ -298,25 +329,67 @@ extension SnippetCommandSurvey {
             closeRun(&runStart, placement: placement)
 
             if placement == .commandName {
-                // A command name that is not one plain literal word cannot
-                // be compared against the re-parsing set at all, and a name
-                // this type cannot read is precisely the "unknown shape"
-                // case that must land on refusal. `"eval" {{X}}` is the
-                // shape that makes this load-bearing rather than tidy.
-                guard isPlainLiteral else { return .unrecognizedSyntax }
-                let word = String(text[wordStart..<index])
-                if Reader.reparsingCommands.contains(word) { return .evaluation }
+                let word = text(from: wordStart, to: index)
+                // A word a shell reads as an assignment is not a command
+                // name at all, so it need not be readable as one:
+                // `PGPASSWORD='secret' psql -h {{HOST}}` is an everyday
+                // snippet, and requiring a plain literal here refused the
+                // whole command over the quotes around `secret`. The value
+                // side stays fully surveyed — its literal runs are
+                // `.commandName` and its quoted spans are `.quoted`, so a
+                // placeholder *inside* the assignment is still refused, and
+                // anything the value contains that this type cannot read
+                // (`$(…)`, a backtick, `${…}`) still refuses the command.
+                //
+                // The test for "this is an assignment" is the STRICT one
+                // (`opensAssignment`: a POSIX identifier then `=`, read out
+                // of plain literal scalars), because it is the test that
+                // lets a word through without the name checks below.
+                if !opensAssignment(from: wordStart) {
+                    // A command name that is not one plain literal word
+                    // cannot be compared against the re-parsing set at all,
+                    // and a name this type cannot read is precisely the
+                    // "unknown shape" case that must land on refusal.
+                    // `"eval" {{X}}` is the shape that makes this
+                    // load-bearing rather than tidy.
+                    guard isPlainLiteral else { return .unrecognizedSyntax }
+                    if Reader.reparsingCommands.contains(word) { return .evaluation }
+                }
                 // An assignment prefix (`DB=x cmd …`) and a word that
                 // introduces another command both leave the command name
-                // still to come.
-                let isAssignmentPrefix = word.contains("=")
-                if !isAssignmentPrefix, !Reader.commandIntroducers.contains(word) {
+                // still to come. `contains("=")` is the LOOSE test on
+                // purpose, and deliberately not the same one as above: a
+                // false positive here only keeps the reader expecting a
+                // name, which makes the NEXT word be checked as one instead
+                // of accepted as an argument — the strict direction.
+                if !word.contains("="), !Reader.commandIntroducers.contains(word) {
                     expectsCommandName = false
                 }
             }
             expectsRedirectionTarget = false
-            atWordStart = false
             return nil
+        }
+
+        /// Whether the word starting at `start` is what a shell reads as an
+        /// assignment: a POSIX identifier (`[A-Za-z_][A-Za-z0-9_]*`)
+        /// followed by `=`, spelled in plain literal scalars.
+        ///
+        /// Read from the raw scalars rather than from the assembled word,
+        /// so a quote, an escape or a `$` anywhere in the name makes it
+        /// false: `"A"=1 cmd` is refused as an unreadable command name even
+        /// though a shell may treat it as an assignment. Over-refusing is
+        /// the safe direction for a test whose true answer skips checks.
+        private func opensAssignment(from start: String.Index) -> Bool {
+            var scan = start
+            guard scan < index, ShellScalar.isASCIILetterOrUnderscore(scalars[scan])
+            else { return false }
+            scan = scalars.index(after: scan)
+            while scan < index,
+                  ShellScalar.isASCIILetterOrUnderscore(scalars[scan])
+                  || ShellScalar.isASCIIDigit(scalars[scan]) {
+                scan = scalars.index(after: scan)
+            }
+            return scan < index && scalars[scan] == "="
         }
 
         private mutating func closeRun(_ runStart: inout String.Index?, placement: Placement) {
@@ -335,27 +408,27 @@ extension SnippetCommandSurvey {
         /// close on the line it opens is refused rather than followed: a
         /// multi-line quoted string is legal shell, this type simply
         /// declines to reason across the break.
-        private mutating func readQuotedSpan(quote: Character) -> Refusal? {
+        private mutating func readQuotedSpan(quote: Unicode.Scalar) -> Refusal? {
             let start = index
             advance()
-            while index < text.endIndex {
-                let character = text[index]
-                if character.isNewline { return .unbalancedQuoting }
-                if character == quote {
+            while index < scalars.endIndex {
+                let scalar = scalars[index]
+                if ShellScalar.isNewline(scalar) { return .unbalancedQuoting }
+                if scalar == quote {
                     advance()
                     spans.append(Span(placement: .quoted, range: start..<index))
                     return nil
                 }
                 if quote == "\"" {
-                    if character == "`" { return .commandSubstitution }
-                    if character == "$" {
+                    if scalar == "`" { return .commandSubstitution }
+                    if scalar == "$" {
                         if let refusal = readExpansion() { return refusal }
                         continue
                     }
-                    if character == "\\" {
-                        let escaped = text.index(after: index)
-                        guard escaped < text.endIndex else { return .unbalancedQuoting }
-                        index = text.index(after: escaped)
+                    if scalar == "\\" {
+                        let escaped = scalars.index(after: index)
+                        guard escaped < scalars.endIndex else { return .unbalancedQuoting }
+                        index = scalars.index(after: escaped)
                         continue
                     }
                 }
@@ -371,29 +444,29 @@ extension SnippetCommandSurvey {
         /// a placeholder overlapping one is uncontained and therefore
         /// unsafe.
         private mutating func readExpansion() -> Refusal? {
-            let next = text.index(after: index)
-            guard next < text.endIndex else { return .expansion }
-            let character = text[next]
-            if character == "(" {
-                let afterParenthesis = text.index(after: next)
-                if afterParenthesis < text.endIndex, text[afterParenthesis] == "(" {
+            let next = scalars.index(after: index)
+            guard next < scalars.endIndex else { return .expansion }
+            let scalar = scalars[next]
+            if scalar == "(" {
+                let afterParenthesis = scalars.index(after: next)
+                if afterParenthesis < scalars.endIndex, scalars[afterParenthesis] == "(" {
                     return .expansion
                 }
                 return .commandSubstitution
             }
-            if character == "{" || character == "'" || character == "\"" { return .expansion }
-            if character.isASCII, character.isLetter || character == "_" {
+            if scalar == "{" || scalar == "'" || scalar == "\"" { return .expansion }
+            if ShellScalar.isASCIILetterOrUnderscore(scalar) {
                 var scan = next
-                while scan < text.endIndex,
-                      text[scan].isASCII,
-                      text[scan].isLetter || text[scan].isNumber || text[scan] == "_" {
-                    scan = text.index(after: scan)
+                while scan < scalars.endIndex,
+                      ShellScalar.isASCIILetterOrUnderscore(scalars[scan])
+                      || ShellScalar.isASCIIDigit(scalars[scan]) {
+                    scan = scalars.index(after: scan)
                 }
                 index = scan
                 return nil
             }
-            if character.isASCII, character.isNumber {
-                index = text.index(after: next)
+            if ShellScalar.isASCIIDigit(scalar) {
+                index = scalars.index(after: next)
                 return nil
             }
             return .expansion

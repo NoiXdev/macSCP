@@ -144,7 +144,7 @@ struct SnippetVariableSubstitutionTests {
         #expect(problem == nil)
     }
 
-    // --- the class four review rounds opened, closed ------------------
+    // --- the class the review rounds opened, closed -------------------
 
     /// Every template a whole-branch review got past this check, each one
     /// verified by the reviewer against real `bash`: the resolved string was
@@ -208,6 +208,107 @@ struct SnippetVariableSubstitutionTests {
         #expect(
             SnippetVariableSubstitution.firstDeclarationProblem(
                 command: template, variables: [placeholder("X")]) == expected)
+    }
+
+    /// The structural default itself — "covered by no recognised span is
+    /// unsafe" — exercised through `firstDeclarationProblem`, which is where
+    /// it is decided.
+    ///
+    /// Every entry in the corpus above lands on a span that EXISTS
+    /// (`.commandName`, `.comment`, `.redirectionTarget`, `.quoted`), so not
+    /// one of them produced a `nil` placement, and two mutations that switch
+    /// the rule off — containment relaxed to `overlaps`, and an uncovered
+    /// position accepted alongside `.argument` — both left the whole suite
+    /// green. A default nothing exercises is a default nothing protects.
+    ///
+    /// These templates do produce `nil`: the backslash escape consumes the
+    /// first `{`, so the `.argument` span begins one scalar INSIDE the
+    /// occurrence. The occurrence therefore starts in text no span covers
+    /// and ends inside an `.argument` — partly in, wholly in nothing,
+    /// straddling the boundary between the two. Under `overlaps` it is
+    /// accepted; under `case .argument, .none` it is accepted; here it is
+    /// refused, and by the named problem rather than by "some problem".
+    @Test(
+        "a placeholder no single span contains is refused, and that is checked",
+        arguments: [
+            #"echo \{{X}}"#,
+            #"echo pre\{{X}} post"#,
+            #"echo a && echo \{{X}}"#,
+        ])
+    func anUncoveredPlaceholderIsRefused(template: String) {
+        #expect(
+            SnippetVariableSubstitution.firstDeclarationProblem(
+                command: template, variables: [placeholder("X")])
+                == .placeholderNotInArgumentPosition(name: "X"))
+    }
+
+    /// The quoted assignment prefix, which this pass deliberately opened up.
+    ///
+    /// `PGPASSWORD='secret' psql -h {{HOST}}` is an everyday snippet, and
+    /// before this pass the quotes around `secret` refused the whole command
+    /// as `unrecognizedSyntax` — the command name had to be one plain
+    /// literal word, and an assignment prefix is read in command-name
+    /// position. A word a shell reads as an assignment is not a command name
+    /// at all, so it no longer has to be readable as one. The placeholder
+    /// still has to be a top-level argument after it.
+    @Test(
+        "a quoted assignment prefix no longer refuses the whole command",
+        arguments: [
+            "PGPASSWORD='secret' psql -h {{HOST}}",
+            #"PGPASSWORD="secret" psql -h {{HOST}}"#,
+            "MSG='hello world' ./notify.sh {{HOST}}",
+            "PATH=/usr/bin:$PATH cmd {{HOST}}",
+            "A='x y' B=2 echo {{HOST}}",
+        ])
+    func aQuotedAssignmentPrefixIsAccepted(command: String) {
+        #expect(
+            SnippetVariableSubstitution.firstDeclarationProblem(
+                command: command, variables: [placeholder("HOST")]) == nil)
+    }
+
+    /// And the boundary of that opening, so it cannot be mistaken for "a
+    /// command name may now be anything".
+    ///
+    /// A word only counts as an assignment when a POSIX identifier followed
+    /// by `=` is spelled in plain literal scalars at its start; a quoted
+    /// name is not one. And the value side stays fully surveyed: a
+    /// placeholder inside it is not an argument, and a construct the
+    /// recogniser cannot read still refuses the command.
+    @Test(
+        "the assignment-prefix opening does not widen anything else",
+        arguments: [
+            (#""A"=1 echo {{X}}"#, SnippetVariableSubstitution.Problem
+                .unanalyzableContext(kind: .unrecognizedSyntax)),
+            ("A='x' eval {{X}}", .unanalyzableContext(kind: .evaluation)),
+            ("A=$(id) echo {{X}}", .unanalyzableContext(kind: .commandSubstitution)),
+            ("A=${HOME} echo {{X}}", .unanalyzableContext(kind: .expansion)),
+            ("A='{{X}}' echo hi", .placeholderInsideQuotes(name: "X")),
+            ("A={{X}} echo hi", .placeholderNotInArgumentPosition(name: "X")),
+        ])
+    func theAssignmentPrefixOpeningStaysNarrow(
+        template: String, expected: SnippetVariableSubstitution.Problem
+    ) {
+        #expect(
+            SnippetVariableSubstitution.firstDeclarationProblem(
+                command: template, variables: [placeholder("X")]) == expected)
+    }
+
+    /// Shapes that stay refused and are named in the report's over-refusal
+    /// list because of this test, not the other way round: a subshell or a
+    /// function definition anywhere in the command refuses the whole
+    /// command, even where the placeholder is plainly an argument elsewhere.
+    @Test(
+        "a subshell or a function definition still refuses the whole command",
+        arguments: [
+            "(cd /srv && ls) ; echo {{X}}",
+            "f() { echo $1; }; f {{X}}",
+            "echo {{X}} | (read x; echo $x)",
+        ])
+    func aGroupingConstructRefusesTheCommand(command: String) {
+        #expect(
+            SnippetVariableSubstitution.firstDeclarationProblem(
+                command: command, variables: [placeholder("X")])
+                == .unanalyzableContext(kind: .commandSubstitution))
     }
 
     /// The other direction, so the corpus above cannot be satisfied by

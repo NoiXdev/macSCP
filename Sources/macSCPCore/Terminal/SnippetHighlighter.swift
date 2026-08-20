@@ -32,6 +32,16 @@ public enum SnippetHighlighter {
     /// non-whitespace character lands in exactly one token, whitespace is not
     /// tokenised, and the App layer is expected to paint a base colour first
     /// rather than rely on full coverage.
+    ///
+    /// This one walks `Character`s, and stays that way on purpose — the
+    /// project's rule that shell syntax is compared in `Unicode.Scalar`s
+    /// (`ShellScalar`) is a rule for code that DECIDES something. A quote
+    /// carrying a combining mark goes uncoloured here; the consequence is a
+    /// shade, and colouring runs want grapheme clusters anyway, because a
+    /// token range that splits a cluster is a range no text view can draw.
+    /// It was load-bearing exactly once — while the variable gate read
+    /// these tokens — and a source-scan guard now keeps that from happening
+    /// again.
     public static func tokens(in text: String, language: SnippetLanguage) -> [SnippetToken] {
         switch language {
         case .shell: return shellTokens(in: text)
@@ -152,7 +162,11 @@ public enum SnippetHighlighter {
     /// `SnippetCommandSurvey` answers the same question separately for the
     /// variable gate, and the duplication is on purpose: sharing one
     /// implementation let a change made for colour move a security verdict,
-    /// which is how three review rounds got past that gate.
+    /// which is how review rounds kept getting past that gate. (No count
+    /// here on purpose — which rounds ran through the shared tokenizer and
+    /// which through something else is not a number this file can check,
+    /// and the project's rule is that an uncountable number does not go in
+    /// a comment.)
     ///
     /// `text[start]` is the opening quote. Inside a DOUBLE-quoted span a
     /// backslash escapes the next character, so `"a\"b"` is one span and not

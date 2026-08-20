@@ -61,9 +61,12 @@ public enum SnippetVariableSubstitution {
     /// A declaration whose NAME is not a POSIX shell identifier is skipped
     /// entirely — no assignment emitted, no placeholder substituted. This
     /// function is the one that turns declaration data into shell text, and
-    /// it is reachable without anybody having called
-    /// `firstDeclarationProblem` first (the prompt-and-run path never does);
-    /// a rule only the checker enforces is not a boundary. `A;touch /tmp/m`
+    /// nothing in its signature makes a prior `firstDeclarationProblem` call
+    /// a precondition: it is public and pure, and any future path may reach
+    /// it directly. The prompt-and-run path in the App layer does check
+    /// first today, and a wiring guard pins that it checks BEFORE opening
+    /// the prompt — but that is a property of one caller, and a rule only
+    /// the checker enforces is not a boundary. `A;touch /tmp/m`
     /// as a name would otherwise be emitted verbatim as the left side of an
     /// assignment, which a shell reads as two extra commands. Skipping
     /// leaves the template's own `{{NAME}}` text standing, which is inert
@@ -166,8 +169,17 @@ public enum SnippetVariableSubstitution {
     /// And the acceptance rule is POSITIVE: an occurrence passes only when
     /// the survey puts it inside one recognised `.argument` span. There is
     /// no "no objection found, carry on" branch, because that branch is what
-    /// four review rounds walked through — every one of them a construct the
-    /// recogniser did not understand, and not understanding meant accepting.
+    /// review round after review round walked through — every one of them a
+    /// construct the recogniser did not understand, and not understanding
+    /// meant accepting.
+    ///
+    /// A `nil` placement — the occurrence lies in no single recognised span
+    /// — is the structural default and lands on
+    /// `placeholderNotInArgumentPosition` through the `default` arm below.
+    /// It is reachable (`echo \{{X}}`: the escape swallows the first brace,
+    /// so the argument span starts one scalar inside the occurrence), and it
+    /// is pinned by its own cases in the test corpus, because a default
+    /// nothing exercises is a default nothing protects.
     public static func firstDeclarationProblem(
         command: String, variables: [SnippetVariable]
     ) -> Problem? {
