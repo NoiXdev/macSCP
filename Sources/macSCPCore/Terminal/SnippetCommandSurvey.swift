@@ -720,14 +720,28 @@ extension SnippetCommandSurvey {
         ///
         /// "The end of that command" is not a second notion of where a
         /// command starts: it is `beginCommand`, which is what already
-        /// answers that question for `expectsCommandName`, and it is called
-        /// from exactly the places a shell ends a simple command — `;`, `&`,
-        /// `|`, `)`, a line feed. The `&&` and `||` spellings arrive as two
+        /// answers that question for `expectsCommandName`. Counted in the
+        /// pass that wrote this sentence, `read()` calls it from three
+        /// branches: a line feed, a `;` or a `)`, and a `&` or a `|` that
+        /// is not part of a redirection operator. That last qualification is
+        /// the whole of a critical finding: while `&` and `|` ended a
+        /// command unconditionally, the `&` of `2>&1` began one, cleared
+        /// this flag, and handed the placeholder behind it to a command name
+        /// the shell never read. The `&&` and `||` spellings arrive as two
         /// `&` or two `|` and reset twice, which is the same answer said
         /// twice. `if`, `then`, `while`, `do` and the other introducers do
         /// NOT reset it, and must not: they leave the command name still to
         /// come, so the flag is false there anyway, and the word that
         /// follows sets it for itself.
+        ///
+        /// What actually carries this flag is the ASSIGNMENT at every
+        /// command name, not the reset in `beginCommand`: no word is ever
+        /// classified as an argument before a command name of the same
+        /// command has been read, so the reset is unreachable as a second
+        /// line of defence. Measured, and stated here rather than implied —
+        /// deleting it leaves the whole suite green, so it is belt and
+        /// braces with no test of its own, and a reader looking for the
+        /// guarantee should look at the assignment.
         var commandReparsesItsArguments = false
 
         init(text: String) {
@@ -785,7 +799,25 @@ extension SnippetCommandSurvey {
                     spans.append(Span(placement: .comment, range: start..<index))
                     continue
                 }
-                if scalar == ";" || scalar == "&" || scalar == "|" || scalar == ")" {
+                if scalar == ";" || scalar == ")" {
+                    advance()
+                    beginCommand()
+                    continue
+                }
+                // A `&` or a `|` ends a simple command — unless it is part
+                // of a REDIRECTION OPERATOR, and `&>` and `&>>` are the two
+                // that begin with one. Reading the `&` of `&>f` as a
+                // separator is the mirror image of the defect
+                // `readRedirectionOperator` exists to close: it starts a
+                // command a shell never started, and the placeholder after
+                // it is judged against the wrong command name.
+                if scalar == "&" || scalar == "|" {
+                    if scalar == "&", peek(after: index) == ">" {
+                        if let refusal = readRedirectionOperator() {
+                            return .refused(refusal)
+                        }
+                        continue
+                    }
                     advance()
                     beginCommand()
                     continue
@@ -794,7 +826,21 @@ extension SnippetCommandSurvey {
                     return .refused(.commandSubstitution)
                 }
                 if scalar == "<" || scalar == ">" {
-                    if let refusal = readRedirectionOperator(scalar) {
+                    if let refusal = readRedirectionOperator() {
+                        return .refused(refusal)
+                    }
+                    continue
+                }
+                // `2>&1`, `1>&2`, `0<&-`: a run of digits at a word boundary
+                // that runs straight into a `<` or a `>` is a FILE
+                // DESCRIPTOR, not a word — measured, `echo 12>f` prints to
+                // fd 12 and leaves `f` empty. Reaching this only from the
+                // top of the loop is what makes it right: every path back
+                // here is a word boundary, so `echo a2>f` still reads `a2`
+                // as a word and redirects fd 1.
+                if ShellScalar.isASCIIDigit(scalar), let start = redirectionAfterFileDescriptor() {
+                    index = start
+                    if let refusal = readRedirectionOperator() {
                         return .refused(refusal)
                     }
                     continue
@@ -854,18 +900,88 @@ extension SnippetCommandSurvey {
             scalars[start..<end].contains { $0 == "=" }
         }
 
-        /// `<`, `<<`, `<<<`, `>`, `>>` and the process substitutions that
-        /// open with them. `<<` in any of its forms is a here-document —
-        /// the two characters are read here, in the unquoted state, so a
-        /// `<<` inside a string or a comment never reaches this branch.
-        private mutating func readRedirectionOperator(_ scalar: Unicode.Scalar) -> Refusal? {
-            let next = scalars.index(after: index)
-            if next < scalars.endIndex {
-                if scalar == "<", scalars[next] == "<" { return .heredoc }
-                if scalars[next] == "(" { return .commandSubstitution }
+        /// The scalar at `position`'s successor, or `nil` at the end of the
+        /// text. A lookahead that cannot run off the end, so the operator
+        /// reader below can ask what follows without repeating the bounds
+        /// check at every step.
+        private func peek(after position: String.Index) -> Unicode.Scalar? {
+            let next = scalars.index(after: position)
+            return next < scalars.endIndex ? scalars[next] : nil
+        }
+
+        /// Where the redirection operator starts when `index` is on the
+        /// first digit of a file-descriptor prefix, or `nil` when the digits
+        /// are an ordinary word. Only the digits are skipped; the operator
+        /// itself is left for `readRedirectionOperator`.
+        private func redirectionAfterFileDescriptor() -> String.Index? {
+            var scan = index
+            while scan < scalars.endIndex, ShellScalar.isASCIIDigit(scalars[scan]) {
+                scan = scalars.index(after: scan)
             }
+            guard scan < scalars.endIndex, scalars[scan] == "<" || scalars[scan] == ">"
+            else { return nil }
+            return scan
+        }
+
+        /// ONE redirection operator, read as a unit.
+        ///
+        /// It is a unit because the pieces it is made of are the pieces a
+        /// shell ends a command with. `readRedirectionOperator` used to read
+        /// only the `<` or `>` (plus a second `>`) and hand the rest back to
+        /// the loop, so the `&` of `2>&1` and the `|` of `>|f` fell into the
+        /// separator branch: `beginCommand` ran where no command began, the
+        /// re-parsing flag was cleared, the descriptor word was read as a
+        /// command NAME, and the placeholder behind it came out an ordinary
+        /// argument of a command that does not exist. Measured on that
+        /// reading, `declare 2>&1 {{X}}` was accepted and created the marker
+        /// in bash 3.2.57, 4.4 and 5.2.37 and in zsh 5.9.
+        ///
+        /// So every `&` and `|` that belongs to an operator is consumed
+        /// HERE, and the shapes are enumerated rather than pattern-guessed.
+        /// Counted while writing this list, there are nine: `>`, `>>` and
+        /// `<`; the read-write `<>`; the descriptor duplications `>&` and
+        /// `<&`; the clobbering `>|`; and `&>` and `&>>`, the two whose
+        /// first scalar is the `&`. The seven that open with `<` or `>` are
+        /// also reached with a file-descriptor digit run already consumed by
+        /// the caller, which is what `2>&1`, `1>&2` and `0<&-` are. What
+        /// follows a duplication — the `-` of `>&-`, the `m` of `n>&m` — is
+        /// read as an ordinary word, and a word after a redirection is
+        /// `.redirectionTarget`, never an argument.
+        ///
+        /// Everything else FAILS CLOSED. A `&` or a `|` still standing
+        /// after the operator has been read is a shape this reader does not
+        /// know — zsh's `>>&`, `>&|`, `&>|` and `&>>|` among them — and it
+        /// is refused as `.unrecognizedSyntax` rather than handed back to
+        /// the loop, because handing it back is precisely how it would
+        /// become a separator again. Over-refusing an operator costs a
+        /// snippet nobody has written yet; the other direction cost this
+        /// branch a critical finding.
+        ///
+        /// `<<` in any of its forms is a here-document, and is read here in
+        /// the unquoted state, so a `<<` inside a string or a comment never
+        /// reaches this branch. A `(` after the operator needs no case of
+        /// its own: it is left for the loop, which refuses every `(` as
+        /// `.commandSubstitution`.
+        private mutating func readRedirectionOperator() -> Refusal? {
+            let bothStreams = scalars[index] == "&"
+            if bothStreams { advance() }
+            let openerScalar = scalars[index]
             advance()
-            if scalar == ">", index < scalars.endIndex, scalars[index] == ">" { advance() }
+            if openerScalar == "<" {
+                if index < scalars.endIndex, scalars[index] == "<" { return .heredoc }
+                if index < scalars.endIndex, scalars[index] == "&" || scalars[index] == ">" {
+                    advance()
+                }
+            } else if index < scalars.endIndex {
+                if scalars[index] == ">" {
+                    advance()
+                } else if !bothStreams, scalars[index] == "&" || scalars[index] == "|" {
+                    advance()
+                }
+            }
+            if index < scalars.endIndex, scalars[index] == "&" || scalars[index] == "|" {
+                return .unrecognizedSyntax
+            }
             expectsRedirectionTarget = true
             return nil
         }

@@ -68,8 +68,14 @@ struct SnippetCommandSurveyTests {
     /// `if`/`then`, `while`/`do` and `{ … }`, where an introducer keeps the
     /// command name still to come; an assignment prefix in front of the
     /// name; the `&&`, `||` and `|` spellings, which reach `beginCommand`
-    /// as two scalars or one; a line feed; and the precommand words `time`
-    /// and `exec`, after which the re-parsing name is still the name.
+    /// as two scalars or one; a line feed; the precommand words `time`
+    /// and `exec`, after which the re-parsing name is still the name; and a
+    /// REDIRECTION between the name and the placeholder, which is the shape
+    /// this corpus was missing while the code was missing it too. `2>&1`,
+    /// `>&2` and `>|f` all carry a `&` or a `|`, and while those were read
+    /// as command separators the placeholder behind them was judged against
+    /// a command a shell never started — `declare 2>&1 {{X}}` was accepted
+    /// and ran its value in every bash measured and in zsh.
     ///
     /// Both directions on purpose. A test that only pinned the refusals
     /// would stay green if every argument in the file became
@@ -87,6 +93,15 @@ struct SnippetCommandSurveyTests {
         #expect(placement(of: "{{X}}", in: "printf 'a'\nls {{X}}") == .argument)
         #expect(placement(of: "{{X}}", in: "exit 0; ls {{X}}") == .argument)
         #expect(placement(of: "{{X}}", in: "FOO=1 ls {{X}}") == .argument)
+        // A redirection does not end the command, so the harmless name
+        // before it still owns what follows — and the descriptor word is
+        // part of the operator rather than a command name of its own.
+        #expect(placement(of: "{{X}}", in: "ls 2>&1 {{X}}") == .argument)
+        #expect(placement(of: "{{X}}", in: "ls >&2 {{X}}") == .argument)
+        #expect(placement(of: "{{X}}", in: "ls >|f {{X}}") == .argument)
+        #expect(placement(of: "{{X}}", in: "ls &>f {{X}}") == .argument)
+        #expect(placement(of: "{{X}}", in: "2>&1 ls {{X}}") == .argument)
+        #expect(placement(of: "{{X}}", in: "printf 'a' 2>&1; ls {{X}}") == .argument)
 
         // The placeholder is an argument of the re-parsing command itself,
         // reached through the same constructs.
@@ -108,9 +123,65 @@ struct SnippetCommandSurveyTests {
         // name that follows it still owns the arguments after it.
         #expect(placement(of: "{{X}}", in: "time printf '%s' {{X}}") == .reparsedArgument)
         #expect(placement(of: "{{X}}", in: "exec printf '%s' {{X}}") == .reparsedArgument)
+        // The same redirections in front of the placeholder of a RE-PARSING
+        // command. This half is the one that was measured wrong: every one
+        // of these came out `.argument`, and the gate accepted them.
+        #expect(placement(of: "{{X}}", in: "printf '%s' 2>&1 {{X}}") == .reparsedArgument)
+        #expect(placement(of: "{{X}}", in: "printf '%s' 1>&2 {{X}}") == .reparsedArgument)
+        #expect(placement(of: "{{X}}", in: "exit >&2 {{X}}") == .reparsedArgument)
+        #expect(placement(of: "{{X}}", in: "exit <&0 {{X}}") == .reparsedArgument)
+        #expect(placement(of: "{{X}}", in: "exit >|f {{X}}") == .reparsedArgument)
+        #expect(placement(of: "{{X}}", in: "exit &>f {{X}}") == .reparsedArgument)
+        #expect(placement(of: "{{X}}", in: "exit 2>f {{X}}") == .reparsedArgument)
         // A redirection target belongs to no argument list, and keeps
         // saying so inside a re-parsing command.
         #expect(placement(of: "{{X}}", in: "printf '%s' a > {{X}}") == .redirectionTarget)
+    }
+
+    /// A redirection operator is read as a UNIT, and an operator shape this
+    /// reader does not know is a refusal.
+    ///
+    /// The direction is the whole point. While `&` and `|` ended a simple
+    /// command unconditionally, the `&` of `2>&1` started one that no shell
+    /// started, and the reader lost track of whose arguments it was reading;
+    /// the answer is not to special-case that `&` but to consume every
+    /// scalar of the operator where the operator is read. What the reader
+    /// then does with a shape it has no rule for — zsh's `>>&`, `>&|`,
+    /// `&>|` — has to be refusal, because "hand it back to the loop" is
+    /// the same defect in a new spelling: the loop's answer for a leftover
+    /// `&` is "a command ended here".
+    ///
+    /// The file-descriptor half is the other unit question. `2` in
+    /// `echo 2>f` is not a word, `a2` in `echo a2>f` is, and `bash` was
+    /// asked: `echo 12>f` leaves `f` empty and writes to descriptor 12.
+    @Test func aRedirectionOperatorIsReadAsOneUnit() {
+        // Shapes the reader knows. The placeholder is an ordinary argument
+        // of the command in front of the redirection.
+        for command in [
+            "ls > f {{X}}", "ls >> f {{X}}", "ls < f {{X}}", "ls <> f {{X}}",
+            "ls >& 2 {{X}}", "ls 2>&1 {{X}}", "ls 0<&- {{X}}", "ls >|f {{X}}",
+            "ls &>f {{X}}", "ls &>>f {{X}}", "ls 2>>f {{X}}", "ls 12>f {{X}}",
+        ] {
+            #expect(
+                placement(of: "{{X}}", in: command) == .argument,
+                "\(command) no longer reads its redirection as one operator")
+        }
+
+        // Shapes it does not. Every one of them leaves a `&` or a `|`
+        // standing where the operator should have ended.
+        for command in ["ls >>&2 {{X}}", "ls >&| {{X}}", "ls &>|f {{X}}", "ls &>>|f {{X}}"] {
+            #expect(
+                refusal(command) == .unrecognizedSyntax,
+                "\(command) is read rather than refused; an unknown operator must fail closed")
+        }
+
+        // A digit run is a descriptor only where a shell reads one.
+        #expect(placement(of: "{{X}}", in: "echo a2>f {{X}}") == .argument)
+        #expect(placement(of: "{{X}}", in: "echo 2 {{X}}") == .argument)
+        #expect(placement(of: "{{X}}", in: "echo {{X}} 2") == .argument)
+        // And the separators stay separators when no operator claims them.
+        #expect(placement(of: "{{X}}", in: "printf '%s' a & ls {{X}}") == .argument)
+        #expect(placement(of: "{{X}}", in: "printf '%s' a | ls {{X}}") == .argument)
     }
 
     // MARK: - Placements that are not safe

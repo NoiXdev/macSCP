@@ -706,6 +706,17 @@ struct ShellQuotingExecutionTests {
             // and what it does with the path outlives the command: every
             // later `zzz` in the session runs it. That is why its reach is
             // the whole template rather than its own argument list.
+            // A redirection between the command name and the placeholder.
+            // While the `&` of `2>&1` was read as a command separator, all
+            // three of these were ACCEPTED — the flag saying "this command
+            // re-parses" was cleared by a command boundary that does not
+            // exist, and `1` was read as the name of the command the value
+            // supposedly belongs to. They fire on this machine's bash
+            // 3.2.57, which is what makes them executable here rather than
+            // pinned in the list below.
+            ReparseCase(template: "declare 2>&1 {{X}}", value: "x[$(touch MARKER)]=1"),
+            ReparseCase(template: "let >&2 {{X}}", value: "a[$(touch MARKER)]"),
+            ReparseCase(template: "read 2>&1 {{X}}", value: "a[$(touch MARKER)]"),
             ReparseCase(
                 template: "hash -p {{X}} zzz", value: "./reparse_hashed.sh",
                 prefix: "printf '#!/bin/sh\\ntouch MARKER\\n' > reparse_hashed.sh\n"
@@ -871,6 +882,16 @@ struct ShellQuotingExecutionTests {
             "if [ -d /tmp ]; then echo {{X}}; fi",
             "printf 'start\\n'; ls {{X}}",
             "export FOO=1; ls {{X}}",
+            // The redirection shapes, from the accepting side. A snippet
+            // that logs its own errors writes `2>&1`, and the placeholder
+            // after it is an argument of the harmless command in front —
+            // which is exactly what the reader must say, without the `&`
+            // making it forget which command that is.
+            "ls 2>&1 {{X}}",
+            "cat {{X}} 2>&1 | head -n 100",
+            "printf 'a\\n' >&2; ls {{X}}",
+            "ls &>out.log {{X}}",
+            "2>&1 ls {{X}}",
         ])
     func aNarrowedRefusalAcceptsAndStaysSafe(command: String) throws {
         #expect(
