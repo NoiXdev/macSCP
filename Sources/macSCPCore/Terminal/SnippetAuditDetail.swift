@@ -17,11 +17,13 @@ public enum SnippetAuditDetail {
         return "ran snippet \u{201C}\(name)\u{201D}: \(command)"
     }
 
-    /// Tabs and runs of spaces become a single space. `isWhitespace` alone
-    /// is the whole rule: in Swift every character with `isNewline` also has
-    /// `isWhitespace`, so naming both would add no case -- and newlines
-    /// cannot reach here anyway, since `Snippet` rejects a command
-    /// containing one at construction.
+    /// Tabs, newlines and runs of spaces become a single space.
+    /// `isWhitespace` alone is the whole rule: in Swift every character with
+    /// `isNewline` also has `isWhitespace`, so naming both would add no
+    /// case. Newlines DO reach here -- a snippet command may span lines
+    /// (snippet editor, part 2), and `Snippet.init` stopped rejecting one at
+    /// construction then -- and collapsing them is what keeps a multi-line
+    /// command to a single scannable row in the log.
     private static func collapsingWhitespace(in command: String) -> String {
         command
             .split(whereSeparator: { $0.isWhitespace })

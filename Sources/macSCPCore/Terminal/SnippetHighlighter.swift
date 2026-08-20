@@ -53,21 +53,29 @@ public enum SnippetHighlighter {
                 continue
             }
 
-            // A comment runs to the end of the line -- but only outside a
-            // string, which is why quotes are consumed whole below.
+            // A comment runs to the end of the LINE -- not to the end of
+            // the text. A command may span lines (snippet editor, part 2),
+            // and an earlier version of this branch ended the token at
+            // `text.endIndex` and stopped tokenising there, so one `#` on
+            // the first line swallowed every later line: no strings, no
+            // variables, nothing. That is a colouring bug on its own, and
+            // it also blinded `SnippetVariableSubstitution
+            // .firstDeclarationProblem`, which reads the `.string` tokens
+            // from here to decide whether a placeholder sits inside quotes.
+            // A `#` inside a string never reaches this branch, because
+            // quotes are consumed whole below.
             if c == "#" {
-                tokens.append(SnippetToken(kind: .comment, range: i..<text.endIndex))
-                break
+                var j = i
+                while j < text.endIndex, !text[j].isNewline { j = text.index(after: j) }
+                tokens.append(SnippetToken(kind: .comment, range: i..<j))
+                i = j
+                continue
             }
 
             if c == "'" || c == "\"" {
-                var j = text.index(after: i)
-                while j < text.endIndex, text[j] != c { j = text.index(after: j) }
-                // An unterminated quote runs to the end rather than
-                // dropping the rest of the line on the floor.
-                let end = j < text.endIndex ? text.index(after: j) : text.endIndex
-                tokens.append(SnippetToken(kind: .string, range: i..<end))
-                i = end
+                let span = quotedSpan(in: text, openingAt: i)
+                tokens.append(SnippetToken(kind: .string, range: i..<span.end))
+                i = span.end
                 continue
             }
 
@@ -129,5 +137,68 @@ public enum SnippetHighlighter {
             i = j
         }
         return tokens
+    }
+
+    /// How far the quoted span that opens at `start` reaches, and whether it
+    /// actually closed.
+    ///
+    /// The ONE place this project decides where a quoted run ends -- both
+    /// `shellTokens` and `quotingBalancesPerLine` go through it, so the two
+    /// answers cannot drift apart (the same single-implementation reasoning
+    /// `PosixQuoting`'s doc comment gives for quoting).
+    ///
+    /// `text[start]` is the opening quote. Inside a DOUBLE-quoted span a
+    /// backslash escapes the next character, so `"a\"b"` is one span and not
+    /// a closed `"a\"` followed by loose text -- getting that wrong is what
+    /// let a placeholder inside `"a\"{{X}}"` read as unquoted. A
+    /// SINGLE-quoted span honours no escape at all in POSIX: every
+    /// character up to the next `'` is literal, backslash included, so
+    /// `'a\'` closes at that second quote. The asymmetry is the shell's, not
+    /// a simplification.
+    ///
+    /// An unterminated span reports `closed: false` and reaches to the end
+    /// of the text, so a caller that only wants tokens still gets a range
+    /// covering the rest rather than dropping it on the floor.
+    private static func quotedSpan(
+        in text: String, openingAt start: String.Index
+    ) -> (end: String.Index, closed: Bool) {
+        let quote = text[start]
+        let honoursEscapes = quote == "\""
+        var j = text.index(after: start)
+        while j < text.endIndex {
+            if honoursEscapes, text[j] == "\\" {
+                let afterBackslash = text.index(after: j)
+                guard afterBackslash < text.endIndex else { break }
+                j = text.index(after: afterBackslash)
+                continue
+            }
+            if text[j] == quote { return (text.index(after: j), true) }
+            j = text.index(after: j)
+        }
+        return (text.endIndex, false)
+    }
+
+    /// Whether every quoted span in `text` opens and closes on the same
+    /// line.
+    ///
+    /// The precondition `SnippetVariableSubstitution.firstDeclarationProblem`
+    /// needs before "this placeholder sits inside quotes" means anything: an
+    /// unterminated quote makes every later position's quoting state a
+    /// guess, and a span running across a line break -- legal in a shell,
+    /// but not something a position check can reason about -- means the same.
+    /// Reported as one boolean rather than a position, because the caller
+    /// refuses on it; it does not point at it.
+    ///
+    /// Built on `tokens(in:language:)` so comments, and `#` characters
+    /// inside strings, are treated exactly as the tokenizer treats them --
+    /// this is not a second scanner with its own opinion.
+    public static func quotingBalancesPerLine(in text: String) -> Bool {
+        for token in tokens(in: text, language: .shell) where token.kind == .string {
+            guard quotedSpan(in: text, openingAt: token.range.lowerBound).closed else {
+                return false
+            }
+            guard !text[token.range].contains(where: \.isNewline) else { return false }
+        }
+        return true
     }
 }

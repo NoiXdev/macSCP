@@ -853,6 +853,9 @@
 "snippets.variables.error.duplicateName" = "Deux variables portent le même nom.";
 "snippets.variables.error.unusedPlaceholder %@" = "« %@ » n’apparaît jamais dans la commande.";
 "snippets.variables.error.quotedPlaceholder %@" = "« %@ » se trouve entre guillemets. Retirez-les — la valeur est protégée pour vous.";
+"snippets.variables.error.heredoc" = "Cette commande utilise un document en ligne (<<). macSCP ne voit pas quelles parties y sont entre guillemets et ne peut donc pas savoir où une valeur atterrirait — il n’en place aucune.";
+"snippets.variables.error.unbalancedQuoting" = "Un guillemet de cette commande ne se referme pas sur la ligne où il s’ouvre. macSCP ne peut pas savoir si une valeur se retrouverait entre guillemets, il n’en place donc aucune.";
+"snippets.variables.refused.title" = "Impossible de renseigner les valeurs de cet extrait";
 "snippets.variables.promptTitle %@" = "Valeurs pour « %@ »";
 "snippets.variables.promptRun" = "Exécuter";
 "snippets.variables.promptNoOptions" = "Aucune option n’est configurée pour cette variable.";

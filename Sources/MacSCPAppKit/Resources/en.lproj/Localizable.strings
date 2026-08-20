@@ -849,6 +849,9 @@
 "snippets.variables.error.duplicateName" = "Two variables share a name.";
 "snippets.variables.error.unusedPlaceholder %@" = "“%@” is never used in the command.";
 "snippets.variables.error.quotedPlaceholder %@" = "“%@” sits inside quotes. Remove them — the value is quoted for you.";
+"snippets.variables.error.heredoc" = "This command uses a here-document (<<). macSCP can't see which parts of it are quoted, so it can't tell where a value would end up — and won't place one there.";
+"snippets.variables.error.unbalancedQuoting" = "A quote in this command doesn't close on the line it opens. macSCP can't tell whether a value would end up inside quotes, so it won't place one there.";
+"snippets.variables.refused.title" = "This snippet's values can't be filled in";
 "snippets.variables.promptTitle %@" = "Values for “%@”";
 "snippets.variables.promptRun" = "Run";
 "snippets.variables.promptNoOptions" = "No options are configured for this variable.";

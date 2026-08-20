@@ -302,6 +302,16 @@ struct ContentView: View {
 
     @State var pendingSnippetVariablePrompt: PendingSnippetVariablePrompt?
 
+    /// The sentence explaining why a snippet's declared values cannot be
+    /// filled in, shown as an alert instead of the prompt. Non-nil only
+    /// between `triggerSnippet` finding a `SnippetVariableSubstitution
+    /// .Problem` and the alert's dismissal. Carries the finished message
+    /// rather than the `Problem`, so nothing downstream has to switch over
+    /// that enum a second time (`snippetVariableProblemText` is the one
+    /// mapping) — and it never carries a value the user typed, because a
+    /// `Problem` never holds one.
+    @State var pendingSnippetVariableRefusal: String?
+
     // MARK: - Session export/import (M9a/T3)
 
     /// Wraps `ExportScope` so it can drive `.sheet(item:)` — `ExportScope`
@@ -652,6 +662,27 @@ struct ContentView: View {
                     onCancel: { pendingSnippetVariablePrompt = nil }
                 )
             }
+            // Declared values refused: the snippet's declarations do not
+            // hold up, so the prompt never opens and nothing is sent. The
+            // message says what was found -- see
+            // `snippetVariableProblemText`; there is no "run it anyway"
+            // button, because the whole point is that macSCP cannot tell
+            // where the value would end up.
+            .alert(
+                L10n.string(
+                    "snippets.variables.refused.title",
+                    "This snippet's values can't be filled in"),
+                isPresented: Binding(
+                    get: { pendingSnippetVariableRefusal != nil },
+                    set: { if !$0 { pendingSnippetVariableRefusal = nil } }),
+                presenting: pendingSnippetVariableRefusal
+            ) { _ in
+                Button(L10n.string("common.ok", "OK")) {
+                    pendingSnippetVariableRefusal = nil
+                }
+            } message: { message in
+                Text(message)
+            }
     }
 
     /// Re-reads `snippets.json` into the command bridge (Terminal-Snippets
@@ -708,7 +739,10 @@ struct ContentView: View {
     /// the reason no second message is raised here.
     ///
     /// A snippet with declared variables (Snippet-Variablen, Task 6) is
-    /// intercepted BEFORE any of the above: instead of opening the panel
+    /// intercepted BEFORE any of the above: it is first run through
+    /// `SnippetVariableSubstitution.firstDeclarationProblem`, and a problem
+    /// there raises `pendingSnippetVariableRefusal` and stops -- no prompt,
+    /// no bytes. Otherwise, instead of opening the panel
     /// and sending anything, `pendingSnippetVariablePrompt` is set and this
     /// method returns. `SnippetVariablePromptSheet`'s own "Run" action
     /// (wired in `body` below) is what eventually calls `runSnippet` with
@@ -727,6 +761,17 @@ struct ContentView: View {
         }
         guard activeTab.session?.terminal != nil else { return }
         guard snippet.variables.isEmpty else {
+            // The editor blocks Save on the same check, but an IMPORTED
+            // snippet's declarations never passed that editor -- and since
+            // import carries declarations over, a shared file can arrive
+            // with an attacker-chosen default under a template that reads
+            // harmlessly. So the refusal is repeated on the run path, where
+            // it is the last thing before a value is asked for at all.
+            if let problem = SnippetVariableSubstitution.firstDeclarationProblem(
+                command: snippet.command, variables: snippet.variables) {
+                pendingSnippetVariableRefusal = snippetVariableProblemText(for: problem)
+                return
+            }
             let store = snippetVariableMemoryStore
             var initialValues: [String: String] = [:]
             for variable in snippet.variables {

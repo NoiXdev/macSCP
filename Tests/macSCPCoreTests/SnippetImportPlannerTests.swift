@@ -67,6 +67,42 @@ struct SnippetImportPlannerTests {
         #expect(!plan.snippetsToImport[0].replacesExisting)
     }
 
+    /// Export writes variable declarations and `decode` reads them back, but
+    /// `makeSnippet` used to omit `variables:` — and since `Snippet`'s
+    /// initializer defaults it to `[]`, the omission compiled and the
+    /// declarations vanished on the last step of the round trip. A review
+    /// measured it: the export file carried the declaration, `decode`
+    /// returned one, the planner returned none.
+    @Test func anImportedSnippetKeepsItsVariableDeclarations() async {
+        let variable = SnippetVariable(
+            name: "DB", prompt: "Which database?", kind: .freeText, placement: .placeholder,
+            defaultValue: "staging", remembersLastValue: true)
+        let incoming = Snippet(
+            name: "Dump", command: "mysqldump {{DB}}", tags: ["db"], variables: [variable])
+
+        let plan = await SnippetImportPlanner.plan(
+            existing: [], incoming: payload([incoming]), arbiter: arbiterThatMustNotBeAsked())
+
+        #expect(plan.snippetsToImport.map(\.snippet.variables) == [[variable]])
+    }
+
+    /// The same carry-over on the renaming path, where a fresh `Snippet` is
+    /// built for a second reason — a collision — and could just as easily
+    /// drop the field again.
+    @Test func aRenamedImportKeepsItsVariableDeclarations() async {
+        let variable = SnippetVariable(
+            name: "DB", prompt: "Which database?", kind: .freeText, placement: .placeholder,
+            defaultValue: "", remembersLastValue: false)
+        let incoming = Snippet(name: "Dump", command: "mysqldump {{DB}}", variables: [variable])
+
+        let plan = await SnippetImportPlanner.plan(
+            existing: [snippet("Dump")], incoming: payload([incoming]),
+            arbiter: arbiterAnswering(.rename))
+
+        #expect(plan.renamed == ["Dump (2)"])
+        #expect(plan.snippetsToImport.map(\.snippet.variables) == [[variable]])
+    }
+
     @Test func aNameCollidingOnlyByCaseAndWhitespaceStillCollides() async {
         let plan = await SnippetImportPlanner.plan(
             existing: [snippet("Clean up")],

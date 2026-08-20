@@ -67,4 +67,74 @@ struct SnippetHighlighterTests {
         #expect(spans(text, .command) == ["cp"])
         #expect(spans(text, .plain) == ["source", "target"])
     }
+
+    // --- multi-line and escapes ------------------------------------------
+
+    /// A comment ends at the LINE break, not at the end of the text. The
+    /// branch used to run to `text.endIndex` and stop tokenising there, so
+    /// in a multi-line command the first `#` swallowed every later line --
+    /// wrong colouring, and (because
+    /// `SnippetVariableSubstitution.firstDeclarationProblem` reads these
+    /// `.string` tokens) a hole in the save-time quoting check.
+    @Test func aCommentEndsAtTheLineBreakNotAtTheEndOfTheText() {
+        let text = "ls # list them\necho \"still a string\""
+        #expect(spans(text, .comment) == ["# list them"])
+        #expect(spans(text, .string) == ["\"still a string\""])
+    }
+
+    /// The same fix seen from the first line: a command that OPENS with a
+    /// comment still colours everything below it.
+    @Test func aLeadingCommentDoesNotSwallowTheLinesBelowIt() {
+        let text = "# note\necho \"value\""
+        #expect(spans(text, .comment) == ["# note"])
+        #expect(spans(text, .string) == ["\"value\""])
+        #expect(spans(text, .command) == ["echo"])
+    }
+
+    /// Inside a DOUBLE-quoted span a backslash escapes the next character,
+    /// so `\"` does not close the span.
+    @Test func aBackslashEscapesTheClosingDoubleQuote() {
+        #expect(spans(#"echo "a\"b" tail"#, .string) == [#""a\"b""#])
+    }
+
+    /// A trailing backslash inside a double-quoted span escapes the quote
+    /// that would have closed it, so the span is unterminated and runs to
+    /// the end rather than looping forever.
+    @Test func aDoubleQuotedSpanEndingInAnEscapedQuoteIsUnterminated() {
+        #expect(spans(#"echo "a\""#, .string) == [#""a\""#])
+        #expect(!SnippetHighlighter.quotingBalancesPerLine(in: #"echo "a\""#))
+    }
+
+    /// The POSIX asymmetry: a SINGLE-quoted span honours no escape at all.
+    /// Everything up to the next `'` is literal, backslash included, so
+    /// `'a\'` closes at that second quote and `b'` opens a new span.
+    @Test func aBackslashDoesNotEscapeInsideASingleQuotedSpan() {
+        #expect(spans(#"echo 'a\' b'c'"#, .string) == [#"'a\'"#, "'c'"])
+    }
+
+    // --- the balance question --------------------------------------------
+
+    @Test(
+        "quoting that opens and closes on one line balances",
+        arguments: [
+            "echo 'a b' \"c d\"",
+            #"echo "a\"b""#,
+            "echo no quotes at all",
+            "echo 'first'\necho \"second\"",
+            "echo 'a # b' # a real comment with a ' in it",
+        ])
+    func balancedQuotingIsRecognised(text: String) {
+        #expect(SnippetHighlighter.quotingBalancesPerLine(in: text))
+    }
+
+    @Test(
+        "quoting that never closes, or closes on a later line, does not balance",
+        arguments: [
+            "echo \"abc",
+            "echo 'abc",
+            "echo \"spans\nlines\"",
+        ])
+    func unbalancedQuotingIsRecognised(text: String) {
+        #expect(!SnippetHighlighter.quotingBalancesPerLine(in: text))
+    }
 }

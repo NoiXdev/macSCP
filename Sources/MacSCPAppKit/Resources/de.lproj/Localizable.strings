@@ -850,6 +850,9 @@
 "snippets.variables.error.duplicateName" = "Zwei Variablen haben denselben Namen.";
 "snippets.variables.error.unusedPlaceholder %@" = "„%@“ kommt im Kommando nicht vor.";
 "snippets.variables.error.quotedPlaceholder %@" = "„%@“ steht in Anführungszeichen. Nimm sie weg — der Wert wird für dich gequotet.";
+"snippets.variables.error.heredoc" = "Dieses Kommando verwendet ein Here-Dokument (<<). macSCP sieht nicht, welche Teile darin gequotet sind, und kann deshalb nicht sagen, wo ein Wert landen würde — und setzt dort keinen ein.";
+"snippets.variables.error.unbalancedQuoting" = "Ein Anführungszeichen in diesem Kommando wird in derselben Zeile nicht wieder geschlossen. macSCP kann nicht erkennen, ob ein Wert in Anführungszeichen landen würde, und setzt dort keinen ein.";
+"snippets.variables.refused.title" = "Die Werte dieses Snippets lassen sich nicht einsetzen";
 "snippets.variables.promptTitle %@" = "Werte für „%@“";
 "snippets.variables.promptRun" = "Ausführen";
 "snippets.variables.promptNoOptions" = "Für diese Variable sind keine Optionen hinterlegt.";

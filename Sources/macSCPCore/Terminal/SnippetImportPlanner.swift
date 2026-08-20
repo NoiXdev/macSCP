@@ -199,8 +199,17 @@ public enum SnippetImportPlanner {
     }
 
     /// Rebuilds `fileSnippet` under a possibly-new id and name, carrying its
-    /// command and tags over unchanged.
+    /// command, tags and variable declarations over unchanged.
+    ///
+    /// Every field except `id` and `name` has to be listed here, and an
+    /// omission is invisible: `Snippet`'s initializer defaults `variables`
+    /// to `[]`, so a forgotten argument does not fail to compile — it
+    /// silently drops what the export wrote and `decode` read back.
+    /// `SnippetImportPlannerTests.anImportedSnippetKeepsItsVariableDeclarations`
+    /// exists because that is exactly what happened once.
     private static func makeSnippet(from fileSnippet: Snippet, id: UUID, name: String) -> Snippet {
-        Snippet(id: id, name: name, command: fileSnippet.command, tags: fileSnippet.tags)
+        Snippet(
+            id: id, name: name, command: fileSnippet.command, tags: fileSnippet.tags,
+            variables: fileSnippet.variables)
     }
 }

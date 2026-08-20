@@ -1,11 +1,12 @@
 import Foundation
 import Testing
 
-/// Guards two `ContentView.swift` call-site facts (Snippet-Variablen, Task 6,
-/// fix round 1) that no functional test can reach — the same
-/// "exists but is not wired right" shape `SnippetAuditWiringGuardTests`,
-/// `PaneVisibilityWiringGuardTests`, and `PaneRenderConditionGuardTests`
-/// already exist to catch elsewhere in this project:
+/// Guards call-site facts in `ContentView.swift` and `SnippetsSheet.swift`
+/// (Snippet-Variablen, Task 6, fix rounds 1 and 2) that no functional test
+/// can reach — the same "exists but is not wired right" shape
+/// `SnippetAuditWiringGuardTests`, `PaneVisibilityWiringGuardTests`, and
+/// `PaneRenderConditionGuardTests` already exist to catch elsewhere in this
+/// project:
 ///
 /// 1. `runSnippet` must pass the ORIGINAL `snippet` — never the resolved
 ///    command, nor a `Snippet` built around it — to
@@ -28,8 +29,18 @@ import Testing
 ///    exercises the store directly with values it is TOLD to remember, never
 ///    through this filter, so a deleted `where` clause would still pass every
 ///    other test in the suite.
+/// 3. `triggerSnippet` must still intercept on `snippet.variables.isEmpty`,
+///    and must still seed the prompt from `SnippetVariableMemoryStore`
+///    rather than from `defaultValue` alone; `SnippetsSheet.save()` must
+///    still pass `variables: variables`. A later review mutated each of
+///    these three lines and watched the full suite stay green: without the
+///    interception the prompt never opens and every value resolves to `''`,
+///    without the store lookup "remember last value" is an opt-in that does
+///    nothing, and with `variables: []` the declarations are never persisted
+///    at all. `Snippet`'s initializer defaults `variables`, so the last one
+///    does not even need a wrong value — a dropped argument compiles.
 ///
-/// Both are SOURCE-TEXT scans, not behavioral tests — this project has no
+/// All are SOURCE-TEXT scans, not behavioral tests — this project has no
 /// SwiftUI rendering/instantiation harness (see `SnippetActionSheet`'s own
 /// doc comment for the same boundary) — and share the known blind spots the
 /// precedent guards above already document: line-based and literal, aimed at
@@ -48,6 +59,8 @@ struct SnippetVariablePromptWiringGuardTests {
 
     private static let contentViewFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView.swift")
+    private static let sheetSourceFile = repoRoot
+        .appendingPathComponent("Sources/MacSCPAppKit/SnippetsSheet.swift")
 
     // MARK: - Guard 1: the audit call carries the template, not a resolved value
 
@@ -200,6 +213,135 @@ struct SnippetVariablePromptWiringGuardTests {
         #expect(Self.isFilteredByRemembersLastValue(rememberLine: rememberLine, in: lines, range: range))
     }
 
+    // MARK: - Guard 3: the prompt is opened at all
+    //
+    // Each of the three below was verified by mutation in a whole-branch
+    // review: the named line was removed or changed, the full suite was run,
+    // and it stayed green. They are the "silently does nothing" shape --
+    // the feature disappears and no behavioural test notices, because no
+    // behavioural test can instantiate a SwiftUI view here.
+
+    /// `triggerSnippet` must intercept a snippet that declares variables.
+    /// Deleting the `guard snippet.variables.isEmpty else { … }` block makes
+    /// the prompt never appear: every declared value resolves to `''` and
+    /// the command runs anyway, which is worse than not running it.
+    @Test func triggerSnippetInterceptsASnippetThatDeclaresVariables() throws {
+        let source = try String(contentsOf: Self.contentViewFile, encoding: .utf8)
+        let lines = source.components(separatedBy: "\n")
+        guard let range = Self.range(
+            ofBlockStartingWith: "func triggerSnippet(_ snippet: Snippet, execute: Bool) {",
+            in: lines)
+        else {
+            Issue.record("`func triggerSnippet(_:execute:)` not found — re-anchor this guard")
+            return
+        }
+        #expect(Self.interceptsDeclaredVariables(in: lines, range: range), """
+            `triggerSnippet` no longer guards on `snippet.variables.isEmpty` — the prompt \
+            would never open, every declared value would resolve to an empty string, and the \
+            command would be sent anyway.
+            """)
+        #expect(Self.prefillsFromTheMemoryStore(in: lines, range: range), """
+            `triggerSnippet` no longer reads `SnippetVariableMemoryStore.value(snippetID:…)` \
+            when seeding the prompt — "remember last value" would be an opt-in that silently \
+            does nothing, since the prompt would always open on `defaultValue`.
+            """)
+    }
+
+    /// `SnippetsSheet.save()` must hand the edited declarations to
+    /// `Snippet`. Passing `variables: []` there persists none of them, and
+    /// `Snippet`'s initializer defaults that argument, so even DROPPING the
+    /// argument compiles.
+    @Test func theSnippetEditorSavesTheEditedDeclarations() throws {
+        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let lines = source.components(separatedBy: "\n")
+        guard let range = Self.range(ofBlockStartingWith: "private func save() {", in: lines)
+        else {
+            Issue.record("`private func save()` not found in SnippetsSheet — re-anchor this guard")
+            return
+        }
+        #expect(Self.savesTheEditedVariables(in: lines, range: range), """
+            `save()` no longer passes `variables: variables` to `Snippet` — the declarations \
+            the user just authored would never be persisted, and nothing else in the suite \
+            would notice.
+            """)
+    }
+
+    // MARK: - Scanner reacts (self-tests for guard 3)
+
+    @Test func scannerFlagsATriggerSnippetWithNoInterception() {
+        let source = """
+            struct Fake {
+                func triggerSnippet(_ snippet: Snippet, execute: Bool) {
+                    guard activeTab.session?.terminal != nil else { return }
+                    runSnippet(snippet, execute: execute, values: [:])
+                }
+            }
+            """
+        let lines = source.components(separatedBy: "\n")
+        let range = Self.range(
+            ofBlockStartingWith: "func triggerSnippet(_ snippet: Snippet, execute: Bool) {",
+            in: lines)!
+        #expect(!Self.interceptsDeclaredVariables(in: lines, range: range))
+        #expect(!Self.prefillsFromTheMemoryStore(in: lines, range: range))
+    }
+
+    @Test func scannerFlagsAPromptSeededFromTheDefaultValueOnly() {
+        let source = """
+            struct Fake {
+                func triggerSnippet(_ snippet: Snippet, execute: Bool) {
+                    guard snippet.variables.isEmpty else {
+                        var initialValues: [String: String] = [:]
+                        for variable in snippet.variables {
+                            initialValues[variable.name] = variable.defaultValue
+                        }
+                        pendingSnippetVariablePrompt = PendingSnippetVariablePrompt(
+                            snippet: snippet, execute: execute, initialValues: initialValues)
+                        return
+                    }
+                    runSnippet(snippet, execute: execute, values: [:])
+                }
+            }
+            """
+        let lines = source.components(separatedBy: "\n")
+        let range = Self.range(
+            ofBlockStartingWith: "func triggerSnippet(_ snippet: Snippet, execute: Bool) {",
+            in: lines)!
+        #expect(Self.interceptsDeclaredVariables(in: lines, range: range))
+        #expect(!Self.prefillsFromTheMemoryStore(in: lines, range: range))
+    }
+
+    @Test func scannerFlagsASaveThatPersistsNoDeclarations() {
+        let source = """
+            struct Fake {
+                private func save() {
+                    let snippet = Snippet(
+                        id: existing?.id ?? UUID(), name: trimmedName, command: command,
+                        tags: tags, variables: [])
+                    try store.save(snippet)
+                }
+            }
+            """
+        let lines = source.components(separatedBy: "\n")
+        let range = Self.range(ofBlockStartingWith: "private func save() {", in: lines)!
+        #expect(!Self.savesTheEditedVariables(in: lines, range: range))
+    }
+
+    @Test func scannerAcceptsASaveThatPersistsTheEditedDeclarations() {
+        let source = """
+            struct Fake {
+                private func save() {
+                    let snippet = Snippet(
+                        id: existing?.id ?? UUID(), name: trimmedName, command: command,
+                        tags: tags, variables: variables)
+                    try store.save(snippet)
+                }
+            }
+            """
+        let lines = source.components(separatedBy: "\n")
+        let range = Self.range(ofBlockStartingWith: "private func save() {", in: lines)!
+        #expect(Self.savesTheEditedVariables(in: lines, range: range))
+    }
+
     // MARK: - Scanner
     //
     // Deliberately line-based, like `PaneVisibilityWiringGuardTests`'s and
@@ -246,5 +388,30 @@ struct SnippetVariablePromptWiringGuardTests {
         rememberLine: Int, in lines: [String], range: ClosedRange<Int>
     ) -> Bool {
         range.contains { $0 < rememberLine && lines[$0].contains("remembersLastValue") }
+    }
+
+    /// Whether the "this snippet declares variables, so do not send
+    /// anything" guard is still in `range`.
+    private static func interceptsDeclaredVariables(
+        in lines: [String], range: ClosedRange<Int>
+    ) -> Bool {
+        range.contains { lines[$0].contains("guard snippet.variables.isEmpty else {") }
+    }
+
+    /// Whether the prompt's initial values are still looked up in
+    /// `SnippetVariableMemoryStore` rather than taken from `defaultValue`
+    /// alone. Anchored on the `value(snippetID:` call, the only thing that
+    /// distinguishes the two.
+    private static func prefillsFromTheMemoryStore(
+        in lines: [String], range: ClosedRange<Int>
+    ) -> Bool {
+        range.contains { lines[$0].contains("value(snippetID:") }
+    }
+
+    /// Whether `save()` still hands the edited declarations to `Snippet`.
+    private static func savesTheEditedVariables(
+        in lines: [String], range: ClosedRange<Int>
+    ) -> Bool {
+        range.contains { lines[$0].contains("variables: variables") }
     }
 }

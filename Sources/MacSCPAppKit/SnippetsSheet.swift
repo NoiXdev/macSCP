@@ -580,12 +580,20 @@ private struct SnippetEditorView: View {
 
     /// What is wrong with the current variable declarations, or `nil`. Both
     /// checks named in the brief: an invalid or duplicate name is caught
-    /// here directly (`SnippetVariable.isValidName` has no caller before
-    /// this one — names are validated where they are authored), and
-    /// `SnippetVariableSubstitution.firstDeclarationProblem` catches the
-    /// command-side mistakes (an unused placeholder, one sitting inside
-    /// quotes). An empty `variableDrafts` short-circuits every check below to
-    /// `nil`, matching a snippet with no variables at all.
+    /// here directly, and `SnippetVariableSubstitution
+    /// .firstDeclarationProblem` catches the command-side mistakes (an
+    /// unused placeholder, one sitting inside quotes, a command whose
+    /// quoting it cannot analyse at all). An empty `variableDrafts`
+    /// short-circuits every check below to `nil`, matching a snippet with no
+    /// variables at all.
+    ///
+    /// The name loop below is not the only enforcement of
+    /// `SnippetVariable.isValidName` any more: `firstDeclarationProblem`
+    /// checks it too, and `SnippetVariableSubstitution.resolve` skips a
+    /// declaration that fails it, because import can carry a declaration in
+    /// from a file without it ever passing this field. The loop stays
+    /// because it is the only one of the three that can say WHICH field the
+    /// user has to fix while they are typing in it.
     private var variablesError: String? {
         for draft in variableDrafts {
             let trimmedName = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -606,20 +614,7 @@ private struct SnippetEditorView: View {
             let problem = SnippetVariableSubstitution.firstDeclarationProblem(
                 command: command, variables: variables)
         else { return nil }
-        switch problem {
-        case .unusedPlaceholder(let name):
-            return String(
-                format: L10n.string(
-                    "snippets.variables.error.unusedPlaceholder %@",
-                    "“%@” is never used in the command."),
-                name)
-        case .placeholderInsideQuotes(let name):
-            return String(
-                format: L10n.string(
-                    "snippets.variables.error.quotedPlaceholder %@",
-                    "“%@” sits inside quotes. Remove them — the value is quoted for you."),
-                name)
-        }
+        return snippetVariableProblemText(for: problem)
     }
 
     /// Only the required-fields check plus the two `variablesError` can

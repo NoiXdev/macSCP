@@ -852,6 +852,9 @@
 "snippets.variables.error.duplicateName" = "Dwie zmienne mają tę samą nazwę.";
 "snippets.variables.error.unusedPlaceholder %@" = "„%@” nie występuje w poleceniu.";
 "snippets.variables.error.quotedPlaceholder %@" = "„%@” znajduje się w cudzysłowie. Usuń go — wartość zostanie zacytowana za Ciebie.";
+"snippets.variables.error.heredoc" = "To polecenie używa dokumentu wbudowanego (<<). macSCP nie widzi, które jego części są w cudzysłowie, więc nie potrafi ustalić, gdzie trafiłaby wartość — i żadnej tam nie wstawi.";
+"snippets.variables.error.unbalancedQuoting" = "Cudzysłów w tym poleceniu nie zamyka się w tym samym wierszu, w którym się otwiera. macSCP nie potrafi ustalić, czy wartość trafiłaby w cudzysłów, więc żadnej tam nie wstawi.";
+"snippets.variables.refused.title" = "Nie można wypełnić wartości tego fragmentu";
 "snippets.variables.promptTitle %@" = "Wartości dla „%@”";
 "snippets.variables.promptRun" = "Wykonaj";
 "snippets.variables.promptNoOptions" = "Dla tej zmiennej nie skonfigurowano żadnych opcji.";

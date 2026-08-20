@@ -192,3 +192,49 @@ func snippetImportErrorText(for error: SessionExportError) -> String {
             "This file couldn't be read as macSCP snippets. It may be a different kind of export, or damaged.")
     }
 }
+
+/// Maps a `SnippetVariableSubstitution.Problem` to the sentence the user
+/// reads.
+///
+/// One mapping for two surfaces: the editor shows it under the variables
+/// section while Save is disabled, and `ContentView` shows it in the alert
+/// that refuses to run a snippet whose declarations never passed an editor
+/// — an imported one. Two switches over the same enum would drift, and the
+/// half that drifted would be the one nobody looks at.
+///
+/// Names are interpolated, values are NOT: a `Problem` never carries one,
+/// and this project's rule keeps a typed value out of every message.
+/// `.invalidName` deliberately drops even the name into a name-free
+/// sentence — an imported declaration can carry an arbitrary string there,
+/// and quoting a hostile one back at the user buys nothing.
+/// `.unanalyzableContext` says what was found and why the value cannot be
+/// placed, without suggesting the command is wrong: a here-document is an
+/// ordinary way to write one.
+func snippetVariableProblemText(for problem: SnippetVariableSubstitution.Problem) -> String {
+    switch problem {
+    case .invalidName:
+        return L10n.string(
+            "snippets.variables.error.invalidName",
+            "A variable name must start with a letter or underscore and may contain only letters, digits and underscores.")
+    case .unanalyzableContext(.heredoc):
+        return L10n.string(
+            "snippets.variables.error.heredoc",
+            "This command uses a here-document (<<). macSCP can't see which parts of it are quoted, so it can't tell where a value would end up — and won't place one there.")
+    case .unanalyzableContext(.unbalancedQuoting):
+        return L10n.string(
+            "snippets.variables.error.unbalancedQuoting",
+            "A quote in this command doesn't close on the line it opens. macSCP can't tell whether a value would end up inside quotes, so it won't place one there.")
+    case .unusedPlaceholder(let name):
+        return String(
+            format: L10n.string(
+                "snippets.variables.error.unusedPlaceholder %@",
+                "“%@” is never used in the command."),
+            name)
+    case .placeholderInsideQuotes(let name):
+        return String(
+            format: L10n.string(
+                "snippets.variables.error.quotedPlaceholder %@",
+                "“%@” sits inside quotes. Remove them — the value is quoted for you."),
+            name)
+    }
+}
