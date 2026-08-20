@@ -144,7 +144,7 @@ struct SnippetVariableSubstitutionTests {
         #expect(problem == nil)
     }
 
-    // --- the class the review opened, closed ------------------------------
+    // --- the class four review rounds opened, closed ------------------
 
     /// Every template a whole-branch review got past this check, each one
     /// verified by the reviewer against real `bash`: the resolved string was
@@ -153,44 +153,94 @@ struct SnippetVariableSubstitutionTests {
     /// position and each template put it in a quoted one the check could not
     /// see.
     ///
-    /// Three separate causes, one class: the tokenizer ended a comment at
-    /// the end of the TEXT rather than the line (so a `#` anywhere killed
-    /// every later `.string` token), it did not honour a backslash escape
-    /// inside a double-quoted span (so `"a\"` looked closed), and a
-    /// here-document cannot be expressed as a quote position at all. The
-    /// first two are fixed in `SnippetHighlighter`; the third is refused
-    /// (`Problem.unanalyzableContext`).
+    /// FOUR separate causes, one class — counted here, in the pass that
+    /// writes the number, because this project's rule says a number in a
+    /// comment is a claim about the rest of the code:
     ///
-    /// The assertion is that the check REFUSES. The other acceptable outcome
-    /// — accepted, and the resolved string runs the payload inertly — is not
-    /// what any of these five do, and pinning "refused" is what would go red
-    /// if one of the three causes came back.
+    /// 1. the tokenizer ended a comment at the end of the TEXT rather than
+    ///    the line, so a `#` anywhere killed every later `.string` token;
+    /// 2. it did not honour a backslash escape inside a double-quoted span,
+    ///    so `"a\"` looked closed;
+    /// 3. a here-document cannot be expressed as a quote position at all;
+    /// 4. a comment was started at ANY `#`, where a shell starts one only at
+    ///    a word start — so `echo a#b "{{X}}"` read the quoted placeholder
+    ///    as being inside a comment, and fifteen templates of that shape
+    ///    executed the payload.
+    ///
+    /// The fourth is the one that ended the deny-list design: each round
+    /// fixed the instances it was shown and the next round found a new
+    /// construct, because *not understanding meant accepting*. The gate is
+    /// now `SnippetCommandSurvey`, which accepts only what it positively
+    /// recognises, and every template below lands on a NAMED outcome rather
+    /// than on "some problem was reported" — the weaker assertion this test
+    /// used to make stayed green under a mutation a sibling test caught.
     @Test(
-        "every template the review broke the check with is refused",
+        "every template a review broke the check with is refused, and for the stated reason",
         arguments: [
-            #"echo {{X}} "{{X}}""#,
-            "# note\necho \"{{X}}\"",
-            "echo hi # note\necho \"{{X}}\"",
-            #"echo "a\"{{X}}""#,
-            "cat <<EOF\n{{X}}\nEOF",
+            (#"echo {{X}} "{{X}}""#, SnippetVariableSubstitution.Problem.placeholderInsideQuotes(name: "X")),
+            ("# note\necho \"{{X}}\"", .placeholderInsideQuotes(name: "X")),
+            ("echo hi # note\necho \"{{X}}\"", .placeholderInsideQuotes(name: "X")),
+            (#"echo "a\"{{X}}""#, .placeholderInsideQuotes(name: "X")),
+            ("cat <<EOF\n{{X}}\nEOF", .unanalyzableContext(kind: .heredoc)),
+            (#"echo a#b "{{X}}""#, .placeholderInsideQuotes(name: "X")),
+            (#"echo issue#42 "{{X}}""#, .placeholderInsideQuotes(name: "X")),
+            (##"echo \# "{{X}}""##, .placeholderInsideQuotes(name: "X")),
+            (#"curl http://e.com/a#b -d "{{X}}""#, .placeholderInsideQuotes(name: "X")),
+            (#"printf %s#%s x "{{X}}""#, .placeholderInsideQuotes(name: "X")),
+            (#"V=a#b; echo "{{X}}""#, .placeholderInsideQuotes(name: "X")),
+            ("echo a#b '{{X}}'", .placeholderInsideQuotes(name: "X")),
+            (#"echo x#y"{{X}}"z"#, .placeholderInsideQuotes(name: "X")),
+            ("echo a#b\ncat <<EOF\n{{X}}\nEOF", .unanalyzableContext(kind: .heredoc)),
+            ("echo $(({{X}}))", .unanalyzableContext(kind: .expansion)),
+            ("eval {{X}}", .unanalyzableContext(kind: .evaluation)),
+            ("echo hi && eval {{X}}", .unanalyzableContext(kind: .evaluation)),
+            (#""eval" {{X}}"#, .unanalyzableContext(kind: .unrecognizedSyntax)),
+            ("echo `id` {{X}}", .unanalyzableContext(kind: .commandSubstitution)),
+            ("echo $(id) {{X}}", .unanalyzableContext(kind: .commandSubstitution)),
+            ("(echo {{X}})", .unanalyzableContext(kind: .commandSubstitution)),
+            ("echo hi > {{X}}", .placeholderNotInArgumentPosition(name: "X")),
+            ("{{X}} --flag", .placeholderNotInArgumentPosition(name: "X")),
+            ("echo hi # {{X}}", .placeholderNotInArgumentPosition(name: "X")),
         ])
-    func theQuotedContextClassIsClosed(template: String) {
-        let problem = SnippetVariableSubstitution.firstDeclarationProblem(
-            command: template, variables: [placeholder("X")])
-        #expect(problem != nil, """
-            this template was accepted -- a review executed the resolved string against real \
-            bash and a command substitution carried in the value ran. Whichever of the three \
-            causes came back (comment-to-end-of-text, unhonoured backslash escape, \
-            here-document), the value would be placed in a context the check cannot see.
-            """)
+    func theUnsafePlacementClassIsClosed(
+        template: String, expected: SnippetVariableSubstitution.Problem
+    ) {
+        #expect(
+            SnippetVariableSubstitution.firstDeclarationProblem(
+                command: template, variables: [placeholder("X")]) == expected)
     }
 
-    /// The other direction, so the five above cannot be satisfied by
-    /// refusing everything: an ordinary multi-line command with a comment in
-    /// it, a placeholder outside quotes, still resolves — and to exactly the
-    /// inert text a shell reads as one word.
-    @Test("a multi-line command with a comment and an unquoted placeholder still resolves")
-    func aCommentedMultiLineCommandWithAnUnquotedPlaceholderIsFine() {
+    /// The other direction, so the corpus above cannot be satisfied by
+    /// refusing everything. These are ordinary snippets, and a gate that
+    /// refuses them is a gate nobody can use — which is the failure mode
+    /// worth having, but only in exchange for something.
+    @Test(
+        "legitimate snippets stay usable",
+        arguments: [
+            "echo {{X}}",
+            "mysqldump {{X}} > out.sql",
+            "awk '{print $1}' {{X}}",
+            #"echo \"{{X}}\""#,
+            "echo {{X}} # don't do this twice",
+            "# back up the database\ncd /srv\nmysqldump {{X}} > out.sql  # dump it",
+            "case \"$1\" in\n  start) echo starting {{X}} ;;\n  *) echo other ;;\nesac",
+            "scp -i {{X}} host:/path && echo \"done\"",
+            "cp {{X}} $HOME/backup",
+            "if [ -f {{X}} ]; then echo yes; fi",
+            "DB=live ./backup.sh {{X}}",
+            "ls | grep {{X}} | wc -l",
+        ])
+    func aLegitimateSnippetStaysUsable(command: String) {
+        #expect(
+            SnippetVariableSubstitution.firstDeclarationProblem(
+                command: command, variables: [placeholder("X")]) == nil)
+    }
+
+    /// An accepted template resolves to text a shell reads as ONE literal
+    /// word — proven here on the payload the reviewers used, and confirmed
+    /// by executing these strings in real `bash` in a scratch directory
+    /// (the marker file was never created).
+    @Test func anAcceptedTemplateResolvesThePayloadInert() {
         let command = "# back up the database\nmysqldump {{DB}} > out.sql"
         #expect(
             SnippetVariableSubstitution.firstDeclarationProblem(
@@ -219,12 +269,17 @@ struct SnippetVariableSubstitutionTests {
     }
 
     /// `<` and `<` with a space between them is process substitution, not a
-    /// here-document — the refusal must not spread to it.
-    @Test("a redirection followed by a process substitution is not a here-document")
-    func aSpacedRedirectionIsNotAHeredoc() {
+    /// here-document. It is refused all the same, and under its own name: a
+    /// process substitution is a command inside a command, with a quoting
+    /// state of its own. This used to be ACCEPTED — the previous gate looked
+    /// only for two adjacent `<`, found none, and concluded the command was
+    /// safe. That conclusion is exactly the shape this wave removed.
+    @Test("a process substitution is refused as a nested command, not as a here-document")
+    func aSpacedRedirectionIsRefusedAsANestedCommand() {
         #expect(
             SnippetVariableSubstitution.firstDeclarationProblem(
-                command: "diff {{A}} < <(sort b)", variables: [placeholder("A")]) == nil)
+                command: "diff {{A}} < <(sort b)", variables: [placeholder("A")])
+                == .unanalyzableContext(kind: .commandSubstitution))
     }
 
     /// A `<<` inside a string or a comment is text, not an operator — the

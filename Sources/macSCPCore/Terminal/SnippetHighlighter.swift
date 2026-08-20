@@ -58,12 +58,18 @@ public enum SnippetHighlighter {
             // and an earlier version of this branch ended the token at
             // `text.endIndex` and stopped tokenising there, so one `#` on
             // the first line swallowed every later line: no strings, no
-            // variables, nothing. That is a colouring bug on its own, and
-            // it also blinded `SnippetVariableSubstitution
-            // .firstDeclarationProblem`, which reads the `.string` tokens
-            // from here to decide whether a placeholder sits inside quotes.
+            // variables, nothing.
+            //
             // A `#` inside a string never reaches this branch, because
-            // quotes are consumed whole below.
+            // quotes are consumed whole below. A `#` in the MIDDLE of a
+            // word does reach it, and this tokenizer colours it as a
+            // comment even though a shell would not start one there
+            // (`echo a#b` passes a literal word). That approximation is
+            // deliberate and harmless HERE, where the only consequence is
+            // a colour; it was not harmless when the variable gate read
+            // these tokens, which is why the gate now has its own
+            // recogniser in `SnippetCommandSurvey` and this file is no
+            // longer load-bearing for it.
             if c == "#" {
                 var j = i
                 while j < text.endIndex, !text[j].isNewline { j = text.index(after: j) }
@@ -142,10 +148,11 @@ public enum SnippetHighlighter {
     /// How far the quoted span that opens at `start` reaches, and whether it
     /// actually closed.
     ///
-    /// The ONE place this project decides where a quoted run ends -- both
-    /// `shellTokens` and `quotingBalancesPerLine` go through it, so the two
-    /// answers cannot drift apart (the same single-implementation reasoning
-    /// `PosixQuoting`'s doc comment gives for quoting).
+    /// Where a quoted run ends, for COLOURING purposes only.
+    /// `SnippetCommandSurvey` answers the same question separately for the
+    /// variable gate, and the duplication is on purpose: sharing one
+    /// implementation let a change made for colour move a security verdict,
+    /// which is how three review rounds got past that gate.
     ///
     /// `text[start]` is the opening quote. Inside a DOUBLE-quoted span a
     /// backslash escapes the next character, so `"a\"b"` is one span and not
@@ -176,29 +183,5 @@ public enum SnippetHighlighter {
             j = text.index(after: j)
         }
         return (text.endIndex, false)
-    }
-
-    /// Whether every quoted span in `text` opens and closes on the same
-    /// line.
-    ///
-    /// The precondition `SnippetVariableSubstitution.firstDeclarationProblem`
-    /// needs before "this placeholder sits inside quotes" means anything: an
-    /// unterminated quote makes every later position's quoting state a
-    /// guess, and a span running across a line break -- legal in a shell,
-    /// but not something a position check can reason about -- means the same.
-    /// Reported as one boolean rather than a position, because the caller
-    /// refuses on it; it does not point at it.
-    ///
-    /// Built on `tokens(in:language:)` so comments, and `#` characters
-    /// inside strings, are treated exactly as the tokenizer treats them --
-    /// this is not a second scanner with its own opinion.
-    public static func quotingBalancesPerLine(in text: String) -> Bool {
-        for token in tokens(in: text, language: .shell) where token.kind == .string {
-            guard quotedSpan(in: text, openingAt: token.range.lowerBound).closed else {
-                return false
-            }
-            guard !text[token.range].contains(where: \.isNewline) else { return false }
-        }
-        return true
     }
 }

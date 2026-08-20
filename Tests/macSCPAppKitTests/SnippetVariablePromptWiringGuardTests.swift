@@ -40,6 +40,18 @@ import Testing
 ///    at all. `Snippet`'s initializer defaults `variables`, so the last one
 ///    does not even need a wrong value — a dropped argument compiles.
 ///
+/// 4. `triggerSnippet` must still run `SnippetVariableSubstitution
+///    .firstDeclarationProblem` and RETURN on a problem BEFORE it opens the
+///    prompt. This is the load-bearing one: the check is the last thing
+///    between an imported snippet — whose declarations never passed the
+///    editor — and a value being placed into a command macSCP cannot
+///    survey. Deleting those lines left the whole suite green, because
+///    every functional test of the check calls Core directly and no test
+///    reaches this call site. The guard requires the order too, not just
+///    the presence of a call: a check whose refusal does not `return`
+///    before `pendingSnippetVariablePrompt` is set is a check that runs and
+///    is then ignored.
+///
 /// All are SOURCE-TEXT scans, not behavioral tests — this project has no
 /// SwiftUI rendering/instantiation harness (see `SnippetActionSheet`'s own
 /// doc comment for the same boundary) — and share the known blind spots the
@@ -342,6 +354,140 @@ struct SnippetVariablePromptWiringGuardTests {
         #expect(Self.savesTheEditedVariables(in: lines, range: range))
     }
 
+    // MARK: - Guard 4: the run path refuses before it prompts
+
+    /// The refusal must sit between "this snippet declares variables" and
+    /// "ask the user for them", and it must leave the method. Order is the
+    /// whole content of the guard: a `firstDeclarationProblem` call whose
+    /// result is computed after the prompt is already scheduled protects
+    /// nothing.
+    @Test func triggerSnippetRefusesAnUnsurveyableCommandBeforeOpeningThePrompt() throws {
+        let source = try String(contentsOf: Self.contentViewFile, encoding: .utf8)
+        let lines = source.components(separatedBy: "\n")
+        guard let range = Self.range(
+            ofBlockStartingWith: "func triggerSnippet(_ snippet: Snippet, execute: Bool) {",
+            in: lines)
+        else {
+            Issue.record("`func triggerSnippet(_:execute:)` not found — re-anchor this guard")
+            return
+        }
+        #expect(Self.refusesBeforePrompting(in: lines, range: range), """
+            `triggerSnippet` no longer refuses an unsurveyable command before opening the \
+            variable prompt. An imported snippet's declarations never passed the editor, so \
+            this call is the last thing before a typed value is placed into a command whose \
+            quoting macSCP could not survey.
+            """)
+    }
+
+    /// The exact regression: the five lines deleted. A reviewer verified
+    /// that this left the whole suite green, which is why the guard exists
+    /// at all.
+    @Test func scannerFlagsATriggerThatPromptsWithoutChecking() {
+        let source = """
+            struct Fake {
+                func triggerSnippet(_ snippet: Snippet, execute: Bool) {
+                    guard snippet.variables.isEmpty else {
+                        let store = snippetVariableMemoryStore
+                        var initialValues: [String: String] = [:]
+                        for variable in snippet.variables {
+                            initialValues[variable.name] =
+                                store?.value(snippetID: snippet.id, name: variable.name)
+                        }
+                        pendingSnippetVariablePrompt = PendingSnippetVariablePrompt(
+                            snippet: snippet, execute: execute, initialValues: initialValues)
+                        return
+                    }
+                    runSnippet(snippet, execute: execute, values: [:])
+                }
+            }
+            """
+        let lines = source.components(separatedBy: "\n")
+        let range = Self.range(
+            ofBlockStartingWith: "func triggerSnippet(_ snippet: Snippet, execute: Bool) {",
+            in: lines)!
+        #expect(!Self.refusesBeforePrompting(in: lines, range: range))
+    }
+
+    /// The subtler regression: the check is still there, its message is
+    /// still raised, but nothing leaves the method — so the prompt opens
+    /// anyway and the refusal is decoration.
+    @Test func scannerFlagsARefusalThatDoesNotLeaveTheMethod() {
+        let source = """
+            struct Fake {
+                func triggerSnippet(_ snippet: Snippet, execute: Bool) {
+                    guard snippet.variables.isEmpty else {
+                        if let problem = SnippetVariableSubstitution.firstDeclarationProblem(
+                            command: snippet.command, variables: snippet.variables) {
+                            pendingSnippetVariableRefusal = snippetVariableProblemText(for: problem)
+                        }
+                        pendingSnippetVariablePrompt = PendingSnippetVariablePrompt(
+                            snippet: snippet, execute: execute, initialValues: [:])
+                        return
+                    }
+                    runSnippet(snippet, execute: execute, values: [:])
+                }
+            }
+            """
+        let lines = source.components(separatedBy: "\n")
+        let range = Self.range(
+            ofBlockStartingWith: "func triggerSnippet(_ snippet: Snippet, execute: Bool) {",
+            in: lines)!
+        #expect(!Self.refusesBeforePrompting(in: lines, range: range))
+    }
+
+    /// And the order regression: the check runs, but only after the prompt
+    /// has already been scheduled.
+    @Test func scannerFlagsACheckThatRunsAfterThePromptIsScheduled() {
+        let source = """
+            struct Fake {
+                func triggerSnippet(_ snippet: Snippet, execute: Bool) {
+                    guard snippet.variables.isEmpty else {
+                        pendingSnippetVariablePrompt = PendingSnippetVariablePrompt(
+                            snippet: snippet, execute: execute, initialValues: [:])
+                        if let problem = SnippetVariableSubstitution.firstDeclarationProblem(
+                            command: snippet.command, variables: snippet.variables) {
+                            pendingSnippetVariableRefusal = snippetVariableProblemText(for: problem)
+                            return
+                        }
+                        return
+                    }
+                    runSnippet(snippet, execute: execute, values: [:])
+                }
+            }
+            """
+        let lines = source.components(separatedBy: "\n")
+        let range = Self.range(
+            ofBlockStartingWith: "func triggerSnippet(_ snippet: Snippet, execute: Bool) {",
+            in: lines)!
+        #expect(!Self.refusesBeforePrompting(in: lines, range: range))
+    }
+
+    /// The passing shape: the real call site, unmodified.
+    @Test func scannerAcceptsARefusalThatPrecedesThePrompt() {
+        let source = """
+            struct Fake {
+                func triggerSnippet(_ snippet: Snippet, execute: Bool) {
+                    guard snippet.variables.isEmpty else {
+                        if let problem = SnippetVariableSubstitution.firstDeclarationProblem(
+                            command: snippet.command, variables: snippet.variables) {
+                            pendingSnippetVariableRefusal = snippetVariableProblemText(for: problem)
+                            return
+                        }
+                        pendingSnippetVariablePrompt = PendingSnippetVariablePrompt(
+                            snippet: snippet, execute: execute, initialValues: [:])
+                        return
+                    }
+                    runSnippet(snippet, execute: execute, values: [:])
+                }
+            }
+            """
+        let lines = source.components(separatedBy: "\n")
+        let range = Self.range(
+            ofBlockStartingWith: "func triggerSnippet(_ snippet: Snippet, execute: Bool) {",
+            in: lines)!
+        #expect(Self.refusesBeforePrompting(in: lines, range: range))
+    }
+
     // MARK: - Scanner
     //
     // Deliberately line-based, like `PaneVisibilityWiringGuardTests`'s and
@@ -413,5 +559,28 @@ struct SnippetVariablePromptWiringGuardTests {
         in lines: [String], range: ClosedRange<Int>
     ) -> Bool {
         range.contains { lines[$0].contains("variables: variables") }
+    }
+    /// Whether the run path still refuses before it asks: the declaration
+    /// check is called, its refusal is raised, the method returns on it, and
+    /// all of that happens above the line that schedules the prompt.
+    /// Fail-closed — a missing anchor is `false`, never a shrug, because the
+    /// thing being guarded against is precisely a call site that vanished.
+    private static func refusesBeforePrompting(
+        in lines: [String], range: ClosedRange<Int>
+    ) -> Bool {
+        guard let checkLine = range.first(where: {
+            lines[$0].contains("SnippetVariableSubstitution.firstDeclarationProblem(")
+        }),
+        let refusalLine = range.first(where: {
+            lines[$0].contains("pendingSnippetVariableRefusal =")
+        }),
+        let promptLine = range.first(where: {
+            lines[$0].contains("pendingSnippetVariablePrompt =")
+        })
+        else { return false }
+        guard checkLine < refusalLine, refusalLine < promptLine else { return false }
+        return (refusalLine + 1..<promptLine).contains {
+            lines[$0].trimmingCharacters(in: .whitespaces) == "return"
+        }
     }
 }

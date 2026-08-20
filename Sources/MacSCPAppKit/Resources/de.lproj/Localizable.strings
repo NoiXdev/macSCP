@@ -852,6 +852,11 @@
 "snippets.variables.error.quotedPlaceholder %@" = "„%@“ steht in Anführungszeichen. Nimm sie weg — der Wert wird für dich gequotet.";
 "snippets.variables.error.heredoc" = "Dieses Kommando verwendet ein Here-Dokument (<<). macSCP sieht nicht, welche Teile darin gequotet sind, und kann deshalb nicht sagen, wo ein Wert landen würde — und setzt dort keinen ein.";
 "snippets.variables.error.unbalancedQuoting" = "Ein Anführungszeichen in diesem Kommando wird in derselben Zeile nicht wieder geschlossen. macSCP kann nicht erkennen, ob ein Wert in Anführungszeichen landen würde, und setzt dort keinen ein.";
+"snippets.variables.error.placeholderPosition %@" = "„%@“ steht nicht als einfaches Argument im Kommando. Nur dort kann macSCP den Wert absichern — nimm es aus dem Kommandonamen, einem Umleitungsziel oder einem Kommentar heraus.";
+"snippets.variables.error.commandSubstitution" = "Dieses Kommando führt ein weiteres Kommando in sich aus ($(…), Backticks oder eine Subshell). macSCP kann nicht erkennen, wo ein Wert dort landen würde, und setzt deshalb keinen ein.";
+"snippets.variables.error.expansion" = "Dieses Kommando verwendet eine Ersetzung, die macSCP nicht lesen kann (${…}, $((…)) oder $'…'). Es kann nicht erkennen, wo ein Wert landen würde, und setzt deshalb keinen ein.";
+"snippets.variables.error.evaluation" = "Dieses Kommando gibt seine Argumente an die Shell zurück (eval). Anführungszeichen sichern einen Wert dort nicht ab, deshalb setzt macSCP keinen ein.";
+"snippets.variables.error.unrecognizedSyntax" = "macSCP kann dieses Kommando nicht weit genug lesen, um zu erkennen, wo ein Wert landen würde. Werte kommen nur in einfache, nicht gequotete Argumente — alles andere lehnt macSCP ab.";
 "snippets.variables.refused.title" = "Die Werte dieses Snippets lassen sich nicht einsetzen";
 "snippets.variables.promptTitle %@" = "Werte für „%@“";
 "snippets.variables.promptRun" = "Ausführen";

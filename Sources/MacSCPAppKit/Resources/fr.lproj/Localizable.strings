@@ -855,6 +855,11 @@
 "snippets.variables.error.quotedPlaceholder %@" = "« %@ » se trouve entre guillemets. Retirez-les — la valeur est protégée pour vous.";
 "snippets.variables.error.heredoc" = "Cette commande utilise un document en ligne (<<). macSCP ne voit pas quelles parties y sont entre guillemets et ne peut donc pas savoir où une valeur atterrirait — il n’en place aucune.";
 "snippets.variables.error.unbalancedQuoting" = "Un guillemet de cette commande ne se referme pas sur la ligne où il s’ouvre. macSCP ne peut pas savoir si une valeur se retrouverait entre guillemets, il n’en place donc aucune.";
+"snippets.variables.error.placeholderPosition %@" = "« %@ » n’est pas un simple argument de la commande. macSCP ne peut protéger la valeur qu’à cet endroit — sortez-le du nom de la commande, d’une redirection ou d’un commentaire.";
+"snippets.variables.error.commandSubstitution" = "Cette commande exécute une autre commande en son sein ($(…), accents graves ou un sous-shell). macSCP ne peut pas savoir où une valeur y atterrirait, il n’en place donc aucune.";
+"snippets.variables.error.expansion" = "Cette commande utilise une expansion que macSCP ne sait pas lire (${…}, $((…)) ou $'…'). Il ne peut pas savoir où une valeur atterrirait, il n’en place donc aucune.";
+"snippets.variables.error.evaluation" = "Cette commande renvoie ses arguments au shell (eval). Les guillemets n’y protègent aucune valeur, macSCP n’en place donc pas.";
+"snippets.variables.error.unrecognizedSyntax" = "macSCP ne peut pas lire cette commande assez loin pour savoir où une valeur atterrirait. Il ne place des valeurs que dans des arguments simples et sans guillemets, et refuse tout ce qu’il ne peut pas analyser.";
 "snippets.variables.refused.title" = "Impossible de renseigner les valeurs de cet extrait";
 "snippets.variables.promptTitle %@" = "Valeurs pour « %@ »";
 "snippets.variables.promptRun" = "Exécuter";

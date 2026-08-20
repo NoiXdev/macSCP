@@ -73,9 +73,10 @@ struct SnippetHighlighterTests {
     /// A comment ends at the LINE break, not at the end of the text. The
     /// branch used to run to `text.endIndex` and stop tokenising there, so
     /// in a multi-line command the first `#` swallowed every later line --
-    /// wrong colouring, and (because
-    /// `SnippetVariableSubstitution.firstDeclarationProblem` reads these
-    /// `.string` tokens) a hole in the save-time quoting check.
+    /// wrong colouring. It was also, at the time, a hole in the snippet
+    /// variable gate, which read these tokens; that gate has its own
+    /// recogniser now (`SnippetCommandSurveyTests`), and nothing here is
+    /// load-bearing for it any more.
     @Test func aCommentEndsAtTheLineBreakNotAtTheEndOfTheText() {
         let text = "ls # list them\necho \"still a string\""
         #expect(spans(text, .comment) == ["# list them"])
@@ -102,7 +103,6 @@ struct SnippetHighlighterTests {
     /// the end rather than looping forever.
     @Test func aDoubleQuotedSpanEndingInAnEscapedQuoteIsUnterminated() {
         #expect(spans(#"echo "a\""#, .string) == [#""a\""#])
-        #expect(!SnippetHighlighter.quotingBalancesPerLine(in: #"echo "a\""#))
     }
 
     /// The POSIX asymmetry: a SINGLE-quoted span honours no escape at all.
@@ -110,31 +110,5 @@ struct SnippetHighlighterTests {
     /// `'a\'` closes at that second quote and `b'` opens a new span.
     @Test func aBackslashDoesNotEscapeInsideASingleQuotedSpan() {
         #expect(spans(#"echo 'a\' b'c'"#, .string) == [#"'a\'"#, "'c'"])
-    }
-
-    // --- the balance question --------------------------------------------
-
-    @Test(
-        "quoting that opens and closes on one line balances",
-        arguments: [
-            "echo 'a b' \"c d\"",
-            #"echo "a\"b""#,
-            "echo no quotes at all",
-            "echo 'first'\necho \"second\"",
-            "echo 'a # b' # a real comment with a ' in it",
-        ])
-    func balancedQuotingIsRecognised(text: String) {
-        #expect(SnippetHighlighter.quotingBalancesPerLine(in: text))
-    }
-
-    @Test(
-        "quoting that never closes, or closes on a later line, does not balance",
-        arguments: [
-            "echo \"abc",
-            "echo 'abc",
-            "echo \"spans\nlines\"",
-        ])
-    func unbalancedQuotingIsRecognised(text: String) {
-        #expect(!SnippetHighlighter.quotingBalancesPerLine(in: text))
     }
 }

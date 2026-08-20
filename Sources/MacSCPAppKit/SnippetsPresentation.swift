@@ -209,7 +209,9 @@ func snippetImportErrorText(for error: SessionExportError) -> String {
 /// and quoting a hostile one back at the user buys nothing.
 /// `.unanalyzableContext` says what was found and why the value cannot be
 /// placed, without suggesting the command is wrong: a here-document is an
-/// ordinary way to write one.
+/// ordinary way to write one, and so is every other construct
+/// `SnippetCommandSurvey` refuses. Each of those sentences is a statement
+/// about macSCP's reach, never about the user's command.
 func snippetVariableProblemText(for problem: SnippetVariableSubstitution.Problem) -> String {
     switch problem {
     case .invalidName:
@@ -236,5 +238,27 @@ func snippetVariableProblemText(for problem: SnippetVariableSubstitution.Problem
                 "snippets.variables.error.quotedPlaceholder %@",
                 "“%@” sits inside quotes. Remove them — the value is quoted for you."),
             name)
+    case .placeholderNotInArgumentPosition(let name):
+        return String(
+            format: L10n.string(
+                "snippets.variables.error.placeholderPosition %@",
+                "“%@” isn't a plain argument of the command. macSCP can only keep a value safe there — take it out of the command name, a redirection target or a comment."),
+            name)
+    case .unanalyzableContext(.commandSubstitution):
+        return L10n.string(
+            "snippets.variables.error.commandSubstitution",
+            "This command runs another command inside itself ($(…), backticks or a subshell). macSCP can't tell where a value would end up in there, so it won't place one.")
+    case .unanalyzableContext(.expansion):
+        return L10n.string(
+            "snippets.variables.error.expansion",
+            "This command uses an expansion macSCP can't read (${…}, $((…)) or $'…'). It can't tell where a value would end up, so it won't place one.")
+    case .unanalyzableContext(.evaluation):
+        return L10n.string(
+            "snippets.variables.error.evaluation",
+            "This command hands its arguments back to the shell (eval). Quoting can't keep a value safe there, so macSCP won't place one.")
+    case .unanalyzableContext(.unrecognizedSyntax):
+        return L10n.string(
+            "snippets.variables.error.unrecognizedSyntax",
+            "macSCP can't read this command far enough to tell where a value would end up. It places values only into plain, unquoted arguments and refuses whatever it can't survey.")
     }
 }

@@ -7,38 +7,37 @@ import Foundation
 /// a wrong answer turns data into code, fully testable.
 public enum SnippetVariableSubstitution {
     /// What is wrong with a set of declarations, if anything.
-    public enum Problem: Equatable {
+    public enum Problem: Equatable, Sendable {
         /// A name that is not a POSIX shell identifier
         /// (`SnippetVariable.isValidName`). For `.environment` such a name
         /// would not produce an assignment at all but extra commands —
         /// `A;touch /tmp/m;B='v' echo hi` is three of them.
         case invalidName(name: String)
-        /// The command carries a shell context the quote-position check
-        /// below cannot analyse, so no answer it gives about a placeholder
-        /// would mean anything. Not an accusation and not a defect in the
-        /// command: it is the limit of a check that reads quote positions
-        /// rather than parsing a shell.
+        /// `SnippetCommandSurvey` could not read the command far enough to
+        /// say anything about a placeholder's position. Not an accusation
+        /// and not a defect in the command: it is the stated limit of a
+        /// recogniser that refuses whatever it cannot survey.
         case unanalyzableContext(kind: Context)
         /// A placeholder declaration whose `{{NAME}}` appears nowhere: the
         /// user would be asked for a value that reaches nothing.
         case unusedPlaceholder(name: String)
         /// `echo "{{NAME}}"` — the value is already quoted by this type, so
-        /// surrounding quotes would show up literally in the output.
+        /// the surrounding quotes would both show up literally AND leave
+        /// anything live in the value live.
         case placeholderInsideQuotes(name: String)
+        /// The placeholder was reached but is not in the one position a
+        /// single-quoted value survives: an unquoted argument of a
+        /// top-level command. Command-name position, a redirection target,
+        /// inside a comment, or straddling a boundary no rule classifies —
+        /// all land here, because acceptance requires a positive answer and
+        /// there was none.
+        case placeholderNotInArgumentPosition(name: String)
 
-        /// Which unanalysable context was found. Named, because a refusal
-        /// that does not say what it saw cannot be acted on.
-        public enum Context: Equatable, Sendable {
-            /// A here-document operator (`<<`, `<<-`, `<<<`, quoted
-            /// delimiter or not). Everything between the operator and its
-            /// delimiter is a quoting context of its own, invisible to a
-            /// scan over quote characters.
-            case heredoc
-            /// A quoted span that never closes, or one that runs across a
-            /// line break. Either way the quoting state of every position
-            /// after it is a guess.
-            case unbalancedQuoting
-        }
+        /// Which unsurveyable construct was found. Named, because a refusal
+        /// that does not say what it saw cannot be acted on. The recogniser
+        /// owns this vocabulary; aliasing rather than restating it is what
+        /// keeps the two from drifting into two different lists.
+        public typealias Context = SnippetCommandSurvey.Refusal
     }
 
     /// `command` with every declared variable applied.
@@ -132,12 +131,12 @@ public enum SnippetVariableSubstitution {
     /// a declaration — see its doc comment for why the emitter, not only the
     /// checker, has to hold that line.
     ///
-    /// Then, before any quote position is read, the command is checked for a
-    /// context this function cannot analyse (see `Problem.Context`). That
-    /// check is deliberately scoped to commands that declare at least one
-    /// `.placeholder`: it exists to protect the quote-position check below,
-    /// and a here-document in a snippet that declares no placeholder — or
-    /// only `.environment` variables, which are prepended as their own
+    /// Then the command is handed to `SnippetCommandSurvey`, which either
+    /// reports the spans it positively recognised or refuses. That call is
+    /// deliberately scoped to commands that declare at least one
+    /// `.placeholder`: it exists to decide where a VALUE may be placed, and
+    /// a here-document in a snippet that declares no placeholder — or only
+    /// `.environment` variables, which are prepended as their own
     /// assignments and never land inside the command's own quoting — is an
     /// ordinary thing to write and stays savable.
     ///
@@ -147,7 +146,7 @@ public enum SnippetVariableSubstitution {
     /// ./backup.sh` sets it for a script that reads it itself. Checking for
     /// `$NAME` there would reject the natural usage.
     ///
-    /// The quote-context check inspects EVERY occurrence of a declared
+    /// The position check inspects EVERY occurrence of a declared
     /// `{{NAME}}`, not just the first. An earlier version of this function
     /// checked only the first occurrence, on the reasoning that `resolve`
     /// quotes every occurrence the same way, so a later occurrence inside
@@ -162,9 +161,13 @@ public enum SnippetVariableSubstitution {
     /// resolves to `echo '$(touch /tmp/marker)' "'$(touch /tmp/marker)'"`,
     /// and bash runs the substitution in the second, double-quoted copy.
     /// The shape is ordinary, not contrived -- `scp -i {{KEY}} … && echo
-    /// "used {{KEY}}"` is a completely normal thing to write. So every
-    /// occurrence is checked, and the first one found inside a `.string`
-    /// token rejects the declaration.
+    /// "used {{KEY}}"` is a completely normal thing to write.
+    ///
+    /// And the acceptance rule is POSITIVE: an occurrence passes only when
+    /// the survey puts it inside one recognised `.argument` span. There is
+    /// no "no objection found, carry on" branch, because that branch is what
+    /// four review rounds walked through — every one of them a construct the
+    /// recogniser did not understand, and not understanding meant accepting.
     public static func firstDeclarationProblem(
         command: String, variables: [SnippetVariable]
     ) -> Problem? {
@@ -172,59 +175,36 @@ public enum SnippetVariableSubstitution {
             return .invalidName(name: variable.name)
         }
 
-        let tokens = SnippetHighlighter.tokens(in: command, language: .shell)
-        let declaresPlaceholder = variables.contains { $0.placement == .placeholder }
-        if declaresPlaceholder, let context = unanalyzableContext(in: command, tokens: tokens) {
-            return .unanalyzableContext(kind: context)
+        let placeholders = variables.filter { $0.placement == .placeholder }
+        guard !placeholders.isEmpty else { return nil }
+
+        let spans: [SnippetCommandSurvey.Span]
+        switch SnippetCommandSurvey.survey(command) {
+        case .refused(let refusal):
+            return .unanalyzableContext(kind: refusal)
+        case .surveyed(let surveyed):
+            spans = surveyed
         }
 
-        let stringRanges = tokens
-            .filter { $0.kind == .string }
-            .map(\.range)
-
-        for variable in variables where variable.placement == .placeholder {
+        for variable in placeholders {
             let needle = "{{\(variable.name)}}"
             var searchRange = command.startIndex..<command.endIndex
             var foundAny = false
             while let occurrence = command.range(of: needle, range: searchRange) {
                 foundAny = true
-                if stringRanges.contains(where: { $0.contains(occurrence.lowerBound) }) {
+                switch SnippetCommandSurvey.placement(of: occurrence, in: spans) {
+                case .argument:
+                    break
+                case .quoted:
                     return .placeholderInsideQuotes(name: variable.name)
+                default:
+                    return .placeholderNotInArgumentPosition(name: variable.name)
                 }
                 searchRange = occurrence.upperBound..<command.endIndex
             }
             guard foundAny else {
                 return .unusedPlaceholder(name: variable.name)
             }
-        }
-        return nil
-    }
-
-    /// The context that makes a quote-position answer meaningless, or `nil`.
-    ///
-    /// A here-document is found as two adjacent `<` operator tokens. Reading
-    /// TOKENS rather than the raw text is what keeps `echo "a << b"` and
-    /// `# pipe it with <<` out of it: a `<<` inside a string or a comment is
-    /// part of that token and never appears as an operator. Adjacency is
-    /// required, so `<` and `<` separated by a space — process substitution,
-    /// `cmd < <(other)` — is not mistaken for one. `<<-` and `<<<` and a
-    /// quoted delimiter all open with the same two characters and are
-    /// therefore all covered.
-    ///
-    /// Neither shape is a defect in the command. A here-document is a
-    /// perfectly good way to write one; it just carries a quoting context of
-    /// its own that a scan over quote characters cannot see into.
-    private static func unanalyzableContext(
-        in command: String, tokens: [SnippetToken]
-    ) -> Problem.Context? {
-        for (left, right) in zip(tokens, tokens.dropFirst())
-        where left.kind == .operator && right.kind == .operator
-            && left.range.upperBound == right.range.lowerBound
-            && command[left.range] == "<" && command[right.range] == "<" {
-            return .heredoc
-        }
-        guard SnippetHighlighter.quotingBalancesPerLine(in: command) else {
-            return .unbalancedQuoting
         }
         return nil
     }
