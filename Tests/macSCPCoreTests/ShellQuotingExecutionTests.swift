@@ -1099,4 +1099,46 @@ struct ShellQuotingExecutionTests {
                 "/bin/ksh no longer runs the command behind a `{fd}>` prefix")
         }
     }
+
+    /// A DEFAULT ALIAS is a shell mechanism, and one of them was in the
+    /// accepted set.
+    ///
+    /// `redirect` was `.doesNotReparse` for four rounds on a sweep that
+    /// came out inert — in ksh93u+m 1.0.4, where it is a real builtin and
+    /// is inert. In ksh93u+ 2012, the version macOS ships as `/bin/ksh`,
+    /// `whence -v redirect` answers "an alias for `command exec`", so
+    /// `redirect {{X}}` is `command exec {{X}}` and the value is the
+    /// program name. It is `.introducesACommandName` now, which is where
+    /// `login` and `newgrp` already were, and a placeholder in the word
+    /// after it is refused as the command name it is.
+    ///
+    /// The lower-bound test could never have found this: it asks `ksh` for
+    /// `builtin`, and `builtin` does not list aliases.
+    ///
+    /// EXECUTES THE PAYLOAD, on purpose, in a fresh scratch directory.
+    @Test func aDefaultAliasInCommandNamePositionIsRefusedAndWouldOtherwiseRun() throws {
+        #expect(
+            SnippetVariableSubstitution.firstDeclarationProblem(
+                command: "redirect {{X}}", variables: [placeholder("X")])
+                == .placeholderNotInArgumentPosition(name: "X"))
+
+        guard FileManager.default.isExecutableFile(atPath: "/bin/ksh") else {
+            Issue.record("""
+                /bin/ksh is not on this machine, so the shell whose `redirect` alias makes this                 a finding could not be asked. The refusal above is pinned; the execution behind                 it is not.
+                """)
+            return
+        }
+        let resolved = SnippetVariableSubstitution.resolve(
+            command: "redirect {{X}}", variables: [placeholder("X")],
+            values: ["X": "./aliased_command.sh"])
+        try withScratchDirectory { directory in
+            try run(
+                "printf '#!/bin/sh\\ntouch MARKER\\n' > aliased_command.sh\n"
+                    + "chmod +x aliased_command.sh\n" + resolved,
+                with: "/bin/ksh", in: directory)
+            #expect(
+                markerExists("MARKER", in: directory),
+                "/bin/ksh no longer runs the value `redirect` is handed")
+        }
+    }
 }

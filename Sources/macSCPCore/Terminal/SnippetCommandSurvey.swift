@@ -319,6 +319,21 @@ extension SnippetCommandSurvey {
     /// an entry with evidence, written by a person who ran something, and
     /// on a shell a SERVER runs rather than this one.
     ///
+    /// It is a lower bound with a KNOWN HOLE, and the hole has cost
+    /// something. `builtin` lists ksh93's builtins and not its default
+    /// ALIASES, and `redirect` is one of the aliases: `whence -v redirect`
+    /// on macOS `/bin/ksh` answers "an alias for `command exec`", which
+    /// puts the value in command-name position, and this table called it
+    /// harmless for four rounds. Counted by asking `/bin/ksh -c alias`,
+    /// ksh93u+ 2012 defines nineteen of them; seventeen are classified
+    /// here, and the two that are not — `2d`, which expands to a function
+    /// no shell defines and is inert in all eleven builds measured, and
+    /// `nohup`, which is an external PROGRAM and therefore out of this
+    /// table's scope by the standing decision below — are named here so
+    /// the omission is a decision rather than an oversight. Extending the
+    /// test to that source would drag every program of `nohup`'s shape in
+    /// with it, and that is a scope question, not a defect.
+    ///
     /// ## The boundary this table does NOT reach
     ///
     /// It is the set where the SHELL re-parses. It is emphatically not a
@@ -354,10 +369,23 @@ extension SnippetCommandSurvey {
     /// or not the shell parses a second time. The cost is that a template
     /// naming `jobs` in command-name position is refused whole.
     ///
-    /// No accepted builtin now puts a value in command-name position.
-    /// Counted in the pass that wrote this paragraph, that is a set of
-    /// zero, and this paragraph rather than either verdict is where the
-    /// reasoning for both is written down.
+    /// An earlier version of this paragraph said "no accepted builtin now
+    /// puts a value in command-name position" and called that a set of
+    /// zero. It was not zero, and the sentence is worth keeping as a
+    /// warning: it was written in the same pass as the `jobs` verdict, it
+    /// sounded like a count, and nothing had been counted. `redirect` was
+    /// in the set — a ksh93 default ALIAS for `command exec`, which no
+    /// sweep of ksh's `builtin` output could ever surface. It is
+    /// `.introducesACommandName` now.
+    ///
+    /// Swept afterwards, and this time the number is the measurement: the
+    /// 46 names still carrying `.doesNotReparse`, less `suspend`, which
+    /// cannot be swept because it SIGSTOPs the shell that runs it, in the
+    /// three shapes `NAME 'V'`, `NAME -x 'V'` and `NAME -p 'V' zzz` with
+    /// `V` the path of a script that creates a marker, across twelve shell
+    /// builds — 1 656 executions, one marker, and it is `redirect`'s.
+    /// `stop`, `type` and `times` are aliases of the same family and came
+    /// out inert; `login` and `newgrp` were already refusing.
     /// How far one re-parsing name's danger reaches, and therefore how much
     /// of the template its presence refuses.
     ///
@@ -645,6 +673,9 @@ extension SnippetCommandSurvey {
         Fact("login", .introducesACommandName,
              .reasoned("ksh93 replaces the shell with the program that follows")),
         Fact("newgrp", .introducesACommandName, .reasoned("ksh93's login under another name")),
+        Fact("redirect", .introducesACommandName,
+             .executed("ksh93u+ 2012 (macOS /bin/ksh): an alias for `command exec`, "
+                 + "so redirect './ev.sh' runs the program the value names")),
         Fact("-", .introducesACommandName,
              .reasoned("zsh runs the following command name as a login shell")),
         Fact("[[", .unmodelledSyntax,
@@ -687,7 +718,6 @@ extension SnippetCommandSurvey {
         Fact("pushln", .doesNotReparse, .sweptInert),
         Fact("pwd", .doesNotReparse, .sweptInert),
         Fact("realpath", .doesNotReparse, .sweptInert),
-        Fact("redirect", .doesNotReparse, .sweptInert),
         Fact("rehash", .doesNotReparse, .sweptInert),
         Fact("rename", .doesNotReparse, .sweptInert),
         Fact("setopt", .doesNotReparse, .sweptInert),
