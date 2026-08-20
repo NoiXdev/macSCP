@@ -55,11 +55,18 @@ struct ShellQuotingExecutionTests {
         return try body(directory)
     }
 
-    /// `/bin/bash`'s own answer to "what builtins do you have", as the
-    /// classification test's input. Asking the shell rather than listing
-    /// what we remember is the whole mechanism: a builtin this project has
-    /// never seen shows up here and fails a test, instead of sailing through
-    /// as an ordinary command name.
+    /// The installed `bash`'s own answer to "what builtins and reserved
+    /// words do you have". It is the LOWER BOUND on
+    /// `SnippetCommandSurvey.shellVocabulary` and nothing else: every name it
+    /// reports must appear in the table, so a name macSCP has never seen goes
+    /// red instead of sailing through as an ordinary command name.
+    ///
+    /// It is deliberately not allowed to make a name SAFE. That is the whole
+    /// finding this shape answers: the snippet runs in the login shell of the
+    /// remote host, `/bin/bash` here is pinned at 3.2.57 by macOS and CI runs
+    /// on macOS, so this process cannot see what bash 5 or zsh do — and a
+    /// previous version of this test read the same enumeration as a proof of
+    /// completeness while three `-v` shapes ran on the other side.
     private func bashWords(_ compgenFlag: String) throws -> [String] {
         let process = Process()
         let pipe = Pipe()
@@ -422,110 +429,65 @@ struct ShellQuotingExecutionTests {
         }
     }
 
-    // MARK: - The classification of builtins is complete by construction
+    // MARK: - The table is the classification, and bash is only a lower bound
 
-    /// Every builtin `bash` reports is classified, one way or the other.
+    /// Every builtin and reserved word the installed `bash` reports appears
+    /// in `SnippetCommandSurvey.shellVocabulary`.
     ///
     /// This is the answer to a deny-list living inside an allow-list, which
-    /// is the shape that produced a finding in most rounds of this branch:
-    /// `reparsingCommands` held `eval`, `command` and `builtin`, and a
-    /// review executed `trap {{X}} EXIT` and got a marker. Adding `trap`
-    /// closes one instance. Asking the shell for the whole list closes the
-    /// class — a builtin `bash` gains that macSCP has never seen fails here
-    /// instead of being read as an ordinary command name.
-    ///
-    /// The input is `compgen -b` from the `bash` that is actually installed,
-    /// so this is not a snapshot of somebody's memory of bash 3.2. The
-    /// classification is spread over three places on purpose: `refused` and
-    /// `introducers` are production sets the reader consults, and
-    /// `builtinsThatDoNotReparse` is here in the test, because "this one is
-    /// harmless" is a claim about a measurement rather than a rule the
-    /// reader applies.
-    @Test func everyBashBuiltinIsClassified() throws {
+    /// is the shape that produced a finding in most rounds of this branch —
+    /// but it is only half of it, and the half that cannot decide anything.
+    /// The table's verdicts come from execution against bash 3.2, bash 4.4,
+    /// bash 5.2 and zsh 5.9; this test only refuses to let a name the local
+    /// shell knows go unclassified. Its failure message says which way round
+    /// that is, because reading it the other way is exactly what happened.
+    @Test func everyLocalShellWordIsInTheTable() throws {
         let builtins = try bashWords("-b")
-        #expect(builtins.count > 30, "compgen -b returned nothing usable")
-        for builtin in builtins {
-            let classified =
-                SnippetCommandSurvey.reparsingCommands.contains(builtin)
-                || SnippetCommandSurvey.commandIntroducers.contains(builtin)
-                || Self.builtinsThatDoNotReparse.contains(builtin)
-            #expect(classified, """
-                bash reports a builtin this project has never classified: \(builtin). Decide \
-                it against bash rather than from memory — put a payload in an argument, run \
-                it, look for the marker. If the shell turns the argument into shell code, now \
-                or later or out of a file it names, it belongs in \
-                SnippetCommandSurvey.reparsingCommands; if the word after it is a command \
-                name, in commandIntroducers; otherwise in builtinsThatDoNotReparse here, \
-                with the shapes that were measured.
-                """)
-        }
-    }
-
-    /// Builtins measured NOT to turn an argument into shell code.
-    ///
-    /// Each was run through `/bin/bash` 3.2.57 with a payload in every
-    /// argument shape the re-parsing ones fell to — `'$(touch M)'`, an array
-    /// subscript `'a[$(touch M)]'`, an assignment through a subscript, the
-    /// `-i` arithmetic form, and the option shapes `-v`, `-C`, `-x`, `-s`,
-    /// `-f`, `-p`, `-e` — in a fresh scratch directory each time. None
-    /// produced a marker.
-    ///
-    /// `test` and `[` are the interesting entries, because their sibling
-    /// `[[` IS a re-parser: `[[ 1 -eq 'a[$(touch M)]' ]]` runs the
-    /// substitution and `[ 1 -eq 'a[$(touch M)]' ]` does not. The
-    /// conditional keyword evaluates its numeric operands as arithmetic; the
-    /// builtin parses a number. Keeping them apart is what lets
-    /// `[ -f {{PATH}} ]` stay a usable snippet.
-    ///
-    /// `compopt` is bash 4+, absent from the `bash` this was measured on,
-    /// and listed from its documented surface: it takes completion option
-    /// NAMES and no command.
-    private static let builtinsThatDoNotReparse: Set<String> = [
-        ":", "[", "bg", "break", "caller", "cd", "compopt", "continue", "dirs", "disown",
-        "echo", "exit", "false", "fg", "getopts", "hash", "help", "jobs", "kill", "logout",
-        "popd", "printf", "pushd", "pwd", "return", "set", "shift", "shopt", "suspend",
-        "test", "times", "true", "type", "ulimit", "umask", "unalias", "wait",
-    ]
-
-    /// Every reserved word `bash` reports is classified too.
-    ///
-    /// The question a keyword raises is different from a builtin's: a
-    /// keyword is syntax this reader does not model at all, and reading one
-    /// as an ordinary command name means the word after it — which `bash`
-    /// may well run as the command — is checked as an argument. So each is
-    /// either an introducer (the word after it IS a command name), or
-    /// refused outright (`unmodelledKeywords`), or measured to take a WORD
-    /// rather than a command name.
-    @Test func everyBashKeywordIsClassified() throws {
         let keywords = try bashWords("-k")
+        #expect(builtins.count > 30, "compgen -b returned nothing usable")
         #expect(keywords.count > 10, "compgen -k returned nothing usable")
-        for keyword in keywords {
-            let classified =
-                SnippetCommandSurvey.commandIntroducers.contains(keyword)
-                || SnippetCommandSurvey.unmodelledKeywords.contains(keyword)
-                || Self.keywordsThatTakeAWordNotACommandName.contains(keyword)
-            #expect(classified, """
-                bash reports a reserved word this project has never classified: \(keyword). \
-                Decide it against bash: if the word after it is a command name it belongs in \
-                commandIntroducers, if the construct brings a sub-language this reader cannot \
-                read it belongs in unmodelledKeywords, and if it simply takes a word say so \
-                here — after measuring, the way `[[` was measured.
+        for word in builtins + keywords {
+            #expect(SnippetCommandSurvey.classifiedShellWords.contains(word), """
+                the installed bash reports a word this project has never classified: \(word). \
+                Add it to SnippetCommandSurvey.shellVocabulary with evidence — and get the \
+                evidence from the shells a SERVER runs, not from this one. Put a payload in \
+                every argument shape (a substitution, an array subscript, an assignment through \
+                a subscript, a bare command word) under every option letter, run it in bash 3.2, \
+                bash 5.x and zsh, and look for the marker. If any of them re-parses, the verdict \
+                is .reparses; being harmless here is not evidence.
                 """)
         }
     }
 
-    /// Reserved words after which `bash` reads a WORD, not a command name.
-    ///
-    /// Measured, each with a payload in the position that follows it: `for`
-    /// and `select` are syntax errors there, `case` matches the word against
-    /// its patterns, `in` introduces a word list, `function` names a
-    /// function. No marker from any of them. Listing them as introducers
-    /// would be the stricter reading and would also refuse `case "$1" in`,
-    /// which is an everyday snippet — so the measurement, not the reflex,
-    /// decides.
-    private static let keywordsThatTakeAWordNotACommandName: Set<String> = [
-        "case", "for", "select", "in", "function",
-    ]
+    /// The table is a table: one verdict per name, and no name twice.
+    /// A duplicate would make the derived sets depend on which entry the
+    /// reader happened to write second.
+    @Test func theShellVocabularyNamesEachWordOnce() {
+        var seen: Set<String> = []
+        for fact in SnippetCommandSurvey.shellVocabulary {
+            #expect(seen.insert(fact.name).inserted, "\(fact.name) is classified twice")
+        }
+        #expect(seen.count == SnippetCommandSurvey.classifiedShellWords.count)
+    }
+
+    /// A verdict of "harmless" has to rest on a measurement. `.reasoned` is
+    /// the label for a behaviour no shell here can demonstrate, and it is
+    /// only ever a reason to REFUSE — a name talked into the accepted set
+    /// without a sweep behind it is the finding of this round in a new
+    /// spelling.
+    @Test func nothingIsCalledHarmlessOnAReason() {
+        for fact in SnippetCommandSurvey.shellVocabulary
+        where fact.verdict == .doesNotReparse || fact.verdict == .takesAWordNotACommandName {
+            if case .reasoned(let reason) = fact.evidence {
+                Issue.record("""
+                    \(fact.name) is classified as harmless on a reason rather than a \
+                    measurement (\(reason)). Sweep it against bash 3.2, bash 5.x and zsh, or \
+                    refuse it.
+                    """)
+            }
+        }
+    }
+
 
     /// A re-parsing command in command-name position is refused, whatever
     /// else the template does. The pure half; the executing half is below.
@@ -569,16 +531,17 @@ struct ShellQuotingExecutionTests {
     /// second, a later change could make one of these shapes inert and leave
     /// a refusal standing that defends nothing.
     ///
-    /// The re-parsing members with no case here are the ones this `bash`
-    /// cannot be made to demonstrate: `export` and `readonly` (the
-    /// assignment family whose subscript evaluation `declare`, `typeset` and
-    /// `local` show, but which 3.2.57 does not perform for these two);
-    /// `complete`, `bind`, `fc` and `history` (they store a command string
-    /// for an interactive shell to run later, and the shell here is not
-    /// interactive — note the target of a snippet IS); `enable` (loads a
-    /// builtin from a shared object, which needs one to exist); and
-    /// `mapfile`/`readarray` (bash 4+, absent here — `-C` runs a callback
-    /// command). They stay classified as re-parsing on the strict side.
+    /// The cases here are the ones the `bash` on THIS machine can be made to
+    /// demonstrate, which is a smaller set than the table refuses — see
+    /// `theTemplatesThisShellCannotDisproveAreStillRefused` below for the
+    /// rest, and `SnippetCommandSurvey.shellVocabulary` for each entry's own
+    /// evidence. Two members whose stated mechanism a later round measured
+    /// FALSE and re-derived: `export` does not evaluate a subscript in bash
+    /// at all (3.2.57, 4.4 and 5.2 all leave `export 'a[$(touch M)]=1'`
+    /// inert, where `declare -x` on the same payload creates the marker) —
+    /// it is refused because ZSH evaluates it; and `mapfile`/`readarray` are
+    /// inert on the subscript shape and fire on `-C`, which is a callback
+    /// command rather than an assignment.
     ///
     /// EXECUTES THE PAYLOAD, on purpose, in a fresh scratch directory.
     @Test(
@@ -660,26 +623,64 @@ struct ShellQuotingExecutionTests {
         }
     }
 
-    /// And the counter-check that keeps the refusals from swallowing the
-    /// shell: `test` and `[` take the same payload and stay inert, so
-    /// `[ -f {{PATH}} ]` is still a snippet somebody can save.
-    @Test func theConditionalBuiltinsAreNotConditionalKeywords() throws {
-        for name in ["test", "["] {
-            let command = name == "[" ? "[ 1 -eq {{X}} ]" : "test 1 -eq {{X}}"
+    /// The refusals this machine cannot disprove, pinned as verdicts.
+    ///
+    /// Every other executing test in this file asserts a marker as well as a
+    /// refusal, because a refusal is only worth pinning while the shape it
+    /// refuses would still do damage. These cannot: the shapes below are
+    /// inert on `/bin/bash` 3.2.57 and create the marker on bash 4.4, bash
+    /// 5.2 or zsh 5.9, and macOS pins `/bin/bash` at 3.2.57. Running them
+    /// here would assert nothing; running them there is what
+    /// `shellVocabulary` records as the evidence for each entry.
+    ///
+    /// So what is pinned is the GATE'S VERDICT, which is the thing this
+    /// process can actually observe. It is the whole finding of the round
+    /// that produced this test: every one of these templates was ACCEPTED
+    /// while its payload ran on the other side, and every one of them reads
+    /// harmlessly enough for an imported snippet to carry it.
+    @Test(
+        "a template only another shell re-parses is still refused",
+        arguments: [
+            "[ -v {{X}} ]",
+            "test -v {{X}}",
+            "printf -v {{X}} '%s' y",
+            "print -v {{X}} y",
+            "export {{X}}",
+            "set -A {{X}} 1",
+            "getopts ab {{X}}",
+            "shift {{X}}",
+            "exit {{X}}",
+            "return {{X}}",
+            "mapfile -C {{X}} -c 1 arr",
+            "zstyle -g {{X}}",
+        ])
+    func theTemplatesThisShellCannotDisproveAreStillRefused(command: String) {
+        #expect(
+            SnippetVariableSubstitution.firstDeclarationProblem(
+                command: command, variables: [placeholder("X")])
+                == .unanalyzableContext(kind: .evaluation),
+            """
+            the gate accepted a template whose command name re-parses on a shell macSCP may \
+            well be talking to. This machine cannot show the marker; that is the reason the \
+            verdict is pinned instead of the execution.
+            """)
+    }
+
+    /// The union posture, stated as a cost rather than left implicit.
+    ///
+    /// `[ -f {{PATH}} ]` was rescued by name in an earlier round and is now
+    /// refused, because the same builtin's `-v` runs a substitution on bash
+    /// 4.2 and later. Modelling the OPTION instead of the name would keep
+    /// it, at the price of a per-builtin option grammar this reader would
+    /// have to get right — and a reader that gets it wrong accepts. This
+    /// test exists so the cost shows up as a decision somebody made, not as
+    /// a surprise in a bug report.
+    @Test func theUnionPostureRefusesEverydayTemplatesAndSaysSo() {
+        for command in ["[ -f {{X}} ]", "test -f {{X}}", "printf '%s' {{X}}", "export FOO={{X}}"] {
             #expect(
                 SnippetVariableSubstitution.firstDeclarationProblem(
-                    command: command, variables: [placeholder("X")]) == nil,
-                "an ordinary conditional builtin was refused")
-
-            let resolved = SnippetVariableSubstitution.resolve(
-                command: command, variables: [placeholder("X")],
-                values: ["X": "a[$(touch MARKER)]"])
-            try withScratchDirectory { directory in
-                try runInBash(resolved, in: directory)
-                #expect(
-                    !markerExists("MARKER", in: directory),
-                    "this builtin evaluates arithmetic after all and must be reclassified")
-            }
+                    command: command, variables: [placeholder("X")]) != nil,
+                "\(command) is accepted again; the union posture has been softened somewhere")
         }
     }
 }

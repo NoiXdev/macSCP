@@ -186,7 +186,7 @@ struct SnippetVariableSubstitutionTests {
             (#"echo issue#42 "{{X}}""#, .placeholderInsideQuotes(name: "X")),
             (##"echo \# "{{X}}""##, .placeholderInsideQuotes(name: "X")),
             (#"curl http://e.com/a#b -d "{{X}}""#, .placeholderInsideQuotes(name: "X")),
-            (#"printf %s#%s x "{{X}}""#, .placeholderInsideQuotes(name: "X")),
+            (#"echo a#b x "{{X}}""#, .placeholderInsideQuotes(name: "X")),
             (#"V=a#b; echo "{{X}}""#, .placeholderInsideQuotes(name: "X")),
             ("echo a#b '{{X}}'", .placeholderInsideQuotes(name: "X")),
             (#"echo x#y"{{X}}"z"#, .placeholderInsideQuotes(name: "X")),
@@ -327,7 +327,7 @@ struct SnippetVariableSubstitutionTests {
             "case \"$1\" in\n  start) echo starting {{X}} ;;\n  *) echo other ;;\nesac",
             "scp -i {{X}} host:/path && echo \"done\"",
             "cp {{X}} $HOME/backup",
-            "if [ -f {{X}} ]; then echo yes; fi",
+            "if grep -q needle {{X}}; then echo yes; fi",
             "DB=live ./backup.sh {{X}}",
             "ls | grep {{X}} | wc -l",
         ])

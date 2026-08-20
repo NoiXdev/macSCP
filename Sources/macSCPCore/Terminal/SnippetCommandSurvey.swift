@@ -81,8 +81,11 @@ public enum SnippetCommandSurvey {
         /// `$'…'`, `$"…"`, or a `$` this type cannot read at all.
         case expansion
         /// A command name from `reparsingCommands` — one where the shell
-        /// itself turns an argument into shell code, at once (`eval`) or on
-        /// a later signal (`trap`) or out of a file it names (`source`).
+        /// itself turns an argument into shell code: at once (`eval`), on a
+        /// later signal (`trap`), out of a file it names (`source`), through
+        /// an option that makes the next argument a variable NAME the shell
+        /// then evaluates (`printf -v`, `test -v`), or by reading an
+        /// argument as arithmetic (`let`, and every counted builtin in zsh).
         /// Quoting a value into one literal word protects nothing when the
         /// word is then handed back to the parser.
         case evaluation
@@ -157,102 +160,348 @@ public enum SnippetCommandSurvey {
 }
 
 extension SnippetCommandSurvey {
-    /// Words that introduce another command rather than being one, so the
-    /// word after them is still a command name. Listed because staying in
-    /// "expects a command name" is the STRICT direction: it makes the next
-    /// word be read as a name (which must be a plain literal and is checked
-    /// against the re-parsing set) instead of as an argument. Missing an
-    /// entry over-refuses; a wrong extra entry cannot open a hole.
+    /// What a shell does with a word in COMMAND-NAME position, and where
+    /// that answer comes from. The one place this project decides which
+    /// snippets it will send.
     ///
-    /// It holds every reserved word after which `bash` reads a COMMAND NAME,
-    /// and `everyBashKeywordIsClassified` asks `compgen -k` for the list and
-    /// fails on a keyword classified nowhere. That is the shape that hurts:
-    /// a keyword read as an ordinary command name makes the reader stop
-    /// expecting a name, so the word `bash` runs as the command gets checked
-    /// as an argument and is never compared against `reparsingCommands`.
+    /// ## The shell this is about is not the shell on this machine
     ///
-    /// The reserved words that take a WORD rather than a command name —
-    /// `case`, `for`, `select`, `in`, `function` — are deliberately NOT here.
-    /// Listing them would refuse `case "$1" in`, an everyday snippet, and
-    /// buy nothing: each was run through `bash` with a payload in the
-    /// position after it and none of them executed anything (`for` and
-    /// `select` are syntax errors there, `case` matches a word, `function`
-    /// names a function). `[[` is the reserved word where that measurement
-    /// came out the other way, and it is in `unmodelledKeywords`.
+    /// A resolved snippet does not run here. `ContentView.runSnippet` hands
+    /// it to the terminal panel, `CitadelShell` writes it into the PTY it
+    /// opened with `withPTY`, and what reads it is the LOGIN SHELL OF THE
+    /// REMOTE HOST — some version of bash, or zsh, or something else again.
+    /// macSCP does not know which and cannot find out. So the guarantee this
+    /// table backs is a guarantee about what macSCP REFUSES TO SEND. What
+    /// the far side does with what it does send is the far side's, and no
+    /// table here can speak for it.
     ///
-    /// `exec` is a builtin rather than a keyword and sits here because
-    /// `bash` reads the word after it as the command name, so this reader
-    /// does too. Measured, `exec` will not run a builtin at all (`exec eval
-    /// 'touch M'` left no marker), so what follows it is an external program
-    /// — the parked class — but reading it as a name is the strict side and
-    /// costs nothing.
-    static let commandIntroducers: Set<String> = [
-        "if", "then", "elif", "else", "fi",
-        "while", "until", "do", "done", "esac",
-        "time", "coproc", "!", "{", "}",
-        "exec",
-    ]
-
-    /// Command names where the SHELL turns an argument into shell code —
-    /// now, or later, or by naming a file of it.
+    /// An earlier version of this classification was called complete by
+    /// construction because it was checked against `compgen -b` from the
+    /// `/bin/bash` installed on the developer's Mac. That asked the wrong
+    /// shell. macOS pins `/bin/bash` at 3.2.57 and CI runs on macOS, so no
+    /// test in this repository could ever observe the difference — and
+    /// `[ -v {{X}} ]`, `test -v {{X}}` and `printf -v {{X}} …` passed that
+    /// gate while creating the marker on bash 5.2 and, for `printf`, on zsh.
+    /// An imported snippet reading as innocently as "is this variable set?"
+    /// ran an attacker's command on the first click of Run.
     ///
-    /// ## What "re-parses" had to cover
+    /// ## Where the authority comes from now
     ///
-    /// The list started as `eval` plus the two wrappers that can front it,
-    /// and stayed that way until a review executed `trap {{X}} EXIT` and
-    /// found the marker. A deny-list inside an allow-list is only as good as
-    /// the day it was written, so the members are now decided against
-    /// `/bin/bash` itself and pinned by `everyBashBuiltinIsClassified`, which
-    /// asks `compgen -b` and fails on any builtin classified nowhere. These
-    /// are the shapes that had to be considered, each with the member that
-    /// carries it:
+    /// From execution against the shells a server plausibly runs — bash
+    /// 3.2.57 (this Mac), bash 4.4 and bash 5.2.37 (containers), zsh 5.9 —
+    /// and never from whichever binary happens to sit on the machine running
+    /// the tests. Each entry carries its own evidence: `.executed` names the
+    /// shell and the shape that created the marker, `.sweptInert` means the
+    /// whole option sweep ran in every one of those shells and left none,
+    /// and `.reasoned` is the honest label for a behaviour no shell here can
+    /// be made to demonstrate — an interactive-only builtin, a module that
+    /// would have to exist — where the reason, not a measurement, is the
+    /// authority. A `.reasoned` entry is never a conclusion of "inert".
     ///
-    /// - evaluated at once — `eval`, `let` (arithmetic, and an array
-    ///   subscript inside arithmetic is a command substitution);
-    /// - stored now and evaluated later — `trap`, `alias`, `bind`, `fc`,
-    ///   `history`, `complete`;
-    /// - naming a file of shell code — `source`, `.`, and `enable -f`,
-    ///   which loads a builtin out of a shared object;
-    /// - dispatching to another builtin — `command`, `builtin`;
-    /// - assigning through an evaluated subscript — `declare`, `typeset`,
-    ///   `local`, `export`, `readonly`, `unset`, `read`, `mapfile`,
-    ///   `readarray`;
-    /// - running a command to produce completions — `compgen`, `complete`.
+    /// ## The posture is the union, and it costs something
     ///
-    /// Replacing the shell (`exec`) is a shape of its own and is handled in
-    /// `commandIntroducers` instead, because what follows `exec` is a
-    /// command name rather than text `exec` itself re-reads.
+    /// If ANY plausible shell re-parses, macSCP refuses. Being harmless on
+    /// bash 3.2.57 is not evidence about a Linux server. That decision is
+    /// what moves `test`, `[`, `printf`, `export` and the numeric builtins
+    /// out of the accepted set, and it is paid for in real snippets:
+    /// `[ -f {{PATH}} ]`, `printf '%s\n' {{X}}` and `export FOO={{VALUE}}`
+    /// can no longer be saved with a placeholder in them. Over-refusing is
+    /// the direction this branch takes when the two disagree.
     ///
-    /// ## The boundary this list does NOT reach
+    /// ## The command name alone is not the question
+    ///
+    /// The finding that produced this table was option-shaped: `-v` turns
+    /// the FOLLOWING argument into a variable NAME, and bash evaluates an
+    /// array subscript inside a name as arithmetic, which expands a command
+    /// substitution. So the classification was decided by sweeping every
+    /// name in the table against every single-letter option in both cases,
+    /// in five argument positions (bare, after the option, after the option
+    /// with a trailing word, before the option, attached to the option) and
+    /// with four payload shapes — a substitution, a subscript, an assignment
+    /// through a subscript, and a bare command word for options that take a
+    /// callback. What that sweep found beyond the names already refused:
+    /// `-v` on `printf` and `test` (a name), `-C` and `-W` on `compgen` and
+    /// `-C` on `mapfile`/`readarray` (a command), `-A` on zsh's `set`, `-a`
+    /// on `zparseopts` and `zformat`, `-g` on `zstyle` (a name), and — the
+    /// mechanism with the widest reach — zsh reading a builtin's NUMERIC
+    /// argument as arithmetic, which fires `break`, `continue`, `return`,
+    /// `shift`, `exit`, `logout` and `bye`. Bracketed `[ … ]` and the
+    /// second-argument name of `getopts` are shapes a flat sweep cannot
+    /// spell, and were measured separately.
+    ///
+    /// A rule that modelled the OPTION rather than the name was considered
+    /// and dropped: it would need a per-builtin option grammar including
+    /// clustering, attached values and `--`, and a reader that misreads that
+    /// grammar accepts — which is the failure mode this whole type exists to
+    /// remove.
+    ///
+    /// ## What `compgen` does now
+    ///
+    /// It is a LOWER BOUND and never a licence. `everyLocalShellWordIsInTheTable`
+    /// asks the installed `bash` for its builtins and reserved words and
+    /// fails if any of them is missing from this table, so a name macSCP has
+    /// never seen still goes red. It cannot make a name safe: safety comes
+    /// from an entry with evidence, written by a person who ran something.
+    ///
+    /// ## The boundary this table does NOT reach
     ///
     /// It is the set where the SHELL re-parses. It is emphatically not a
     /// list of every danger: a PROGRAM that interprets its own argument —
     /// `bash -c`, `sh -c`, `python -c`, `perl -e`, `awk`, `find -exec`,
     /// `xargs`, an `ssh` command string — reads a perfectly quoted word as
     /// code, and no quoting rule reaches inside it. Those are out of scope
-    /// by standing decision, not covered here, and a snippet author placing
-    /// a value into one is placing it into another language's parser.
-    static let reparsingCommands: Set<String> = [
-        "eval", "command", "builtin",
-        "trap", "let", "source", ".", "alias",
-        "declare", "typeset", "local", "export", "readonly", "unset", "read",
-        "compgen", "complete", "bind", "fc", "history", "enable",
-        "mapfile", "readarray",
+    /// by standing decision. `jobs -x` is the one BUILTIN of that shape:
+    /// measured, `jobs -x ./evil` execs the program the value names. It
+    /// stays classified as not re-parsing because that is what it does — the
+    /// shell parses nothing again and the value stays exactly one word, so
+    /// `jobs -x 'touch M'` looks for a program called `touch M` and finds
+    /// none — but the value does reach command-name position, and this
+    /// paragraph rather than the verdict is where that is written down.
+    enum Verdict: Sendable, Equatable {
+        /// The shell itself turns an argument into shell code — at once, or
+        /// on a later signal, or out of a file it names, or by reading a
+        /// name or a number as something it evaluates. Refused.
+        case reparses
+        /// The word AFTER this one is what the shell runs, so the reader
+        /// keeps expecting a command name. The strict direction: it makes
+        /// the next word be checked instead of accepted.
+        case introducesACommandName
+        /// Reserved-word syntax this reader does not model at all. Refused
+        /// rather than read on, because reading on is what turns "no rule
+        /// for this" into acceptance.
+        case unmodelledSyntax
+        /// A reserved word that takes a WORD rather than a command name.
+        /// Read as an ordinary command, which is what it behaves like here.
+        case takesAWordNotACommandName
+        /// Measured not to turn an argument into shell code.
+        case doesNotReparse
+    }
+
+    /// Where an entry's verdict comes from. The distinction is the point of
+    /// the table: a shell that could not be made to show a behaviour is not
+    /// a shell that showed the behaviour absent.
+    enum Evidence: Sendable, Equatable {
+        /// A marker was created. The string names the shell and the shape.
+        case executed(String)
+        /// The option sweep ran in every listed shell and produced none.
+        case sweptInert
+        /// No shell available here can demonstrate it. The string is the
+        /// reason, and the reason is what the verdict rests on.
+        case reasoned(String)
+    }
+
+    /// One name and what the plausible target shells do with it.
+    struct Fact: Sendable {
+        let name: String
+        let verdict: Verdict
+        let evidence: Evidence
+
+        init(_ name: String, _ verdict: Verdict, _ evidence: Evidence) {
+            self.name = name
+            self.verdict = verdict
+            self.evidence = evidence
+        }
+    }
+
+    /// The checked-in classification. Its scope is the union of the builtins
+    /// and reserved words of bash 3.2, bash 4.4, bash 5.x and zsh — a name
+    /// only one of them has still belongs here, because the shell on the
+    /// other end may be that one.
+    static let shellVocabulary: [Fact] = [
+        Fact("eval", .reparses, .executed("every shell: eval '$(touch M)'")),
+        Fact("let", .reparses, .executed("every shell: let 'a[$(touch M)]'")),
+        Fact("command", .reparses, .executed("every shell: command eval 'touch M'")),
+        Fact("builtin", .reparses, .executed("every shell: builtin eval 'touch M'")),
+        Fact("source", .reparses, .executed("every shell: source a file holding touch M")),
+        Fact(".", .reparses, .executed("every shell: . a file holding touch M")),
+        Fact("trap", .reparses, .executed("every shell: trap 'touch M' EXIT")),
+        Fact("alias", .reparses, .executed("every shell: alias a='touch M', then a")),
+        Fact("emulate", .reparses, .executed("zsh 5.9: emulate zsh -c 'touch M'")),
+        Fact("declare", .reparses, .executed("every shell: declare 'x[$(touch M)]=1'")),
+        Fact("typeset", .reparses, .executed("every shell: typeset 'x[$(touch M)]=1'")),
+        Fact("local", .reparses,
+             .executed("bash 3.2/4.4/5.2 in a function: local 'x[$(touch M)]=1'")),
+        Fact("unset", .reparses,
+             .executed("every shell, with an array set: unset 'a[$(touch M)]'")),
+        Fact("export", .reparses, .executed("zsh 5.9: export 'a[$(touch M)]'")),
+        Fact("private", .reparses, .executed("zsh 5.9: private 'a[$(touch M)]'")),
+        Fact("read", .reparses, .executed("every shell: read 'a[$(touch M)]'")),
+        Fact("getln", .reparses, .executed("zsh 5.9: getln 'a[$(touch M)]'")),
+        Fact("getopts", .reparses, .executed("zsh 5.9: getopts ab 'a[$(touch M)]'")),
+        Fact("set", .reparses, .executed("zsh 5.9: set -A 'a[$(touch M)]' x")),
+        Fact("printf", .reparses, .executed("bash 4.4/5.2, zsh 5.9: printf -v 'a[$(touch M)]'")),
+        Fact("print", .reparses, .executed("zsh 5.9: print -v 'a[$(touch M)]' y")),
+        Fact("test", .reparses, .executed("bash 4.4/5.2: test -v 'a[$(touch M)]'")),
+        Fact("[", .reparses, .executed("bash 4.4/5.2: [ -v 'a[$(touch M)]' ]")),
+        Fact("compgen", .reparses, .executed("every bash: compgen -C 'touch M' / -W '$(touch M)'")),
+        Fact("mapfile", .reparses, .executed("bash 4.4/5.2: mapfile -C 'touch M' -c 1 arr")),
+        Fact("readarray", .reparses, .executed("bash 4.4/5.2: readarray -C 'touch M' -c 1 arr")),
+        Fact("zstyle", .reparses, .executed("zsh 5.9: zstyle -g 'a[$(touch M)]'")),
+        Fact("zformat", .reparses, .executed("zsh 5.9: zformat -a 'a[$(touch M)]' …")),
+        Fact("zparseopts", .reparses, .executed("zsh 5.9: zparseopts -a 'a[$(touch M)]'")),
+        Fact("break", .reparses,
+             .executed("zsh 5.9: break 'x[$(touch M)]=1' — the count is arithmetic")),
+        Fact("continue", .reparses, .executed("zsh 5.9: continue 'x[$(touch M)]=1' — likewise")),
+        Fact("return", .reparses, .executed("zsh 5.9: return 'x[$(touch M)]=1' — likewise")),
+        Fact("shift", .reparses, .executed("zsh 5.9: shift 'x[$(touch M)]=1' — likewise")),
+        Fact("exit", .reparses, .executed("zsh 5.9: exit 'x[$(touch M)]=1' — likewise")),
+        Fact("logout", .reparses, .executed("zsh 5.9: logout 'x[$(touch M)]=1' — likewise")),
+        Fact("bye", .reparses, .executed("zsh 5.9: bye 'x[$(touch M)]=1' — likewise")),
+        Fact("readonly", .reparses,
+             .reasoned("zsh spells it typeset -r, and typeset and export both fire there")),
+        Fact("bind", .reparses,
+             .reasoned("binds a key to a command line an interactive shell later runs")),
+        Fact("bindkey", .reparses, .reasoned("zsh's bind; -s pushes its argument back as input")),
+        Fact("complete", .reparses, .reasoned("-C names a command run to produce completions")),
+        Fact("compctl", .reparses,
+             .reasoned("zsh's complete; -K names a function run to complete")),
+        Fact("fc", .reparses, .reasoned("-s re-runs a history entry with substitutions applied")),
+        Fact("r", .reparses, .reasoned("zsh's fc -s under a shorter name")),
+        Fact("history", .reparses,
+             .reasoned("-s pushes a line into the history an interactive shell re-runs")),
+        Fact("enable", .reparses, .reasoned("-f loads a builtin out of a shared object")),
+        Fact("zmodload", .reparses,
+             .reasoned("zsh's enable -f; loads a module and can alias parameters")),
+        Fact("zcompile", .reparses,
+             .reasoned("compiles shell code into a file the shell later reads")),
+        Fact("autoload", .reparses,
+             .reasoned("marks a name the shell later loads as code out of fpath")),
+        Fact("functions", .reparses,
+             .reasoned("-M defines a math function the shell calls from arithmetic")),
+        Fact("sched", .reparses,
+             .reasoned("stores a command line the shell runs at a later prompt")),
+        Fact("zle", .reparses, .reasoned("-N names a widget function the line editor later runs")),
+        Fact("vared", .reparses,
+             .reasoned("edits a named parameter, the shape read is measured on")),
+        Fact("float", .reparses, .reasoned("a typeset variant, and typeset is measured")),
+        Fact("integer", .reparses, .reasoned("a typeset variant, and typeset is measured")),
+        Fact("zregexparse", .reparses,
+             .reasoned("its actions are shell code the builtin evaluates")),
+        Fact("compadd", .reparses,
+             .reasoned("a completion-widget builtin: names parameters it assigns through")),
+        Fact("comparguments", .reparses,
+             .reasoned("a completion-widget builtin: names parameters it assigns through")),
+        Fact("compcall", .reparses,
+             .reasoned("a completion-widget builtin: names parameters it assigns through")),
+        Fact("compdescribe", .reparses,
+             .reasoned("a completion-widget builtin: names parameters it assigns through")),
+        Fact("compfiles", .reparses,
+             .reasoned("a completion-widget builtin: names parameters it assigns through")),
+        Fact("compgroups", .reparses,
+             .reasoned("a completion-widget builtin: names parameters it assigns through")),
+        Fact("compquote", .reparses,
+             .reasoned("a completion-widget builtin: names parameters it assigns through")),
+        Fact("compset", .reparses,
+             .reasoned("a completion-widget builtin: names parameters it assigns through")),
+        Fact("comptags", .reparses,
+             .reasoned("a completion-widget builtin: names parameters it assigns through")),
+        Fact("comptry", .reparses,
+             .reasoned("a completion-widget builtin: names parameters it assigns through")),
+        Fact("compvalues", .reparses,
+             .reasoned("a completion-widget builtin: names parameters it assigns through")),
+        Fact("if", .introducesACommandName, .reasoned("bash and zsh read a command name after it")),
+        Fact("then", .introducesACommandName, .reasoned("likewise")),
+        Fact("elif", .introducesACommandName, .reasoned("likewise")),
+        Fact("else", .introducesACommandName, .reasoned("likewise")),
+        Fact("fi", .introducesACommandName, .reasoned("likewise")),
+        Fact("while", .introducesACommandName, .reasoned("likewise")),
+        Fact("until", .introducesACommandName, .reasoned("likewise")),
+        Fact("do", .introducesACommandName, .reasoned("likewise")),
+        Fact("done", .introducesACommandName, .reasoned("likewise")),
+        Fact("esac", .introducesACommandName, .reasoned("likewise")),
+        Fact("time", .introducesACommandName, .reasoned("likewise")),
+        Fact("coproc", .introducesACommandName, .reasoned("likewise")),
+        Fact("!", .introducesACommandName, .reasoned("likewise")),
+        Fact("{", .introducesACommandName, .reasoned("likewise")),
+        Fact("}", .introducesACommandName, .reasoned("likewise")),
+        Fact("end", .introducesACommandName,
+             .reasoned("zsh closes foreach with it, and a command name follows")),
+        Fact("exec", .introducesACommandName,
+             .reasoned("a builtin, but the word after it is the command name")),
+        Fact("noglob", .introducesACommandName,
+             .reasoned("zsh precommand modifier: the word after it is the command name")),
+        Fact("nocorrect", .introducesACommandName, .reasoned("zsh precommand modifier: likewise")),
+        Fact("-", .introducesACommandName,
+             .reasoned("zsh runs the following command name as a login shell")),
+        Fact("[[", .unmodelledSyntax, .executed("every bash: [[ 1 -eq 'a[$(touch M)]' ]]")),
+        Fact("]]", .unmodelledSyntax,
+             .reasoned("a reader that refuses the opener cannot claim to know the closer")),
+        Fact("repeat", .unmodelledSyntax,
+             .reasoned("zsh reads an arithmetic count and then a command name")),
+        Fact("case", .takesAWordNotACommandName,
+             .executed("matches the word against patterns; no marker")),
+        Fact("in", .takesAWordNotACommandName, .executed("introduces a word list; no marker")),
+        Fact("for", .takesAWordNotACommandName,
+             .executed("a payload in that position is a syntax error")),
+        Fact("select", .takesAWordNotACommandName, .executed("likewise")),
+        Fact("function", .takesAWordNotACommandName, .executed("names a function; no marker")),
+        Fact("foreach", .takesAWordNotACommandName,
+             .executed("zsh's for; its ( … ) list refuses the command anyway")),
+        Fact(":", .doesNotReparse, .sweptInert),
+        Fact("bg", .doesNotReparse, .sweptInert),
+        Fact("caller", .doesNotReparse, .sweptInert),
+        Fact("cd", .doesNotReparse, .sweptInert),
+        Fact("chdir", .doesNotReparse, .sweptInert),
+        Fact("compopt", .doesNotReparse, .sweptInert),
+        Fact("dirs", .doesNotReparse, .sweptInert),
+        Fact("disable", .doesNotReparse, .sweptInert),
+        Fact("disown", .doesNotReparse, .sweptInert),
+        Fact("echo", .doesNotReparse, .sweptInert),
+        Fact("echotc", .doesNotReparse, .sweptInert),
+        Fact("echoti", .doesNotReparse, .sweptInert),
+        Fact("false", .doesNotReparse, .sweptInert),
+        Fact("fg", .doesNotReparse, .sweptInert),
+        Fact("hash", .doesNotReparse, .sweptInert),
+        Fact("help", .doesNotReparse, .sweptInert),
+        Fact("jobs", .doesNotReparse, .sweptInert),
+        Fact("kill", .doesNotReparse, .sweptInert),
+        Fact("limit", .doesNotReparse, .sweptInert),
+        Fact("log", .doesNotReparse, .sweptInert),
+        Fact("popd", .doesNotReparse, .sweptInert),
+        Fact("pushd", .doesNotReparse, .sweptInert),
+        Fact("pushln", .doesNotReparse, .sweptInert),
+        Fact("pwd", .doesNotReparse, .sweptInert),
+        Fact("rehash", .doesNotReparse, .sweptInert),
+        Fact("setopt", .doesNotReparse, .sweptInert),
+        Fact("shopt", .doesNotReparse, .sweptInert),
+        Fact("suspend", .doesNotReparse, .sweptInert),
+        Fact("times", .doesNotReparse, .sweptInert),
+        Fact("true", .doesNotReparse, .sweptInert),
+        Fact("ttyctl", .doesNotReparse, .sweptInert),
+        Fact("type", .doesNotReparse, .sweptInert),
+        Fact("ulimit", .doesNotReparse, .sweptInert),
+        Fact("umask", .doesNotReparse, .sweptInert),
+        Fact("unalias", .doesNotReparse, .sweptInert),
+        Fact("unfunction", .doesNotReparse, .sweptInert),
+        Fact("unhash", .doesNotReparse, .sweptInert),
+        Fact("unlimit", .doesNotReparse, .sweptInert),
+        Fact("unsetopt", .doesNotReparse, .sweptInert),
+        Fact("wait", .doesNotReparse, .sweptInert),
+        Fact("whence", .doesNotReparse, .sweptInert),
+        Fact("where", .doesNotReparse, .sweptInert),
+        Fact("which", .doesNotReparse, .sweptInert),
     ]
+
+    /// Command names where the shell turns an argument into shell code.
+    /// Derived from `shellVocabulary` so the table is the only place a
+    /// verdict is written down.
+    static let reparsingCommands: Set<String> = names(with: .reparses)
+
+    /// Words after which the next word is still a command name. Missing an
+    /// entry over-refuses; a wrong extra entry cannot open a hole, because
+    /// expecting a command name only ever adds checks.
+    static let commandIntroducers: Set<String> = names(with: .introducesACommandName)
 
     /// Reserved words this reader does not model, refused when they would be
     /// the command name.
-    ///
-    /// `[[` opens a conditional expression whose operators bring their own
-    /// sub-languages: measured, `[[ 1 -eq 'a[$(touch M)]' ]]` runs the
-    /// substitution, because a numeric comparison evaluates its operands as
-    /// arithmetic and an array subscript in arithmetic is expanded. `test`
-    /// and `[` do NOT — the same payload through either leaves no marker,
-    /// they parse a number and stop — so they stay ordinary commands and
-    /// `[ -f {{PATH}} ]` keeps working. `]]` is listed with it because a
-    /// reader that refuses the opener has no business claiming to know the
-    /// closer.
-    static let unmodelledKeywords: Set<String> = ["[[", "]]"]
+    static let unmodelledKeywords: Set<String> = names(with: .unmodelledSyntax)
+
+    /// Every name the table classifies, for the lower-bound test.
+    static let classifiedShellWords: Set<String> = Set(shellVocabulary.map(\.name))
+
+    private static func names(with verdict: Verdict) -> Set<String> {
+        Set(shellVocabulary.lazy.filter { $0.verdict == verdict }.map(\.name))
+    }
 
     /// The single left-to-right pass. Kept as a struct with one cursor so
     /// there is exactly one notion of "where we are" — the earlier design

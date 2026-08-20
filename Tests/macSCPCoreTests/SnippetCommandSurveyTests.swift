@@ -38,7 +38,7 @@ struct SnippetCommandSurveyTests {
             "cd /srv && ./run.sh {{X}}",
             "ls | grep {{X}}",
             "{ echo {{X}}; }",
-            "if [ -f {{X}} ]; then echo yes; fi",
+            "if grep -q x {{X}}; then echo yes; fi",
             "DB=live ./backup.sh {{X}}",
             "awk '{print $1}' {{X}}",
         ])
@@ -420,6 +420,24 @@ struct SnippetCommandSurveyTests {
     /// walk, so the last `Character` walk under this ban is gone. The scan
     /// exists to make a NEW spelling of the old mistake announce itself.
     ///
+    /// **And it cannot be completed.** That is a conclusion, not a to-do. A
+    /// later review injected four more compiling spellings and every one of
+    /// them stayed green: `starts(with:)` next to a banned `hasPrefix`,
+    /// `firstRange(of:)` next to a banned `range(of:)`, `replacing(` next to
+    /// a banned `replacingOccurrences(` — and `switch c { case "=": }`,
+    /// which compares a cluster against a literal while containing no
+    /// comparison operator at all. The first three are closed below by
+    /// widening the patterns to the whole family; the fourth needed a rule
+    /// that looks at the enclosing `switch`. But the shape of that round
+    /// generalises: `String`'s per-element surface is open-ended and grows
+    /// with each Swift release, a textual scan cannot type-check a receiver,
+    /// and a cluster comparison need not contain any token a scan can look
+    /// for. So the honest statement of what this guard is worth is: it makes
+    /// a spelling this project has ALREADY got wrong announce itself if it
+    /// comes back, and it buys nothing at all against a spelling nobody here
+    /// has thought of. Anything load-bearing has to be the structure above
+    /// or the executing corpus, never this list.
+    ///
     /// **The receiver rule.** Some of these questions are perfectly correct
     /// on a scalar and wrong on a `Character` — `scalar == "'"` and
     /// `scalars[start..<end].contains { $0 == "=" }` are both in the code and
@@ -444,7 +462,28 @@ struct SnippetCommandSurveyTests {
                     Decide it one Unicode.Scalar at a time — see ShellScalar.
                     """)
             }
+            // A `switch` asks its per-element question on one line and
+            // answers it on another, so the receiver rule has to look UP to
+            // the subject rather than along the `case`. Injected as
+            // `switch c { case "=": … }`, that spelling passed every pattern
+            // below: it carries no comparison operator to match on.
+            var subjectOfEnclosingSwitch = ""
             for line in lines {
+                if line.range(of: #"\bswitch\b"#, options: .regularExpression) != nil {
+                    subjectOfEnclosingSwitch = line
+                }
+                if line.range(of: #"\bcase\s+""#, options: .regularExpression) != nil {
+                    #expect(
+                        line.lowercased().contains("scalar")
+                            || subjectOfEnclosingSwitch.lowercased().contains("scalar"), """
+                            \(file.lastPathComponent) matches shell text against a literal in a \
+                            case pattern whose switch subject does not name a scalar. On a String \
+                            or a Character that is a cluster comparison wearing no operator, so \
+                            no pattern in this guard sees it — and it is the shape ShellScalar \
+                            itself uses, which makes it the likeliest re-spelling of the old \
+                            mistake. Switch over a Unicode.Scalar and name it — see ShellScalar.
+                            """)
+                }
                 for shape in Self.perElementPatterns
                 where line.range(of: shape, options: .regularExpression) != nil {
                     #expect(
@@ -473,23 +512,32 @@ struct SnippetCommandSurveyTests {
     /// - `.isNewline` is a `Character` property, and "what is a line break"
     ///   is the question that has to be `bash`'s rather than Unicode's.
     /// - the rest are `String` APIs that match on clusters and canonical
-    ///   equivalence: `replacingOccurrences` in any spelling, including one
-    ///   reached through a variable or an interpolation, plus `split`,
-    ///   `firstIndex`/`lastIndex`, `hasPrefix`/`hasSuffix`.
+    ///   equivalence: `replacing` in any spelling (`replacingOccurrences`
+    ///   included, and one reached through a variable or an interpolation),
+    ///   plus `split`, `firstIndex`/`lastIndex`, `hasPrefix`/`hasSuffix`.
     /// - `range(of:)`, `components(separatedBy:)`, `prefix`/`suffix` are the
     ///   shapes a review found green and are banned outright: none of them
     ///   has a scalar-view spelling this code needs, and the one caller that
     ///   used `range(of:)` — the placeholder search — is a scalar walk now.
+    /// - the patterns are written to cover a call's SIBLINGS, not its exact
+    ///   spelling, because a later review found three of those green while
+    ///   the call next to them was banned: `starts(with:)` beside
+    ///   `hasPrefix`, `firstRange(of:)` beside `range(of:)`, `replacing(`
+    ///   beside `replacingOccurrences(`. So `range` matches any `…Range(of:`
+    ///   / `…Ranges(of:` and `replacing` matches any `replacing…(`. This
+    ///   widens the net; it does not close it — see the test's own comment
+    ///   on why it cannot be closed.
     private static let characterShapedPatterns = [
         #"\bCharacter\b"#,
         #"\.contains\(""#,
         #"\.first\b(?!\s*[({])"#,
         #"\.isNewline\b"#,
-        #"\.replacingOccurrences\("#,
+        #"\.replacing\w*\("#,
         #"\.split\(separator:"#,
         #"\.(first|last)Index\(of:"#,
         #"\.has(Prefix|Suffix)\("#,
-        #"\.range\(of:"#,
+        #"\.starts\(with:"#,
+        #"\.\w*[Rr]anges?\(of:"#,
         #"\.components\(separatedBy:"#,
         #"\.(prefix|suffix)\("#,
     ]
@@ -501,7 +549,9 @@ struct SnippetCommandSurveyTests {
     /// of the round before it.
     ///
     /// - a comparison against a literal is the whole family in one line, and
-    ///   it is the rule that catches the shapes a scan cannot enumerate:
+    ///   it is the rule that catches most of the shapes a scan cannot
+    ///   enumerate (`~=` is in it because a pattern match is a comparison
+    ///   spelled backwards):
     ///   `v.contains { $0 == "=" }`, `for c in v where c == "="`,
     ///   `v[v.startIndex] == "="` all reduce to a literal compared against
     ///   something whose unit the line does not name. Every literal
@@ -514,7 +564,7 @@ struct SnippetCommandSurveyTests {
     /// - a subscript by an index or a start/end bound yields a `Character`
     ///   from a `String`; `v[v.startIndex] == "="` was green.
     private static let perElementPatterns = [
-        #"[=!]= ""#,
+        #"[=!~]= ""#,
         #"\.contains\s*[{]"#,
         #"\.contains\(where:"#,
         #"\.(first|last)Index\(where:"#,
@@ -579,10 +629,18 @@ struct SnippetCommandSurveyTests {
     /// nothing and closes the case before there is one.
     ///
     /// The gap it still does not close, recorded rather than claimed shut: a
-    /// new file that brings its OWN alphabet — lexes shell text in
-    /// `Character`s without naming either type — is derived by nothing here.
-    /// The executing corpus is what catches that one, since a recogniser
-    /// that mis-reads a template shows up as a marker file, not as a name.
+    /// file that brings its OWN alphabet — lexes shell text in `Character`s
+    /// without naming either type — is derived by nothing here. That is not
+    /// hypothetical and never was. `SnippetHighlighter` is exactly such a
+    /// file, in Core, today, on purpose: it tokenizes shell text for
+    /// COLOURING, names `ShellScalar` only in a doc comment (which
+    /// `codeLines` filters out), and so appears on neither list. It is
+    /// deliberately outside the gate — a token boundary a shade off is
+    /// invisible when colouring — and the guard above is what keeps anything
+    /// on the gate path from reaching into it. So the gap this test leaves
+    /// is occupied, knowingly, by one file; what catches a SECOND one is the
+    /// executing corpus, since a recogniser that mis-reads a template shows
+    /// up as a marker file rather than as a name.
     @Test func everySourceFileOnTheShellPathIsClassified() throws {
         let classified = Set(Self.shellLexingFileNames + Self.shellCallerFileNames)
         var onThePath: [String] = []

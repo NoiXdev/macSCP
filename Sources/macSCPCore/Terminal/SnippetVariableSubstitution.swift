@@ -100,6 +100,13 @@ public enum SnippetVariableSubstitution {
             // Skipping rather than trusting that keeps a future name rule
             // from producing a torn value — the placeholder would simply
             // stay in the text as inert literal characters.
+            //
+            // Which makes this guard UNREACHABLE today, and it is written
+            // down here so nobody mistakes it for tested: deleting the line
+            // leaves the suite green, as a review measured. That is the
+            // correct outcome, not a coverage hole — a test that reached it
+            // would have to declare a name the name rule forbids, and would
+            // then be pinning a shape the product cannot produce.
             guard replacement.range.lowerBound >= cursor else { continue }
             assembled.append(contentsOf: scalars[cursor..<replacement.range.lowerBound])
             assembled.append(contentsOf: replacement.quoted.unicodeScalars)
