@@ -175,7 +175,12 @@ struct SnippetCommandSurveyTests {
                 "\(command) is read rather than refused; an unknown operator must fail closed")
         }
 
-        // A digit run is a descriptor only where a shell reads one.
+        // A digit run is a descriptor only where a shell reads one — and
+        // where it is one, the word AFTER it is the command name. Reading
+        // `2` as the name instead is what makes this more than tidiness:
+        // the re-parsing name behind it would never be looked up.
+        #expect(placement(of: "{{X}}", in: "2>&1 declare {{X}}") == .reparsedArgument)
+        #expect(refusal("2>&1 eval {{X}}") == .evaluation)
         #expect(placement(of: "{{X}}", in: "echo a2>f {{X}}") == .argument)
         #expect(placement(of: "{{X}}", in: "echo 2 {{X}}") == .argument)
         #expect(placement(of: "{{X}}", in: "echo {{X}} 2") == .argument)
