@@ -22,9 +22,24 @@ import Testing
 /// directory; the assertion is that the file is not there. A marker is the
 /// one signal that cannot be argued with.
 ///
-/// No test failure message here contains a value or a resolved command:
-/// values in this suite are attack payloads, and a payload in a test log is
-/// a value that left the process.
+/// Some tests here DELIBERATELY EXECUTE an attack payload on every `swift
+/// test` run, and say so in their own doc comments. That is the point of
+/// them: a refusal is only worth pinning while the shape it refuses would
+/// still do damage, so the corpus that pins refusals is paired with tests
+/// asserting that the marker IS created when the same template is resolved
+/// anyway. Each runs `bash` in its own fresh scratch directory, with no
+/// stdin and no inherited output, and every payload writes a marker file
+/// into that directory and nothing else. The README's "Building from
+/// source" section says so too, so a reader of a CI log is not surprised
+/// by it.
+///
+/// No value a USER typed reaches a log, an error, an export or a failure
+/// message anywhere in this area — `SnippetVariableSubstitution`,
+/// `SnippetCommandSurvey` and `PosixQuoting` do no logging, and `Problem`
+/// carries declaration names only. The failure messages here are a weaker
+/// claim than that: swift-testing prints the ARGUMENTS of a parameterised
+/// test, so a payload from this file's own `arguments:` lists can appear in
+/// a failure line. Those are hard-wired test data, not anybody's value.
 @Suite("shell quoting, executed")
 struct ShellQuotingExecutionTests {
     /// `'` U+0308 — the apostrophe that is not an apostrophe to Swift.
@@ -231,6 +246,139 @@ struct ShellQuotingExecutionTests {
     /// is the point: if a later change made this shape inert, the corpus
     /// entry above would be pinning a refusal that no longer defends
     /// anything, and this test says so instead of staying quietly green.
+    // MARK: - A decorated `=` must not hide the command name behind it
+
+    /// The gate asked about one `=` in two alphabets and got two answers.
+    ///
+    /// `opensAssignment` read SCALARS, found U+003D, and concluded "this is
+    /// an assignment prefix", which skips the command-name checks. The line
+    /// below it read `Character`s — `=` plus a combining mark is one cluster
+    /// unequal to `"="` — concluded "no assignment here", and stopped
+    /// expecting a command name. So the word after it was taken for an
+    /// argument and never compared against `eval`. `bash` disagrees with the
+    /// cluster half and agrees with the scalar half: measured, `A=̈1 sh -c
+    /// 'echo $A'` prints the decorated value, so it IS an assignment and
+    /// `eval` after it IS the command name.
+    ///
+    /// Both halves are asserted for every decoration, because the pair is
+    /// the finding: the gate must refuse, AND the template must still be one
+    /// that executes when resolved regardless — otherwise the refusal above
+    /// would be pinning something that no longer defends anything.
+    ///
+    /// EXECUTES THE PAYLOAD, on purpose, in a fresh scratch directory.
+    @Test(
+        "a decorated = does not hide an eval command name",
+        arguments: ["\u{0308}", "\u{FE0F}", "\u{0301}", "\u{20E3}", "\u{200D}"])
+    func aDecoratedEqualsDoesNotHideAnEvalCommandName(decoration: String) throws {
+        let marker = "marker-decorated-assignment"
+        let templates = [
+            "A=\(decoration)1 eval {{X}}",
+            "A=\(decoration)1 command eval {{X}}",
+            "PGPASSWORD=\(decoration)'x' eval {{X}}",
+        ]
+        for command in templates {
+            #expect(
+                SnippetVariableSubstitution.firstDeclarationProblem(
+                    command: command, variables: [placeholder("X")])
+                    == .unanalyzableContext(kind: .evaluation),
+                "an assignment prefix with a decorated = hid the eval behind it")
+
+            let resolved = SnippetVariableSubstitution.resolve(
+                command: command, variables: [placeholder("X")],
+                values: ["X": "$(touch \(marker))"])
+            try withScratchDirectory { directory in
+                try runInBash(resolved, in: directory)
+                #expect(
+                    markerExists(marker, in: directory),
+                    """
+                    this template no longer executes its payload; the refusal above may now \
+                    be defending nothing
+                    """)
+            }
+        }
+    }
+
+    /// The undecorated control, and the one that always worked: the same
+    /// templates with a plain `=` are refused for the same reason.
+    @Test func aPlainAssignmentPrefixStillGuardsTheCommandNameBehindIt() {
+        for command in ["A=1 eval {{X}}", "A=1 command eval {{X}}", "PGPASSWORD='x' eval {{X}}"] {
+            #expect(
+                SnippetVariableSubstitution.firstDeclarationProblem(
+                    command: command, variables: [placeholder("X")])
+                    == .unanalyzableContext(kind: .evaluation))
+        }
+    }
+
+    // MARK: - A comment ends where bash ends one
+
+    /// `bash` ends a `#` comment at U+000A and at nothing else — measured by
+    /// running `ls # note<X>touch MARK` through `/bin/bash` for each
+    /// candidate: only LF let the `touch` run.
+    ///
+    /// The recogniser used `Character.isNewline`, which also reports CR, VT,
+    /// FF, NEL, U+2028 and U+2029. So it closed the comment at one of those,
+    /// read what followed as a fresh command and the placeholder in it as
+    /// `.argument`, while `bash` kept the whole tail inside the comment.
+    /// `.comment` is documented unsafe for exactly the reason that then
+    /// applies: a value containing a newline ends the comment, and
+    /// everything after the newline is code again. A value can contain one —
+    /// an imported `defaultValue` pre-fills the prompt.
+    ///
+    /// EXECUTES THE PAYLOAD, on purpose, in a fresh scratch directory.
+    @Test(
+        "a comment is not ended by a terminator bash reads straight through",
+        arguments: ["\u{000D}", "\u{000B}", "\u{000C}", "\u{0085}", "\u{2028}", "\u{2029}"])
+    func aCommentIsNotEndedByATerminatorBashReadsThrough(terminator: String) throws {
+        let marker = "marker-comment"
+        let command = "ls # note\(terminator)echo {{X}}"
+        #expect(
+            SnippetVariableSubstitution.firstDeclarationProblem(
+                command: command, variables: [placeholder("X")]) != nil,
+            "a placeholder inside a bash comment was accepted as an argument")
+
+        let resolved = SnippetVariableSubstitution.resolve(
+            command: command, variables: [placeholder("X")],
+            values: ["X": "\ntouch \(marker)\n"])
+        try withScratchDirectory { directory in
+            try runInBash(resolved, in: directory)
+            #expect(
+                markerExists(marker, in: directory),
+                """
+                this template no longer executes its payload; the refusal above may now be \
+                defending nothing
+                """)
+        }
+    }
+
+    /// The other side of the same rule, and the reason it is not simply
+    /// "refuse anything with a comment in it": at a real line feed the
+    /// comment really is over, the placeholder after it really is an
+    /// argument, and the same newline-carrying value is inert there. Both
+    /// spellings of a line ending are covered, since `"\r\n"` is one
+    /// `Character` and two scalars and this file's whole subject is units
+    /// disagreeing.
+    @Test(
+        "a comment ended by a real line feed leaves the next command's argument safe",
+        arguments: ["\n", "\r\n"])
+    func aCommentEndedByALineFeedLeavesTheNextArgumentSafe(terminator: String) throws {
+        let marker = "marker-comment-clean"
+        let command = "ls # note\(terminator)echo {{X}}"
+        #expect(
+            SnippetVariableSubstitution.firstDeclarationProblem(
+                command: command, variables: [placeholder("X")]) == nil,
+            "a placeholder in ordinary argument position after a comment was refused")
+
+        let resolved = SnippetVariableSubstitution.resolve(
+            command: command, variables: [placeholder("X")],
+            values: ["X": "\ntouch \(marker)\n"])
+        try withScratchDirectory { directory in
+            try runInBash(resolved, in: directory)
+            #expect(
+                !markerExists(marker, in: directory),
+                "a newline in the value escaped its single quotes and ran as a command")
+        }
+    }
+
     @Test func theRefusedMarkedQuoteTemplateWouldOtherwiseExecute() throws {
         let marker = "marker-marked-template"
         let command = "echo x'\u{0308}{{X}}'\u{0308}"

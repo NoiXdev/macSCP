@@ -164,8 +164,8 @@ struct SnippetVariableSubstitutionTests {
     /// 3. a here-document cannot be expressed as a quote position at all;
     /// 4. a comment was started at ANY `#`, where a shell starts one only at
     ///    a word start — so `echo a#b "{{X}}"` read the quoted placeholder
-    ///    as being inside a comment, and fifteen templates of that shape
-    ///    executed the payload.
+    ///    as being inside a comment, and templates of that shape executed
+    ///    the payload.
     ///
     /// The fourth is the one that ended the deny-list design: each round
     /// fixed the instances it was shown and the next round found a new

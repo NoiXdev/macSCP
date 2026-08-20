@@ -90,6 +90,18 @@ parser's test fixture is checked against — it stays out of the normal
 docker compose -f docker/test-server/compose.yml --profile nextcloud up -d nextcloud
 ```
 
+One suite is worth knowing about before you read a test log. The quoting
+tests in `Tests/macSCPCoreTests/ShellQuotingExecutionTests.swift` run
+`/bin/bash` on every `swift test` — they are ungated on purpose, because a
+proof you have to switch on is not a proof, and they are the only way to
+check a quoting rule against a shell rather than against our idea of one.
+A few of them **deliberately execute an attack payload**: a refusal is only
+worth pinning while the shape it refuses would still do damage, so those
+tests assert that the payload does run when the same template is resolved
+anyway. Each runs in its own fresh temporary directory with no stdin and no
+inherited output, and every payload writes a marker file there and nothing
+else.
+
 ## Command line
 
 `macscp-cli` is a small command-line companion. It ships **inside the app

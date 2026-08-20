@@ -48,8 +48,9 @@ struct SnippetCommandSurveyTests {
 
     /// The `#` rule a shell actually has: a comment starts only at a word
     /// start. Reading `a#b` as "everything after `#` is a comment" is what
-    /// blinded the previous gate to fifteen templates, so the two halves are
-    /// pinned separately — mid-word `#` is literal, word-start `#` is not.
+    /// blinded a previous gate to a batch of templates, so the two halves
+    /// are pinned separately — mid-word `#` is literal, word-start `#` is
+    /// not.
     @Test func aHashInsideAWordIsLiteralAndAHashAtAWordStartIsAComment() {
         #expect(placement(of: "{{X}}", in: "echo a#b {{X}}") == .argument)
         #expect(placement(of: "{{X}}", in: "echo a#b # {{X}}") == .comment)
@@ -229,8 +230,8 @@ struct SnippetCommandSurveyTests {
     /// compares unequal to `"'"`. Reading shell text in `Character`s
     /// therefore walked straight past it, stayed in the unquoted state, and
     /// emitted an `.argument` span over a placeholder a shell reads as
-    /// quoted — fourteen templates of this shape were accepted and executed
-    /// their payload. Positive recognition is no defence when the span
+    /// quoted — templates of this shape were accepted and executed their
+    /// payload. Positive recognition is no defence when the span
     /// itself is wrong, which is why the reader now works in
     /// `Unicode.Scalar`s (see `ShellScalar`).
     @Test(
@@ -256,16 +257,63 @@ struct SnippetCommandSurveyTests {
         #expect(placement(of: "{{X}}", in: "echo x'{{X}}'\u{0308}") == .quoted)
     }
 
-    /// The line-handling check the scalar decision owes: `"\r\n"` is one
-    /// `Character` and two scalars, so a scalar walk sees two line breaks
-    /// where a character walk saw one. Both are state resets, so the
-    /// outcomes are unchanged — verified here rather than assumed.
-    @Test func carriageReturnsAreStillLineBreaks() {
+    /// Line handling, against `bash`'s rules rather than Swift's.
+    ///
+    /// An earlier version of this test asked only the Swift half — `"\r\n"`
+    /// is one `Character` and two scalars, both are state resets, so the
+    /// outcome is unchanged — and that half is true and is still pinned
+    /// below. The half it did not ask is whether the scalar is a line
+    /// terminator TO BASH at all. It is not: `bash` ends a line at U+000A
+    /// and reads CR, VT, FF, NEL, U+2028 and U+2029 as ordinary bytes
+    /// (measured; `ShellQuotingExecutionTests` runs the comment case through
+    /// a real shell). So a comment ended early for us and kept running for
+    /// `bash`, and the placeholder in between was called an argument while
+    /// sitting inside `bash`'s comment.
+    ///
+    /// The same measurement settles word splitting: `bash`'s blanks are
+    /// space and tab, so a CR does not end a word either — `foo\recho` is
+    /// ONE argument word, and the classification below says so.
+    @Test func linesAndWordsEndWhereBashEndsThem() {
+        // The wide set still refuses a quoted span, which is the one
+        // direction where being wider than `bash` costs only a nuisance.
         #expect(refusal("echo \"a\r\nb\" {{X}}") == .unbalancedQuoting)
         #expect(refusal("echo \"a\rb\" {{X}}") == .unbalancedQuoting)
+        #expect(refusal("echo \"a\u{2028}b\" {{X}}") == .unbalancedQuoting)
+
+        // A line feed resets the command; a CR is word content, so the
+        // placeholder is an argument either way — but for different reasons.
         #expect(placement(of: "{{X}}", in: "echo foo\r\necho {{X}}") == .argument)
         #expect(placement(of: "{{X}}", in: "echo foo\recho {{X}}") == .argument)
+
+        // A comment ends at a line feed and at nothing else.
         #expect(placement(of: "{{X}}", in: "echo hi # note\r\necho {{X}}") == .argument)
+        #expect(placement(of: "{{X}}", in: "echo hi # note\necho {{X}}") == .argument)
+        #expect(placement(of: "{{X}}", in: "echo hi # note\recho {{X}}") == .comment)
+        #expect(placement(of: "{{X}}", in: "echo hi # note\u{000B}echo {{X}}") == .comment)
+        #expect(placement(of: "{{X}}", in: "echo hi # note\u{2028}echo {{X}}") == .comment)
+
+        // And a `#` that a CR pushed into the middle of a word is not a
+        // comment for `bash`, so it is not one here (`printf` builds one
+        // argument out of `ls\r#`).
+        #expect(placement(of: "{{X}}", in: "ls\r# {{X}}") == .argument)
+    }
+
+    /// A word is compared against the keyword sets as a whole `String`,
+    /// which is exact only while those sets are ASCII: canonical
+    /// equivalence cannot map any other scalar sequence onto an all-ASCII
+    /// string, so `==` against `"eval"` is a byte comparison — the same one
+    /// `bash` makes. A non-ASCII entry would quietly turn `ShellWord.isOneOf`
+    /// into a cluster comparison, which is the whole family of bug this area
+    /// is here for.
+    @Test func shellWordKeywordSetsAreASCII() {
+        let keywords =
+            SnippetCommandSurvey.reparsingCommands.union(SnippetCommandSurvey.commandIntroducers)
+        #expect(!keywords.isEmpty)
+        for keyword in keywords {
+            #expect(
+                keyword.unicodeScalars.allSatisfy { $0.isASCII },
+                "a non-ASCII keyword makes the word comparison a cluster comparison")
+        }
     }
 
     // MARK: - Containment, not overlap
@@ -324,15 +372,149 @@ struct SnippetCommandSurveyTests {
         }
     }
 
-    /// The comparison-unit decision, kept structural in the same way.
+    /// The comparison-unit decision, kept structural — and kept in the
+    /// shapes the mistake has actually taken, not only the one already
+    /// repaired.
     ///
-    /// `replacingOccurrences(of:with:)` matches on extended grapheme
-    /// clusters and canonical equivalence, so escaping a shell or markup
-    /// metacharacter with it silently misses every occurrence that carries a
-    /// combining mark — which is how a value broke out of the single quotes
-    /// the quoter had just put around it. Also derived rather than listed:
-    /// the whole Core tree is scanned for the shape, so a new copy of the
-    /// mistake anywhere in Core fails here rather than waiting for a review.
+    /// The previous version of this guard matched the literal spelling
+    /// `replacingOccurrences(of: "<metachar>"` and nothing else. A review
+    /// injected the other shapes into a Core file one at a time and the
+    /// guard stayed green for every one of them — including
+    /// `value.contains("=")`, which was sitting in Core at that moment and
+    /// was the critical finding of that round. A guard that misses the shape
+    /// of the bug is the finding; the hole it happens to catch is not the
+    /// defence.
+    ///
+    /// **Scope.** Banning `Character` across all of Core is not possible:
+    /// `AppVersion` and `SigV4Signer` use it for things that are not shell
+    /// or markup syntax, and `SSHConnectionConfig` keeps `Character` ALLOW
+    /// lists on purpose (an allow list survives the wrong alphabet — a
+    /// decorated cluster is simply not on it, and `Character.isASCII` is
+    /// false for every one of them). So this guard covers the files that
+    /// lex shell text scalar by scalar, and
+    /// `everyCoreFileOnTheShellPathIsClassified` below keeps that list from
+    /// going stale by failing the moment a Core file joins the shell path
+    /// without being classified.
+    ///
+    /// A textual scan cannot tell `scalar == "'"` from `character == "'"`,
+    /// which is exactly why the ban on naming `Character` at all is the load
+    /// bearing rule here: in a file where no `Character` exists, a literal
+    /// comparison cannot be one.
+    @Test func noShellLexingFileAsksACharacterQuestion() throws {
+        for file in try Self.shellLexingSourceFiles() {
+            let code = try Self.codeLines(of: file).joined(separator: "\n")
+            for shape in Self.characterShapedPatterns {
+                #expect(
+                    code.range(of: shape, options: .regularExpression) == nil, """
+                    \(file.lastPathComponent) asks a Character-shaped question (\(shape)) about \
+                    shell text. A Character is an extended grapheme cluster, so a metacharacter \
+                    carrying a combining mark is not an occurrence of it — which is how a value \
+                    broke out of its own single quotes and how a decorated `=` hid an eval. \
+                    Decide it one Unicode.Scalar at a time — see ShellScalar.
+                    """)
+            }
+        }
+    }
+
+    /// The shapes the guard above looks for. Each one was measured against a
+    /// decorated metacharacter before being listed, and each is a shape a
+    /// review found green under the previous guard.
+    ///
+    /// - `Character` as a type name covers `Set<Character>`, `[Character]`,
+    ///   `: Character` and `Character(…)`.
+    /// - `.contains("…")` covers the critical finding's own line.
+    /// - `.first` (other than `first { … }` / `first(where:)`, which are the
+    ///   `Collection` methods) yields a `Character` from a `String`.
+    /// - `.isNewline` is a `Character` property, and "what is a line break"
+    ///   is the question that has to be `bash`'s rather than Unicode's.
+    /// - the rest are `String` APIs that match on clusters and canonical
+    ///   equivalence: `replacingOccurrences` in any spelling, including one
+    ///   reached through a variable or an interpolation, plus `split`,
+    ///   `firstIndex`/`lastIndex`, `hasPrefix`/`hasSuffix`.
+    private static let characterShapedPatterns = [
+        #"\bCharacter\b"#,
+        #"\.contains\(""#,
+        #"\.first\b(?!\s*[({])"#,
+        #"\.isNewline\b"#,
+        #"\.replacingOccurrences\("#,
+        #"\.split\(separator:"#,
+        #"\.(first|last)Index\(of:"#,
+        #"\.has(Prefix|Suffix)\("#,
+    ]
+
+    /// The Core files that lex shell text scalar by scalar.
+    ///
+    /// Named rather than derived, because "does this file decide shell
+    /// syntax" is not a property a directory listing knows — but the naming
+    /// is fail-closed twice over: a name that no longer exists fails here,
+    /// and a file that joins the shell path without being named fails
+    /// `everyCoreFileOnTheShellPathIsClassified`.
+    private static let shellLexingFileNames = [
+        "ShellScalar.swift",
+        "PosixQuoting.swift",
+        "SnippetCommandSurvey.swift",
+        "SnippetVariableSubstitution.swift",
+    ]
+
+    /// Core files that CALL the shell-lexing code without lexing themselves.
+    /// They are excluded from the `Character` ban for stated reasons:
+    /// `SSHConnectionConfig` keeps two `Character` allow lists (see the
+    /// guard above), and the other two only hand a value to
+    /// `PosixQuoting.singleQuoted`.
+    private static let shellCallerFileNames = [
+        "SSHConnectionConfig.swift",
+        "SSHCommandBuilder.swift",
+        "CLIToolInstaller.swift",
+    ]
+
+    private static func shellLexingSourceFiles() throws -> [URL] {
+        let files = try coreSourceFiles()
+        return try shellLexingFileNames.map { name in
+            guard let file = files.first(where: { $0.lastPathComponent == name }) else {
+                throw GuardFailure.missingShellLexingFile(name)
+            }
+            return file
+        }
+    }
+
+    private enum GuardFailure: Error {
+        case missingShellLexingFile(String)
+    }
+
+    /// Every Core file that names `ShellScalar` or `PosixQuoting` in code is
+    /// either a shell-lexing file or a listed caller.
+    ///
+    /// This is what stops the list above from being the stale hand-written
+    /// list that a previous round rightly objected to. A new file that joins
+    /// the shell path — a helper the survey delegates to, a third quoter —
+    /// has to name one of those two to do its job, and the moment it does,
+    /// this test fails until somebody decides which side of the ban it is
+    /// on. Deciding is the point; the failure message says so.
+    @Test func everyCoreFileOnTheShellPathIsClassified() throws {
+        let classified = Set(Self.shellLexingFileNames + Self.shellCallerFileNames)
+        var onThePath: [String] = []
+        for file in try Self.coreSourceFiles() {
+            let code = try Self.codeLines(of: file)
+            if code.contains(where: { $0.contains("ShellScalar") || $0.contains("PosixQuoting") }) {
+                onThePath.append(file.lastPathComponent)
+            }
+        }
+        #expect(!onThePath.isEmpty, "the Core source tree could not be walked")
+        for name in onThePath {
+            #expect(classified.contains(name), """
+                \(name) names ShellScalar or PosixQuoting in code but is on neither list in \
+                SnippetCommandSurveyTests. Decide whether it lexes shell text — then it goes on \
+                shellLexingFileNames and must not name Character — or only calls the quoter, \
+                which puts it on shellCallerFileNames.
+                """)
+        }
+    }
+
+    /// The Core-wide half, unchanged in intent and kept broad: escaping a
+    /// metacharacter with `replacingOccurrences` is wrong wherever it
+    /// appears, shell path or not, because it matches on grapheme clusters
+    /// and canonical equivalence. The S3 XML escaper is in Core and is not a
+    /// shell-lexing file, and it had this exact shape.
     @Test func noCoreFileEscapesAMetacharacterWithReplacingOccurrences() throws {
         let metacharacters = ["'", "\\\"", "`", "$", "&", "<", ">", ";", "|", "#", "\\\\"]
         let needles = metacharacters.map { #"replacingOccurrences(of: ""# + $0 + "\"" }

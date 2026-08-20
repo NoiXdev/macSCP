@@ -515,11 +515,53 @@ struct TerminalPanelViewModelDeliveryTests {
         }
     }
 
+    /// Counts delivery callbacks AND lets a test wait for the first one
+    /// without inventing a deadline for it.
+    ///
+    /// The wait used to be a 5 ms poll against a 5 s deadline, and that
+    /// deadline was the whole flakiness: measured under CPU starvation
+    /// (twelve spinners on this machine) the test went red roughly one run
+    /// in three, and its own failure message said which half was missing --
+    /// "callback 0, shell received 1 chunk(s), state .running". The bytes
+    /// had reached the shell; only the hop back onto the main actor to call
+    /// `onDelivered` had not been scheduled yet, because every main-actor
+    /// test in the suite was queued in front of it. Nothing was lost; the
+    /// test simply stopped waiting.
+    ///
+    /// So the wait is event-driven now: the callback resumes it, and a
+    /// starved machine makes it slower rather than red. Raising the number
+    /// would have hidden the same race one load level further out. The same
+    /// shape as `OpenGate` above, for the same reason -- if the delivery
+    /// already happened, the wait returns at once instead of parking on a
+    /// continuation nobody will resume.
     private final class Box: @unchecked Sendable {
         private let lock = NSLock()
         private var _count = 0
+        private var continuation: CheckedContinuation<Void, Never>?
+
         var count: Int { lock.lock(); defer { lock.unlock() }; return _count }
-        func bump() { lock.lock(); _count += 1; lock.unlock() }
+
+        func bump() {
+            lock.lock()
+            _count += 1
+            let pending = continuation
+            continuation = nil
+            lock.unlock()
+            pending?.resume()
+        }
+
+        func waitForFirstDelivery() async {
+            await withCheckedContinuation { c in
+                lock.lock()
+                if _count > 0 {
+                    lock.unlock()
+                    c.resume()
+                    return
+                }
+                continuation = c
+                lock.unlock()
+            }
+        }
     }
 
     /// Polls instead of sleeping a fixed span: the same fixed wait that is
@@ -545,7 +587,7 @@ struct TerminalPanelViewModelDeliveryTests {
 
         let delivered = Box()
         vm.send([0x61]) { delivered.bump() }
-        _ = await waitUntil { delivered.count == 1 }
+        await delivered.waitForFirstDelivery()
 
         #expect(delivered.count == 1)
     }
@@ -566,7 +608,7 @@ struct TerminalPanelViewModelDeliveryTests {
         #expect(delivered.count == 0)
 
         gate.open()
-        _ = await waitUntil { delivered.count == 1 }
+        await delivered.waitForFirstDelivery()
         // Reports which half is missing when this fails: bytes at the shell
         // but no callback is a callback bug; neither is a flush bug.
         #expect(

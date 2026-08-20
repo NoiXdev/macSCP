@@ -25,16 +25,25 @@ public enum S3MultipartXML {
 
     /// Builds the `CompleteMultipartUpload` XML body, listing `parts` in
     /// ascending part-number order regardless of the order they were
-    /// collected in. ETags are echoed VERBATIM — including their surrounding
-    /// quotes exactly as the `UploadPart` response's `ETag` header carried
-    /// them — since S3 compares the ETag it is given against what it stored
-    /// byte-for-byte.
+    /// collected in.
+    ///
+    /// An ETag keeps the surrounding quotes the `UploadPart` response's
+    /// `ETag` header carried, because S3 compares the ETag it is given
+    /// against what it stored byte-for-byte — but it goes through
+    /// `S3XMLText.escaped` on the way in, which those quotes make the point
+    /// of rather than an exception to. The value is chosen by the SERVER,
+    /// this body is assembled by string interpolation, and an ETag holding a
+    /// `<` would otherwise decide where `<ETag>` ends. Escaping is
+    /// transparent to the receiver (`&quot;` parses back to `"`), so the
+    /// bytes S3 compares are unchanged; the shape of the document stops
+    /// being the server's to choose.
     public static func completeBody(parts: [(number: Int, etag: String)]) -> Data {
         let sorted = parts.sorted { $0.number < $1.number }
         var xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
         xml += "<CompleteMultipartUpload>"
         for part in sorted {
-            xml += "<Part><PartNumber>\(part.number)</PartNumber><ETag>\(part.etag)</ETag></Part>"
+            let etag = S3XMLText.escaped(part.etag)
+            xml += "<Part><PartNumber>\(part.number)</PartNumber><ETag>\(etag)</ETag></Part>"
         }
         xml += "</CompleteMultipartUpload>"
         return Data(xml.utf8)

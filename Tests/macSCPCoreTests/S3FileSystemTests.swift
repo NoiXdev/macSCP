@@ -748,6 +748,34 @@ struct S3FileSystemTests {
         #expect(bodyXML.contains("<Key>d/a</Key>") && bodyXML.contains("<Key>d/</Key>"))
     }
 
+    /// The keys in that body are XML-ESCAPED, and nothing pinned that
+    /// before: mutating the escaper to return its input unchanged left the
+    /// whole suite green, which is how a security-relevant function ends up
+    /// rewritten with no test behind it.
+    ///
+    /// An object named `a&b.txt` is ordinary, and `a<b` or `a"b` are legal
+    /// S3 keys too. Unescaped, each one decides where `<Key>` ends — the
+    /// body stops being the document this process meant to send. The listing
+    /// hands the raw key back, so the round trip is real rather than
+    /// hypothetical: the parser unescapes what S3 sent, and this rebuilds it.
+    @Test func deleteTreeEscapesXMLMetacharactersInKeys() async throws {
+        let (fs, transport) = try await connect(responses: [
+            (Data(listingWithKeys(["d/", "d/a&amp;b.txt", "d/c&lt;d&gt;e", "d/f&quot;g&apos;h"]).utf8),
+             httpResponse(status: 200)),
+            (Data("<DeleteResult></DeleteResult>".utf8), httpResponse(status: 200)),
+        ])
+
+        try await fs.deleteTree(at: "/d")
+
+        let bodyXML = String(data: await transport.requests.last!.httpBody!, encoding: .utf8)!
+        #expect(bodyXML.contains("<Key>d/a&amp;b.txt</Key>"))
+        #expect(bodyXML.contains("<Key>d/c&lt;d&gt;e</Key>"))
+        #expect(bodyXML.contains("<Key>d/f&quot;g&apos;h</Key>"))
+        // The escape is a single pass, so an ampersand it introduced is not
+        // escaped again -- the ordering trap of chained replacement.
+        #expect(!bodyXML.contains("&amp;amp;"))
+    }
+
     /// S3's `DeleteObjects` can answer HTTP 200 with a `<DeleteResult>` body
     /// that STILL lists a per-key `<Error>` for an object it failed to
     /// delete — the same "200 lies" shape `copyObject` already guards

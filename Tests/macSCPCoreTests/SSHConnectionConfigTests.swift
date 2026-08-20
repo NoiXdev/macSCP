@@ -256,6 +256,44 @@ struct SSHConnectionConfigTests {
         }
     }
 
+    /// The same guard, with a combining mark on the `-`.
+    ///
+    /// `value.first` yields a `Character` — an extended grapheme cluster —
+    /// so `-` followed by U+0308 was one symbol that compared unequal to
+    /// `"-"`, and `host = "-̈x.com"` and `username = "-̈l"` were accepted
+    /// while their undecorated forms were rejected. `ssh` and getopt read
+    /// the `-` byte and the mark separately. The ban lists beside this guard
+    /// had already moved onto scalars a round earlier; the guard one line
+    /// above them had not.
+    ///
+    /// The jump fields would refuse these anyway through their whitelists
+    /// (`Character.isASCII` is false for a decorated cluster), and they are
+    /// asserted here so the four fields answer alike rather than two by
+    /// accident.
+    @Test(
+        "a leading dash carrying a combining mark is rejected too",
+        arguments: ["\u{0308}", "\u{FE0F}", "\u{0301}"])
+    func aDecoratedLeadingDashIsRejected(mark: String) {
+        #expect(throws: SSHConnectionConfig.ConfigError.invalidHost) {
+            _ = try SSHConnectionConfig(
+                host: "-\(mark)oProxyCommand=x", username: "tim", auth: .password("x"))
+        }
+        #expect(throws: SSHConnectionConfig.ConfigError.invalidUsername) {
+            _ = try SSHConnectionConfig(
+                host: "example.com", username: "-\(mark)l", auth: .password("x"))
+        }
+        #expect(throws: SSHConnectionConfig.ConfigError.invalidJumpHost) {
+            _ = try SSHConnectionConfig(
+                host: "example.com", username: "tim", auth: .password("x"),
+                jump: .init(host: "-\(mark)x.com", username: "j", auth: .password("x")))
+        }
+        #expect(throws: SSHConnectionConfig.ConfigError.invalidJumpUsername) {
+            _ = try SSHConnectionConfig(
+                host: "example.com", username: "tim", auth: .password("x"),
+                jump: .init(host: "b", username: "-\(mark)l", auth: .password("x")))
+        }
+    }
+
     // MARK: - C-1 regression: ordinary values must still be accepted, for
     // both target and jump.
 

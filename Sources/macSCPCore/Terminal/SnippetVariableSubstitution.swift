@@ -106,7 +106,17 @@ public enum SnippetVariableSubstitution {
         // line only, so it becomes its own line instead -- which is why the
         // variable then outlives the run in that session, a fact the editor's
         // hint text states.
-        let separator = substituted.contains(where: \.isNewline) ? "\n" : " "
+        //
+        // Asked over scalars with the WIDE line-break set, which is the
+        // strict side of both halves of the question: putting the
+        // assignments on their own line is never less safe than putting them
+        // in front of the first command, so anything that might be a line
+        // break should tip it. `Character.isNewline` would have answered a
+        // question about clusters instead -- and the whole area is here
+        // because a cluster answer and a byte answer disagreed.
+        let separator =
+            substituted.unicodeScalars.contains(where: ShellScalar.looksLikeALineBreak)
+            ? "\n" : " "
         return assignments.joined(separator: " ") + separator + substituted
     }
 

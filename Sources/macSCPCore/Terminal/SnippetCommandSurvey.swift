@@ -48,6 +48,17 @@ import Foundation
 /// placeholder a shell reads as quoted. Positive recognition does not save
 /// you there: the span is not missing, it is *wrong*. Containment in one
 /// span can only be as good as the span.
+///
+/// ## And its predicates are `bash`'s, not Unicode's
+///
+/// The unit is half the answer. A scalar predicate that recognises a
+/// lexical event `bash` does not is the same defect in a new spelling: the
+/// placeholder lands in a context modelled wrongly, and a wrong model here
+/// resolves to acceptance. Each predicate this type reads shell text with —
+/// what ends a line, what separates words — was run through `/bin/bash` and
+/// matched to what `bash` actually did; where the answers differed, the
+/// predicate moved to `bash`'s. `ShellScalar` records those measurements
+/// next to the predicates themselves.
 public enum SnippetCommandSurvey {
     /// What stopped the reading. Each case names a construct, not a
     /// mistake: every one of these is a perfectly good thing to write in a
@@ -145,6 +156,24 @@ public enum SnippetCommandSurvey {
 }
 
 extension SnippetCommandSurvey {
+    /// Words that introduce another command rather than being one, so the
+    /// word after them is still a command name. Listed because staying in
+    /// "expects a command name" is the STRICT direction: it makes the next
+    /// word be read as a name (which must be a plain literal and is checked
+    /// against the re-parsing set) instead of as an argument. Missing an
+    /// entry over-refuses; a wrong extra entry cannot open a hole.
+    static let commandIntroducers: Set<String> = [
+        "if", "then", "elif", "else", "while", "until", "do", "time", "!", "{", "}",
+    ]
+
+    /// Command names that hand their arguments back to the shell parser.
+    /// `command` and `builtin` are here because `command eval …` runs
+    /// `eval`. This is not a claim to have enumerated every program that
+    /// interprets its argv — `bash -c`, `python -c` and friends do too, and
+    /// no quoting rule can help there; it is the set where the SHELL itself
+    /// re-parses, which is the question this type answers.
+    static let reparsingCommands: Set<String> = ["eval", "command", "builtin"]
+
     /// The single left-to-right pass. Kept as a struct with one cursor so
     /// there is exactly one notion of "where we are" — the earlier design
     /// derived quoting state from a token list produced elsewhere, and the
@@ -152,12 +181,19 @@ extension SnippetCommandSurvey {
     /// is where every past escape lived.
     ///
     /// It holds the command's `String.UnicodeScalarView` and NOT the
-    /// `String`, so the unit `ShellScalar` settles on is the only unit
-    /// available in here: a `Character` comparison cannot be written against
-    /// this cursor without first putting the `String` back as a property,
-    /// which is a visible edit rather than a slip. Scalar-view indices are
-    /// `String.Index` values, so the spans handed out stay comparable with
-    /// ranges a caller found by ordinary text search.
+    /// `String`. Scalar-view indices are `String.Index` values, so the spans
+    /// handed out stay comparable with ranges a caller found by ordinary
+    /// text search.
+    ///
+    /// An earlier version of this comment claimed that holding only the
+    /// scalar view made a `Character` comparison unwritable in here. It did
+    /// not: a helper built a `String` out of the cursor's scalars, and
+    /// `word.contains("=")` was written against that `String` — a
+    /// `Character` test, sitting one line below a scalar test of the same
+    /// `=`, disagreeing with it, and accepting `A=̈1 eval {{X}}` because it
+    /// disagreed. The route is closed now by giving the helper a return type
+    /// with no character access at all (`ShellWord`), so the claim is about
+    /// a type rather than about a habit.
     private struct Reader {
         let scalars: String.UnicodeScalarView
         var index: String.Index
@@ -172,52 +208,45 @@ extension SnippetCommandSurvey {
             self.index = text.startIndex
         }
 
-        /// Words that introduce another command rather than being one, so
-        /// the word after them is still a command name. Listed because
-        /// staying in "expects a command name" is the STRICT direction: it
-        /// makes the next word be read as a name (which must be a plain
-        /// literal and is checked against the re-parsing set) instead of as
-        /// an argument. Missing an entry over-refuses; a wrong extra entry
-        /// cannot open a hole.
-        static let commandIntroducers: Set<String> = [
-            "if", "then", "elif", "else", "while", "until", "do", "time", "!", "{", "}",
-        ]
-
-        /// Command names that hand their arguments back to the shell parser.
-        /// `command` and `builtin` are here because `command eval …` runs
-        /// `eval`. This is not a claim to have enumerated every program that
-        /// interprets its argv — `bash -c`, `python -c` and friends do too,
-        /// and no quoting rule can help there; it is the set where the
-        /// SHELL itself re-parses, which is the question this type answers.
-        static let reparsingCommands: Set<String> = ["eval", "command", "builtin"]
-
         mutating func read() -> Reading {
             while index < scalars.endIndex {
                 let scalar = scalars[index]
 
-                if ShellScalar.isNewline(scalar) {
+                if ShellScalar.isLineFeed(scalar) {
                     advance()
                     beginCommand()
                     continue
                 }
-                if ShellScalar.isWhitespace(scalar) {
+                if ShellScalar.isBlank(scalar) {
                     advance()
                     continue
                 }
                 // A `#` that reaches the top of this loop always begins a
                 // comment, exactly as a shell has it, because every path
                 // back to the top is a word boundary: the start of the
-                // text, a line break, unquoted whitespace, a separator, a
+                // text, a line feed, an unquoted blank, a separator, a
                 // redirection operator. A `#` in the MIDDLE of a word never
                 // arrives here — `readWord` does not treat `#` as a word
                 // terminator, so it is consumed inside the word and
                 // `echo a#b` passes a literal `a#b`. That, and nothing
                 // else, is what stops a mid-word `#` from being read as a
-                // comment; reading it as one is what let fifteen templates
+                // comment; reading it as one let a batch of templates
                 // through a previous round.
+                //
+                // The comment then runs to the next LINE FEED and to
+                // nothing else, because that is where `bash` ends one —
+                // measured, not assumed (`ShellScalar.isLineFeed`). Ending
+                // it at a CR, a VT, a NEL or a U+2028 the way
+                // `Character.isNewline` would meant reading the rest of
+                // `bash`'s comment as a fresh command and the placeholder
+                // in it as an argument, while `bash` kept the value inside
+                // the comment — where a value carrying a newline reopens
+                // code. Running off the end of the text without finding a
+                // line feed is the correct outcome, not a missing case: the
+                // comment reaches the end for `bash` too.
                 if scalar == "#" {
                     let start = index
-                    while index < scalars.endIndex, !ShellScalar.isNewline(scalars[index]) {
+                    while index < scalars.endIndex, !ShellScalar.isLineFeed(scalars[index]) {
                         advance()
                     }
                     spans.append(Span(placement: .comment, range: start..<index))
@@ -253,13 +282,42 @@ extension SnippetCommandSurvey {
             expectsRedirectionTarget = false
         }
 
-        /// The scalars of `start..<end` as a `String`. Built through the
-        /// scalar view rather than by subscripting the original `String`,
-        /// because a scalar-aligned index need not sit on a grapheme
-        /// cluster boundary and slicing a `String` at one is not a
-        /// well-defined thing to ask for.
-        private func text(from start: String.Index, to end: String.Index) -> String {
-            String(String.UnicodeScalarView(scalars[start..<end]))
+        /// The scalars of `start..<end` as a `ShellWord` — a whole word, for
+        /// comparison against a keyword set and for nothing else.
+        ///
+        /// It returns `ShellWord` rather than `String` because the `String`
+        /// this used to return was the way back into the wrong alphabet:
+        /// `word.contains("=")` was a `Character` test written against a
+        /// cursor that is otherwise scalars all the way down. `ShellWord`
+        /// offers no character access, so the same line does not compile any
+        /// more. Built through the scalar view rather than by subscripting
+        /// the original `String`, because a scalar-aligned index need not sit
+        /// on a grapheme cluster boundary and slicing a `String` at one is
+        /// not a well-defined thing to ask for.
+        private func word(from start: String.Index, to end: String.Index) -> ShellWord {
+            ShellWord(scalars[start..<end])
+        }
+
+        /// Whether the word `start..<end` contains a `=` SCALAR anywhere.
+        ///
+        /// The loose companion to `opensAssignment`, and loose on purpose:
+        /// a false positive here only keeps the reader expecting a command
+        /// name, which makes the NEXT word be checked as one instead of
+        /// accepted as an argument. A false NEGATIVE is the unsafe
+        /// direction, and it is what a `Character` `contains("=")` produced
+        /// for `A=̈1`: `bash` reads that as an assignment (measured — the
+        /// variable is set and the mark lands in its value), so `eval` after
+        /// it is the command name, while the cluster test said "no `=`
+        /// here" and handed `eval` on as an ordinary argument.
+        ///
+        /// Asking it in scalars also makes it a provable superset of
+        /// `opensAssignment`, which scans the same scalars for the same `=`:
+        /// wherever that one is true, this one is true too, so the branch
+        /// that skips the command-name checks can never be the branch that
+        /// also stops expecting a command name.
+        private func containsAssignmentScalar(from start: String.Index, to end: String.Index)
+            -> Bool {
+            scalars[start..<end].contains { $0 == "=" }
         }
 
         /// `<`, `<<`, `<<<`, `>`, `>>` and the process substitutions that
@@ -280,9 +338,14 @@ extension SnippetCommandSurvey {
 
         /// One word: its literal runs, its quoted spans, its expansions.
         ///
-        /// The word ends at whitespace or at any unquoted metacharacter,
-        /// which is left for `read()` to classify — this method never
-        /// consumes a separator.
+        /// The word ends at a blank, at a line feed, or at any unquoted
+        /// metacharacter, which is left for `read()` to classify — this
+        /// method never consumes a separator. That is `bash`'s word
+        /// boundary and no other: a CR, a VT, a form feed or a U+00A0 are
+        /// ordinary word content, measured by printing the argument vector
+        /// `bash` builds for `a<scalar>b`. Splitting a word `bash` keeps
+        /// whole would put the tail of a command NAME into argument
+        /// position, which is the wrong side to be wrong on.
         private mutating func readWord() -> Refusal? {
             let placement: Placement =
                 expectsRedirectionTarget ? .redirectionTarget
@@ -293,7 +356,7 @@ extension SnippetCommandSurvey {
 
             while index < scalars.endIndex {
                 let scalar = scalars[index]
-                if ShellScalar.isWhitespace(scalar) || scalar == ";" || scalar == "&"
+                if ShellScalar.endsAWord(scalar) || scalar == ";" || scalar == "&"
                     || scalar == "|" || scalar == "<" || scalar == ">"
                     || scalar == "(" || scalar == ")" || scalar == "`" {
                     break
@@ -329,7 +392,7 @@ extension SnippetCommandSurvey {
             closeRun(&runStart, placement: placement)
 
             if placement == .commandName {
-                let word = text(from: wordStart, to: index)
+                let word = word(from: wordStart, to: index)
                 // A word a shell reads as an assignment is not a command
                 // name at all, so it need not be readable as one:
                 // `PGPASSWORD='secret' psql -h {{HOST}}` is an everyday
@@ -353,16 +416,26 @@ extension SnippetCommandSurvey {
                     // `"eval" {{X}}` is the shape that makes this
                     // load-bearing rather than tidy.
                     guard isPlainLiteral else { return .unrecognizedSyntax }
-                    if Reader.reparsingCommands.contains(word) { return .evaluation }
+                    if word.isOneOf(SnippetCommandSurvey.reparsingCommands) {
+                        return .evaluation
+                    }
                 }
                 // An assignment prefix (`DB=x cmd …`) and a word that
                 // introduces another command both leave the command name
-                // still to come. `contains("=")` is the LOOSE test on
-                // purpose, and deliberately not the same one as above: a
-                // false positive here only keeps the reader expecting a
-                // name, which makes the NEXT word be checked as one instead
-                // of accepted as an argument — the strict direction.
-                if !word.contains("="), !Reader.commandIntroducers.contains(word) {
+                // still to come — so the next word gets read as a name and
+                // checked against the re-parsing set instead of being
+                // accepted as an argument.
+                //
+                // Both questions about this word's `=` are now asked in the
+                // same alphabet: `opensAssignment` above and
+                // `containsAssignmentScalar` here read the same scalars, so
+                // the strict test cannot say "assignment, skip the checks"
+                // while the loose one says "no assignment, stop expecting a
+                // name". Those two answers disagreeing over a `=` carrying a
+                // combining mark is precisely how `A=̈1 eval {{X}}` was
+                // accepted and ran its payload.
+                if !containsAssignmentScalar(from: wordStart, to: index),
+                   !word.isOneOf(SnippetCommandSurvey.commandIntroducers) {
                     expectsCommandName = false
                 }
             }
@@ -408,12 +481,21 @@ extension SnippetCommandSurvey {
         /// close on the line it opens is refused rather than followed: a
         /// multi-line quoted string is legal shell, this type simply
         /// declines to reason across the break.
+        ///
+        /// This is the ONE place the wide `looksLikeALineBreak` set is
+        /// right, and it is right because the outcome is a refusal. `bash`
+        /// would carry the span across a CR or a U+2028 happily; refusing
+        /// there costs a legitimate command a nuisance, whereas the
+        /// corresponding mistake in the other direction — deciding a
+        /// construct ENDS at a scalar `bash` reads straight through — is
+        /// what put a placeholder inside a `bash` comment while this type
+        /// thought it was an argument.
         private mutating func readQuotedSpan(quote: Unicode.Scalar) -> Refusal? {
             let start = index
             advance()
             while index < scalars.endIndex {
                 let scalar = scalars[index]
-                if ShellScalar.isNewline(scalar) { return .unbalancedQuoting }
+                if ShellScalar.looksLikeALineBreak(scalar) { return .unbalancedQuoting }
                 if scalar == quote {
                     advance()
                     spans.append(Span(placement: .quoted, range: start..<index))

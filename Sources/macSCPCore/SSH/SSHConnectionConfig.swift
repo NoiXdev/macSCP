@@ -96,7 +96,7 @@ public struct SSHConnectionConfig: Equatable, Sendable {
     /// enter ssh's implicit `ProxyCommand` string, so it keeps this strict
     /// whitelist rather than the target's more permissive ban list.
     private static func isValidJumpHost(_ value: String) -> Bool {
-        guard let first = value.first, first != "-" else { return false }
+        guard !startsWithHyphen(value) else { return false }
         return value.allSatisfy { char in
             (char.isASCII && (char.isLetter || char.isNumber))
                 || char == "." || char == "-" || char == "_" || char == ":" || char == "%"
@@ -108,10 +108,27 @@ public struct SSHConnectionConfig: Equatable, Sendable {
     /// (`isValidTargetUsername`), the jump username DOES enter ssh's
     /// implicit `ProxyCommand` string, so it keeps this strict whitelist.
     private static func isValidJumpUsername(_ value: String) -> Bool {
-        guard let first = value.first, first != "-" else { return false }
+        guard !startsWithHyphen(value) else { return false }
         return value.allSatisfy { char in
             (char.isASCII && (char.isLetter || char.isNumber)) || char == "." || char == "-" || char == "_"
         }
+    }
+
+    /// Whether `value` starts with a `-`, which `ssh`/getopt could mistake
+    /// for an option. Read as a SCALAR, not as `value.first`: a `Character`
+    /// is an extended grapheme cluster, so `-` followed by U+0308 is one
+    /// symbol that compares unequal to `"-"` — `"-̈x.com"` and `"-̈l"` were
+    /// accepted while their undecorated forms were rejected, and getopt sees
+    /// the `-` byte either way. The ban lists below moved onto scalars a
+    /// round earlier; this guard sat one line above them and did not.
+    ///
+    /// The whitelists above keep asking their question in `Character`s, and
+    /// that is not the same oversight: an ALLOW list survives the wrong
+    /// alphabet by construction, because a decorated cluster is simply not
+    /// on it (`Character.isASCII` is false for every one of them). A BAN
+    /// list — and a `first != "-"` guard is one — does not.
+    private static func startsWithHyphen(_ value: String) -> Bool {
+        value.unicodeScalars.first == "-"
     }
 
     /// Characters rejected outright anywhere in a control character check:
@@ -123,7 +140,8 @@ public struct SSHConnectionConfig: Equatable, Sendable {
     /// attacker chooses the input for.
     private static func hasWhitespaceOrControlCharacter(_ value: String) -> Bool {
         value.unicodeScalars.contains { scalar in
-            ShellScalar.isWhitespace(scalar) || scalar.value < 0x20 || scalar.value == 0x7F
+            ShellScalar.isAnyUnicodeWhitespace(scalar) || scalar.value < 0x20
+                || scalar.value == 0x7F
         }
     }
 
@@ -153,7 +171,7 @@ public struct SSHConnectionConfig: Equatable, Sendable {
     /// so a ban list closes the real shell-injection risks without
     /// rejecting legitimate values the way the old whitelist did.
     private static func isValidTargetHost(_ value: String) -> Bool {
-        guard let first = value.first, first != "-" else { return false }
+        guard !startsWithHyphen(value) else { return false }
         guard !hasWhitespaceOrControlCharacter(value) else { return false }
         let banned: Set<Unicode.Scalar> = [
             "'", "\"", "`", "$", "&", ";", "|", "<", ">", "(", ")", "{", "}", "[", "]",
@@ -172,7 +190,7 @@ public struct SSHConnectionConfig: Equatable, Sendable {
     /// `ProxyCommand` string, unlike the jump username — see
     /// `isValidJumpUsername`).
     private static func isValidTargetUsername(_ value: String) -> Bool {
-        guard let first = value.first, first != "-" else { return false }
+        guard !startsWithHyphen(value) else { return false }
         guard !hasWhitespaceOrControlCharacter(value) else { return false }
         let banned: Set<Unicode.Scalar> = [
             "'", "\"", "`", "$", "&", ";", "|", "<", ">", "(", ")", "{", "}", "[", "]",

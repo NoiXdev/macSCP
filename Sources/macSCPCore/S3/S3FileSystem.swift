@@ -618,39 +618,10 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     private static func deleteObjectsXML(keys: [String]) -> Data {
         var xml = "<Delete>"
         for key in keys {
-            xml += "<Object><Key>\(Self.xmlEscape(key))</Key></Object>"
+            xml += "<Object><Key>\(S3XMLText.escaped(key))</Key></Object>"
         }
         xml += "</Delete>"
         return Data(xml.utf8)
-    }
-
-    /// Escapes the five XML predefined entities — the only characters that
-    /// are structurally significant inside an element's text content.
-    ///
-    /// One pass over `Unicode.Scalar`s, deliberately not a chain of
-    /// `replacingOccurrences` calls. Two reasons, and the second is the one
-    /// that made this worth rewriting: chained replacement has to order "&"
-    /// first or it re-escapes the ampersands the later replacements
-    /// introduce (a correctness trap that only ordering hides), and
-    /// `replacingOccurrences` matches on extended grapheme clusters, so a
-    /// key holding "&" or "<" followed by a combining mark is not an
-    /// occurrence to it and goes into the request body unescaped. A key can
-    /// hold anything — an object named "a&b.txt" is ordinary. Deciding one
-    /// scalar at a time has neither problem.
-    private static func xmlEscape(_ string: String) -> String {
-        var escaped = ""
-        escaped.reserveCapacity(string.unicodeScalars.count)
-        for scalar in string.unicodeScalars {
-            switch scalar {
-            case "&": escaped += "&amp;"
-            case "<": escaped += "&lt;"
-            case ">": escaped += "&gt;"
-            case "\"": escaped += "&quot;"
-            case "'": escaped += "&apos;"
-            default: escaped.unicodeScalars.append(scalar)
-            }
-        }
-        return escaped
     }
 
     /// Maps an absolute browser path to the S3 object key used for a FILE
