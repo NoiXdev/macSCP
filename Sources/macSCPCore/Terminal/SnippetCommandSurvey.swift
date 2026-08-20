@@ -80,10 +80,11 @@ public enum SnippetCommandSurvey {
         /// An expansion other than a plain `$NAME` or `$1`: `${…}`, `$((…))`,
         /// `$'…'`, `$"…"`, or a `$` this type cannot read at all.
         case expansion
-        /// A command that re-parses its own arguments as shell text
-        /// (`eval`, and the `command`/`builtin` wrappers that can front
-        /// it). Quoting a value into one literal word protects nothing when
-        /// the word is then handed back to the parser.
+        /// A command name from `reparsingCommands` — one where the shell
+        /// itself turns an argument into shell code, at once (`eval`) or on
+        /// a later signal (`trap`) or out of a file it names (`source`).
+        /// Quoting a value into one literal word protects nothing when the
+        /// word is then handed back to the parser.
         case evaluation
         /// The text ran out mid-construct, or a shape appeared that no rule
         /// here covers — including a command name that is not a plain
@@ -162,17 +163,96 @@ extension SnippetCommandSurvey {
     /// word be read as a name (which must be a plain literal and is checked
     /// against the re-parsing set) instead of as an argument. Missing an
     /// entry over-refuses; a wrong extra entry cannot open a hole.
+    ///
+    /// It holds every reserved word after which `bash` reads a COMMAND NAME,
+    /// and `everyBashKeywordIsClassified` asks `compgen -k` for the list and
+    /// fails on a keyword classified nowhere. That is the shape that hurts:
+    /// a keyword read as an ordinary command name makes the reader stop
+    /// expecting a name, so the word `bash` runs as the command gets checked
+    /// as an argument and is never compared against `reparsingCommands`.
+    ///
+    /// The reserved words that take a WORD rather than a command name —
+    /// `case`, `for`, `select`, `in`, `function` — are deliberately NOT here.
+    /// Listing them would refuse `case "$1" in`, an everyday snippet, and
+    /// buy nothing: each was run through `bash` with a payload in the
+    /// position after it and none of them executed anything (`for` and
+    /// `select` are syntax errors there, `case` matches a word, `function`
+    /// names a function). `[[` is the reserved word where that measurement
+    /// came out the other way, and it is in `unmodelledKeywords`.
+    ///
+    /// `exec` is a builtin rather than a keyword and sits here because
+    /// `bash` reads the word after it as the command name, so this reader
+    /// does too. Measured, `exec` will not run a builtin at all (`exec eval
+    /// 'touch M'` left no marker), so what follows it is an external program
+    /// — the parked class — but reading it as a name is the strict side and
+    /// costs nothing.
     static let commandIntroducers: Set<String> = [
-        "if", "then", "elif", "else", "while", "until", "do", "time", "!", "{", "}",
+        "if", "then", "elif", "else", "fi",
+        "while", "until", "do", "done", "esac",
+        "time", "coproc", "!", "{", "}",
+        "exec",
     ]
 
-    /// Command names that hand their arguments back to the shell parser.
-    /// `command` and `builtin` are here because `command eval …` runs
-    /// `eval`. This is not a claim to have enumerated every program that
-    /// interprets its argv — `bash -c`, `python -c` and friends do too, and
-    /// no quoting rule can help there; it is the set where the SHELL itself
-    /// re-parses, which is the question this type answers.
-    static let reparsingCommands: Set<String> = ["eval", "command", "builtin"]
+    /// Command names where the SHELL turns an argument into shell code —
+    /// now, or later, or by naming a file of it.
+    ///
+    /// ## What "re-parses" had to cover
+    ///
+    /// The list started as `eval` plus the two wrappers that can front it,
+    /// and stayed that way until a review executed `trap {{X}} EXIT` and
+    /// found the marker. A deny-list inside an allow-list is only as good as
+    /// the day it was written, so the members are now decided against
+    /// `/bin/bash` itself and pinned by `everyBashBuiltinIsClassified`, which
+    /// asks `compgen -b` and fails on any builtin classified nowhere. These
+    /// are the shapes that had to be considered, each with the member that
+    /// carries it:
+    ///
+    /// - evaluated at once — `eval`, `let` (arithmetic, and an array
+    ///   subscript inside arithmetic is a command substitution);
+    /// - stored now and evaluated later — `trap`, `alias`, `bind`, `fc`,
+    ///   `history`, `complete`;
+    /// - naming a file of shell code — `source`, `.`, and `enable -f`,
+    ///   which loads a builtin out of a shared object;
+    /// - dispatching to another builtin — `command`, `builtin`;
+    /// - assigning through an evaluated subscript — `declare`, `typeset`,
+    ///   `local`, `export`, `readonly`, `unset`, `read`, `mapfile`,
+    ///   `readarray`;
+    /// - running a command to produce completions — `compgen`, `complete`.
+    ///
+    /// Replacing the shell (`exec`) is a shape of its own and is handled in
+    /// `commandIntroducers` instead, because what follows `exec` is a
+    /// command name rather than text `exec` itself re-reads.
+    ///
+    /// ## The boundary this list does NOT reach
+    ///
+    /// It is the set where the SHELL re-parses. It is emphatically not a
+    /// list of every danger: a PROGRAM that interprets its own argument —
+    /// `bash -c`, `sh -c`, `python -c`, `perl -e`, `awk`, `find -exec`,
+    /// `xargs`, an `ssh` command string — reads a perfectly quoted word as
+    /// code, and no quoting rule reaches inside it. Those are out of scope
+    /// by standing decision, not covered here, and a snippet author placing
+    /// a value into one is placing it into another language's parser.
+    static let reparsingCommands: Set<String> = [
+        "eval", "command", "builtin",
+        "trap", "let", "source", ".", "alias",
+        "declare", "typeset", "local", "export", "readonly", "unset", "read",
+        "compgen", "complete", "bind", "fc", "history", "enable",
+        "mapfile", "readarray",
+    ]
+
+    /// Reserved words this reader does not model, refused when they would be
+    /// the command name.
+    ///
+    /// `[[` opens a conditional expression whose operators bring their own
+    /// sub-languages: measured, `[[ 1 -eq 'a[$(touch M)]' ]]` runs the
+    /// substitution, because a numeric comparison evaluates its operands as
+    /// arithmetic and an array subscript in arithmetic is expanded. `test`
+    /// and `[` do NOT — the same payload through either leaves no marker,
+    /// they parse a number and stop — so they stay ordinary commands and
+    /// `[ -f {{PATH}} ]` keeps working. `]]` is listed with it because a
+    /// reader that refuses the opener has no business claiming to know the
+    /// closer.
+    static let unmodelledKeywords: Set<String> = ["[[", "]]"]
 
     /// The single left-to-right pass. Kept as a struct with one cursor so
     /// there is exactly one notion of "where we are" — the earlier design
@@ -223,9 +303,15 @@ extension SnippetCommandSurvey {
                 }
                 // A `#` that reaches the top of this loop always begins a
                 // comment, exactly as a shell has it, because every path
-                // back to the top is a word boundary: the start of the
-                // text, a line feed, an unquoted blank, a separator, a
-                // redirection operator. A `#` in the MIDDLE of a word never
+                // back to the top is a word boundary. Counted rather than
+                // recalled, there are seven of them: the start of the text,
+                // a line feed, an unquoted blank, a `#` comment, a
+                // separator, a redirection operator, and the return from
+                // `readWord`. The last two are the ones an earlier version
+                // of this list left out, and both are still boundaries: the
+                // comment branch stops ON a line feed or at the end of the
+                // text, and `readWord` never breaks on `#`, so neither can
+                // carry a mid-word `#` up here. A `#` in the MIDDLE of a word never
                 // arrives here — `readWord` does not treat `#` as a word
                 // terminator, so it is consumed inside the word and
                 // `echo a#b` passes a literal `a#b`. That, and nothing
@@ -364,7 +450,7 @@ extension SnippetCommandSurvey {
                 if scalar == "'" || scalar == "\"" {
                     closeRun(&runStart, placement: placement)
                     isPlainLiteral = false
-                    if let refusal = readQuotedSpan(quote: scalar) { return refusal }
+                    if let refusal = readQuotedSpan(quoteScalar: scalar) { return refusal }
                     runStart = index
                     continue
                 }
@@ -418,6 +504,13 @@ extension SnippetCommandSurvey {
                     guard isPlainLiteral else { return .unrecognizedSyntax }
                     if word.isOneOf(SnippetCommandSurvey.reparsingCommands) {
                         return .evaluation
+                    }
+                    // A reserved word this reader does not model. Refused
+                    // here rather than read on as an ordinary command,
+                    // because reading on is what turns "we have no rule for
+                    // this" into acceptance.
+                    if word.isOneOf(SnippetCommandSurvey.unmodelledKeywords) {
+                        return .unrecognizedSyntax
                     }
                 }
                 // An assignment prefix (`DB=x cmd …`) and a word that
@@ -490,18 +583,18 @@ extension SnippetCommandSurvey {
         /// construct ENDS at a scalar `bash` reads straight through — is
         /// what put a placeholder inside a `bash` comment while this type
         /// thought it was an argument.
-        private mutating func readQuotedSpan(quote: Unicode.Scalar) -> Refusal? {
+        private mutating func readQuotedSpan(quoteScalar: Unicode.Scalar) -> Refusal? {
             let start = index
             advance()
             while index < scalars.endIndex {
                 let scalar = scalars[index]
                 if ShellScalar.looksLikeALineBreak(scalar) { return .unbalancedQuoting }
-                if scalar == quote {
+                if scalar == quoteScalar {
                     advance()
                     spans.append(Span(placement: .quoted, range: start..<index))
                     return nil
                 }
-                if quote == "\"" {
+                if quoteScalar == "\"" {
                     if scalar == "`" { return .commandSubstitution }
                     if scalar == "$" {
                         if let refusal = readExpansion() { return refusal }

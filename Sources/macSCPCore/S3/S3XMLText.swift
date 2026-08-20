@@ -32,10 +32,35 @@ enum S3XMLText {
     /// Escaping is transparent to the receiver — an XML parser turns
     /// `&quot;` back into `"` — so it does not break S3's byte-for-byte
     /// comparison of an ETag against what it stored.
-    static func escaped(_ string: String) -> String {
+    ///
+    /// ## Why a control character is a refusal and not an escape
+    ///
+    /// XML 1.0 admits, below U+0020, only tab, line feed and carriage
+    /// return; U+FFFE and U+FFFF are out too. There is no way to carry the
+    /// others: a numeric reference to a forbidden character is forbidden as
+    /// well. Measured, a value holding U+0001 produced a document a real
+    /// `XMLParser` rejected outright — so passing one through builds a
+    /// request no receiver can read.
+    ///
+    /// Dropping the character would produce a well-formed document and is
+    /// the worse answer, which is why it is not the one taken here. These
+    /// values are identities that have to match byte-for-byte: `a\u{1}b.txt`
+    /// with the control removed is `ab.txt`, and `ab.txt` may well be a
+    /// DIFFERENT object in the same bucket. A `DeleteObjects` body would
+    /// then name a real object nobody asked to delete. Refusing turns an
+    /// unrepresentable value into a failed request, which is what it
+    /// already was.
+    static func escaped(_ string: String) throws -> String {
         var escaped = ""
         escaped.reserveCapacity(string.unicodeScalars.count)
         for scalar in string.unicodeScalars {
+            guard isRepresentableInXML(scalar) else {
+                // The reason names no value: an object key can be anything a
+                // user typed into a rename field, and a reason string
+                // reaches logs and error banners.
+                throw RemoteFSError.protocolError(
+                    reason: "S3 request body: a value contains a character XML cannot carry")
+            }
             switch scalar {
             case "&": escaped += "&amp;"
             case "<": escaped += "&lt;"
@@ -46,5 +71,15 @@ enum S3XMLText {
             }
         }
         return escaped
+    }
+
+    /// The XML 1.0 `Char` production, decided one scalar at a time.
+    /// Surrogates need no arm: `Unicode.Scalar` cannot hold one.
+    private static func isRepresentableInXML(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x09, 0x0A, 0x0D: return true
+        case 0x20...0xD7FF, 0xE000...0xFFFD, 0x10000...0x10FFFF: return true
+        default: return false
+        }
     }
 }

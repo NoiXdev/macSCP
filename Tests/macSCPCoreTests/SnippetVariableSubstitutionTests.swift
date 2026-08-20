@@ -478,4 +478,100 @@ struct SnippetVariableSubstitutionTests {
             values: ["A;touch /tmp/m": "v", "MSG": "hi"])
         #expect(resolved == "echo 'hi'")
     }
+
+    // MARK: - The gate and the emitter look for the same thing
+
+    /// The checker and the emitter must find EXACTLY the same occurrences,
+    /// and the way to guarantee that is for them to ask the same function —
+    /// which is what `occurrences(of:in:)` now is.
+    ///
+    /// It was two searches: `range(of:)` in the checker, a walk over `{{`
+    /// and `}}` in the emitter. A previous round left them apart on the
+    /// reasoning that moving only one would turn a refusal into a silent
+    /// non-substitution, and that reasoning was inherited rather than run.
+    /// Run: a corpus of decorated templates — one decoration inserted at
+    /// every position of `echo {{X}}`, six decorations — found the two
+    /// agreeing on all sixty-six. So the reasoning held; the STRUCTURE did
+    /// not, because two searches that agree today can drift tomorrow and the
+    /// drift that costs the gate is silent (a value placed where nothing
+    /// classified it).
+    ///
+    /// This test is that corpus, kept, and now asserting the property that
+    /// matters rather than the coincidence: for every variant, the checker
+    /// finding an occurrence and the emitter substituting one are the same
+    /// event.
+    @Test func theGateAndTheEmitterAgreeOnEveryDecoratedBrace() {
+        let decorations = ["\u{0308}", "\u{FE0F}", "\u{0301}", "\u{20E3}", "\u{200D}", "\u{1AB0}"]
+        let base = "echo {{X}}"
+        var checked = 0
+        for decoration in decorations {
+            for position in 0...base.unicodeScalars.count {
+                var scalars = Array(base.unicodeScalars)
+                scalars.insert(contentsOf: Array(decoration.unicodeScalars), at: position)
+                var view = String.UnicodeScalarView()
+                for scalar in scalars { view.append(scalar) }
+                let command = String(view)
+
+                let found = SnippetVariableSubstitution.occurrences(of: "X", in: command)
+                let resolved = SnippetVariableSubstitution.resolve(
+                    command: command, variables: [placeholder("X")], values: ["X": "V"])
+                // Asked as "did the text change at all" rather than by
+                // searching for the quoted value: a cluster search for
+                // `'V'` misses it when the template's next scalar is a
+                // combining mark, which is the very confusion this test
+                // exists to rule out of the code.
+                let substituted = resolved != command
+                #expect(
+                    found.isEmpty != substituted,
+                    "the checker and the emitter disagree about what an occurrence is")
+
+                // And the checker's verdict follows from the same set, in
+                // both directions. `unusedPlaceholder` means "found
+                // nothing", so it must appear exactly when the finder found
+                // nothing — a checker searching some other way would report
+                // it for a template the emitter does fill, which is the
+                // drift this whole arrangement exists to make impossible.
+                let problem = SnippetVariableSubstitution.firstDeclarationProblem(
+                    command: command, variables: [placeholder("X")])
+                #expect(
+                    (problem == .unusedPlaceholder(name: "X")) == found.isEmpty,
+                    "the checker looked for the placeholder somewhere the emitter did not")
+                checked += 1
+            }
+        }
+        #expect(checked == decorations.count * (base.unicodeScalars.count + 1))
+    }
+
+    /// The scalar walk sees an occurrence a cluster search cannot: a
+    /// combining mark after the closing brace makes `}` and the mark one
+    /// `Character`, so `range(of: "{{X}}")` finds nothing there. Both halves
+    /// see it now, because there is only one half.
+    ///
+    /// The value still cannot reach anything live: it is placed complete,
+    /// inside its own quotes, and the mark stays outside them.
+    @Test func aTrailingCombiningMarkDoesNotHideAnOccurrence() {
+        let command = "echo {{X}}\u{0308}"
+        #expect(SnippetVariableSubstitution.occurrences(of: "X", in: command).count == 1)
+        #expect(command.range(of: "{{X}}") == nil)
+        // The checker agrees it is there — a cluster search here would call
+        // the declaration unused while the emitter filled it.
+        #expect(
+            SnippetVariableSubstitution.firstDeclarationProblem(
+                command: command, variables: [placeholder("X")]) == nil)
+        let resolved = SnippetVariableSubstitution.resolve(
+            command: command, variables: [placeholder("X")], values: ["X": "v"])
+        #expect(resolved == "echo 'v'\u{0308}")
+    }
+
+    /// Two declared names in one command are found and filled independently,
+    /// left to right, and a value that happens to contain another
+    /// placeholder's token is never re-read — the ranges come from the
+    /// original text.
+    @Test func severalPlaceholdersAreFilledFromTheOriginalTextOnly() {
+        let resolved = SnippetVariableSubstitution.resolve(
+            command: "cp {{A}} {{B}} {{A}}",
+            variables: [placeholder("A"), placeholder("B")],
+            values: ["A": "{{B}}", "B": "two"])
+        #expect(resolved == "cp '{{B}}' 'two' '{{B}}'")
+    }
 }

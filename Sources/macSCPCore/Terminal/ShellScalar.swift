@@ -102,9 +102,15 @@ enum ShellScalar {
         scalar == " " || scalar == "\t"
     }
 
-    /// Where a word ends for `bash`: a blank or a line feed. (The other
-    /// terminators — `;`, `&`, `|`, `<`, `>`, `(`, `)` — are metacharacters
-    /// the caller classifies rather than skips, so they are matched there.)
+    /// Where a word ends for `bash`: a blank or a line feed.
+    ///
+    /// The caller breaks a word on more than this, and the rest are matched
+    /// at the call site because it does not merely skip them, it classifies
+    /// them. Counted there while writing this: eight, namely `;`, `&`, `|`,
+    /// `<`, `>`, `(`, `)` — `bash`'s remaining metacharacters — and the
+    /// backtick, which is not one of `bash`'s metacharacters but ends a word
+    /// here anyway because it opens a command substitution this type
+    /// refuses.
     static func endsAWord(_ scalar: Unicode.Scalar) -> Bool {
         isBlank(scalar) || isLineFeed(scalar)
     }
@@ -167,11 +173,30 @@ enum ShellScalar {
 /// no `first`, no subscript, no iteration. `isOneOf` is the whole surface,
 /// and asking anything else does not compile.
 ///
-/// Comparing whole words as `String`s is exact here because the keyword sets
-/// are ASCII: no other scalar sequence is canonically equivalent to an
-/// all-ASCII string, so `==` against `"eval"` is a byte comparison. A
-/// decorated `ev̈al` is therefore not `eval` to us — and it is not `eval` to
-/// `bash` either, which looks for the same bytes.
+/// Comparing whole words as `String`s is safe here, and an earlier version
+/// of this comment gave the wrong reason for it. It claimed that no other
+/// scalar sequence is canonically equivalent to an all-ASCII string. That is
+/// false: `"\u{212A}" == "K"` is `true` in Swift, U+212A KELVIN SIGN having
+/// a canonical decomposition to U+004B, and U+212B ÅNGSTRÖM SIGN behaves the
+/// same way. Swift's `==` on `String` is canonical equivalence, not a byte
+/// comparison, and no amount of the keywords being ASCII changes that.
+///
+/// The reason that does hold is about DIRECTION, and it holds for every
+/// keyword set this is asked about. Each caller's true branch is the
+/// stricter reading: a hit on `reparsingCommands` or `unmodelledKeywords` is
+/// a refusal, and a hit on `commandIntroducers` keeps the reader expecting a
+/// command name, which only adds checks. So a comparison that says yes too
+/// often costs a nuisance. And it cannot say no too often in a way that
+/// matters, because `bash` matches its own reserved words and builtins on
+/// BYTES: a word whose bytes differ from `eval` is not `eval` to `bash`
+/// either, so the two disagree about nothing. Measured on the obvious
+/// candidate: `"ev\u{0308}al" == "eval"` is `false` here, and `bash` runs no
+/// builtin for it.
+///
+/// `shellWordKeywordSetsAreASCII` still pins the sets as ASCII — a non-ASCII
+/// keyword would be a question about equivalence classes rather than about
+/// bytes, and nobody should have to reason about that here — but it is a
+/// tidiness rule, not the thing that makes the comparison sound.
 struct ShellWord {
     private let text: String
 

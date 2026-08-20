@@ -217,7 +217,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         let keys = try await allObjectKeys(underPrefix: Self.s3Prefix(forPath: path))
         for batch in keys.chunked(into: 1000) {
             try Task.checkCancellation()
-            let body = Self.deleteObjectsXML(keys: batch)
+            let body = try Self.deleteObjectsXML(keys: batch)
             let md5 = Data(Insecure.MD5.hash(data: body)).base64EncodedString()
             let request = try buildSignedRequest(
                 method: "POST", key: "", query: [(name: "delete", value: "")],
@@ -615,10 +615,10 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// Builds the `<Delete>` XML body for one `DeleteObjects` batch — an
     /// `<Object><Key>…</Key></Object>` per key, XML-escaped (a key CAN
     /// contain "&" or "<", e.g. an object named "a&b.txt").
-    private static func deleteObjectsXML(keys: [String]) -> Data {
+    private static func deleteObjectsXML(keys: [String]) throws -> Data {
         var xml = "<Delete>"
         for key in keys {
-            xml += "<Object><Key>\(S3XMLText.escaped(key))</Key></Object>"
+            xml += "<Object><Key>\(try S3XMLText.escaped(key))</Key></Object>"
         }
         xml += "</Delete>"
         return Data(xml.utf8)

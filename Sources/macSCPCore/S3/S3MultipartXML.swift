@@ -37,12 +37,12 @@ public enum S3MultipartXML {
     /// transparent to the receiver (`&quot;` parses back to `"`), so the
     /// bytes S3 compares are unchanged; the shape of the document stops
     /// being the server's to choose.
-    public static func completeBody(parts: [(number: Int, etag: String)]) -> Data {
+    public static func completeBody(parts: [(number: Int, etag: String)]) throws -> Data {
         let sorted = parts.sorted { $0.number < $1.number }
         var xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
         xml += "<CompleteMultipartUpload>"
         for part in sorted {
-            let etag = S3XMLText.escaped(part.etag)
+            let etag = try S3XMLText.escaped(part.etag)
             xml += "<Part><PartNumber>\(part.number)</PartNumber><ETag>\(etag)</ETag></Part>"
         }
         xml += "</CompleteMultipartUpload>"

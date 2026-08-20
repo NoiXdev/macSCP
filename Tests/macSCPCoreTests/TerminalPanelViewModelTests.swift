@@ -534,6 +534,18 @@ struct TerminalPanelViewModelDeliveryTests {
     /// shape as `OpenGate` above, for the same reason -- if the delivery
     /// already happened, the wait returns at once instead of parking on a
     /// continuation nobody will resume.
+    ///
+    /// It is event-driven WITH A CEILING, and the ceiling is not the timing
+    /// budget the old poll's deadline was. The first version of this had no
+    /// bound at all, and a review measured what that costs: mutate
+    /// `onDelivered?()` in `TerminalPanelViewModel.send` to never fire, and
+    /// this suite ran past ninety seconds instead of failing in five with a
+    /// diagnosis. That trades a flaky test for a hung suite, in a repository
+    /// whose backlog already carries a suite-hang incident. The bound is
+    /// deliberately far outside any scheduling delay -- it is not there to
+    /// decide the race, it is there so a callback that will NEVER fire ends
+    /// as a red test with a message instead of as a runner that never
+    /// returns.
     private final class Box: @unchecked Sendable {
         private let lock = NSLock()
         private var _count = 0
@@ -550,7 +562,26 @@ struct TerminalPanelViewModelDeliveryTests {
             pending?.resume()
         }
 
-        func waitForFirstDelivery() async {
+        /// Waits for the first delivery, or gives up after `timeout` and
+        /// reports which happened. The caller asserts on the count either
+        /// way, so a give-up lands on the diagnostic rather than on a
+        /// bare timeout message.
+        @discardableResult
+        func waitForFirstDelivery(timeout: Duration = .seconds(30)) async -> Bool {
+            let waiter = Task { await self.parkUntilDelivered() }
+            let ceiling = Task {
+                try? await Task.sleep(for: timeout)
+                // Resuming the continuation from here is what makes the
+                // ceiling real: the waiter is parked on it and nothing else
+                // will touch it if the callback never comes.
+                self.resumePendingWaiter()
+            }
+            await waiter.value
+            ceiling.cancel()
+            return count > 0
+        }
+
+        private func parkUntilDelivered() async {
             await withCheckedContinuation { c in
                 lock.lock()
                 if _count > 0 {
@@ -561,6 +592,14 @@ struct TerminalPanelViewModelDeliveryTests {
                 continuation = c
                 lock.unlock()
             }
+        }
+
+        private func resumePendingWaiter() {
+            lock.lock()
+            let pending = continuation
+            continuation = nil
+            lock.unlock()
+            pending?.resume()
         }
     }
 
@@ -589,7 +628,9 @@ struct TerminalPanelViewModelDeliveryTests {
         vm.send([0x61]) { delivered.bump() }
         await delivered.waitForFirstDelivery()
 
-        #expect(delivered.count == 1)
+        #expect(
+            delivered.count == 1,
+            "callback \(delivered.count), shell received \(shell.sent.count) chunk(s)")
     }
 
     @Test func waitsForTheFlushWhenTheShellIsStillOpening() async throws {
@@ -609,8 +650,12 @@ struct TerminalPanelViewModelDeliveryTests {
 
         gate.open()
         await delivered.waitForFirstDelivery()
-        // Reports which half is missing when this fails: bytes at the shell
-        // but no callback is a callback bug; neither is a flush bug.
+        // Reachable again, and that is the point of the ceiling: without one
+        // a callback that never fires parked this wait forever and the line
+        // below was dead code. It reports which half is missing -- bytes at
+        // the shell but no callback is a callback bug; neither is a flush
+        // bug. That message is what diagnosed the flake this suite was
+        // rebuilt around.
         #expect(
             delivered.count == 1,
             "callback \(delivered.count), shell received \(shell.sent.count) chunk(s), state \(vm.state)")

@@ -298,16 +298,22 @@ struct SnippetCommandSurveyTests {
         #expect(placement(of: "{{X}}", in: "ls\r# {{X}}") == .argument)
     }
 
-    /// A word is compared against the keyword sets as a whole `String`,
-    /// which is exact only while those sets are ASCII: canonical
-    /// equivalence cannot map any other scalar sequence onto an all-ASCII
-    /// string, so `==` against `"eval"` is a byte comparison — the same one
-    /// `bash` makes. A non-ASCII entry would quietly turn `ShellWord.isOneOf`
-    /// into a cluster comparison, which is the whole family of bug this area
-    /// is here for.
+    /// The keyword sets stay ASCII.
+    ///
+    /// This used to be justified by a claim that is simply false — that
+    /// canonical equivalence cannot map another scalar sequence onto an
+    /// all-ASCII string. It can: `"\u{212A}" == "K"` is `true`. What makes
+    /// `ShellWord.isOneOf` sound is the direction of every one of its
+    /// callers, and `ShellWord`'s own comment now carries that argument.
+    ///
+    /// What this test is still worth: a non-ASCII entry would make the
+    /// comparison a question about equivalence classes rather than about
+    /// bytes, and nobody reading this area should have to hold that in their
+    /// head. It pins tidiness, not the gate.
     @Test func shellWordKeywordSetsAreASCII() {
-        let keywords =
-            SnippetCommandSurvey.reparsingCommands.union(SnippetCommandSurvey.commandIntroducers)
+        let keywords = SnippetCommandSurvey.reparsingCommands
+            .union(SnippetCommandSurvey.commandIntroducers)
+            .union(SnippetCommandSurvey.unmodelledKeywords)
         #expect(!keywords.isEmpty)
         for keyword in keywords {
             #expect(
@@ -354,10 +360,7 @@ struct SnippetCommandSurveyTests {
     /// and `SnippetCommandEditor` is supposed to call it.
     ///
     /// A source scan, in the idiom the App layer's wiring guards already
-    /// use: `#filePath` is `<repoRoot>/Tests/macSCPCoreTests/…`, so three
-    /// `deletingLastPathComponent()` calls recover the repo root regardless
-    /// of `swift test`'s working directory. Fail-closed: if the directory
-    /// cannot be walked, the test errors rather than passing.
+    /// use — see `swiftFiles(under:)` for how the repo root is recovered.
     @Test func noCoreFileButTheHighlighterItselfNamesTheHighlighter() throws {
         let files = try Self.coreSourceFiles()
         #expect(!files.isEmpty, "the Core source tree could not be walked")
@@ -392,17 +395,45 @@ struct SnippetCommandSurveyTests {
     /// decorated cluster is simply not on it, and `Character.isASCII` is
     /// false for every one of them). So this guard covers the files that
     /// lex shell text scalar by scalar, and
-    /// `everyCoreFileOnTheShellPathIsClassified` below keeps that list from
-    /// going stale by failing the moment a Core file joins the shell path
+    /// `everySourceFileOnTheShellPathIsClassified` below keeps that list
+    /// from going stale by failing the moment a file joins the shell path
     /// without being classified.
     ///
-    /// A textual scan cannot tell `scalar == "'"` from `character == "'"`,
-    /// which is exactly why the ban on naming `Character` at all is the load
-    /// bearing rule here: in a file where no `Character` exists, a literal
-    /// comparison cannot be one.
+    /// **What this guard is and is not.** An earlier version of this comment
+    /// claimed that in a file where no `Character` exists, a literal
+    /// comparison cannot be one. That was false twice over. A textual scan
+    /// cannot type-check a receiver, so it cannot tell `String.contains {
+    /// $0 == "=" }` from the same call on a scalar view; and
+    /// `SnippetVariableSubstitution` was on the list below while walking the
+    /// command in `Character`s through `command[index]`, naming the type
+    /// nowhere and passing this guard. A review injected nine cluster-unit
+    /// spellings into a listed file one at a time and seven of them stayed
+    /// green, including `value.contains { $0 == "=" }` — literally the
+    /// previous round's critical finding with a closure instead of a
+    /// literal.
+    ///
+    /// So this is a TRIPWIRE for known spellings, not a proof. What actually
+    /// holds the unit is structural and lives in the code: `ShellWord` hands
+    /// out no character access, so `word.contains("=")` does not compile;
+    /// the reader holds a `String.UnicodeScalarView` and no `String`; and
+    /// `SnippetVariableSubstitution.occurrences(of:in:)` is now a scalar
+    /// walk, so the last `Character` walk under this ban is gone. The scan
+    /// exists to make a NEW spelling of the old mistake announce itself.
+    ///
+    /// **The receiver rule.** Some of these questions are perfectly correct
+    /// on a scalar and wrong on a `Character` — `scalar == "'"` and
+    /// `scalars[start..<end].contains { $0 == "=" }` are both in the code and
+    /// both right. A textual scan cannot tell them from the `String`
+    /// spellings, so those shapes are banned unless the LINE also names the
+    /// scalar it asks about. That is a convention, not a type check, and it
+    /// is stated here rather than implied: a line that asks a per-element
+    /// question about shell text must show the scalar it asks it of. One
+    /// parameter was renamed to `quoteScalar` to keep it, which is the
+    /// convention paying for itself in the only currency it has.
     @Test func noShellLexingFileAsksACharacterQuestion() throws {
         for file in try Self.shellLexingSourceFiles() {
-            let code = try Self.codeLines(of: file).joined(separator: "\n")
+            let lines = try Self.codeLines(of: file)
+            let code = lines.joined(separator: "\n")
             for shape in Self.characterShapedPatterns {
                 #expect(
                     code.range(of: shape, options: .regularExpression) == nil, """
@@ -412,6 +443,20 @@ struct SnippetCommandSurveyTests {
                     broke out of its own single quotes and how a decorated `=` hid an eval. \
                     Decide it one Unicode.Scalar at a time — see ShellScalar.
                     """)
+            }
+            for line in lines {
+                for shape in Self.perElementPatterns
+                where line.range(of: shape, options: .regularExpression) != nil {
+                    #expect(
+                        line.lowercased().contains("scalar"), """
+                        \(file.lastPathComponent) asks a per-element question (\(shape)) about \
+                        shell text without naming the scalar it asks it of. On a String every \
+                        one of these works on grapheme clusters, so a metacharacter carrying a \
+                        combining mark is not an element — the shape of the `A=̈1 eval` escape, \
+                        rewritten as a closure. Ask it of a Unicode.Scalar and name it — see \
+                        ShellScalar.
+                        """)
+                }
             }
         }
     }
@@ -431,6 +476,10 @@ struct SnippetCommandSurveyTests {
     ///   equivalence: `replacingOccurrences` in any spelling, including one
     ///   reached through a variable or an interpolation, plus `split`,
     ///   `firstIndex`/`lastIndex`, `hasPrefix`/`hasSuffix`.
+    /// - `range(of:)`, `components(separatedBy:)`, `prefix`/`suffix` are the
+    ///   shapes a review found green and are banned outright: none of them
+    ///   has a scalar-view spelling this code needs, and the one caller that
+    ///   used `range(of:)` — the placeholder search — is a scalar walk now.
     private static let characterShapedPatterns = [
         #"\bCharacter\b"#,
         #"\.contains\(""#,
@@ -440,6 +489,37 @@ struct SnippetCommandSurveyTests {
         #"\.split\(separator:"#,
         #"\.(first|last)Index\(of:"#,
         #"\.has(Prefix|Suffix)\("#,
+        #"\.range\(of:"#,
+        #"\.components\(separatedBy:"#,
+        #"\.(prefix|suffix)\("#,
+    ]
+
+    /// Shapes that are a cluster question on a `String` and the right
+    /// question on a scalar view, so the guard asks the LINE to name the
+    /// view rather than banning the call. Every one of them was measured
+    /// green under the previous guard while expressing the critical finding
+    /// of the round before it.
+    ///
+    /// - a comparison against a literal is the whole family in one line, and
+    ///   it is the rule that catches the shapes a scan cannot enumerate:
+    ///   `v.contains { $0 == "=" }`, `for c in v where c == "="`,
+    ///   `v[v.startIndex] == "="` all reduce to a literal compared against
+    ///   something whose unit the line does not name. Every literal
+    ///   comparison in these files today reads `scalar == "…"` or
+    ///   `scalars[i] == "…"`, so the convention costs nothing to keep.
+    /// - `contains { … }` and `contains(where:)` are `value.contains("=")`
+    ///   with the literal moved into a closure, where `$0` is a `Character`.
+    /// - `firstIndex(where:)` / `lastIndex(where:)` are the same question
+    ///   asked for a position.
+    /// - a subscript by an index or a start/end bound yields a `Character`
+    ///   from a `String`; `v[v.startIndex] == "="` was green.
+    private static let perElementPatterns = [
+        #"[=!]= ""#,
+        #"\.contains\s*[{]"#,
+        #"\.contains\(where:"#,
+        #"\.(first|last)Index\(where:"#,
+        #"\[\w*[Ii]ndex\]"#,
+        #"\[\w+\.(startIndex|endIndex)\]"#,
     ]
 
     /// The Core files that lex shell text scalar by scalar.
@@ -448,7 +528,7 @@ struct SnippetCommandSurveyTests {
     /// syntax" is not a property a directory listing knows — but the naming
     /// is fail-closed twice over: a name that no longer exists fails here,
     /// and a file that joins the shell path without being named fails
-    /// `everyCoreFileOnTheShellPathIsClassified`.
+    /// `everySourceFileOnTheShellPathIsClassified`.
     private static let shellLexingFileNames = [
         "ShellScalar.swift",
         "PosixQuoting.swift",
@@ -481,8 +561,8 @@ struct SnippetCommandSurveyTests {
         case missingShellLexingFile(String)
     }
 
-    /// Every Core file that names `ShellScalar` or `PosixQuoting` in code is
-    /// either a shell-lexing file or a listed caller.
+    /// Every source file that names `ShellScalar` or `PosixQuoting` in code
+    /// is either a shell-lexing file or a listed caller.
     ///
     /// This is what stops the list above from being the stale hand-written
     /// list that a previous round rightly objected to. A new file that joins
@@ -490,16 +570,29 @@ struct SnippetCommandSurveyTests {
     /// has to name one of those two to do its job, and the moment it does,
     /// this test fails until somebody decides which side of the ban it is
     /// on. Deciding is the point; the failure message says so.
-    @Test func everyCoreFileOnTheShellPathIsClassified() throws {
+    ///
+    /// The walk covers `Sources` whole and not just `Sources/macSCPCore`.
+    /// A review measured that gap: an App-layer file lexing shell text and
+    /// calling `PosixQuoting` was invisible here, and `PosixQuoting` is
+    /// `public`, so nothing stops one existing. No file outside Core names
+    /// either type today, which is exactly why widening the walk costs
+    /// nothing and closes the case before there is one.
+    ///
+    /// The gap it still does not close, recorded rather than claimed shut: a
+    /// new file that brings its OWN alphabet — lexes shell text in
+    /// `Character`s without naming either type — is derived by nothing here.
+    /// The executing corpus is what catches that one, since a recogniser
+    /// that mis-reads a template shows up as a marker file, not as a name.
+    @Test func everySourceFileOnTheShellPathIsClassified() throws {
         let classified = Set(Self.shellLexingFileNames + Self.shellCallerFileNames)
         var onThePath: [String] = []
-        for file in try Self.coreSourceFiles() {
+        for file in try Self.allSourceFiles() {
             let code = try Self.codeLines(of: file)
             if code.contains(where: { $0.contains("ShellScalar") || $0.contains("PosixQuoting") }) {
                 onThePath.append(file.lastPathComponent)
             }
         }
-        #expect(!onThePath.isEmpty, "the Core source tree could not be walked")
+        #expect(!onThePath.isEmpty, "the source tree could not be walked")
         for name in onThePath {
             #expect(classified.contains(name), """
                 \(name) names ShellScalar or PosixQuoting in code but is on neither list in \
@@ -533,14 +626,28 @@ struct SnippetCommandSurveyTests {
 
     /// Every `.swift` file under `Sources/macSCPCore`.
     private static func coreSourceFiles() throws -> [URL] {
+        try swiftFiles(under: "Sources/macSCPCore")
+    }
+
+    /// Every `.swift` file under `Sources`, App layer and CLI included.
+    private static func allSourceFiles() throws -> [URL] {
+        try swiftFiles(under: "Sources")
+    }
+
+    /// `#filePath` is `<repoRoot>/Tests/macSCPCoreTests/…`, so three
+    /// `deletingLastPathComponent()` calls recover the repo root regardless
+    /// of `swift test`'s working directory. Fail-closed: a directory that
+    /// cannot be walked throws rather than yielding an empty list that every
+    /// caller would then pass vacuously.
+    private static func swiftFiles(under relativePath: String) throws -> [URL] {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
-        let core = repoRoot.appendingPathComponent("Sources/macSCPCore")
-        let contents = try FileManager.default.subpathsOfDirectory(atPath: core.path)
+        let root = repoRoot.appendingPathComponent(relativePath)
+        let contents = try FileManager.default.subpathsOfDirectory(atPath: root.path)
         return contents
             .filter { $0.hasSuffix(".swift") }
-            .map { core.appendingPathComponent($0) }
+            .map { root.appendingPathComponent($0) }
     }
 
     /// The lines of `file` that are not whole-line comments — so a doc

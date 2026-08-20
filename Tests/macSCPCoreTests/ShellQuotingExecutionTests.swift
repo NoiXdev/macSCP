@@ -55,6 +55,28 @@ struct ShellQuotingExecutionTests {
         return try body(directory)
     }
 
+    /// `/bin/bash`'s own answer to "what builtins do you have", as the
+    /// classification test's input. Asking the shell rather than listing
+    /// what we remember is the whole mechanism: a builtin this project has
+    /// never seen shows up here and fails a test, instead of sailing through
+    /// as an ordinary command name.
+    private func bashWords(_ compgenFlag: String) throws -> [String] {
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = ["-c", "compgen \(compgenFlag)"]
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+        try process.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return (String(data: data, encoding: .utf8) ?? "")
+            .split(separator: "\n")
+            .map(String.init)
+            .filter { !$0.isEmpty }
+    }
+
     /// Runs `command` with `bash` in `directory`, with no stdin and no
     /// inherited output, and waits for it. The exit status is ignored on
     /// purpose: a payload that fails to run and a payload that runs are both
@@ -236,16 +258,6 @@ struct ShellQuotingExecutionTests {
             "a placeholder a shell reads as quoted was accepted as an argument")
     }
 
-    /// And the refusal above is load-bearing, not cosmetic: resolved anyway
-    /// and executed, that template DOES run the payload. The template's own
-    /// quotes close around the value's quotes, so `$(…)` lands unquoted —
-    /// quoting cannot save this one, which is exactly why the recogniser has
-    /// to see the marked quote and refuse.
-    ///
-    /// Asserting that a marker IS created is the unusual direction, and it
-    /// is the point: if a later change made this shape inert, the corpus
-    /// entry above would be pinning a refusal that no longer defends
-    /// anything, and this test says so instead of staying quietly green.
     // MARK: - A decorated `=` must not hide the command name behind it
 
     /// The gate asked about one `=` in two alphabets and got two answers.
@@ -379,6 +391,19 @@ struct ShellQuotingExecutionTests {
         }
     }
 
+    /// And the refusal of `echo x'̈{{X}}'̈` is load-bearing, not cosmetic:
+    /// resolved anyway and executed, that template DOES run the payload. The
+    /// template's own quotes close around the value's quotes, so `$(…)`
+    /// lands unquoted — quoting cannot save this one, which is exactly why
+    /// the recogniser has to see the marked quote and refuse.
+    ///
+    /// Asserting that a marker IS created is the unusual direction, and it
+    /// is the point: if a later change made this shape inert, the corpus
+    /// entry it is paired with would be pinning a refusal that no longer
+    /// defends anything, and this test says so instead of staying quietly
+    /// green.
+    ///
+    /// EXECUTES THE PAYLOAD, on purpose, in a fresh scratch directory.
     @Test func theRefusedMarkedQuoteTemplateWouldOtherwiseExecute() throws {
         let marker = "marker-marked-template"
         let command = "echo x'\u{0308}{{X}}'\u{0308}"
@@ -394,6 +419,267 @@ struct ShellQuotingExecutionTests {
                 this template no longer executes its payload; the refusal it is pinned \
                 against may now be defending nothing
                 """)
+        }
+    }
+
+    // MARK: - The classification of builtins is complete by construction
+
+    /// Every builtin `bash` reports is classified, one way or the other.
+    ///
+    /// This is the answer to a deny-list living inside an allow-list, which
+    /// is the shape that produced a finding in most rounds of this branch:
+    /// `reparsingCommands` held `eval`, `command` and `builtin`, and a
+    /// review executed `trap {{X}} EXIT` and got a marker. Adding `trap`
+    /// closes one instance. Asking the shell for the whole list closes the
+    /// class — a builtin `bash` gains that macSCP has never seen fails here
+    /// instead of being read as an ordinary command name.
+    ///
+    /// The input is `compgen -b` from the `bash` that is actually installed,
+    /// so this is not a snapshot of somebody's memory of bash 3.2. The
+    /// classification is spread over three places on purpose: `refused` and
+    /// `introducers` are production sets the reader consults, and
+    /// `builtinsThatDoNotReparse` is here in the test, because "this one is
+    /// harmless" is a claim about a measurement rather than a rule the
+    /// reader applies.
+    @Test func everyBashBuiltinIsClassified() throws {
+        let builtins = try bashWords("-b")
+        #expect(builtins.count > 30, "compgen -b returned nothing usable")
+        for builtin in builtins {
+            let classified =
+                SnippetCommandSurvey.reparsingCommands.contains(builtin)
+                || SnippetCommandSurvey.commandIntroducers.contains(builtin)
+                || Self.builtinsThatDoNotReparse.contains(builtin)
+            #expect(classified, """
+                bash reports a builtin this project has never classified: \(builtin). Decide \
+                it against bash rather than from memory — put a payload in an argument, run \
+                it, look for the marker. If the shell turns the argument into shell code, now \
+                or later or out of a file it names, it belongs in \
+                SnippetCommandSurvey.reparsingCommands; if the word after it is a command \
+                name, in commandIntroducers; otherwise in builtinsThatDoNotReparse here, \
+                with the shapes that were measured.
+                """)
+        }
+    }
+
+    /// Builtins measured NOT to turn an argument into shell code.
+    ///
+    /// Each was run through `/bin/bash` 3.2.57 with a payload in every
+    /// argument shape the re-parsing ones fell to — `'$(touch M)'`, an array
+    /// subscript `'a[$(touch M)]'`, an assignment through a subscript, the
+    /// `-i` arithmetic form, and the option shapes `-v`, `-C`, `-x`, `-s`,
+    /// `-f`, `-p`, `-e` — in a fresh scratch directory each time. None
+    /// produced a marker.
+    ///
+    /// `test` and `[` are the interesting entries, because their sibling
+    /// `[[` IS a re-parser: `[[ 1 -eq 'a[$(touch M)]' ]]` runs the
+    /// substitution and `[ 1 -eq 'a[$(touch M)]' ]` does not. The
+    /// conditional keyword evaluates its numeric operands as arithmetic; the
+    /// builtin parses a number. Keeping them apart is what lets
+    /// `[ -f {{PATH}} ]` stay a usable snippet.
+    ///
+    /// `compopt` is bash 4+, absent from the `bash` this was measured on,
+    /// and listed from its documented surface: it takes completion option
+    /// NAMES and no command.
+    private static let builtinsThatDoNotReparse: Set<String> = [
+        ":", "[", "bg", "break", "caller", "cd", "compopt", "continue", "dirs", "disown",
+        "echo", "exit", "false", "fg", "getopts", "hash", "help", "jobs", "kill", "logout",
+        "popd", "printf", "pushd", "pwd", "return", "set", "shift", "shopt", "suspend",
+        "test", "times", "true", "type", "ulimit", "umask", "unalias", "wait",
+    ]
+
+    /// Every reserved word `bash` reports is classified too.
+    ///
+    /// The question a keyword raises is different from a builtin's: a
+    /// keyword is syntax this reader does not model at all, and reading one
+    /// as an ordinary command name means the word after it — which `bash`
+    /// may well run as the command — is checked as an argument. So each is
+    /// either an introducer (the word after it IS a command name), or
+    /// refused outright (`unmodelledKeywords`), or measured to take a WORD
+    /// rather than a command name.
+    @Test func everyBashKeywordIsClassified() throws {
+        let keywords = try bashWords("-k")
+        #expect(keywords.count > 10, "compgen -k returned nothing usable")
+        for keyword in keywords {
+            let classified =
+                SnippetCommandSurvey.commandIntroducers.contains(keyword)
+                || SnippetCommandSurvey.unmodelledKeywords.contains(keyword)
+                || Self.keywordsThatTakeAWordNotACommandName.contains(keyword)
+            #expect(classified, """
+                bash reports a reserved word this project has never classified: \(keyword). \
+                Decide it against bash: if the word after it is a command name it belongs in \
+                commandIntroducers, if the construct brings a sub-language this reader cannot \
+                read it belongs in unmodelledKeywords, and if it simply takes a word say so \
+                here — after measuring, the way `[[` was measured.
+                """)
+        }
+    }
+
+    /// Reserved words after which `bash` reads a WORD, not a command name.
+    ///
+    /// Measured, each with a payload in the position that follows it: `for`
+    /// and `select` are syntax errors there, `case` matches the word against
+    /// its patterns, `in` introduces a word list, `function` names a
+    /// function. No marker from any of them. Listing them as introducers
+    /// would be the stricter reading and would also refuse `case "$1" in`,
+    /// which is an everyday snippet — so the measurement, not the reflex,
+    /// decides.
+    private static let keywordsThatTakeAWordNotACommandName: Set<String> = [
+        "case", "for", "select", "in", "function",
+    ]
+
+    /// A re-parsing command in command-name position is refused, whatever
+    /// else the template does. The pure half; the executing half is below.
+    @Test func everyReparsingCommandIsRefusedAsACommandName() {
+        for name in SnippetCommandSurvey.reparsingCommands {
+            #expect(
+                SnippetVariableSubstitution.firstDeclarationProblem(
+                    command: "\(name) {{X}}", variables: [placeholder("X")])
+                    == .unanalyzableContext(kind: .evaluation),
+                "a command classified as re-parsing was accepted as a command name")
+        }
+    }
+
+    /// One entry of the executing corpus: a template, the value that arms
+    /// it, and the shell state its builtin needs around it.
+    ///
+    /// `prefix`/`suffix` exist because some builtins only re-parse in a
+    /// context — `local` wants a function, `unset` wants the array whose
+    /// subscript it evaluates, `alias` wants the definition to be reached
+    /// again — and refusing to model that would mean quietly dropping the
+    /// builtins whose danger is deferred. What surrounds the template is
+    /// ordinary shell state a live session may already hold; the template
+    /// and the value are what the gate sees.
+    struct ReparseCase: Sendable, CustomStringConvertible {
+        let template: String
+        let value: String
+        var prefix = ""
+        var suffix = ""
+
+        var description: String { template }
+    }
+
+    /// Every builtin this project classifies as re-parsing, proven the way
+    /// the `trap` finding was opened: payload in the VALUE, resolved through
+    /// the real code, executed by real `bash` in a fresh scratch directory,
+    /// marker checked.
+    ///
+    /// Both halves are asserted for each case, and the second half is the
+    /// one that keeps this honest over time: the gate refuses the template,
+    /// AND the same template resolved anyway creates the marker. Without the
+    /// second, a later change could make one of these shapes inert and leave
+    /// a refusal standing that defends nothing.
+    ///
+    /// The re-parsing members with no case here are the ones this `bash`
+    /// cannot be made to demonstrate: `export` and `readonly` (the
+    /// assignment family whose subscript evaluation `declare`, `typeset` and
+    /// `local` show, but which 3.2.57 does not perform for these two);
+    /// `complete`, `bind`, `fc` and `history` (they store a command string
+    /// for an interactive shell to run later, and the shell here is not
+    /// interactive — note the target of a snippet IS); `enable` (loads a
+    /// builtin from a shared object, which needs one to exist); and
+    /// `mapfile`/`readarray` (bash 4+, absent here — `-C` runs a callback
+    /// command). They stay classified as re-parsing on the strict side.
+    ///
+    /// EXECUTES THE PAYLOAD, on purpose, in a fresh scratch directory.
+    @Test(
+        "a re-parsing builtin is refused, and would run the value if it were not",
+        arguments: [
+            ReparseCase(template: "eval {{X}}", value: "$(touch MARKER)"),
+            ReparseCase(template: "trap {{X}} EXIT", value: "$(touch MARKER)"),
+            ReparseCase(template: "let {{X}}", value: "a[$(touch MARKER)]"),
+            ReparseCase(template: "declare {{X}}", value: "x[$(touch MARKER)]=1"),
+            ReparseCase(template: "typeset {{X}}", value: "x[$(touch MARKER)]=1"),
+            ReparseCase(template: "read {{X}}", value: "a[$(touch MARKER)]"),
+            ReparseCase(template: "compgen -W {{X}} x", value: "$(touch MARKER)"),
+            ReparseCase(template: "command eval {{X}}", value: "touch MARKER"),
+            ReparseCase(template: "builtin eval {{X}}", value: "touch MARKER"),
+            ReparseCase(
+                template: "local {{X}}", value: "x[$(touch MARKER)]=1",
+                prefix: "reparse_case() { ", suffix: "; }\nreparse_case"),
+            ReparseCase(
+                template: "unset {{X}}", value: "a[$(touch MARKER)]",
+                prefix: "a=(1 2)\n"),
+            ReparseCase(
+                template: "source {{X}}", value: "./sourced.sh",
+                prefix: "echo 'touch MARKER' > sourced.sh\n"),
+            ReparseCase(
+                template: ". {{X}}", value: "./sourced.sh",
+                prefix: "echo 'touch MARKER' > sourced.sh\n"),
+            ReparseCase(
+                template: "alias {{X}}", value: "reparse_alias=touch MARKER",
+                prefix: "shopt -s expand_aliases\n", suffix: "\nreparse_alias"),
+        ])
+    func aReparsingBuiltinIsRefusedAndWouldOtherwiseRun(testCase: ReparseCase) throws {
+        #expect(
+            SnippetVariableSubstitution.firstDeclarationProblem(
+                command: testCase.template, variables: [placeholder("X")])
+                == .unanalyzableContext(kind: .evaluation),
+            "the gate accepted a template whose command name re-parses its arguments")
+
+        let resolved = SnippetVariableSubstitution.resolve(
+            command: testCase.template, variables: [placeholder("X")],
+            values: ["X": testCase.value])
+        try withScratchDirectory { directory in
+            try runInBash(testCase.prefix + resolved + testCase.suffix, in: directory)
+            #expect(
+                markerExists("MARKER", in: directory), """
+                this template no longer executes its payload; the refusal above may now be \
+                defending nothing
+                """)
+        }
+    }
+
+    /// `[[` is the reserved word the measurement caught, and the reason the
+    /// keyword question is asked separately from the builtin one.
+    ///
+    /// `[[ 1 -eq 'a[$(touch MARKER)]' ]]` runs the substitution: a numeric
+    /// comparison inside `[[ … ]]` evaluates its operands as arithmetic, and
+    /// an array subscript in arithmetic is expanded. Read as an ordinary
+    /// command name — which is what this reader did — `[[` would leave the
+    /// placeholder in plain argument position and the gate would accept it.
+    ///
+    /// EXECUTES THE PAYLOAD, on purpose, in a fresh scratch directory.
+    @Test func aConditionalExpressionKeywordIsRefusedAndWouldOtherwiseRun() throws {
+        let command = "[[ 1 -eq {{X}} ]]"
+        #expect(
+            SnippetVariableSubstitution.firstDeclarationProblem(
+                command: command, variables: [placeholder("X")])
+                == .unanalyzableContext(kind: .unrecognizedSyntax),
+            "the gate read a conditional expression as an ordinary command")
+
+        let resolved = SnippetVariableSubstitution.resolve(
+            command: command, variables: [placeholder("X")],
+            values: ["X": "a[$(touch MARKER)]"])
+        try withScratchDirectory { directory in
+            try runInBash(resolved, in: directory)
+            #expect(
+                markerExists("MARKER", in: directory), """
+                this template no longer executes its payload; the refusal above may now be \
+                defending nothing
+                """)
+        }
+    }
+
+    /// And the counter-check that keeps the refusals from swallowing the
+    /// shell: `test` and `[` take the same payload and stay inert, so
+    /// `[ -f {{PATH}} ]` is still a snippet somebody can save.
+    @Test func theConditionalBuiltinsAreNotConditionalKeywords() throws {
+        for name in ["test", "["] {
+            let command = name == "[" ? "[ 1 -eq {{X}} ]" : "test 1 -eq {{X}}"
+            #expect(
+                SnippetVariableSubstitution.firstDeclarationProblem(
+                    command: command, variables: [placeholder("X")]) == nil,
+                "an ordinary conditional builtin was refused")
+
+            let resolved = SnippetVariableSubstitution.resolve(
+                command: command, variables: [placeholder("X")],
+                values: ["X": "a[$(touch MARKER)]"])
+            try withScratchDirectory { directory in
+                try runInBash(resolved, in: directory)
+                #expect(
+                    !markerExists("MARKER", in: directory),
+                    "this builtin evaluates arithmetic after all and must be reclassified")
+            }
         }
     }
 }

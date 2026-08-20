@@ -48,15 +48,21 @@ public enum SnippetVariableSubstitution {
     /// leaving `{{NAME}}` in a command that then runs would be worse than an
     /// empty argument.
     ///
-    /// Placeholder substitution is a single left-to-right pass over the
-    /// ORIGINAL `command`, not a chain of `replacingOccurrences` calls run
-    /// one after another on the accumulating result. Chaining would re-scan
-    /// an already-substituted value for the *next* variable's token: if an
-    /// earlier value happened to contain a later `{{NAME}}` literally (a
-    /// user can type anything into a prompt), that later pass would match it
-    /// and substitute inside the first value's quotes, breaking them open.
-    /// Scanning the original text once means a substituted value is only
-    /// ever appended as literal output, never re-examined.
+    /// Placeholder substitution works from ranges taken out of the ORIGINAL
+    /// `command` — the ones `occurrences(of:in:)` reports — and not from a
+    /// chain of `replacingOccurrences` calls run one after another on the
+    /// accumulating result. Chaining would re-scan an already-substituted
+    /// value for the *next* variable's token: if an earlier value happened
+    /// to contain a later `{{NAME}}` literally (a user can type anything
+    /// into a prompt), that later pass would match it and substitute inside
+    /// the first value's quotes, breaking them open. Reading positions out
+    /// of the original text means a substituted value is only ever appended
+    /// as literal output, never re-examined.
+    ///
+    /// The result is assembled through the scalar view rather than by
+    /// slicing the `String`. An occurrence is scalar-aligned and a
+    /// scalar-aligned index need not sit on a grapheme cluster boundary, so
+    /// asking a `String` for that slice is not a well-defined request.
     ///
     /// A declaration whose NAME is not a POSIX shell identifier is skipped
     /// entirely — no assignment emitted, no placeholder substituted. This
@@ -75,26 +81,32 @@ public enum SnippetVariableSubstitution {
         command: String, variables: [SnippetVariable], values: [String: String]
     ) -> String {
         let variables = variables.filter { SnippetVariable.isValidName($0.name) }
-        var quotedByName: [String: String] = [:]
+        var replacements: [(range: Range<String.Index>, quoted: String)] = []
         for variable in variables where variable.placement == .placeholder {
-            quotedByName[variable.name] = PosixQuoting.singleQuoted(values[variable.name] ?? "")
-        }
-
-        var substituted = ""
-        var index = command.startIndex
-        while index < command.endIndex {
-            if let closing = closingBraces(in: command, afterOpeningAt: index) {
-                let nameStart = command.index(index, offsetBy: 2)
-                let name = command[nameStart..<closing.lowerBound]
-                if let quoted = quotedByName[String(name)] {
-                    substituted += quoted
-                    index = closing.upperBound
-                    continue
-                }
+            let quoted = PosixQuoting.singleQuoted(values[variable.name] ?? "")
+            for range in occurrences(of: variable.name, in: command) {
+                replacements.append((range, quoted))
             }
-            substituted.append(command[index])
-            index = command.index(after: index)
         }
+        replacements.sort { $0.range.lowerBound < $1.range.lowerBound }
+
+        let scalars = command.unicodeScalars
+        var assembled = String.UnicodeScalarView()
+        var cursor = scalars.startIndex
+        for replacement in replacements {
+            // Two occurrences cannot overlap: a declared name is a POSIX
+            // identifier, so it holds no brace, so `{{A}}` and `{{B}}` are
+            // disjoint spans and repeats of one name are consumed whole.
+            // Skipping rather than trusting that keeps a future name rule
+            // from producing a torn value — the placeholder would simply
+            // stay in the text as inert literal characters.
+            guard replacement.range.lowerBound >= cursor else { continue }
+            assembled.append(contentsOf: scalars[cursor..<replacement.range.lowerBound])
+            assembled.append(contentsOf: replacement.quoted.unicodeScalars)
+            cursor = replacement.range.upperBound
+        }
+        assembled.append(contentsOf: scalars[cursor...])
+        let substituted = String(assembled)
 
         let assignments = variables
             .filter { $0.placement == .environment }
@@ -120,19 +132,52 @@ public enum SnippetVariableSubstitution {
         return assignments.joined(separator: " ") + separator + substituted
     }
 
-    /// If `command[index...]` opens with `{{`, the range of the matching
-    /// `}}` that follows it -- otherwise `nil`. A plain brace-pair finder,
-    /// not a shell tokenizer: `resolve` only needs to recognise `{{NAME}}`
-    /// spans, and undeclared ones (a Go template, say) are left untouched by
-    /// the caller regardless of what this returns for their contents.
-    private static func closingBraces(
-        in command: String, afterOpeningAt index: String.Index
-    ) -> Range<String.Index>? {
-        guard command[index] == "{" else { return nil }
-        let next = command.index(after: index)
-        guard next < command.endIndex, command[next] == "{" else { return nil }
-        let searchStart = command.index(after: next)
-        return command.range(of: "}}", range: searchStart..<command.endIndex)
+    /// Every occurrence of `{{name}}` in `command`, non-overlapping, left to
+    /// right, as ranges into `command`.
+    ///
+    /// THE occurrence finder, and the reason it is one function: the gate
+    /// asks it where to check a value's position and the emitter asks it
+    /// where to put the value. Those were two different searches — a
+    /// `range(of:)` in the checker, a walk over `{{` and `}}` in the emitter
+    /// — and a corpus of sixty-six decorated templates found them agreeing
+    /// on every one. Agreeing is not the property that matters, though;
+    /// being the same question is. Two searches that agree today can drift
+    /// tomorrow, and the drift that costs the gate is silent: a value
+    /// substituted at a position nothing classified.
+    ///
+    /// Read one `Unicode.Scalar` at a time, for the reason `ShellScalar`
+    /// sets out. The cluster search this replaces could not see `{{X}}` when
+    /// the next scalar was a combining mark, because that mark and the final
+    /// `}` are one `Character`; a scalar walk sees it. That widens what
+    /// counts as an occurrence, and it widens it for BOTH callers at once —
+    /// the survey classifies the position and the emitter fills it, or
+    /// neither does.
+    ///
+    /// Only declared names are ever passed in, so a `{{…}}` belonging to
+    /// some other template language is not an occurrence of anything here
+    /// and is left in the text untouched.
+    static func occurrences(of name: String, in command: String) -> [Range<String.Index>] {
+        let needle = Array("{{\(name)}}".unicodeScalars)
+        guard !needle.isEmpty else { return [] }
+        let scalars = command.unicodeScalars
+        var found: [Range<String.Index>] = []
+        var start = scalars.startIndex
+        while start < scalars.endIndex {
+            var scan = start
+            var matched = 0
+            while matched < needle.count, scan < scalars.endIndex,
+                  scalars[scan] == needle[matched] {
+                matched += 1
+                scan = scalars.index(after: scan)
+            }
+            if matched == needle.count {
+                found.append(start..<scan)
+                start = scan
+            } else {
+                start = scalars.index(after: start)
+            }
+        }
+        return found
     }
 
     /// The first thing that would make these declarations wrong, or `nil`.
@@ -209,11 +254,11 @@ public enum SnippetVariableSubstitution {
         }
 
         for variable in placeholders {
-            let needle = "{{\(variable.name)}}"
-            var searchRange = command.startIndex..<command.endIndex
-            var foundAny = false
-            while let occurrence = command.range(of: needle, range: searchRange) {
-                foundAny = true
+            let found = occurrences(of: variable.name, in: command)
+            guard !found.isEmpty else {
+                return .unusedPlaceholder(name: variable.name)
+            }
+            for occurrence in found {
                 switch SnippetCommandSurvey.placement(of: occurrence, in: spans) {
                 case .argument:
                     break
@@ -222,10 +267,6 @@ public enum SnippetVariableSubstitution {
                 default:
                     return .placeholderNotInArgumentPosition(name: variable.name)
                 }
-                searchRange = occurrence.upperBound..<command.endIndex
-            }
-            guard foundAny else {
-                return .unusedPlaceholder(name: variable.name)
             }
         }
         return nil

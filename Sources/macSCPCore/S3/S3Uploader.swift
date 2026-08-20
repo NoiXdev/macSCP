@@ -125,7 +125,7 @@ public struct S3Uploader: Sendable {
                 }
             }
 
-            let completeBody = S3MultipartXML.completeBody(parts: parts)
+            let completeBody = try S3MultipartXML.completeBody(parts: parts)
             let completeRequest = try builder.signedRequest(
                 method: "POST", key: key, query: [(name: "uploadId", value: uploadID)],
                 extraHeaders: [:], body: completeBody, payloadHash: SigV4Signer.hexSHA256(completeBody))
