@@ -76,6 +76,9 @@ public final class SettingsStore {
         static let menuBarEnabled = "menuBarEnabled"
         static let appLanguage = "appLanguage"
         static let presignedDefaultExpiry = "presignedDefaultExpiry"
+        static let reconnectBehaviour = "reconnectBehaviour"
+        static let keepAliveIntervalSeconds = "keepAliveIntervalSeconds"
+        static let connectTimeoutSeconds = "connectTimeoutSeconds"
     }
 
     private enum Defaults {
@@ -91,6 +94,9 @@ public final class SettingsStore {
         static let updateCheckEnabled = true
         static let menuBarEnabled = true
         static let presignedDefaultExpiry = PresignedExpiry.oneHour
+        static let reconnectBehaviour = ReconnectBehaviour.offerOnly
+        static let keepAliveIntervalSeconds = 60
+        static let connectTimeoutSeconds = 10
     }
 
     /// Identical to `SessionStore.defaultDirectory` — both stores share the
@@ -399,6 +405,55 @@ public final class SettingsStore {
             raw[Keys.presignedDefaultExpiry] = .string(newValue.rawValue)
             persist()
         }
+    }
+
+    /// What happens when a session's connection is found gone. Default
+    /// `.offerOnly` — reconnecting re-authenticates, so nothing happens
+    /// without a click. An unrecognized raw value on disk (future app
+    /// version, or hand-edited garbage) reads as `.offerOnly` instead of
+    /// crashing or propagating `nil` — same pattern as `terminalCursorStyle`.
+    public var reconnectBehaviour: ReconnectBehaviour {
+        get {
+            guard case .string(let value)? = raw[Keys.reconnectBehaviour] else {
+                return Defaults.reconnectBehaviour
+            }
+            return ReconnectBehaviour(rawValue: value) ?? .offerOnly
+        }
+        set {
+            raw[Keys.reconnectBehaviour] = .string(newValue.rawValue)
+            persist()
+        }
+    }
+
+    /// Seconds between liveness probes; default 60. `0` means "off"
+    /// and is the ONLY value below the floor that survives clamping —
+    /// every other value is clamped to 15...600 on BOTH ends, same
+    /// forward-compat pattern as `autoRefreshIntervalSeconds`. A naive
+    /// `clamp(value, 15, 600)` would turn "off" into "every 15 seconds",
+    /// the opposite of what the user asked for.
+    public var keepAliveIntervalSeconds: Int {
+        get {
+            Self.clampKeepAliveInterval(
+                intValue(for: Keys.keepAliveIntervalSeconds, default: Defaults.keepAliveIntervalSeconds))
+        }
+        set { setInt(Self.clampKeepAliveInterval(newValue), for: Keys.keepAliveIntervalSeconds) }
+    }
+
+    private static func clampKeepAliveInterval(_ value: Int) -> Int {
+        value == 0 ? 0 : min(max(value, 15), 600)
+    }
+
+    /// Connection-establishment timeout in seconds, applied per hop
+    /// (including a jump host). Clamped to 5...120 on BOTH ends, default 10
+    /// — deliberately below NIO's own default of 30s (which Citadel
+    /// overrides to), same forward-compat pattern as `terminalFontSize`.
+    public var connectTimeoutSeconds: Int {
+        get {
+            clamp(
+                intValue(for: Keys.connectTimeoutSeconds, default: Defaults.connectTimeoutSeconds),
+                5, 120)
+        }
+        set { setInt(clamp(newValue, 5, 120), for: Keys.connectTimeoutSeconds) }
     }
 
     /// Convenience: association lookup with the SAME normalization applied.

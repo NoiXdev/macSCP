@@ -787,4 +787,81 @@ struct SettingsStoreTests {
         let store = SettingsStore(directory: dir)
         #expect(store.presignedDefaultExpiry == .oneHour)
     }
+
+    // MARK: - Connection liveness settings
+
+    @Test func theKeepAliveIntervalIsClampedOnBothEnds() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.keepAliveIntervalSeconds = 5
+        // 0 means off and is the ONLY value below the floor that survives.
+        #expect(store.keepAliveIntervalSeconds == 15)
+        store.keepAliveIntervalSeconds = 0
+        #expect(store.keepAliveIntervalSeconds == 0)
+        store.keepAliveIntervalSeconds = 9_999
+        #expect(store.keepAliveIntervalSeconds == 600)
+    }
+
+    @Test func keepAliveIntervalSecondsDefaultsToSixtyAndRoundtripsZero() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.keepAliveIntervalSeconds == 60)
+
+        store.keepAliveIntervalSeconds = 0
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.keepAliveIntervalSeconds == 0)
+    }
+
+    @Test func theConnectTimeoutIsClampedAndDefaultsBelowCitadelsThirty() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.connectTimeoutSeconds == 10)
+        store.connectTimeoutSeconds = 1
+        #expect(store.connectTimeoutSeconds == 5)
+        store.connectTimeoutSeconds = 10_000
+        #expect(store.connectTimeoutSeconds == 120)
+    }
+
+    @Test func connectTimeoutSecondsRoundtrips() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.connectTimeoutSeconds = 45
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.connectTimeoutSeconds == 45)
+    }
+
+    @Test func reconnectDefaultsToOfferingOnly() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(SettingsStore(directory: dir).reconnectBehaviour == .offerOnly)
+    }
+
+    @Test func reconnectBehaviourRoundtrips() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.reconnectBehaviour = .automatic
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.reconnectBehaviour == .automatic)
+    }
+
+    /// An unrecognized raw behaviour string (future app version, or
+    /// hand-edited garbage) must read as the safe default `.offerOnly` —
+    /// same pattern as `selectedLanguageFallsBackOnGarbage`.
+    @Test func reconnectBehaviourUnknownRawValueReadsAsOfferOnly() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"reconnectBehaviour": "weird"}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        #expect(store.reconnectBehaviour == .offerOnly)
+    }
 }

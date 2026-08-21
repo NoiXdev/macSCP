@@ -42,3 +42,17 @@ public enum ReconnectBackoff {
         return min(60, 5 * (1 << min(attempt - 1, 10)))
     }
 }
+
+/// What macSCP does when a session's connection is found gone. Persisted by
+/// `SettingsStore.reconnectBehaviour`; lives next to the liveness/backoff
+/// policy it configures rather than in `Settings/`, since the three cases
+/// only make sense read together with `LivenessProbePolicy` and
+/// `ReconnectBackoff` above.
+public enum ReconnectBehaviour: String, CaseIterable, Sendable {
+    /// Nothing happens without a click. The default, because reconnecting
+    /// re-authenticates — a keychain read, possibly a passphrase — and a
+    /// changed host key is a hard stop that needs a person.
+    case offerOnly
+    case onceThenAsk
+    case automatic
+}
