@@ -759,7 +759,7 @@ private struct SnippetEditorView: View {
 
             Text(L10n.string(
                 "snippets.variables.hint",
-                "A value is inserted as a single shell word. An environment variable in a multi-line command stays set in the session after the run."))
+                "A value is inserted as a single shell word. An environment variable is exported ahead of the command and stays set in the session after the run."))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 

@@ -845,7 +845,7 @@
 "snippets.variables.placement.environment" = "Umgebungsvariable";
 "snippets.variables.kind.freeText" = "Freitext";
 "snippets.variables.kind.selection" = "Auswahl";
-"snippets.variables.hint" = "Ein Wert wird als ein einzelnes Shell-Wort eingesetzt. Eine Umgebungsvariable bleibt bei einem mehrzeiligen Kommando nach dem Lauf in der Sitzung gesetzt.";
+"snippets.variables.hint" = "Ein Wert wird als ein einzelnes Shell-Wort eingesetzt. Eine Umgebungsvariable wird vor dem Kommando exportiert und bleibt nach dem Lauf in der Sitzung gesetzt.";
 "snippets.variables.error.invalidName" = "Ein Variablenname beginnt mit einem Buchstaben oder Unterstrich und enthält nur Buchstaben, Ziffern und Unterstriche.";
 "snippets.variables.error.duplicateName" = "Zwei Variablen haben denselben Namen.";
 "snippets.variables.error.unusedPlaceholder %@" = "„%@“ kommt im Kommando nicht vor.";

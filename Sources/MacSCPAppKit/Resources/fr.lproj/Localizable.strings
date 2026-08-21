@@ -848,7 +848,7 @@
 "snippets.variables.placement.environment" = "Variable d’environnement";
 "snippets.variables.kind.freeText" = "Texte libre";
 "snippets.variables.kind.selection" = "Choix";
-"snippets.variables.hint" = "Une valeur est insérée comme un seul mot du shell. Dans une commande multiligne, une variable d’environnement reste définie dans la session après l’exécution.";
+"snippets.variables.hint" = "Une valeur est insérée comme un seul mot du shell. Une variable d’environnement est exportée avant la commande et reste définie dans la session après l’exécution.";
 "snippets.variables.error.invalidName" = "Un nom de variable commence par une lettre ou un tiret bas et ne contient que des lettres, des chiffres et des tirets bas.";
 "snippets.variables.error.duplicateName" = "Deux variables portent le même nom.";
 "snippets.variables.error.unusedPlaceholder %@" = "« %@ » n’apparaît jamais dans la commande.";
