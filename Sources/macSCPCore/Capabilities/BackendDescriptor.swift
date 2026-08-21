@@ -48,9 +48,20 @@ public struct BackendDescriptor: Sendable {
     /// mismatch in either is a hard stop the deciders below never get asked
     /// about.
     /// The last argument is the connection-establishment timeout in seconds
-    /// (`SettingsStore.connectTimeoutSeconds`) — only the SSH closure below
-    /// consumes it (forwarded to `CitadelFileSystem.connect`); S3 and WebDAV
-    /// ignore it, matching how they already ignore the host-key decider.
+    /// (`SettingsStore.connectTimeoutSeconds`). Only the SSH closure below
+    /// actually uses it (forwarded to `CitadelFileSystem.connect`).
+    ///
+    /// Unlike the host-key decider two lines up, which is genuinely
+    /// SSH-only (S3 and WebDAV have their own, separate certificate
+    /// decider), a connect timeout is a meaningful setting for EVERY
+    /// backend — S3 and WebDAV's own HTTP clients have connect-timeout
+    /// knobs of their own. Their closures below currently drop this
+    /// argument on the floor and keep using their transport's own default,
+    /// which means the value the user configured is silently ignored for
+    /// those two backends. That gap is real, out of this task's scope, and
+    /// tracked separately rather than fixed here — the parameter is
+    /// declared on the shared closure type now so wiring it into S3/WebDAV
+    /// later is a one-line change per backend, not a signature change.
     public let connect: @Sendable (
         ConnectionConfig,
         @escaping ConnectionViewModel.HostKeyDecider,

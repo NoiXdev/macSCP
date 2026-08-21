@@ -189,11 +189,6 @@ extension ContentView {
     ) -> SessionTab {
         let certificateBridge = CertificatePromptBridge()
         let box = SessionTabBox()
-        // Read here, synchronously, while still definitely on the main
-        // actor `settingsStore` requires — the connector closure below is
-        // `@Sendable` and may run off it, so it captures this plain `Int`
-        // value instead of `settingsStore` itself.
-        let connectTimeoutSeconds = settingsStore.connectTimeoutSeconds
         let tab = SessionTab(
             connectionViewModel: ConnectionViewModel(connector: { config, decider in
                 // Plaintext confirmation (M21/T10): asked BEFORE dispatching
@@ -225,6 +220,17 @@ extension ContentView {
                 // descriptor's `connect` closure is what carries SSH's
                 // known-hosts store and WebDAV's trust store, so there is no
                 // central dispatcher left to route through.
+                //
+                // Read HERE, at the moment this connect attempt actually
+                // runs, not once at `makeTab` time — `settingsStore` is
+                // `@MainActor`, and the closure only ever runs from a
+                // `connect()` call already on the main actor (`ConnectionViewModel`
+                // itself is `@MainActor`), so this is a same-actor read, not
+                // a hop. Capturing the `Int` up front instead would have
+                // baked in whatever the setting was when the tab was
+                // CREATED, silently ignoring any later change (Task 9 adds
+                // the Settings UI, which is what makes that observable).
+                let connectTimeoutSeconds = settingsStore.connectTimeoutSeconds
                 return try await BackendDescriptor.descriptor(for: config.kind).connect(
                     config, decider, { candidate in await certificateBridge.ask(candidate) },
                     connectTimeoutSeconds)

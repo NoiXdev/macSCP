@@ -443,15 +443,24 @@ public final class SettingsStore {
         value == 0 ? 0 : min(max(value, 15), 600)
     }
 
-    /// Connection-establishment timeout in seconds, applied per hop
-    /// (including a jump host) — `BackendDescriptor.sshDescriptor`'s
-    /// `connect` closure reads this and hands it to
-    /// `CitadelFileSystem.connect`, which passes it to BOTH of its
-    /// `SSHClient.connect` calls (jump hop and target). Clamped to 5...120 on
-    /// BOTH ends, default 10, which is NIO's own `ClientBootstrap` default;
-    /// Citadel overrides that to 30s, and this setting deliberately keeps
-    /// NIO's shorter default instead. Same forward-compat pattern as
-    /// `terminalFontSize`.
+    /// Connection-establishment timeout in seconds —
+    /// `BackendDescriptor.sshDescriptor`'s `connect` closure reads this and
+    /// hands it to `CitadelFileSystem.connect`. Bounds the TCP-level connect
+    /// of whichever hop goes through Citadel's `SSHClient.connect(host:...)`:
+    /// the jump hop when there is one, otherwise the target directly.
+    ///
+    /// Measured against the vendored Citadel source: a JUMP HOST'S second
+    /// hop (`SSHClient.jump(to:)`, tunneled through the already-open first
+    /// hop) never reads this setting at all — it has no TCP connect step of
+    /// its own to bound, and its login/handshake wait is a hardcoded 10s
+    /// (`ClientHandshakeHandler`'s `loginTimeout`) this setting cannot
+    /// reach. So a jump-host chain is only half configurable by this value;
+    /// recorded as a known limitation, not a bug to fix here.
+    ///
+    /// Clamped to 5...120 on BOTH ends, default 10, which is NIO's own
+    /// `ClientBootstrap` default; Citadel overrides that to 30s, and this
+    /// setting deliberately keeps NIO's shorter default instead. Same
+    /// forward-compat pattern as `terminalFontSize`.
     public var connectTimeoutSeconds: Int {
         get {
             clamp(

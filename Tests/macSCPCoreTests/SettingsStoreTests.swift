@@ -860,6 +860,20 @@ struct SettingsStoreTests {
         #expect(reloaded.connectTimeoutSeconds == 45)
     }
 
+    /// Pins `SettingsStore.defaultConnectTimeoutSeconds` (the constant
+    /// `MacSCPCLI/SessionConnecting.swift` falls back to, having no
+    /// `SettingsStore` of its own) against a FRESH store's own default —
+    /// the two are the same underlying value by construction
+    /// (`defaultConnectTimeoutSeconds = Defaults.connectTimeoutSeconds`),
+    /// but nothing else in the suite exercises that tie, so a future edit
+    /// that quietly re-literals one of them would otherwise go unnoticed.
+    @Test func defaultConnectTimeoutSecondsMatchesAFreshStore() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(SettingsStore.defaultConnectTimeoutSeconds == store.connectTimeoutSeconds)
+    }
+
     @Test func reconnectDefaultsToOfferingOnly() {
         let dir = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
