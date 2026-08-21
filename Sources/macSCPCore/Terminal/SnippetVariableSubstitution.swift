@@ -11,7 +11,8 @@ public enum SnippetVariableSubstitution {
         /// A name that is not a POSIX shell identifier
         /// (`SnippetVariable.isValidName`). For `.environment` such a name
         /// would not produce an assignment at all but extra commands —
-        /// `export A;touch /tmp/m;B='v'; echo hi` is three of them.
+        /// `export A;touch /tmp/m;B='v'; echo hi` is four commands where the
+        /// template was one.
         case invalidName(name: String)
         /// `SnippetCommandSurvey` could not read the command far enough to
         /// say anything about a placeholder's position. Not an accusation
