@@ -443,10 +443,12 @@ public final class SettingsStore {
         value == 0 ? 0 : min(max(value, 15), 600)
     }
 
-    /// Connection-establishment timeout in seconds, meant to apply per hop
-    /// (including a jump host) once a later task wires it into the connect
-    /// call — nothing reads this property yet. Clamped to 5...120 on BOTH
-    /// ends, default 10, which is NIO's own `ClientBootstrap` default;
+    /// Connection-establishment timeout in seconds, applied per hop
+    /// (including a jump host) — `BackendDescriptor.sshDescriptor`'s
+    /// `connect` closure reads this and hands it to
+    /// `CitadelFileSystem.connect`, which passes it to BOTH of its
+    /// `SSHClient.connect` calls (jump hop and target). Clamped to 5...120 on
+    /// BOTH ends, default 10, which is NIO's own `ClientBootstrap` default;
     /// Citadel overrides that to 30s, and this setting deliberately keeps
     /// NIO's shorter default instead. Same forward-compat pattern as
     /// `terminalFontSize`.
@@ -458,6 +460,14 @@ public final class SettingsStore {
         }
         set { setInt(clamp(newValue, 5, 120), for: Keys.connectTimeoutSeconds) }
     }
+
+    /// The same default as the instance property above, reachable without a
+    /// `SettingsStore` instance. `MacSCPCLI` never reads user settings at
+    /// all (it has no `settings.json` of its own) and this task does not
+    /// change that — `SessionConnecting.swift`'s `connect` uses this
+    /// constant so its connect-timeout matches the App's default instead of
+    /// duplicating the literal `10` a second time somewhere easy to drift.
+    public nonisolated static let defaultConnectTimeoutSeconds = Defaults.connectTimeoutSeconds
 
     /// Convenience: association lookup with the SAME normalization applied.
     public func associatedApp(forExtension ext: String) -> String? {

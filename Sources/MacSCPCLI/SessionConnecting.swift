@@ -50,8 +50,13 @@ func connect(
     // decider refuses by default — the CLI has no interactive certificate
     // prompt, and an unknown server certificate must never be trusted
     // silently.
+    //
+    // The CLI reads no user settings at all (no `settings.json` of its
+    // own), so it uses the settings default rather than a live,
+    // user-configured value.
     return try await BackendDescriptor.descriptor(for: config.kind).connect(
-        config, makeDecider(policy: options.hostKeyPolicy), { _ in false })
+        config, makeDecider(policy: options.hostKeyPolicy), { _ in false },
+        SettingsStore.defaultConnectTimeoutSeconds)
 }
 
 /// Connects to `reference`, runs `body`, and awaits `fs.disconnect()` on

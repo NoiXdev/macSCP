@@ -189,6 +189,11 @@ extension ContentView {
     ) -> SessionTab {
         let certificateBridge = CertificatePromptBridge()
         let box = SessionTabBox()
+        // Read here, synchronously, while still definitely on the main
+        // actor `settingsStore` requires — the connector closure below is
+        // `@Sendable` and may run off it, so it captures this plain `Int`
+        // value instead of `settingsStore` itself.
+        let connectTimeoutSeconds = settingsStore.connectTimeoutSeconds
         let tab = SessionTab(
             connectionViewModel: ConnectionViewModel(connector: { config, decider in
                 // Plaintext confirmation (M21/T10): asked BEFORE dispatching
@@ -221,7 +226,8 @@ extension ContentView {
                 // known-hosts store and WebDAV's trust store, so there is no
                 // central dispatcher left to route through.
                 return try await BackendDescriptor.descriptor(for: config.kind).connect(
-                    config, decider, { candidate in await certificateBridge.ask(candidate) })
+                    config, decider, { candidate in await certificateBridge.ask(candidate) },
+                    connectTimeoutSeconds)
             }),
             certificateBridge: certificateBridge,
             limiter: limiter,

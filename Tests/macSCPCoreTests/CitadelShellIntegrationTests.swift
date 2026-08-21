@@ -1,4 +1,5 @@
 import Foundation
+import NIOCore
 import Testing
 @testable import macSCPCore
 
@@ -25,11 +26,11 @@ struct CitadelShellIntegrationTests {
         let store = KnownHostsStore(directory: knownHostsDirectory)
         do {
             return try await CitadelFileSystem.connect(
-                config: config, knownHosts: store, onUnknownHostKey: { _ in true })
+                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
         } catch {
             try? await Task.sleep(for: .milliseconds(500))
             return try await CitadelFileSystem.connect(
-                config: config, knownHosts: store, onUnknownHostKey: { _ in true })
+                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
         }
     }
 

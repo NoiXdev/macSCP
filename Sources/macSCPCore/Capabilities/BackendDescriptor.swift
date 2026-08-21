@@ -1,4 +1,5 @@
 import Foundation
+import NIOCore
 
 /// The static, connection-free description of a protocol (M12): its
 /// capabilities, its connection-form schema/presets, a badge label, and the
@@ -46,10 +47,15 @@ public struct BackendDescriptor: Sendable {
     /// known-hosts store, WebDAV its trusted-certificate store -- and a
     /// mismatch in either is a hard stop the deciders below never get asked
     /// about.
+    /// The last argument is the connection-establishment timeout in seconds
+    /// (`SettingsStore.connectTimeoutSeconds`) — only the SSH closure below
+    /// consumes it (forwarded to `CitadelFileSystem.connect`); S3 and WebDAV
+    /// ignore it, matching how they already ignore the host-key decider.
     public let connect: @Sendable (
         ConnectionConfig,
         @escaping ConnectionViewModel.HostKeyDecider,
-        @escaping WebDAVSessionDelegate.CertificateDecider
+        @escaping WebDAVSessionDelegate.CertificateDecider,
+        Int
     ) async throws -> any RemoteFileSystem
 
     public let badgeLabelKey: String
@@ -325,12 +331,13 @@ public struct BackendDescriptor: Sendable {
         makeConfig: { values, secret in try SSHFieldSchema.makeConfig(values, secret) },
         displaySummary: { values in SSHFieldSchema.displaySummary(values) },
         apply: { values, session in SSHFieldSchema.apply(values, to: &session) },
-        connect: { config, decider, _ in
+        connect: { config, decider, _, connectTimeoutSeconds in
             guard case .ssh(let ssh) = config else {
                 throw RemoteFSError.protocolError(reason: "wrong config for the SSH backend")
             }
             return try await CitadelFileSystem.connect(
                 config: ssh,
+                connectTimeout: .seconds(Int64(connectTimeoutSeconds)),
                 knownHosts: KnownHostsStore(directory: SessionStore.defaultDirectory),
                 onUnknownHostKey: decider)
         },
@@ -355,7 +362,7 @@ public struct BackendDescriptor: Sendable {
         makeConfig: { values, secret in try S3FieldSchema.makeConfig(values, secret) },
         displaySummary: { values in S3FieldSchema.displaySummary(values) },
         apply: { values, session in S3FieldSchema.apply(values, to: &session) },
-        connect: { config, _, _ in
+        connect: { config, _, _, _ in
             guard case .s3(let s3) = config else {
                 throw RemoteFSError.protocolError(reason: "wrong config for the S3 backend")
             }
@@ -383,7 +390,7 @@ public struct BackendDescriptor: Sendable {
         makeConfig: { values, secret in try WebDAVFieldSchema.makeConfig(values, secret) },
         displaySummary: { values in WebDAVFieldSchema.displaySummary(values) },
         apply: { values, session in WebDAVFieldSchema.apply(values, to: &session) },
-        connect: { config, _, certificateDecider in
+        connect: { config, _, certificateDecider, _ in
             guard case .webdav(let webdav) = config else {
                 throw RemoteFSError.protocolError(reason: "wrong config for the WebDAV backend")
             }

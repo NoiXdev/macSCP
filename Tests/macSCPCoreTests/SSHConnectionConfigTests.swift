@@ -1,4 +1,5 @@
 import Foundation
+import NIOCore
 import Testing
 @testable import macSCPCore
 
@@ -55,7 +56,7 @@ struct SSHConnectionConfigTests {
             .appendingPathComponent("macscp-kh-\(UUID().uuidString)"))
         await #expect(throws: SSHKeyError.fileNotFound(path: missing)) {
             _ = try await CitadelFileSystem.connect(
-                config: config, knownHosts: store, onUnknownHostKey: { _ in true })
+                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
         }
     }
 

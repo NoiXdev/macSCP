@@ -1,4 +1,5 @@
 import Foundation
+import NIOCore
 import Testing
 @testable import macSCPCore
 
@@ -71,7 +72,7 @@ struct WebDAVFileSystemIntegrationTests {
         let store = KnownHostsStore(directory: dir)
         return try await connectSSHWithRetry {
             try await CitadelFileSystem.connect(
-                config: config, knownHosts: store, onUnknownHostKey: { _ in true })
+                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
         }
     }
 

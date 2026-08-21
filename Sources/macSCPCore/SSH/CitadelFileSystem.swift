@@ -67,8 +67,17 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// than a single shared client — simpler than coordinating concurrent
     /// access from two hops, with no correctness cost since ssh-agent
     /// natively serves multiple connections.
+    /// `connectTimeout` is REQUIRED, not defaulted — Citadel's own
+    /// `SSHClient.connect` defaults it to `.seconds(30)`, and that default is
+    /// exactly how this parameter went unpassed for the life of the product:
+    /// nothing here ever noticed a value it never had to supply. A required
+    /// parameter costs every call site (production and test) one argument,
+    /// once, and makes forgetting it impossible thereafter — see
+    /// `CitadelFileSystemConnectTimeoutWiringGuardTests` for the guard that
+    /// keeps it that way.
     public static func connect(
         config: SSHConnectionConfig,
+        connectTimeout: TimeAmount,
         knownHosts: KnownHostsStore,
         onUnknownHostKey: @escaping @Sendable (HostKeyCandidate) async -> Bool
     ) async throws -> CitadelFileSystem {
@@ -109,7 +118,8 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         let sftpOpenAttempted = SFTPOpenAttemptFlag()
         do {
             let result = try await connectWithTOFURetries(
-                config: config, knownHosts: knownHosts, onUnknownHostKey: onUnknownHostKey,
+                config: config, connectTimeout: connectTimeout, knownHosts: knownHosts,
+                onUnknownHostKey: onUnknownHostKey,
                 jumpAgent: jumpAgent, targetAgent: targetAgent, group: dedicatedGroup,
                 sftpOpenAttempted: sftpOpenAttempted)
             await jumpAgent?.close()
@@ -160,6 +170,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// user-auth to consume any of them).
     private static func connectWithTOFURetries(
         config: SSHConnectionConfig,
+        connectTimeout: TimeAmount,
         knownHosts: KnownHostsStore,
         onUnknownHostKey: @escaping @Sendable (HostKeyCandidate) async -> Bool,
         jumpAgent: AgentAuthContext?,
@@ -174,7 +185,8 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             let targetBox = TOFUHostKeyValidator.Box()
             do {
                 return try await attemptConnect(
-                    config: config, knownHosts: knownHosts, jumpBox: jumpBox, targetBox: targetBox,
+                    config: config, connectTimeout: connectTimeout, knownHosts: knownHosts,
+                    jumpBox: jumpBox, targetBox: targetBox,
                     jumpAgent: jumpAgent, targetAgent: targetAgent, group: group,
                     sftpOpenAttempted: sftpOpenAttempted)
             } catch {
@@ -286,6 +298,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// better than before).
     private static func attemptConnect(
         config: SSHConnectionConfig,
+        connectTimeout: TimeAmount,
         knownHosts: KnownHostsStore,
         jumpBox: TOFUHostKeyValidator.Box,
         targetBox: TOFUHostKeyValidator.Box,
@@ -316,7 +329,8 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                         authenticationMethod: method,
                         hostKeyValidator: .custom(jumpValidator),
                         reconnect: .never,
-                        group: group ?? .singleton
+                        group: group ?? .singleton,
+                        connectTimeout: connectTimeout
                     )
                 }
             } catch {
@@ -365,7 +379,8 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 authenticationMethod: method,
                 hostKeyValidator: .custom(validator),
                 reconnect: .never,
-                group: group ?? .singleton
+                group: group ?? .singleton,
+                connectTimeout: connectTimeout
             )
         }
         do {
