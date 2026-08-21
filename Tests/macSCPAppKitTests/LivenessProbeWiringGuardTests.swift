@@ -14,10 +14,19 @@ import Testing
 ///    .decide(...)` (Task 1) — not a condition rewritten inline, which
 ///    could silently drift from that policy without either test suite
 ///    noticing.
-/// 3. A `.giveUp` verdict tears the session down through the existing
-///    `teardown(_:)` path — not a second, ad-hoc route that could skip a
-///    step of the invariant order (`cancelAll` → terminal `shutdown` →
-///    `disconnect`).
+/// 3. A `.giveUp` verdict delegates to `onGiveUp` — not a second,
+///    ad-hoc route reimplementing what that callback already does.
+///
+/// Claim 3 used to assert the `.giveUp` case called `teardown(_:)`
+/// literally, which a reviewer defeated (fix round 3) by swapping that
+/// call with `tab.liveness = .lost` — a source scan cannot see WHICH
+/// statement ran first, only that both are spelled somewhere in the case
+/// body. That property now belongs to `LivenessGiveUpOrderingTests`, which
+/// drives the real `ContentView.handleLivenessGiveUp(_:)` and observes the
+/// order actually held; this claim only pins that `.giveUp` asks that
+/// function rather than reimplementing its two statements inline, the same
+/// role `LivenessProbeCoverageTests`/`LivenessProbeMountGuardTests` split
+/// between them for WHICH tabs get probed.
 ///
 /// Same boundary as this project's other wiring guards (see
 /// `ConnectTimeoutAppWiringGuardTests`'s doc comment for the same idiom):
@@ -70,18 +79,18 @@ struct LivenessProbeWiringGuardTests {
             """)
     }
 
-    @Test func giveUpRoutesThroughTeardown() throws {
+    @Test func giveUpDelegatesToOnGiveUp() throws {
         let source = try String(contentsOf: Self.detailFile, encoding: .utf8)
         let body = try Self.loopBody(after: Self.anchor, in: source)
         guard let giveUpCase = Self.caseBody(named: ".giveUp", in: body) else {
             Issue.record("no `case .giveUp:` found inside the probe loop — re-anchor this guard.")
             return
         }
-        #expect(giveUpCase.contains("await teardown(tab)"), """
-            the `.giveUp` case no longer calls `await teardown(tab)` — a separate \
-            teardown route could bypass the invariant order (`cancelAll` → \
-            terminal `shutdown` → `disconnect`) this project's ONE teardown path \
-            guarantees.
+        #expect(giveUpCase.contains("await onGiveUp(tab)"), """
+            the `.giveUp` case no longer calls `await onGiveUp(tab)` — reimplementing \
+            its `teardown(_:)`-then-`.lost` order inline here would bring back the \
+            exact ordering bug `LivenessGiveUpOrderingTests` exists to catch, since \
+            that order is no longer provable by reading this file alone.
             """)
     }
 
@@ -142,37 +151,36 @@ struct LivenessProbeWiringGuardTests {
         #expect(!body.contains("LivenessProbePolicy.decide("))
     }
 
-    @Test func scannerFlagsAGiveUpThatBypassesTeardown() throws {
+    @Test func scannerFlagsAGiveUpThatReimplementsInline() throws {
         let source = """
             // Liveness probe (Task 4)
             while !Task.isCancelled {
                 switch action {
                 case .giveUp:
+                    await teardown(tab)
                     tab.liveness = .lost
-                    await session.remote.disconnect()
                 }
             }
             """
         let body = try Self.loopBody(after: Self.anchor, in: source)
         let giveUpCase = try #require(Self.caseBody(named: ".giveUp", in: body))
-        #expect(!giveUpCase.contains("await teardown(tab)"))
+        #expect(!giveUpCase.contains("await onGiveUp(tab)"))
     }
 
-    @Test func scannerAcceptsAGiveUpThatCallsTeardown() throws {
+    @Test func scannerAcceptsAGiveUpThatDelegates() throws {
         let source = """
             // Liveness probe (Task 4)
             while !Task.isCancelled {
                 switch action {
                 case .giveUp:
-                    tab.liveness = .lost
-                    await teardown(tab)
+                    await onGiveUp(tab)
                     return
                 }
             }
             """
         let body = try Self.loopBody(after: Self.anchor, in: source)
         let giveUpCase = try #require(Self.caseBody(named: ".giveUp", in: body))
-        #expect(giveUpCase.contains("await teardown(tab)"))
+        #expect(giveUpCase.contains("await onGiveUp(tab)"))
     }
 
     @Test func scannerThrowsWhenTheAnchorIsMissing() {

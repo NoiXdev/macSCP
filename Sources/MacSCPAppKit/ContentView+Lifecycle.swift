@@ -346,15 +346,36 @@ extension ContentView {
         tab.activeStoredSessionID = nil
         tab.titleName = nil
         // Stale liveness (connection-liveness plan, Task 4, fix round 2):
-        // every OTHER route through this function is a deliberate "leave
-        // this connection" (disconnect button, reconnect-in-place, tab
-        // close, sidebar delete) — there is no connection left to describe,
-        // so a dot left reading `.degraded`/`.lost` from before this call
-        // would be describing a session that is no longer there. The ONE
-        // exception, `LivenessProbeRunner`'s `.giveUp` case, writes `.lost`
-        // AFTER calling this function precisely so that write is not the
-        // one this line clears.
+        // this function has exactly three OTHER callers —
+        // `disconnectToForm` (the toolbar "Disconnect" button),
+        // `performClose` (closing a tab), and the reconnect-in-place branch
+        // of `connect(in:stored:)` — and every one of them is a deliberate
+        // "leave this connection". There is no connection left to describe
+        // afterward, so a dot left reading `.degraded`/`.lost` from before
+        // this call would be describing a session that is no longer there.
+        // The ONE exception is `handleLivenessGiveUp`, which writes
+        // `.lost` AFTER calling this function precisely so that write is
+        // not the one this line clears.
         tab.liveness = nil
+    }
+
+    /// The liveness probe's own route off a session (connection-liveness
+    /// plan, Task 4, fix round 3): `LivenessProbeRunner`'s `.giveUp` case
+    /// calls this instead of inlining its own two statements, so the order
+    /// that makes `.lost` observable afterward is a single, real function a
+    /// test can call directly — this project has no way to run a
+    /// `.task(id:)` closure embedded in a view body in a test, so the
+    /// order used to be provable only by reading the source, which is
+    /// exactly what let a previous round's reviewer swap these two lines
+    /// and still pass every test.
+    ///
+    /// `teardown(_:)` clears `tab.liveness` to `nil` unconditionally (see
+    /// that function's own doc comment) — writing `.lost` only AFTER this
+    /// function's own call to it returns is what keeps this route's value
+    /// from being cleared by that same reset.
+    func handleLivenessGiveUp(_ tab: SessionTab) async {
+        await teardown(tab)
+        tab.liveness = .lost
     }
 
     /// Activates a tab (strip click) and resets its attention indicator —

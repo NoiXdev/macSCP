@@ -166,23 +166,38 @@ final class SessionTab: Identifiable {
     /// from `BrowserSession`). `nil` before the first connect attempt.
     ///
     /// Stored directly on the TAB, not on the session, and that is the
-    /// whole fix: a `.giveUp` verdict sets this to `.lost` and then tears
-    /// the session down through `teardown(_:)`, which ends by nilling
-    /// `session` — if `liveness` had stayed a read-through onto
-    /// `session?.liveness` (as it did before fix round 1), that same
-    /// `teardown(_:)` call would have erased the very value it was just set
-    /// to, in the same breath, and `.lost` could never be observed by
-    /// anything that reads this property afterward — exactly the state
-    /// Task 7's error view exists to show. `.lost` is precisely the state in
+    /// whole fix: `ContentView.teardown(_:)` nils `session`, and if
+    /// `liveness` had stayed a read-through onto `session?.liveness` (as it
+    /// did before fix round 1), tearing a session down would ALWAYS have
+    /// erased its own liveness in the same breath — `.lost`, the state
+    /// `ContentView.handleLivenessGiveUp(_:)` sets after calling
+    /// `teardown(_:)`, could never have been observed by anything that
+    /// reads this property afterward. `.lost` is precisely the state in
     /// which there is no session anymore, so the value has to be able to
     /// outlive the session it describes.
     ///
-    /// Written directly by `ContentView.startSession` (reset to `.connected`
-    /// on every fresh connect) and by the probe loop in
-    /// `ContentView+Detail.swift` — no getter/setter indirection the way
-    /// `showsFiles` has: `showsFiles` is per-SESSION and needs the session
-    /// to route writes into, `liveness` is per-TAB and is exactly what must
-    /// keep working once the session it was describing is gone.
+    /// Four writers, current as of fix round 3 — `LivenessGiveUpOrdering
+    /// Tests` pins the second of these by mutation, since a comment
+    /// describing this order is exactly what went stale between fix rounds
+    /// 1 and 2 (a swapped pair of statements in a file this list does not
+    /// name):
+    /// - `ContentView.startSession` resets this to `.connected` on every
+    ///   fresh connect.
+    /// - `ContentView.handleLivenessGiveUp(_:)` sets `.lost` AFTER calling
+    ///   `teardown(_:)`, not before — seeing `.lost` at all depends on that
+    ///   order.
+    /// - `ContentView.teardown(_:)` itself resets this to `nil`
+    ///   unconditionally, for its three other callers (`disconnectToForm`,
+    ///   `performClose`, the reconnect-in-place branch of `connect(in:
+    ///   stored:)`) — every one of them is a deliberate "leave this
+    ///   connection", with nothing left for a stale dot to describe.
+    /// - `LivenessProbeRunner`'s probe loop writes `.connected`/`.degraded`
+    ///   directly while a session is live.
+    ///
+    /// No getter/setter indirection the way `showsFiles` has: `showsFiles`
+    /// is per-SESSION and needs the session to route writes into,
+    /// `liveness` is per-TAB and is exactly what must keep working once the
+    /// session it was describing is gone.
     var liveness: ConnectionLiveness?
 
     var displayTitle: String {

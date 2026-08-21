@@ -22,11 +22,14 @@ extension ContentView {
     /// chain that decorates it are two separate inference problems instead of
     /// one. Together they had grown past what the type checker will solve.
     ///
-    /// Also mounts one `LivenessProbeRunner` per entry of `tabsModel.tabs`
-    /// (connection-liveness plan, Task 4, fix round 1) — deliberately here
-    /// and not inside `detail`, which SwiftUI mounts only for the active
-    /// tab; see `LivenessProbeRunner`'s own doc comment for why a
-    /// background tab needs its probe running too.
+    /// Also mounts one `LivenessProbeRunner` per tab `LivenessProbeCoverage
+    /// .tabsToProbe` selects (connection-liveness plan, Task 4, fix rounds
+    /// 1 through 3) — deliberately here and not inside `detail`, which
+    /// SwiftUI mounts only for the active tab; see `LivenessProbeRunner`'s
+    /// own doc comment for why a background tab needs its probe running
+    /// too, and `LivenessProbeCoverage`'s own doc comment for why WHICH
+    /// tabs get probed is a question answered by that type, not decided
+    /// inline here.
     var splitLayout: some View {
     HSplitView {
         SessionSidebar(
@@ -115,16 +118,17 @@ extension ContentView {
         // clipped on both sides instead of shrinking.
         .frame(minWidth: isPristine ? 500 : 590, maxWidth: .infinity)
     }
-    // One probe per tab, mounted regardless of which tab is active (Task 4,
-    // fix round 1) — see `LivenessProbeRunner`'s own doc comment. Zero-size
+    // One probe per tab `LivenessProbeCoverage.tabsToProbe` selects (Task
+    // 4, fix rounds 1 through 3) — see that type's own doc comment for why
+    // the coverage decision is asked of it rather than made here. Zero-size
     // and non-hit-testing, so this changes nothing about layout or input;
     // `ForEach` drops a tab's runner (cancelling its `.task`) the instant
-    // that tab leaves `tabsModel.tabs`.
+    // that tab leaves the selected set.
     .background {
-        ForEach(tabsModel.tabs) { tab in
+        ForEach(LivenessProbeCoverage.tabsToProbe(from: tabsModel.tabs)) { tab in
             LivenessProbeRunner(
                 tab: tab, settingsStore: settingsStore,
-                teardown: { await teardown($0) })
+                onGiveUp: { await handleLivenessGiveUp($0) })
         }
     }
     }
@@ -650,7 +654,7 @@ extension ContentView {
 }
 
 /// Mounts the liveness probe for exactly one tab (connection-liveness plan,
-/// Task 4, fix rounds 1 and 2).
+/// Task 4, fix rounds 1 through 3).
 ///
 /// The probe used to be a second `.task(id: session.id)` inside
 /// `ContentView.detail`'s own body. `detail` is built from `let tab =
@@ -660,32 +664,60 @@ extension ContentView {
 /// ran at all, and `SessionTab.liveness` stayed at whatever it was the
 /// moment that tab stopped being active. Task 5's tab-strip dot needs a
 /// live value for every tab shown in the strip at once, not just the
-/// selected one. `LivenessProbeMountGuardTests` pins this placement by
-/// mutation, since a mount that quietly moved back into `detail` would
-/// still spell correctly and pass every other test in the suite.
+/// selected one.
 ///
-/// `ContentView.splitLayout` mounts one `LivenessProbeRunner` per entry of
-/// `tabsModel.tabs`, in a `ForEach` that lives in the tree regardless of
-/// which tab is active — so a background tab now keeps probing. The
-/// `.task(id:)` shape is kept deliberately: `ForEach` drops a tab's row (and
-/// with it, cancels its task) the moment that tab is closed, and this
-/// view's own `.task(id: tab.session?.id)` still restarts the loop on a
-/// disconnect/reconnect the same way the original did — the cancellation
-/// guarantee this whole approach depends on did not change, only where the
-/// mounted view lives.
+/// `ContentView.splitLayout` mounts one of these per tab
+/// `LivenessProbeCoverage.tabsToProbe` selects, in a `ForEach` that lives in
+/// the tree regardless of which tab is active — so a background tab now
+/// keeps probing. WHICH tabs that is lives in `LivenessProbeCoverage`, a
+/// plain function over the tab list, not decided by this view or by
+/// `splitLayout` — a source-text scan can prove a view calls that function,
+/// but cannot prove the function itself covers the right tabs; that
+/// property is `LivenessProbeCoverageTests`' job, on a value this project
+/// can actually run in a test. The `.task(id:)` shape is kept deliberately:
+/// `ForEach` drops a tab's row (and with it, cancels its task) the moment
+/// that tab leaves the selected set, and this view's own `.task(id: tab
+/// .session?.id)` still restarts the loop on a disconnect/reconnect the
+/// same way the original did — the cancellation guarantee this whole
+/// approach depends on did not change, only where the mounted view lives.
 ///
 /// Renders nothing observable: `body` is a zero-size `Color.clear`, purely
 /// a mount point for `.task(id:)`. Draws no indicator itself — that is Task
 /// 5's job, reading `tab.liveness`.
+/// Which tabs should have a running liveness probe (connection-liveness
+/// plan, Task 4, fix round 3) — pulled out of `ContentView.splitLayout` so
+/// `Tests/macSCPAppKitTests/` can drive it directly, the same move this
+/// codebase already made for `SnippetListPlan`/`SnippetMenuModel`/
+/// `SnippetSendPlan`: a view detail is not observable in this project's
+/// test setup, but a plain function over the tab list is.
+///
+/// Every CONNECTED tab, regardless of which one is active. Restricting
+/// this to only the active tab is the exact "only the active tab was
+/// probed" regression fix round 1 closed — `LivenessProbeCoverageTests`
+/// pins that restriction back OUT by mutation, on this function directly,
+/// rather than on `ContentView.splitLayout`'s view body, which this
+/// project has no way to run in a test. An unconnected tab is excluded on
+/// its own basis (no session, nothing to `stat`), never on which tab
+/// happens to be selected.
+@MainActor
+enum LivenessProbeCoverage {
+    static func tabsToProbe(from tabs: [SessionTab]) -> [SessionTab] {
+        tabs.filter { $0.isConnected }
+    }
+}
+
 struct LivenessProbeRunner: View {
     let tab: SessionTab
     let settingsStore: SettingsStore
-    /// Routes to `ContentView.teardown(_:)` — passed in rather than called
-    /// directly because this type has no access to `ContentView`'s own
-    /// instance state, only to what its caller (`ContentView.splitLayout`)
-    /// hands it. The ONE teardown path (`cancelAll` → terminal `shutdown` →
-    /// `disconnect`), same as every other route off a session.
-    let teardown: (SessionTab) async -> Void
+    /// Routes to `ContentView.handleLivenessGiveUp(_:)` — passed in rather
+    /// than called directly because this type has no access to
+    /// `ContentView`'s own instance state, only to what its caller
+    /// (`ContentView.splitLayout`) hands it. `handleLivenessGiveUp` is the
+    /// real function a test drives to prove the `teardown(_:)`-then-`.lost`
+    /// order holds (`LivenessGiveUpOrderingTests`); the probe loop's
+    /// `.giveUp` case delegates to it rather than inlining that order a
+    /// second time, so there is exactly one place that order is written.
+    let onGiveUp: (SessionTab) async -> Void
 
     var body: some View {
         Color.clear
@@ -754,15 +786,12 @@ struct LivenessProbeRunner: View {
                                 // `.giveUp`.
                             }
                         case .giveUp:
-                            // AFTER teardown, deliberately (fix round 2):
-                            // `teardown(_:)` itself clears `tab.liveness`
-                            // to `nil` for every OTHER route through it (a
-                            // deliberate disconnect has nothing left to
-                            // describe) — writing `.lost` afterward is what
-                            // keeps THIS route's value from being cleared
-                            // by that same reset.
-                            await teardown(tab)
-                            tab.liveness = .lost
+                            // Delegates to `onGiveUp` rather than inlining
+                            // `teardown(_:)`-then-`.lost` here a second
+                            // time (fix round 3) — see `onGiveUp`'s own doc
+                            // comment for why, and `handleLivenessGiveUp`'s
+                            // for the order itself and why it matters.
+                            await onGiveUp(tab)
                             return
                         }
                     }
