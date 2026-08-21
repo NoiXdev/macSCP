@@ -245,29 +245,40 @@ struct ConnectingAttemptWiringGuardTests {
     /// header text before that opening brace, not just what sits inside the
     /// braces (the surface anchor sits before an `if`'s CONDITION,
     /// `ConnectionSurfacePlan.surface(...)`, which lives in the header, not
-    /// the body — a scanner that dropped the header could never see it) —
-    /// with comments and string literals then stripped out. Throws rather
-    /// than returning `nil` so a missing anchor or an unbalanced file fails
-    /// the calling test loudly, not as a silently-empty string that would
-    /// make every `contains` check in the calling tests trivially false.
+    /// the body — a scanner that dropped the header could never see it).
+    /// Throws rather than returning `nil` so a missing anchor or an
+    /// unbalanced file fails the calling test loudly, not as a silently-
+    /// empty string that would make every `contains` check in the calling
+    /// tests trivially false.
+    ///
+    /// Strips comments and string literals FIRST, from the text after the
+    /// anchor, and only THEN counts braces on the result (fix round 2 —
+    /// the previous order, brace-match-then-strip, let a `{` or `}`
+    /// sitting inside a comment shift where the scanner believed the block
+    /// ended, since at brace-matching time that character was still a real
+    /// brace as far as the depth counter could tell; only after the match
+    /// already happened did stripping remove it). The anchor itself is
+    /// still found in the RAW, unstripped source — it is a `//` comment,
+    /// and a whole-source strip first would delete it before it could ever
+    /// be searched for.
     private static func strippedBody(after anchor: String, in source: String) throws -> String {
         guard let anchorRange = source.range(of: anchor) else { throw ScanError.anchorNotFound }
-        let afterAnchor = source[anchorRange.upperBound...]
-        guard let openBraceIndex = afterAnchor.firstIndex(of: "{") else {
+        let stripped = stripCommentsAndStrings(String(source[anchorRange.upperBound...]))
+        guard let openBraceIndex = stripped.firstIndex(of: "{") else {
             throw ScanError.openBraceNotFound
         }
         var depth = 0
         var index = openBraceIndex
-        while index < afterAnchor.endIndex {
-            let character = afterAnchor[index]
+        while index < stripped.endIndex {
+            let character = stripped[index]
             if character == "{" { depth += 1 }
             if character == "}" {
                 depth -= 1
                 if depth == 0 {
-                    return stripCommentsAndStrings(String(afterAnchor[afterAnchor.startIndex...index]))
+                    return String(stripped[stripped.startIndex...index])
                 }
             }
-            index = afterAnchor.index(after: index)
+            index = stripped.index(after: index)
         }
         throw ScanError.unbalancedBraces
     }
@@ -283,10 +294,12 @@ struct ConnectingAttemptWiringGuardTests {
     /// before this fix, because the surrounding doc comment names that
     /// method in prose.
     ///
-    /// Applied to the EXTRACTED body text, after the anchor/brace scan
-    /// already located it — not to the whole source before searching for
-    /// the anchor, which is itself a `//` comment and would vanish under a
-    /// global strip before it could ever be found.
+    /// Applied to the text AFTER the anchor, before the brace scan runs
+    /// over it (fix round 2 — see `strippedBody(after:in:)`'s own doc
+    /// comment for why that order, not the reverse, matters) — not to the
+    /// whole source before searching for the anchor itself, which is a
+    /// `//` comment and would vanish under a global strip before it could
+    /// ever be found.
     ///
     /// Handles `\"`-escaped quotes inside regular string literals and
     /// nested `/* */` block comments (Swift allows both). Does not attempt

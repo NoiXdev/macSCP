@@ -431,11 +431,15 @@ struct ConnectionViewModelTests {
         _ = await result
     }
 
-    /// Same re-entrancy shape `connect()`'s own top-of-function guard uses:
-    /// a call outside `.connecting` must not stomp a state some OTHER path
-    /// already published — here, `.failed`, which a stray Cancel arriving
-    /// late (the dial already settled on its own) must not silently erase.
-    @Test @MainActor func cancelConnectingIsANoOpOutsideConnecting() async {
+    /// `state` outside `.connecting` must not be stomped by a stray Cancel
+    /// arriving late (the dial already settled on its own) — here,
+    /// `.failed`, which must not be silently erased. NOT a claim that
+    /// `cancelConnecting()` does nothing outside `.connecting` (fix round
+    /// 2: `currentAttempt` now moves unconditionally, precisely so a
+    /// Cancel arriving in this exact window still means something — see
+    /// that method's own doc comment); this test only pins the ONE thing
+    /// that stays untouched, `state` itself.
+    @Test @MainActor func cancelConnectingLeavesStateAloneOutsideConnecting() async {
         let vm = makeVM()
         #expect(vm.state == .idle)
         vm.cancelConnecting()

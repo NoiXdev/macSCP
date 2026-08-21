@@ -8,12 +8,13 @@ import Testing
 /// which of the two "no session yet" surfaces `ContentView.detail` shows.
 /// No SwiftUI rendering harness exists in this project, so nothing here can
 /// prove what actually lands on screen; what it CAN prove, and does, is the
-/// mapping itself for every `ConnectionLiveness?` case, crossed with the one
-/// override (a pending host-key prompt) that must always win regardless of
-/// liveness — see that function's own doc comment for why: TOFU's trust
-/// card lives inside `ConnectionFormView`, so hiding that view during
-/// `.connecting` would hide the one thing an unknown host's first connect
-/// needs answered.
+/// mapping itself, crossed properly: all five `ConnectionLiveness?` values
+/// (the four real cases plus `nil`) against BOTH values of
+/// `hostKeyPromptPending` — ten combinations, all ten covered below, not a
+/// sampled subset. Fix round 2, review-measured: an earlier version of this
+/// file claimed "crossed with" while only exercising `pending: true` for
+/// two of the five liveness values (`.connecting` and `nil`); this is the
+/// corrected version, not a rephrased claim over the same coverage.
 @Suite("Connection surface plan")
 struct ConnectionSurfacePlanTests {
     @Test func connectingShowsTheConnectingSurface() {
@@ -25,22 +26,26 @@ struct ConnectionSurfacePlanTests {
     @Test(arguments: [
         Optional<ConnectionLiveness>.none, .connected, .degraded, .lost,
     ])
-    func everyOtherLivenessShowsTheForm(liveness: ConnectionLiveness?) {
+    func everyOtherLivenessShowsTheFormWhenNoPromptIsPending(liveness: ConnectionLiveness?) {
         #expect(
             ConnectionSurfacePlan.surface(for: liveness, hostKeyPromptPending: false) == .form)
     }
 
-    /// The override: even while `.connecting`, a pending host-key prompt
-    /// forces the form back — that is where the SSH trust card actually
-    /// renders (`ConnectionFormView.hostKeyPromptView`), and a `.connecting`
-    /// surface covering it would leave the user with no way to answer it.
-    @Test func aPendingHostKeyPromptAlwaysWinsOverConnecting() {
-        #expect(
-            ConnectionSurfacePlan.surface(for: .connecting, hostKeyPromptPending: true) == .form)
-    }
-
-    @Test func aPendingHostKeyPromptWithNoLivenessStillShowsTheForm() {
-        #expect(
-            ConnectionSurfacePlan.surface(for: nil, hostKeyPromptPending: true) == .form)
+    /// The override, now tested against all five liveness values instead of
+    /// two: even while `.connecting`, a pending host-key prompt forces the
+    /// form back — that is where the SSH trust card actually renders
+    /// (`ConnectionFormView.hostKeyPromptView`), and a `.connecting` surface
+    /// covering it would leave the user with no way to answer it. The other
+    /// four values passing this same check is not a redundant restatement:
+    /// `ConnectionSurfacePlan.surface`'s own implementation returns `.form`
+    /// on this branch BEFORE it ever reads `liveness` at all, so this suite
+    /// pins that the guard is first and unconditional, not merely that
+    /// `.connecting` happens to also satisfy some liveness-dependent path
+    /// that reaches the same answer by coincidence.
+    @Test(arguments: [
+        Optional<ConnectionLiveness>.none, .connecting, .connected, .degraded, .lost,
+    ])
+    func aPendingHostKeyPromptAlwaysShowsTheFormRegardlessOfLiveness(liveness: ConnectionLiveness?) {
+        #expect(ConnectionSurfacePlan.surface(for: liveness, hostKeyPromptPending: true) == .form)
     }
 }

@@ -442,8 +442,12 @@ public final class ConnectionViewModel {
     /// resumed (availability) — see the Task 6 fix-round report for the
     /// full trace.
     ///
-    /// Reassigned at the top of every `connect()` call and by
-    /// `cancelConnecting()`. Every write `connect()` performs from THAT
+    /// Reassigned at the top of every `connect()` call and, since fix
+    /// round 2, UNCONDITIONALLY by `cancelConnecting()` — not only while
+    /// `state == .connecting` (see that method's own doc comment for the
+    /// window fix round 1 left open by gating the move on `state`, which
+    /// `connect()`'s own success path leaves BEFORE the caller finishes
+    /// its own remaining work). Every write `connect()` performs from THAT
     /// point on — publishing a host-key prompt, and the terminal `state`/
     /// `lastConnectedConfig` writes after the dial returns — is guarded by
     /// comparing the attempt's own captured token against this property at
@@ -670,18 +674,35 @@ public final class ConnectionViewModel {
         }
     }
 
-    /// Abandons an in-flight connect attempt (connection-liveness plan,
-    /// Task 6; fix round 1 added the attempt token below after a review
-    /// measured what forcing `state` alone allowed): moves `currentAttempt`
-    /// forward — so every write the abandoned dial still tries to make
-    /// becomes a no-op, see that property's own doc comment — forces
-    /// `state` back to `.idle` on the FOREGROUND without waiting for the
-    /// dial itself, and releases any host-key prompt this attempt had
-    /// published.
+    /// Abandons the current connect attempt (connection-liveness plan,
+    /// Task 6). `currentAttempt` moves UNCONDITIONALLY — fix round 2,
+    /// after a review measured a window fix round 1 left open: `state`
+    /// alone does not describe whether an attempt is still "live" once
+    /// `connect()` has already returned to its App-layer caller.
+    /// `ConnectionViewModel.connect()`'s success path sets `state = .idle`
+    /// and returns the file system BEFORE the caller does its own
+    /// remaining work (`fs.homeDirectoryPath()`, then handing the result to
+    /// `ContentView.startSession`) — during that window `state` is `.idle`,
+    /// not `.connecting`, so a `cancelConnecting()` gated on `state ==
+    /// .connecting` (fix round 1's shape) would do NOTHING: the token
+    /// would stay put, and the caller's own eventual `startSession` call
+    /// would have no way to learn a cancel happened in Core at all. Moving
+    /// the token first, unconditionally, is what makes `cancelConnecting()`
+    /// always mean "whatever attempt was running, it is no longer this
+    /// one" regardless of which line of `connect()` that attempt happens
+    /// to be on right now — the App layer's own gate on this same fact
+    /// (`SessionTab.reconnectAttempt`, checked immediately before
+    /// `startSession` at both call sites) is what actually closes the
+    /// window this paragraph describes; this unconditional move is Core's
+    /// own half of the same rule, kept true regardless of what the App
+    /// layer does with it.
     ///
-    /// Forcing `state` directly (rather than relying on the wrapping
-    /// `Task`'s cancellation to eventually be noticed) is not a style
-    /// choice — `ConnectionViewModelTests
+    /// The `state == .connecting` guard below now gates only the REST of
+    /// this method — forcing `state` back to `.idle` and releasing a
+    /// host-key prompt — which only make sense while a dial is actually in
+    /// progress. Forcing `state` directly (rather than relying on the
+    /// wrapping `Task`'s cancellation to eventually be noticed) is not a
+    /// style choice — `ConnectionViewModelTests
     /// .secondConnectWhileConnectingIsRejected` (same file) already proves
     /// the `connector` this type is built with can hang past any amount of
     /// cancellation on the CALLING `Task`: nothing on the plain-dial path
@@ -706,22 +727,23 @@ public final class ConnectionViewModel {
     /// offers Cancel while a host-key prompt is pending), but Core does not
     /// rely on a caller's UI gating for its own correctness.
     ///
-    /// A no-op outside `.connecting` — the same re-entrancy guard
-    /// `connect()` itself applies at its own top — so a stray second call
-    /// (a fast double-click on Cancel, or a Cancel that arrives after the
-    /// dial already settled on its own) cannot stomp a state some OTHER
-    /// path already published.
+    /// A repeated call (a fast double-click on Cancel, or a Cancel that
+    /// arrives after the dial already settled on its own) is harmless: the
+    /// token simply moves again, which cannot un-supersede anything, and
+    /// the `state == .connecting` guard still protects the rest of the
+    /// method from stomping a state some OTHER path already published.
     ///
     /// The abandoned dial may still resolve afterward, successfully or
     /// not, in the true background; this method does not and cannot stop
     /// it (the same best-effort-only trade the App layer's
     /// `LivenessProbeRace` documents for the liveness probe's own `stat`
-    /// call) — what changed in fix round 1 is that the abandoned dial's
-    /// EVENTUAL writes are now refused at the source, rather than merely
-    /// left for a caller to notice and discard.
+    /// call) — what fix round 1 changed is that the abandoned dial's
+    /// EVENTUAL writes INSIDE `connect()` are refused at the source; what
+    /// fix round 2 adds is that this now holds regardless of which line of
+    /// `connect()` the abandoned attempt is sitting on when Cancel runs.
     public func cancelConnecting() {
-        guard state == .connecting else { return }
         currentAttempt = UUID()
+        guard state == .connecting else { return }
         state = .idle
         hostKeyPrompt = nil
         resolveHostKeyPrompt(trust: false)

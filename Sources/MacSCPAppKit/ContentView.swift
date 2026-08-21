@@ -424,7 +424,8 @@ struct ContentView: View {
 
     init(
         settingsStore: SettingsStore, bandwidthLimiter: BandwidthLimiter, auditStore: AuditLogStore,
-        tabCommands: TabCommands, updateModel: UpdateCheckModel, menuBarModel: MenuBarStatusModel
+        tabCommands: TabCommands, updateModel: UpdateCheckModel, menuBarModel: MenuBarStatusModel,
+        sessionListViewModel: SessionListViewModel? = nil
     ) {
         self.settingsStore = settingsStore
         self.bandwidthLimiter = bandwidthLimiter
@@ -434,7 +435,30 @@ struct ContentView: View {
         self.menuBarModel = menuBarModel
         _tabsModel = State(initialValue: TabsViewModel(
             initial: Self.makeTab(settingsStore: settingsStore, limiter: bandwidthLimiter)))
-        _sessionListViewModel = State(initialValue: SessionListViewModel(
+        // Test seam (connection-liveness plan, Task 6 fix round 2, review-
+        // mandated): `sessionListViewModel` defaults to `nil`, which
+        // preserves production behavior byte-for-byte — `MacSCPApp.swift`,
+        // the one production call site, passes nothing for this parameter,
+        // so it still gets the real, Keychain- and default-directory-backed
+        // instance built here exactly as before this parameter existed.
+        // Passing a non-nil value is how a test points the whole session
+        // store (and, through it, every secret write `ContentView
+        // .startSession` can make) at a temporary directory and an in-
+        // memory `SecretStore` instead — the seam that makes it possible
+        // for a `ContentView`-level test to exist at all without touching
+        // this machine's real keychain or real `sessions-v2.json`. Built as
+        // an INITIAL value here, at construction, rather than a property a
+        // test reassigns afterward: an `@State` property's `wrappedValue`
+        // setter is documented as requiring installation into a live
+        // SwiftUI view graph to persist a mutation, which nothing in this
+        // project's test suite ever does (see `LivenessGiveUpOrderingTests`'
+        // own doc comment on that same boundary) — measured directly while
+        // building this fix: reassigning `view.sessionListViewModel` from a
+        // test, then reading it back with no intervening call, still
+        // returned the ORIGINAL value `ContentView.init` built. Choosing
+        // the initial value here sidesteps that limitation entirely, since
+        // it is a plain constructor argument, not a later mutation.
+        _sessionListViewModel = State(initialValue: sessionListViewModel ?? SessionListViewModel(
             store: SessionStore(directory: SessionStore.defaultDirectory),
             secrets: KeychainSecretStore(),
             auditStore: auditStore
@@ -1144,6 +1168,49 @@ struct ContentView: View {
             : BackendDescriptor.descriptor(for: form.kind).displaySummary(form.values)
     }
 
+    /// Completes the AD-HOC connect form's own attempt after
+    /// `ConnectionViewModel.connect()` has already succeeded (connection-
+    /// liveness plan, Task 6 fix round 2) — `ContentView.detail`'s
+    /// `onConnected` closure calls this instead of inlining the hand-off,
+    /// so `Tests/macSCPAppKitTests/` can drive it directly (the same move
+    /// `handleLivenessGiveUp(_:)` made for the probe's give-up path — see
+    /// that method's own doc comment).
+    ///
+    /// `attempt` is `tab.reconnectAttempt`'s value the CALLER captured the
+    /// moment its closure started running, before `fs.homeDirectoryPath()`
+    /// — not read fresh in here, which would defeat the whole point: Cancel
+    /// moves `tab.reconnectAttempt` unconditionally (see that property's
+    /// own doc comment) the instant it runs, and the guard below only means
+    /// something if it compares against a value captured BEFORE the
+    /// vulnerable `await`, not after.
+    ///
+    /// The bug this closes (Critical, fix round 2 review): `form.connect()`
+    /// already refuses to hand back a result for an attempt Core itself
+    /// superseded, but by the time `fs` reaches this function `Connection
+    /// ViewModel.state` has already moved to `.idle` — the dial succeeded —
+    /// so a Cancel that lands during `fs.homeDirectoryPath()` below is
+    /// invisible to Core entirely. Left ungated, `startSession` would run
+    /// unconditionally: it sets `tab.session`, publishes `.connected`, and —
+    /// with the form's "save as session" toggle on — persists a NEW
+    /// `StoredSession` and writes its secret to the keychain, all for a
+    /// connection the user had already clicked Cancel on.
+    func handleAdHocConnected(
+        _ fs: any RemoteFileSystem, in tab: SessionTab, attempt: UUID
+    ) async {
+        // Remote home start (M9d): resolved once per connect, right before
+        // the browser session is built, so the remote pane opens where the
+        // user actually lands after login instead of hardcoded "/". A
+        // lookup failure (older SFTP servers, permission quirks) falls back
+        // to "/" rather than failing the connect.
+        // Accept only usable absolute paths (M9d final review): an
+        // empty/relative realpath result would land the pane in .failed
+        // where "/" always worked.
+        let resolved = (try? await fs.homeDirectoryPath()) ?? "/"
+        let home = resolved.hasPrefix("/") ? resolved : "/"
+        guard tab.reconnectAttempt == attempt else { return }
+        startSession(in: tab, with: fs, startPath: home)
+    }
+
     // MARK: - Pane visibility (P2 terminal-chrome milestone, Task 4)
 
     /// Restores `tab`'s pane visibility to what was last saved for `stored`,
@@ -1311,6 +1378,24 @@ struct ContentView: View {
                 // .failed where "/" always worked.
                 let resolved = (try? await fs.homeDirectoryPath()) ?? "/"
                 let home = resolved.hasPrefix("/") ? resolved : "/"
+                // Hand-off guard (connection-liveness plan, Task 6 fix
+                // round 2, Critical — measured by review): `form.connect()`
+                // already refuses to return a result for an attempt Core
+                // itself has superseded (`ConnectionViewModel
+                // .currentAttempt`), but Cancel can still land in the
+                // window AFTER that `await` returns and BEFORE this line —
+                // `await fs.homeDirectoryPath()` above is itself an `await`,
+                // and during it `ConnectionViewModel.state` is already
+                // `.idle` (the dial succeeded), not `.connecting`, so
+                // nothing Core-side observes a Cancel that arrives here.
+                // `tab.reconnectAttempt` is the one thing Cancel moves
+                // UNCONDITIONALLY (see that property's own doc comment) —
+                // checking it here, immediately before the hand-off, is
+                // what stops this exact attempt from setting `tab.session`,
+                // `activeStoredSessionID`, restoring pane visibility, or
+                // writing an audit record for a connection the user already
+                // backed out of.
+                guard tab.reconnectAttempt == myAttempt else { return }
                 startSession(in: tab, with: fs, storedName: stored.name, startPath: home)
                 tab.activeStoredSessionID = stored.id
                 // Pane visibility (P2 terminal-chrome milestone, Task 4):

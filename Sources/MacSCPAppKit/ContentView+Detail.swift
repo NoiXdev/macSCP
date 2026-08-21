@@ -555,35 +555,24 @@ extension ContentView {
                                 let current = sessionListViewModel.sessions.first(where: { $0.id == stored.id }) ?? stored
                                 connect(in: tab, stored: current)
                             }
+                        // Ad-hoc connect completion (connection-liveness plan, Task 6)
                         ) { fs in
-                            // Remote home start (M9d): resolved once per connect,
-                            // right before the browser session is built, so the
-                            // remote pane opens where the user actually lands after
-                            // login instead of hardcoded "/". A lookup failure
-                            // (older SFTP servers, permission quirks) falls back to
-                            // "/" rather than failing the connect.
-                            // Accept only usable absolute paths (M9d final review): an
-                            // empty/relative realpath result would land the pane in
-                            // .failed where "/" always worked.
-                            //
-                            // No stale-attempt guard needed here (connection-
-                            // liveness plan, Task 6 fix round 1): `fs` only
-                            // reaches this closure at all when `form.connect()`
-                            // returned non-nil, and `ConnectionViewModel
-                            // .connect()` now refuses to return a result for
-                            // an attempt Cancel (or a newer attempt) has
-                            // already superseded — see `ConnectionViewModel
-                            // .currentAttempt`'s own doc comment. The App
-                            // layer used to re-check this itself
-                            // (`ConnectAttemptOutcome`, removed in the same
-                            // fix round); Core is the one place that can
-                            // actually tell "my own attempt" from "a later
-                            // one that happens to share the same liveness
-                            // value", which is exactly the gap that type's
-                            // own doc comment admitted it could not close.
-                            let resolved = (try? await fs.homeDirectoryPath()) ?? "/"
-                            let home = resolved.hasPrefix("/") ? resolved : "/"
-                            startSession(in: tab, with: fs, startPath: home)
+                            // Captured HERE, before `handleAdHocConnected`'s
+                            // own `fs.homeDirectoryPath()` await — fix round
+                            // 2 (Critical, review-measured): `form.connect()`
+                            // already refuses a result for an attempt Core
+                            // superseded, but by the time `fs` reaches this
+                            // closure `ConnectionViewModel.state` is already
+                            // `.idle` (the dial succeeded), so a Cancel
+                            // landing in the window this closure is about to
+                            // open is invisible to Core. `tab.reconnectAttempt`
+                            // is the one thing Cancel still moves
+                            // unconditionally in that window — capturing it
+                            // NOW, before the vulnerable await, is what lets
+                            // `handleAdHocConnected` tell "nothing changed"
+                            // from "Cancel ran while I was awaiting".
+                            let myAttempt = tab.reconnectAttempt
+                            await handleAdHocConnected(fs, in: tab, attempt: myAttempt)
                         }
                     }
                 }
