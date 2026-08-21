@@ -1278,8 +1278,21 @@ struct ContentView: View {
     ) {
         guard !tab.isReconnecting else { return }
         tab.isReconnecting = true // synchronous — locks this tab immediately, before the first await
+        // Attempt-scoped (connection-liveness plan, Task 6 fix round 1,
+        // measured by review — Critical 1): Cancel releases `isReconnecting`
+        // directly rather than waiting for THIS Task's own `defer`, which
+        // stays suspended on `await form.connect()` for as long as the
+        // abandoned dial keeps running. Without `reconnectAttempt`, that
+        // deferred release would still fire once the abandoned dial finally
+        // settles — clearing `isReconnecting` for whatever attempt is
+        // current AT THAT LATER MOMENT, not this one. See
+        // `SessionTab.reconnectAttempt`'s own doc comment.
+        let myAttempt = UUID()
+        tab.reconnectAttempt = myAttempt
         Task {
-            defer { tab.isReconnecting = false }
+            defer {
+                if tab.reconnectAttempt == myAttempt { tab.isReconnecting = false }
+            }
             // Defensive only: the sidebar rule always hands over an
             // unconnected tab. Reconnecting in place still tears THIS tab's
             // session down first, never anyone else's.

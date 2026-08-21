@@ -490,9 +490,23 @@ struct ConnectionFormView: View {
                                 isHandingOff = true
                                 await onConnected(fs)
                                 isHandingOff = false
-                            } else if case .failed(let message, _) = viewModel.state {
-                                alertMessage = message
                             }
+                            // No inline `else if case .failed` here (removed,
+                            // connection-liveness plan Task 6 fix round 1):
+                            // this Task can be the ABANDONED half of a
+                            // cancelled connect attempt (see `ConnectionViewModel
+                            // .currentAttempt`'s own doc comment), and by the
+                            // time its `await` above finally returns nil,
+                            // `viewModel.state` may already belong to a
+                            // completely different, later attempt on this
+                            // same tab — reading it here could pop an alert
+                            // for the wrong attempt, or reopen one the user
+                            // already dismissed. The `.onChange(of: viewModel
+                            // .state)` handler below already shows the alert
+                            // for every GENUINE transition into `.failed`,
+                            // including this button's own — it is value-
+                            // driven, so it cannot read a state that has
+                            // since moved on the way this stale re-check did.
                         }
                     }
                     .keyboardShortcut(.defaultAction)

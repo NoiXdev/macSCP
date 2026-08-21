@@ -345,12 +345,13 @@ extension ContentView {
         tab.session = nil
         tab.activeStoredSessionID = nil
         tab.titleName = nil
-        // Stale liveness (connection-liveness plan, Task 4, fix round 2):
-        // this function has exactly three OTHER callers —
-        // `disconnectToForm` (the toolbar "Disconnect" button),
-        // `performClose` (closing a tab), and the reconnect-in-place branch
-        // of `connect(in:stored:)` — and every one of them is a deliberate
-        // "leave this connection". There is no connection left to describe
+        // Stale liveness (connection-liveness plan, Task 4, fix round 2;
+        // recounted for Task 6): this function has exactly four OTHER
+        // callers — `disconnectToForm` (the toolbar "Disconnect" button),
+        // `performClose` (closing a tab), the reconnect-in-place branch of
+        // `connect(in:stored:)`, and `ConnectingAttemptView`'s `onCancel` in
+        // `ContentView+Detail.swift` (Task 6) — and every one of them is a
+        // deliberate "leave this connection". There is no connection left to describe
         // afterward, so a dot left reading `.degraded`/`.lost` from before
         // this call would be describing a session that is no longer there.
         // The ONE exception is `handleLivenessGiveUp`, which writes

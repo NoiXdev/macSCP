@@ -446,6 +446,153 @@ struct ConnectionViewModelTests {
         #expect(vm.state == .failed(message: "boom", field: nil))
     }
 
+    /// The reason `cancelConnecting()` needs an attempt token at all
+    /// (fix round 1, connection-liveness plan Task 6, measured by review):
+    /// forcing `state` back to `.idle` unblocks a SECOND `connect()` call
+    /// on this SAME instance, but the FIRST attempt's connector is still
+    /// running, so both are genuinely concurrent on one `ConnectionViewModel`.
+    /// Both connectors hang on their OWN stream here — attempt #2's is
+    /// released only after this test has confirmed #2 also reached
+    /// `.connecting` — so the test can deterministically prove attempt #1's
+    /// late success is refused WHILE #2 is still genuinely in flight,
+    /// rather than racing to catch a fast, easily-missed transition.
+    @Test @MainActor
+    func aLateSuccessFromAnAbandonedAttemptDoesNotOverwriteTheCurrentOnesState() async {
+        let counter = CallCounter()
+        let (stream1, continuation1) = AsyncStream<Void>.makeStream()
+        let (stream2, continuation2) = AsyncStream<Void>.makeStream()
+        let vm = makeVM(connector: { _, _ in
+            let callNumber = await counter.incrementAndGet()
+            if callNumber == 1 {
+                for await _ in stream1 {}   // attempt #1 hangs until released
+            } else {
+                for await _ in stream2 {}   // attempt #2 hangs until released
+            }
+            return MockRemoteFileSystem(tree: ["/": []])
+        })
+
+        async let firstResult = vm.connect()
+        guard await waitUntil("attempt #1 must reach the connector", {
+            await counter.value == 1
+        }) else {
+            continuation1.finish()
+            continuation2.finish()
+            _ = await firstResult
+            return
+        }
+        #expect(vm.state == .connecting)
+
+        vm.cancelConnecting()
+        #expect(vm.state == .idle)
+
+        async let secondResult = vm.connect()
+        guard await waitUntil("attempt #2 must reach the connector", {
+            await counter.value == 2
+        }) else {
+            continuation1.finish()
+            continuation2.finish()
+            _ = await firstResult
+            _ = await secondResult
+            return
+        }
+        #expect(vm.state == .connecting)
+
+        // Attempt #1 finally succeeds, in the true background, while #2 is
+        // still hanging in ITS OWN connector call — genuinely concurrent,
+        // not just theoretically so.
+        continuation1.finish()
+        let firstFS = await firstResult
+        #expect(firstFS == nil, """
+            an abandoned attempt's own success must not be handed back to \
+            its own caller — the caller has already moved on.
+            """)
+        #expect(vm.state == .connecting, """
+            attempt #1's late, abandoned success must not overwrite \
+            attempt #2's still-genuine `.connecting`.
+            """)
+
+        continuation2.finish()
+        let secondFS = await secondResult
+        #expect(secondFS != nil)
+        #expect(vm.state == .idle)
+        #expect(await counter.value == 2)
+    }
+
+    /// The host-key half of the same measured failure: attempt #1's late
+    /// decider call must not replace attempt #2's still-pending trust card
+    /// with a DIFFERENT host's fingerprint, and must not overwrite #2's
+    /// continuation — which would leave #2's card on screen with nothing
+    /// left able to resolve it.
+    @Test @MainActor
+    func anAbandonedAttemptsHostKeyPromptDoesNotOverwriteTheCurrentOnesCard() async {
+        let candidateA = HostKeyCandidate(
+            host: "abandoned.example.com", port: 22, keyType: "ssh-ed25519",
+            publicKeyBase64: "AAAAC3NzaC1lZDI1NTE5AAAAIAtestA")
+        let candidateB = HostKeyCandidate(
+            host: "current.example.com", port: 22, keyType: "ssh-ed25519",
+            publicKeyBase64: "AAAAC3NzaC1lZDI1NTE5AAAAIAtestB")
+        let counter = CallCounter()
+        let (releaseStream, releaseContinuation) = AsyncStream<Void>.makeStream()
+        let vm = makeVM(connector: { _, decider in
+            let callNumber = await counter.incrementAndGet()
+            let candidate: HostKeyCandidate
+            if callNumber == 1 {
+                for await _ in releaseStream {}   // attempt #1 hangs before ever asking
+                candidate = candidateA
+            } else {
+                candidate = candidateB
+            }
+            let trusted = await decider(candidate)
+            guard trusted else { throw HostKeyError.rejectedByUser }
+            return MockRemoteFileSystem(tree: ["/": []])
+        })
+
+        async let firstResult = vm.connect()
+        guard await waitUntil("attempt #1 must reach the connector", {
+            await counter.value == 1
+        }) else {
+            releaseContinuation.finish()
+            _ = await firstResult
+            return
+        }
+        vm.cancelConnecting()
+
+        async let secondResult = vm.connect()
+        guard await waitUntil("attempt #2's host-key prompt must be published", {
+            vm.hostKeyPrompt != nil
+        }) else {
+            releaseContinuation.finish()
+            _ = await firstResult
+            _ = await secondResult
+            return
+        }
+        #expect(vm.hostKeyPrompt?.candidate == candidateB)
+
+        // Attempt #1 is released now and reaches its OWN decider call — it
+        // must not publish `candidateA` over `candidateB`'s still-pending
+        // card, and must not register a continuation nobody will resume.
+        // Awaiting `firstResult` directly (rather than polling a counter)
+        // is what actually waits for attempt #1's decider call AND its
+        // subsequent guard-return to finish, not just for its connector to
+        // have STARTED.
+        releaseContinuation.finish()
+        let firstFS = await firstResult
+        #expect(firstFS == nil)
+        #expect(vm.hostKeyPrompt?.candidate == candidateB, """
+            attempt #1's late decider call must not replace attempt #2's \
+            still-pending host-key card.
+            """)
+
+        // #2's continuation must still be the live one — resolving it
+        // must still work, proving it was never silently overwritten.
+        vm.resolveHostKeyPrompt(trust: true)
+        let secondFS = await secondResult
+        #expect(secondFS != nil, """
+            attempt #2's continuation was overwritten or lost — resolving \
+            it did not let #2's connect() finish.
+            """)
+    }
+
     @Test @MainActor func beginEditingPrefillsEverythingExceptTheSecret() {
         let vm = makeVM()
         let stored = sshSession(name: "web", host: "h", port: 2222, username: "u",
@@ -1561,6 +1708,16 @@ struct ConnectionViewModelTests {
 private actor CallCounter {
     private(set) var value = 0
     func increment() { value += 1 }
+    /// Atomic read-after-increment (connection-liveness plan, Task 6 fix
+    /// round 1): a caller that needs to know WHICH numbered call it is —
+    /// telling a first, hanging connector invocation apart from a second,
+    /// immediately-resolving one — cannot do that safely with two separate
+    /// actor hops (`increment()` then `value`), since another call could
+    /// land between them.
+    func incrementAndGet() -> Int {
+        value += 1
+        return value
+    }
 }
 
 /// Polls `condition` until it holds, and fails the test with `description`
@@ -1582,16 +1739,18 @@ private actor CallCounter {
 /// success path never waits for it — the loop leaves as soon as `condition`
 /// holds.
 ///
-/// Recording the failure is only half the job: at three of the four call
-/// sites the very next statement is an `await` that cannot complete when the
-/// wait timed out (the connect child never published what the test is about
-/// to answer, or never reached the state that would make the following call
-/// return). Falling through would print the message and THEN park at 0% CPU —
-/// the exact failure this helper exists to prevent, just with a diagnosis
-/// nobody gets to read, because `swift test` prints no summary for a run that
-/// never ends. Hence the `Bool`: callers whose next step can park must
-/// `guard` on it and leave the test instead. `@discardableResult` for the one
-/// site that provably cannot park.
+/// Recording the failure is only half the job: at eight of the nine call
+/// sites (recounted for the connection-liveness plan Task 6 fix round,
+/// which added four more of the guarded kind) the very next statement is an
+/// `await` that cannot complete when the wait timed out (the connect child
+/// never published what the test is about to answer, or never reached the
+/// state that would make the following call return). Falling through would
+/// print the message and THEN park at 0% CPU — the exact failure this
+/// helper exists to prevent, just with a diagnosis nobody gets to read,
+/// because `swift test` prints no summary for a run that never ends. Hence
+/// the `Bool`: callers whose next step can park must `guard` on it and
+/// leave the test instead. `@discardableResult` for the one site that
+/// provably cannot park.
 @MainActor @discardableResult
 private func waitUntil(
     _ description: Comment,

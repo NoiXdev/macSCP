@@ -151,6 +151,19 @@ final class SessionTab: Identifiable {
     /// `recordDisconnected()` call. See `ContentView.attachAuditRecorder`.
     var auditRecorder: AuditRecorder?
     var isReconnecting = false
+    /// Identifies the current reconnect attempt for THIS tab (connection-
+    /// liveness plan, Task 6 fix round 1) — the App-layer counterpart of
+    /// `ConnectionViewModel.currentAttempt` (Core), for the identical
+    /// reason: `isReconnecting` locks the sidebar and rejects a double-
+    /// click reconnect (`ContentView.connect(in:stored:)`'s own top-of-
+    /// function guard), and it must be released the moment Cancel runs —
+    /// see `ConnectingAttemptView`'s `onCancel` in `ContentView+Detail
+    /// .swift` — not only once the abandoned attempt's own wrapping `Task`
+    /// finally reaches its `defer`. Reassigned both there and at the start
+    /// of `connect(in:stored:)`, so a Task whose own attempt is no longer
+    /// current cannot clear a NEWER attempt's `isReconnecting` flag out
+    /// from under it when its own deferred cleanup finally runs.
+    var reconnectAttempt = UUID()
     /// Last-seen value of `transferQueue.totalFailureCount` while this tab was
     /// active — the attention indicator (T4) lights up when
     /// `totalFailureCount` exceeds it. `totalFailureCount` is monotonic (it
@@ -176,23 +189,30 @@ final class SessionTab: Identifiable {
     /// which there is no session anymore, so the value has to be able to
     /// outlive the session it describes.
     ///
-    /// Four writers, current as of fix round 3 — `LivenessGiveUpOrdering
-    /// Tests` pins the second of these by mutation, since a comment
-    /// describing this order is exactly what went stale between fix rounds
-    /// 1 and 2 (a swapped pair of statements in a file this list does not
-    /// name):
+    /// Five writers, current as of Task 6 fix round 1 (a fifth was added
+    /// counting the mirror below; the count was four as of Task 4 fix round
+    /// 3, before this task) — `LivenessGiveUpOrderingTests` pins the second
+    /// of these by mutation, since a comment describing this order is
+    /// exactly what went stale between fix rounds 1 and 2 (a swapped pair
+    /// of statements in a file this list does not name):
     /// - `ContentView.startSession` resets this to `.connected` on every
     ///   fresh connect.
     /// - `ContentView.handleLivenessGiveUp(_:)` sets `.lost` AFTER calling
     ///   `teardown(_:)`, not before — seeing `.lost` at all depends on that
     ///   order.
     /// - `ContentView.teardown(_:)` itself resets this to `nil`
-    ///   unconditionally, for its three other callers (`disconnectToForm`,
+    ///   unconditionally, for its four other callers (`disconnectToForm`,
     ///   `performClose`, the reconnect-in-place branch of `connect(in:
-    ///   stored:)`) — every one of them is a deliberate "leave this
-    ///   connection", with nothing left for a stale dot to describe.
+    ///   stored:)`, and Cancel's `onCancel` in `ContentView+Detail.swift`,
+    ///   connection-liveness plan Task 6) — every one of them is a
+    ///   deliberate "leave this connection", with nothing left for a stale
+    ///   dot to describe.
     /// - `LivenessProbeRunner`'s probe loop writes `.connected`/`.degraded`
     ///   directly while a session is live.
+    /// - `ConnectAttemptLivenessMirror` (Task 6) writes `.connecting` when
+    ///   this tab's own `connectionViewModel.state` reaches `.connecting`,
+    ///   and `nil` on `.failed` while this tab has no session — see that
+    ///   type's own doc comment in `ContentView+Detail.swift`.
     ///
     /// No getter/setter indirection the way `showsFiles` has: `showsFiles`
     /// is per-SESSION and needs the session to route writes into,

@@ -911,4 +911,5 @@
 "settings.shortcuts.label.insertSnippet" = "Wstaw fragment 1–3";
 
 /* Connecting attempt surface (connection-liveness plan, Task 6) */
+"connection.connecting.title" = "Łączenie…";
 "connection.connecting.body" = "macSCP czeka na odpowiedź hosta.";

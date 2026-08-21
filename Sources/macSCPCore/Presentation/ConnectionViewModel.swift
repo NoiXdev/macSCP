@@ -423,6 +423,35 @@ public final class ConnectionViewModel {
     /// `resolveHostKeyPrompt`.
     public private(set) var hostKeyPrompt: HostKeyPrompt?
 
+    /// Identifies whichever `connect()` call is currently allowed to write
+    /// to this instance (connection-liveness plan, Task 6 fix round 1).
+    ///
+    /// Forcing `state` back to `.idle` on Cancel (`cancelConnecting()`)
+    /// does not, by itself, stop the abandoned dial `connect()` is still
+    /// awaiting — cancelling that dial is best-effort only (see
+    /// `cancelConnecting()`'s own doc comment). Without this token, a
+    /// SECOND `connect()` call started after Cancel shares every one of
+    /// this instance's mutable slots (`state`, `hostKeyPrompt`,
+    /// `hostKeyContinuation`, `lastConnectedConfig`) with the first,
+    /// abandoned one — measured, not hypothetical: the abandoned attempt's
+    /// own `defer { hostKeyPrompt = nil }` erased the SECOND attempt's live
+    /// trust card, the abandoned attempt's own late call into
+    /// `presentHostKeyPrompt` replaced the second attempt's card with a
+    /// DIFFERENT host's fingerprint (attribution), and the second attempt's
+    /// own host-key continuation was silently overwritten and never
+    /// resumed (availability) — see the Task 6 fix-round report for the
+    /// full trace.
+    ///
+    /// Reassigned at the top of every `connect()` call and by
+    /// `cancelConnecting()`. Every write `connect()` performs from THAT
+    /// point on — publishing a host-key prompt, and the terminal `state`/
+    /// `lastConnectedConfig` writes after the dial returns — is guarded by
+    /// comparing the attempt's own captured token against this property at
+    /// the moment of the write, not just at the moment the attempt started;
+    /// an attempt that was current when it began but got superseded while
+    /// suspended writes nothing.
+    private var currentAttempt = UUID()
+
     private let connector: Connector
     /// Holds the continuation that the host-key decider places on `connect()`,
     /// until `resolveHostKeyPrompt` fulfills it. Stays private — the UI only
@@ -572,9 +601,26 @@ public final class ConnectionViewModel {
     /// publishing the resolution's failure into `state`, the `.connecting`
     /// transition, the host-key decider, and the record of what was actually
     /// connected.
+    ///
+    /// Attempt-scoped since Task 6 fix round 1 (`myAttempt`, captured once
+    /// at the top and compared against `currentAttempt` at every write from
+    /// the dial onward — see `currentAttempt`'s own doc comment for why):
+    /// nothing before `state = .connecting` needs the same guard, because
+    /// nothing before it suspends — `resolveConfigWithoutDialing()` is
+    /// synchronous, so no OTHER call to this actor-isolated method can run
+    /// between this attempt claiming `currentAttempt` and reaching that
+    /// line.
     public func connect() async -> (any RemoteFileSystem)? {
         guard state != .connecting else { return nil }
-        defer { hostKeyPrompt = nil }
+        let myAttempt = UUID()
+        currentAttempt = myAttempt
+        defer {
+            // Only clear the prompt if IT belongs to this attempt — an
+            // abandoned attempt reaching this `defer` after being
+            // superseded must not erase a newer attempt's still-pending
+            // trust card.
+            if currentAttempt == myAttempt { hostKeyPrompt = nil }
+        }
 
         if shouldSaveSession,
            saveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -600,8 +646,13 @@ public final class ConnectionViewModel {
             // belongs to whoever builds the `connector` (the App passes
             // `certificateBridge.ask`, the CLI refuses every unknown one).
             let fs = try await connector(dialed) { [weak self] candidate in
-                await self?.presentHostKeyPrompt(for: candidate) ?? false
+                await self?.presentHostKeyPrompt(for: candidate, attempt: myAttempt) ?? false
             }
+            // Attempt-scoped write (see `currentAttempt`'s own doc
+            // comment): a superseded attempt's own successful dial must not
+            // publish `.idle`/`lastConnectedConfig`, and must not hand its
+            // `fs` back to its own caller as if it were still wanted.
+            guard currentAttempt == myAttempt else { return nil }
             state = .idle
             // The DIALED config, hop included: `lastConnectedConfig` is what
             // the external-terminal launcher reproduces the connection from.
@@ -612,16 +663,25 @@ public final class ConnectionViewModel {
             if case .ssh(let ssh) = dialed { lastConnectedConfig = ssh.redactingSecrets() }
             return fs
         } catch {
+            // Same attempt-scoped write as the success path above.
+            guard currentAttempt == myAttempt else { return nil }
             state = jumpAwareFailedState(for: error)
             return nil
         }
     }
 
     /// Abandons an in-flight connect attempt (connection-liveness plan,
-    /// Task 6): forces `state` back to `.idle` without waiting for the dial
-    /// itself to finish.
+    /// Task 6; fix round 1 added the attempt token below after a review
+    /// measured what forcing `state` alone allowed): moves `currentAttempt`
+    /// forward — so every write the abandoned dial still tries to make
+    /// becomes a no-op, see that property's own doc comment — forces
+    /// `state` back to `.idle` on the FOREGROUND without waiting for the
+    /// dial itself, and releases any host-key prompt this attempt had
+    /// published.
     ///
-    /// This is not a style choice — `ConnectionViewModelTests
+    /// Forcing `state` directly (rather than relying on the wrapping
+    /// `Task`'s cancellation to eventually be noticed) is not a style
+    /// choice — `ConnectionViewModelTests
     /// .secondConnectWhileConnectingIsRejected` (same file) already proves
     /// the `connector` this type is built with can hang past any amount of
     /// cancellation on the CALLING `Task`: nothing on the plain-dial path
@@ -630,11 +690,21 @@ public final class ConnectionViewModel {
     /// exception is the host-key-prompt wait inside `presentHostKeyPrompt`,
     /// which IS built on `withTaskCancellationHandler` — see
     /// `cancelWhileHostKeyPromptPendingResolvesConnect`.) Forcing `state`
-    /// here, instead of relying on the wrapping `Task`'s cancellation to
-    /// eventually be noticed, is therefore the only way an App-level Cancel
-    /// control can hand the form back before a dead host's dial times out
-    /// on its own (bounded by `connectTimeoutSeconds`, but still up to that
-    /// long).
+    /// is therefore the only way an App-level Cancel control can hand the
+    /// form back before a dead host's dial times out on its own (bounded by
+    /// `connectTimeoutSeconds`, but still up to that long).
+    ///
+    /// Clearing `hostKeyPrompt` and resolving `hostKeyContinuation` here —
+    /// rather than leaving that to `connect()`'s own `defer` — matters for
+    /// the case where Cancel runs WHILE a trust card is up: the `defer`'s
+    /// own guard (`if currentAttempt == myAttempt`) would otherwise refuse
+    /// to touch it, since by the time that `defer` runs `currentAttempt`
+    /// has already moved past this abandoned attempt — leaving an orphaned
+    /// card on screen with a live continuation nobody but this method can
+    /// still resolve. In today's App layer this path is not reachable
+    /// through the Cancel button itself (`ConnectionSurfacePlan` never
+    /// offers Cancel while a host-key prompt is pending), but Core does not
+    /// rely on a caller's UI gating for its own correctness.
     ///
     /// A no-op outside `.connecting` — the same re-entrancy guard
     /// `connect()` itself applies at its own top — so a stray second call
@@ -646,11 +716,15 @@ public final class ConnectionViewModel {
     /// not, in the true background; this method does not and cannot stop
     /// it (the same best-effort-only trade the App layer's
     /// `LivenessProbeRace` documents for the liveness probe's own `stat`
-    /// call). Whoever awaits `connect()`'s result is responsible for not
-    /// acting on one that arrives after the user has already cancelled.
+    /// call) — what changed in fix round 1 is that the abandoned dial's
+    /// EVENTUAL writes are now refused at the source, rather than merely
+    /// left for a caller to notice and discard.
     public func cancelConnecting() {
         guard state == .connecting else { return }
+        currentAttempt = UUID()
         state = .idle
+        hostKeyPrompt = nil
+        resolveHostKeyPrompt(trust: false)
     }
 
     /// `failedState` carrying the jump context the form currently holds.
@@ -728,7 +802,17 @@ public final class ConnectionViewModel {
     /// Cancellation-safe: if the connect() task is cancelled while the prompt
     /// is open, the continuation resolves with `false` (no leak, no hang);
     /// the connector sees a rejection.
-    private func presentHostKeyPrompt(for candidate: HostKeyCandidate) async -> Bool {
+    ///
+    /// `attempt` is `connect()`'s own `myAttempt`, checked BEFORE this
+    /// method touches `hostKeyPrompt`/`hostKeyContinuation` at all (fix
+    /// round 1, connection-liveness plan Task 6): a `connect()` call whose
+    /// attempt has already been superseded — by Cancel or by a newer
+    /// `connect()` call — refuses right here, before publishing a card for
+    /// the wrong host over a still-pending one and before registering a
+    /// continuation nobody will ever resume. See `currentAttempt`'s own doc
+    /// comment for the measured failure this closes.
+    private func presentHostKeyPrompt(for candidate: HostKeyCandidate, attempt: UUID) async -> Bool {
+        guard attempt == currentAttempt else { return false }
         hostKeyPrompt = HostKeyPrompt(candidate: candidate)
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in

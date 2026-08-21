@@ -44,25 +44,3 @@ struct ConnectionSurfacePlanTests {
             ConnectionSurfacePlan.surface(for: nil, hostKeyPromptPending: true) == .form)
     }
 }
-
-/// Direct tests over `ConnectAttemptOutcome.shouldApply(livenessAtCompletion:)`
-/// (connection-liveness plan, Task 6) — the guard the ad-hoc form's
-/// `onConnected` closure consults before calling `ContentView.startSession`,
-/// so a connect attempt abandoned by Cancel cannot resurrect a session on a
-/// tab the user already backed out of. See that guard's own doc comment
-/// (`ContentView+Detail.swift`) for the narrower gap it does NOT close: a
-/// brand-new attempt started on the same tab before the abandoned one gives
-/// up also reads `.connecting` and would still be accepted.
-@Suite("Connect attempt outcome")
-struct ConnectAttemptOutcomeTests {
-    @Test func stillConnectingMeansApplyTheResult() {
-        #expect(ConnectAttemptOutcome.shouldApply(livenessAtCompletion: .connecting))
-    }
-
-    @Test(arguments: [
-        Optional<ConnectionLiveness>.none, .connected, .degraded, .lost,
-    ])
-    func anythingElseMeansDiscardIt(liveness: ConnectionLiveness?) {
-        #expect(!ConnectAttemptOutcome.shouldApply(livenessAtCompletion: liveness))
-    }
-}

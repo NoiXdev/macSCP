@@ -473,7 +473,20 @@ extension ContentView {
                             // is forcing `state` back on the FOREGROUND and
                             // running the one teardown path, not waiting for
                             // the abandoned dial to notice anything.
+                            // `cancelConnecting()` also moves Core's own
+                            // attempt token, so the abandoned dial's
+                            // eventual writes (state, a host-key card) are
+                            // refused at the source — see that method's own
+                            // doc comment. `reconnectAttempt`/
+                            // `isReconnecting` are the identical App-layer
+                            // fix for the stored-session path's own lock
+                            // (Critical 1, fix round 1): without resetting
+                            // them HERE, the sidebar would stay disabled
+                            // until the abandoned Task's own deferred
+                            // cleanup finally ran.
                             tab.connectionViewModel.cancelConnecting()
+                            tab.reconnectAttempt = UUID()
+                            tab.isReconnecting = false
                             Task { await teardown(tab) }
                         })
                     } else {
@@ -542,7 +555,6 @@ extension ContentView {
                                 let current = sessionListViewModel.sessions.first(where: { $0.id == stored.id }) ?? stored
                                 connect(in: tab, stored: current)
                             }
-                        // Connect completion guard (connection-liveness plan, Task 6)
                         ) { fs in
                             // Remote home start (M9d): resolved once per connect,
                             // right before the browser session is built, so the
@@ -553,20 +565,24 @@ extension ContentView {
                             // Accept only usable absolute paths (M9d final review): an
                             // empty/relative realpath result would land the pane in
                             // .failed where "/" always worked.
+                            //
+                            // No stale-attempt guard needed here (connection-
+                            // liveness plan, Task 6 fix round 1): `fs` only
+                            // reaches this closure at all when `form.connect()`
+                            // returned non-nil, and `ConnectionViewModel
+                            // .connect()` now refuses to return a result for
+                            // an attempt Cancel (or a newer attempt) has
+                            // already superseded — see `ConnectionViewModel
+                            // .currentAttempt`'s own doc comment. The App
+                            // layer used to re-check this itself
+                            // (`ConnectAttemptOutcome`, removed in the same
+                            // fix round); Core is the one place that can
+                            // actually tell "my own attempt" from "a later
+                            // one that happens to share the same liveness
+                            // value", which is exactly the gap that type's
+                            // own doc comment admitted it could not close.
                             let resolved = (try? await fs.homeDirectoryPath()) ?? "/"
                             let home = resolved.hasPrefix("/") ? resolved : "/"
-                            // Stale-attempt guard (connection-liveness plan,
-                            // Task 6): a Cancel click resets `tab.liveness`
-                            // well before this `await` chain necessarily
-                            // returns — the dial itself is only
-                            // best-effort-cancelled (see
-                            // `ConnectionViewModel.cancelConnecting()`'s own
-                            // doc comment) and may still succeed in the true
-                            // background. Without this check that stale
-                            // success would resurrect a session on a tab the
-                            // user already backed out of.
-                            guard ConnectAttemptOutcome.shouldApply(livenessAtCompletion: tab.liveness)
-                            else { return }
                             startSession(in: tab, with: fs, startPath: home)
                         }
                     }
@@ -981,35 +997,6 @@ enum ConnectionSurfacePlan {
     }
 }
 
-/// Whether a connect attempt's result should still be handed to
-/// `ContentView.startSession` (connection-liveness plan, Task 6) — read at
-/// the exact moment the ad-hoc form's `onConnected` closure in `ContentView
-/// .detail` actually runs, after `form.connect()` and the home-directory
-/// lookup both return.
-///
-/// Cancel (`ConnectingAttemptView`'s `onCancel`, wired in `ContentView
-/// .detail`) forces `tab.liveness` back to `nil` through `teardown(_:)` the
-/// moment the user clicks it — well before the abandoned dial itself
-/// necessarily returns, since cancelling the dial is best-effort only (see
-/// `ConnectionViewModel.cancelConnecting()`'s own doc comment, and
-/// `ConnectionViewModelTests
-/// .cancelConnectingReleasesStateWhileTheDialNeverReturns`, which measures
-/// exactly that for the underlying connector). Comparing against
-/// `.connecting` here is what stops a stale success from resurrecting a
-/// session on a tab the user already backed out of.
-///
-/// Does NOT distinguish a cancelled attempt from a brand-new one started on
-/// the SAME tab afterward — both read `.connecting` at the moment a late
-/// result arrives. A user who cancels and reconnects before the abandoned
-/// dial gives up on its own could still see that stale result applied. A
-/// per-attempt token would close this narrower gap; see the Task 6 report
-/// for why this task stops short of adding one.
-enum ConnectAttemptOutcome {
-    static func shouldApply(livenessAtCompletion: ConnectionLiveness?) -> Bool {
-        livenessAtCompletion == .connecting
-    }
-}
-
 /// Mirrors `SessionTab.connectionViewModel.state` into `SessionTab
 /// .liveness` while a connect attempt for THIS tab is running (connection-
 /// liveness plan, Task 6) — mounted per tab in `ContentView.splitLayout`'s
@@ -1023,21 +1010,37 @@ enum ConnectAttemptOutcome {
 /// INTO `.connecting`, so the dot and the surface cannot read two
 /// independently-derived answers to "is this tab connecting right now".
 ///
-/// Two of `ConnectionViewModel.State`'s three cases matter here.
+/// `initial: true` (fix round 1, connection-liveness plan Task 6): without
+/// it, `.onChange` only fires on a change witnessed AFTER this view has
+/// mounted — a brand-new tab whose connect attempt starts before SwiftUI
+/// gets a render pass to mount this view's row would have its very FIRST
+/// `.connecting` transition missed entirely, leaving `tab.liveness` at
+/// `nil` (dot blank, connecting surface never shown) until some LATER
+/// transition happened to fire the observer. `initial: true` also
+/// evaluates the closure once with the CURRENT value the moment the view
+/// appears, closing that gap.
+///
+/// Two of `ConnectionViewModel.State`'s three cases write something here.
 /// `.connecting` always means an attempt for this tab just started, and
-/// always publishes `.connecting`. `.failed` always means the attempt just
-/// ended with nothing connected — `ContentView.connect(in:stored:)` tears
-/// any PREVIOUS session down before dialing again, so `tab.session` is
-/// already nil by the time a fresh dial can even reach `.connecting`, and
-/// there is nothing left afterward for a stale liveness to describe (the
-/// same "no session, no liveness" rule `SessionTab.liveness`'s own doc
-/// comment states) — this resets to `nil`. `.idle` is deliberately left
-/// alone: the only transition INTO `.idle` FROM `.connecting` is a
-/// SUCCESSFUL dial (`ConnectionViewModel.connect()`'s one `state = .idle`
-/// assignment sits on its success path), and publishing that success as
-/// `.connected` is `ContentView.startSession`'s job, moments later, once
-/// the home-directory lookup finishes — resetting to `nil` here first would
-/// flash the form back for that window.
+/// always publishes `.connecting`. `.idle` is left alone: it is reached
+/// both by a SUCCESSFUL dial (`ConnectionViewModel.connect()`'s own
+/// success-path write) — where publishing `.connected` is `ContentView
+/// .startSession`'s job, moments later, once the home-directory lookup
+/// finishes, so resetting to `nil` here first would flash the form back for
+/// that window — AND by `cancelConnecting()` (fix round 1: Cancel now
+/// forces `state` to `.idle` too) — where `teardown(_:)`, called from the
+/// SAME `onCancel` that calls `cancelConnecting()`, is already the thing
+/// resetting `tab.liveness` to `nil`; this mirror does not need to race it.
+/// `.failed` means the attempt just ended with nothing connected, and
+/// resets to `nil` — but ONLY while `tab.session == nil`: `.failed` is not
+/// exclusively a "just tried and failed to connect" signal (`showFailure`
+/// is also how a validation refusal unrelated to dialing — e.g. an empty
+/// save name — reaches this same `state`), and this tab's own
+/// `connectionViewModel` is never touched by anything while the tab IS
+/// connected in today's App (the form that could touch it is not even
+/// mounted then — see `ConnectionSurfacePlan`). Guarding on `tab.session`
+/// rather than relying on that as an invariant is what keeps a latent path
+/// from ever nilling a CONNECTED tab's liveness out from under it.
 struct ConnectAttemptLivenessMirror: View {
     let tab: SessionTab
 
@@ -1045,12 +1048,12 @@ struct ConnectAttemptLivenessMirror: View {
         Color.clear
             .frame(width: 0, height: 0)
             .allowsHitTesting(false)
-            .onChange(of: tab.connectionViewModel.state) { _, newState in
+            .onChange(of: tab.connectionViewModel.state, initial: true) { _, newState in
                 switch newState {
                 case .connecting:
                     tab.liveness = .connecting
                 case .failed:
-                    tab.liveness = nil
+                    if tab.session == nil { tab.liveness = nil }
                 case .idle:
                     break
                 }
@@ -1067,6 +1070,14 @@ struct ConnectAttemptLivenessMirror: View {
 /// so the rest of the window — other tabs, the sidebar once this one's own
 /// dial ends — stays usable instead of the tab looking like a dead modal
 /// with nothing to click.
+///
+/// The headline has its OWN catalog key (`connection.connecting.title`,
+/// fix round 1) rather than reusing the tab-strip dot's tooltip key
+/// (`tabs.liveness.connectingHelp`, Task 5): the two read the same today,
+/// but a tooltip and a headline are different UI roles that can legitimately
+/// need different wording later, and sharing one key would silently change
+/// this surface's text the next time someone edits the dot's tooltip for
+/// its OWN reasons.
 private struct ConnectingAttemptView: View {
     let onCancel: () -> Void
 
@@ -1074,7 +1085,7 @@ private struct ConnectingAttemptView: View {
         VStack(spacing: 16) {
             ProgressView()
                 .controlSize(.large)
-            Text(L10n.string("tabs.liveness.connectingHelp", "Connecting…"))
+            Text(L10n.string("connection.connecting.title", "Connecting…"))
                 .font(.title2.bold())
             Text(L10n.string(
                 "connection.connecting.body",
