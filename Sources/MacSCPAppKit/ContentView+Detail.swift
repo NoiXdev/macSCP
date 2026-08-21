@@ -804,24 +804,33 @@ private struct TerminalPanelHeader: View {
             // state afterward.
             SnippetActionSheet(
                 snippet: snippet,
-                // Dismissals run BEFORE the trigger, not after (whole-branch
-                // review, finding 4): `onRunSnippet` can itself request a NEW
-                // presentation (the multi-line-insert refusal alert, via
-                // `ContentView.triggerSnippet`'s `pendingMultilineInsertRefusal`),
-                // and requesting one while a sheet AND a popover are being
-                // dismissed in the same SwiftUI update cycle is exactly the
-                // situation where the new presentation gets silently dropped.
-                // Dismissing both here first, then triggering, keeps the
-                // alert's presentation request in its own update cycle.
+                // Dismiss, then trigger on the NEXT runloop turn — not in
+                // the same closure. `onRunSnippet` can itself request a new
+                // presentation: the multi-line-insert refusal alert, and
+                // since snippet variables, the value prompt SHEET. Clearing
+                // the two flags does not take the popover off screen; that
+                // happens when SwiftUI next applies state. Requesting a
+                // sheet before it does means asking to present over a
+                // popover that is still up, and the request is dropped
+                // without a trace.
+                //
+                // An earlier version did the dismissals first and called
+                // straight through, with a comment claiming that put the
+                // request "in its own update cycle". It did not — one
+                // closure is one update. The alert survived it; the sheet
+                // did not, which is how this surfaced (maintainer report,
+                // 2026-08-21: via the terminal's snippet button neither
+                // Insert nor Execute did anything once the snippet declared
+                // a variable).
                 onInsert: {
                     actionSheetSnippet = nil
                     isSnippetPopoverPresented = false
-                    onRunSnippet(snippet, false)
+                    DispatchQueue.main.async { onRunSnippet(snippet, false) }
                 },
                 onExecute: {
                     actionSheetSnippet = nil
                     isSnippetPopoverPresented = false
-                    onRunSnippet(snippet, true)
+                    DispatchQueue.main.async { onRunSnippet(snippet, true) }
                 },
                 onCancel: { actionSheetSnippet = nil }
             )
@@ -929,18 +938,19 @@ private struct TerminalPanelHeader: View {
             .contextMenu {
                 SnippetRowContextMenu(
                     row: row,
-                    // Same reordering, and the same reason, as the action
-                    // sheet's onInsert/onExecute above (whole-branch review,
-                    // finding 4): dismiss the popover first, trigger after,
-                    // so a refusal alert `onRunSnippet` requests is not
-                    // competing with that dismissal in the same update cycle.
+                    // Same shape, and the same reason, as the action
+                    // sheet's onInsert/onExecute above: dismiss here, and
+                    // let the trigger run once SwiftUI has actually taken
+                    // the popover down, so a sheet or alert `onRunSnippet`
+                    // asks for is not aimed at a screen the popover still
+                    // owns.
                     onExecute: {
                         isSnippetPopoverPresented = false
-                        onRunSnippet(row.snippet, true)
+                        DispatchQueue.main.async { onRunSnippet(row.snippet, true) }
                     },
                     onInsert: {
                         isSnippetPopoverPresented = false
-                        onRunSnippet(row.snippet, false)
+                        DispatchQueue.main.async { onRunSnippet(row.snippet, false) }
                     },
                     onPreview: { previewPinnedRow = row }
                 )
