@@ -578,6 +578,39 @@ private struct SnippetEditorView: View {
     /// documents for its own per-keystroke rebuild.
     private var variables: [SnippetVariable] { variableDrafts.map(\.variable) }
 
+    /// What the editor shows below Tags: the command as it would actually
+    /// be sent, with a stand-in for every declared value.
+    ///
+    /// It calls the same `SnippetVariableSubstitution.resolve` the run path
+    /// calls — deliberately, not a second renderer that could agree with it
+    /// today and drift tomorrow. So the preview also shows what the run
+    /// path does with things the template alone does not reveal: an
+    /// `.environment` variable appearing as a prepended assignment rather
+    /// than in place, a value being single-quoted, and a `{{NAME}}` that
+    /// matches no declaration staying in the text as inert literal
+    /// characters.
+    private var commandPreview: String {
+        // `uniquingKeysWith` rather than `uniqueKeysWithValues`: two drafts
+        // may share a name while the user is still typing, and that is a
+        // validation error to report, not a reason to trap.
+        let sample = Dictionary(
+            variables.map { ($0.name, previewValue(for: $0)) },
+            uniquingKeysWith: { first, _ in first })
+        return SnippetVariableSubstitution.resolve(
+            command: command, variables: variables, values: sample)
+    }
+
+    /// The stand-in for one variable: its default, else the first option of
+    /// a choice, else a neutral word — the point is that the preview reads
+    /// like a finished command, not that the value is meaningful.
+    private func previewValue(for variable: SnippetVariable) -> String {
+        if !variable.defaultValue.isEmpty { return variable.defaultValue }
+        if case .selection(let options) = variable.kind, let first = options.first {
+            return first
+        }
+        return L10n.string("snippets.editor.preview.sample", "sample")
+    }
+
     /// What is wrong with the current variable declarations, or `nil`. Both
     /// checks named in the brief: an invalid or duplicate name is caught
     /// here directly, and `SnippetVariableSubstitution
@@ -654,6 +687,14 @@ private struct SnippetEditorView: View {
                 // and an `NSScrollView` cannot draw a rounded border.
                 SnippetCommandEditor(text: $command, accessibilityLabel: commandLabel)
                     .frame(height: SnippetCommandEditor.intrinsicHeight(for: command))
+                    // `FormRow` aligns on `.firstTextBaseline`, and SwiftUI
+                    // cannot read one out of an `NSViewRepresentable` -- the
+                    // label ended up about a line and a half above the field
+                    // it names. The editor knows where its first baseline
+                    // sits; this hands that number to the row.
+                    .alignmentGuide(.firstTextBaseline) { _ in
+                        SnippetCommandEditor.firstBaselineOffset
+                    }
                     .background(RoundedRectangle(cornerRadius: 6).fill(DesignTokens.card))
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
@@ -664,6 +705,17 @@ private struct SnippetEditorView: View {
 
             FormRow(label: L10n.string("snippets.tags.label", "Tags")) {
                 SnippetTagField(tags: $tags, suggestions: tagSuggestions)
+            }
+
+            if !command.isEmpty {
+                FormRow(label: L10n.string("snippets.editor.preview", "Preview")) {
+                    Text(commandPreview)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(DesignTokens.inkSecondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             // Credentials note (Terminal-Snippets design doc, "Snippets
             // enthalten keine Zugangsdaten"): the reason, not a bare
@@ -680,6 +732,8 @@ private struct SnippetEditorView: View {
                 """))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             if let errorMessage {
                 Text(errorMessage).font(.caption).foregroundStyle(.red).lineLimit(2)
@@ -733,6 +787,10 @@ private struct SnippetEditorView: View {
     /// why does not experiment, they give up (brief, Step 2).
     @ViewBuilder
     private var variablesSection: some View {
+        // Deliberately NOT a `FormRow`: a variable row carries six controls
+        // of its own, so this block keeps the sheet's full width instead of
+        // the 300pt that would be left beside a label column (maintainer's
+        // visual check, 2026-08-21).
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(L10n.string("snippets.variables.title", "Variables"))
@@ -757,11 +815,16 @@ private struct SnippetEditorView: View {
                 }
             }
 
+            // `fixedSize` vertically: without it this row proposes an
+            // unbounded width, the sentence lays out on one line and the
+            // sheet's fixed width truncates it mid-word.
             Text(L10n.string(
                 "snippets.variables.hint",
                 "A value is inserted as a single shell word. An environment variable is exported ahead of the command and stays set in the session after the run."))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             if let variablesError {
                 Text(variablesError).font(.caption).foregroundStyle(.red).lineLimit(2)

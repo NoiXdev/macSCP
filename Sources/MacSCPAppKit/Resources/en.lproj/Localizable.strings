@@ -845,6 +845,8 @@
 "snippets.variables.kind.freeText" = "Free text";
 "snippets.variables.kind.selection" = "Choice";
 "snippets.variables.hint" = "A value is inserted as a single shell word. An environment variable is exported ahead of the command and stays set in the session after the run.";
+"snippets.editor.preview" = "Preview";
+"snippets.editor.preview.sample" = "sample";
 "snippets.variables.error.invalidName" = "A variable name must start with a letter or underscore and may contain only letters, digits and underscores.";
 "snippets.variables.error.duplicateName" = "Two variables share a name.";
 "snippets.variables.error.unusedPlaceholder %@" = "“%@” is never used in the command.";
