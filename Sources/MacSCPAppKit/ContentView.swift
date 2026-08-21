@@ -1001,7 +1001,12 @@ struct ContentView: View {
                 return try await shellProvider.openShell(
                     terminal: term, cols: cols, rows: rows)
             }),
-            editManager: EditSessionManager(sessionID: sessionID, queue: queue)
+            editManager: EditSessionManager(sessionID: sessionID, queue: queue),
+            // Both callers of `startSession` already resolved this via
+            // `homeDirectoryPath()` before calling in (see this function's
+            // own `startPath` parameter doc comment) — captured here too for
+            // the liveness probe, see `BrowserSession.homePath`'s doc comment.
+            homePath: startPath
         )
         // Hidden-files toggle (M7a/T4): applied once here at session start,
         // kept in sync afterwards by the `.onChange` observer above.

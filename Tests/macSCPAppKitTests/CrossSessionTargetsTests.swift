@@ -37,7 +37,8 @@ struct CrossSessionTargetsTests {
             terminal: TerminalPanelViewModel(openShell: { _, _, _ in
                 throw CancellationError()
             }),
-            editManager: EditSessionManager(sessionID: sessionID, queue: tab.transferQueue))
+            editManager: EditSessionManager(sessionID: sessionID, queue: tab.transferQueue),
+            homePath: remotePath)
     }
 
     /// A tab never offers itself as a transfer destination — "copy to

@@ -40,7 +40,8 @@ struct SessionTabTests {
             terminal: TerminalPanelViewModel(openShell: { _, _, _ in
                 throw CancellationError()
             }),
-            editManager: EditSessionManager(sessionID: sessionID, queue: tab.transferQueue))
+            editManager: EditSessionManager(sessionID: sessionID, queue: tab.transferQueue),
+            homePath: "/")
     }
 
     /// A tab with no session is not connected, and shows the generic title

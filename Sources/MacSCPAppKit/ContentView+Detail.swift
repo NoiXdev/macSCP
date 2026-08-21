@@ -398,6 +398,71 @@ extension ContentView {
                         await session.remote.refreshQuietly()
                     }
                 }
+                .task(id: session.id) {
+                    // Liveness probe (Task 4): same shape as this view's
+                    // existing auto-refresh loop — lives inside the tab's
+                    // `.id` identity, so a tab switch or a teardown cancels it
+                    // for free, and the keep-alive interval is read fresh
+                    // every lap so a mid-session settings change applies
+                    // without restart.
+                    //
+                    // Writes go through `tab.session?.liveness`, never through
+                    // the `session` constant this closure captured: that
+                    // constant is a `BrowserSession` VALUE copied when this
+                    // task started, so assigning through it would update a
+                    // local copy nobody else can see. `tab` is the
+                    // `@Observable` reference the rest of the app reads
+                    // `SessionTab.liveness` through.
+                    var consecutiveFailures = 0
+                    while !Task.isCancelled {
+                        let interval = settingsStore.keepAliveIntervalSeconds
+                        // `0` means no probe at all (design spec, connection-
+                        // liveness plan §6) — sleep a fixed beat and recheck
+                        // rather than spin, so turning the setting back on
+                        // later takes effect without restarting the tab.
+                        guard interval > 0 else {
+                            try? await Task.sleep(for: .seconds(5))
+                            continue
+                        }
+                        try? await Task.sleep(for: .seconds(interval))
+                        guard !Task.isCancelled else { continue }
+                        probing: while !Task.isCancelled {
+                            let action = LivenessProbePolicy.decide(
+                                queueIsBusy: tab.transferQueue.isActive,
+                                consecutiveFailures: consecutiveFailures)
+                            switch action {
+                            case .skip:
+                                break probing
+                            case .probe, .probeAgainNow:
+                                let timeoutSeconds = LivenessProbePolicy.probeTimeout(forInterval: interval)
+                                let alive = await probeIsAlive(
+                                    fs: session.remoteFS, path: session.homePath,
+                                    timeoutSeconds: timeoutSeconds)
+                                if alive {
+                                    consecutiveFailures = 0
+                                    tab.session?.liveness = .connected
+                                    break probing
+                                } else {
+                                    consecutiveFailures += 1
+                                    tab.session?.liveness = .degraded
+                                    // Loop again immediately, without sleeping
+                                    // the full interval: `decide` now sees the
+                                    // incremented failure count and answers
+                                    // `.probeAgainNow` (one immediate retry) or
+                                    // `.giveUp`.
+                                }
+                            case .giveUp:
+                                tab.session?.liveness = .lost
+                                // The ONE teardown path (`cancelAll` → terminal
+                                // `shutdown` → `disconnect`), same as every
+                                // other route off a session — see
+                                // `ContentView.teardown(_:)`.
+                                await teardown(tab)
+                                return
+                            }
+                        }
+                    }
+                }
                 .transferConflictSheet(bridge: bridge)
             } else if let candidate = tab.certificateBridge.currentCandidate {
                 // Certificate trust prompt (M21/T10): the same "form is
@@ -534,6 +599,31 @@ extension ContentView {
         // shell instead of rebinding to the new one. `BrowserPane`/
         // `ConnectionFormView` `@State` would leak across tabs the same way.
         .id(tab.id)
+    }
+
+    /// The liveness probe's own round trip (connection-liveness plan, Task
+    /// 4): races `stat` on the session's home path against
+    /// `timeoutSeconds` (`LivenessProbePolicy.probeTimeout(forInterval:)`,
+    /// Task 1) — `true` only on a reply within that time, `false` on either
+    /// a thrown error or the timeout winning the race. `RemoteFileSystem
+    /// .stat` carries no cancellation contract, so the losing side of the
+    /// race may keep running past this function's return; the probe loop's
+    /// `.task(id:)` in `detail` never waits on it again either way.
+    private func probeIsAlive(
+        fs: any RemoteFileSystem, path: String, timeoutSeconds: Int
+    ) async -> Bool {
+        await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                (try? await fs.stat(path: path)) != nil
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(timeoutSeconds))
+                return false
+            }
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
+        }
     }
 
     /// Panel content: a narrow header (host name + snippet picker, Task 8)

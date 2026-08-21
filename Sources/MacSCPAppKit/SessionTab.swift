@@ -34,6 +34,21 @@ struct BrowserSession {
     /// `ContentView.teardown(_:)`'s ordering (`stopAll` after `cancelAll`,
     /// before `terminal.shutdown`).
     let editManager: EditSessionManager
+    /// The remote home-directory path resolved once at connect (connection-
+    /// liveness plan, Task 4). `ContentView.startSession`'s two callers
+    /// already run `homeDirectoryPath()` before building this session and
+    /// hand the result in as `startPath` — storing it here too lets the
+    /// liveness probe `stat` it without a second round trip to find its own
+    /// target.
+    let homePath: String
+    /// This session's connection liveness (Task 4), owned by the session
+    /// itself — never an app-wide singleton, this project's standing
+    /// per-window-scope invariant (see `SessionTab`'s own doc comment).
+    /// Starts `.connected`: by the time a `BrowserSession` exists,
+    /// `ConnectionViewModel.connect()` has already succeeded. Written by the
+    /// probe loop in `ContentView+Detail.swift`, read through
+    /// `SessionTab.liveness`.
+    var liveness: ConnectionLiveness = .connected
 }
 
 /// One window tab (M8a): bundles what used to be window-wide state, per
@@ -151,6 +166,13 @@ final class SessionTab: Identifiable {
     var seenFailureCount = 0
 
     var isConnected: Bool { session != nil }
+
+    /// This tab's connection liveness (Task 4), read through to the
+    /// session — `nil` while no session is attached (the connection form,
+    /// or a freshly closed/torn-down tab). Read-only here: the probe loop
+    /// writes `tab.session?.liveness` directly, the same pattern `showsFiles`
+    /// already uses to write `session?.showsFiles`.
+    var liveness: ConnectionLiveness? { session?.liveness }
 
     var displayTitle: String {
         titleName ?? L10n.string("tabs.newConnection", "New Connection")
