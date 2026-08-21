@@ -264,7 +264,7 @@ zu finden.
 - [ ] **Step 1: Wächtertest zuerst** — drei Aussagen über den Quelltext,
   jede durch Mutation geprüft: die Schleife liest das Intervall in der
   Schleife (nicht davor), sie fragt `LivenessProbePolicy` statt selbst zu
-  entscheiden, und bei `.giveUp` läuft der Abbau über `teardownSession`
+  entscheiden, und bei `.giveUp` läuft der Abbau über `ContentView.teardown(_:)`
   statt über einen eigenen Weg.
 - [ ] **Step 2: Rot.**
 - [ ] **Step 3: Umsetzen.** Intervall `0` heißt: gar keine Sonde.
@@ -302,7 +302,7 @@ ist der Reiter für Farbenblinde und für VoiceOver stumm.
 **Interfaces:** Consumes: Task 3 (Frist), Task 4 (Zustand).
 
 Der Tab zeigt „Verbinde …" mit **Abbrechen**, der Rest der App bleibt
-bedienbar. Abbrechen bricht die Aufgabe ab und räumt über `teardownSession`
+bedienbar. Abbrechen bricht die Aufgabe ab und räumt über `ContentView.teardown(_:)`
 ab — nicht über einen eigenen Weg.
 
 **Wenn bei der Umsetzung auffällt, dass der Hauptthread tatsächlich
