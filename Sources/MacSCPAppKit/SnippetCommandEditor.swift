@@ -53,12 +53,31 @@ struct SnippetCommandEditor: NSViewRepresentable {
     ///
     /// The bounds are estimates and belong in the maintainer's visual check
     /// — no test in this project draws an `NSViewRepresentable`.
+    /// The text container's inset above the first line and below the last,
+    /// and the font every line is laid out in. They live here as constants
+    /// because three things have to agree on them: `makeNSView`, which sets
+    /// the inset on the view; `intrinsicHeight`, which reserves room for
+    /// both; and `firstBaselineOffset`, which the sheet aligns the row's
+    /// label to.
+    static let verticalInset: CGFloat = 4
+    static let lineHeight: CGFloat = 16
+    static var font: NSFont {
+        .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+    }
+
+    /// Distance from the view's top edge to the FIRST LINE's baseline.
+    ///
+    /// SwiftUI cannot read a baseline out of an `NSViewRepresentable`, so a
+    /// `.firstTextBaseline` row aligns the label against the wrapper's own
+    /// edge instead and the label ends up sitting well above the text it
+    /// names. The sheet hands this value to `.alignmentGuide` to put the
+    /// label back on the first line — see `SnippetsSheet`'s command row.
+    static var firstBaselineOffset: CGFloat { verticalInset + font.ascender }
+
     static func intrinsicHeight(for text: String) -> CGFloat {
-        let lineHeight: CGFloat = 16
-        let insets: CGFloat = 8
         let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).count
         let clamped = min(max(lines, 1), 8)
-        return CGFloat(clamped) * lineHeight + insets
+        return CGFloat(clamped) * lineHeight + verticalInset * 2
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -69,8 +88,8 @@ struct SnippetCommandEditor: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.isRichText = false
         textView.allowsUndo = true
-        textView.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        textView.textContainerInset = NSSize(width: 6, height: 4)
+        textView.font = Self.font
+        textView.textContainerInset = NSSize(width: 6, height: Self.verticalInset)
         textView.drawsBackground = false
         textView.setAccessibilityLabel(accessibilityLabel)
         // Hazard 5: an `NSTextField`'s field editor disables all five of
