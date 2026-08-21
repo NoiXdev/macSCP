@@ -395,6 +395,57 @@ struct ConnectionViewModelTests {
             message: CoreL10n.string("core.hostkey.rejected"), field: nil))
     }
 
+    /// `cancelConnecting()`'s own reason for existing (connection-liveness
+    /// plan, Task 6): the connector below never returns on its own — the
+    /// same hanging shape `secondConnectWhileConnectingIsRejected` above
+    /// uses to prove a dial can outlast `Task.cancel()` on whatever wraps
+    /// `connect()`. `cancelConnecting()` must release `state` anyway,
+    /// without waiting for the dial.
+    @Test @MainActor
+    func cancelConnectingReleasesStateWhileTheDialNeverReturns() async {
+        let counter = CallCounter()
+        let (stream, continuation) = AsyncStream<Void>.makeStream()
+        let vm = makeVM(connector: { _, _ in
+            await counter.increment()
+            for await _ in stream {}   // hangs until the test ends the stream
+            return MockRemoteFileSystem(tree: ["/": []])
+        })
+
+        async let result = vm.connect()
+        guard await waitUntil("connect() must reach the connector", {
+            await counter.value == 1
+        }) else {
+            continuation.finish()
+            _ = await result
+            return
+        }
+        #expect(vm.state == .connecting)
+
+        vm.cancelConnecting()
+        #expect(vm.state == .idle)
+
+        // The connector is still parked on `stream` at this point — proof
+        // that the assertion above did not depend on it having settled.
+        // Releasing it now just lets the test itself finish cleanly.
+        continuation.finish()
+        _ = await result
+    }
+
+    /// Same re-entrancy shape `connect()`'s own top-of-function guard uses:
+    /// a call outside `.connecting` must not stomp a state some OTHER path
+    /// already published — here, `.failed`, which a stray Cancel arriving
+    /// late (the dial already settled on its own) must not silently erase.
+    @Test @MainActor func cancelConnectingIsANoOpOutsideConnecting() async {
+        let vm = makeVM()
+        #expect(vm.state == .idle)
+        vm.cancelConnecting()
+        #expect(vm.state == .idle)
+
+        vm.showFailure(message: "boom", field: nil)
+        vm.cancelConnecting()
+        #expect(vm.state == .failed(message: "boom", field: nil))
+    }
+
     @Test @MainActor func beginEditingPrefillsEverythingExceptTheSecret() {
         let vm = makeVM()
         let stored = sshSession(name: "web", host: "h", port: 2222, username: "u",

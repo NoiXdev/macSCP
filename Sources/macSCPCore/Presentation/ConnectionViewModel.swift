@@ -617,6 +617,42 @@ public final class ConnectionViewModel {
         }
     }
 
+    /// Abandons an in-flight connect attempt (connection-liveness plan,
+    /// Task 6): forces `state` back to `.idle` without waiting for the dial
+    /// itself to finish.
+    ///
+    /// This is not a style choice — `ConnectionViewModelTests
+    /// .secondConnectWhileConnectingIsRejected` (same file) already proves
+    /// the `connector` this type is built with can hang past any amount of
+    /// cancellation on the CALLING `Task`: nothing on the plain-dial path
+    /// polls `Task.isCancelled`, so a `Task.cancel()` on whatever wraps
+    /// `connect()` does not, by itself, make that `await` return. (The one
+    /// exception is the host-key-prompt wait inside `presentHostKeyPrompt`,
+    /// which IS built on `withTaskCancellationHandler` — see
+    /// `cancelWhileHostKeyPromptPendingResolvesConnect`.) Forcing `state`
+    /// here, instead of relying on the wrapping `Task`'s cancellation to
+    /// eventually be noticed, is therefore the only way an App-level Cancel
+    /// control can hand the form back before a dead host's dial times out
+    /// on its own (bounded by `connectTimeoutSeconds`, but still up to that
+    /// long).
+    ///
+    /// A no-op outside `.connecting` — the same re-entrancy guard
+    /// `connect()` itself applies at its own top — so a stray second call
+    /// (a fast double-click on Cancel, or a Cancel that arrives after the
+    /// dial already settled on its own) cannot stomp a state some OTHER
+    /// path already published.
+    ///
+    /// The abandoned dial may still resolve afterward, successfully or
+    /// not, in the true background; this method does not and cannot stop
+    /// it (the same best-effort-only trade the App layer's
+    /// `LivenessProbeRace` documents for the liveness probe's own `stat`
+    /// call). Whoever awaits `connect()`'s result is responsible for not
+    /// acting on one that arrives after the user has already cancelled.
+    public func cancelConnecting() {
+        guard state == .connecting else { return }
+        state = .idle
+    }
+
     /// `failedState` carrying the jump context the form currently holds.
     ///
     /// Used by both jump-aware failure sites -- attaching the hop, and the dial

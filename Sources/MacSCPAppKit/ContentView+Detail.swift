@@ -131,6 +131,16 @@ extension ContentView {
                 onGiveUp: { await handleLivenessGiveUp($0) })
         }
     }
+    // Connect-attempt liveness mirror (Task 6): one per tab, not only the
+    // active one — see `ConnectAttemptLivenessMirror`'s own doc comment for
+    // why. Zero-size and non-hit-testing, the same shape as the probe
+    // runners above; a second `.background` layer composes with the first
+    // rather than replacing it.
+    .background {
+        ForEach(tabsModel.tabs) { tab in
+            ConnectAttemptLivenessMirror(tab: tab)
+        }
+    }
     }
 
     /// Window-level chrome: minimum size, tint, title, the `NSWindow` handle,
@@ -438,83 +448,128 @@ extension ContentView {
                 .frame(minWidth: 420, maxWidth: 460)
                 .frame(maxHeight: .infinity, alignment: .top)
             } else {
-                // Align the form to the top instead of centering it vertically
-                // (user feedback 2026-07-10, M5c/T0) — otherwise the compact
-                // window has a lot of empty space below the content.
-                ConnectionFormView(
-                    viewModel: tab.connectionViewModel,
-                    groups: sessionListViewModel.groups,
-                    sessionList: sessionListViewModel,
-                    resolveLoginSetForSubmit: {
-                        let form = tab.connectionViewModel
-                        let refusals = sessionListViewModel.prepareForSubmit(form: form)
-                        for refusal in refusals {
-                            form.showFailure(
-                                message: SubmitRefusalText.message(for: refusal), field: refusal.field)
+                // The single "no session yet" surface (connection-liveness
+                // plan, Task 6): `ConnectionSurfacePlan.surface` decides
+                // between the ordinary form and "Connecting…" — see that
+                // type's own doc comment for why a pending host-key prompt
+                // forces the form back regardless of `tab.liveness`. `Group`
+                // keeps the plaintext-confirmation dialog below attached to
+                // BOTH branches: the connector closure in `ContentView
+                // .makeTab` can raise that confirmation WHILE `.connecting`
+                // is showing (it asks before dispatching the dial, which
+                // runs after `ConnectionViewModel.connect()` has already
+                // set `state = .connecting`), so the dialog must not be
+                // reachable only from the form branch.
+                Group {
+                    // Connecting surface branch (connection-liveness plan, Task 6)
+                    if ConnectionSurfacePlan.surface(
+                        for: tab.liveness,
+                        hostKeyPromptPending: tab.connectionViewModel.hostKeyPrompt != nil
+                    ) == .connecting {
+                        ConnectingAttemptView(onCancel: {
+                            // Best-effort on the dial itself (see
+                            // `ConnectionViewModel.cancelConnecting()`'s own
+                            // doc comment) — what makes the tab usable again
+                            // is forcing `state` back on the FOREGROUND and
+                            // running the one teardown path, not waiting for
+                            // the abandoned dial to notice anything.
+                            tab.connectionViewModel.cancelConnecting()
+                            Task { await teardown(tab) }
+                        })
+                    } else {
+                        // Align the form to the top instead of centering it
+                        // vertically (user feedback 2026-07-10, M5c/T0) —
+                        // otherwise the compact window has a lot of empty
+                        // space below the content.
+                        ConnectionFormView(
+                            viewModel: tab.connectionViewModel,
+                            groups: sessionListViewModel.groups,
+                            sessionList: sessionListViewModel,
+                            resolveLoginSetForSubmit: {
+                                let form = tab.connectionViewModel
+                                let refusals = sessionListViewModel.prepareForSubmit(form: form)
+                                for refusal in refusals {
+                                    form.showFailure(
+                                        message: SubmitRefusalText.message(for: refusal), field: refusal.field)
+                                }
+                                return refusals.isEmpty
+                            },
+                            onSaveEdited: { stored, secret in
+                                var stored = stored
+                                var effectiveSecret = secret
+                                if let newSetID = maybeCreateNewLoginSet(
+                                    from: tab.connectionViewModel, editedSession: stored
+                                ) {
+                                    // The secret now lives under the new set's id —
+                                    // don't also duplicate it into the session's own
+                                    // keychain slot.
+                                    stored.loginSetID = newSetID
+                                    effectiveSecret = nil
+                                } else if stored.loginSetID != nil {
+                                    // Set mode: the set already owns the secret.
+                                    effectiveSecret = nil
+                                }
+                                // Jump secret (M10c/T3): `stored.jump` was already
+                                // built by `validateForEditSave()` (Set mode carries
+                                // only `loginSetID`, Manual carries the manual
+                                // fields + the EXISTING `secretID` it remembered) --
+                                // `updateSession` itself gates on `jump.loginSetID
+                                // == nil` before writing this, so passing it
+                                // unconditionally is safe in Set/Manual mode.
+                                //
+                                // Session mode (M11a/T3): `jumpPassword` was just
+                                // filled with the REFERENCED session's own resolved
+                                // secret (`SessionListViewModel.resolveJumpSession`,
+                                // spec §4a) --
+                                // passing that through here would copy it into the
+                                // jump's supposedly UNUSED `secretID` slot (spec §1:
+                                // "ungenutzt") on every save, not just the
+                                // manual→session switch `cleanOrphanedJumpSlot`
+                                // guards against. `nil` keeps that slot untouched.
+                                sessionListViewModel.updateSession(
+                                    stored, newSecret: effectiveSecret,
+                                    jumpSecret: tab.connectionViewModel.jumpSourceMode == .session
+                                        ? nil : tab.connectionViewModel.jumpPassword)
+                                tab.connectionViewModel.endEditing()
+                            },
+                            onCancelEdit: { tab.connectionViewModel.endEditing() },
+                            onConnectEdited: { stored in
+                                // onSaveEdited may have rewired loginSetID (e.g. "save as new
+                                // login set") on its own local copy of `stored`, which never
+                                // reaches this closure's parameter. `updateSession` inside
+                                // onSaveEdited already reloaded the list synchronously, so look
+                                // up the just-persisted session by id and connect with that.
+                                let current = sessionListViewModel.sessions.first(where: { $0.id == stored.id }) ?? stored
+                                connect(in: tab, stored: current)
+                            }
+                        // Connect completion guard (connection-liveness plan, Task 6)
+                        ) { fs in
+                            // Remote home start (M9d): resolved once per connect,
+                            // right before the browser session is built, so the
+                            // remote pane opens where the user actually lands after
+                            // login instead of hardcoded "/". A lookup failure
+                            // (older SFTP servers, permission quirks) falls back to
+                            // "/" rather than failing the connect.
+                            // Accept only usable absolute paths (M9d final review): an
+                            // empty/relative realpath result would land the pane in
+                            // .failed where "/" always worked.
+                            let resolved = (try? await fs.homeDirectoryPath()) ?? "/"
+                            let home = resolved.hasPrefix("/") ? resolved : "/"
+                            // Stale-attempt guard (connection-liveness plan,
+                            // Task 6): a Cancel click resets `tab.liveness`
+                            // well before this `await` chain necessarily
+                            // returns — the dial itself is only
+                            // best-effort-cancelled (see
+                            // `ConnectionViewModel.cancelConnecting()`'s own
+                            // doc comment) and may still succeed in the true
+                            // background. Without this check that stale
+                            // success would resurrect a session on a tab the
+                            // user already backed out of.
+                            guard ConnectAttemptOutcome.shouldApply(livenessAtCompletion: tab.liveness)
+                            else { return }
+                            startSession(in: tab, with: fs, startPath: home)
                         }
-                        return refusals.isEmpty
-                    },
-                    onSaveEdited: { stored, secret in
-                        var stored = stored
-                        var effectiveSecret = secret
-                        if let newSetID = maybeCreateNewLoginSet(
-                            from: tab.connectionViewModel, editedSession: stored
-                        ) {
-                            // The secret now lives under the new set's id —
-                            // don't also duplicate it into the session's own
-                            // keychain slot.
-                            stored.loginSetID = newSetID
-                            effectiveSecret = nil
-                        } else if stored.loginSetID != nil {
-                            // Set mode: the set already owns the secret.
-                            effectiveSecret = nil
-                        }
-                        // Jump secret (M10c/T3): `stored.jump` was already
-                        // built by `validateForEditSave()` (Set mode carries
-                        // only `loginSetID`, Manual carries the manual
-                        // fields + the EXISTING `secretID` it remembered) --
-                        // `updateSession` itself gates on `jump.loginSetID
-                        // == nil` before writing this, so passing it
-                        // unconditionally is safe in Set/Manual mode.
-                        //
-                        // Session mode (M11a/T3): `jumpPassword` was just
-                        // filled with the REFERENCED session's own resolved
-                        // secret (`SessionListViewModel.resolveJumpSession`,
-                        // spec §4a) --
-                        // passing that through here would copy it into the
-                        // jump's supposedly UNUSED `secretID` slot (spec §1:
-                        // "ungenutzt") on every save, not just the
-                        // manual→session switch `cleanOrphanedJumpSlot`
-                        // guards against. `nil` keeps that slot untouched.
-                        sessionListViewModel.updateSession(
-                            stored, newSecret: effectiveSecret,
-                            jumpSecret: tab.connectionViewModel.jumpSourceMode == .session
-                                ? nil : tab.connectionViewModel.jumpPassword)
-                        tab.connectionViewModel.endEditing()
-                    },
-                    onCancelEdit: { tab.connectionViewModel.endEditing() },
-                    onConnectEdited: { stored in
-                        // onSaveEdited may have rewired loginSetID (e.g. "save as new
-                        // login set") on its own local copy of `stored`, which never
-                        // reaches this closure's parameter. `updateSession` inside
-                        // onSaveEdited already reloaded the list synchronously, so look
-                        // up the just-persisted session by id and connect with that.
-                        let current = sessionListViewModel.sessions.first(where: { $0.id == stored.id }) ?? stored
-                        connect(in: tab, stored: current)
                     }
-                ) { fs in
-                    // Remote home start (M9d): resolved once per connect,
-                    // right before the browser session is built, so the
-                    // remote pane opens where the user actually lands after
-                    // login instead of hardcoded "/". A lookup failure
-                    // (older SFTP servers, permission quirks) falls back to
-                    // "/" rather than failing the connect.
-                    // Accept only usable absolute paths (M9d final review): an
-                    // empty/relative realpath result would land the pane in
-                    // .failed where "/" always worked.
-                    let resolved = (try? await fs.homeDirectoryPath()) ?? "/"
-                    let home = resolved.hasPrefix("/") ? resolved : "/"
-                    startSession(in: tab, with: fs, startPath: home)
                 }
                 .frame(maxHeight: .infinity, alignment: .top)
                 // Plaintext-transport confirmation (M21/T10): asked by the
@@ -883,6 +938,155 @@ enum LivenessProbeRace {
             timeoutTask?.cancel()
             continuation.resume(returning: value)
         }
+    }
+}
+
+/// What the tab's connection area should show while it has no active
+/// session (connection-liveness plan, Task 6) — the ONE surface Task 6's
+/// `.connecting` case renders through, shaped for Task 7 to add its own
+/// case (the `lost` error view) onto without redesigning this type or its
+/// call site in `ContentView.detail`. Named per the design spec's own
+/// framing (`docs/superpowers/specs/2026-08-21-verbindungszustand-design.md`
+/// §4): "dieselbe Tab-Fläche" for connecting, connected, and lost.
+enum ConnectionAttemptSurface: Equatable {
+    /// The ordinary new-connection/edit form (`ConnectionFormView`).
+    case form
+    /// "Connecting…" with a Cancel control (Task 6).
+    case connecting
+}
+
+/// Decides `ConnectionAttemptSurface` from the two facts `ContentView
+/// .detail` already has in hand — pulled out as a plain function so
+/// `Tests/macSCPAppKitTests/` can exercise every combination directly,
+/// rather than the decision living inline in a view body this project has
+/// no way to render (the same move `LivenessDotPlan`, Task 5, made for the
+/// tab-strip dot).
+enum ConnectionSurfacePlan {
+    /// `hostKeyPromptPending` is `tab.connectionViewModel.hostKeyPrompt !=
+    /// nil` at the call site. TOFU's trust card lives INSIDE
+    /// `ConnectionFormView` (`hostKeyPromptView`), unlike the WebDAV/S3
+    /// certificate prompt, which is a sibling surface `ContentView.detail`
+    /// already checks before ever reaching this function
+    /// (`tab.certificateBridge.currentCandidate`) — so a `.connecting`
+    /// surface that hid `ConnectionFormView` unconditionally would hide the
+    /// one thing on screen a first connection to an unknown host needs
+    /// answered. TOFU is a hard stop in this project (see the architecture
+    /// invariants), never bypassed by a UI surface picking the wrong
+    /// branch — this override is what keeps that true here.
+    static func surface(
+        for liveness: ConnectionLiveness?, hostKeyPromptPending: Bool
+    ) -> ConnectionAttemptSurface {
+        guard !hostKeyPromptPending else { return .form }
+        return liveness == .connecting ? .connecting : .form
+    }
+}
+
+/// Whether a connect attempt's result should still be handed to
+/// `ContentView.startSession` (connection-liveness plan, Task 6) — read at
+/// the exact moment the ad-hoc form's `onConnected` closure in `ContentView
+/// .detail` actually runs, after `form.connect()` and the home-directory
+/// lookup both return.
+///
+/// Cancel (`ConnectingAttemptView`'s `onCancel`, wired in `ContentView
+/// .detail`) forces `tab.liveness` back to `nil` through `teardown(_:)` the
+/// moment the user clicks it — well before the abandoned dial itself
+/// necessarily returns, since cancelling the dial is best-effort only (see
+/// `ConnectionViewModel.cancelConnecting()`'s own doc comment, and
+/// `ConnectionViewModelTests
+/// .cancelConnectingReleasesStateWhileTheDialNeverReturns`, which measures
+/// exactly that for the underlying connector). Comparing against
+/// `.connecting` here is what stops a stale success from resurrecting a
+/// session on a tab the user already backed out of.
+///
+/// Does NOT distinguish a cancelled attempt from a brand-new one started on
+/// the SAME tab afterward — both read `.connecting` at the moment a late
+/// result arrives. A user who cancels and reconnects before the abandoned
+/// dial gives up on its own could still see that stale result applied. A
+/// per-attempt token would close this narrower gap; see the Task 6 report
+/// for why this task stops short of adding one.
+enum ConnectAttemptOutcome {
+    static func shouldApply(livenessAtCompletion: ConnectionLiveness?) -> Bool {
+        livenessAtCompletion == .connecting
+    }
+}
+
+/// Mirrors `SessionTab.connectionViewModel.state` into `SessionTab
+/// .liveness` while a connect attempt for THIS tab is running (connection-
+/// liveness plan, Task 6) — mounted per tab in `ContentView.splitLayout`'s
+/// `.background`, for every tab and not only the active one, for the same
+/// reason `LivenessProbeRunner` is (see that type's own doc comment):
+/// switching away from a connecting tab must not stop THAT tab's own dot
+/// and surface from tracking its own attempt.
+///
+/// `tab.liveness` is the single fact Task 5's tab-strip dot and this task's
+/// `ConnectionSurfacePlan` both read — this is the one place that drives it
+/// INTO `.connecting`, so the dot and the surface cannot read two
+/// independently-derived answers to "is this tab connecting right now".
+///
+/// Two of `ConnectionViewModel.State`'s three cases matter here.
+/// `.connecting` always means an attempt for this tab just started, and
+/// always publishes `.connecting`. `.failed` always means the attempt just
+/// ended with nothing connected — `ContentView.connect(in:stored:)` tears
+/// any PREVIOUS session down before dialing again, so `tab.session` is
+/// already nil by the time a fresh dial can even reach `.connecting`, and
+/// there is nothing left afterward for a stale liveness to describe (the
+/// same "no session, no liveness" rule `SessionTab.liveness`'s own doc
+/// comment states) — this resets to `nil`. `.idle` is deliberately left
+/// alone: the only transition INTO `.idle` FROM `.connecting` is a
+/// SUCCESSFUL dial (`ConnectionViewModel.connect()`'s one `state = .idle`
+/// assignment sits on its success path), and publishing that success as
+/// `.connected` is `ContentView.startSession`'s job, moments later, once
+/// the home-directory lookup finishes — resetting to `nil` here first would
+/// flash the form back for that window.
+struct ConnectAttemptLivenessMirror: View {
+    let tab: SessionTab
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+            .onChange(of: tab.connectionViewModel.state) { _, newState in
+                switch newState {
+                case .connecting:
+                    tab.liveness = .connecting
+                case .failed:
+                    tab.liveness = nil
+                case .idle:
+                    break
+                }
+            }
+    }
+}
+
+/// "Connecting…" with a Cancel control (connection-liveness plan, Task 6) —
+/// shown instead of `ConnectionFormView` while `ConnectionSurfacePlan
+/// .surface(for:hostKeyPromptPending:)` answers `.connecting`. The design
+/// spec's own framing for this surface
+/// (`docs/superpowers/specs/2026-08-21-verbindungszustand-design.md` §4):
+/// the connection attempt becomes a cancellable task on the same tab area,
+/// so the rest of the window — other tabs, the sidebar once this one's own
+/// dial ends — stays usable instead of the tab looking like a dead modal
+/// with nothing to click.
+private struct ConnectingAttemptView: View {
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .controlSize(.large)
+            Text(L10n.string("tabs.liveness.connectingHelp", "Connecting…"))
+                .font(.title2.bold())
+            Text(L10n.string(
+                "connection.connecting.body",
+                "macSCP is waiting for the host to respond."))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button(L10n.string("common.cancel", "Cancel"), action: onCancel)
+                .buttonStyle(.polished)
+        }
+        .padding(24)
+        .frame(minWidth: 420, maxWidth: 460)
     }
 }
 
