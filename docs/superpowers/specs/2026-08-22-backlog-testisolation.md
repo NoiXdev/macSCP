@@ -18,7 +18,18 @@ des Entwicklers**:
 Der geschriebene Wert war eine Testzeichenkette, kein echtes Geheimnis. Der
 Umsetzer hat die Änderung sofort zurückgenommen, gestoppt und gemeldet; der
 Schutzmechanismus hat ihm das Aufräumen im Keychain verweigert, was richtig
-ist. Die Einträge wurden über die App entfernt.
+ist.
+
+**Korrektur, gemessen 2026-08-22:** eine frühere Fassung dieses Absatzes
+behauptete, beide Einträge seien entfernt. Nachgesehen: der Keychain-Eintrag
+ist weg, der Eintrag in `sessions-v2.json` stand noch da. Die Behauptung war
+eine Annahme, keine Messung.
+
+Das ist nicht nur Unordnung. `SessionListViewModel.save` sucht per **Namen** —
+ein Lauf mit gebrochener Naht schreibt denselben Eintrag also erneut und
+erzeugt **byte-identisches JSON**. Der Schnappschuss-Test, der die Isolation
+beweisen soll, besteht damit ausgerechnet in dem Zustand leer, den der
+Vorfall hinterlassen hat.
 
 ## Der eigentliche Befund
 
