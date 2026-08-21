@@ -443,10 +443,13 @@ public final class SettingsStore {
         value == 0 ? 0 : min(max(value, 15), 600)
     }
 
-    /// Connection-establishment timeout in seconds, applied per hop
-    /// (including a jump host). Clamped to 5...120 on BOTH ends, default 10
-    /// — deliberately below NIO's own default of 30s (which Citadel
-    /// overrides to), same forward-compat pattern as `terminalFontSize`.
+    /// Connection-establishment timeout in seconds, meant to apply per hop
+    /// (including a jump host) once a later task wires it into the connect
+    /// call — nothing reads this property yet. Clamped to 5...120 on BOTH
+    /// ends, default 10, which is NIO's own `ClientBootstrap` default;
+    /// Citadel overrides that to 30s, and this setting deliberately keeps
+    /// NIO's shorter default instead. Same forward-compat pattern as
+    /// `terminalFontSize`.
     public var connectTimeoutSeconds: Int {
         get {
             clamp(

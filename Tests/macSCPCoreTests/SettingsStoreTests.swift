@@ -14,6 +14,16 @@ struct SettingsStoreTests {
         { dir in dir.appendingPathComponent("settings.json") }
     }
 
+    /// Reads back what a setter actually persisted. Asserting through
+    /// `SettingsStore`'s own getter is not enough to pin a clamping
+    /// setter: the getter independently re-clamps on every read, so a
+    /// setter that skipped clamping entirely would still read back
+    /// correctly and the test would stay green.
+    private func persistedRaw(_ dir: URL) throws -> [String: JSONValue] {
+        let data = try Data(contentsOf: fileURL(dir))
+        return try JSONDecoder().decode([String: JSONValue].self, from: data)
+    }
+
     @Test func defaultsWithoutFile() {
         let dir = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -790,17 +800,27 @@ struct SettingsStoreTests {
 
     // MARK: - Connection liveness settings
 
-    @Test func theKeepAliveIntervalIsClampedOnBothEnds() {
+    /// Asserts through the persisted file, not just the getter: the getter
+    /// re-clamps independently, so a setter that forgot to clamp would
+    /// still read back clamped and this test would miss it (see
+    /// `persistedRaw`'s doc comment).
+    @Test func theKeepAliveIntervalIsClampedOnBothEnds() throws {
         let dir = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = SettingsStore(directory: dir)
+
         store.keepAliveIntervalSeconds = 5
         // 0 means off and is the ONLY value below the floor that survives.
         #expect(store.keepAliveIntervalSeconds == 15)
+        #expect(try persistedRaw(dir)["keepAliveIntervalSeconds"] == .number(15))
+
         store.keepAliveIntervalSeconds = 0
         #expect(store.keepAliveIntervalSeconds == 0)
+        #expect(try persistedRaw(dir)["keepAliveIntervalSeconds"] == .number(0))
+
         store.keepAliveIntervalSeconds = 9_999
         #expect(store.keepAliveIntervalSeconds == 600)
+        #expect(try persistedRaw(dir)["keepAliveIntervalSeconds"] == .number(600))
     }
 
     @Test func keepAliveIntervalSecondsDefaultsToSixtyAndRoundtripsZero() {
@@ -814,15 +834,21 @@ struct SettingsStoreTests {
         #expect(reloaded.keepAliveIntervalSeconds == 0)
     }
 
-    @Test func theConnectTimeoutIsClampedAndDefaultsBelowCitadelsThirty() {
+    /// Asserts through the persisted file, not just the getter — see
+    /// `theKeepAliveIntervalIsClampedOnBothEnds`'s comment for why.
+    @Test func theConnectTimeoutIsClampedAndDefaultsBelowCitadelsThirty() throws {
         let dir = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = SettingsStore(directory: dir)
         #expect(store.connectTimeoutSeconds == 10)
+
         store.connectTimeoutSeconds = 1
         #expect(store.connectTimeoutSeconds == 5)
+        #expect(try persistedRaw(dir)["connectTimeoutSeconds"] == .number(5))
+
         store.connectTimeoutSeconds = 10_000
         #expect(store.connectTimeoutSeconds == 120)
+        #expect(try persistedRaw(dir)["connectTimeoutSeconds"] == .number(120))
     }
 
     @Test func connectTimeoutSecondsRoundtrips() {
