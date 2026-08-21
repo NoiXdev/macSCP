@@ -58,14 +58,47 @@ Kostet ein Xcode-Projekt neben dem reinen SwiftPM-Aufbau und einen
 CI-Runner mit GUI-Sitzung. Das ist ein eigenes Vorhaben, kein Zusatz — und
 es berührt `scripts/package-app` und die Release-Kette.
 
+## Zweiter belegter Fall (2026-08-21, Verbindungszustand Task 4)
+
+Derselbe Riss, an anderer Stelle und diesmal **dreifach gemessen**. Die
+Sonde soll jeden verbundenen Tab prüfen, nicht nur den sichtbaren. Die
+Entscheidung darüber wurde in einen prüfbaren Typ gezogen
+(`LivenessProbeCoverage.tabsToProbe(from:)`, ohne `activeTabID`-Parameter,
+sodass die Einschränkung dort nicht einmal formulierbar ist). Trotzdem
+bringt jede dieser drei Änderungen den Fehler zurück, und **alle drei
+lassen die volle Suite grün**:
+
+- ein `.filter { $0.id == activeTabID }` hinter dem Aufruf am Montageort,
+- die Einschränkung im Runner statt an der Montage,
+- ein Runner-Rumpf, der für nicht-aktive Tabs `EmptyView()` liefert.
+
+Der Grund ist immer derselbe: ein Quelltext-Scan beweist, dass ein Aufruf
+**existiert**, nicht dass er **wirkt**. Drei Wächter auf diesem Zweig sind
+nacheinander an genau dieser Grenze gescheitert — erst ein Etikett statt
+eines durchgereichten Werts, dann Anwesenheit statt Ort, dann Ort statt
+Abdeckung.
+
+**Entscheidung:** nicht weiterverfolgt. Ein vierter, klügerer Scan hätte
+dieselbe Grenze. Was diese Klasse fängt, ist Möglichkeit **C** — und die ist
+ein eigenes Vorhaben, kein Zusatz. Die Lücke steht als Kommentar an
+`LivenessProbeMountGuardTests`, damit sie am Ort des Geschehens sichtbar ist
+statt nur hier.
+
+**Damit sind es zwei belegte Fälle statt einem** — die Zahl, an der die
+Empfehlung unten hängt.
+
 ## Empfehlung
 
 **A jetzt, C als eigenes Vorhaben erwägen, B nicht.** B kostet eine
 Abhängigkeit und sieht ausgerechnet die Fehlerklasse nicht, die uns
 getroffen hat.
 
-Vor C wäre ehrlich zu fragen, wie viele Fehler dieser Art es bisher gab:
-gezählt sind es zwei — der verschluckte Ablehnungs-Alert aus Teil 2 und das
-verschluckte Sheet von heute. Beide in derselben Ecke, beide aus derselben
-Ursache. Das spricht eher für A als für den Aufbau einer zweiten
-Testinfrastruktur.
+Vor C wäre ehrlich zu fragen, wie viele Fehler dieser Art es bisher gab.
+Gezählt am 2026-08-21: **vier**. Zwei verschluckte Präsentationen (der
+Ablehnungs-Alert aus Snippets Teil 2, das Wert-Sheet aus dem Popover) und
+zwei Fälle, in denen ein Wächter eine Schreibweise statt einer Eigenschaft
+bezeugte (die Aufbaufrist, die Sonden-Abdeckung).
+
+Vier ist keine Zahl mehr, die für A allein spricht. Sie spricht dafür, C
+ernsthaft zu terminieren — aber als eigenes Vorhaben mit eigenem Entwurf,
+nicht als Anhängsel an den nächsten Zweig.
