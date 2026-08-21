@@ -131,7 +131,16 @@ Drei Werte im `SettingsStore`:
 |---|---|---|
 | Wiederverbinden-Verhalten | `offerOnly` | die drei Fälle aus Abschnitt 3 |
 | Intervall der Lebenszeichen | 60 s | 0 schaltet die Sonde ab |
-| Frist für den Verbindungsaufbau | 10 s | NIOs eigener Vorgabewert; Citadel überschreibt ihn auf 30. Gilt für **jeden** Hop einzeln, also auch für den Sprung-Host |
+| Frist für den Verbindungsaufbau | 10 s | NIOs eigener Vorgabewert; Citadel überschreibt ihn auf 30. Gilt für den **TCP-Aufbau jedes Hops**, den die Frist erreicht — siehe die Einschränkung darunter |
+
+**Korrektur, gemessen 2026-08-21:** eine frühere Fassung dieser Spec
+behauptete, die Frist gelte „für jeden Hop einzeln, also auch für den
+Sprung-Host". Das stimmt nicht. Nur der **erste** Hop geht über
+`SSHClient.connect`, das die Frist entgegennimmt. Der zweite läuft über
+Citadels `jump(to:)`, das `connectTimeout` gar nicht liest — dort begrenzt
+ein fest verdrahtetes `loginTimeout` von 10 Sekunden, an das wir nicht
+herankommen. Eine Kette mit Sprung-Host ist also nur zur Hälfte einstellbar.
+Das gehört in den Backlog, nicht in diesen Umfang.
 
 Die Frist der **Sonde** ist bewusst **keine** Einstellung: sie muss kürzer
 als das Intervall sein, sonst überholen sich Sonden. Sie wird aus dem
