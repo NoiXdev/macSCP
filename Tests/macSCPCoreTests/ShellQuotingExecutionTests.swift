@@ -196,8 +196,9 @@ struct ShellQuotingExecutionTests {
     }
 
     /// The `.environment` placement uses the same quoter and was affected
-    /// identically — `V=''̈; touch E1; '̈' echo $V` ran the payload as its
-    /// own command. The survey never sees this path (it is scoped to
+    /// identically — the emitted assignment, `export V=''̈; touch E1; '̈';
+    /// echo $V` in today's shape, ran the payload as its own command. The
+    /// survey never sees this path (it is scoped to
     /// commands that declare a placeholder), so the quoter is the only thing
     /// standing between an imported default value and a shell here.
     @Test func anEnvironmentValueWhoseQuotesCarryACombiningMarkCannotBreakOut() throws {

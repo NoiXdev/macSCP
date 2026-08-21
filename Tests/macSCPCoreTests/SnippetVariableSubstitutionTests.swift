@@ -419,8 +419,8 @@ struct SnippetVariableSubstitutionTests {
     /// Scoped to commands that declare a placeholder: the refusal exists to
     /// protect the quote-position check, and a here-document with no
     /// placeholder in it has nothing for that check to get wrong. An
-    /// environment variable is prepended as its own assignment and never
-    /// lands inside the command's quoting either.
+    /// environment variable is prepended as its own `export` statement and
+    /// never lands inside the command's quoting either.
     @Test("a here-document with only an environment variable stays savable")
     func aHeredocWithoutPlaceholdersIsFine() {
         let command = "cat <<EOF > $HOME/note.txt\nhello\nEOF"
