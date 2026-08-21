@@ -345,6 +345,16 @@ extension ContentView {
         tab.session = nil
         tab.activeStoredSessionID = nil
         tab.titleName = nil
+        // Stale liveness (connection-liveness plan, Task 4, fix round 2):
+        // every OTHER route through this function is a deliberate "leave
+        // this connection" (disconnect button, reconnect-in-place, tab
+        // close, sidebar delete) — there is no connection left to describe,
+        // so a dot left reading `.degraded`/`.lost` from before this call
+        // would be describing a session that is no longer there. The ONE
+        // exception, `LivenessProbeRunner`'s `.giveUp` case, writes `.lost`
+        // AFTER calling this function precisely so that write is not the
+        // one this line clears.
+        tab.liveness = nil
     }
 
     /// Activates a tab (strip click) and resets its attention indicator —

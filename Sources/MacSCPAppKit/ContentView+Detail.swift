@@ -650,16 +650,19 @@ extension ContentView {
 }
 
 /// Mounts the liveness probe for exactly one tab (connection-liveness plan,
-/// Task 4, fix round 1).
+/// Task 4, fix rounds 1 and 2).
 ///
-/// The probe used to be a second `.task(id: session.id)` inside `detail`'s
-/// own body — which SwiftUI only ever mounts for `tabsModel.activeTab`
-/// (`detail`'s doc comment on `ContentView`), since only one tab's content
-/// is in the view tree at a time. That meant a BACKGROUND tab's probe never
+/// The probe used to be a second `.task(id: session.id)` inside
+/// `ContentView.detail`'s own body. `detail` is built from `let tab =
+/// activeTab` and only ever renders that ONE tab's content — background
+/// tabs exist in `tabsModel.tabs` for switching, but their content is never
+/// mounted while they are not active — so a BACKGROUND tab's probe never
 /// ran at all, and `SessionTab.liveness` stayed at whatever it was the
 /// moment that tab stopped being active. Task 5's tab-strip dot needs a
 /// live value for every tab shown in the strip at once, not just the
-/// selected one.
+/// selected one. `LivenessProbeMountGuardTests` pins this placement by
+/// mutation, since a mount that quietly moved back into `detail` would
+/// still spell correctly and pass every other test in the suite.
 ///
 /// `ContentView.splitLayout` mounts one `LivenessProbeRunner` per entry of
 /// `tabsModel.tabs`, in a `ForEach` that lives in the tree regardless of
@@ -700,10 +703,10 @@ struct LivenessProbeRunner: View {
                     // `0` means no probe at all (design spec, connection-
                     // liveness plan §6) — sleep a fixed beat and recheck
                     // rather than spin, so turning the setting back on later
-                    // takes effect without restarting the tab. WIDENING an
-                    // already-running interval instead only takes effect once
-                    // the current sleep call completes, up to the OLD
-                    // interval's own length — see
+                    // takes effect without restarting the tab. NARROWING an
+                    // already-running interval instead only takes effect
+                    // once the current sleep call completes, up to the OLD,
+                    // LARGER interval's own length — see
                     // `LivenessProbePolicy.idleRecheckSeconds`'s own doc
                     // comment for that asymmetry stated precisely.
                     guard interval > 0 else {
@@ -719,13 +722,18 @@ struct LivenessProbeRunner: View {
                         switch action {
                         case .skip:
                             // Running traffic proves the connection better
-                            // than any probe would (design spec §2.1) —
-                            // stronger evidence than the failure streak this
-                            // resets, so carrying that streak across the
-                            // busy gap would let a later give-up fire on
-                            // stale evidence from before the traffic ever
-                            // started.
+                            // than any probe would (design spec §2.1) — so
+                            // the VISIBLE state says so too, not just the
+                            // internal failure count: `consecutiveFailures`
+                            // resets here for the same reason a stale
+                            // `.degraded` from before the busy gap must not
+                            // keep reading `.degraded` for the traffic's
+                            // whole duration (fix round 2) — carrying either
+                            // one across the gap would let a later give-up,
+                            // or a stale dot, stand on evidence that
+                            // predates the very traffic that disproved it.
                             consecutiveFailures = 0
+                            tab.liveness = .connected
                             break probing
                         case .probe, .probeAgainNow:
                             let timeoutSeconds = LivenessProbePolicy.probeTimeout(forInterval: interval)
@@ -746,8 +754,15 @@ struct LivenessProbeRunner: View {
                                 // `.giveUp`.
                             }
                         case .giveUp:
-                            tab.liveness = .lost
+                            // AFTER teardown, deliberately (fix round 2):
+                            // `teardown(_:)` itself clears `tab.liveness`
+                            // to `nil` for every OTHER route through it (a
+                            // deliberate disconnect has nothing left to
+                            // describe) — writing `.lost` afterward is what
+                            // keeps THIS route's value from being cleared
+                            // by that same reset.
                             await teardown(tab)
+                            tab.liveness = .lost
                             return
                         }
                     }
@@ -787,14 +802,21 @@ struct LivenessProbeRunner: View {
 /// where `Box` is constructed and both racing tasks are created — runs on
 /// the main actor without ever yielding, which is what guarantees both
 /// `box.operationTask` and `box.timeoutTask` are assigned before either
-/// task's own `@MainActor`-isolated body can start. `Box.resume(with:)` —
-/// the only place the continuation is taken and resumed — is itself
-/// reachable only by hopping onto the main actor, serializing the two
-/// racing calls regardless of which task gets there first: `continuation ==
-/// nil` on the second call is what makes a double resumption (which would
-/// trap) impossible, and both racing tasks always call `resume(with:)`
-/// exactly once each, so the guarantee is "at least once, at most once" —
-/// never zero, never twice.
+/// task's own `@MainActor`-isolated body can start.
+///
+/// The two racing calls to `resume(with:)` are NOT symmetric —
+/// `LivenessProbeRaceTests
+/// .aStatThatNeverRespondsStillReportsFailureWithinTheDeadline` is exactly
+/// the case where the operation task's own call never happens at all,
+/// because `await operation()` never returns to reach it. "At least once"
+/// instead comes from the timeout task alone: `Task.sleep` completes on
+/// its own schedule regardless of what `operation` does, so its call to
+/// `resume(with:)` is guaranteed no matter how the race goes. "At most
+/// once" comes from `Box.resume(with:)` itself — the only place the
+/// continuation is taken and resumed, reachable only by hopping onto the
+/// main actor, so whichever call (one or two) arrives is serialized, and
+/// `continuation == nil` on a second call is what makes a double
+/// resumption (which would trap) impossible.
 @MainActor
 enum LivenessProbeRace {
     static func run(

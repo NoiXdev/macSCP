@@ -81,9 +81,18 @@ struct LivenessProbeRaceTests {
         }
         let elapsed = start.duration(to: .now)
         #expect(alive == false)
-        // A generous bound, not an exact figure — this suite runs alongside
-        // the rest of the package's tests under Swift Testing's default
-        // parallel execution, and MainActor scheduling under that
+        // Lower bound: an implementation that returned `false`
+        // immediately (never actually waiting out `timeoutSeconds`) would
+        // still pass `alive == false` and the upper bound alike — this is
+        // what rules that out. A small margin under the 1s deadline itself
+        // (rather than requiring the full 1s) tolerates the deadline
+        // firing a hair early on a busy scheduler without weakening what
+        // this checks: the race genuinely waited, it did not just answer
+        // `false` on the spot.
+        #expect(elapsed >= .milliseconds(900))
+        // Upper bound, generous rather than exact — this suite runs
+        // alongside the rest of the package's tests under Swift Testing's
+        // default parallel execution, and MainActor scheduling under that
         // contention measured as high as 4.3s for this same 1s deadline in
         // one observed run. What this assertion actually separates is
         // "timed out as designed" from "hung on the abandoned operation

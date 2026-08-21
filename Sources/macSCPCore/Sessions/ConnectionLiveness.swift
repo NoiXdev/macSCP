@@ -40,11 +40,12 @@ public enum LivenessProbePolicy {
     /// all") — a fixed, short beat, not a zero-length sleep (which would
     /// spin the loop) and not the interval itself (which does not exist
     /// while the probe is off). This bounds only how quickly turning the
-    /// probe back ON takes effect; WIDENING an already-running interval
-    /// (e.g. 600 seconds down to 15, or the reverse) only takes effect once
-    /// the current sleep completes, up to the OLD interval's own length —
-    /// "applies without restart" holds up to one stale interval, not
-    /// instantly.
+    /// probe back ON takes effect. NARROWING an already-running interval
+    /// (e.g. 600 seconds down to 15) is the case that actually matters: it
+    /// only takes effect once the current sleep completes, up to the OLD,
+    /// LARGER interval's own length — up to ten minutes before a user who
+    /// just asked for 15-second checks gets one, not instantly. "Applies
+    /// without restart" holds up to one stale interval, not immediately.
     public static let idleRecheckSeconds = 5
 }
 
