@@ -21,6 +21,12 @@ extension ContentView {
     /// Split out of `mainContent` (M20 CI fix) so the layout and the modifier
     /// chain that decorates it are two separate inference problems instead of
     /// one. Together they had grown past what the type checker will solve.
+    ///
+    /// Also mounts one `LivenessProbeRunner` per entry of `tabsModel.tabs`
+    /// (connection-liveness plan, Task 4, fix round 1) — deliberately here
+    /// and not inside `detail`, which SwiftUI mounts only for the active
+    /// tab; see `LivenessProbeRunner`'s own doc comment for why a
+    /// background tab needs its probe running too.
     var splitLayout: some View {
     HSplitView {
         SessionSidebar(
@@ -108,6 +114,18 @@ extension ContentView {
         // the split view's content overflows the window and gets
         // clipped on both sides instead of shrinking.
         .frame(minWidth: isPristine ? 500 : 590, maxWidth: .infinity)
+    }
+    // One probe per tab, mounted regardless of which tab is active (Task 4,
+    // fix round 1) — see `LivenessProbeRunner`'s own doc comment. Zero-size
+    // and non-hit-testing, so this changes nothing about layout or input;
+    // `ForEach` drops a tab's runner (cancelling its `.task`) the instant
+    // that tab leaves `tabsModel.tabs`.
+    .background {
+        ForEach(tabsModel.tabs) { tab in
+            LivenessProbeRunner(
+                tab: tab, settingsStore: settingsStore,
+                teardown: { await teardown($0) })
+        }
     }
     }
 
@@ -398,71 +416,6 @@ extension ContentView {
                         await session.remote.refreshQuietly()
                     }
                 }
-                .task(id: session.id) {
-                    // Liveness probe (Task 4): same shape as this view's
-                    // existing auto-refresh loop — lives inside the tab's
-                    // `.id` identity, so a tab switch or a teardown cancels it
-                    // for free, and the keep-alive interval is read fresh
-                    // every lap so a mid-session settings change applies
-                    // without restart.
-                    //
-                    // Writes go through `tab.session?.liveness`, never through
-                    // the `session` constant this closure captured: that
-                    // constant is a `BrowserSession` VALUE copied when this
-                    // task started, so assigning through it would update a
-                    // local copy nobody else can see. `tab` is the
-                    // `@Observable` reference the rest of the app reads
-                    // `SessionTab.liveness` through.
-                    var consecutiveFailures = 0
-                    while !Task.isCancelled {
-                        let interval = settingsStore.keepAliveIntervalSeconds
-                        // `0` means no probe at all (design spec, connection-
-                        // liveness plan §6) — sleep a fixed beat and recheck
-                        // rather than spin, so turning the setting back on
-                        // later takes effect without restarting the tab.
-                        guard interval > 0 else {
-                            try? await Task.sleep(for: .seconds(5))
-                            continue
-                        }
-                        try? await Task.sleep(for: .seconds(interval))
-                        guard !Task.isCancelled else { continue }
-                        probing: while !Task.isCancelled {
-                            let action = LivenessProbePolicy.decide(
-                                queueIsBusy: tab.transferQueue.isActive,
-                                consecutiveFailures: consecutiveFailures)
-                            switch action {
-                            case .skip:
-                                break probing
-                            case .probe, .probeAgainNow:
-                                let timeoutSeconds = LivenessProbePolicy.probeTimeout(forInterval: interval)
-                                let alive = await probeIsAlive(
-                                    fs: session.remoteFS, path: session.homePath,
-                                    timeoutSeconds: timeoutSeconds)
-                                if alive {
-                                    consecutiveFailures = 0
-                                    tab.session?.liveness = .connected
-                                    break probing
-                                } else {
-                                    consecutiveFailures += 1
-                                    tab.session?.liveness = .degraded
-                                    // Loop again immediately, without sleeping
-                                    // the full interval: `decide` now sees the
-                                    // incremented failure count and answers
-                                    // `.probeAgainNow` (one immediate retry) or
-                                    // `.giveUp`.
-                                }
-                            case .giveUp:
-                                tab.session?.liveness = .lost
-                                // The ONE teardown path (`cancelAll` → terminal
-                                // `shutdown` → `disconnect`), same as every
-                                // other route off a session — see
-                                // `ContentView.teardown(_:)`.
-                                await teardown(tab)
-                                return
-                            }
-                        }
-                    }
-                }
                 .transferConflictSheet(bridge: bridge)
             } else if let candidate = tab.certificateBridge.currentCandidate {
                 // Certificate trust prompt (M21/T10): the same "form is
@@ -601,31 +554,6 @@ extension ContentView {
         .id(tab.id)
     }
 
-    /// The liveness probe's own round trip (connection-liveness plan, Task
-    /// 4): races `stat` on the session's home path against
-    /// `timeoutSeconds` (`LivenessProbePolicy.probeTimeout(forInterval:)`,
-    /// Task 1) — `true` only on a reply within that time, `false` on either
-    /// a thrown error or the timeout winning the race. `RemoteFileSystem
-    /// .stat` carries no cancellation contract, so the losing side of the
-    /// race may keep running past this function's return; the probe loop's
-    /// `.task(id:)` in `detail` never waits on it again either way.
-    private func probeIsAlive(
-        fs: any RemoteFileSystem, path: String, timeoutSeconds: Int
-    ) async -> Bool {
-        await withTaskGroup(of: Bool.self) { group in
-            group.addTask {
-                (try? await fs.stat(path: path)) != nil
-            }
-            group.addTask {
-                try? await Task.sleep(for: .seconds(timeoutSeconds))
-                return false
-            }
-            let result = await group.next() ?? false
-            group.cancelAll()
-            return result
-        }
-    }
-
     /// Panel content: a narrow header (host name + snippet picker, Task 8)
     /// above the terminal itself, which shows the running shell or an
     /// ended/empty state. `SSHTerminalView` is deliberately mounted only
@@ -717,6 +645,192 @@ extension ContentView {
                 .fill(DesignTokens.hairline)
                 .frame(height: 1)
                 .allowsHitTesting(false)
+        }
+    }
+}
+
+/// Mounts the liveness probe for exactly one tab (connection-liveness plan,
+/// Task 4, fix round 1).
+///
+/// The probe used to be a second `.task(id: session.id)` inside `detail`'s
+/// own body — which SwiftUI only ever mounts for `tabsModel.activeTab`
+/// (`detail`'s doc comment on `ContentView`), since only one tab's content
+/// is in the view tree at a time. That meant a BACKGROUND tab's probe never
+/// ran at all, and `SessionTab.liveness` stayed at whatever it was the
+/// moment that tab stopped being active. Task 5's tab-strip dot needs a
+/// live value for every tab shown in the strip at once, not just the
+/// selected one.
+///
+/// `ContentView.splitLayout` mounts one `LivenessProbeRunner` per entry of
+/// `tabsModel.tabs`, in a `ForEach` that lives in the tree regardless of
+/// which tab is active — so a background tab now keeps probing. The
+/// `.task(id:)` shape is kept deliberately: `ForEach` drops a tab's row (and
+/// with it, cancels its task) the moment that tab is closed, and this
+/// view's own `.task(id: tab.session?.id)` still restarts the loop on a
+/// disconnect/reconnect the same way the original did — the cancellation
+/// guarantee this whole approach depends on did not change, only where the
+/// mounted view lives.
+///
+/// Renders nothing observable: `body` is a zero-size `Color.clear`, purely
+/// a mount point for `.task(id:)`. Draws no indicator itself — that is Task
+/// 5's job, reading `tab.liveness`.
+struct LivenessProbeRunner: View {
+    let tab: SessionTab
+    let settingsStore: SettingsStore
+    /// Routes to `ContentView.teardown(_:)` — passed in rather than called
+    /// directly because this type has no access to `ContentView`'s own
+    /// instance state, only to what its caller (`ContentView.splitLayout`)
+    /// hands it. The ONE teardown path (`cancelAll` → terminal `shutdown` →
+    /// `disconnect`), same as every other route off a session.
+    let teardown: (SessionTab) async -> Void
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+            .task(id: tab.session?.id) {
+                guard let session = tab.session else { return }
+                var consecutiveFailures = 0
+                // Liveness probe (Task 4): reads settings fresh every lap so
+                // a mid-session change applies without restart; skipped laps
+                // just sleep on — the same shape `detail`'s own auto-refresh
+                // loop uses.
+                while !Task.isCancelled {
+                    let interval = settingsStore.keepAliveIntervalSeconds
+                    // `0` means no probe at all (design spec, connection-
+                    // liveness plan §6) — sleep a fixed beat and recheck
+                    // rather than spin, so turning the setting back on later
+                    // takes effect without restarting the tab. WIDENING an
+                    // already-running interval instead only takes effect once
+                    // the current sleep call completes, up to the OLD
+                    // interval's own length — see
+                    // `LivenessProbePolicy.idleRecheckSeconds`'s own doc
+                    // comment for that asymmetry stated precisely.
+                    guard interval > 0 else {
+                        try? await Task.sleep(for: .seconds(LivenessProbePolicy.idleRecheckSeconds))
+                        continue
+                    }
+                    try? await Task.sleep(for: .seconds(interval))
+                    guard !Task.isCancelled else { continue }
+                    probing: while !Task.isCancelled {
+                        let action = LivenessProbePolicy.decide(
+                            queueIsBusy: tab.transferQueue.isActive,
+                            consecutiveFailures: consecutiveFailures)
+                        switch action {
+                        case .skip:
+                            // Running traffic proves the connection better
+                            // than any probe would (design spec §2.1) —
+                            // stronger evidence than the failure streak this
+                            // resets, so carrying that streak across the
+                            // busy gap would let a later give-up fire on
+                            // stale evidence from before the traffic ever
+                            // started.
+                            consecutiveFailures = 0
+                            break probing
+                        case .probe, .probeAgainNow:
+                            let timeoutSeconds = LivenessProbePolicy.probeTimeout(forInterval: interval)
+                            let alive = await LivenessProbeRace.run(timeoutSeconds: timeoutSeconds) {
+                                (try? await session.remoteFS.stat(path: session.homePath)) != nil
+                            }
+                            if alive {
+                                consecutiveFailures = 0
+                                tab.liveness = .connected
+                                break probing
+                            } else {
+                                consecutiveFailures += 1
+                                tab.liveness = .degraded
+                                // Loop again immediately, without sleeping
+                                // the full interval: `decide` now sees the
+                                // incremented failure count and answers
+                                // `.probeAgainNow` (one immediate retry) or
+                                // `.giveUp`.
+                            }
+                        case .giveUp:
+                            tab.liveness = .lost
+                            await teardown(tab)
+                            return
+                        }
+                    }
+                }
+            }
+    }
+}
+
+/// Races an async operation against a deadline, `false` if the deadline
+/// wins (connection-liveness plan, Task 4, fix round 1) — pulled out of
+/// `LivenessProbeRunner` so `Tests/macSCPAppKitTests/` can drive it directly
+/// with a fake `RemoteFileSystem` whose `stat` never resumes: the exact case
+/// the previous shape (`withTaskGroup`) could not survive.
+///
+/// `withTaskGroup` implicitly awaits every remaining child before its own
+/// scope returns, even one abandoned via `cancelAll()` — that is a
+/// structured-concurrency guarantee, not a bug, but it defeats a timeout
+/// when the abandoned child cannot finish early. Citadel's own path into
+/// NIO ends in a bare `EventLoopFuture.get()` with no cancellation handler,
+/// so a cancelled `stat` against a connection that has actually died does
+/// not finish early — measured at 3.00s against a 1s deadline with the
+/// `withTaskGroup` shape, on the exact case this whole probe exists to
+/// catch: a connection that dies silently, where `stat` never returns at
+/// all. With that shape the probe hangs instead of timing out, and the
+/// state stays `.connected` — the opposite of the intent.
+///
+/// Two unstructured `Task`s race instead of one structured child: neither
+/// is a child `run(timeoutSeconds:operation:)` itself awaits, so returning
+/// does not wait on whichever one loses. The abandoned operation may keep
+/// running in the true background afterward — cancelling it is best-effort
+/// only, for the same reason `EventLoopFuture.get()` defeated the previous
+/// shape's own cancellation — but that no longer blocks the caller.
+///
+/// Exactly-once resumption (this project's standing continuation invariant;
+/// see `ConflictPromptBridge`'s doc comment for the fuller treatment): `run`
+/// is `@MainActor`, so its synchronous `withCheckedContinuation` closure —
+/// where `Box` is constructed and both racing tasks are created — runs on
+/// the main actor without ever yielding, which is what guarantees both
+/// `box.operationTask` and `box.timeoutTask` are assigned before either
+/// task's own `@MainActor`-isolated body can start. `Box.resume(with:)` —
+/// the only place the continuation is taken and resumed — is itself
+/// reachable only by hopping onto the main actor, serializing the two
+/// racing calls regardless of which task gets there first: `continuation ==
+/// nil` on the second call is what makes a double resumption (which would
+/// trap) impossible, and both racing tasks always call `resume(with:)`
+/// exactly once each, so the guarantee is "at least once, at most once" —
+/// never zero, never twice.
+@MainActor
+enum LivenessProbeRace {
+    static func run(
+        timeoutSeconds: Int, operation: @escaping @Sendable () async -> Bool
+    ) async -> Bool {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            let box = Box(continuation: continuation)
+            box.operationTask = Task { @MainActor in
+                let succeeded = await operation()
+                box.resume(with: succeeded)
+            }
+            box.timeoutTask = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(timeoutSeconds))
+                box.resume(with: false)
+            }
+        }
+    }
+
+    @MainActor
+    private final class Box {
+        private var continuation: CheckedContinuation<Bool, Never>?
+        var operationTask: Task<Void, Never>?
+        var timeoutTask: Task<Void, Never>?
+
+        init(continuation: CheckedContinuation<Bool, Never>) {
+            self.continuation = continuation
+        }
+
+        /// The only place `continuation` is taken and resumed — see this
+        /// type's own doc comment for the exactly-once argument.
+        func resume(with value: Bool) {
+            guard let continuation else { return }
+            self.continuation = nil
+            operationTask?.cancel()
+            timeoutTask?.cancel()
+            continuation.resume(returning: value)
         }
     }
 }

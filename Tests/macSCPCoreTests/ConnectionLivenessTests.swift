@@ -16,6 +16,13 @@ struct ConnectionLivenessTests {
         #expect(LivenessProbePolicy.decide(queueIsBusy: true, consecutiveFailures: 0) == .skip)
     }
 
+    @Test func theIdleRecheckIsFiveSeconds() {
+        // Pinned so the App-layer probe loop (Task 4, fix round 1) reads
+        // this constant instead of carrying its own bare literal — a
+        // regression here is a behavior change, not just a comment.
+        #expect(LivenessProbePolicy.idleRecheckSeconds == 5)
+    }
+
     @Test func theFirstFailureDegradesAndRetriesTheSecondGivesUp() {
         #expect(LivenessProbePolicy.decide(queueIsBusy: false, consecutiveFailures: 0) == .probe)
         #expect(LivenessProbePolicy.decide(queueIsBusy: false, consecutiveFailures: 1) == .probeAgainNow)

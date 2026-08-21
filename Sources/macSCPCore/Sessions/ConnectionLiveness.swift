@@ -34,6 +34,18 @@ public enum LivenessProbePolicy {
     public static func probeTimeout(forInterval interval: Int) -> Int {
         max(1, min(10, interval / 2))
     }
+
+    /// How long the probe loop sleeps before rechecking
+    /// `keepAliveIntervalSeconds` while that setting reads `0` ("no probe at
+    /// all") — a fixed, short beat, not a zero-length sleep (which would
+    /// spin the loop) and not the interval itself (which does not exist
+    /// while the probe is off). This bounds only how quickly turning the
+    /// probe back ON takes effect; WIDENING an already-running interval
+    /// (e.g. 600 seconds down to 15, or the reverse) only takes effect once
+    /// the current sleep completes, up to the OLD interval's own length —
+    /// "applies without restart" holds up to one stale interval, not
+    /// instantly.
+    public static let idleRecheckSeconds = 5
 }
 
 public enum ReconnectBackoff {

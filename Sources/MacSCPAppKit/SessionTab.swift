@@ -41,19 +41,14 @@ struct BrowserSession {
     /// liveness probe `stat` it without a second round trip to find its own
     /// target.
     let homePath: String
-    /// This session's connection liveness (Task 4), owned by the session
-    /// itself — never an app-wide singleton, this project's standing
-    /// per-window-scope invariant (see `SessionTab`'s own doc comment).
-    /// Starts `.connected`: by the time a `BrowserSession` exists,
-    /// `ConnectionViewModel.connect()` has already succeeded. Written by the
-    /// probe loop in `ContentView+Detail.swift`, read through
-    /// `SessionTab.liveness`.
-    var liveness: ConnectionLiveness = .connected
 }
 
 /// One window tab (M8a): bundles what used to be window-wide state, per
 /// tab. Reference type — background tabs stay alive in `TabsViewModel`
-/// while only the active tab is mounted.
+/// while only the active tab is mounted. Per-window scope: this type and
+/// everything it stores (`liveness` included) belongs to one window's tab,
+/// never to an app-wide singleton — this project's standing invariant for
+/// connection/session state.
 @MainActor
 @Observable
 final class SessionTab: Identifiable {
@@ -167,12 +162,28 @@ final class SessionTab: Identifiable {
 
     var isConnected: Bool { session != nil }
 
-    /// This tab's connection liveness (Task 4), read through to the
-    /// session — `nil` while no session is attached (the connection form,
-    /// or a freshly closed/torn-down tab). Read-only here: the probe loop
-    /// writes `tab.session?.liveness` directly, the same pattern `showsFiles`
-    /// already uses to write `session?.showsFiles`.
-    var liveness: ConnectionLiveness? { session?.liveness }
+    /// This tab's connection liveness (Task 4; fix round 1 moved it here
+    /// from `BrowserSession`). `nil` before the first connect attempt.
+    ///
+    /// Stored directly on the TAB, not on the session, and that is the
+    /// whole fix: a `.giveUp` verdict sets this to `.lost` and then tears
+    /// the session down through `teardown(_:)`, which ends by nilling
+    /// `session` — if `liveness` had stayed a read-through onto
+    /// `session?.liveness` (as it did before fix round 1), that same
+    /// `teardown(_:)` call would have erased the very value it was just set
+    /// to, in the same breath, and `.lost` could never be observed by
+    /// anything that reads this property afterward — exactly the state
+    /// Task 7's error view exists to show. `.lost` is precisely the state in
+    /// which there is no session anymore, so the value has to be able to
+    /// outlive the session it describes.
+    ///
+    /// Written directly by `ContentView.startSession` (reset to `.connected`
+    /// on every fresh connect) and by the probe loop in
+    /// `ContentView+Detail.swift` — no getter/setter indirection the way
+    /// `showsFiles` has: `showsFiles` is per-SESSION and needs the session
+    /// to route writes into, `liveness` is per-TAB and is exactly what must
+    /// keep working once the session it was describing is gone.
+    var liveness: ConnectionLiveness?
 
     var displayTitle: String {
         titleName ?? L10n.string("tabs.newConnection", "New Connection")

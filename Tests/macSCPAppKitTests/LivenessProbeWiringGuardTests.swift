@@ -2,11 +2,13 @@ import Foundation
 import Testing
 
 /// Guards the shape of the liveness-probe loop in `ContentView+Detail.swift`
-/// (connection-liveness plan, Task 4): three claims about that loop, each
-/// checked by scanning source text rather than by running it.
+/// (connection-liveness plan, Task 4; fix round 1 moved the loop from
+/// `ContentView.detail` into `LivenessProbeRunner.body`, still in the same
+/// file — see that type's own doc comment for why): three claims about that
+/// loop, each checked by scanning source text rather than by running it.
 ///
 /// 1. The keep-alive interval is read INSIDE the `while`, every lap — not
-///    hoisted to a `let` above it, which would freeze the value at the
+///    hoisted to a `let` outside it, which would freeze the value at the
 ///    loop's first iteration and ignore a setting changed mid-session.
 /// 2. The probe/retry/give-up decision comes from `LivenessProbePolicy
 ///    .decide(...)` (Task 1) — not a condition rewritten inline, which
@@ -18,12 +20,12 @@ import Testing
 ///    `disconnect`).
 ///
 /// Same boundary as this project's other wiring guards (see
-/// `ConnectTimeoutAppWiringGuardTests`'s doc comment, right beside this
-/// file): this project has no SwiftUI rendering harness, so a `.task(id:)`
+/// `ConnectTimeoutAppWiringGuardTests`'s doc comment for the same idiom):
+/// this project has no SwiftUI rendering harness, so a `.task(id:)`
 /// closure's shape can only be checked by reading it, not by running it.
 /// Fail-closed: an unreadable file, a missing anchor, or an unbalanced brace
-/// all count as failures. Self-tested against synthetic source below, so
-/// the guard cannot pass silently just because the real file moved, was
+/// all count as failures. Self-tested against synthetic source, so the
+/// guard cannot pass silently just because the real file moved, was
 /// reformatted past recognition, or failed to read.
 @Suite("Liveness probe loop wiring guard")
 struct LivenessProbeWiringGuardTests {
@@ -39,10 +41,8 @@ struct LivenessProbeWiringGuardTests {
     private static let detailFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Detail.swift")
 
-    /// Anchors the probe loop's own `.task(id:)` — distinct from the
-    /// auto-refresh loop's `.task(id: session.id)` a few lines above it in
-    /// the same file (checked unique against the real file by
-    /// `theAnchorAppearsExactlyOnceInTheRealFile` below).
+    /// Anchors the probe loop's own `.task(id:)`, unique in the file
+    /// (checked by `theAnchorAppearsExactlyOnceInTheRealFile`).
     private static let anchor = "// Liveness probe (Task 4)"
 
     private enum ScanError: Error { case anchorNotFound, openBraceNotFound, unbalancedBraces }
@@ -55,8 +55,8 @@ struct LivenessProbeWiringGuardTests {
         #expect(body.contains("settingsStore.keepAliveIntervalSeconds"), """
             the probe loop's body no longer reads \
             `settingsStore.keepAliveIntervalSeconds` inside the `while` — a read \
-            hoisted above the loop would freeze the interval at the loop's first \
-            lap and ignore a setting changed mid-session.
+            hoisted outside the loop would freeze the interval at the loop's \
+            first lap and ignore a setting changed mid-session.
             """)
     }
 
@@ -87,8 +87,8 @@ struct LivenessProbeWiringGuardTests {
 
     /// Fail-closed check, same reasoning as
     /// `ConnectTimeoutAppWiringGuardTests.theAnchorAppearsExactlyOnceInTheRealFile`:
-    /// if the anchor ever stops being unique, the three claims above could be
-    /// scanning the wrong loop silently.
+    /// if the anchor ever stops being unique, the three claims this suite
+    /// makes could be scanning the wrong loop silently.
     @Test func theAnchorAppearsExactlyOnceInTheRealFile() throws {
         let source = try String(contentsOf: Self.detailFile, encoding: .utf8)
         let count = source.components(separatedBy: Self.anchor).count - 1
@@ -134,7 +134,7 @@ struct LivenessProbeWiringGuardTests {
             while !Task.isCancelled {
                 let interval = settingsStore.keepAliveIntervalSeconds
                 if failures >= 2 {
-                    tab.session?.liveness = .lost
+                    tab.liveness = .lost
                 }
             }
             """
@@ -148,7 +148,7 @@ struct LivenessProbeWiringGuardTests {
             while !Task.isCancelled {
                 switch action {
                 case .giveUp:
-                    tab.session?.liveness = .lost
+                    tab.liveness = .lost
                     await session.remote.disconnect()
                 }
             }
@@ -164,7 +164,7 @@ struct LivenessProbeWiringGuardTests {
             while !Task.isCancelled {
                 switch action {
                 case .giveUp:
-                    tab.session?.liveness = .lost
+                    tab.liveness = .lost
                     await teardown(tab)
                     return
                 }
@@ -194,7 +194,7 @@ struct LivenessProbeWiringGuardTests {
     /// balanced-brace close. Throws rather than returning `nil` so a
     /// missing anchor or an unbalanced file fails the calling test loudly,
     /// not as a silently-empty string that would make every `contains`
-    /// check below trivially false.
+    /// check in the calling tests trivially false.
     private static func loopBody(after anchor: String, in source: String) throws -> String {
         guard let anchorRange = source.range(of: anchor) else { throw ScanError.anchorNotFound }
         let afterAnchor = source[anchorRange.upperBound...]

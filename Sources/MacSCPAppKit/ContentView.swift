@@ -1008,6 +1008,12 @@ struct ContentView: View {
             // the liveness probe, see `BrowserSession.homePath`'s doc comment.
             homePath: startPath
         )
+        // Fresh liveness for a fresh session (Task 4, fix round 1):
+        // `SessionTab.liveness` lives on the tab, not the session (see that
+        // property's own doc comment for why), so it needs its own reset
+        // here rather than getting one for free from `BrowserSession`'s
+        // memberwise init the way it used to.
+        tab.liveness = .connected
         // Hidden-files toggle (M7a/T4): applied once here at session start,
         // kept in sync afterwards by the `.onChange` observer above.
         tab.session?.local.showHiddenFiles = settingsStore.showHiddenFiles
