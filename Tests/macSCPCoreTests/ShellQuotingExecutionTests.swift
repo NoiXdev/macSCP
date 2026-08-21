@@ -857,6 +857,12 @@ struct ShellQuotingExecutionTests {
     /// that produced this test: every one of these templates was ACCEPTED
     /// while its payload ran on the other side, and every one of them reads
     /// harmlessly enough for an imported snippet to carry it.
+    ///
+    /// `export {{X}}` used to be in this list and no longer is: `/bin/zsh`
+    /// is installed here and does run its payload, so it has a marker behind
+    /// it now in
+    /// `exportInATemplateReparsesItsArgumentWhileTheEmittedOneDoesNot`. The
+    /// entries that remain are the ones no shell on this machine disproves.
     @Test(
         "a template only another shell re-parses is still refused",
         arguments: [
@@ -864,7 +870,6 @@ struct ShellQuotingExecutionTests {
             "test -v {{X}}",
             "printf -v {{X}} '%s' y",
             "print -v {{X}} y",
-            "export {{X}}",
             "set -A {{X}} 1",
             "getopts ab {{X}}",
             "shift {{X}}",
@@ -1139,6 +1144,195 @@ struct ShellQuotingExecutionTests {
             #expect(
                 markerExists("MARKER", in: directory),
                 "/bin/ksh no longer runs the value `redirect` is handed")
+        }
+    }
+
+    // MARK: - The `.environment` placement, measured rather than assumed
+
+    /// The shells installed on this machine, of the ones this section asks.
+    ///
+    /// Every question below is about POSIX assignment and export semantics
+    /// rather than about a bash extension, so asking one shell would leave
+    /// the answer looking universal without being measured that way. The
+    /// same four are the ones macOS ships; bash 5.2 and mksh were measured
+    /// in the round that wrote this and agreed with all four.
+    private var installedShells: [String] {
+        ["/bin/bash", "/bin/zsh", "/bin/dash", "/bin/ksh"].filter {
+            FileManager.default.isExecutableFile(atPath: $0)
+        }
+    }
+
+    /// Defect 1: a `NAME='value' command` PREFIX scopes to one simple
+    /// command, so everything after `&&`, `;` or `|` ran without the value.
+    ///
+    /// Each marker is named after the value, so a marker that exists proves
+    /// the value ARRIVED there rather than merely that a command ran.
+    ///
+    /// The second half is the one that keeps this from going vacuous: the
+    /// prefix form is built by hand here, run through the same shells, and
+    /// must NOT produce those markers. It is what `resolve` emitted before
+    /// this round.
+    @Test func anEnvironmentValueReachesTheCommandsAfterAnOperator() throws {
+        let body = #"true && touch "and-$V"; true; touch "semi-$V"; true | touch "pipe-$V""#
+        let resolved = SnippetVariableSubstitution.resolve(
+            command: body, variables: [environment("V")], values: ["V": "reached"])
+        #expect(resolved == "export V='reached'; " + body)
+
+        #expect(!installedShells.isEmpty, "no shell to ask")
+        for shell in installedShells {
+            try withScratchDirectory { directory in
+                try run(resolved, with: shell, in: directory)
+                for marker in ["and-reached", "semi-reached", "pipe-reached"] {
+                    #expect(
+                        markerExists(marker, in: directory),
+                        "\(shell): the exported value did not reach \(marker)")
+                }
+            }
+            try withScratchDirectory { directory in
+                try run("V='reached' " + body, with: shell, in: directory)
+                for marker in ["and-reached", "semi-reached", "pipe-reached"] {
+                    #expect(
+                        !markerExists(marker, in: directory), """
+                        \(shell): a prefix assignment now reaches \(marker), so the defect \
+                        this shape was changed for is gone and the change may be reverted
+                        """)
+                }
+            }
+        }
+    }
+
+    /// Defect 2: without `export`, a CHILD PROCESS saw nothing — and a
+    /// called script reading the value itself is the case this placement
+    /// exists for (`DB='x' ./backup.sh`, the example in its own doc
+    /// comment).
+    ///
+    /// The contrast half is the unexported statement, which is what
+    /// `resolve` emitted for a multi-line body before this round: the shell
+    /// running the body sees the value, `sh -c` does not.
+    @Test func anEnvironmentValueReachesAChildProcess() throws {
+        let body = #"sh -c 'touch "child-$V"'"#
+        let resolved = SnippetVariableSubstitution.resolve(
+            command: body, variables: [environment("V")], values: ["V": "reached"])
+        #expect(resolved == "export V='reached'; " + body)
+
+        #expect(!installedShells.isEmpty, "no shell to ask")
+        for shell in installedShells {
+            try withScratchDirectory { directory in
+                try run(resolved, with: shell, in: directory)
+                #expect(
+                    markerExists("child-reached", in: directory),
+                    "\(shell): the exported value did not reach the child process")
+            }
+            try withScratchDirectory { directory in
+                try run("V='reached'\n" + body, with: shell, in: directory)
+                #expect(
+                    !markerExists("child-reached", in: directory), """
+                    \(shell): an unexported assignment now reaches a child process, so the \
+                    defect this shape was changed for is gone
+                    """)
+            }
+        }
+    }
+
+    /// The value in an emitted `export` is data, and stays data.
+    ///
+    /// `export` is in `SnippetCommandSurvey.reparsingCommands`, so a
+    /// template that USES it as a command name is refused — see
+    /// `exportInATemplateReparsesItsArgumentWhileTheEmittedOneDoesNot`.
+    /// This is the other side of that line: macSCP emits the word itself,
+    /// with a name that passed `SnippetVariable.isValidName` on the left of
+    /// the `=` and a `PosixQuoting.singleQuoted` value on the right, so the
+    /// value is never a word `export` re-parses.
+    ///
+    /// The marker is the assertion. The `SAME` marker beside it is a
+    /// secondary one — it compares `$V` against the same quoter's output, so
+    /// a broken quoter could in principle break both sides identically;
+    /// a payload that stays inert AND compares equal is still the pair worth
+    /// seeing.
+    ///
+    /// EXECUTES THE PAYLOADS, on purpose, in a fresh scratch directory.
+    @Test(
+        "a hostile value in an emitted export stays inert",
+        arguments: [
+            "$(touch MARKER)",
+            "`touch MARKER`",
+            "a[$(touch MARKER)]=1",
+            "'; touch MARKER; '",
+            "'\u{0308}; touch MARKER; '\u{0308}",
+            "x\ntouch MARKER",
+            "*",
+        ])
+    func aHostileEnvironmentValueStaysDataInEveryShell(value: String) throws {
+        let body = #"[ "$V" = "# + PosixQuoting.singleQuoted(value) + #" ] && touch SAME"#
+        let resolved = SnippetVariableSubstitution.resolve(
+            command: body, variables: [environment("V")], values: ["V": value])
+
+        #expect(!installedShells.isEmpty, "no shell to ask")
+        for shell in installedShells {
+            try withScratchDirectory { directory in
+                try run(resolved, with: shell, in: directory)
+                #expect(
+                    !markerExists("MARKER", in: directory),
+                    "\(shell): the value escaped the emitted assignment and ran as a command")
+                #expect(
+                    markerExists("SAME", in: directory),
+                    "\(shell): the exported value is not the value that was asked for")
+            }
+        }
+    }
+
+    /// Why `export` is refused as a template's command name and emitted by
+    /// macSCP in the same round, with the difference measured.
+    ///
+    /// `export {{X}}` puts the VALUE in the position `export` re-parses, and
+    /// with `a[$(touch MARKER)]=1` zsh evaluates the subscript and runs the
+    /// substitution — `/bin/zsh` on this machine does it, and so does mksh.
+    /// `/bin/bash` 3.2.57 does not, which is why this shape used to sit in
+    /// `theTemplatesThisShellCannotDisproveAreStillRefused` as a verdict
+    /// with no marker behind it; zsh is installed, so it can be shown.
+    ///
+    /// macSCP's own emission puts the same payload on the RIGHT of an `=`,
+    /// inside single quotes, behind a name that is a shell identifier. The
+    /// second half of this test runs that through every installed shell and
+    /// no marker appears.
+    ///
+    /// EXECUTES THE PAYLOAD, on purpose, in a fresh scratch directory.
+    @Test func exportInATemplateReparsesItsArgumentWhileTheEmittedOneDoesNot() throws {
+        let payload = "a[$(touch MARKER)]=1"
+        #expect(
+            SnippetVariableSubstitution.firstDeclarationProblem(
+                command: "export {{X}}", variables: [placeholder("X")])
+                == expectedRefusal(forAnArgumentOf: "export"))
+
+        if FileManager.default.isExecutableFile(atPath: "/bin/zsh") {
+            let asATemplate = SnippetVariableSubstitution.resolve(
+                command: "export {{X}}", variables: [placeholder("X")], values: ["X": payload])
+            try withScratchDirectory { directory in
+                try run(asATemplate, with: "/bin/zsh", in: directory)
+                #expect(
+                    markerExists("MARKER", in: directory), """
+                    /bin/zsh no longer evaluates the subscript of a word handed to `export`, \
+                    so the refusal of `export` as a command name may be defending nothing
+                    """)
+            }
+        } else {
+            Issue.record("""
+                /bin/zsh is not on this machine, so the shell that re-parses an argument of \
+                `export` could not be asked. The refusal above is pinned; the execution \
+                behind it is not.
+                """)
+        }
+
+        let emitted = SnippetVariableSubstitution.resolve(
+            command: "echo done", variables: [environment("V")], values: ["V": payload])
+        #expect(emitted == "export V='a[$(touch MARKER)]=1'; echo done")
+        for shell in installedShells {
+            try withScratchDirectory { directory in
+                try run(emitted, with: shell, in: directory)
+                #expect(
+                    !markerExists("MARKER", in: directory),
+                    "\(shell): the emitted export re-parsed its own value")
+            }
         }
     }
 }

@@ -105,4 +105,59 @@ struct SnippetSendPlanTests {
             command: "echo hi\n", execute: true, bracketedPaste: false)
         #expect(plan == .send(Array("echo hi".utf8) + [Self.cr] + [Self.cr]))
     }
+
+    // MARK: - What a prepended `export` statement does to the plan
+
+    /// An `.environment` variable is emitted as `export NAME='value'; ` in
+    /// front of the body, and the separator is `; ` rather than a line break
+    /// precisely so that THIS stays true: a single-line snippet with an
+    /// environment variable is still one line, so it takes the single-line
+    /// path and is neither bracketed nor refused.
+    ///
+    /// A line break would have moved every such snippet onto the multi-line
+    /// path, where inserting without bracketed paste is refused outright.
+    @Test("an environment variable keeps a single-line snippet on the single-line path")
+    func aPrependedExportKeepsASingleLineSingle() {
+        let resolved = SnippetVariableSubstitution.resolve(
+            command: "./backup.sh",
+            variables: [SnippetVariable(
+                name: "DB", prompt: "DB", kind: .freeText, placement: .environment,
+                defaultValue: "", remembersLastValue: false)],
+            values: ["DB": "kunden db"])
+        #expect(resolved == "export DB='kunden db'; ./backup.sh")
+        #expect(
+            SnippetSendPlanner.plan(command: resolved, execute: false, bracketedPaste: false)
+                == .send(SnippetKeystrokes.bytes(forLine: resolved, execute: false)))
+    }
+
+    /// A multi-line body keeps every property it had: it is still multi-line
+    /// after the statement is prepended, so bracketed paste still brackets
+    /// it verbatim, and inserting it without bracketed paste is still
+    /// refused. The one visible change is that the first line now carries
+    /// the assignment ahead of the body's first command.
+    @Test("a multi-line body keeps its plan, with the export on the first line")
+    func aPrependedExportLeavesAMultiLineBodyMultiLine() {
+        let resolved = SnippetVariableSubstitution.resolve(
+            command: "cd /srv\nmake all",
+            variables: [SnippetVariable(
+                name: "DB", prompt: "DB", kind: .freeText, placement: .environment,
+                defaultValue: "", remembersLastValue: false)],
+            values: ["DB": "x"])
+        #expect(resolved == "export DB='x'; cd /srv\nmake all")
+        #expect(
+            SnippetSendPlanner.plan(command: resolved, execute: false, bracketedPaste: true)
+                == .send(Self.start + Array(resolved.utf8) + Self.end))
+        #expect(
+            SnippetSendPlanner.plan(command: resolved, execute: false, bracketedPaste: false)
+                == .refusedMultilineInsert)
+        // The line-by-line fallback sends the assignment and the body's
+        // first command as ONE line, which is what keeps them one statement
+        // list: a separate Return for the assignment would still export the
+        // value, but the shell would echo a second prompt for it.
+        #expect(
+            SnippetSendPlanner.plan(command: resolved, execute: true, bracketedPaste: false)
+                == .send(
+                    Array("export DB='x'; cd /srv".utf8) + [Self.cr]
+                        + Array("make all".utf8) + [Self.cr]))
+    }
 }

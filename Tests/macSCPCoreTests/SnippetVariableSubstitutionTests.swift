@@ -42,23 +42,29 @@ struct SnippetVariableSubstitutionTests {
         #expect(resolved == command)
     }
 
-    @Test("an environment variable is prepended to a single-line command")
+    /// One shape for every body: an exported assignment as its own
+    /// statement. The `NAME='value' command` prefix this replaces scoped to
+    /// exactly one simple command, and an unexported assignment reached no
+    /// child process; both losses are measured against six shells in
+    /// `ShellQuotingExecutionTests`.
+    @Test("an environment variable is prepended as its own exported statement")
     func environmentSingleLine() {
         let resolved = SnippetVariableSubstitution.resolve(
             command: "./backup.sh", variables: [environment("DB")],
             values: ["DB": "kunden db"])
-        #expect(resolved == "DB='kunden db' ./backup.sh")
+        #expect(resolved == "export DB='kunden db'; ./backup.sh")
     }
 
-    /// A multi-line body cannot take a leading assignment on the same line —
-    /// it would only scope to the first line. It becomes its own line, which
-    /// is why the variable then outlives the run in that session.
-    @Test("an environment variable becomes its own line for a multi-line body")
+    /// A multi-line body takes the SAME shape — there is no second branch
+    /// that reads the body and picks a separator. The `; ` is what keeps a
+    /// single-line body single-line for `SnippetSendPlanner`; here it simply
+    /// sits in front of the first line.
+    @Test("a multi-line body takes the same exported statement")
     func environmentMultiLine() {
         let resolved = SnippetVariableSubstitution.resolve(
             command: "cd /srv\nmake all", variables: [environment("DB")],
             values: ["DB": "x"])
-        #expect(resolved == "DB='x'\ncd /srv\nmake all")
+        #expect(resolved == "export DB='x'; cd /srv\nmake all")
     }
 
     @Test("several environment variables keep declaration order")
@@ -66,7 +72,7 @@ struct SnippetVariableSubstitutionTests {
         let resolved = SnippetVariableSubstitution.resolve(
             command: "./run.sh", variables: [environment("A"), environment("B")],
             values: ["A": "1", "B": "2"])
-        #expect(resolved == "A='1' B='2' ./run.sh")
+        #expect(resolved == "export A='1'; export B='2'; ./run.sh")
     }
 
     @Test("a declared placeholder that appears nowhere is a problem")

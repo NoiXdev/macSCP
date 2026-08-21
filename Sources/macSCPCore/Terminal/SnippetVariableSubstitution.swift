@@ -11,7 +11,7 @@ public enum SnippetVariableSubstitution {
         /// A name that is not a POSIX shell identifier
         /// (`SnippetVariable.isValidName`). For `.environment` such a name
         /// would not produce an assignment at all but extra commands —
-        /// `A;touch /tmp/m;B='v' echo hi` is three of them.
+        /// `export A;touch /tmp/m;B='v'; echo hi` is three of them.
         case invalidName(name: String)
         /// `SnippetCommandSurvey` could not read the command far enough to
         /// say anything about a placeholder's position. Not an accusation
@@ -55,7 +55,8 @@ public enum SnippetVariableSubstitution {
     /// `command` with every declared variable applied.
     ///
     /// Placeholders are replaced by the quoted value; environment
-    /// declarations are prepended as assignments in declaration order.
+    /// declarations are prepended, in declaration order, as one
+    /// `export NAME='value';` statement each.
     /// A missing value is treated as the empty string rather than skipped —
     /// leaving `{{NAME}}` in a command that then runs would be worse than an
     /// empty argument.
@@ -127,28 +128,42 @@ public enum SnippetVariableSubstitution {
         assembled.append(contentsOf: scalars[cursor...])
         let substituted = String(assembled)
 
+        // One `export NAME='value';` STATEMENT per declaration, ahead of the
+        // body, whatever the body looks like. Both halves of that shape are
+        // measured rather than argued (bash 3.2.57, bash 5.2, zsh 5.9, dash,
+        // mksh, ksh93; the probe reads the value in the body and in a child
+        // `sh -c`):
+        //
+        // - As a PREFIX -- `NAME='value' command` -- the assignment scopes to
+        //   that one simple command, so `V='x' true && printf "$V"` and every
+        //   `;` or `|` continuation read an empty value in all six shells.
+        //   The prefix does not even reach the first command's own arguments,
+        //   because expansion happens before the assignment takes effect.
+        // - WITHOUT `export`, as its own statement, the body sees the value
+        //   but a child process does not -- and a called script reading the
+        //   value itself is the case this placement exists for.
+        //
+        // The separator is `; ` and not a line break, on a difference that is
+        // not about shells at all: both forms measured identical in all six.
+        // A `; ` keeps a single-line body single-line, so `SnippetSendPlanner`
+        // still takes the single-line path for it -- a line break would turn
+        // every snippet with an environment variable into a multi-line send,
+        // which without bracketed paste is refused for insert and split into
+        // separate Return-terminated lines for execute.
+        //
+        // Emitting `export` here is not the shape `SnippetCommandSurvey`
+        // refuses as a reparsing command name. That refusal is about a
+        // placeholder standing among the arguments of an `export` the USER
+        // typed, where `export {{X}}` with a value of `a[$(touch M)]=1` runs
+        // the substitution in zsh and mksh (measured, both). Here the name is
+        // the left side of the assignment and passed `isValidName`, and the
+        // value is `PosixQuoting.singleQuoted` on the right side of the `=`;
+        // the same payload measured inert in all six shells.
         let assignments = variables
             .filter { $0.placement == .environment }
-            .map { "\($0.name)=\(PosixQuoting.singleQuoted(values[$0.name] ?? ""))" }
+            .map { "export \($0.name)=\(PosixQuoting.singleQuoted(values[$0.name] ?? "")); " }
         guard !assignments.isEmpty else { return substituted }
-
-        // A leading `NAME=value command` assignment scopes to that ONE
-        // command. For a multi-line body that would set it for the first
-        // line only, so it becomes its own line instead -- which is why the
-        // variable then outlives the run in that session, a fact the editor's
-        // hint text states.
-        //
-        // Asked over scalars with the WIDE line-break set, which is the
-        // strict side of both halves of the question: putting the
-        // assignments on their own line is never less safe than putting them
-        // in front of the first command, so anything that might be a line
-        // break should tip it. `Character.isNewline` would have answered a
-        // question about clusters instead -- and the whole area is here
-        // because a cluster answer and a byte answer disagreed.
-        let separator =
-            substituted.unicodeScalars.contains(where: ShellScalar.looksLikeALineBreak)
-            ? "\n" : " "
-        return assignments.joined(separator: " ") + separator + substituted
+        return assignments.joined() + substituted
     }
 
     /// Every occurrence of `{{name}}` in `command`, non-overlapping, left to
@@ -213,8 +228,8 @@ public enum SnippetVariableSubstitution {
     /// deliberately scoped to commands that declare at least one
     /// `.placeholder`: it exists to decide where a VALUE may be placed, and
     /// a here-document in a snippet that declares no placeholder — or only
-    /// `.environment` variables, which are prepended as their own
-    /// assignments and never land inside the command's own quoting — is an
+    /// `.environment` variables, which are prepended as their own `export`
+    /// statements and never land inside the command's own quoting — is an
     /// ordinary thing to write and stays savable.
     ///
     /// The unused check applies to `.placeholder` **only**, and that is not

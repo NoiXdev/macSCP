@@ -20,8 +20,17 @@ public struct SnippetVariable: Codable, Equatable, Sendable {
     public enum Placement: String, Codable, Equatable, Sendable {
         /// `{{NAME}}` in the command text is replaced by the quoted value.
         case placeholder
-        /// `NAME='value'` is prepended, and the command uses `$NAME` — or
-        /// does not mention it at all and lets a called script read it.
+        /// `export NAME='value';` is prepended as its own statement, and the
+        /// command uses `$NAME` — or does not mention it at all and lets a
+        /// called script read it.
+        ///
+        /// A statement rather than a `NAME='value' command` prefix, and
+        /// exported rather than plain, because both narrower forms lose the
+        /// value where it is most often wanted: a prefix reaches only one
+        /// simple command (nothing after `&&`, `;` or `|`), and an unexported
+        /// assignment reaches no child process — which is exactly the script
+        /// this placement is named for. Measured across six shells; see
+        /// `SnippetVariableSubstitution.resolve`.
         case environment
     }
 
