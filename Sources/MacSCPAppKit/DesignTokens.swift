@@ -32,6 +32,22 @@ enum DesignTokens {
     static let statusPhosphor = Color(nsColor: NSColor(
         srgbRed: 123 / 255, green: 216 / 255, blue: 143 / 255, alpha: 1)) // #7BD88F
 
+    /// Connection-liveness "connecting"/"degraded" status (connection-
+    /// liveness plan, Task 5): system orange, deliberately NOT `localAmber`
+    /// — that token is reserved for local-pane/upload semantics
+    /// (docs/design/ci.md: "Bernstein und Ozeanblau nie dekorativ mischen —
+    /// sie sind semantisch [lokal/remote], nicht ornamental"), and a tab can
+    /// show an upload's `localAmber` pulse and this liveness dot at the same
+    /// time. A distinct status color keeps those two meanings from reading
+    /// as the same signal.
+    static let statusAmber = Color.orange
+
+    /// Connection-liveness "lost" status (connection-liveness plan,
+    /// Task 5): system red, per docs/design/ci.md ("Status-Grün [Phosphor]
+    /// ist von den Markenfarben getrennt; Fehler nutzen System-Rot" — status
+    /// green is separate from the brand colors; errors use system red).
+    static let statusLost = Color.red
+
     /// Terminal background: deep sea (#0F1E2B) — deliberately NOT dynamic,
     /// the terminal is a "dark console" in both light and dark mode.
     static let terminalBackground = NSColor(

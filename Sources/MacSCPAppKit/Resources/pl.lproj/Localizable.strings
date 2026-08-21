@@ -350,6 +350,17 @@
 "tabs.a11y.uploading" = "wysyłanie";
 "tabs.a11y.downloading" = "pobieranie";
 "tabs.a11y.attention" = "wymaga uwagi";
+
+/* Kropka stanu połączenia na pasku kart (connection-liveness plan, Task 5) */
+"tabs.liveness.connectingHelp" = "Łączenie…";
+"tabs.liveness.connectingA11y" = "łączenie";
+"tabs.liveness.connectedHelp" = "Połączono";
+"tabs.liveness.connectedA11y" = "połączono";
+"tabs.liveness.degradedHelp" = "Brak odpowiedzi — ponowne sprawdzanie…";
+"tabs.liveness.degradedA11y" = "brak odpowiedzi, ponowne sprawdzanie";
+"tabs.liveness.lostHelp" = "Połączenie utracone";
+"tabs.liveness.lostA11y" = "połączenie utracone";
+
 "tabs.close.title" = "Zamknąć kartę?";
 "tabs.close.activeTransfers" = "Aktywne transfery w tej karcie zostaną anulowane.";
 "tabs.close.confirm" = "Zamknij";

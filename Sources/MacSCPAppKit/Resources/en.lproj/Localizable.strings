@@ -347,6 +347,17 @@
 "tabs.a11y.uploading" = "uploading";
 "tabs.a11y.downloading" = "downloading";
 "tabs.a11y.attention" = "needs attention";
+
+/* Tab strip liveness dot (connection-liveness plan, Task 5) */
+"tabs.liveness.connectingHelp" = "Connecting…";
+"tabs.liveness.connectingA11y" = "connecting";
+"tabs.liveness.connectedHelp" = "Connected";
+"tabs.liveness.connectedA11y" = "connected";
+"tabs.liveness.degradedHelp" = "Not responding — checking again…";
+"tabs.liveness.degradedA11y" = "not responding, checking again";
+"tabs.liveness.lostHelp" = "Connection lost";
+"tabs.liveness.lostA11y" = "connection lost";
+
 "tabs.close.title" = "Close tab?";
 "tabs.close.activeTransfers" = "Active transfers in this tab will be canceled.";
 "tabs.close.confirm" = "Close";

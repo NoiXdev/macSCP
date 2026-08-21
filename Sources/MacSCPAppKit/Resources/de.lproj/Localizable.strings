@@ -348,6 +348,17 @@
 "tabs.a11y.uploading" = "wird hochgeladen";
 "tabs.a11y.downloading" = "wird heruntergeladen";
 "tabs.a11y.attention" = "erfordert Aufmerksamkeit";
+
+/* Verbindungspunkt in der Tableiste (connection-liveness plan, Task 5) */
+"tabs.liveness.connectingHelp" = "Verbindet…";
+"tabs.liveness.connectingA11y" = "wird verbunden";
+"tabs.liveness.connectedHelp" = "Verbunden";
+"tabs.liveness.connectedA11y" = "verbunden";
+"tabs.liveness.degradedHelp" = "Antwortet nicht — wird erneut geprüft…";
+"tabs.liveness.degradedA11y" = "antwortet nicht, wird erneut geprüft";
+"tabs.liveness.lostHelp" = "Verbindung verloren";
+"tabs.liveness.lostA11y" = "Verbindung verloren";
+
 "tabs.close.title" = "Tab schließen?";
 "tabs.close.activeTransfers" = "Laufende Übertragungen in diesem Tab werden abgebrochen.";
 "tabs.close.confirm" = "Schließen";

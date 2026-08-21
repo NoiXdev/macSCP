@@ -351,6 +351,17 @@
 "tabs.a11y.uploading" = "envoi en cours";
 "tabs.a11y.downloading" = "téléchargement en cours";
 "tabs.a11y.attention" = "nécessite votre attention";
+
+/* Point de vie de la connexion dans la barre d'onglets (connection-liveness plan, Task 5) */
+"tabs.liveness.connectingHelp" = "Connexion…";
+"tabs.liveness.connectingA11y" = "connexion en cours";
+"tabs.liveness.connectedHelp" = "Connecté";
+"tabs.liveness.connectedA11y" = "connecté";
+"tabs.liveness.degradedHelp" = "Ne répond pas — nouvelle vérification…";
+"tabs.liveness.degradedA11y" = "ne répond pas, nouvelle vérification en cours";
+"tabs.liveness.lostHelp" = "Connexion perdue";
+"tabs.liveness.lostA11y" = "connexion perdue";
+
 "tabs.close.title" = "Fermer l'onglet ?";
 "tabs.close.activeTransfers" = "Les transferts actifs de cet onglet seront annulés.";
 "tabs.close.confirm" = "Fermer";

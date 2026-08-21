@@ -47,6 +47,61 @@ struct TabStripView: View {
     }
 }
 
+/// What the tab strip's liveness dot shows for one `ConnectionLiveness?`
+/// (connection-liveness plan, Task 5): a color and, since colour is never
+/// the only carrier of the message, a `.help` tooltip and a VoiceOver
+/// label for every state. Kept as a plain, testable mapping — same move as
+/// `SnippetListPlan` (Core) and `LivenessProbeCoverage`
+/// (`ContentView+Detail.swift`) — because this project has no SwiftUI
+/// rendering harness: nothing here can pin what actually lands on screen,
+/// but this function is the part a test CAN call directly and check.
+enum LivenessDotPlan {
+    struct Appearance: Equatable {
+        let color: Color
+        let helpKey: String
+        let helpDefault: String
+        let accessibilityLabelKey: String
+        let accessibilityLabelDefault: String
+    }
+
+    /// `nil` when there is nothing to show — no dot at all, not some
+    /// neutral fifth color. `SessionTab.liveness` is `nil` both before a
+    /// tab's first connect attempt and after `ContentView.teardown(_:)`
+    /// deliberately clears it (see that property's own doc comment): both
+    /// describe a tab with no session to report on, which is exactly what
+    /// today's tab strip already shows with nothing but italic, dimmed
+    /// title text. A dot claiming a status for a session that is not
+    /// currently being described would be a false signal, not a missing
+    /// one, so this returns `nil` rather than falling back to any of the
+    /// four real states.
+    static func appearance(for liveness: ConnectionLiveness?) -> Appearance? {
+        guard let liveness else { return nil }
+        switch liveness {
+        case .connecting:
+            return Appearance(
+                color: DesignTokens.statusAmber,
+                helpKey: "tabs.liveness.connectingHelp", helpDefault: "Connecting…",
+                accessibilityLabelKey: "tabs.liveness.connectingA11y", accessibilityLabelDefault: "connecting")
+        case .connected:
+            return Appearance(
+                color: DesignTokens.statusPhosphor,
+                helpKey: "tabs.liveness.connectedHelp", helpDefault: "Connected",
+                accessibilityLabelKey: "tabs.liveness.connectedA11y", accessibilityLabelDefault: "connected")
+        case .degraded:
+            return Appearance(
+                color: DesignTokens.statusAmber,
+                helpKey: "tabs.liveness.degradedHelp", helpDefault: "Not responding — checking again…",
+                accessibilityLabelKey: "tabs.liveness.degradedA11y",
+                accessibilityLabelDefault: "not responding, checking again")
+        case .lost:
+            return Appearance(
+                color: DesignTokens.statusLost,
+                helpKey: "tabs.liveness.lostHelp", helpDefault: "Connection lost",
+                accessibilityLabelKey: "tabs.liveness.lostA11y", accessibilityLabelDefault: "connection lost")
+        }
+    }
+}
+
 private struct TabItemView: View {
     let tab: SessionTab
     let isActive: Bool
@@ -84,6 +139,7 @@ private struct TabItemView: View {
 
     var body: some View {
         HStack(spacing: 7) {
+            livenessDot
             switch indicator {
             case .none: EmptyView()
             case .upload: dot(DesignTokens.localAmber, pulse: true)
@@ -151,6 +207,25 @@ private struct TabItemView: View {
         case .upload: return L10n.string("tabs.a11y.uploading", "uploading")
         case .download: return L10n.string("tabs.a11y.downloading", "downloading")
         case .attention: return L10n.string("tabs.a11y.attention", "needs attention")
+        }
+    }
+
+    // Liveness dot (connection-liveness plan, Task 5)
+    //
+    // Drawn before `dot(_:pulse:)`'s own upload/download/attention dot, not
+    // instead of it: liveness (is this session's connection alive at all)
+    // and activity (is a transfer running, does something need attention)
+    // are two independent axes, and a tab can legitimately be `.connected`
+    // while also mid-upload.
+    @ViewBuilder
+    private var livenessDot: some View {
+        if let appearance = LivenessDotPlan.appearance(for: tab.liveness) {
+            Circle()
+                .fill(appearance.color)
+                .frame(width: 7, height: 7)
+                .help(L10n.string(appearance.helpKey, appearance.helpDefault))
+                .accessibilityLabel(
+                    L10n.string(appearance.accessibilityLabelKey, appearance.accessibilityLabelDefault))
         }
     }
 
