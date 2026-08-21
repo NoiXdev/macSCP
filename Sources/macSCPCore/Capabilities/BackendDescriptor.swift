@@ -51,9 +51,9 @@ public struct BackendDescriptor: Sendable {
     /// (`SettingsStore.connectTimeoutSeconds`). Only the SSH closure below
     /// actually uses it (forwarded to `CitadelFileSystem.connect`).
     ///
-    /// Unlike the host-key decider two lines up, which is genuinely
-    /// SSH-only (S3 and WebDAV have their own, separate certificate
-    /// decider), a connect timeout is a meaningful setting for EVERY
+    /// Unlike a host-key decider, which is genuinely SSH-only (S3 and
+    /// WebDAV have their own, separate certificate decider), a connect
+    /// timeout is a meaningful setting for EVERY
     /// backend — S3 and WebDAV's own HTTP clients have connect-timeout
     /// knobs of their own. Their closures below currently drop this
     /// argument on the floor and keep using their transport's own default,
