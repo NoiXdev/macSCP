@@ -338,8 +338,16 @@ struct ConnectAttemptHandoffTests {
 
         // The abandoned dial "succeeds" now, in the true background.
         continuation.finish()
-        guard await waitUntil("the abandoned attempt must finish resuming past its own await", {
-            await gate.returnCount == 1
+        // Waits for the DISCONNECT as well as the dial's return. The refusal
+        // branch closes the abandoned connection after the await it was
+        // suspended on, so `returnCount` alone is satisfied one scheduling
+        // hop too early — a review measured that hop losing 2 runs in 10
+        // under full-suite load while passing 5 of 5 in isolation. The
+        // sibling scenario needs no such wait: it awaits the task itself.
+        guard await waitUntil("the abandoned attempt must finish resuming and close what it abandoned", {
+            let returned = await gate.returnCount
+            let closed = await gate.disconnectCount
+            return returned == 1 && closed == 1
         }) else { return name }
 
         #expect(tab.session == nil, "a cancelled attempt must not set a session")
