@@ -102,6 +102,47 @@ enum LivenessDotPlan {
     }
 }
 
+/// What the tab strip's SECOND dot shows — the pre-existing activity/
+/// attention indicator, not the liveness dot above (`LivenessDotPlan`).
+///
+/// Pulled out of `TabItemView.indicator` for this project's usual reason
+/// (nothing renders SwiftUI in a test) and for one specific rule this task
+/// added, which is invisible from inside either view: while a tab's
+/// connection reads `.lost`, the attention dot is suppressed.
+///
+/// The maintainer's reasoning, 2026-08-21: the drop EXPLAINS the failed
+/// transfer. The liveness dot is already red and already says "connection
+/// lost"; a second red dot immediately beside it, saying "needs attention"
+/// about the transfer that failed BECAUSE of it, tells the same news twice
+/// in the same colour. The attention state itself is not cleared, only
+/// hidden — `SessionTab.seenFailureCount` is untouched, so the dot comes
+/// back the moment the tab is connected again with failures still unseen.
+enum TabIndicatorPlan {
+    enum Indicator: Equatable { case none, upload, download, attention }
+
+    /// Attention (static red) wins over activity, as it always has;
+    /// activity direction is the caller's `isUploading`, read from
+    /// `TransferQueueViewModel.displayDirection`.
+    ///
+    /// Only `.attention` is suppressed by `.lost`, not the activity cases:
+    /// suppressing those would be a claim about what a torn-down tab's
+    /// queue can be doing, and this function is not the place that knows
+    /// it. In practice `ContentView.teardown(_:)` has already run
+    /// `cancelAll()` by the time a tab reads `.lost`, so the activity
+    /// branch answers `.none` on its own — by fact, not by a second rule
+    /// here that could disagree with it.
+    static func indicator(
+        liveness: ConnectionLiveness?, hasConflictPrompt: Bool,
+        hasUnseenFailures: Bool, queueIsActive: Bool, isUploading: Bool
+    ) -> Indicator {
+        if (hasConflictPrompt || hasUnseenFailures) && liveness != .lost {
+            return .attention
+        }
+        guard queueIsActive else { return .none }
+        return isUploading ? .upload : .download
+    }
+}
+
 private struct TabItemView: View {
     let tab: SessionTab
     let isActive: Bool
@@ -112,13 +153,9 @@ private struct TabItemView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulsing = false
 
-    private enum Indicator { case none, upload, download, attention }
-
-    /// Attention (static red) wins over activity; activity color follows
-    /// `TransferQueueViewModel.displayDirection` (spec 2: last-started item's
-    /// direction while something is running, falling back to the first
-    /// queued item's direction otherwise — see that property's doc comment,
-    /// M8a T5 review finding 4).
+    /// The activity/attention dot, decided by `TabIndicatorPlan` — see that
+    /// type's own doc comment for the rules, including the `.lost`
+    /// suppression this view cannot state on its own.
     ///
     /// The attention comparison uses `totalFailureCount` (monotonic), not the
     /// old item-based `failedCount`: `clearCompleted()` removes `.failed`
@@ -128,13 +165,19 @@ private struct TabItemView: View {
     /// count and never re-trigger. `totalFailureCount` only ever grows, so
     /// this comparison always detects a genuinely new failure (M8a T5
     /// review, finding 2).
-    private var indicator: Indicator {
-        if tab.conflictBridge.currentPrompt != nil
-            || tab.transferQueue.totalFailureCount > tab.seenFailureCount {
-            return .attention
-        }
-        guard tab.transferQueue.isActive else { return .none }
-        return tab.transferQueue.displayDirection == .upload ? .upload : .download
+    ///
+    /// `displayDirection` (spec 2): the last-started item's direction while
+    /// something is running, falling back to the first queued item's
+    /// direction otherwise — see that property's doc comment (M8a T5 review
+    /// finding 4).
+    private var indicator: TabIndicatorPlan.Indicator {
+        // Tab indicator decision (connection-liveness plan, Task 7)
+        TabIndicatorPlan.indicator(
+            liveness: tab.liveness,
+            hasConflictPrompt: tab.conflictBridge.currentPrompt != nil,
+            hasUnseenFailures: tab.transferQueue.totalFailureCount > tab.seenFailureCount,
+            queueIsActive: tab.transferQueue.isActive,
+            isUploading: tab.transferQueue.displayDirection == .upload)
     }
 
     var body: some View {

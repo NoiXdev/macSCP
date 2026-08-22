@@ -910,3 +910,14 @@
 /* Connecting attempt surface (connection-liveness plan, Task 6) */
 "connection.connecting.title" = "Connecting…";
 "connection.connecting.body" = "macSCP is waiting for the host to respond.";
+
+/* Lost-connection surface (connection-liveness plan, Task 7) */
+"connection.lost.title" = "Connection lost";
+"connection.lost.body.probe" = "The host stopped answering, so macSCP closed the session.";
+"connection.lost.body.retryFailed" = "macSCP could not reach the host again.";
+"connection.lost.body.needsPerson" = "The last attempt stopped at a question only you can answer.";
+"connection.lost.hint.noSavedSession" = "This connection was not saved, so reconnecting means filling the form in again.";
+"connection.lost.hint.stopped" = "macSCP is not retrying on its own until you have answered it.";
+"connection.lost.hint.automatic" = "macSCP keeps trying on its own, waiting longer between attempts.";
+"connection.lost.reconnect" = "Reconnect";
+"connection.lost.dismiss" = "Back to the form";

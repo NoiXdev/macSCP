@@ -1,0 +1,412 @@
+import Foundation
+import Testing
+@testable import MacSCPAppKit
+@testable import macSCPCore
+
+/// Drives the recovery path end to end on a REAL `ContentView`
+/// (connection-liveness plan, Task 7) — the half `ReconnectWiringGuardTests`
+/// cannot reach. A source scan can prove `reconnect(_:)` names
+/// `connect(in:stored:)`; only running it proves the redial actually
+/// reaches the connector with the stored session's own configuration, and
+/// that the tab it lands on is the one that lost its connection.
+///
+/// **Isolation.** Every `ContentView` here is built through `init`'s
+/// `sessionListViewModel:`/`secretStore:`/`managedKeyStore:` seams, pointed
+/// at a temporary directory and an in-memory `SecretStore`. That is not
+/// caution for its own sake: an earlier round on this branch reassigned
+/// those properties AFTER construction, the reassignment silently did not
+/// take, and a mutation experiment wrote a real entry into the maintainer's
+/// real `sessions-v2.json` and a real Keychain item. Every save name below
+/// is run-unique for the same reason `ConnectAttemptHandoffTests`' are —
+/// see that file's own "Isolation, round 3" — and
+/// `theRealSessionsFileIsNeverTouched` proves the isolation empirically
+/// rather than by reading the code.
+@Suite("Reconnect path")
+@MainActor
+struct ReconnectPathTests {
+    private static var realSessionsFileURL: URL {
+        SessionStore.defaultDirectory.appendingPathComponent("sessions-v2.json")
+    }
+
+    private func snapshotRealSessionsFile() -> Data? {
+        try? Data(contentsOf: Self.realSessionsFileURL)
+    }
+
+    private func makeTempDirectory(_ label: String) -> URL {
+        URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-\(label)-\(UUID().uuidString)")
+    }
+
+    private func uniqueSaveName(_ label: String) -> String {
+        "\(label)-\(UUID().uuidString)"
+    }
+
+    /// Same shape as `ConnectAttemptHandoffTests.makeContentView`, including
+    /// all three isolation seams.
+    private func makeContentView(
+        secrets: ReconnectSecretStore, storeDirectory: URL
+    ) -> (view: ContentView, cleanup: () -> Void) {
+        let settingsDir = makeTempDirectory("settings")
+        let auditDir = makeTempDirectory("audit")
+        let sessionListViewModel = SessionListViewModel(
+            store: SessionStore(directory: storeDirectory),
+            secrets: secrets,
+            auditStore: AuditLogStore(directory: storeDirectory.appendingPathComponent("audit")),
+            loginSetStore: LoginSetStore(directory: storeDirectory),
+            keys: ManagedKeyStore(directory: storeDirectory))
+        let view = ContentView(
+            settingsStore: SettingsStore(directory: settingsDir),
+            bandwidthLimiter: BandwidthLimiter(),
+            auditStore: AuditLogStore(directory: auditDir),
+            tabCommands: TabCommands(),
+            updateModel: UpdateCheckModel(),
+            menuBarModel: MenuBarStatusModel(),
+            sessionListViewModel: sessionListViewModel,
+            secretStore: secrets,
+            managedKeyStore: ManagedKeyStore(directory: storeDirectory))
+        return (view, {
+            try? FileManager.default.removeItem(at: settingsDir)
+            try? FileManager.default.removeItem(at: auditDir)
+        })
+    }
+
+    private func makeTab(connector: @escaping ConnectionViewModel.Connector) -> SessionTab {
+        SessionTab(
+            connectionViewModel: ConnectionViewModel(connector: connector),
+            certificateBridge: CertificatePromptBridge(),
+            limiter: BandwidthLimiter(),
+            maxConcurrent: 2)
+    }
+
+    /// Same shape as `LivenessGiveUpOrderingTests.attachSession(to:)`: a
+    /// tab that looks connected, without a network anywhere.
+    private func attachSession(to tab: SessionTab) {
+        let sessionID = UUID()
+        let remoteFS = LocalFileSystem()
+        tab.session = BrowserSession(
+            id: sessionID,
+            localFS: LocalFileSystem(),
+            remoteFS: remoteFS,
+            local: RemoteBrowserViewModel(fs: LocalFileSystem(), startPath: NSHomeDirectory()),
+            remote: RemoteBrowserViewModel(fs: remoteFS, startPath: "/"),
+            terminal: TerminalPanelViewModel(openShell: { _, _, _ in throw CancellationError() }),
+            editManager: EditSessionManager(sessionID: sessionID, queue: tab.transferQueue),
+            homePath: "/")
+        tab.liveness = .connected
+    }
+
+    @discardableResult
+    private func waitUntil(
+        _ description: Comment, timeout: Duration = .seconds(30),
+        sourceLocation: SourceLocation = #_sourceLocation,
+        _ condition: () async -> Bool
+    ) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        var satisfied = await condition()
+        while !satisfied, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+            satisfied = await condition()
+        }
+        #expect(satisfied, description, sourceLocation: sourceLocation)
+        return satisfied
+    }
+
+    // MARK: - Giving up records what the way back needs
+
+    /// The fact `handleLivenessGiveUp(_:)` has to capture BEFORE the
+    /// teardown that erases it: `teardown(_:)` clears
+    /// `activeStoredSessionID` along with the session, so a give-up that
+    /// read it afterwards would leave the surface with a Reconnect button
+    /// and nothing to dial. Behavioural, not a source scan — the order of
+    /// two statements is exactly what a scan cannot see, which is the
+    /// lesson `LivenessGiveUpOrderingTests` was written for.
+    @Test func givingUpRemembersWhichStoredSessionToRedial() async {
+        let workDir = makeTempDirectory("giveup")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, cleanup) = makeContentView(secrets: ReconnectSecretStore(), storeDirectory: workDir)
+        defer { cleanup() }
+        let tab = makeTab(connector: { _, _ in throw CancellationError() })
+        attachSession(to: tab)
+        let storedID = UUID()
+        tab.activeStoredSessionID = storedID
+
+        await view.handleLivenessGiveUp(tab)
+
+        #expect(tab.liveness == .lost)
+        #expect(tab.activeStoredSessionID == nil, "teardown still clears the live session's id")
+        #expect(tab.lostConnection?.storedSessionID == storedID, """
+            the give-up did not record which stored session dropped. `teardown(_:)` clears \
+            `activeStoredSessionID`, so reading it after the teardown — instead of before — \
+            leaves "Reconnect" with nothing to dial.
+            """)
+        #expect(tab.lostConnection?.reason == .probeGaveUp)
+        #expect(tab.lostConnection?.automaticAttempts == 0)
+    }
+
+    /// An ad-hoc connection has no stored session, and the surface must say
+    /// so rather than offering a button that cannot work.
+    @Test func givingUpOnAnAdHocConnectionOffersNoRedialTarget() async {
+        let workDir = makeTempDirectory("giveup-adhoc")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, cleanup) = makeContentView(secrets: ReconnectSecretStore(), storeDirectory: workDir)
+        defer { cleanup() }
+        let tab = makeTab(connector: { _, _ in throw CancellationError() })
+        attachSession(to: tab)
+
+        await view.handleLivenessGiveUp(tab)
+
+        #expect(tab.lostConnection?.storedSessionID == nil)
+        #expect(view.reconnectTarget(for: tab) == nil)
+    }
+
+    // MARK: - The redial itself
+
+    /// The load-bearing claim of this task, run rather than read: the
+    /// reconnect reaches the connector — through `connect(in:stored:)`,
+    /// which means through `fillForm(_:from:)`, through
+    /// `ConnectionViewModel.connect()`'s validation, and with the host-key
+    /// decider Core hands every backend — and lands a session on the tab
+    /// that lost one.
+    @Test func reconnectDialsTheStoredSessionAndBringsTheTabBack() async {
+        let workDir = makeTempDirectory("reconnect-dial")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let secrets = ReconnectSecretStore()
+        let (view, cleanup) = makeContentView(secrets: secrets, storeDirectory: workDir)
+        defer { cleanup() }
+
+        // `.agent` auth needs neither a typed password nor a keychain
+        // lookup to pass the form's own pre-dial validation — the same
+        // choice, for the same measured reason, as
+        // `ConnectAttemptHandoffTests.runStoredSessionHandoffScenario`.
+        let stored = StoredSession(
+            name: uniqueSaveName("reconnect-target"), kind: .ssh,
+            ssh: StoredSSHConfig(host: "example.com", username: "tim", authKind: .agent))
+        try? SessionStore(directory: workDir).upsert(stored)
+        view.sessionListViewModel.reload()
+
+        let recorder = DialRecorder()
+        let tab = makeTab(connector: { config, _ in
+            await recorder.record(config)
+            return RecordingFileSystem(recorder: recorder)
+        })
+        tab.lostConnection = LostConnection(reason: .probeGaveUp, storedSessionID: stored.id)
+        tab.liveness = .lost
+
+        view.reconnect(tab)
+
+        guard await waitUntil("the reconnect must reach the connector", {
+            await recorder.dialCount == 1
+        }) else { return }
+        guard await waitUntil("the reconnect must hand a session to the tab", {
+            tab.session != nil
+        }) else { return }
+
+        #expect(await recorder.dialedHost == "example.com", """
+            the reconnect dialed something other than the stored session it recorded — the \
+            redial must use the SAME stored configuration the dropped connection used.
+            """)
+        #expect(tab.activeStoredSessionID == stored.id)
+        #expect(tab.liveness == .connected)
+        #expect(tab.lostConnection == nil, """
+            a tab with a live session again must stop describing the connection that dropped \
+            — otherwise the next failed attempt returns to a stale surface, and an unattended \
+            schedule keeps pacing itself by the old attempt count.
+            """)
+    }
+
+    /// A session deleted while its tab sat on the lost surface: the button
+    /// resolves to nothing and nothing is dialed. `reconnectTarget(for:)`
+    /// is resolved against the live list on every call precisely so this
+    /// cannot dial a session that is gone.
+    @Test func reconnectDialsNothingWhenTheStoredSessionIsGone() async {
+        let workDir = makeTempDirectory("reconnect-missing")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, cleanup) = makeContentView(secrets: ReconnectSecretStore(), storeDirectory: workDir)
+        defer { cleanup() }
+
+        let recorder = DialRecorder()
+        let tab = makeTab(connector: { config, _ in
+            await recorder.record(config)
+            return RecordingFileSystem(recorder: recorder)
+        })
+        tab.lostConnection = LostConnection(reason: .probeGaveUp, storedSessionID: UUID())
+        tab.liveness = .lost
+
+        #expect(view.reconnectTarget(for: tab) == nil)
+        view.reconnect(tab)
+        // Nothing to await: with no target the call returns before the
+        // `Task` inside `connect(in:stored:)` would ever be created. A
+        // short settle keeps this from passing merely because the check
+        // ran first.
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(await recorder.dialCount == 0)
+        #expect(tab.session == nil)
+        #expect(tab.liveness == .lost, "the tab stays on the surface that explains why")
+    }
+
+    @Test func dismissingTheSurfaceClearsBothFacts() async {
+        let workDir = makeTempDirectory("reconnect-dismiss")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, cleanup) = makeContentView(secrets: ReconnectSecretStore(), storeDirectory: workDir)
+        defer { cleanup() }
+        let tab = makeTab(connector: { _, _ in throw CancellationError() })
+        tab.lostConnection = LostConnection(reason: .probeGaveUp, storedSessionID: UUID())
+        tab.liveness = .lost
+
+        view.dismissLostConnection(tab)
+
+        #expect(tab.liveness == nil, "the surface would otherwise stay up")
+        #expect(tab.lostConnection == nil, """
+            clearing only the liveness would leave the tab still "describing a lost \
+            connection" — the next failed attempt would jump straight back to the surface \
+            from under the form the user is typing into.
+            """)
+    }
+
+    /// Everything that puts the FORM on a tab has to leave the lost
+    /// surface first — `isConnected` is false for a lost tab, so these
+    /// paths reuse it, and `ConnectionSurfacePlan` would keep the error
+    /// view on screen over the freshly blanked form.
+    @Test func newConnectionOnALostTabReturnsToTheForm() async {
+        let workDir = makeTempDirectory("reconnect-newconnection")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, cleanup) = makeContentView(secrets: ReconnectSecretStore(), storeDirectory: workDir)
+        defer { cleanup() }
+        let tab = view.tabsModel.activeTab
+        tab.lostConnection = LostConnection(reason: .probeGaveUp, storedSessionID: UUID())
+        tab.liveness = .lost
+
+        view.newConnection()
+
+        #expect(tab.liveness == nil)
+        #expect(tab.lostConnection == nil)
+    }
+
+    /// The user moved on: a connect aimed at a DIFFERENT stored session
+    /// ends the episode, so a failure belongs to what they just asked for
+    /// rather than sending them back to a surface offering to redial
+    /// something else. The reconnect itself passes the same id, which is
+    /// what keeps its own failures on the surface that explains them —
+    /// `reconnectDialsTheStoredSessionAndBringsTheTabBack` above is the
+    /// other half of this pair.
+    @Test func connectingToADifferentSessionEndsTheLostEpisode() async {
+        let workDir = makeTempDirectory("reconnect-different")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, cleanup) = makeContentView(secrets: ReconnectSecretStore(), storeDirectory: workDir)
+        defer { cleanup() }
+
+        let other = StoredSession(
+            name: uniqueSaveName("other-session"), kind: .ssh,
+            ssh: StoredSSHConfig(host: "elsewhere.example", username: "tim", authKind: .agent))
+        let recorder = DialRecorder()
+        let tab = makeTab(connector: { config, _ in
+            await recorder.record(config)
+            return RecordingFileSystem(recorder: recorder)
+        })
+        tab.lostConnection = LostConnection(reason: .probeGaveUp, storedSessionID: UUID())
+        tab.liveness = .lost
+
+        view.connect(in: tab, stored: other)
+
+        #expect(tab.lostConnection == nil, "a connect to a different stored session left the previous drop's record in place — a failure would then return to a surface offering to redial the OLD session.")
+        guard await waitUntil("the connect must reach the connector", {
+            await recorder.dialCount == 1
+        }) else { return }
+        #expect(await recorder.dialedHost == "elsewhere.example")
+    }
+
+    // MARK: - Isolation proof
+
+    @Test func theRealSessionsFileIsNeverTouched() async {
+        let before = snapshotRealSessionsFile()
+        await reconnectDialsTheStoredSessionAndBringsTheTabBack()
+        await givingUpRemembersWhichStoredSessionToRedial()
+        let after = snapshotRealSessionsFile()
+        #expect(before == after, """
+            the real on-disk session store changed while this suite ran. `before` had \
+            \(before?.count.description ?? "no file"), `after` had \
+            \(after?.count.description ?? "no file").
+            """)
+    }
+}
+
+/// Records what the connector was handed, and how often — an actor so the
+/// polling loops above can read it while the dial runs.
+private actor DialRecorder {
+    private(set) var dialCount = 0
+    private(set) var dialedHost: String?
+    private(set) var disconnectCount = 0
+
+    func record(_ config: ConnectionConfig) {
+        dialCount += 1
+        if case .ssh(let ssh) = config { dialedHost = ssh.host }
+    }
+
+    func markDisconnected() { disconnectCount += 1 }
+}
+
+/// A `RemoteFileSystem` that answers only what a successful connect needs
+/// (`homeDirectoryPath()`), and traps on everything else so a future change
+/// routing through one of them fails loudly instead of passing silently —
+/// the same idiom as `ConnectAttemptHandoffTests
+/// .HangingHomeDirectoryFileSystem` and `LivenessProbeRaceTests
+/// .NeverRespondingFileSystem`.
+private struct RecordingFileSystem: RemoteFileSystem {
+    let recorder: DialRecorder
+
+    func list(path: String) async throws -> [RemoteFileItem] {
+        fatalError("not exercised by this test")
+    }
+
+    func stat(path: String) async throws -> RemoteFileItem {
+        fatalError("not exercised by this test")
+    }
+
+    func readStream(
+        path: String, fromOffset offset: UInt64
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        fatalError("not exercised by this test")
+    }
+
+    func write(
+        path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>
+    ) async throws {
+        fatalError("not exercised by this test")
+    }
+
+    func delete(path: String) async throws { fatalError("not exercised by this test") }
+    func createDirectory(at path: String) async throws { fatalError("not exercised by this test") }
+    func rename(from: String, to: String) async throws { fatalError("not exercised by this test") }
+    func setPermissions(path: String, permissions: UInt32) async throws {
+        fatalError("not exercised by this test")
+    }
+    func deleteTree(at path: String) async throws { fatalError("not exercised by this test") }
+
+    func homeDirectoryPath() async throws -> String { "/home/reconnect-test" }
+
+    func disconnect() async { await recorder.markDisconnected() }
+}
+
+/// In-memory `SecretStore` — `macSCPAppKitTests` cannot import
+/// `macSCPCoreTests`' own double (separate SwiftPM test targets), and the
+/// point of passing one at all is that no test in this file can reach the
+/// real Keychain.
+private final class ReconnectSecretStore: SecretStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [UUID: String] = [:]
+
+    func savePassword(_ password: String, for sessionID: UUID) throws {
+        lock.lock(); defer { lock.unlock() }
+        storage[sessionID] = password
+    }
+
+    func password(for sessionID: UUID) throws -> String? {
+        lock.lock(); defer { lock.unlock() }
+        return storage[sessionID]
+    }
+
+    func deletePassword(for sessionID: UUID) throws {
+        lock.lock(); defer { lock.unlock() }
+        storage[sessionID] = nil
+    }
+}

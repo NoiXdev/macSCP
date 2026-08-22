@@ -15,6 +15,10 @@ import Testing
 /// file claimed "crossed with" while only exercising `pending: true` for
 /// two of the five liveness values (`.connecting` and `nil`); this is the
 /// corrected version, not a rephrased claim over the same coverage.
+///
+/// Task 7 moved `.lost` out of the "everything else shows the form" group
+/// into its own surface; the ten combinations are unchanged in number and
+/// still all covered.
 @Suite("Connection surface plan")
 struct ConnectionSurfacePlanTests {
     @Test func connectingShowsTheConnectingSurface() {
@@ -23,8 +27,16 @@ struct ConnectionSurfacePlanTests {
                 == .connecting)
     }
 
+    /// The lost-connection surface (connection-liveness plan, Task 7) — the
+    /// error view with its "Reconnect" control, not the form. Before this
+    /// task `.lost` fell into the group below and showed the plain form,
+    /// which is exactly the behaviour this task replaces.
+    @Test func lostShowsTheLostSurface() {
+        #expect(ConnectionSurfacePlan.surface(for: .lost, hostKeyPromptPending: false) == .lost)
+    }
+
     @Test(arguments: [
-        Optional<ConnectionLiveness>.none, .connected, .degraded, .lost,
+        Optional<ConnectionLiveness>.none, .connected, .degraded,
     ])
     func everyOtherLivenessShowsTheFormWhenNoPromptIsPending(liveness: ConnectionLiveness?) {
         #expect(

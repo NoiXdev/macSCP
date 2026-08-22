@@ -18,6 +18,94 @@ struct ConnectionViewModelTests {
         return vm
     }
 
+    // MARK: - lastFailureKind (connection-liveness plan, Task 7)
+    //
+    // The one fact the reconnect policy reads to decide whether repeating
+    // an attempt unattended could ever produce a different outcome. Driven
+    // through the real `connect()` with a throwing connector rather than by
+    // calling the classifier directly: what matters is that the verdict
+    // reaches `lastFailureKind` on the same path the App reads it from, not
+    // that a private switch maps an error correctly in isolation.
+
+    /// TOFU, both halves: a key that does not match the one on record
+    /// (a hard stop nobody can retry past) and a trust card the user
+    /// answered with No.
+    @Test(arguments: [
+        HostKeyError.mismatch(host: "example.com", expected: "SHA256:a", presented: "SHA256:b"),
+        HostKeyError.rejectedByUser,
+    ])
+    func aHostKeyFailureNeedsAPerson(error: HostKeyError) async {
+        let vm = makeVM(connector: { _, _ in throw error })
+        _ = await vm.connect()
+        #expect(vm.lastFailureKind == .needsPerson)
+    }
+
+    /// The certificate analogue, case for case — WebDAV/S3's own TOFU.
+    @Test(arguments: [
+        ServerCertificateError.mismatch(host: "example.com", expected: "a", presented: "b"),
+        ServerCertificateError.rejectedByUser,
+        ServerCertificateError.trustStoreUnreadable(reason: "unreadable"),
+    ])
+    func aCertificateFailureNeedsAPerson(error: ServerCertificateError) async {
+        let vm = makeVM(connector: { _, _ in throw error })
+        _ = await vm.connect()
+        #expect(vm.lastFailureKind == .needsPerson)
+    }
+
+    @Test(arguments: [SSHKeyError.passphraseRequired, .wrongPassphrase])
+    func aKeyPassphraseFailureNeedsAPerson(error: SSHKeyError) async {
+        let vm = makeVM(connector: { _, _ in throw error })
+        _ = await vm.connect()
+        #expect(vm.lastFailureKind == .needsPerson)
+    }
+
+    /// The case that must NOT stop an unattended retry — a transport
+    /// failure is exactly what retrying is for. Without this, every test
+    /// above would pass just as well against a classifier that answers
+    /// `.needsPerson` for everything.
+    @Test func anOrdinaryTransportFailureIsRetryable() async {
+        let vm = makeVM(connector: { _, _ in
+            throw RemoteFSError.connectionFailed(reason: "timed out")
+        })
+        _ = await vm.connect()
+        #expect(vm.lastFailureKind == .other)
+    }
+
+    @Test func aSuccessfulConnectLeavesNoVerdictBehind() async {
+        let vm = makeVM(connector: { _, _ in throw SSHKeyError.passphraseRequired })
+        _ = await vm.connect()
+        #expect(vm.lastFailureKind == .needsPerson)
+
+        let second = makeVM()
+        _ = await second.connect()
+        #expect(second.lastFailureKind == nil)
+    }
+
+    /// Every attempt starts without a verdict: a second attempt that fails
+    /// for an ordinary reason must not still be reading the first one's
+    /// `.needsPerson`, which would keep an unattended schedule stopped for
+    /// good.
+    @Test func aLaterAttemptDoesNotInheritAnEarlierVerdict() async {
+        let outcomes = Outcomes(errors: [SSHKeyError.passphraseRequired,
+                                         RemoteFSError.connectionFailed(reason: "timed out")])
+        let vm = makeVM(connector: { _, _ in throw await outcomes.next() })
+        _ = await vm.connect()
+        #expect(vm.lastFailureKind == .needsPerson)
+        _ = await vm.connect()
+        #expect(vm.lastFailureKind == .other)
+    }
+
+    /// An App-layer refusal (`showFailure`) is not a dial result — leaving
+    /// the previous dial's verdict standing behind a newer, unrelated
+    /// `.failed` would attribute it to the wrong thing entirely.
+    @Test func anAppLayerRefusalClearsTheVerdict() async {
+        let vm = makeVM(connector: { _, _ in throw HostKeyError.rejectedByUser })
+        _ = await vm.connect()
+        #expect(vm.lastFailureKind == .needsPerson)
+        vm.showFailure(message: "the stored login was not found")
+        #expect(vm.lastFailureKind == nil)
+    }
+
     @Test func successReturnsFileSystemAndResetsState() async {
         let vm = makeVM()
         let fs = await vm.connect()
@@ -1842,4 +1930,13 @@ private actor RaceClaim {
         claimed = true
         return true
     }
+}
+
+
+/// Hands out a fixed sequence of errors, one per call — an actor because
+/// the connector closure that reads it is `@Sendable`.
+private actor Outcomes {
+    private var errors: [any Error]
+    init(errors: [any Error]) { self.errors = errors }
+    func next() -> any Error { errors.isEmpty ? CancellationError() : errors.removeFirst() }
 }

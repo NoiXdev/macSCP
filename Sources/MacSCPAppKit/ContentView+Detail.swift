@@ -141,6 +141,19 @@ extension ContentView {
             ConnectAttemptLivenessMirror(tab: tab)
         }
     }
+    // Unattended reconnect (Task 7): one per tab, for the same reason the
+    // two `.background` layers above are — a tab whose connection dropped
+    // while it was NOT the one on screen is the tab that most needs this.
+    // Same zero-size, non-hit-testing shape; a third `.background` layer
+    // composes with the two above rather than replacing either.
+    .background {
+        ForEach(tabsModel.tabs) { tab in
+            ReconnectRunner(
+                tab: tab, settingsStore: settingsStore,
+                targetIsKnown: { reconnectTarget(for: $0) != nil },
+                onAttempt: { reconnect($0) })
+        }
+    }
     }
 
     /// Window-level chrome: minimum size, tint, title, the `NSWindow` handle,
@@ -462,10 +475,10 @@ extension ContentView {
                 // reachable only from the form branch.
                 Group {
                     // Connecting surface branch (connection-liveness plan, Task 6)
-                    if ConnectionSurfacePlan.surface(
+                    let surface = ConnectionSurfacePlan.surface(
                         for: tab.liveness,
-                        hostKeyPromptPending: tab.connectionViewModel.hostKeyPrompt != nil
-                    ) == .connecting {
+                        hostKeyPromptPending: tab.connectionViewModel.hostKeyPrompt != nil)
+                    if surface == .connecting {
                         ConnectingAttemptView(onCancel: {
                             // Best-effort on the dial itself (see
                             // `ConnectionViewModel.cancelConnecting()`'s own
@@ -489,6 +502,29 @@ extension ContentView {
                             tab.isReconnecting = false
                             Task { await teardown(tab) }
                         })
+                    }
+                    // Lost surface branch (connection-liveness plan, Task 7)
+                    //
+                    // Placed between the `}` and the `else` deliberately: it
+                    // is `ReconnectWiringGuardTests`' anchor for this branch,
+                    // and an anchor INSIDE the branch would leave the scan's
+                    // first balanced brace pair somewhere in the middle of
+                    // the call below instead of around the whole branch.
+                    //
+                    // The content is `LostConnectionPlan.content`'s, not
+                    // assembled here: what a given reason says, and whether
+                    // "Reconnect" is offered at all, is the one decision on
+                    // this surface a test can actually check
+                    // (`ReconnectPlanTests`), and it stays checkable only
+                    // while this branch does no deciding of its own.
+                    else if surface == .lost {
+                        LostConnectionView(
+                            content: LostConnectionPlan.content(
+                                reason: tab.lostConnection?.reason ?? .probeGaveUp,
+                                targetIsKnown: reconnectTarget(for: tab) != nil,
+                                behaviour: settingsStore.reconnectBehaviour),
+                            onReconnect: { reconnect(tab) },
+                            onDismiss: { dismissLostConnection(tab) })
                     } else {
                         // Align the form to the top instead of centering it
                         // vertically (user feedback 2026-07-10, M5c/T0) —
@@ -946,9 +982,9 @@ enum LivenessProbeRace {
 
 /// What the tab's connection area should show while it has no active
 /// session (connection-liveness plan, Task 6) — the ONE surface Task 6's
-/// `.connecting` case renders through, shaped for Task 7 to add its own
-/// case (the `lost` error view) onto without redesigning this type or its
-/// call site in `ContentView.detail`. Named per the design spec's own
+/// `.connecting` case renders through, and which Task 7 then added its own
+/// `lost` case to without redesigning this type or its call site in
+/// `ContentView.detail`. Named per the design spec's own
 /// framing (`docs/superpowers/specs/2026-08-21-verbindungszustand-design.md`
 /// §4): "dieselbe Tab-Fläche" for connecting, connected, and lost.
 enum ConnectionAttemptSurface: Equatable {
@@ -956,6 +992,9 @@ enum ConnectionAttemptSurface: Equatable {
     case form
     /// "Connecting…" with a Cancel control (Task 6).
     case connecting
+    /// The lost-connection surface: what happened, and the way back (Task
+    /// 7) — `LostConnectionView`, driven by `LostConnectionPlan.content`.
+    case lost
 }
 
 /// Decides `ConnectionAttemptSurface` from the two facts `ContentView
@@ -976,11 +1015,193 @@ enum ConnectionSurfacePlan {
     /// answered. TOFU is a hard stop in this project (see the architecture
     /// invariants), never bypassed by a UI surface picking the wrong
     /// branch — this override is what keeps that true here.
+    ///
+    /// `.lost` (Task 7) is answered here rather than by a second, parallel
+    /// decision in `ContentView.detail`, so the host-key override above
+    /// covers it too: an automatic reconnect that raises a trust card while
+    /// the tab still reads `.lost` must show that card, not an error view
+    /// explaining that the connection dropped.
     static func surface(
         for liveness: ConnectionLiveness?, hostKeyPromptPending: Bool
     ) -> ConnectionAttemptSurface {
         guard !hostKeyPromptPending else { return .form }
-        return liveness == .connecting ? .connecting : .form
+        switch liveness {
+        case .connecting: return .connecting
+        case .lost: return .lost
+        case .connected, .degraded, nil: return .form
+        }
+    }
+}
+
+/// Why a tab's connection is gone, at the coarseness the lost-connection
+/// surface and the reconnect policy both read (connection-liveness plan,
+/// Task 7).
+enum LostConnectionReason: Equatable {
+    /// The liveness probe gave up on a session that had been connected.
+    case probeGaveUp
+    /// A reconnect attempt failed for a reason another attempt might not
+    /// hit — a timeout, a refused connection, a host that is still booting.
+    case reconnectFailed
+    /// The last attempt stopped at something only a person can answer: an
+    /// unknown or changed host key, or a key passphrase macSCP does not
+    /// have. Repeating it unattended would only raise the same question
+    /// again on a schedule, so this reason stops background retrying
+    /// outright — see `ReconnectPlan.step`. Comes from Core's own
+    /// `ConnectFailureKind.needsPerson`, never from reading a message.
+    case needsPerson
+}
+
+/// What a tab remembers about a connection that dropped (connection-
+/// liveness plan, Task 7) — stored on `SessionTab.lostConnection`.
+///
+/// Carries an id and an enum, never a host name, a server message or a
+/// typed value: the design spec's §10 rule (no secret and no user-typed
+/// value on the error view) is a property of what this type is able to
+/// hold, not a habit at the call site. `LostConnectionContent`, what
+/// actually reaches the screen, has the same shape for the same reason.
+struct LostConnection: Equatable {
+    var reason: LostConnectionReason
+    /// The stored session to redial, or `nil` for an ad-hoc connection —
+    /// one typed into the form and never saved, whose secrets
+    /// `ContentView.teardown(_:)` has already cleared, so there is nothing
+    /// left to redial WITH. That case offers the form back instead of a
+    /// Reconnect button; see `LostConnectionPlan.content`.
+    var storedSessionID: UUID?
+    /// How many unattended attempts this episode has already started.
+    /// Drives `ReconnectBackoff.delay(forAttempt:)` and, under
+    /// `.onceThenAsk`, the "once" itself. Counts attempts STARTED, not
+    /// attempts finished — an attempt that is still dialing must not be
+    /// started a second time by the same schedule.
+    var automaticAttempts = 0
+}
+
+/// The lost-connection surface's whole content (connection-liveness plan,
+/// Task 7): catalog keys and their English defaults, and two booleans.
+///
+/// There is deliberately no `String` field here that a host name, a server
+/// error, or a form value could be put into — that is what makes the design
+/// spec's §10 rule (the error view must contain no secret and no value the
+/// user typed) checkable rather than merely intended. `ReconnectPlanTests`
+/// pins that every reachable content value is one of a fixed, enumerated
+/// set of catalog keys.
+struct LostConnectionContent: Equatable {
+    struct Message: Equatable {
+        let key: String
+        let fallback: String
+    }
+
+    let title: Message
+    let body: Message
+    /// A second line under the body, when there is something to add about
+    /// what macSCP is doing on its own. `nil` when the body already says
+    /// everything.
+    let hint: Message?
+    /// Whether the surface offers "Reconnect" at all.
+    let offersReconnect: Bool
+}
+
+/// Builds `LostConnectionContent` (connection-liveness plan, Task 7) —
+/// a plain function over three facts, for the same reason `LivenessDotPlan`
+/// (Task 5) and `ConnectionSurfacePlan` (Task 6) are: no test in this
+/// project renders SwiftUI, so the decision has to live somewhere a test
+/// can call.
+enum LostConnectionPlan {
+    /// `targetIsKnown` is "this tab's dropped connection names a stored
+    /// session that is still in the list" — resolved at the call site
+    /// against `SessionListViewModel.sessions`, because a session can be
+    /// deleted while its tab sits on this surface, and offering to redial
+    /// something that no longer exists is a button that cannot work.
+    static func content(
+        reason: LostConnectionReason, targetIsKnown: Bool, behaviour: ReconnectBehaviour
+    ) -> LostConnectionContent {
+        let body: LostConnectionContent.Message
+        switch reason {
+        case .probeGaveUp:
+            body = .init(
+                key: "connection.lost.body.probe",
+                fallback: "The host stopped answering, so macSCP closed the session.")
+        case .reconnectFailed:
+            body = .init(
+                key: "connection.lost.body.retryFailed",
+                fallback: "macSCP could not reach the host again.")
+        case .needsPerson:
+            body = .init(
+                key: "connection.lost.body.needsPerson",
+                fallback: "The last attempt stopped at a question only you can answer.")
+        }
+
+        let hint: LostConnectionContent.Message?
+        if !targetIsKnown {
+            hint = .init(
+                key: "connection.lost.hint.noSavedSession",
+                fallback: "This connection was not saved, so reconnecting means filling the form in again.")
+        } else if reason == .needsPerson {
+            // Deliberately no "macSCP keeps trying" hint even under
+            // `.automatic`: this reason is exactly the case where it does
+            // NOT keep trying (`ReconnectPlan.step`), and a hint promising
+            // otherwise would be the surface contradicting the policy.
+            hint = .init(
+                key: "connection.lost.hint.stopped",
+                fallback: "macSCP is not retrying on its own until you have answered it.")
+        } else {
+            switch behaviour {
+            case .automatic:
+                hint = .init(
+                    key: "connection.lost.hint.automatic",
+                    fallback: "macSCP keeps trying on its own, waiting longer between attempts.")
+            case .onceThenAsk, .offerOnly:
+                hint = nil
+            }
+        }
+
+        return LostConnectionContent(
+            title: .init(key: "connection.lost.title", fallback: "Connection lost"),
+            body: body,
+            hint: hint,
+            offersReconnect: targetIsKnown)
+    }
+}
+
+/// Whether an unattended reconnect attempt is due, and when (connection-
+/// liveness plan, Task 7) — the whole `offerOnly`/`onceThenAsk`/`automatic`
+/// rule as a plain function, so `ReconnectRunner` below is left with
+/// nothing but a sleep and a call.
+///
+/// The spacing itself is Core's (`ReconnectBackoff.delay(forAttempt:)`,
+/// pinned by `ConnectionLivenessTests`): 5 seconds, doubling, capped at 60,
+/// with no give-up limit. `.onceThenAsk` uses the same first delay rather
+/// than firing immediately, so the two behaviours differ in how many
+/// attempts they make and in nothing else.
+enum ReconnectPlan {
+    enum Step: Equatable {
+        case wait(seconds: Int)
+        case stop
+    }
+
+    /// `liveness` and `lost` are read together on purpose: an attempt is
+    /// due only while the tab is actually sitting on the lost surface. A
+    /// tab that is mid-attempt (`.connecting`), reconnected (`.connected`)
+    /// or back at the form (`nil`) must not have a second attempt fired
+    /// underneath it.
+    static func step(
+        liveness: ConnectionLiveness?, lost: LostConnection?,
+        targetIsKnown: Bool, behaviour: ReconnectBehaviour
+    ) -> Step {
+        guard liveness == .lost, let lost, targetIsKnown else { return .stop }
+        // The design spec's own exception (§3, restated in this task's
+        // brief): even under `.automatic`, an attempt that ran into a
+        // host-key decision or a key passphrase ends in the error view and
+        // is NOT repeated in the background.
+        guard lost.reason != .needsPerson else { return .stop }
+        switch behaviour {
+        case .offerOnly:
+            return .stop
+        case .onceThenAsk:
+            guard lost.automaticAttempts < 1 else { return .stop }
+        case .automatic:
+            break
+        }
+        return .wait(seconds: ReconnectBackoff.delay(forAttempt: lost.automaticAttempts + 1))
     }
 }
 
@@ -1019,15 +1240,27 @@ enum ConnectionSurfacePlan {
 /// SAME `onCancel` that calls `cancelConnecting()`, is already the thing
 /// resetting `tab.liveness` to `nil`; this mirror does not need to race it.
 /// `.failed` means the attempt just ended with nothing connected, and
-/// resets to `nil` — but ONLY while `tab.session == nil`: `.failed` is not
-/// exclusively a "just tried and failed to connect" signal (`showFailure`
-/// is also how a validation refusal unrelated to dialing — e.g. an empty
-/// save name — reaches this same `state`), and this tab's own
+/// resets to `nil` — but ONLY while `tab.session == nil`, and only while
+/// this tab is not describing a dropped connection (see the Task 7
+/// paragraph below). `.failed` is not exclusively a "just tried and failed
+/// to connect" signal (`showFailure` is also how a validation refusal
+/// unrelated to dialing — e.g. an empty save name — reaches this same
+/// `state`), and this tab's own
 /// `connectionViewModel` is never touched by anything while the tab IS
 /// connected in today's App (the form that could touch it is not even
 /// mounted then — see `ConnectionSurfacePlan`). Guarding on `tab.session`
 /// rather than relying on that as an invariant is what keeps a latent path
 /// from ever nilling a CONNECTED tab's liveness out from under it.
+///
+/// Task 7 added the one case this switch could not express before: a tab
+/// whose connection was already LOST and whose failed attempt was the
+/// reconnect from that surface. Clearing to `nil` there would drop the user
+/// back onto the connection form the moment an unattended retry failed —
+/// with the lost surface, its explanation and its Reconnect button gone,
+/// and (under `.automatic`) the next retry still scheduled behind it. The
+/// decision now lives in `ConnectAttemptLivenessPlan.write`, a plain
+/// function, for the reason every other decision on this branch was pulled
+/// out of a view body: nothing here can be rendered in a test.
 struct ConnectAttemptLivenessMirror: View {
     let tab: SessionTab
 
@@ -1036,15 +1269,197 @@ struct ConnectAttemptLivenessMirror: View {
             .frame(width: 0, height: 0)
             .allowsHitTesting(false)
             .onChange(of: tab.connectionViewModel.state, initial: true) { _, newState in
-                switch newState {
+                // Liveness mirror write (connection-liveness plan, Task 7)
+                switch ConnectAttemptLivenessPlan.write(
+                    for: newState, hasSession: tab.session != nil,
+                    describesLostConnection: tab.lostConnection != nil,
+                    failureKind: tab.connectionViewModel.lastFailureKind)
+                {
                 case .connecting:
                     tab.liveness = .connecting
-                case .failed:
-                    if tab.session == nil { tab.liveness = nil }
-                case .idle:
+                case .lost(let reason):
+                    // The reason is refreshed in the same step as the state
+                    // it explains: an attempt that stopped at a host key or
+                    // a passphrase must reach `.needsPerson` BEFORE
+                    // `ReconnectRunner` re-reads this tab, or the very
+                    // schedule that rule exists to stop would be decided on
+                    // the reason of the attempt BEFORE it.
+                    tab.lostConnection?.reason = reason
+                    tab.liveness = .lost
+                case .clear:
+                    tab.liveness = nil
+                case .leaveAlone:
                     break
                 }
             }
+    }
+}
+
+/// What `ConnectAttemptLivenessMirror` writes for one `ConnectionViewModel
+/// .State` (connection-liveness plan, Task 7) — the mirror's whole decision
+/// as a plain function, so `Tests/macSCPAppKitTests/` can drive every
+/// combination instead of a `.onChange` closure this project cannot render.
+///
+/// The three `State` cases, and why each answers as it does, are set out in
+/// `ConnectAttemptLivenessMirror`'s own doc comment; the one case that is
+/// new here is `.failed` on a tab that is describing a lost connection,
+/// which goes back to `.lost` rather than clearing.
+enum ConnectAttemptLivenessPlan {
+    enum Write: Equatable {
+        case connecting
+        /// Back to the lost surface, with the reason this attempt earned.
+        case lost(LostConnectionReason)
+        case clear
+        case leaveAlone
+    }
+
+    /// `failureKind` is `ConnectionViewModel.lastFailureKind`, read at the
+    /// call site right after the state change that carries it. It is
+    /// consulted only on the `.failed`-while-lost path: it is what turns
+    /// "the reconnect failed" into "the reconnect stopped at something only
+    /// a person can answer", which is the difference between a schedule
+    /// that keeps running and one that stops (`ReconnectPlan.step`).
+    static func write(
+        for state: ConnectionViewModel.State, hasSession: Bool,
+        describesLostConnection: Bool, failureKind: ConnectFailureKind?
+    ) -> Write {
+        switch state {
+        case .connecting:
+            return .connecting
+        case .failed:
+            guard !hasSession else { return .leaveAlone }
+            guard describesLostConnection else { return .clear }
+            return .lost(failureKind == .needsPerson ? .needsPerson : .reconnectFailed)
+        case .idle:
+            return .leaveAlone
+        }
+    }
+}
+
+/// Runs the unattended part of the reconnect (connection-liveness plan,
+/// Task 7) — mounted per tab in `ContentView.splitLayout`'s `.background`,
+/// for every tab and not only the active one, the same shape and the same
+/// reason as `LivenessProbeRunner` and `ConnectAttemptLivenessMirror`: a
+/// background tab whose connection dropped is exactly the tab whose owner
+/// is not watching it.
+///
+/// Holds no state of its own. WHETHER an attempt is due and after how long
+/// is `ReconnectPlan.step`'s answer, HOW MANY attempts have run lives on
+/// `SessionTab.lostConnection` (so it survives this view being torn down
+/// and remounted between attempts, which `.task(id:)` guarantees will
+/// happen), and the attempt itself is `ContentView.reconnect(_:)` —
+/// which dials through the ordinary `connect(in:stored:)`, the same path a
+/// sidebar click takes. That last point is the load-bearing security
+/// decision of this task and is guarded by `ReconnectWiringGuardTests`:
+/// a second dial here would be a second place to forget TOFU.
+///
+/// The step is decided twice — once when the task starts, once after the
+/// sleep. Not belt-and-braces: `RunKey` cannot contain whether the stored
+/// session still exists (that lives in `SessionListViewModel`, and is
+/// resolved through `targetIsKnown` at decision time), so a session deleted
+/// during the wait would otherwise be redialled by a schedule that was
+/// decided before it went away.
+struct ReconnectRunner: View {
+    let tab: SessionTab
+    let settingsStore: SettingsStore
+    /// Whether this tab's dropped connection still names a stored session
+    /// that is in the list right now — a closure, not a value, so it is
+    /// answered when the decision is made rather than when this view was
+    /// last rendered.
+    let targetIsKnown: (SessionTab) -> Bool
+    let onAttempt: (SessionTab) -> Void
+
+    /// Restarts the task whenever anything the schedule was decided from
+    /// changes: the tab leaving (or re-entering) `.lost`, an attempt having
+    /// been counted, and the setting itself — so changing the behaviour in
+    /// Settings applies to a tab already sitting on the lost surface.
+    private struct RunKey: Equatable {
+        let liveness: ConnectionLiveness?
+        let lost: LostConnection?
+        let behaviour: ReconnectBehaviour
+    }
+
+    private var runKey: RunKey {
+        RunKey(
+            liveness: tab.liveness, lost: tab.lostConnection,
+            behaviour: settingsStore.reconnectBehaviour)
+    }
+
+    private var step: ReconnectPlan.Step {
+        ReconnectPlan.step(
+            liveness: tab.liveness, lost: tab.lostConnection,
+            targetIsKnown: targetIsKnown(tab),
+            behaviour: settingsStore.reconnectBehaviour)
+    }
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+            .task(id: runKey) {
+                // Reconnect schedule (connection-liveness plan, Task 7)
+                guard case .wait(let seconds) = step else { return }
+                try? await Task.sleep(for: .seconds(seconds))
+                guard !Task.isCancelled, case .wait = step else { return }
+                // Counted BEFORE the dial, and in the same synchronous
+                // step: the count is of attempts STARTED. Incrementing
+                // afterwards would let a slow attempt be scheduled a second
+                // time on the old count, and would make `.onceThenAsk`
+                // depend on how long a dial takes.
+                tab.lostConnection?.automaticAttempts += 1
+                onAttempt(tab)
+            }
+    }
+}
+
+/// The lost-connection surface (connection-liveness plan, Task 7): what
+/// happened, and the way back. Shown instead of `ConnectionFormView` while
+/// `ConnectionSurfacePlan.surface(for:hostKeyPromptPending:)` answers
+/// `.lost`.
+///
+/// Every string on it comes from `LostConnectionContent`, which holds
+/// catalog keys and nothing else — see that type's own doc comment for why
+/// the design spec's "no secret, no user-typed value" rule is a property of
+/// the type here rather than a rule someone has to remember. In particular
+/// this surface does NOT show the host, the account, the failure text the
+/// server sent, or anything from the form.
+private struct LostConnectionView: View {
+    let content: LostConnectionContent
+    let onReconnect: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 28))
+                .foregroundStyle(DesignTokens.statusLost)
+            Text(L10n.string(content.title.key, content.title.fallback))
+                .font(.title2.bold())
+            Text(L10n.string(content.body.key, content.body.fallback))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            if let hint = content.hint {
+                Text(L10n.string(hint.key, hint.fallback))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            HStack(spacing: 12) {
+                if content.offersReconnect {
+                    Button(
+                        L10n.string("connection.lost.reconnect", "Reconnect"),
+                        action: onReconnect
+                    )
+                    .buttonStyle(.polished)
+                }
+                Button(
+                    L10n.string("connection.lost.dismiss", "Back to the form"),
+                    action: onDismiss)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 420, maxWidth: 460)
     }
 }
 

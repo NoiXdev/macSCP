@@ -358,6 +358,13 @@ extension ContentView {
         // `.lost` AFTER calling this function precisely so that write is
         // not the one this line clears.
         tab.liveness = nil
+        // Same rule, same sentence, for the lost-connection record (Task
+        // 7): every caller listed above is leaving this connection on
+        // purpose, and a record of a DROP would be describing something
+        // that did not happen. `handleLivenessGiveUp` is the same one
+        // exception it is for `liveness` — it writes this afterwards,
+        // deliberately after this line has run.
+        tab.lostConnection = nil
     }
 
     /// The liveness probe's own route off a session (connection-liveness
@@ -374,8 +381,19 @@ extension ContentView {
     /// that function's own doc comment) — writing `.lost` only AFTER this
     /// function's own call to it returns is what keeps this route's value
     /// from being cleared by that same reset.
+    ///
+    /// The stored session id is read BEFORE the teardown and written back
+    /// after it (connection-liveness plan, Task 7): `teardown(_:)` clears
+    /// `activeStoredSessionID` along with the session, so after it runs
+    /// there is nothing left on the tab naming the connection that just
+    /// dropped — and that id is exactly what "Reconnect" needs. Reading it
+    /// first changes nothing about the order the two WRITES happen in,
+    /// which is what `LivenessGiveUpOrderingTests` pins.
     func handleLivenessGiveUp(_ tab: SessionTab) async {
+        let storedSessionID = tab.activeStoredSessionID
         await teardown(tab)
+        tab.lostConnection = LostConnection(
+            reason: .probeGaveUp, storedSessionID: storedSessionID)
         tab.liveness = .lost
     }
 

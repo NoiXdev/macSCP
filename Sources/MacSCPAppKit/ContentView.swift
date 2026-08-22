@@ -1081,6 +1081,13 @@ struct ContentView: View {
         // here rather than getting one for free from `BrowserSession`'s
         // memberwise init the way it used to.
         tab.liveness = .connected
+        // Nothing left to describe (connection-liveness plan, Task 7): this
+        // tab has a live session again, so the record of the connection
+        // that dropped — including the attempt counter an unattended
+        // schedule was pacing itself by — goes with the state it explained.
+        // A later drop starts a fresh episode from `handleLivenessGiveUp`,
+        // at attempt zero.
+        tab.lostConnection = nil
         // Hidden-files toggle (M7a/T4): applied once here at session start,
         // kept in sync afterwards by the `.onChange` observer above.
         tab.session?.local.showHiddenFiles = settingsStore.showHiddenFiles
@@ -1400,6 +1407,14 @@ struct ContentView: View {
         in tab: SessionTab, stored: StoredSession, paneVisibility: PaneVisibility? = nil
     ) {
         guard !tab.isReconnecting else { return }
+        // Connecting to a DIFFERENT session ends the episode the lost
+        // surface was describing (connection-liveness plan, Task 7): the
+        // user has moved on, and a failure now belongs to what they just
+        // asked for, not to the connection that dropped earlier — which
+        // would otherwise send them back to a surface offering to redial
+        // something else entirely. `reconnect(_:)` passes the SAME id, so
+        // its own failures still return to the surface that explains them.
+        if tab.lostConnection?.storedSessionID != stored.id { tab.lostConnection = nil }
         tab.isReconnecting = true // synchronous — locks this tab immediately, before the first await
         // Attempt-scoped (connection-liveness plan, Task 6 fix round 1,
         // measured by review — Critical 1): Cancel releases `isReconnecting`
@@ -1505,6 +1520,59 @@ struct ContentView: View {
         }
     }
 
+
+    /// The stored session a lost tab's "Reconnect" would redial, or `nil`
+    /// (connection-liveness plan, Task 7).
+    ///
+    /// Resolved against the LIVE session list every time it is asked, not
+    /// remembered: `SessionTab.lostConnection` keeps only the id, because a
+    /// session can be edited — or deleted — while its tab sits on the lost
+    /// surface. A deleted one turns "Reconnect" off (`LostConnectionPlan
+    /// .content`'s `targetIsKnown`) and stops the unattended schedule
+    /// (`ReconnectPlan.step`), instead of offering a button that dials
+    /// something that is no longer there.
+    ///
+    /// `nil` for an ad-hoc connection too — one typed into the form and
+    /// never saved has no `storedSessionID` at all, and `teardown(_:)` has
+    /// already cleared the form's secrets by the time this surface appears,
+    /// so there is nothing left to redial with.
+    func reconnectTarget(for tab: SessionTab) -> StoredSession? {
+        guard let id = tab.lostConnection?.storedSessionID else { return nil }
+        return sessionListViewModel.sessions.first(where: { $0.id == id })
+    }
+
+    /// Rebuilds a lost connection (connection-liveness plan, Task 7) —
+    /// from the surface's "Reconnect" button and from `ReconnectRunner`'s
+    /// unattended schedule alike.
+    ///
+    /// One line of substance, and that is the point: this dials through
+    /// `connect(in:stored:)`, the SAME function a sidebar click goes
+    /// through, so TOFU stays the hard stop it is, the keychain rules are
+    /// the ones `fillForm(_:from:)` already applies, the plaintext
+    /// confirmation still gets asked, and the attempt token/`isReconnecting`
+    /// lock still guard the hand-off. The design spec calls this out as the
+    /// load-bearing decision of its recovery section: a second dial here
+    /// would be a second place a security rule could be forgotten.
+    /// `ReconnectWiringGuardTests` pins it by scanning this function's own
+    /// comment-stripped source, and `ReconnectPathTests` drives the real
+    /// call end to end.
+    func reconnect(_ tab: SessionTab) {
+        guard let stored = reconnectTarget(for: tab) else { return }
+        connect(in: tab, stored: stored)
+    }
+
+    /// Leaves the lost surface for the ordinary connection form
+    /// (connection-liveness plan, Task 7).
+    ///
+    /// Clears BOTH facts: `liveness` is what `ConnectionSurfacePlan` reads
+    /// to pick the surface, `lostConnection` is what would otherwise send
+    /// the next failed attempt straight back to it
+    /// (`ConnectAttemptLivenessPlan.write`) and keep an unattended schedule
+    /// alive behind a form the user is typing into.
+    func dismissLostConnection(_ tab: SessionTab) {
+        tab.lostConnection = nil
+        tab.liveness = nil
+    }
 
     /// Fills `form` from a stored session — the ONE fill both callers of a
     /// stored session's data share (P3c/T2): the connect below, and the
@@ -1932,6 +2000,13 @@ struct ContentView: View {
             return
         }
         guard !tab.isReconnecting else { return }
+        // A tab sitting on the lost-connection surface is "unconnected" by
+        // `isConnected`, so this path reuses it — but the surface, not the
+        // form, is what `ConnectionSurfacePlan` puts on screen for it
+        // (connection-liveness plan, Task 7). Without this the fields would
+        // be blanked behind an error view and the command would look like
+        // it did nothing.
+        dismissLostConnection(tab)
         tab.connectionViewModel.endEditing()
     }
 
@@ -1947,6 +2022,10 @@ struct ContentView: View {
             return fresh
         }
         guard !tab.isReconnecting else { return nil }
+        // Same reason as `newConnection()` above (connection-liveness plan,
+        // Task 7): every caller of this fills the FORM, which a tab still
+        // showing the lost-connection surface would not be displaying.
+        dismissLostConnection(tab)
         return tab
     }
 

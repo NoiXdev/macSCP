@@ -189,12 +189,12 @@ final class SessionTab: Identifiable {
     /// which there is no session anymore, so the value has to be able to
     /// outlive the session it describes.
     ///
-    /// Five writers, current as of Task 6 fix round 1 (a fifth was added
-    /// counting the mirror below; the count was four as of Task 4 fix round
-    /// 3, before this task) — `LivenessGiveUpOrderingTests` pins the second
-    /// of these by mutation, since a comment describing this order is
-    /// exactly what went stale between fix rounds 1 and 2 (a swapped pair
-    /// of statements in a file this list does not name):
+    /// Six writers, recounted while writing this sentence, at Task 7 (five
+    /// as of Task 6 fix round 1, four as of Task 4 fix round 3) —
+    /// `LivenessGiveUpOrderingTests` pins the second of these by mutation,
+    /// since a comment describing this order is exactly what went stale
+    /// between fix rounds 1 and 2 (a swapped pair of statements in a file
+    /// this list does not name):
     /// - `ContentView.startSession` resets this to `.connected` on every
     ///   fresh connect.
     /// - `ContentView.handleLivenessGiveUp(_:)` sets `.lost` AFTER calling
@@ -207,18 +207,45 @@ final class SessionTab: Identifiable {
     ///   connection-liveness plan Task 6) — every one of them is a
     ///   deliberate "leave this connection", with nothing left for a stale
     ///   dot to describe.
+    /// - `ContentView.dismissLostConnection(_:)` (Task 7) resets it to
+    ///   `nil` when the user leaves the lost surface for the form, and
+    ///   clears `lostConnection` in the same breath.
     /// - `LivenessProbeRunner`'s probe loop writes `.connected`/`.degraded`
     ///   directly while a session is live.
-    /// - `ConnectAttemptLivenessMirror` (Task 6) writes `.connecting` when
-    ///   this tab's own `connectionViewModel.state` reaches `.connecting`,
-    ///   and `nil` on `.failed` while this tab has no session — see that
-    ///   type's own doc comment in `ContentView+Detail.swift`.
+    /// - `ConnectAttemptLivenessMirror` (Task 6, extended in Task 7) writes
+    ///   `.connecting` when this tab's own `connectionViewModel.state`
+    ///   reaches `.connecting`, and, on `.failed` while this tab has no
+    ///   session, either `.lost` again (when `lostConnection` says this tab
+    ///   is describing a dropped connection) or `nil`. Which of the two is
+    ///   `ConnectAttemptLivenessPlan.write`'s answer, not the view's — see
+    ///   that type's doc comment in `ContentView+Detail.swift`.
     ///
     /// No getter/setter indirection the way `showsFiles` has: `showsFiles`
     /// is per-SESSION and needs the session to route writes into,
     /// `liveness` is per-TAB and is exactly what must keep working once the
     /// session it was describing is gone.
     var liveness: ConnectionLiveness?
+
+    /// What the lost-connection surface describes and offers while
+    /// `liveness` is `.lost` (connection-liveness plan, Task 7).
+    ///
+    /// Separate from `liveness` and not derived from it: `.lost` says THAT
+    /// the connection is gone, this says what happened and — the part that
+    /// cannot be recovered afterwards — WHICH stored session to redial.
+    /// `ContentView.teardown(_:)` clears `activeStoredSessionID` along with
+    /// the session itself, so by the time `.lost` is written there is no
+    /// longer anything on this tab naming the connection that just dropped;
+    /// `ContentView.handleLivenessGiveUp(_:)` captures it BEFORE calling
+    /// teardown and writes this afterwards, in the same order and for the
+    /// same reason `.lost` itself is written afterwards.
+    ///
+    /// Written by `handleLivenessGiveUp(_:)` (a fresh episode), by
+    /// `ReconnectRunner` (its attempt counter), and cleared by
+    /// `ContentView.teardown(_:)` and `ContentView.startSession` — the same
+    /// two places that own `liveness`'s own "there is nothing to describe
+    /// anymore" and "there is a live session again" transitions, so the two
+    /// values cannot drift into describing different tabs' realities.
+    var lostConnection: LostConnection?
 
     var displayTitle: String {
         titleName ?? L10n.string("tabs.newConnection", "New Connection")

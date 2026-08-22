@@ -1,6 +1,27 @@
 import Foundation
 import Observation
 
+/// Whether a failed dial is worth repeating unattended (connection-liveness
+/// plan, Task 7) — `ConnectionViewModel.lastFailureKind`'s type. Two cases,
+/// because that is the whole question the reconnect policy asks: repeating
+/// an attempt that stopped at a host-key decision or a missing key
+/// passphrase would only raise the same question again, on a schedule, with
+/// nobody necessarily watching.
+///
+/// Lives in Core, next to the form that produces it, rather than in the App
+/// that reads it: the classification is over Core's own error types (see
+/// `ConnectionViewModel.failureKind(for:)`), and an App-side reading of
+/// `state`'s localized message or form field could not tell a mismatched
+/// host key from an ordinary timeout.
+public enum ConnectFailureKind: Equatable, Sendable {
+    /// A person has to answer or supply something before another attempt
+    /// can differ from this one.
+    case needsPerson
+    /// Anything else — including every transport failure, which is exactly
+    /// what retrying is for.
+    case other
+}
+
 /// State and logic of the connection form.
 /// The connector is injectable: production uses CitadelFileSystem.connect,
 /// tests use a mock — the view model stays testable without a network.
@@ -423,6 +444,30 @@ public final class ConnectionViewModel {
     /// `resolveHostKeyPrompt`.
     public private(set) var hostKeyPrompt: HostKeyPrompt?
 
+    /// Why the most recent dial failed, at the only coarseness a caller
+    /// deciding whether to try again needs (connection-liveness plan, Task
+    /// 7): would an identical second attempt differ from this one at all, or
+    /// does a person have to answer or supply something first?
+    ///
+    /// `nil` unless the most recent dial threw. Written in three places, all
+    /// in this type and counted while writing this sentence: `connect()`
+    /// clears it as its first act (every attempt starts without a verdict),
+    /// `connect()`'s `catch` sets it from the thrown error, and
+    /// `showFailure(_:field:)` clears it (an App-layer refusal is not a dial
+    /// result, and must not leave the previous dial's verdict standing
+    /// behind a newer, unrelated `.failed`). Every other `.failed` write in
+    /// this type happens inside `connect()` AFTER its own clear, so `nil` is
+    /// already the right answer there. The two writes that accompany a
+    /// `state` change both happen BEFORE it, so nothing observing `state`
+    /// can read a verdict that belongs to the attempt before.
+    ///
+    /// Deliberately NOT derived from `state`'s `field:` at the reading end:
+    /// `.failed` carries a localized message and a form field, neither of
+    /// which is a stable thing to branch on — the message is translated
+    /// text, and a mismatched host key (a hard stop with no field at all)
+    /// would be indistinguishable from an ordinary network failure.
+    public private(set) var lastFailureKind: ConnectFailureKind?
+
     /// Identifies whichever `connect()` call is currently allowed to write
     /// to this instance (connection-liveness plan, Task 6 fix round 1).
     ///
@@ -629,6 +674,9 @@ public final class ConnectionViewModel {
     /// line.
     public func connect() async -> (any RemoteFileSystem)? {
         guard state != .connecting else { return nil }
+        // Every attempt starts without a verdict — see `lastFailureKind`'s
+        // own doc comment for the three writes that keep it honest.
+        lastFailureKind = nil
         let myAttempt = UUID()
         currentAttempt = myAttempt
         defer {
@@ -682,8 +730,44 @@ public final class ConnectionViewModel {
         } catch {
             // Same attempt-scoped write as the success path above.
             guard currentAttempt == myAttempt else { return nil }
+            // Before the `state` write, not after: `state` is what observers
+            // watch, and an observer that reacted to `.failed` while this
+            // still held the PREVIOUS attempt's verdict would decide on the
+            // wrong one. Observation delivers on a later turn today, so the
+            // order is belt-and-braces — but it costs nothing and does not
+            // depend on that staying true.
+            lastFailureKind = Self.failureKind(for: error)
             state = jumpAwareFailedState(for: error)
             return nil
+        }
+    }
+
+    /// Classifies a thrown dial error for `lastFailureKind`.
+    ///
+    /// `.needsPerson` covers exactly what the connection-liveness design
+    /// spec names as the stop condition for background retrying: a host-key
+    /// decision (`HostKeyError`, and `ServerCertificateError`, its
+    /// WebDAV/S3 analogue — a mismatch is a hard stop nobody can retry
+    /// past, a rejection was a person's answer, and an unreadable trust
+    /// store means the question cannot even be asked) and a key passphrase
+    /// macSCP does not have (`SSHKeyError.passphraseRequired` /
+    /// `.wrongPassphrase`).
+    ///
+    /// The other two `SSHKeyError` cases (`fileNotFound`,
+    /// `unsupportedFormat`) are deliberately `.other`, even though no
+    /// second attempt will fix them either: the spec's rule is about the
+    /// two conditions above, and treating this as a general "would retrying
+    /// help" oracle would make it a growing list of guesses instead of one
+    /// stated rule. Nothing is lost either way — the surface that reads
+    /// this still offers a manual retry in both cases.
+    static func failureKind(for error: Error) -> ConnectFailureKind {
+        switch error {
+        case is HostKeyError, is ServerCertificateError:
+            return .needsPerson
+        case SSHKeyError.passphraseRequired, SSHKeyError.wrongPassphrase:
+            return .needsPerson
+        default:
+            return .other
         }
     }
 
@@ -879,6 +963,11 @@ public final class ConnectionViewModel {
     /// gets the identical red-highlight/alert treatment without a second
     /// error-reporting mechanism.
     public func showFailure(message: String, field: Field? = nil) {
+        // Cleared before the `state` write, for the same reason `connect()`'s
+        // own catch sets it before its own: an App-layer refusal is not a
+        // dial result, and must not be observed carrying the previous dial's
+        // verdict. See `lastFailureKind`'s own doc comment.
+        lastFailureKind = nil
         state = .failed(message: message, field: field)
     }
 

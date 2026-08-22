@@ -913,3 +913,14 @@
 /* Connecting attempt surface (connection-liveness plan, Task 6) */
 "connection.connecting.title" = "Łączenie…";
 "connection.connecting.body" = "macSCP czeka na odpowiedź hosta.";
+
+/* Lost-connection surface (connection-liveness plan, Task 7) */
+"connection.lost.title" = "Połączenie utracone";
+"connection.lost.body.probe" = "Host przestał odpowiadać, więc macSCP zamknął sesję.";
+"connection.lost.body.retryFailed" = "macSCP nie zdołał ponownie połączyć się z hostem.";
+"connection.lost.body.needsPerson" = "Ostatnia próba zatrzymała się na pytaniu, na które tylko Ty możesz odpowiedzieć.";
+"connection.lost.hint.noSavedSession" = "To połączenie nie było zapisane — aby połączyć się ponownie, wypełnij formularz jeszcze raz.";
+"connection.lost.hint.stopped" = "macSCP nie ponawia prób samodzielnie, dopóki nie odpowiesz.";
+"connection.lost.hint.automatic" = "macSCP ponawia próby samodzielnie, z coraz dłuższymi przerwami.";
+"connection.lost.reconnect" = "Połącz ponownie";
+"connection.lost.dismiss" = "Wróć do formularza";

@@ -107,6 +107,9 @@ struct IconTooltipLintTests {
         DecorativeIcon(
             file: "MenuBarController.swift", symbol: "circle.fill",
             reason: "Colour-coded status dot on a menu ITEM, whose own title already spells the state out in words (Connected/Connecting…/Failed/Ready); `NSMenuItem.image` takes no tooltip of its own."),
+        DecorativeIcon(
+            file: "ContentView+Detail.swift", symbol: "exclamationmark.triangle.fill",
+            reason: "Heads the lost-connection surface, directly above its own headline (\"Connection lost\") and a sentence saying what happened; it takes no click, and a tooltip could only repeat the two lines under it."),
     ]
 
     /// How far below an icon a hover hint still counts as belonging to it.
