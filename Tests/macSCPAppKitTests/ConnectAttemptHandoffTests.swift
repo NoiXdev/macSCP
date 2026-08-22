@@ -226,7 +226,7 @@ struct ConnectAttemptHandoffTests {
             """)
     }
 
-    // MARK: - The two end-to-end proofs
+    // MARK: - The three end-to-end proofs
 
     @Test func cancelDuringHomeDirectoryLookupPreventsTheStoredSessionHandoff() async {
         _ = await runStoredSessionHandoffScenario()
@@ -234,6 +234,58 @@ struct ConnectAttemptHandoffTests {
 
     @Test func cancelDuringHomeDirectoryLookupPreventsTheAdHocHandoffAndAnyKeychainWrite() async {
         _ = await runAdHocHandoffScenario()
+    }
+
+    /// Positive proof for the fix-round-4 seam (review item "the seam still
+    /// has a hole, on the path your own suite drives"): `ContentView
+    /// .fillForm(_:from:)`'s private-key-auth branch used to build its own
+    /// `ManagedKeyStore(directory: SessionStore.defaultDirectory)`/
+    /// `KeychainSecretStore()` inline, reachable through `connect(in:
+    /// stored:)` — the same call path `runStoredSessionHandoffScenario`
+    /// drives, just not with `.privateKey` auth, which is why that test
+    /// alone never exercised this branch. This test resolves a managed
+    /// key's passphrase end to end THROUGH the injected `managedKeyStore`/
+    /// `secretStore` `makeContentView` supplies and confirms the resolved
+    /// value is the one planted in `RecordingSecretStore` — proving data
+    /// actually flows through the seam, not merely that nothing crashes.
+    /// Calls `fillForm` directly (a plain, non-`async`, throwing method) —
+    /// no need for the hang/cancel machinery the other two tests use, since
+    /// this fix is entirely inside that one function.
+    @Test func fillFormResolvesAManagedKeyPassphraseThroughTheInjectedStoresOnly() throws {
+        let workDir = makeTempDirectory("managed-key-seam")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let secrets = RecordingSecretStore()
+        let (view, cleanup) = makeContentView(secrets: secrets, storeDirectory: workDir)
+        defer { cleanup() }
+
+        // Planted directly into the SAME temp directory `makeContentView`
+        // gave `view`'s own `managedKeyStore` — a second `ManagedKeyStore`
+        // value sharing that directory's on-disk files, the same way two
+        // `SessionStore` values sharing a directory already do elsewhere in
+        // this suite.
+        let managedKeyStore = ManagedKeyStore(directory: workDir)
+        let keyFileName = "seam-test-key"
+        let key = ManagedKey(
+            name: "seam test key", comment: "", type: .ed25519,
+            fingerprint: "SHA256:seam-test", publicKeyOpenSSH: "ssh-ed25519 AAAAseamtest",
+            createdAt: Date(), hasPassphrase: true, fileName: keyFileName)
+        try managedKeyStore.add(key)
+        try secrets.savePassword("seam-managed-passphrase", for: key.id)
+
+        let keyPath = managedKeyStore.keyDirectory.appendingPathComponent(keyFileName).path(percentEncoded: false)
+        let stored = StoredSession(
+            name: uniqueSaveName("managed-key-seam"), kind: .ssh,
+            ssh: StoredSSHConfig(
+                host: "example.com", username: "tim", authKind: .privateKey, keyPath: keyPath))
+        let form = ConnectionViewModel(connector: { _, _ in
+            fatalError("not exercised by this test — fillForm never dials")
+        })
+
+        _ = try view.fillForm(form, from: stored)
+
+        #expect(form.password == "seam-managed-passphrase", """
+            fillForm's private-key branch must resolve the managed key's             passphrase through the INJECTED managedKeyStore/secretStore             ContentView.init now takes, not the real ones it built inline             before this fix.
+            """)
     }
 
     // MARK: - Scenarios (shared by the isolation-proof tests and their own direct tests)
@@ -296,7 +348,9 @@ struct ConnectAttemptHandoffTests {
         #expect(view.sessionListViewModel.sessions.isEmpty, "a cancelled attempt must not persist a StoredSession")
         #expect(secrets.storedIDs.isEmpty, "a cancelled attempt must not write a keychain-equivalent secret")
         #expect(await gate.disconnectCount == 1, """
-            the refused hand-off must close the connection it abandons —             left open, it would stay connected to the remote host until             the whole process exits (fix round 3, review-measured).
+            the refused hand-off must close the connection it abandons — \
+            left open, it would stay connected to the remote host until \
+            the whole process exits (fix round 3, review-measured).
             """)
         return name
     }

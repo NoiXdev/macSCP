@@ -1573,12 +1573,23 @@ struct ContentView: View {
             // passphrase and none was typed, resolve it from the
             // Keychain so the user need not re-enter it. Inert outside
             // SSH: no other backend has a private-key auth choice.
+            //
+            // `managedKeyStore`/`secretStore` (connection-liveness plan,
+            // Task 6 fix round 4, review-mandated): this call site builds
+            // its own `ManagedKeyStore(directory: SessionStore
+            // .defaultDirectory)`/`KeychainSecretStore()` inline until this
+            // fix, unseamed and reachable through `connect(in:stored:)` —
+            // the SAME call path `ConnectAttemptHandoffTests`' own stored-
+            // session scenario drives — for any stored session using
+            // private-key auth. Routed through the same two properties
+            // `maybeCreateNewLoginSet(from:editedSession:)` and
+            // `startSession`'s own `shouldSaveSession` branch already use.
             if form.authChoice == .privateKey {
                 form.password = ManagedKeyPassphrase.resolve(
                     keyPath: form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
                     typed: form.password,
-                    store: ManagedKeyStore(directory: SessionStore.defaultDirectory),
-                    secrets: KeychainSecretStore())
+                    store: managedKeyStore,
+                    secrets: secretStore)
             }
             form.loginMode = stored.loginSetID != nil ? .set : .manual
             form.selectedLoginSetID = stored.loginSetID

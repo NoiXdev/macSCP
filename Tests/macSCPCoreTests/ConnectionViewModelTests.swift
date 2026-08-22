@@ -466,7 +466,11 @@ struct ConnectionViewModelTests {
         vm.cancelConnecting()
 
         #expect(vm.currentAttempt != before, """
-            cancelConnecting() must move currentAttempt even when state is             not .connecting — the OLD (fix round 1) shape gated the whole             method on `state == .connecting` and returned before ever             touching this property, which is exactly the window fix             round 2 closed.
+            cancelConnecting() must move currentAttempt even when state is \
+            not .connecting — the OLD (fix round 1) shape gated the whole \
+            method on `state == .connecting` and returned before ever \
+            touching this property, which is exactly the window fix \
+            round 2 closed.
             """)
     }
 
