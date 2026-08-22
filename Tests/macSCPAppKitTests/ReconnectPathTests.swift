@@ -397,10 +397,20 @@ struct ReconnectPathTests {
         let write = ConnectAttemptLivenessPlan.write(
             for: form.state, hasSession: false, describesLostConnection: true,
             failureKind: form.lastFailureKind)
-        #expect(write == .lost(.needsPerson), sourceLocation: sourceLocation)
+        guard case .lost(let reason) = write else {
+            Issue.record(
+                "a failed attempt on a lost tab must return to the lost surface, got \(write)",
+                sourceLocation: sourceLocation)
+            return
+        }
+        #expect(reason == .needsPerson, sourceLocation: sourceLocation)
+        // The reason the plan ACTUALLY produced, threaded on rather than a
+        // literal `.needsPerson` (round 3, after review): fed a literal,
+        // this would answer `.stop` even if the chain above had produced
+        // something else entirely, which is the whole thing it is checking.
         let step = ReconnectPlan.step(
             liveness: .lost,
-            lost: LostConnection(reason: .needsPerson, storedSessionID: UUID()),
+            lost: LostConnection(reason: reason, storedSessionID: UUID()),
             targetIsKnown: true, behaviour: .automatic)
         #expect(step == .stop, sourceLocation: sourceLocation)
     }

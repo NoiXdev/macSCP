@@ -45,20 +45,38 @@ struct ConnectionViewModelSourceGuardTests {
     /// look like before they were routed through `fail(_:kind:)`.
     private static let allowedAssignments = [".idle", ".connecting", "newState"]
 
+    /// Finds a write to `state` wherever it appears, not where it happens
+    /// to start a line.
+    ///
+    /// Round 2 anchored this on the normalized line PREFIX, and the
+    /// reviewer walked past it twice: `self.state = .failed(…)` — mandatory
+    /// inside the `Task { @MainActor [weak self] in … }` block this very
+    /// file already contains — and `guard ok else { state = .failed(…);
+    /// return }`. The identical write at line start was caught. The lesson
+    /// is the same one this whole round is about: an anchor is a spelling,
+    /// and a spelling fails open.
+    ///
+    /// `(?<![A-Za-z0-9_])` keeps `newState = …` from matching while letting
+    /// any receiver through, since `.`/`?`/`!` and whitespace are all
+    /// outside that class — so `self.state`, `self?.state` and a bare
+    /// `state` are all seen. `=\s*(?!=)` excludes `==`.
+    ///
+    /// `_?` covers the `@Observable` macro's backing store: a hand-written
+    /// `_state = .failed(…)` inside the type would set the property while
+    /// spelling nothing this pattern would otherwise look for. Found by
+    /// asking where the property could be violated FROM rather than
+    /// whether the pattern still catches what it was written against.
+    private static let stateWritePattern = #"(?<![A-Za-z0-9_])_?state\s*=\s*(?!=)"#
+
     @Test func everyStateAssignmentIsOnTheAllowList() throws {
         let stripped = Self.stripCommentsAndStrings(
             try String(contentsOf: Self.viewModelFile, encoding: .utf8))
+        let writes = try Self.stateWrites(in: stripped)
         var offenders: [String] = []
-        var found = 0
-        for rawLine in stripped.split(separator: "\n", omittingEmptySubsequences: false) {
-            let line = rawLine.split(whereSeparator: { $0 == " " || $0 == "\t" })
-                .joined(separator: " ")
-            guard line.hasPrefix("state = ") else { continue }
-            found += 1
-            let assigned = String(line.dropFirst("state = ".count))
-            if !Self.allowedAssignments.contains(where: { assigned.hasPrefix($0) }) {
-                offenders.append(line)
-            }
+        let found = writes.count
+        for assigned in writes
+        where !Self.allowedAssignments.contains(where: { assigned.hasPrefix($0) }) {
+            offenders.append("state = \(assigned)")
         }
         #expect(found >= 3, """
             only \(found) `state = ` assignments found in ConnectionViewModel.swift — the \
@@ -102,27 +120,53 @@ struct ConnectionViewModelSourceGuardTests {
             """)
     }
 
-    /// Self-test: the scan must reject a direct failure write and accept
-    /// the sanctioned ones, on synthetic source.
-    @Test func theScanRejectsADirectFailureWrite() {
+    /// Self-test: the scan must reject a direct failure write wherever it
+    /// sits, and accept the sanctioned ones. The last three lines are the
+    /// evasions round 2 shipped — a receiver, a weak-self receiver, and a
+    /// write buried in a `guard … else` clause.
+    @Test func theScanRejectsADirectFailureWriteWhereverItSits() throws {
         let stripped = Self.stripCommentsAndStrings("""
             // state = .failed(message: "commented out", field: nil)
             state = .idle
             state = .connecting
             state = newState
+            if state == .failed(message: m, field: f) { return }
             state = .failed(message: m, field: f)
-            state = jumpFailure
+            self.state = .failed(message: m, field: f)
+            Task { @MainActor [weak self] in self?.state = jumpFailure }
+            guard ok else { state = .failed(message: m, field: f); return }
+            _state = .failed(message: m, field: f)
             """)
-        let offenders = stripped.split(separator: "\n", omittingEmptySubsequences: false)
-            .map { $0.split(whereSeparator: { $0 == " " || $0 == "\t" }).joined(separator: " ") }
-            .filter { $0.hasPrefix("state = ") }
-            .filter { line in
-                let assigned = String(line.dropFirst("state = ".count))
-                return !Self.allowedAssignments.contains { assigned.hasPrefix($0) }
-            }
-        #expect(offenders.count == 2, "expected the two unsanctioned writes, found \(offenders)")
-        #expect(offenders.contains { $0.contains(".failed(") })
-        #expect(offenders.contains { $0.contains("jumpFailure") })
+        let writes = try Self.stateWrites(in: stripped)
+        let offenders = writes.filter { assigned in
+            !Self.allowedAssignments.contains { assigned.hasPrefix($0) }
+        }
+        #expect(writes.count == 8, """
+            expected the three allowed writes and the five unsanctioned ones (the comparison \
+            and the commented-out line must not count); found \(writes)
+            """)
+        #expect(offenders.count == 5, "expected the five unsanctioned writes, found \(offenders)")
+        #expect(offenders.filter { $0.hasPrefix(".failed(") }.count == 4, """
+            a `.failed` written with a receiver, inside a `guard … else` clause, or straight \
+            into the observable backing store must be seen exactly like one at the start of a \
+            line: \(offenders)
+            """)
+        #expect(offenders.contains { $0.hasPrefix("jumpFailure") })
+    }
+
+    /// Every write to `state`, as the text assigned. Returns what follows
+    /// the `=` up to the end of that line, whitespace-normalized — enough
+    /// for the allow-list to judge, and enough for a failure message to
+    /// quote.
+    private static func stateWrites(in stripped: String) throws -> [String] {
+        let regex = try NSRegularExpression(pattern: stateWritePattern)
+        let range = NSRange(stripped.startIndex..., in: stripped)
+        return regex.matches(in: stripped, range: range).compactMap { match in
+            guard let matchRange = Range(match.range, in: stripped) else { return nil }
+            let rest = stripped[matchRange.upperBound...]
+            let line = rest.prefix { $0 != "\n" }
+            return line.split(whereSeparator: { $0 == " " || $0 == "\t" }).joined(separator: " ")
+        }
     }
 
     /// Strips `//` and `/* */` comments and string literals, preserving

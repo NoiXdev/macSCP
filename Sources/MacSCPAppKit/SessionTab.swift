@@ -262,9 +262,13 @@ final class SessionTab: Identifiable {
     /// - `ReconnectRunner` increments `automaticAttempts`, before the dial
     ///   it is about to start.
     ///
-    /// The first three of those are the same three transitions `liveness`
-    /// has (see that property's own list), which is what keeps the two
-    /// values from drifting into describing different realities.
+    /// Five of those seven also write `liveness`, in the same step, and
+    /// the overlap was recounted here rather than carried over:
+    /// `handleLivenessGiveUp`, `teardown`, `startSession`,
+    /// `dismissLostConnection` and the mirror. That is what keeps the two
+    /// values from drifting into describing different realities. The two
+    /// that do not — `connect(in:stored:)`'s conditional clear and the
+    /// runner's counter — touch nothing `liveness` describes.
     var lostConnection: LostConnection?
 
     var displayTitle: String {

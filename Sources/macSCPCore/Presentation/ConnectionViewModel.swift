@@ -20,8 +20,11 @@ public enum ConnectFailureKind: Equatable, Sendable {
     /// EARN the right to be repeated rather than fall into it. Every
     /// refusal that happens before the dial is one of these by
     /// construction — the inputs are a pure function of the form and the
-    /// stores, so nothing about them changes on its own before the next
-    /// attempt asks the same question and gets the same answer.
+    /// stores, and nothing about them changes without a person doing
+    /// something. (Something else may well change them: a login set
+    /// repaired in another window, a keychain unlocked meanwhile. Both are
+    /// a person acting, which is exactly the state this case is named for —
+    /// and the surface's manual Reconnect is how they say so.)
     case needsPerson
     /// A dial that reached the wire and failed there — a timeout, a refused
     /// connection, a host still booting. The only case an unattended retry
@@ -690,7 +693,7 @@ public final class ConnectionViewModel {
     public func connect() async -> (any RemoteFileSystem)? {
         guard state != .connecting else { return nil }
         // Every attempt starts without a verdict — see `lastFailureKind`'s
-        // own doc comment for the three writes that keep it honest.
+        // own doc comment for the two writers that keep it honest.
         lastFailureKind = nil
         let myAttempt = UUID()
         currentAttempt = myAttempt
@@ -761,9 +764,10 @@ public final class ConnectionViewModel {
     /// `.needsPerson` is the default because every caller but one is a
     /// refusal decided BEFORE anything reached the wire: a form validation,
     /// a schema violation, a login set that no longer resolves. None of
-    /// those can answer differently on a retry, because none of their
-    /// inputs change on their own. Only `connect()`'s `catch` passes a
-    /// `kind` at all, and only it can pass `.other`.
+    /// those can answer differently on a retry unless a person does
+    /// something first — see `ConnectFailureKind.needsPerson`. Only
+    /// `connect()`'s `catch` passes a `kind` at all, and only it can pass
+    /// `.other`.
     private func fail(_ newState: State, kind: ConnectFailureKind = .needsPerson) {
         lastFailureKind = kind
         state = newState

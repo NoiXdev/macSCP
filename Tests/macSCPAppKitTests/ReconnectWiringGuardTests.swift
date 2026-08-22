@@ -51,51 +51,141 @@ struct ReconnectWiringGuardTests {
         repoRoot.appendingPathComponent(relativePath)
     }
 
-    /// Both GUI targets. `MacSCPMain` is a ten-line entry point today, and
-    /// including it costs nothing — the point of an allow-list is that
-    /// "nobody thought to look there" is not a way through it.
+    private static let sourcesDirectory = repoRoot.appendingPathComponent("Sources")
+
+    /// The GUI targets this suite scans, BY NAME — but never as the last
+    /// word on what exists. Round 2 hardcoded this list, and the reviewer
+    /// walked past it by adding a whole new target: `Sources/MacSCPPanels`,
+    /// containing a `BackendDescriptor` connect with an accept-anything
+    /// host-key decider, made a dependency of the shipped `MacSCPMain`. The
+    /// suite stayed green, and the walk's own floor test stayed true
+    /// throughout, because a floor cannot notice what it was never pointed
+    /// at.
     ///
-    /// `Sources/MacSCPCLI` is deliberately NOT scanned: it is a separate
-    /// program with no tabs, no lost surface and no reconnect policy, and
-    /// its own connect path is not this property. Sanctioning its dial
-    /// sites here would mean vouching for code this suite is not about.
-    private static let scannedRoots = [
-        repoRoot.appendingPathComponent("Sources/MacSCPAppKit"),
-        repoRoot.appendingPathComponent("Sources/MacSCPMain"),
+    /// So the roots are DERIVED and this list is only one half of a
+    /// partition. `everySourceDirectoryIsScannedOrExplicitlyExcluded` reads
+    /// what is actually on disk under `Sources/`, and
+    /// `everyPackageTargetIsScannedOrExplicitlyExcluded` reads what
+    /// `Package.swift` actually declares; a directory or target in neither
+    /// list fails both. A guard that scans less than it thinks is worse
+    /// than one that scans nothing, because it reports success.
+    private static let scannedRootNames = ["MacSCPAppKit", "MacSCPMain"]
+
+    private struct ExcludedRoot {
+        let name: String
+        let reason: String
+    }
+
+    /// Not scanned, on purpose, each with the reason that makes it a
+    /// decision rather than an oversight. An exclusion is as much a
+    /// security statement as a sanctioned site, and is meant to be read as
+    /// one.
+    private static let excludedRoots: [ExcludedRoot] = [
+        ExcludedRoot(
+            name: "macSCPCore",
+            reason: "Core is where the dial legitimately lives — every backend's `connect` is defined there. The property this suite guards is that the APP reaches those through one path, so scanning Core would mean sanctioning the implementation this suite exists to funnel access to."),
+        ExcludedRoot(
+            name: "MacSCPCLI",
+            reason: "A separate program with no tabs, no lost surface and no reconnect policy. Its own connect path is a different property; sanctioning its dial sites here would mean vouching for code this suite is not about."),
     ]
+
+    private static var scannedRoots: [URL] {
+        scannedRootNames.map { sourcesDirectory.appendingPathComponent($0) }
+    }
 
     // MARK: - The choke points, and who is allowed to be at one
 
-    /// What the scan looks for. Deliberately generous: a token that never
-    /// appears costs nothing, and the cost of a missing one is a dial
-    /// nobody sees. Grouped by what they are a choke point FOR.
+    /// What counts as touching a choke point — expressed as patterns over
+    /// the THING, not as literal spellings of it.
     ///
-    /// Dialing:
-    /// - `.connect(` — every dial the App can start today spells this:
-    ///   the form's `viewModel.connect()`, `connect(in:stored:)`'s
-    ///   `form.connect()`, and the connector closure's
-    ///   `BackendDescriptor.descriptor(for:).connect(`.
-    /// - the concrete backends and their transports — naming one in the App
-    ///   layer means going around `BackendDescriptor` altogether.
-    /// - `import Citadel` / `import NIO` — the App layer imports neither
-    ///   today, and a hand-rolled dial would need one.
+    /// Round 2 got this half wrong, and the reviewer measured it: the sites
+    /// were an allow-list, but the detector was still thirteen literal
+    /// substrings, which is a deny-list wearing an allow-list's clothes.
+    /// `let dial = connectionViewModel.connect` followed by
+    /// `Task { _ = await dial() }` bypassed `fillForm`, both hand-off locks,
+    /// `startSession` and the audit recorder — and passed, because the
+    /// token was `.connect(` and the evasion has no paren. Every entry here
+    /// was re-read with that question: does this describe a thing, or one
+    /// way of writing it?
     ///
-    /// Handing a session to a tab, which is the choke point a dial the
-    /// tokens above somehow missed would still have to pass:
-    /// - `startSession(`, `BrowserSession(`, `tab.session =`.
+    /// What changed, and why:
+    /// - `.connect(` → `\.connect\b`. A member named `connect`, applied or
+    ///   merely referenced. `.connected`/`.connecting` do not match (the
+    ///   word boundary), and catalog keys naming it are string literals the
+    ///   stripper has already blanked.
+    /// - the five concrete backend/transport type names → two patterns for
+    ///   the CATEGORY. Any `…FileSystem` that is not the protocol
+    ///   (`RemoteFileSystem`) or the one legitimate local one
+    ///   (`LocalFileSystem`), and any `SSH…Client`/`SFTP…Client`. A fourth
+    ///   backend added to Core is caught without anyone remembering to add
+    ///   it here.
+    /// - `import Citadel`/`import NIO` → deleted, and replaced by
+    ///   `permittedImports` below. Naming forbidden modules is the same
+    ///   deny-list mistake one level down; every import in these targets is
+    ///   now allow-listed instead.
+    /// - `startSession(`/`BrowserSession(`/`LostConnectionContent(`/
+    ///   `LostConnectionView(` → the paren is dropped or made part of a
+    ///   construction pattern that also accepts `.init`, so a reference or
+    ///   an `.init` spelling cannot slip past.
+    /// - `tab.session =` → a pattern for WRITING that property through any
+    ///   receiver (`self.session =`, `activeTab.session =`) or none, while
+    ///   excluding the `if let session =` bindings that merely read it.
     ///
-    /// Two more, guarding this task's own structural claims rather than the
-    /// dial: `LostConnectionContent(` (the error view's content must come
-    /// from `LostConnectionPlan`, which is what keeps a host name or a
-    /// server message off that surface) and `dot(.red` (the attention dot
-    /// must be rendered in exactly one place, the one that consults
-    /// `TabIndicatorPlan`).
-    private static let chokePointTokens = [
-        ".connect(",
-        "CitadelFileSystem", "SSHClient", "SFTPClient", "S3FileSystem", "WebDAVFileSystem",
-        "import Citadel", "import NIO",
-        "startSession(", "BrowserSession(", "tab.session =",
-        "LostConnectionContent(", "dot(.red",
+    /// `dot(.red` → `\bdot\s*\(\s*\.red\b` is the one entry that stays
+    /// tied to a helper's name, and it is worth being honest about: a
+    /// renamed helper would evade it. It is a belt, not the guarantee. What
+    /// actually keeps the `.lost` suppression working is `TabIndicatorPlan`
+    /// plus `ReconnectPlanTests` and
+    /// `theTabIndicatorPassesItsArgumentsUnconditioned`.
+    private struct ChokePoint {
+        let pattern: String
+        /// What the pattern is looking for, in words — this is what a
+        /// failure message tells the reader they have just done.
+        let describes: String
+    }
+
+    private static let chokePoints: [ChokePoint] = [
+        ChokePoint(
+            pattern: #"\.connect\b"#,
+            describes: "obtaining a connection"),
+        ChokePoint(
+            pattern: #"\b(?!RemoteFileSystem\b)(?!LocalFileSystem\b)\w*FileSystem\b"#,
+            describes: "naming a concrete remote backend"),
+        ChokePoint(
+            pattern: #"\b(?:SSH|SFTP)\w*Client\b"#,
+            describes: "naming a transport client"),
+        ChokePoint(
+            pattern: #"\bstartSession\b"#,
+            describes: "installing a session on a tab"),
+        ChokePoint(
+            pattern: #"\bBrowserSession\s*(?:\(|\.init\b)"#,
+            describes: "constructing a session"),
+        ChokePoint(
+            pattern: #"\.session\s*=(?!=)|(?<!let )(?<!var )(?<![A-Za-z0-9_.])session\s*=(?!=)"#,
+            describes: "writing a tab's session property"),
+        ChokePoint(
+            pattern: #"\bLostConnectionContent\s*(?:\(|\.init\b)"#,
+            describes: "building the lost-connection surface's content"),
+        ChokePoint(
+            pattern: #"\bLostConnectionView\s*(?:\(|\.init\b)"#,
+            describes: "rendering the lost-connection surface"),
+        ChokePoint(
+            pattern: #"\bdot\s*\(\s*\.red\b"#,
+            describes: "drawing the attention dot"),
+    ]
+
+    /// Every module these targets may import. An allow-list for the same
+    /// reason the sites are one: a hand-rolled dial has to reach a
+    /// transport somehow, and naming the libraries it must NOT use is a
+    /// list that fails open on the first one nobody thought of.
+    ///
+    /// Ten entries, counted while writing this sentence. Adding an eleventh
+    /// is a deliberate edit, which is the point — `import Citadel`,
+    /// `import NIOCore` or `import Network` appearing in the App layer is
+    /// exactly the change that should stop a reader.
+    private static let permittedImports: Set<String> = [
+        "AppKit", "Combine", "Foundation", "MacSCPAppKit", "Observation",
+        "SwiftTerm", "SwiftUI", "UniformTypeIdentifiers", "macSCPCore", "os",
     ]
 
     private struct SanctionedSite {
@@ -181,6 +271,7 @@ struct ReconnectWiringGuardTests {
     /// `ContentView+Detail.swift`, which has sanctioned lines of its own,
     /// but not that one.
     @Test func everyChokePointInTheAppLayerIsSanctioned() throws {
+        let detectors = try Self.chokePointDetectors()
         var unsanctioned: [String] = []
         for file in try Self.appSwiftFiles() {
             let relative = Self.relativePath(of: file)
@@ -188,11 +279,12 @@ struct ReconnectWiringGuardTests {
                 try String(contentsOf: file, encoding: .utf8))
             for line in stripped.split(separator: "\n", omittingEmptySubsequences: false) {
                 let code = Self.normalized(String(line))
-                guard Self.chokePointTokens.contains(where: { code.contains($0) }) else { continue }
+                guard let describes = Self.chokePoint(in: code, detectors: detectors)
+                else { continue }
                 let sanctioned = Self.sanctionedSites.contains {
                     $0.file == relative && $0.code == code
                 }
-                if !sanctioned { unsanctioned.append("\(relative): \(code)") }
+                if !sanctioned { unsanctioned.append("\(relative): \(code)   [\(describes)]") }
             }
         }
         #expect(unsanctioned.isEmpty, """
@@ -245,6 +337,82 @@ struct ReconnectWiringGuardTests {
             """)
     }
 
+    /// Derives the roots from the filesystem rather than trusting the list:
+    /// every directory under `Sources/` must be either scanned or
+    /// explicitly excluded with a reason. This is what a new target cannot
+    /// walk past — the reviewer's `Sources/MacSCPPanels`, with its
+    /// accept-anything host-key decider, is a directory that is in neither
+    /// list, so it fails here whether or not anyone remembered this suite.
+    ///
+    /// Both directions are checked: an unknown directory fails, and a name
+    /// on either list that no longer exists on disk fails too, so neither
+    /// list can rot into a claim about code that is gone.
+    @Test func everySourceDirectoryIsScannedOrExplicitlyExcluded() throws {
+        let contents = try FileManager.default.contentsOfDirectory(
+            at: Self.sourcesDirectory, includingPropertiesForKeys: [.isDirectoryKey])
+        let directories = contents.filter {
+            (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        }.map(\.lastPathComponent)
+
+        #expect(directories.count >= 2, """
+            only \(directories.count) director(ies) found under Sources/ — this check is not \
+            reading the directory it is meant to derive the roots from.
+            """)
+
+        let known = Set(Self.scannedRootNames).union(Self.excludedRoots.map(\.name))
+        let unknown = Set(directories).subtracting(known)
+        #expect(unknown.isEmpty, """
+            director(ies) under Sources/ that this suite neither scans nor excludes: \
+            \(unknown.sorted()).
+
+            A new target is invisible to a hardcoded root list — which is exactly how a target \
+            containing a `BackendDescriptor` connect with an accept-anything host-key decider \
+            was added, made a dependency of the shipped app, and left this suite green. Add it \
+            to `scannedRootNames` (and expect to sanction whatever it dials), or to \
+            `excludedRoots` WITH a reason that says why its connect path is not this property.
+            """)
+
+        let missing = known.subtracting(directories)
+        #expect(missing.isEmpty, """
+            \(missing.sorted()) are named by this suite but no longer exist under Sources/ — \
+            an allowance for code that is gone is a lie about the code.
+            """)
+    }
+
+    /// The second, independent derivation: `Package.swift`'s own non-test
+    /// targets. A target could in principle live outside `Sources/` (SwiftPM
+    /// takes a `path:`), which the filesystem check above would never see.
+    ///
+    /// Read from the RAW manifest, comments included. A commented-out target
+    /// therefore demands coverage it does not need — a false positive, which
+    /// is the safe direction for this check and cheaper than parsing Swift.
+    @Test func everyPackageTargetIsScannedOrExplicitlyExcluded() throws {
+        let manifest = try String(
+            contentsOf: Self.repoRoot.appendingPathComponent("Package.swift"), encoding: .utf8)
+        let regex = try NSRegularExpression(
+            pattern: #"\.(?:executableTarget|target)\(\s*name:\s*"([^"]+)""#)
+        let range = NSRange(manifest.startIndex..., in: manifest)
+        var targets: Set<String> = []
+        for match in regex.matches(in: manifest, range: range) {
+            guard let nameRange = Range(match.range(at: 1), in: manifest) else { continue }
+            targets.insert(String(manifest[nameRange]))
+        }
+
+        #expect(targets.count >= 2, """
+            only \(targets.count) target(s) parsed out of Package.swift — the manifest scan is \
+            not reading what it thinks it is.
+            """)
+
+        let known = Set(Self.scannedRootNames).union(Self.excludedRoots.map(\.name))
+        let unknown = targets.subtracting(known)
+        #expect(unknown.isEmpty, """
+            Package.swift declares target(s) this suite neither scans nor excludes: \
+            \(unknown.sorted()). See `everySourceDirectoryIsScannedOrExplicitlyExcluded` for \
+            what to do about it — this check exists because a target's sources need not live \
+            under Sources/ at all.
+            """)
+    }
+
     /// The last gap in the "this surface can only show fixed catalog keys"
     /// claim, found by asking where the property could be violated FROM
     /// rather than whether the lines just written still say what they said:
@@ -272,24 +440,78 @@ struct ReconnectWiringGuardTests {
             """)
     }
 
-    /// Self-test on synthetic source: the scan must actually reject a dial
-    /// it has not been told about, and accept the sanctioned spelling.
-    @Test func theScanRejectsAnUnknownDialAndAcceptsASanctionedOne() {
-        let sanctioned = SanctionedSite(
-            file: "Fake.swift", code: "if let fs = await form.connect() {", occurrences: 1,
-            reason: "self-test")
-        let lines = Self.stripCommentsAndStrings("""
+    /// Self-test on synthetic source: the scan must reject a dial it has
+    /// not been told about, accept the sanctioned spelling, and — the case
+    /// round 2 shipped broken — see a dial spelled as an UNAPPLIED method
+    /// reference, which has no paren anywhere.
+    @Test func theScanSeesEveryWayADialCanBeSpelled() throws {
+        let detectors = try Self.chokePointDetectors()
+        let flagged = Self.stripCommentsAndStrings("""
             // if let fs = await form.connect() {
+            let harmless = tab.liveness == .connected
+            let alsoHarmless = surface == .connecting
             if let fs = await form.connect() {
             Task { _ = await tab.connectionViewModel.connect() }
+            let dial = tab.connectionViewModel.connect
+            let fs = try await CitadelFileSystem.connect(config, decider)
+            let client = SSHClient.self
+            tab.session = BrowserSession.init(id: id)
             """)
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { Self.normalized(String($0)) }
-            .filter { code in Self.chokePointTokens.contains { code.contains($0) } }
-        #expect(lines.count == 2, "the commented-out line must not count; found \(lines)")
-        #expect(lines.contains(sanctioned.code))
-        #expect(lines.contains { $0 != sanctioned.code }, """
-            the unsanctioned dial must survive stripping and be visible to the scan.
+            .filter { Self.chokePoint(in: $0, detectors: detectors) != nil }
+
+        #expect(!flagged.contains { $0.contains("harmless") }, """
+            `.connected`/`.connecting` must not match the `connect` pattern, or every liveness \
+            comparison in the App layer would need a sanction: \(flagged)
+            """)
+        #expect(flagged.contains("let dial = tab.connectionViewModel.connect"), """
+            an unapplied method reference is invisible to the scan — this is the exact evasion \
+            round 2 shipped, where the only difference from a caught line was a paren.
+            """)
+        #expect(flagged.contains("if let fs = await form.connect() {"))
+        #expect(flagged.contains("Task { _ = await tab.connectionViewModel.connect() }"))
+        #expect(flagged.contains("let fs = try await CitadelFileSystem.connect(config, decider)"))
+        #expect(flagged.contains("let client = SSHClient.self"))
+        #expect(flagged.contains("tab.session = BrowserSession.init(id: id)"), """
+            an `.init` spelling must be seen the same as a `(` one.
+            """)
+        #expect(flagged.count == 6, "expected exactly the six real hits, found \(flagged)")
+    }
+
+    /// Nothing may enter these targets that is not on `permittedImports` —
+    /// a hand-rolled dial has to reach a transport somehow, and this is the
+    /// door it would come through.
+    @Test func everyImportIsPermitted() throws {
+        let regex = try NSRegularExpression(pattern: #"(?<![A-Za-z0-9_])import\s+([A-Za-z_][\w.]*)"#)
+        var seen: Set<String> = []
+        var forbidden: [String] = []
+        for file in try Self.appSwiftFiles() {
+            let stripped = Self.stripCommentsAndStrings(
+                try String(contentsOf: file, encoding: .utf8))
+            let range = NSRange(stripped.startIndex..., in: stripped)
+            for match in regex.matches(in: stripped, range: range) {
+                guard let nameRange = Range(match.range(at: 1), in: stripped) else { continue }
+                let module = String(stripped[nameRange])
+                seen.insert(module)
+                if !Self.permittedImports.contains(module) {
+                    forbidden.append("\(Self.relativePath(of: file)): import \(module)")
+                }
+            }
+        }
+        #expect(forbidden.isEmpty, """
+            module(s) imported into the GUI targets that are not on the allow-list:
+            \(forbidden.joined(separator: "\n"))
+
+            A transport library reaching the App layer is how a dial that goes around \
+            `ContentView.connect(in:stored:)` gets built. If this really is a new dependency \
+            of the App layer, add it to `permittedImports` and expect that addition to be \
+            read as the decision it is.
+            """)
+        let stale = Self.permittedImports.subtracting(seen)
+        #expect(stale.isEmpty, """
+            \(stale.sorted()) are on `permittedImports` but imported nowhere. An allowance for \
+            something that does not exist is a lie about the code — remove them.
             """)
     }
 
@@ -513,6 +735,27 @@ struct ReconnectWiringGuardTests {
             files += walker.compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
         }
         return files.sorted { $0.path < $1.path }
+    }
+
+    /// Compiled once per test that needs them, and `throws` rather than
+    /// force-unwrapping: a pattern that fails to compile must fail the
+    /// calling test loudly, not take the whole run down with it.
+    private static func chokePointDetectors() throws -> [(regex: NSRegularExpression, describes: String)] {
+        try chokePoints.map { (try NSRegularExpression(pattern: $0.pattern), $0.describes) }
+    }
+
+    /// What choke point this line touches, if any — the description, so a
+    /// failure message can say what was just done rather than which
+    /// substring matched.
+    private static func chokePoint(
+        in line: String, detectors: [(regex: NSRegularExpression, describes: String)]
+    ) -> String? {
+        let range = NSRange(line.startIndex..., in: line)
+        for detector in detectors
+        where detector.regex.firstMatch(in: line, range: range) != nil {
+            return detector.describes
+        }
+        return nil
     }
 
     private static func relativePath(of file: URL) -> String {
