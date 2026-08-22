@@ -239,12 +239,32 @@ final class SessionTab: Identifiable {
     /// teardown and writes this afterwards, in the same order and for the
     /// same reason `.lost` itself is written afterwards.
     ///
-    /// Written by `handleLivenessGiveUp(_:)` (a fresh episode), by
-    /// `ReconnectRunner` (its attempt counter), and cleared by
-    /// `ContentView.teardown(_:)` and `ContentView.startSession` — the same
-    /// two places that own `liveness`'s own "there is nothing to describe
-    /// anymore" and "there is a live session again" transitions, so the two
-    /// values cannot drift into describing different tabs' realities.
+    /// Seven writers, counted while writing this sentence (the first
+    /// version of this comment named four of them, which is how a reviewer
+    /// found it):
+    /// - `ContentView.handleLivenessGiveUp(_:)` opens an episode, after
+    ///   `teardown(_:)` has run and for the same reason `.lost` is written
+    ///   there rather than before it.
+    /// - `ContentView.teardown(_:)` clears it, unconditionally, for its
+    ///   other callers — every one of them a deliberate "leave this
+    ///   connection", with no drop left to describe.
+    /// - `ContentView.startSession` clears it: the tab has a live session
+    ///   again, so the record of the one that dropped goes with it, attempt
+    ///   counter included.
+    /// - `ContentView.dismissLostConnection(_:)` clears it together with
+    ///   `liveness`, when the user leaves the surface for the form.
+    /// - `ContentView.connect(in:stored:)` clears it when the connect names
+    ///   a DIFFERENT stored session — the user has moved on, and that
+    ///   attempt's failure belongs to what they just asked for.
+    /// - `ConnectAttemptLivenessMirror` writes back the `reason` a failed
+    ///   attempt earned (`ConnectAttemptLivenessPlan.write`'s answer), in
+    ///   the same step as the `liveness` it explains.
+    /// - `ReconnectRunner` increments `automaticAttempts`, before the dial
+    ///   it is about to start.
+    ///
+    /// The first three of those are the same three transitions `liveness`
+    /// has (see that property's own list), which is what keeps the two
+    /// values from drifting into describing different realities.
     var lostConnection: LostConnection?
 
     var displayTitle: String {

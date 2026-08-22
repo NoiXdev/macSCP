@@ -315,6 +315,96 @@ struct ReconnectPathTests {
         #expect(await recorder.dialedHost == "elsewhere.example")
     }
 
+    // MARK: - Pre-dial refusals reach the schedule as "needs a person"
+
+    /// The reviewer's first measured example, driven end to end through the
+    /// real code: a stored session whose login set no longer resolves.
+    /// `ContentView.fillForm(_:from:)` reports it through
+    /// `ConnectionViewModel.showFailure`, which round 1 had CLEARING the
+    /// verdict — so the reason became `.reconnectFailed` and `.automatic`
+    /// re-asked a question only a person could answer, on a schedule,
+    /// forever.
+    ///
+    /// The chain is followed with the real pieces at every link: the real
+    /// `fillForm`, the real `lastFailureKind` it leaves behind, the real
+    /// `ConnectAttemptLivenessPlan.write` the mirror consults, and the real
+    /// `ReconnectPlan.step` the runner consults. Only the SwiftUI mirror
+    /// and runner themselves are stood in for — this project renders no
+    /// views in a test.
+    @Test func aDanglingLoginSetStopsTheUnattendedSchedule() throws {
+        let workDir = makeTempDirectory("predial-loginset")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, cleanup) = makeContentView(secrets: ReconnectSecretStore(), storeDirectory: workDir)
+        defer { cleanup() }
+
+        let stored = StoredSession(
+            name: uniqueSaveName("dangling-set"),
+            loginSetID: UUID(),   // no such set in the isolated store
+            kind: .ssh,
+            ssh: StoredSSHConfig(host: "example.com", username: "tim"))
+        let form = ConnectionViewModel(connector: { _, _ in
+            Issue.record("the dial must never be reached — the fill refuses first")
+            throw CancellationError()
+        })
+
+        let filled = try view.fillForm(form, from: stored)
+
+        #expect(filled == false, "a dangling login set must refuse before the dial")
+        #expect(form.lastFailureKind == .needsPerson, """
+            a refusal decided before the dial left no verdict, so an unattended retry would \
+            read it as worth repeating.
+            """)
+        expectTheScheduleStops(for: form, sourceLocation: #_sourceLocation)
+    }
+
+    /// The reviewer's second measured example: a stored session whose
+    /// secret is gone from the store. Nothing throws — `fillForm` fills a
+    /// blank password and `resolveConfigWithoutDialing()` refuses on the
+    /// schema violation, a route that never reaches `connect()`'s `catch`
+    /// at all, which is why round 1 left it unclassified.
+    @Test func aMissingStoredSecretStopsTheUnattendedSchedule() async throws {
+        let workDir = makeTempDirectory("predial-secret")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, cleanup) = makeContentView(secrets: ReconnectSecretStore(), storeDirectory: workDir)
+        defer { cleanup() }
+
+        let stored = StoredSession(
+            name: uniqueSaveName("missing-secret"), kind: .ssh,
+            ssh: StoredSSHConfig(host: "example.com", username: "tim", authKind: .password))
+        let form = ConnectionViewModel(connector: { _, _ in
+            Issue.record("the dial must never be reached — validation refuses first")
+            throw CancellationError()
+        })
+
+        #expect(try view.fillForm(form, from: stored) == true, "the fill itself succeeds here")
+        let fs = await form.connect()
+
+        #expect(fs == nil)
+        #expect(form.lastFailureKind == .needsPerson, """
+            the schema violation for the empty secret left no verdict — this is the route that \
+            never reaches the dial's `catch`, and round 1 classified only what the dial threw.
+            """)
+        expectTheScheduleStops(for: form, sourceLocation: #_sourceLocation)
+    }
+
+    /// The rest of the chain, shared by the two tests above: the verdict the
+    /// form is carrying must make the mirror publish `.needsPerson`, and
+    /// that reason must make the schedule stop — under `.automatic`, the
+    /// behaviour where looping would actually happen.
+    private func expectTheScheduleStops(
+        for form: ConnectionViewModel, sourceLocation: SourceLocation
+    ) {
+        let write = ConnectAttemptLivenessPlan.write(
+            for: form.state, hasSession: false, describesLostConnection: true,
+            failureKind: form.lastFailureKind)
+        #expect(write == .lost(.needsPerson), sourceLocation: sourceLocation)
+        let step = ReconnectPlan.step(
+            liveness: .lost,
+            lost: LostConnection(reason: .needsPerson, storedSessionID: UUID()),
+            targetIsKnown: true, behaviour: .automatic)
+        #expect(step == .stop, sourceLocation: sourceLocation)
+    }
+
     // MARK: - Isolation proof
 
     @Test func theRealSessionsFileIsNeverTouched() async {

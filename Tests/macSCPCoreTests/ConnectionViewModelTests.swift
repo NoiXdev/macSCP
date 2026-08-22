@@ -22,10 +22,15 @@ struct ConnectionViewModelTests {
     //
     // The one fact the reconnect policy reads to decide whether repeating
     // an attempt unattended could ever produce a different outcome. Driven
-    // through the real `connect()` with a throwing connector rather than by
-    // calling the classifier directly: what matters is that the verdict
-    // reaches `lastFailureKind` on the same path the App reads it from, not
-    // that a private switch maps an error correctly in isolation.
+    // through the real `connect()`/`showFailure` rather than by calling the
+    // classifier directly: what matters is that the verdict reaches
+    // `lastFailureKind` on the same path the App reads it from, not that a
+    // private switch maps an error correctly in isolation.
+    //
+    // `.needsPerson` is the DEFAULT (round 2, after review). Only a dial
+    // that reached the wire can be `.other`, so the tests below come in two
+    // groups: the many ways a failure stays unanswerable, and the one way
+    // it becomes worth repeating.
 
     /// TOFU, both halves: a key that does not match the one on record
     /// (a hard stop nobody can retry past) and a trust card the user
@@ -59,11 +64,49 @@ struct ConnectionViewModelTests {
         #expect(vm.lastFailureKind == .needsPerson)
     }
 
-    /// The case that must NOT stop an unattended retry — a transport
-    /// failure is exactly what retrying is for. Without this, every test
-    /// above would pass just as well against a classifier that answers
-    /// `.needsPerson` for everything.
-    @Test func anOrdinaryTransportFailureIsRetryable() async {
+    /// The inverted default, and the half round 1 got wrong: a refusal
+    /// decided BEFORE the dial is exactly as unanswerable by a retry as one
+    /// thrown by it — the inputs are a pure function of the form and the
+    /// stores, so the next unattended attempt asks the same question and
+    /// gets the same answer. Three pre-dial refusals, each reaching
+    /// `.failed` by a different route: form validation, a schema violation
+    /// on a required secret, and the save-name rule.
+    @Test func aPreDialValidationRefusalNeedsAPerson() async {
+        let vm = makeVM()
+        vm.host = ""
+        _ = await vm.connect()
+        #expect(vm.lastFailureKind == .needsPerson)
+    }
+
+    @Test func aMissingRequiredSecretNeedsAPerson() async {
+        let vm = makeVM()
+        vm.password = ""
+        _ = await vm.connect()
+        #expect(vm.lastFailureKind == .needsPerson)
+    }
+
+    @Test func anEmptySaveNameNeedsAPerson() async {
+        let vm = makeVM()
+        vm.shouldSaveSession = true
+        vm.saveName = "   "
+        _ = await vm.connect()
+        #expect(vm.lastFailureKind == .needsPerson)
+    }
+
+    /// The App layer's own refusal route — `ContentView.fillForm(_:from:)`
+    /// reports a dangling login set through this method, and round 1 had it
+    /// CLEARING the verdict, which read as retryable.
+    @Test func anAppLayerRefusalNeedsAPerson() {
+        let vm = makeVM()
+        vm.showFailure(message: "the stored login for this connection was not found")
+        #expect(vm.lastFailureKind == .needsPerson)
+    }
+
+    /// Every pre-dial refusal above must not have made `.other`
+    /// unreachable: a dial that got to the wire and failed there is the one
+    /// case an unattended retry exists for, and it is the only thing that
+    /// opts into it.
+    @Test func onlyAFailureThatReachedTheWireIsRetryable() async {
         let vm = makeVM(connector: { _, _ in
             throw RemoteFSError.connectionFailed(reason: "timed out")
         })
@@ -93,17 +136,6 @@ struct ConnectionViewModelTests {
         #expect(vm.lastFailureKind == .needsPerson)
         _ = await vm.connect()
         #expect(vm.lastFailureKind == .other)
-    }
-
-    /// An App-layer refusal (`showFailure`) is not a dial result — leaving
-    /// the previous dial's verdict standing behind a newer, unrelated
-    /// `.failed` would attribute it to the wrong thing entirely.
-    @Test func anAppLayerRefusalClearsTheVerdict() async {
-        let vm = makeVM(connector: { _, _ in throw HostKeyError.rejectedByUser })
-        _ = await vm.connect()
-        #expect(vm.lastFailureKind == .needsPerson)
-        vm.showFailure(message: "the stored login was not found")
-        #expect(vm.lastFailureKind == nil)
     }
 
     @Test func successReturnsFileSystemAndResetsState() async {

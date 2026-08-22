@@ -505,11 +505,9 @@ extension ContentView {
                     }
                     // Lost surface branch (connection-liveness plan, Task 7)
                     //
-                    // Placed between the `}` and the `else` deliberately: it
-                    // is `ReconnectWiringGuardTests`' anchor for this branch,
-                    // and an anchor INSIDE the branch would leave the scan's
-                    // first balanced brace pair somewhere in the middle of
-                    // the call below instead of around the whole branch.
+                    // Also `ReconnectWiringGuardTests`' anchor for this
+                    // branch; that suite's own doc comment explains what it
+                    // scans from here.
                     //
                     // The content is `LostConnectionPlan.content`'s, not
                     // assembled here: what a given reason says, and whether
@@ -522,7 +520,8 @@ extension ContentView {
                             content: LostConnectionPlan.content(
                                 reason: tab.lostConnection?.reason ?? .probeGaveUp,
                                 targetIsKnown: reconnectTarget(for: tab) != nil,
-                                behaviour: settingsStore.reconnectBehaviour),
+                                behaviour: settingsStore.reconnectBehaviour,
+                                attempts: tab.lostConnection?.automaticAttempts ?? 0),
                             onReconnect: { reconnect(tab) },
                             onDismiss: { dismissLostConnection(tab) })
                     } else {
@@ -1084,6 +1083,12 @@ struct LostConnection: Equatable {
 /// user typed) checkable rather than merely intended. `ReconnectPlanTests`
 /// pins that every reachable content value is one of a fixed, enumerated
 /// set of catalog keys.
+///
+/// The two button labels are fields here rather than literals in the view
+/// (round 2, after review): with them left in the view, this type covered
+/// the text on the surface but not all of it, and the claim that the key
+/// scan is exhaustive was true only of the part that happened to live here.
+/// Everything the surface renders now comes through this type.
 struct LostConnectionContent: Equatable {
     struct Message: Equatable {
         let key: String
@@ -1096,8 +1101,11 @@ struct LostConnectionContent: Equatable {
     /// what macSCP is doing on its own. `nil` when the body already says
     /// everything.
     let hint: Message?
-    /// Whether the surface offers "Reconnect" at all.
-    let offersReconnect: Bool
+    /// The redial button, or `nil` when there is nothing to redial.
+    let reconnectButton: Message?
+    /// The way back to the ordinary connection form. Always offered — even
+    /// with a redial available, leaving the surface has to be possible.
+    let dismissButton: Message
 }
 
 /// Builds `LostConnectionContent` (connection-liveness plan, Task 7) —
@@ -1111,8 +1119,16 @@ enum LostConnectionPlan {
     /// against `SessionListViewModel.sessions`, because a session can be
     /// deleted while its tab sits on this surface, and offering to redial
     /// something that no longer exists is a button that cannot work.
+    ///
+    /// `attempts` is `LostConnection.automaticAttempts`. It matters only to
+    /// `.onceThenAsk`, which is the behaviour whose whole state is "has the
+    /// one attempt happened yet" — and which round 1 left with no hint at
+    /// all, so a user could not tell that macSCP was about to try by
+    /// itself, nor afterwards that it already had. That invisibility, not
+    /// the delay before the attempt, was the friction.
     static func content(
-        reason: LostConnectionReason, targetIsKnown: Bool, behaviour: ReconnectBehaviour
+        reason: LostConnectionReason, targetIsKnown: Bool, behaviour: ReconnectBehaviour,
+        attempts: Int
     ) -> LostConnectionContent {
         let body: LostConnectionContent.Message
         switch reason {
@@ -1149,7 +1165,15 @@ enum LostConnectionPlan {
                 hint = .init(
                     key: "connection.lost.hint.automatic",
                     fallback: "macSCP keeps trying on its own, waiting longer between attempts.")
-            case .onceThenAsk, .offerOnly:
+            case .onceThenAsk:
+                hint = attempts == 0
+                    ? .init(
+                        key: "connection.lost.hint.onceUpcoming",
+                        fallback: "macSCP will try once on its own in a moment.")
+                    : .init(
+                        key: "connection.lost.hint.onceDone",
+                        fallback: "macSCP already tried once on its own.")
+            case .offerOnly:
                 hint = nil
             }
         }
@@ -1158,7 +1182,10 @@ enum LostConnectionPlan {
             title: .init(key: "connection.lost.title", fallback: "Connection lost"),
             body: body,
             hint: hint,
-            offersReconnect: targetIsKnown)
+            reconnectButton: targetIsKnown
+                ? .init(key: "connection.lost.reconnect", fallback: "Reconnect") : nil,
+            dismissButton: .init(
+                key: "connection.lost.dismiss", fallback: "Back to the form"))
     }
 }
 
@@ -1446,15 +1473,12 @@ private struct LostConnectionView: View {
                     .multilineTextAlignment(.center)
             }
             HStack(spacing: 12) {
-                if content.offersReconnect {
-                    Button(
-                        L10n.string("connection.lost.reconnect", "Reconnect"),
-                        action: onReconnect
-                    )
-                    .buttonStyle(.polished)
+                if let reconnect = content.reconnectButton {
+                    Button(L10n.string(reconnect.key, reconnect.fallback), action: onReconnect)
+                        .buttonStyle(.polished)
                 }
                 Button(
-                    L10n.string("connection.lost.dismiss", "Back to the form"),
+                    L10n.string(content.dismissButton.key, content.dismissButton.fallback),
                     action: onDismiss)
             }
         }

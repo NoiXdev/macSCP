@@ -920,5 +920,7 @@
 "connection.lost.hint.noSavedSession" = "Diese Verbindung war nicht gespeichert; zum Wiederverbinden füllen Sie das Formular erneut aus.";
 "connection.lost.hint.stopped" = "macSCP versucht es nicht von selbst erneut, solange die Frage offen ist.";
 "connection.lost.hint.automatic" = "macSCP versucht es von selbst weiter, mit wachsendem Abstand.";
+"connection.lost.hint.onceUpcoming" = "macSCP versucht es gleich einmal von selbst.";
+"connection.lost.hint.onceDone" = "macSCP hat es bereits einmal von selbst versucht.";
 "connection.lost.reconnect" = "Erneut verbinden";
 "connection.lost.dismiss" = "Zurück zum Formular";

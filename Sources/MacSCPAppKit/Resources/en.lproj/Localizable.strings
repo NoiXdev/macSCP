@@ -919,5 +919,7 @@
 "connection.lost.hint.noSavedSession" = "This connection was not saved, so reconnecting means filling the form in again.";
 "connection.lost.hint.stopped" = "macSCP is not retrying on its own until you have answered it.";
 "connection.lost.hint.automatic" = "macSCP keeps trying on its own, waiting longer between attempts.";
+"connection.lost.hint.onceUpcoming" = "macSCP will try once on its own in a moment.";
+"connection.lost.hint.onceDone" = "macSCP already tried once on its own.";
 "connection.lost.reconnect" = "Reconnect";
 "connection.lost.dismiss" = "Back to the form";

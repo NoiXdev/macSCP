@@ -922,5 +922,7 @@
 "connection.lost.hint.noSavedSession" = "To połączenie nie było zapisane — aby połączyć się ponownie, wypełnij formularz jeszcze raz.";
 "connection.lost.hint.stopped" = "macSCP nie ponawia prób samodzielnie, dopóki nie odpowiesz.";
 "connection.lost.hint.automatic" = "macSCP ponawia próby samodzielnie, z coraz dłuższymi przerwami.";
+"connection.lost.hint.onceUpcoming" = "macSCP zaraz spróbuje raz samodzielnie.";
+"connection.lost.hint.onceDone" = "macSCP już raz spróbował samodzielnie.";
 "connection.lost.reconnect" = "Połącz ponownie";
 "connection.lost.dismiss" = "Wróć do formularza";

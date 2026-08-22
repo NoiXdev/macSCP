@@ -15,10 +15,18 @@ import Observation
 /// host key from an ordinary timeout.
 public enum ConnectFailureKind: Equatable, Sendable {
     /// A person has to answer or supply something before another attempt
-    /// can differ from this one.
+    /// can differ from this one. **The default**, and deliberately so: an
+    /// unattended retry is the dangerous direction, so a failure has to
+    /// EARN the right to be repeated rather than fall into it. Every
+    /// refusal that happens before the dial is one of these by
+    /// construction — the inputs are a pure function of the form and the
+    /// stores, so nothing about them changes on its own before the next
+    /// attempt asks the same question and gets the same answer.
     case needsPerson
-    /// Anything else — including every transport failure, which is exactly
-    /// what retrying is for.
+    /// A dial that reached the wire and failed there — a timeout, a refused
+    /// connection, a host still booting. The only case an unattended retry
+    /// is for, and the only one anything has to opt into (see
+    /// `ConnectionViewModel.failureKind(for:)`).
     case other
 }
 
@@ -449,17 +457,24 @@ public final class ConnectionViewModel {
     /// 7): would an identical second attempt differ from this one at all, or
     /// does a person have to answer or supply something first?
     ///
-    /// `nil` unless the most recent dial threw. Written in three places, all
-    /// in this type and counted while writing this sentence: `connect()`
-    /// clears it as its first act (every attempt starts without a verdict),
-    /// `connect()`'s `catch` sets it from the thrown error, and
-    /// `showFailure(_:field:)` clears it (an App-layer refusal is not a dial
-    /// result, and must not leave the previous dial's verdict standing
-    /// behind a newer, unrelated `.failed`). Every other `.failed` write in
-    /// this type happens inside `connect()` AFTER its own clear, so `nil` is
-    /// already the right answer there. The two writes that accompany a
-    /// `state` change both happen BEFORE it, so nothing observing `state`
-    /// can read a verdict that belongs to the attempt before.
+    /// `nil` only while `state` is not `.failed`. Two writers, counted while
+    /// writing this sentence, both in this type: `connect()` clears it as
+    /// its first act (an attempt that has just started has earned no
+    /// verdict), and `fail(_:kind:)` sets it — and `fail(_:kind:)` is the
+    /// ONLY way `state` is ever made `.failed` anywhere in this type, which
+    /// is what makes "every failure carries a verdict" structural rather
+    /// than a rule seven call sites have to remember.
+    /// `ConnectionViewModelSourceGuardTests` scans for a `.failed` written
+    /// any other way.
+    ///
+    /// `fail(_:kind:)` writes this BEFORE `state`, so nothing observing
+    /// `state` can read a verdict belonging to the attempt before.
+    ///
+    /// Round 2, after review: the first version classified only what the
+    /// dial THREW, so every pre-dial refusal — a dangling login set, a
+    /// stored secret that is gone — left this `nil`, read as retryable, and
+    /// `.automatic` looped on a question only a person could answer. The
+    /// default is now the other way round.
     ///
     /// Deliberately NOT derived from `state`'s `field:` at the reading end:
     /// `.failed` carries a localized message and a form field, neither of
@@ -689,15 +704,15 @@ public final class ConnectionViewModel {
 
         if shouldSaveSession,
            saveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            state = .failed(
-                message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName)
+            fail(.failed(
+                message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName))
             return nil
         }
 
         let dialed: ConnectionConfig
         switch resolveConfigWithoutDialing() {
         case .failed(let failure):
-            state = failure
+            fail(failure)
             return nil
         case .resolved(let config):
             dialed = config
@@ -730,16 +745,28 @@ public final class ConnectionViewModel {
         } catch {
             // Same attempt-scoped write as the success path above.
             guard currentAttempt == myAttempt else { return nil }
-            // Before the `state` write, not after: `state` is what observers
-            // watch, and an observer that reacted to `.failed` while this
-            // still held the PREVIOUS attempt's verdict would decide on the
-            // wrong one. Observation delivers on a later turn today, so the
-            // order is belt-and-braces — but it costs nothing and does not
-            // depend on that staying true.
-            lastFailureKind = Self.failureKind(for: error)
-            state = jumpAwareFailedState(for: error)
+            // The one call that passes a `kind`, and so the only one that
+            // can reach `.other`: this is the only failure in this type
+            // that got as far as the wire.
+            fail(jumpAwareFailedState(for: error), kind: Self.failureKind(for: error))
             return nil
         }
+    }
+
+    /// The ONLY way `state` becomes `.failed` in this type — see
+    /// `lastFailureKind`'s own doc comment for why that is structural
+    /// rather than a convention, and `ConnectionViewModelSourceGuardTests`
+    /// for the scan that keeps it so.
+    ///
+    /// `.needsPerson` is the default because every caller but one is a
+    /// refusal decided BEFORE anything reached the wire: a form validation,
+    /// a schema violation, a login set that no longer resolves. None of
+    /// those can answer differently on a retry, because none of their
+    /// inputs change on their own. Only `connect()`'s `catch` passes a
+    /// `kind` at all, and only it can pass `.other`.
+    private func fail(_ newState: State, kind: ConnectFailureKind = .needsPerson) {
+        lastFailureKind = kind
+        state = newState
     }
 
     /// Classifies a thrown dial error for `lastFailureKind`.
@@ -963,12 +990,13 @@ public final class ConnectionViewModel {
     /// gets the identical red-highlight/alert treatment without a second
     /// error-reporting mechanism.
     public func showFailure(message: String, field: Field? = nil) {
-        // Cleared before the `state` write, for the same reason `connect()`'s
-        // own catch sets it before its own: an App-layer refusal is not a
-        // dial result, and must not be observed carrying the previous dial's
-        // verdict. See `lastFailureKind`'s own doc comment.
-        lastFailureKind = nil
-        state = .failed(message: message, field: field)
+        // `.needsPerson`, by `fail(_:kind:)`'s default: an App-layer
+        // refusal reaches this method precisely because something needs the
+        // user's attention — a login set that no longer resolves, a jump
+        // whose source session is gone — and the next unattended attempt
+        // would ask the identical question. See `lastFailureKind`'s doc
+        // comment for the review that measured these looping.
+        fail(.failed(message: message, field: field))
     }
 
     /// Removes the plaintext password from the state (e.g. after disconnecting).
@@ -1310,8 +1338,8 @@ public final class ConnectionViewModel {
 
         let trimmedName = saveName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
-            state = .failed(
-                message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName)
+            fail(.failed(
+                message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName))
             return nil
         }
         let descriptor = BackendDescriptor.descriptor(for: kind)
@@ -1329,9 +1357,9 @@ public final class ConnectionViewModel {
         // otherwise change this answer without touching this line.
         let leftLoginSet = editingOriginal?.loginSetID != nil && loginMode == .manual
         if let violation = descriptor.firstViolation(in: values, requireSecrets: leftLoginSet) {
-            state = .failed(
+            fail(.failed(
                 message: CoreL10n.string(violation.messageKey),
-                field: .schema(violation.fieldKey))
+                field: .schema(violation.fieldKey)))
             return nil
         }
         // M30: the jump's own half of the rule above. Its `loginSetID` and
@@ -1342,7 +1370,7 @@ public final class ConnectionViewModel {
         // the reason `validateJump`'s own doc comment gives.
         let jumpLeftLoginSet = editingOriginal?.jump?.loginSetID != nil && jumpLoginMode == .manual
         if let jumpFailure = validateJump(requireSecret: jumpLeftLoginSet) {
-            state = jumpFailure
+            fail(jumpFailure)
             return nil
         }
 

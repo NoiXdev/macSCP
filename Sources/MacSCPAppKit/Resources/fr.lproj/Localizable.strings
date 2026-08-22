@@ -923,5 +923,7 @@
 "connection.lost.hint.noSavedSession" = "Cette connexion n'était pas enregistrée : pour vous reconnecter, remplissez à nouveau le formulaire.";
 "connection.lost.hint.stopped" = "macSCP ne réessaie pas de lui-même tant que vous n'avez pas répondu.";
 "connection.lost.hint.automatic" = "macSCP continue d'essayer de lui-même, en espaçant les tentatives.";
+"connection.lost.hint.onceUpcoming" = "macSCP va essayer une fois de lui-même dans un instant.";
+"connection.lost.hint.onceDone" = "macSCP a déjà essayé une fois de lui-même.";
 "connection.lost.reconnect" = "Se reconnecter";
 "connection.lost.dismiss" = "Revenir au formulaire";

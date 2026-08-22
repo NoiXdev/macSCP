@@ -139,6 +139,14 @@ struct ReconnectPlanTests {
     /// future edit that interpolated a host name, a server message, or a
     /// form field into any of them would have to invent a key that is not
     /// in this set, or change one of these strings, and either fails here.
+    ///
+    /// Eleven keys, counted while writing this sentence, and — since round
+    /// 2 moved the two button labels into `LostConnectionContent` — this
+    /// really is everything the surface renders, not everything that
+    /// happened to live in the content type. `ReconnectWiringGuardTests`
+    /// pins that the view is the only site that renders that content and
+    /// the plan the only site that builds it, so there is no second place
+    /// a string could be introduced.
     @Test func everyReachableMessageComesFromTheFixedCatalogKeySet() {
         let allowedKeys: Set<String> = [
             "connection.lost.title",
@@ -148,21 +156,30 @@ struct ReconnectPlanTests {
             "connection.lost.hint.noSavedSession",
             "connection.lost.hint.stopped",
             "connection.lost.hint.automatic",
+            "connection.lost.hint.onceUpcoming",
+            "connection.lost.hint.onceDone",
+            "connection.lost.reconnect",
+            "connection.lost.dismiss",
         ]
         var seen: Set<String> = []
         for reason in [LostConnectionReason.probeGaveUp, .reconnectFailed, .needsPerson] {
             for targetIsKnown in [true, false] {
                 for behaviour in ReconnectBehaviour.allCases {
-                    let content = LostConnectionPlan.content(
-                        reason: reason, targetIsKnown: targetIsKnown, behaviour: behaviour)
-                    for message in [content.title, content.body] + [content.hint].compactMap({ $0 }) {
-                        #expect(allowedKeys.contains(message.key), """
-                            `\(message.key)` is not one of the keys this surface is allowed to \
-                            show. Every string on the lost-connection surface must be a fixed \
-                            catalog entry — see the design spec's §10 rule.
-                            """)
-                        #expect(!message.fallback.isEmpty)
-                        seen.insert(message.key)
+                    for attempts in [0, 1, 7] {
+                        let content = LostConnectionPlan.content(
+                            reason: reason, targetIsKnown: targetIsKnown,
+                            behaviour: behaviour, attempts: attempts)
+                        let messages = [content.title, content.body, content.dismissButton]
+                            + [content.hint, content.reconnectButton].compactMap { $0 }
+                        for message in messages {
+                            #expect(allowedKeys.contains(message.key), """
+                                `\(message.key)` is not one of the keys this surface is allowed \
+                                to show. Every string on the lost-connection surface must be a \
+                                fixed catalog entry — see the design spec's §10 rule.
+                                """)
+                            #expect(!message.fallback.isEmpty)
+                            seen.insert(message.key)
+                        }
                     }
                 }
             }
@@ -180,20 +197,22 @@ struct ReconnectPlanTests {
     ])
     func eachReasonHasItsOwnBody(reason: LostConnectionReason, key: String) {
         let content = LostConnectionPlan.content(
-            reason: reason, targetIsKnown: true, behaviour: .offerOnly)
+            reason: reason, targetIsKnown: true, behaviour: .offerOnly, attempts: 0)
         #expect(content.body.key == key)
         #expect(content.title.key == "connection.lost.title")
     }
 
     @Test func reconnectIsOfferedOnlyWhenThereIsSomethingToRedial() {
-        #expect(
-            LostConnectionPlan.content(
-                reason: .probeGaveUp, targetIsKnown: true, behaviour: .offerOnly)
-                .offersReconnect)
+        let stored = LostConnectionPlan.content(
+            reason: .probeGaveUp, targetIsKnown: true, behaviour: .offerOnly, attempts: 0)
+        #expect(stored.reconnectButton?.key == "connection.lost.reconnect")
         let adHoc = LostConnectionPlan.content(
-            reason: .probeGaveUp, targetIsKnown: false, behaviour: .offerOnly)
-        #expect(!adHoc.offersReconnect)
+            reason: .probeGaveUp, targetIsKnown: false, behaviour: .offerOnly, attempts: 0)
+        #expect(adHoc.reconnectButton == nil)
         #expect(adHoc.hint?.key == "connection.lost.hint.noSavedSession")
+        // Always a way off this surface, redial or not.
+        #expect(stored.dismissButton.key == "connection.lost.dismiss")
+        #expect(adHoc.dismissButton.key == "connection.lost.dismiss")
     }
 
     /// The surface must not promise something the policy does not do. Under
@@ -203,20 +222,46 @@ struct ReconnectPlanTests {
     @Test func theHintAgreesWithWhatThePolicyActuallyDoes() {
         #expect(
             LostConnectionPlan.content(
-                reason: .probeGaveUp, targetIsKnown: true, behaviour: .automatic)
+                reason: .probeGaveUp, targetIsKnown: true, behaviour: .automatic, attempts: 0)
                 .hint?.key == "connection.lost.hint.automatic")
         #expect(
             LostConnectionPlan.content(
-                reason: .needsPerson, targetIsKnown: true, behaviour: .automatic)
+                reason: .needsPerson, targetIsKnown: true, behaviour: .automatic, attempts: 0)
                 .hint?.key == "connection.lost.hint.stopped")
         #expect(
             LostConnectionPlan.content(
-                reason: .probeGaveUp, targetIsKnown: true, behaviour: .offerOnly)
+                reason: .probeGaveUp, targetIsKnown: true, behaviour: .offerOnly, attempts: 0)
                 .hint == nil)
+    }
+
+    /// `.onceThenAsk` waits the same first backoff as `.automatic` before
+    /// its one attempt — a deliberate decision, since the instant after the
+    /// probe gives up is the worst moment in the next minute to retry, and
+    /// "once" is about count, not latency. What round 1 got wrong was
+    /// leaving that behaviour with NO hint at all, so a user could not tell
+    /// that macSCP was about to try by itself. The hint now says so before
+    /// the attempt and afterwards, and this test crosses it with what
+    /// `ReconnectPlan.step` actually does at the same attempt count.
+    @Test func onceThenAskSaysWhatItIsAboutToDoAndWhatItHasDone() {
+        let before = LostConnectionPlan.content(
+            reason: .probeGaveUp, targetIsKnown: true, behaviour: .onceThenAsk, attempts: 0)
+        #expect(before.hint?.key == "connection.lost.hint.onceUpcoming")
         #expect(
-            LostConnectionPlan.content(
-                reason: .probeGaveUp, targetIsKnown: true, behaviour: .onceThenAsk)
-                .hint == nil)
+            ReconnectPlan.step(
+                liveness: .lost, lost: lost(attempts: 0), targetIsKnown: true,
+                behaviour: .onceThenAsk)
+                != .stop,
+            "the hint promises an attempt, so the schedule must actually have one due")
+
+        let after = LostConnectionPlan.content(
+            reason: .probeGaveUp, targetIsKnown: true, behaviour: .onceThenAsk, attempts: 1)
+        #expect(after.hint?.key == "connection.lost.hint.onceDone")
+        #expect(
+            ReconnectPlan.step(
+                liveness: .lost, lost: lost(attempts: 1), targetIsKnown: true,
+                behaviour: .onceThenAsk)
+                == .stop,
+            "the hint says the one attempt has happened, so nothing more may be scheduled")
     }
 
     // MARK: - ConnectAttemptLivenessPlan: what a state change writes
