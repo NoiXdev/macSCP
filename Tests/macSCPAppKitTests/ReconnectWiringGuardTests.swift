@@ -35,8 +35,41 @@ import Testing
 /// guard on this branch passed while broken.
 ///
 /// Fail-closed throughout: an unreadable file, a missing anchor, an
-/// unbalanced brace, a walk that finds implausibly few files, and a
-/// sanctioned site that no longer exists are all failures.
+/// unbalanced brace, a walk that finds implausibly few files, a symbolic
+/// link among the sources, and a sanctioned site that no longer exists are
+/// all failures.///
+/// ## What this guard cannot see
+///
+/// Green here is not proof that no dial escapes the shared path. Four
+/// known gaps, named so the next person does not mistake one for the
+/// other:
+///
+/// 1. **A Core-side dial under another name.** A function in Core —
+///    `QuickOpenHelper.open(config)`, say — that dials, called from the
+///    App, passes and always will. Core is an excluded root precisely
+///    because dialling legitimately lives there, so an App call into an
+///    arbitrarily named Core function is textually indistinguishable from
+///    any other Core call. Catching it would mean knowing which Core
+///    functions dial, which is this same problem one level down. **No
+///    source scan can close this.** It needs a capability boundary in the
+///    design — the App layer being unable to obtain a connection except
+///    through one type it must hold — which is an architectural change,
+///    not a guard. Recorded as backlog by the coordinator, 2026-08-22.
+/// 2. **A key-path write**: `tab[keyPath: \SessionTab.session] = nil`
+///    names neither `.session =` nor anything else these patterns look
+///    for.
+/// 3. **`Mirror`-based label lookup** reaches a property without naming
+///    it in source at all.
+/// 4. **An `await` more than one wrapped line above its call.** The
+///    `.connect` discrimination reads a two-line window (see
+///    `Discrimination.unlessSynchronousCall`), so a dial split across
+///    three lines reads as an ordinary synchronous call and is excused.
+///
+/// Gaps 2 and 3 are exotic — they would not survive code review as
+/// ordinary code, which is the layer that catches them. Gap 4 is the price
+/// of clearing a false positive that would otherwise have taught someone
+/// to switch this suite off. Gap 1 is real, and is why this suite's green
+/// is a floor, not a ceiling.
 @Suite("Reconnect wiring guard")
 struct ReconnectWiringGuardTests {
     /// `#filePath` here is
@@ -137,19 +170,42 @@ struct ReconnectWiringGuardTests {
     /// actually keeps the `.lost` suppression working is `TabIndicatorPlan`
     /// plus `ReconnectPlanTests` and
     /// `theTabIndicatorPassesItsArgumentsUnconditioned`.
+    private enum Discrimination {
+        /// Every match counts.
+        case always
+        /// A match counts unless it is an ordinary SYNCHRONOUS call: an
+        /// applied `(…)` with no `await` in its window. Exists for exactly
+        /// one shape — Combine's `ConnectablePublisher.connect()`, which is
+        /// not async and never awaited, while every dial in this project is
+        /// `async` and therefore cannot be called without `await`. Round 3
+        /// flagged such a call as a dial, and a guard that cries wolf on
+        /// unrelated code is a guard the next person switches off.
+        ///
+        /// An unapplied reference (`let dial = x.connect`) is never
+        /// excused: it has no parentheses, and it is the round-2 evasion.
+        case unlessSynchronousCall
+    }
+
     private struct ChokePoint {
         let pattern: String
         /// What the pattern is looking for, in words — this is what a
         /// failure message tells the reader they have just done.
         let describes: String
+        var discrimination: Discrimination = .always
     }
 
     private static let chokePoints: [ChokePoint] = [
         ChokePoint(
             pattern: #"\.connect\b"#,
-            describes: "obtaining a connection"),
+            describes: "obtaining a connection",
+            discrimination: .unlessSynchronousCall),
+        // `[A-Z]` (round 4, review-measured): the lookaheads are
+        // case-sensitive, so `let remoteFileSystem = fs` — an ordinary
+        // local — was read as a concrete backend. Swift capitalizes type
+        // names, so requiring one is what distinguishes a type from a
+        // variable that merely ends the same way.
         ChokePoint(
-            pattern: #"\b(?!RemoteFileSystem\b)(?!LocalFileSystem\b)\w*FileSystem\b"#,
+            pattern: #"\b(?!RemoteFileSystem\b)(?!LocalFileSystem\b)[A-Z]\w*FileSystem\b"#,
             describes: "naming a concrete remote backend"),
         ChokePoint(
             pattern: #"\b(?:SSH|SFTP)\w*Client\b"#,
@@ -160,9 +216,21 @@ struct ReconnectWiringGuardTests {
         ChokePoint(
             pattern: #"\bBrowserSession\s*(?:\(|\.init\b)"#,
             describes: "constructing a session"),
+        // Narrowed to what is actually ASSIGNED (round 4,
+        // review-measured): `self.session = URLSession.shared` matched the
+        // old property-name-only pattern, and `session` is far too common a
+        // property name to keep flagging by name alone.
+        //
+        // The three assignable shapes are `nil` (releasing one), a
+        // `BrowserSession` (installing a fresh one) and another object's
+        // `.session` (moving a live one between tabs). Nothing is lost by
+        // narrowing: a `BrowserSession` cannot exist without its
+        // construction being flagged by the pattern above, so a write whose
+        // right-hand side is some helper's return value is caught where
+        // that helper builds it.
         ChokePoint(
-            pattern: #"\.session\s*=(?!=)|(?<!let )(?<!var )(?<![A-Za-z0-9_.])session\s*=(?!=)"#,
-            describes: "writing a tab's session property"),
+            pattern: #"(?:\.|(?<!let )(?<!var )(?<![A-Za-z0-9_.]))session\s*=\s*(?:nil\b|BrowserSession\b|[A-Za-z_][\w.?!]*\.session\b)"#,
+            describes: "moving a session onto or off a tab"),
         ChokePoint(
             pattern: #"\bLostConnectionContent\s*(?:\(|\.init\b)"#,
             describes: "building the lost-connection surface's content"),
@@ -277,9 +345,11 @@ struct ReconnectWiringGuardTests {
             let relative = Self.relativePath(of: file)
             let stripped = Self.stripCommentsAndStrings(
                 try String(contentsOf: file, encoding: .utf8))
-            for line in stripped.split(separator: "\n", omittingEmptySubsequences: false) {
-                let code = Self.normalized(String(line))
-                guard let describes = Self.chokePoint(in: code, detectors: detectors)
+            let codeLines = stripped.split(separator: "\n", omittingEmptySubsequences: false)
+                .map { Self.normalized(String($0)) }
+            for (index, code) in codeLines.enumerated() {
+                let window = index > 0 ? codeLines[index - 1] + " " + code : code
+                guard let describes = Self.chokePoint(in: code, window: window, detectors: detectors)
                 else { continue }
                 let sanctioned = Self.sanctionedSites.contains {
                     $0.file == relative && $0.code == code
@@ -379,6 +449,123 @@ struct ReconnectWiringGuardTests {
             """)
     }
 
+
+    /// The parser, on every form the grammar allows — including the one
+    /// whose misreading would have talked a developer into opening the
+    /// door this list exists to hold shut.
+    @Test func theImportParserReadsTheModuleNotTheKeyword() throws {
+        let modules = try Self.importedModules(in: """
+            import Foundation
+            @preconcurrency import SwiftUI
+            import Foundation.NSString
+            import struct Foundation.Decimal
+            import struct Citadel.SSHClient
+            import func Darwin.fcntl
+            let showImportFileImporter = true
+            """)
+        #expect(modules == ["Citadel", "Darwin", "Foundation", "SwiftUI"], """
+            expected the MODULE of each import — `import struct Foundation.Decimal` is             Foundation, not `struct`, and `import struct Citadel.SSHClient` is Citadel, which             is exactly what must not be able to hide behind a keyword: \(modules)
+            """)
+    }
+
+    /// Every module imported by the scanned sources, first path component
+    /// only. Shared by `everyImportIsPermitted` and its parser self-test so
+    /// the two cannot disagree about what an import is.
+    private static func importedModules(in stripped: String) throws -> [String] {
+        let regex = try NSRegularExpression(pattern: importPattern)
+        let range = NSRange(stripped.startIndex..., in: stripped)
+        var modules: Set<String> = []
+        for match in regex.matches(in: stripped, range: range) {
+            guard let nameRange = Range(match.range(at: 1), in: stripped) else { continue }
+            modules.insert(String(stripped[nameRange]))
+        }
+        return modules.sorted()
+    }
+
+    /// No source the compiler sees may be reached through a symbolic link.
+    ///
+    /// The gap this closes was measured, not imagined: a directory linked
+    /// in under a scanned root compiles into the target while the walk
+    /// neither descends into it nor reports it — see `appSwiftFiles()`'s
+    /// own doc comment. This test names the offending paths directly, so
+    /// the finding is readable without decoding a thrown error.
+    @Test func noSourceIsReachedThroughASymbolicLink() throws {
+        let links = try Self.symbolicLinks(under: Self.scannedRoots + [Self.sourcesDirectory])
+        #expect(links.isEmpty, """
+            symbolic link(s) among the scanned sources: \(links).
+
+            A symlinked directory is compiled into the target, but the walk does not descend \
+            into it and it does not report itself as a directory — so it is neither scanned \
+            for dials nor reported as an unscanned root, and this suite reports success over \
+            less than it read. Replace it with a real directory, or teach the walk to resolve \
+            it deliberately.
+            """)
+    }
+
+    /// Proves the detector actually detects, without planting a symlink in
+    /// the repository: a throwaway tree with a real subdirectory, a link to
+    /// a directory INSIDE the tree, a link to one OUTSIDE it, and a linked
+    /// file — checking that all three links are found and the real
+    /// directory and file are not.
+    @Test func theSymlinkDetectorFindsALinkedDirectory() throws {
+        let manager = FileManager.default
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-symlink-guard-\(UUID().uuidString)")
+        let outside = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-symlink-outside-\(UUID().uuidString)")
+        defer {
+            try? manager.removeItem(at: root)
+            try? manager.removeItem(at: outside)
+        }
+
+        let real = root.appendingPathComponent("Real")
+        try manager.createDirectory(at: real, withIntermediateDirectories: true)
+        try manager.createDirectory(at: outside, withIntermediateDirectories: true)
+        let realFile = real.appendingPathComponent("Kept.swift")
+        try "// kept".write(to: realFile, atomically: true, encoding: .utf8)
+        let outsideFile = outside.appendingPathComponent("Hidden.swift")
+        try "// hidden".write(to: outsideFile, atomically: true, encoding: .utf8)
+
+        try manager.createSymbolicLink(
+            at: root.appendingPathComponent("LinkedInside"), withDestinationURL: real)
+        try manager.createSymbolicLink(
+            at: root.appendingPathComponent("LinkedOutside"), withDestinationURL: outside)
+        try manager.createSymbolicLink(
+            at: real.appendingPathComponent("LinkedFile.swift"), withDestinationURL: outsideFile)
+
+        let links = try Self.symbolicLinks(under: [root])
+        #expect(links.count == 3, "expected the three links, found \(links)")
+        #expect(links.contains { $0.hasSuffix("LinkedInside") })
+        #expect(links.contains { $0.hasSuffix("LinkedOutside") }, """
+            a link pointing outside the tree must be found too — that is the shape whose \
+            contents no repo-relative scan could ever describe.
+            """)
+        #expect(links.contains { $0.hasSuffix("LinkedFile.swift") })
+        #expect(!links.contains { $0.hasSuffix("Real") })
+        #expect(!links.contains { $0.hasSuffix("Kept.swift") })
+    }
+
+    /// And the walk must refuse to answer while one is present, so every
+    /// scanning test fails rather than only the dedicated one above.
+    @Test func theWalkRefusesToScanWhileALinkIsPresent() throws {
+        let manager = FileManager.default
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-symlink-refusal-\(UUID().uuidString)")
+        defer { try? manager.removeItem(at: root) }
+        let real = root.appendingPathComponent("Real")
+        try manager.createDirectory(at: real, withIntermediateDirectories: true)
+        try manager.createSymbolicLink(
+            at: root.appendingPathComponent("Linked"), withDestinationURL: real)
+
+        let links = try Self.symbolicLinks(under: [root])
+        #expect(!links.isEmpty)
+        // The refusal `appSwiftFiles()` performs, on the same input: a
+        // non-empty link list is what it turns into a thrown error.
+        let error = ScanError.symbolicLinkInSources(links)
+        #expect(error.description.contains("symbolic link"))
+        #expect(error.description.contains("Linked"))
+    }
+
     /// The second, independent derivation: `Package.swift`'s own non-test
     /// targets. A target could in principle live outside `Sources/` (SwiftPM
     /// takes a `path:`), which the filesystem check above would never see.
@@ -440,13 +627,25 @@ struct ReconnectWiringGuardTests {
             """)
     }
 
+    /// Runs the detectors over synthetic source the way the real scan does,
+    /// window and all.
+    private static func flaggedLines(in source: String) throws -> [String] {
+        let detectors = try chokePointDetectors()
+        let lines = stripCommentsAndStrings(source)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { normalized(String($0)) }
+        return lines.enumerated().compactMap { index, code in
+            let window = index > 0 ? lines[index - 1] + " " + code : code
+            return chokePoint(in: code, window: window, detectors: detectors) != nil ? code : nil
+        }
+    }
+
     /// Self-test on synthetic source: the scan must reject a dial it has
     /// not been told about, accept the sanctioned spelling, and — the case
     /// round 2 shipped broken — see a dial spelled as an UNAPPLIED method
     /// reference, which has no paren anywhere.
     @Test func theScanSeesEveryWayADialCanBeSpelled() throws {
-        let detectors = try Self.chokePointDetectors()
-        let flagged = Self.stripCommentsAndStrings("""
+        let flagged = try Self.flaggedLines(in: """
             // if let fs = await form.connect() {
             let harmless = tab.liveness == .connected
             let alsoHarmless = surface == .connecting
@@ -457,9 +656,6 @@ struct ReconnectWiringGuardTests {
             let client = SSHClient.self
             tab.session = BrowserSession.init(id: id)
             """)
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { Self.normalized(String($0)) }
-            .filter { Self.chokePoint(in: $0, detectors: detectors) != nil }
 
         #expect(!flagged.contains { $0.contains("harmless") }, """
             `.connected`/`.connecting` must not match the `connect` pattern, or every liveness \
@@ -479,20 +675,84 @@ struct ReconnectWiringGuardTests {
         #expect(flagged.count == 6, "expected exactly the six real hits, found \(flagged)")
     }
 
+    /// The other direction, and the one round 3 got wrong: ordinary code
+    /// that merely reads like a dial must NOT be flagged. Every line here
+    /// was measured as a false positive by the review — a local variable
+    /// whose name ends in `FileSystem`, an unrelated `session` property,
+    /// and Combine's synchronous `connect()`. A guard that cries wolf on
+    /// code like this is a guard the next person switches off, and then it
+    /// protects nothing.
+    @Test func ordinaryCodeIsNotMistakenForADial() throws {
+        let flagged = try Self.flaggedLines(in: """
+            let remoteFileSystem = fs
+            let myLocalFileSystem = LocalFileSystem()
+            self.session = URLSession.shared
+            let task = URLSession.shared.dataTask(with: request)
+            cancellable = publisher.connect()
+            let connected = liveness == .connected
+            if state == .connecting { return }
+            """)
+        #expect(flagged.isEmpty, """
+            ordinary code was flagged as touching a dial choke point: \(flagged)
+            """)
+    }
+
+    /// …but the narrowing must not have gone so far that the real thing
+    /// slips through alongside it. Each line here is the dangerous twin of
+    /// one above.
+    @Test func theNarrowingDidNotLetTheRealThingThrough() throws {
+        let flagged = try Self.flaggedLines(in: """
+            let fs = CitadelFileSystem.self
+            self.session = BrowserSession(id: id)
+            tab.session = otherTab.session
+            tab.session = nil
+            let fs = await publisher.connect()
+            """)
+        #expect(flagged.count == 5, """
+            a dangerous line was excused by the narrowing that cleared the false positives: \
+            \(flagged)
+            """)
+    }
+
+    /// The `await` that belongs to a wrapped call sits on the line above
+    /// it. Without the window, splitting the line would excuse the dial.
+    @Test func anAwaitOnTheWrappedLineAboveStillCounts() throws {
+        let flagged = try Self.flaggedLines(in: """
+            let fs = try await form
+                .connect()
+            """)
+        #expect(flagged.contains(".connect()"), """
+            a dial whose `await` wrapped onto the previous line was excused: \(flagged)
+            """)
+    }
+
     /// Nothing may enter these targets that is not on `permittedImports` —
     /// a hand-rolled dial has to reach a transport somehow, and this is the
     /// door it would come through.
+    /// Swift's import grammar has three forms, and round 3 understood one:
+    ///
+    /// - `import Foundation`
+    /// - `import Foundation.NSString` — a submodule
+    /// - `import struct Foundation.Decimal` — an import KIND
+    ///   (`typealias`/`struct`/`class`/`enum`/`protocol`/`let`/`var`/`func`)
+    ///   followed by the declaration's path
+    ///
+    /// The third read as a module named `struct`, and the failure message
+    /// then told the developer to add `struct` to `permittedImports` —
+    /// after which `import struct Citadel.SSHClient` would have passed. A
+    /// remediation that opens the hole it was guarding is worse than no
+    /// message at all, which is why the kind is now consumed and the FIRST
+    /// path component — the actual module — is what gets checked.
+    private static let importPattern =
+        #"(?<![A-Za-z0-9_])import\s+(?:(?:typealias|struct|class|enum|protocol|let|var|func)\s+)?([A-Za-z_]\w*)"#
+
     @Test func everyImportIsPermitted() throws {
-        let regex = try NSRegularExpression(pattern: #"(?<![A-Za-z0-9_])import\s+([A-Za-z_][\w.]*)"#)
         var seen: Set<String> = []
         var forbidden: [String] = []
         for file in try Self.appSwiftFiles() {
             let stripped = Self.stripCommentsAndStrings(
                 try String(contentsOf: file, encoding: .utf8))
-            let range = NSRange(stripped.startIndex..., in: stripped)
-            for match in regex.matches(in: stripped, range: range) {
-                guard let nameRange = Range(match.range(at: 1), in: stripped) else { continue }
-                let module = String(stripped[nameRange])
+            for module in try Self.importedModules(in: stripped) {
                 seen.insert(module)
                 if !Self.permittedImports.contains(module) {
                     forbidden.append("\(Self.relativePath(of: file)): import \(module)")
@@ -529,7 +789,30 @@ struct ReconnectWiringGuardTests {
     private static let mirrorWriteAnchor = "// Liveness mirror write (connection-liveness plan, Task 7)"
     private static let indicatorAnchor = "private var indicator: TabIndicatorPlan.Indicator"
 
-    private enum ScanError: Error { case anchorNotFound, openBraceNotFound, unbalancedBraces }
+    private enum ScanError: Error, Equatable, CustomStringConvertible {
+        case anchorNotFound
+        case openBraceNotFound
+        case unbalancedBraces
+        case symbolicLinkInSources([String])
+
+        var description: String {
+            switch self {
+            case .anchorNotFound: return "anchor not found"
+            case .openBraceNotFound: return "no opening brace after the anchor"
+            case .unbalancedBraces: return "unbalanced braces"
+            case .symbolicLinkInSources(let paths):
+                return """
+                    symbolic link(s) in the scanned sources: \(paths). A symlinked DIRECTORY \
+                    is compiled into the target but is not descended into by the walk, and it \
+                    does not report itself as a directory either — so its contents are neither \
+                    scanned for dials nor reported as an unscanned root. Replace the link with \
+                    a real directory, or teach this suite to resolve it deliberately and decide \
+                    what a link pointing outside the repository means for `sanctionedSites`' \
+                    repo-relative paths.
+                    """
+            }
+        }
+    }
 
     private static let contentViewFile = file("Sources/MacSCPAppKit/ContentView.swift")
     private static let detailFile = file("Sources/MacSCPAppKit/ContentView+Detail.swift")
@@ -726,7 +1009,28 @@ struct ReconnectWiringGuardTests {
 
     // MARK: - Scanner
 
+    /// Every Swift file the scan covers — and it refuses to answer at all
+    /// while a symbolic link is in the way.
+    ///
+    /// `FileManager.enumerator(at:)` yields a symlinked DIRECTORY as an
+    /// entry but does not descend into it, and `.isDirectoryKey` is `false`
+    /// for that entry. Round 3 therefore neither scanned such a directory
+    /// nor reported it as unknown: `Extras/Panels/Dial.swift`, linked in as
+    /// `Sources/MacSCPAppKit/Panels`, compiled into the target with
+    /// accept-anything deciders and a `startSession`, and left the suite
+    /// green. A symlinked FILE was always caught; only directories slipped,
+    /// which is the worst kind of gap — the walk reported success over less
+    /// than it thought it was reading.
+    ///
+    /// Refusing rather than following, deliberately: a symlinked source
+    /// directory is unusual enough that stopping with a clear message is a
+    /// better outcome than quietly resolving it and scanning a path nobody
+    /// declared. Following would also have to decide what to do about a
+    /// link pointing outside the repository, where `sanctionedSites`'
+    /// repo-relative paths stop meaning anything.
     private static func appSwiftFiles() throws -> [URL] {
+        let links = try symbolicLinks(under: scannedRoots + [sourcesDirectory])
+        guard links.isEmpty else { throw ScanError.symbolicLinkInSources(links) }
         var files: [URL] = []
         for root in scannedRoots {
             guard let walker = FileManager.default.enumerator(
@@ -737,25 +1041,97 @@ struct ReconnectWiringGuardTests {
         return files.sorted { $0.path < $1.path }
     }
 
+    /// Every symbolic link at or under the given roots, in repo-relative
+    /// form. Detected by the link's OWN metadata (`.isSymbolicLinkKey`,
+    /// with `attributesOfItem` — `lstat` semantics — as the fallback), not
+    /// by asking whether the target is a directory, which is exactly the
+    /// question that answered `false` for a symlinked directory and let one
+    /// through.
+    ///
+    /// Takes its roots as a parameter so
+    /// `theSymlinkDetectorFindsALinkedDirectory` can drive it over a
+    /// throwaway temporary tree, rather than the property being provable
+    /// only by planting a symlink in the repository.
+    private static func symbolicLinks(under roots: [URL]) throws -> [String] {
+        var found: [String] = []
+        for root in roots {
+            guard let walker = FileManager.default.enumerator(
+                at: root, includingPropertiesForKeys: [.isSymbolicLinkKey],
+                options: [.skipsSubdirectoryDescendants])
+            else { continue }
+            var candidates = walker.compactMap { $0 as? URL }
+            // The immediate children above, plus everything below the
+            // roots that are actually scanned — a link nested inside a real
+            // subdirectory hides just as well as one at the top.
+            if let deep = FileManager.default.enumerator(
+                at: root, includingPropertiesForKeys: [.isSymbolicLinkKey])
+            {
+                candidates += deep.compactMap { $0 as? URL }
+            }
+            for url in candidates where isSymbolicLink(url) {
+                let relative = relativePath(of: url)
+                if !found.contains(relative) { found.append(relative) }
+            }
+        }
+        return found.sorted()
+    }
+
+    private static func isSymbolicLink(_ url: URL) -> Bool {
+        if let value = try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink {
+            return value
+        }
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        return (attributes?[.type] as? FileAttributeType) == .typeSymbolicLink
+    }
+
     /// Compiled once per test that needs them, and `throws` rather than
     /// force-unwrapping: a pattern that fails to compile must fail the
     /// calling test loudly, not take the whole run down with it.
-    private static func chokePointDetectors() throws -> [(regex: NSRegularExpression, describes: String)] {
-        try chokePoints.map { (try NSRegularExpression(pattern: $0.pattern), $0.describes) }
+    private static func chokePointDetectors() throws -> [(regex: NSRegularExpression, point: ChokePoint)] {
+        try chokePoints.map { (try NSRegularExpression(pattern: $0.pattern), $0) }
     }
 
     /// What choke point this line touches, if any — the description, so a
     /// failure message can say what was just done rather than which
     /// substring matched.
+    ///
+    /// `window` is the matched line together with the one before it, and is
+    /// consulted only by `.unlessSynchronousCall`: Swift lets an `await`
+    /// sit on a wrapped line above the call it belongs to. Two lines is the
+    /// window, not the whole statement — see this suite's own "what this
+    /// guard cannot see" list, which says so rather than implying more.
     private static func chokePoint(
-        in line: String, detectors: [(regex: NSRegularExpression, describes: String)]
+        in line: String, window: String,
+        detectors: [(regex: NSRegularExpression, point: ChokePoint)]
     ) -> String? {
         let range = NSRange(line.startIndex..., in: line)
         for detector in detectors
         where detector.regex.firstMatch(in: line, range: range) != nil {
-            return detector.describes
+            switch detector.point.discrimination {
+            case .always:
+                return detector.point.describes
+            case .unlessSynchronousCall:
+                if !isAppliedCall(of: detector.regex, in: line) || containsAwait(window) {
+                    return detector.point.describes
+                }
+            }
         }
         return nil
+    }
+
+    /// Whether the match is immediately applied — `x.connect(` rather than
+    /// the bare `x.connect` a method reference produces.
+    private static func isAppliedCall(of regex: NSRegularExpression, in line: String) -> Bool {
+        let range = NSRange(line.startIndex..., in: line)
+        guard let match = regex.firstMatch(in: line, range: range),
+            let matchRange = Range(match.range, in: line)
+        else { return false }
+        let rest = line[matchRange.upperBound...].drop { $0 == " " }
+        return rest.first == "("
+    }
+
+    private static func containsAwait(_ text: String) -> Bool {
+        text.split(whereSeparator: { !$0.isLetter && $0 != "_" }).contains("await")
     }
 
     private static func relativePath(of file: URL) -> String {
