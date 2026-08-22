@@ -35,14 +35,33 @@ import Testing
 /// the test go red) ran against the REAL, unmodified stores and wrote a
 /// real entry into this machine's real `sessions-v2.json` and a real
 /// keychain item under service `dev.noix.macSCP`, both cleaned up by hand
-/// afterward. `ContentView.init` now takes an optional `sessionListViewModel`
-/// parameter (defaulting to `nil`, which preserves the real Keychain-backed
-/// construction byte for byte — see that initializer's own doc comment) —
-/// every test below passes a fresh one backed by a temporary directory and
-/// `RecordingSecretStore`, an in-memory `SecretStore`. With this seam the
-/// real stores are never constructed by anything this suite runs, mutation
-/// experiment included; `theRealSessionsFileIsNeverTouched` below proves
-/// that empirically rather than resting on that architectural claim alone.
+/// afterward. `ContentView.init` now takes optional `sessionListViewModel`/
+/// `secretStore`/`managedKeyStore` parameters (all defaulting to `nil`,
+/// which preserves the real Keychain-backed construction byte for byte —
+/// see that initializer's own doc comment) — every test below passes a
+/// fresh `SessionListViewModel` backed by a temporary directory and
+/// `RecordingSecretStore`, an in-memory `SecretStore`.
+///
+/// **Isolation, round 3 — the snapshot itself was vacuous.** The FIRST
+/// version of `theRealSessionsFileIsNeverTouched` compared the real
+/// session file's raw bytes before and after, using fixed save names
+/// ("handoff-stored", "adhoc-handoff-save"). That is exactly what the
+/// round-2 incident had already written into the real file BY THOSE SAME
+/// NAMES — and `SessionListViewModel.save(name:...)` upserts by NAME,
+/// reusing the existing entry's id and overwriting it with the identical
+/// field values this suite always sends. Measured directly: a broken seam
+/// re-running against the real store produced byte-IDENTICAL JSON while a
+/// real secret was written under that reused id — the exact incident the
+/// test exists to catch, passing vacuously through it. Every save name
+/// below now embeds a fresh `UUID` per test run, so a real write — if the
+/// seam were ever bypassed — can never land on a name the real file
+/// already has; it can only ever APPEND a new, distinct entry, which no
+/// byte comparison can mistake for "nothing changed".
+/// `theSaveNamesUsedByThisRunNeverAppearInTheRealFile` below checks that
+/// directly, by NAME, as a second, independent signal
+/// from the byte comparison — parsed via `SessionStore`'s own real reader,
+/// which is a READ, not a write, and therefore safe regardless of what a
+/// broken seam did.
 @Suite("Connect attempt hand-off")
 @MainActor
 struct ConnectAttemptHandoffTests {
@@ -56,14 +75,27 @@ struct ConnectAttemptHandoffTests {
         SessionStore.defaultDirectory.appendingPathComponent("sessions-v2.json")
     }
 
-    /// Read as raw bytes, not parsed — a byte-for-byte comparison is the
-    /// strongest available claim ("nothing whatsoever changed"), and it
+    /// Read as raw bytes, not parsed — a byte-for-byte comparison is a
+    /// strong general-purpose claim ("nothing whatsoever changed"), and it
     /// costs nothing extra over parsing. `nil` (file absent) is itself a
     /// valid, comparable snapshot: a fresh machine or CI runner that has
     /// never saved a session has no such file, and that absence must
-    /// survive this suite too.
+    /// survive this suite too. NOT sufficient on its own against an
+    /// upsert-by-name rewrite that happens to reproduce identical bytes —
+    /// see this file's own top-level doc comment, "Isolation, round 3" —
+    /// which is why every save name below is unique per run and a second,
+    /// name-based check runs alongside this one.
     private func snapshotRealSessionsFile() -> Data? {
         try? Data(contentsOf: Self.realSessionsFileURL)
+    }
+
+    /// A run-unique save name — every scenario below uses one of these
+    /// instead of a fixed string, specifically so a real write (if the
+    /// seam were ever bypassed) cannot land on a name the real file
+    /// already has and disappear into an upsert. See this file's own
+    /// top-level doc comment, "Isolation, round 3".
+    private func uniqueSaveName(_ label: String) -> String {
+        "\(label)-\(UUID().uuidString)"
     }
 
     private func makeTempDirectory(_ label: String) -> URL {
@@ -73,12 +105,18 @@ struct ConnectAttemptHandoffTests {
 
     /// Same shape as `LivenessGiveUpOrderingTests.makeContentView()`, plus
     /// the isolation seam: a fresh `SessionListViewModel` pointed entirely
-    /// at a temporary directory and `secrets`, passed to `ContentView.init`
-    /// so it becomes the `@State` property's INITIAL value rather than a
-    /// later reassignment (see this file's own top-level doc comment for
-    /// why that distinction is what makes the seam actually work). No live
-    /// window or rendering involved; `body` is never called, only plain
-    /// methods (`connect(in:stored:)`, `handleAdHocConnected`, `teardown(_:)`).
+    /// at a temporary directory and `secrets`, and `secrets`/a temp-
+    /// directory `ManagedKeyStore` ALSO passed as `ContentView.init`'s own
+    /// `secretStore:`/`managedKeyStore:` parameters (fix round 3, review
+    /// item "the seam is only half there") — one shared isolated secret
+    /// store for the whole window, not two that could silently disagree.
+    /// Passed to `ContentView.init` so all three become the `@State`
+    /// property's (and the two `let` properties') INITIAL values rather
+    /// than a later reassignment (see this file's own top-level doc
+    /// comment for why that distinction is what makes the seam actually
+    /// work). No live window or rendering involved; `body` is never
+    /// called, only plain methods (`connect(in:stored:)`,
+    /// `handleAdHocConnected`, `teardown(_:)`).
     private func makeContentView(secrets: RecordingSecretStore, storeDirectory: URL) -> (view: ContentView, cleanup: () -> Void) {
         let settingsDir = makeTempDirectory("settings")
         let auditDir = makeTempDirectory("audit")
@@ -95,7 +133,9 @@ struct ConnectAttemptHandoffTests {
             tabCommands: TabCommands(),
             updateModel: UpdateCheckModel(),
             menuBarModel: MenuBarStatusModel(),
-            sessionListViewModel: sessionListViewModel)
+            sessionListViewModel: sessionListViewModel,
+            secretStore: secrets,
+            managedKeyStore: ManagedKeyStore(directory: storeDirectory))
         return (view, {
             try? FileManager.default.removeItem(at: settingsDir)
             try? FileManager.default.removeItem(at: auditDir)
@@ -136,19 +176,24 @@ struct ConnectAttemptHandoffTests {
 
     // MARK: - Isolation proof, demonstrated rather than asserted
 
-    /// Runs BOTH end-to-end tests below (they are otherwise independent —
-    /// duplicating the run here would just mean the fix runs twice for one
-    /// proof) and confirms the one file this suite must never write is
-    /// byte-for-byte identical before and after, using `Data`'s own
-    /// `Equatable` conformance across BOTH states a real machine can be in:
-    /// the file already exists (a developer's machine with saved sessions,
-    /// matching what fix round 2's incident actually hit) and the file does
-    /// not exist yet (a fresh CI runner) — snapshotting `nil` in the second
-    /// case and comparing `nil == nil` afterward covers it too.
+    /// Runs BOTH end-to-end scenarios below (they are otherwise
+    /// independent — duplicating the run here would just mean the fix
+    /// runs twice for one proof) and confirms the one file this suite
+    /// must never write is byte-for-byte identical before and after,
+    /// using `Data`'s own `Equatable` conformance across BOTH states a
+    /// real machine can be in: the file already exists (a developer's
+    /// machine with saved sessions, matching what the fix-round-2 incident
+    /// actually hit) and the file does not exist yet (a fresh CI runner) —
+    /// snapshotting `nil` in the second case and comparing `nil == nil`
+    /// afterward covers it too.
+    ///
+    /// A general-purpose signal, not the whole proof by itself — see
+    /// `theSaveNamesUsedByThisRunNeverAppearInTheRealFile` below for the
+    /// targeted one this file's own incident required.
     @Test func theRealSessionsFileIsNeverTouched() async {
         let before = snapshotRealSessionsFile()
-        await runStoredSessionHandoffScenario()
-        await runAdHocHandoffScenario()
+        _ = await runStoredSessionHandoffScenario()
+        _ = await runAdHocHandoffScenario()
         let after = snapshotRealSessionsFile()
         #expect(before == after, """
             the real on-disk session store changed while this suite ran — \
@@ -158,19 +203,45 @@ struct ConnectAttemptHandoffTests {
             """)
     }
 
+    /// The targeted proof fix round 3 added: parses the REAL session file
+    /// through `SessionStore`'s own reader (a READ, never a write — safe
+    /// regardless of what a broken seam did) and confirms neither run-
+    /// unique save name this suite generated appears in it. Unlike a raw
+    /// byte comparison, this cannot be defeated by an upsert that happens
+    /// to reproduce identical bytes — see this file's own top-level doc
+    /// comment, "Isolation, round 3", for the exact incident that made
+    /// this check necessary rather than merely thorough.
+    @Test func theSaveNamesUsedByThisRunNeverAppearInTheRealFile() async {
+        let storedName = await runStoredSessionHandoffScenario()
+        let adHocName = await runAdHocHandoffScenario()
+        let realNames = Set((try? SessionStore(directory: SessionStore.defaultDirectory).all().map(\.name)) ?? [])
+        #expect(!realNames.contains(storedName), """
+            the stored-session scenario's run-unique save name \
+            "\(storedName)" appears in the real session store — a real \
+            write reached it.
+            """)
+        #expect(!realNames.contains(adHocName), """
+            the ad-hoc scenario's run-unique save name "\(adHocName)" \
+            appears in the real session store — a real write reached it.
+            """)
+    }
+
     // MARK: - The two end-to-end proofs
 
     @Test func cancelDuringHomeDirectoryLookupPreventsTheStoredSessionHandoff() async {
-        await runStoredSessionHandoffScenario()
+        _ = await runStoredSessionHandoffScenario()
     }
 
     @Test func cancelDuringHomeDirectoryLookupPreventsTheAdHocHandoffAndAnyKeychainWrite() async {
-        await runAdHocHandoffScenario()
+        _ = await runAdHocHandoffScenario()
     }
 
-    // MARK: - Scenarios (shared by the isolation-proof test and their own direct tests)
+    // MARK: - Scenarios (shared by the isolation-proof tests and their own direct tests)
 
-    private func runStoredSessionHandoffScenario() async {
+    /// Returns the run-unique save name this scenario used, so a caller
+    /// can check for its absence from the real store.
+    @discardableResult
+    private func runStoredSessionHandoffScenario() async -> String {
         let workDir = makeTempDirectory("stored-handoff")
         defer { try? FileManager.default.removeItem(at: workDir) }
         let secrets = RecordingSecretStore()
@@ -191,8 +262,9 @@ struct ConnectAttemptHandoffTests {
         // building this test (`fillForm` filled a blank password, and
         // `connect()` failed with "Password must not be empty." before the
         // fake connector was ever called).
+        let name = uniqueSaveName("handoff-stored")
         let stored = StoredSession(
-            name: "handoff-stored", kind: .ssh,
+            name: name, kind: .ssh,
             ssh: StoredSSHConfig(host: "example.com", username: "tim", authKind: .agent))
 
         view.connect(in: tab, stored: stored)
@@ -201,7 +273,7 @@ struct ConnectAttemptHandoffTests {
             await gate.callCount == 1
         }) else {
             continuation.finish()
-            return
+            return name
         }
 
         // Cancel — the exact statements `ConnectingAttemptView`'s
@@ -216,16 +288,23 @@ struct ConnectAttemptHandoffTests {
         continuation.finish()
         guard await waitUntil("the abandoned attempt must finish resuming past its own await", {
             await gate.returnCount == 1
-        }) else { return }
+        }) else { return name }
 
         #expect(tab.session == nil, "a cancelled attempt must not set a session")
         #expect(tab.activeStoredSessionID == nil, "a cancelled attempt must not adopt the stored session's id")
         #expect(tab.isReconnecting == false, "the reconnect lock must not be left stuck after Cancel")
         #expect(view.sessionListViewModel.sessions.isEmpty, "a cancelled attempt must not persist a StoredSession")
         #expect(secrets.storedIDs.isEmpty, "a cancelled attempt must not write a keychain-equivalent secret")
+        #expect(await gate.disconnectCount == 1, """
+            the refused hand-off must close the connection it abandons —             left open, it would stay connected to the remote host until             the whole process exits (fix round 3, review-measured).
+            """)
+        return name
     }
 
-    private func runAdHocHandoffScenario() async {
+    /// Returns the run-unique save name this scenario used, so a caller
+    /// can check for its absence from the real store.
+    @discardableResult
+    private func runAdHocHandoffScenario() async -> String {
         let workDir = makeTempDirectory("adhoc-handoff")
         defer { try? FileManager.default.removeItem(at: workDir) }
         let secrets = RecordingSecretStore()
@@ -244,19 +323,22 @@ struct ConnectAttemptHandoffTests {
         // "Save as session" ON, with a password — the exact configuration
         // whose keychain-equivalent write this test exists to rule out.
         // Safe with the injected `secrets`/`workDir` above regardless of
-        // whether the guard below holds — this is precisely what makes a
-        // real red/green mutation experiment against THIS test safe, unlike
-        // fix round 2's first attempt.
+        // whether the guard below holds, and safe against the real store
+        // specifically because `name` is run-unique — this is precisely
+        // what makes a real red/green mutation experiment against THIS
+        // test safe, unlike fix round 2's first attempt.
         form.shouldSaveSession = true
-        form.saveName = "adhoc-handoff-save"
+        let name = uniqueSaveName("adhoc-handoff-save")
+        form.saveName = name
 
         // The ad-hoc form's own two-step hand-off (`ConnectionFormView`'s
         // Connect button, then `ContentView.detail`'s `onConnected`
         // closure), reproduced in the exact order and with the exact
-        // capture-before-await shape the real code uses — see
-        // `ContentView+Detail.swift`'s `onConnected` closure. What actually
-        // runs the guard is the REAL `handleAdHocConnected`, not a copy of
-        // its logic.
+        // capture-before-the-dial shape the real code uses (fix round 3:
+        // `ConnectionFormView.currentReconnectAttempt` is read before
+        // `viewModel.connect()` starts, not after — see that property's
+        // own doc comment for why). What actually runs the guard is the
+        // REAL `handleAdHocConnected`, not a copy of its logic.
         let myAttempt = tab.reconnectAttempt
         let task = Task { @MainActor in
             guard let connectedFS = await form.connect() else { return }
@@ -268,7 +350,7 @@ struct ConnectAttemptHandoffTests {
         }) else {
             continuation.finish()
             _ = await task.value
-            return
+            return name
         }
 
         tab.connectionViewModel.cancelConnecting()
@@ -291,6 +373,12 @@ struct ConnectAttemptHandoffTests {
             most, now checkable against `RecordingSecretStore` instead of \
             the real Keychain.
             """)
+        #expect(await gate.disconnectCount == 1, """
+            the refused hand-off must close the connection it abandons — \
+            left open, it would stay connected to the remote host until \
+            the whole process exits (fix round 3, review-measured).
+            """)
+        return name
     }
 }
 
@@ -302,8 +390,16 @@ struct ConnectAttemptHandoffTests {
 private actor HomeDirLookupGate {
     private(set) var callCount = 0
     private(set) var returnCount = 0
+    /// How many times `HangingHomeDirectoryFileSystem.disconnect()` has
+    /// been called — fix round 3 (review item "the gate discards a live
+    /// connection without closing it"): the scenarios below assert this
+    /// reaches exactly 1 after a cancelled hand-off, proving the refusal
+    /// path actually closes the connection it abandons rather than merely
+    /// not crashing.
+    private(set) var disconnectCount = 0
     func markCalled() { callCount += 1 }
     func markReturned() { returnCount += 1 }
+    func markDisconnected() { disconnectCount += 1 }
 }
 
 /// A `RemoteFileSystem` whose `homeDirectoryPath()` hangs on `stream` until
@@ -313,6 +409,14 @@ private actor HomeDirLookupGate {
 /// the tests in this file and traps if ever called, so a future change
 /// that routes through one of them fails loudly instead of silently
 /// passing — same idiom as `LivenessProbeRaceTests.NeverRespondingFileSystem`.
+///
+/// Fix round 3 (review item "the gate discards a live connection without
+/// closing it"): `disconnect()` is deliberately NOT a `fatalError` here —
+/// both `ContentView.handleAdHocConnected` and `ContentView.connect(in:
+/// stored:)` now call it on the refusal path, and this suite's own
+/// scenarios exercise exactly that path and assert on `gate
+/// .disconnectCount` directly, proving the abandoned connection is
+/// actually closed rather than merely not crashing.
 private struct HangingHomeDirectoryFileSystem: RemoteFileSystem {
     let stream: AsyncStream<Void>
     let gate: HomeDirLookupGate
@@ -364,7 +468,9 @@ private struct HangingHomeDirectoryFileSystem: RemoteFileSystem {
         return "/home/handoff-test"
     }
 
-    func disconnect() async {}
+    func disconnect() async {
+        await gate.markDisconnected()
+    }
 }
 
 /// Test double for `SecretStore`, local to this file — `macSCPAppKitTests`

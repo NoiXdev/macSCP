@@ -165,6 +165,22 @@ struct ContentView: View {
     /// Assigned in `init` (not a bare default value) so it can pass
     /// `auditStore` through — mirrors `_tabsModel` below.
     @State var sessionListViewModel: SessionListViewModel
+    /// The Keychain-backed secret store `maybeCreateNewLoginSet(from:
+    /// editedSession:)` and the ad-hoc "save as session" path
+    /// (`startSession`'s `shouldSaveSession` branch) both read to check
+    /// for an existing managed-key passphrase, alongside `managedKeyStore`
+    /// below (connection-liveness plan, Task 6 fix round 3, review item
+    /// "Important — the seam is only half there"). A `let`, not
+    /// constructed inline at each call site — those two call sites used to
+    /// build their own `KeychainSecretStore()` on the spot, unreachable by
+    /// any test seam; routing both through this one property is what lets
+    /// `ContentView.init`'s `secretStore:` parameter isolate them the same
+    /// way `sessionListViewModel:` isolates `startSession`'s OWN keychain
+    /// write.
+    let secretStore: any SecretStore
+    /// The managed-key store the same two call sites read alongside
+    /// `secretStore` above — same reasoning, same fix.
+    let managedKeyStore: ManagedKeyStore
     /// Window-scoped tab collection (M8a/T3). Everything that used to be
     /// window-wide session state (connection form, session, queue, conflict
     /// bridge, title, edit error, reconnect flag) now lives per tab in
@@ -425,7 +441,9 @@ struct ContentView: View {
     init(
         settingsStore: SettingsStore, bandwidthLimiter: BandwidthLimiter, auditStore: AuditLogStore,
         tabCommands: TabCommands, updateModel: UpdateCheckModel, menuBarModel: MenuBarStatusModel,
-        sessionListViewModel: SessionListViewModel? = nil
+        sessionListViewModel: SessionListViewModel? = nil,
+        secretStore: (any SecretStore)? = nil,
+        managedKeyStore: ManagedKeyStore? = nil
     ) {
         self.settingsStore = settingsStore
         self.bandwidthLimiter = bandwidthLimiter
@@ -436,31 +454,56 @@ struct ContentView: View {
         _tabsModel = State(initialValue: TabsViewModel(
             initial: Self.makeTab(settingsStore: settingsStore, limiter: bandwidthLimiter)))
         // Test seam (connection-liveness plan, Task 6 fix round 2, review-
-        // mandated): `sessionListViewModel` defaults to `nil`, which
-        // preserves production behavior byte-for-byte — `MacSCPApp.swift`,
-        // the one production call site, passes nothing for this parameter,
-        // so it still gets the real, Keychain- and default-directory-backed
-        // instance built here exactly as before this parameter existed.
-        // Passing a non-nil value is how a test points the whole session
-        // store (and, through it, every secret write `ContentView
-        // .startSession` can make) at a temporary directory and an in-
-        // memory `SecretStore` instead — the seam that makes it possible
-        // for a `ContentView`-level test to exist at all without touching
-        // this machine's real keychain or real `sessions-v2.json`. Built as
-        // an INITIAL value here, at construction, rather than a property a
-        // test reassigns afterward: an `@State` property's `wrappedValue`
-        // setter is documented as requiring installation into a live
-        // SwiftUI view graph to persist a mutation, which nothing in this
-        // project's test suite ever does (see `LivenessGiveUpOrderingTests`'
-        // own doc comment on that same boundary) — measured directly while
-        // building this fix: reassigning `view.sessionListViewModel` from a
-        // test, then reading it back with no intervening call, still
-        // returned the ORIGINAL value `ContentView.init` built. Choosing
-        // the initial value here sidesteps that limitation entirely, since
-        // it is a plain constructor argument, not a later mutation.
+        // mandated; `secretStore`/`managedKeyStore` added in fix round 3,
+        // review item "the seam is only half there" — `ContentView` still
+        // built its OWN `KeychainSecretStore()`/`ManagedKeyStore(directory:
+        // SessionStore.defaultDirectory)` at two other call sites,
+        // `maybeCreateNewLoginSet(from:editedSession:)` and the ad-hoc
+        // "save as session" path inside `startSession`, both reachable by
+        // a test exercising private-key auth). Every one of these three
+        // parameters defaults to `nil`, which preserves production
+        // behavior byte-for-byte — `MacSCPApp.swift`, the one production
+        // call site, passes nothing for any of them, so production still
+        // gets the real, Keychain- and default-directory-backed instances
+        // built here exactly as before these parameters existed. Passing
+        // non-nil values is how a test points the whole session store, the
+        // Keychain read `maybeCreateNewLoginSet`/`startSession` make to
+        // check for a managed-key passphrase, and the managed-key store
+        // itself at a temporary directory and an in-memory `SecretStore`
+        // instead — the seam that makes it possible for a `ContentView`-
+        // level test to exist at all without touching this machine's real
+        // keychain or real `sessions-v2.json`. `secretStore`/
+        // `managedKeyStore` resolve FIRST, so a test that supplies them but
+        // leaves `sessionListViewModel` as `nil` still gets a default
+        // `SessionListViewModel` built from the SAME resolved `secretStore`
+        // — one isolated secret store for the whole window, not two that
+        // could silently disagree.
+        //
+        // Built as INITIAL values here, at construction, rather than
+        // properties a test reassigns afterward: an `@State` property's
+        // `wrappedValue` setter is documented as requiring installation
+        // into a live SwiftUI view graph to persist a mutation, which
+        // nothing in this project's test suite ever does (see
+        // `LivenessGiveUpOrderingTests`' own doc comment on that same
+        // boundary) — measured directly while building fix round 2:
+        // reassigning `view.sessionListViewModel` from a test, then
+        // reading it back with no intervening call, still returned the
+        // ORIGINAL value `ContentView.init` built. Choosing the initial
+        // value here sidesteps that limitation entirely, since it is a
+        // plain constructor argument, not a later mutation. `secretStore`/
+        // `managedKeyStore` are plain `let` properties, not `@State` —
+        // unlike `sessionListViewModel` they are never reassigned after
+        // `init`, so they need none of `@State`'s machinery and the same
+        // limitation does not apply to them; they are included in this
+        // same paragraph because they are resolved alongside it, not
+        // because they share its risk.
+        let resolvedSecretStore: any SecretStore = secretStore ?? KeychainSecretStore()
+        self.secretStore = resolvedSecretStore
+        self.managedKeyStore = managedKeyStore
+            ?? ManagedKeyStore(directory: SessionStore.defaultDirectory)
         _sessionListViewModel = State(initialValue: sessionListViewModel ?? SessionListViewModel(
             store: SessionStore(directory: SessionStore.defaultDirectory),
-            secrets: KeychainSecretStore(),
+            secrets: resolvedSecretStore,
             auditStore: auditStore
         ))
     }
@@ -914,9 +957,9 @@ struct ContentView: View {
     /// comment) -- a session's or login set's own secret slot must never
     /// duplicate it. The decision of whether that applies now lives in
     /// `SessionSecretPolicy.usesStoredManagedPassphrase` (Core), which this
-    /// function calls with the same two stores `ContentView` has always
-    /// built (`ManagedKeyStore(directory: SessionStore.defaultDirectory)`,
-    /// `KeychainSecretStore()`); see that type's doc comments for why an
+    /// function calls with `ContentView`'s own `managedKeyStore`/
+    /// `secretStore` (real Keychain-backed in production, test-seamed —
+    /// fix round 3 — otherwise); see that type's doc comments for why an
     /// unanswerable probe counts as "has a slot" rather than "does not".
     func maybeCreateNewLoginSet(
         from form: ConnectionViewModel, editedSession: StoredSession? = nil
@@ -957,8 +1000,8 @@ struct ContentView: View {
         let carried: String? = typed == nil ? nil
             : SessionSecretPolicy.usesStoredManagedPassphrase(
                 kind: form.kind, authChoice: form.authChoice, keyPath: form.keyPath,
-                keys: ManagedKeyStore(directory: SessionStore.defaultDirectory),
-                secrets: KeychainSecretStore()) ? ""
+                keys: managedKeyStore,
+                secrets: secretStore) ? ""
             : ((typed ?? "").isEmpty
                 ? (editedSession.flatMap { sessionListViewModel.password(for: $0) })
                 : typed)
@@ -1106,8 +1149,8 @@ struct ContentView: View {
                 password: SessionSecretPolicy.valueToPersist(
                     resolvedSecret: form.resolvedSecret, kind: form.kind, authChoice: form.authChoice,
                     keyPath: form.keyPath,
-                    keys: ManagedKeyStore(directory: SessionStore.defaultDirectory),
-                    secrets: KeychainSecretStore()),
+                    keys: managedKeyStore,
+                    secrets: secretStore),
                 kind: form.kind,
                 groupID: form.selectedGroupID,
                 loginSetID: form.loginMode == .set ? form.selectedLoginSetID : newSetID,
@@ -1207,7 +1250,20 @@ struct ContentView: View {
         // where "/" always worked.
         let resolved = (try? await fs.homeDirectoryPath()) ?? "/"
         let home = resolved.hasPrefix("/") ? resolved : "/"
-        guard tab.reconnectAttempt == attempt else { return }
+        guard tab.reconnectAttempt == attempt else {
+            // The dial itself succeeded — `fs` is a live, open connection —
+            // but the hand-off it was for has been superseded. Nothing
+            // else owns this connection: `tab.session` is (and stays) nil
+            // on this path, so the only other place a `disconnect()` call
+            // could come from — `teardown(_:)`, gated on `tab.session !=
+            // nil` — will never reach it, and `deinit` cleanup is against
+            // this project's own rules (see the architecture invariants).
+            // Left uncalled, the connection the user cancelled would stay
+            // open on the remote host until the whole process exits
+            // (fix round 3, review-measured).
+            await fs.disconnect()
+            return
+        }
         startSession(in: tab, with: fs, startPath: home)
     }
 
@@ -1395,7 +1451,17 @@ struct ContentView: View {
                 // `activeStoredSessionID`, restoring pane visibility, or
                 // writing an audit record for a connection the user already
                 // backed out of.
-                guard tab.reconnectAttempt == myAttempt else { return }
+                guard tab.reconnectAttempt == myAttempt else {
+                    // Same reasoning as `handleAdHocConnected`'s own
+                    // refusal branch: `fs` is a live, open connection with
+                    // nothing else left to close it (`tab.session` stays
+                    // nil on this path, so `teardown(_:)` never reaches it,
+                    // and `deinit` cleanup is against this project's own
+                    // rules) — left uncalled, it would stay open until the
+                    // process exits (fix round 3, review-measured).
+                    await fs.disconnect()
+                    return
+                }
                 startSession(in: tab, with: fs, storedName: stored.name, startPath: home)
                 tab.activeStoredSessionID = stored.id
                 // Pane visibility (P2 terminal-chrome milestone, Task 4):

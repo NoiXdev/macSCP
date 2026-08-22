@@ -554,24 +554,22 @@ extension ContentView {
                                 // up the just-persisted session by id and connect with that.
                                 let current = sessionListViewModel.sessions.first(where: { $0.id == stored.id }) ?? stored
                                 connect(in: tab, stored: current)
-                            }
+                            },
+                            // Read fresh at Connect-button-click time, inside
+                            // `ConnectionFormView`'s own handler, NOT here —
+                            // see `ConnectionFormView.currentReconnectAttempt`'s
+                            // own doc comment for why a closure (fix round 3)
+                            // rather than a plain value captured at THIS
+                            // render.
+                            currentReconnectAttempt: { tab.reconnectAttempt }
                         // Ad-hoc connect completion (connection-liveness plan, Task 6)
-                        ) { fs in
-                            // Captured HERE, before `handleAdHocConnected`'s
-                            // own `fs.homeDirectoryPath()` await — fix round
-                            // 2 (Critical, review-measured): `form.connect()`
-                            // already refuses a result for an attempt Core
-                            // superseded, but by the time `fs` reaches this
-                            // closure `ConnectionViewModel.state` is already
-                            // `.idle` (the dial succeeded), so a Cancel
-                            // landing in the window this closure is about to
-                            // open is invisible to Core. `tab.reconnectAttempt`
-                            // is the one thing Cancel still moves
-                            // unconditionally in that window — capturing it
-                            // NOW, before the vulnerable await, is what lets
-                            // `handleAdHocConnected` tell "nothing changed"
-                            // from "Cancel ran while I was awaiting".
-                            let myAttempt = tab.reconnectAttempt
+                        ) { fs, myAttempt in
+                            // `myAttempt` is the token `ConnectionFormView`'s
+                            // own Connect handler captured BEFORE dialing —
+                            // see that view's `currentReconnectAttempt` doc
+                            // comment for why capturing there (not here,
+                            // after the dial) is what fix round 3 settled on
+                            // as the one rule both connect paths share.
                             await handleAdHocConnected(fs, in: tab, attempt: myAttempt)
                         }
                     }

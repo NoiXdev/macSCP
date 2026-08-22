@@ -140,7 +140,9 @@ struct LivenessGiveUpOrderingTests {
 
         let after = snapshotRealSessionsFile()
         #expect(before == after, """
-            the real on-disk session store changed while this suite ran.             `before` had \(before?.count.description ?? "no file"),             `after` had \(after?.count.description ?? "no file").
+            the real on-disk session store changed while this suite ran. \
+            `before` had \(before?.count.description ?? "no file"), \
+            `after` had \(after?.count.description ?? "no file").
             """)
     }
 }

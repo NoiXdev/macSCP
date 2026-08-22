@@ -454,7 +454,20 @@ public final class ConnectionViewModel {
     /// the moment of the write, not just at the moment the attempt started;
     /// an attempt that was current when it began but got superseded while
     /// suspended writes nothing.
-    private var currentAttempt = UUID()
+    ///
+    /// `internal`, not `private` (fix round 3, review-mandated regression
+    /// test): every OTHER effect of this property is observable only
+    /// through a write it gates, and fix round 2's specific change — moving
+    /// this UNCONDITIONALLY in `cancelConnecting()` rather than only while
+    /// `state == .connecting` — has no such gated write to observe FROM
+    /// Core alone once `connect()` has already returned (there is no
+    /// lingering suspended call left to refuse anything from at that
+    /// point). `ConnectionViewModelTests.cancelConnectingMovesTheTokenEvenOutsideConnecting`
+    /// reads this directly to pin the one-line reordering itself, the
+    /// thing an indirect, effects-only test cannot reach. Still invisible
+    /// outside this module — `@testable import` is what `internal` opens,
+    /// not a wider audience than `private` denied.
+    var currentAttempt = UUID()
 
     private let connector: Connector
     /// Holds the continuation that the host-key decider places on `connect()`,

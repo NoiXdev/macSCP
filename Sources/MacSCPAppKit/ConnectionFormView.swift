@@ -39,9 +39,45 @@ struct ConnectionFormView: View {
     /// which reloads the secret from the keychain (covers "empty password
     /// means unchanged" automatically).
     var onConnectEdited: (StoredSession) -> Void = { _ in }
+    /// Reads `tab.reconnectAttempt`'s CURRENT value on demand — a closure,
+    /// not a plain `UUID`, because this view has no reference to `tab`
+    /// itself (only to `tab.connectionViewModel`, passed as `viewModel`)
+    /// and because a plain value captured at VIEW CONSTRUCTION time could
+    /// be stale by the time the user actually taps Connect, however many
+    /// re-renders later that turns out to be. Called exactly once, at the
+    /// TOP of the Connect button's own handler — before `ManagedKeyPassphrase
+    /// .resolve` and before `viewModel.connect()` even starts dialing —
+    /// matching `ContentView.connect(in:stored:)`'s own capture point
+    /// (synchronously, at the very top, before its first `await`) rather
+    /// than the narrower "right before the vulnerable window" point this
+    /// view used before fix round 3. The two connect paths sharing ONE
+    /// capture-timing rule — "claim your token the moment your attempt
+    /// begins, before anything else can run" — is the correct choice
+    /// (not merely the more convenient one): it protects against ANY
+    /// future write to `tab.reconnectAttempt` between attempt-start and
+    /// the hand-off, not only the one window fix round 2 measured, and it
+    /// mirrors the SAME synchronous-lock timing `ContentView.connect(in:
+    /// stored:)` already uses for `tab.isReconnecting = true`.
+    ///
+    /// Declared BEFORE `onConnected` below on purpose: `onConnected` is
+    /// this view's trailing closure at its one call site
+    /// (`ContentView+Detail.swift`), which requires it to stay the LAST
+    /// property in this struct's synthesized memberwise initializer.
+    let currentReconnectAttempt: () -> UUID
     /// `async` (M9d): the caller resolves the remote home directory before
     /// building the browser session, so it needs to `await` inside here.
-    let onConnected: (any RemoteFileSystem) async -> Void
+    /// The `UUID` is the attempt token the Connect button's own handler
+    /// read from `currentReconnectAttempt()` BEFORE dialing (connection-
+    /// liveness plan, Task 6 fix round 3) — handed straight through to
+    /// `ContentView.handleAdHocConnected(_:in:attempt:)`, which compares it
+    /// against `tab.reconnectAttempt` again once the hand-off's own
+    /// `homeDirectoryPath()` await returns. Passed here rather than
+    /// re-read fresh inside `onConnected`'s closure so BOTH connect paths
+    /// agree on which moment defines "this attempt's own token" — see
+    /// `currentReconnectAttempt`'s own doc comment for why capturing
+    /// AFTER the dial (this view's previous shape) was inconsistent with
+    /// `ContentView.connect(in:stored:)`'s own, earlier capture point.
+    let onConnected: (any RemoteFileSystem, UUID) async -> Void
 
     @State private var showKeyImporter = false
     /// Same as `showKeyImporter` but for the jump's own key file (M10c/T3) —
@@ -485,10 +521,16 @@ struct ConnectionFormView: View {
                                 store: ManagedKeyStore(directory: SessionStore.defaultDirectory),
                                 secrets: KeychainSecretStore())
                         }
+                        // Captured HERE, synchronously, before dialing even
+                        // starts — see `currentReconnectAttempt`'s own doc
+                        // comment for why this timing (not "right before
+                        // the hand-off", this view's shape before fix
+                        // round 3) is the one both connect paths now share.
+                        let myAttempt = currentReconnectAttempt()
                         Task {
                             if let fs = await viewModel.connect() {
                                 isHandingOff = true
-                                await onConnected(fs)
+                                await onConnected(fs, myAttempt)
                                 isHandingOff = false
                             }
                             // No inline `else if case .failed` here (removed,

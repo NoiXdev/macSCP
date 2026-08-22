@@ -450,6 +450,26 @@ struct ConnectionViewModelTests {
         #expect(vm.state == .failed(message: "boom", field: nil))
     }
 
+    /// The regression test fix round 2's reordering shipped without (fix
+    /// round 3, review-mandated): `cancelConnecting()` moves `currentAttempt`
+    /// UNCONDITIONALLY now — before, not after, the `state == .connecting`
+    /// guard. `currentAttempt` is `internal` specifically so this test can
+    /// read it directly; see that property's own doc comment for why an
+    /// indirect, effects-only test cannot reach this particular claim once
+    /// `connect()` has already returned (there is no longer a suspended
+    /// call left whose refusal would prove the token moved).
+    @Test @MainActor func cancelConnectingMovesTheTokenEvenOutsideConnecting() async {
+        let vm = makeVM()
+        #expect(vm.state == .idle)
+        let before = vm.currentAttempt
+
+        vm.cancelConnecting()
+
+        #expect(vm.currentAttempt != before, """
+            cancelConnecting() must move currentAttempt even when state is             not .connecting — the OLD (fix round 1) shape gated the whole             method on `state == .connecting` and returned before ever             touching this property, which is exactly the window fix             round 2 closed.
+            """)
+    }
+
     /// The reason `cancelConnecting()` needs an attempt token at all
     /// (fix round 1, connection-liveness plan Task 6, measured by review):
     /// forcing `state` back to `.idle` unblocks a SECOND `connect()` call
