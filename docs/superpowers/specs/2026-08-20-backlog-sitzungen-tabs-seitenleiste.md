@@ -51,6 +51,32 @@ Tab-Dateien. B1s „nach links / nach rechts" und B2 sind dieselbe zugrunde
 liegende Fähigkeit (Tabs umordnen), nur zwei Bedienwege. **Zusammen bauen**,
 sonst entsteht die Umordnung zweimal.
 
+### B3. Woher die Einträge kommen (Maintainer, 2026-08-25)
+
+**Kein `switch` über `ConnectionKind`.** Ein Tab-Menü kann pro Protokoll
+anders aussehen, und dieses Projekt hat dafür bereits ein Muster:
+`BackendDescriptor.fileActions: [FileActionContribution]` — jedes Backend
+**beiträgt** seine Aktionen, statt dass eine Stelle über die Art verzweigt.
+Am Verbindungs-Einstieg steht der Grund im Quelltext: dort zu leben „löste
+den letzten `ConnectionKind`-switch auf dem Verbindungspfad auf".
+
+Gegenprobe beim Anlegen dieses Eintrags: die verbliebenen `switch …kind` im
+Baum laufen über **Ereignis**- und **Element**-Arten, nicht über
+`ConnectionKind`. Das Muster hält also; ein neuer switch wäre ein Rückschritt.
+
+**Die Unterscheidung, die beim Bauen leicht verlorengeht:** das Menü mischt
+zwei Herkünfte.
+
+| Eintrag | Woher |
+|---|---|
+| protokollabhängige Aktionen | Beitrag des Backends, wie `fileActions` |
+| Schließen, nach links / nach rechts | Eigenschaft des **Tabs**, für jedes Protokoll gleich |
+| Als Sitzung speichern | Eigenschaft des **Tab-Zustands** — nur bei einer Ad-hoc-Verbindung, unabhängig vom Backend |
+
+Alles durch den Descriptor zu zwingen wäre genauso falsch wie ein switch:
+drei Backends müssten dann dieselbe Schließen-Aktion beitragen. Die Trennlinie
+ist nicht „welches Menü", sondern **wovon der Eintrag abhängt**.
+
 ---
 
 ## C. Sitzung starten
