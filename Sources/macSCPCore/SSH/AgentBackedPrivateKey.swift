@@ -110,6 +110,25 @@ enum AgentAlgorithm {
         static let name = "rsa-sha2-512"
         static let signFlags: UInt32 = SSHAgentCodec.rsaSHA2_512
     }
+
+    /// The algorithm names macSCP is willing to repeat back in an error
+    /// message: the ones the markers above offer, plus the two an RSA agent
+    /// realistically substitutes for `rsa-sha2-512` when it ignores the
+    /// SHA2 flags. Returns `nil` for anything else.
+    ///
+    /// The point is not to validate the name — the caller has already
+    /// decided it is wrong — but to keep the *product's* error text made of
+    /// the product's own strings. What the agent reports is decoded from
+    /// arbitrary bytes of its answer, so echoing it verbatim would let the
+    /// agent write into a dialog.
+    static func recognizedName(_ name: String) -> String? {
+        knownNames.contains(name) ? name : nil
+    }
+
+    private static let knownNames: Set<String> = [
+        Ed25519.name, ECDSAP256.name, ECDSAP384.name, ECDSAP521.name,
+        RSASha512.name, "ssh-rsa", "rsa-sha2-256",
+    ]
 }
 
 /// Byte-level helpers shared by `AgentBackedPublicKey`/`AgentSignature`.
@@ -279,8 +298,25 @@ final class AgentBackedPrivateKey<Algorithm: AgentSigningAlgorithm>: NIOSSHPriva
             throw AgentError.protocolError(reason: "agent SIGN_RESPONSE is missing its algorithm name")
         }
         guard reportedAlgorithm == Algorithm.name else {
+            // The reported name is echoed back only when it is one macSCP
+            // already names itself. `leadingSSHString` decodes whatever
+            // bytes the agent put in that field — any length the frame
+            // allows, any content — and this `reason` ends up in the
+            // failed-connect text. The agent holds the user's private keys
+            // and is therefore trusted far more than a remote server, but
+            // "trusted enough to hold keys" is not "trusted to write the
+            // product's error messages", and a buggy or hostile agent is
+            // exactly the case this check exists to catch in the first
+            // place.
+            //
+            // Recognized names are the interesting ones anyway: the
+            // realistic failure is an agent that ignores the SHA2 flags and
+            // signs with a legacy algorithm, and naming which one is the
+            // whole diagnosis.
+            let reported = AgentAlgorithm.recognizedName(reportedAlgorithm)
+                ?? "an unrecognized algorithm name"
             throw AgentError.protocolError(
-                reason: "agent signature algorithm mismatch: expected \(Algorithm.name), got \(reportedAlgorithm)")
+                reason: "agent signature algorithm mismatch: expected \(Algorithm.name), got \(reported)")
         }
         return AgentSignature<Algorithm>(rawAgentResponse: raw)
     }

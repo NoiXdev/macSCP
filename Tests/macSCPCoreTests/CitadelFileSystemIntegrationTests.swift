@@ -575,8 +575,8 @@ struct CitadelFileSystemIntegrationTests {
                 return
             }
             // Named, not a stringified Foundation error: the read side's
-            // verdict a few arms up reads the same way, and neither is a
-            // question the user can answer by retrying.
+            // verdict reads the same way, and neither is a question the
+            // user can answer by retrying.
             #expect(reason.hasPrefix("known_hosts store not writable"))
         }
         // Asked once. The point of failing rather than continuing is that

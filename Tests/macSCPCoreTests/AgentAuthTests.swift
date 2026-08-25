@@ -189,6 +189,51 @@ struct AgentAuthTests {
             publicKeyBlob: edIdentity.publicKeyBlob, data: Data("payload".utf8), flags: 0))
     }
 
+    /// The algorithm-mismatch refusal, and what its message is made of. The
+    /// name the agent self-reports is decoded from arbitrary bytes of its
+    /// answer — its length is bounded by the frame and nothing else — and
+    /// the `reason` it lands in is shown to a person. A recognized name is
+    /// repeated back, because naming which legacy algorithm the agent
+    /// substituted IS the diagnosis; anything else is replaced, so the
+    /// agent cannot write the text.
+    @Test func mismatchedAlgorithmNamesOnlyNamesItIfMacSCPKnowsIt() async throws {
+        func signExpectingRefusal(reporting reported: String) throws -> String {
+            let identity = Self.makeIdentity(
+                keyType: "ssh-rsa", material: Self.sshBytes([0x01]) + Self.sshBytes([0x02]),
+                comment: "rsa")
+            let rawSignature = Self.sshBytes(reported) + Self.sshBytes([0x01, 0x02])
+            let client = SSHAgentClient(transport: MockAgentTransport(
+                response: Self.frame(type: 14, payload: Self.sshBytes(rawSignature))))
+            let key = AgentBackedPrivateKey<AgentAlgorithm.RSASha512>(
+                identity: identity, client: client)
+            do {
+                _ = try key.signature(for: Data("payload".utf8))
+                Issue.record("expected the mismatched algorithm name to be refused")
+                return ""
+            } catch let error as AgentError {
+                guard case .protocolError(let reason) = error else {
+                    Issue.record("expected a protocolError, got \(error)")
+                    return ""
+                }
+                return reason
+            }
+        }
+
+        // The realistic misbehaviour: an agent that ignored the SHA2 flags
+        // and signed with legacy SHA-1. Named, because it is macSCP's own
+        // string.
+        #expect(try signExpectingRefusal(reporting: "ssh-rsa")
+            == "agent signature algorithm mismatch: expected rsa-sha2-512, got ssh-rsa")
+
+        // Free text the agent chose. It must reach neither the error nor
+        // anything rendered from it, at any length.
+        let injected = "attacker-chosen-\(String(repeating: "A", count: 512))"
+        let reason = try signExpectingRefusal(reporting: injected)
+        #expect(!reason.contains("attacker-chosen"))
+        #expect(!reason.contains("AAAA"))
+        #expect(reason.hasSuffix("got an unrecognized algorithm name"))
+    }
+
     /// M11e/T1 point 2: the semaphore wait in `signature(for:)` has its own
     /// wall-clock ceiling, independent of `NIOUnixSocketAgentTransport`'s own
     /// 10s response deadline — that transport-level deadline only fires

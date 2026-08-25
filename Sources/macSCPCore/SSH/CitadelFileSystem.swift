@@ -222,10 +222,10 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                     // `WebDAVFileSystem.connect` wraps what `URLSession`
                     // hands it.
                     //
-                    // `connectionFailed` mirrors the READ side's verdict a
-                    // few arms up (`.lookupFailed`): both mean the
-                    // known-hosts store could not do its job, and neither is
-                    // a question a person can answer by retrying.
+                    // `connectionFailed` mirrors the READ side's verdict for
+                    // `.lookupFailed`: both mean the known-hosts store could
+                    // not do its job, and neither is a question a person can
+                    // answer by retrying.
                     do {
                         try knownHosts.upsert(KnownHostKey(
                             host: candidate.host, port: candidate.port,
