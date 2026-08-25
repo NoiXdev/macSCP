@@ -27,8 +27,13 @@ import Testing
 /// `SecretStore` — this suite's own path genuinely does not reach the real
 /// Keychain or the real session store today. It is still built with the
 /// SAME temp-directory/in-memory-secrets seam `ConnectAttemptHandoffTests`
-/// uses (`ContentView.init`'s `sessionListViewModel:` parameter), and
-/// `theRealSessionsFileIsNeverTouched` below proves it empirically rather
+/// uses — `ContentView.init`'s `sessionListViewModel:`, `secretStore:` and
+/// `managedKeyStore:` parameters, the whole seam rather than the part this
+/// suite's own path needs (whole-branch final review, finding M-2: passing
+/// only some of them left this `ContentView` holding a real
+/// `KeychainSecretStore` and the real Application Support directory, inert
+/// only for as long as nothing here called a function that reads them) —
+/// and `theRealSessionsFileIsNeverTouched` proves it empirically rather
 /// than resting on "the code doesn't call it today" — the property that
 /// matters is that a FUTURE change to `teardown(_:)` cannot silently start
 /// writing to a developer's real data through this suite without the proof
@@ -56,8 +61,8 @@ struct LivenessGiveUpOrderingTests {
     /// The same minimal, `ContentView.init`-shaped fixture a window would
     /// hand it — no live window or rendering involved; `body` is never
     /// called, only the plain `handleLivenessGiveUp(_:)` method. Isolated
-    /// via `ContentView.init`'s `sessionListViewModel:` seam even though
-    /// this suite's own call path does not reach it — see this file's own
+    /// through every seam `ContentView.init` offers, even though this
+    /// suite's own call path reaches none of them — see this file's own
     /// top-level doc comment.
     private func makeContentView() -> (view: ContentView, cleanup: () -> Void) {
         let settingsDir = makeTempDirectory("settings")
@@ -76,7 +81,9 @@ struct LivenessGiveUpOrderingTests {
             tabCommands: TabCommands(),
             updateModel: UpdateCheckModel(),
             menuBarModel: MenuBarStatusModel(),
-            sessionListViewModel: sessionListViewModel)
+            sessionListViewModel: sessionListViewModel,
+            secretStore: NoOpSecretStore(),
+            managedKeyStore: ManagedKeyStore(directory: workDir))
         return (view, {
             try? FileManager.default.removeItem(at: settingsDir)
             try? FileManager.default.removeItem(at: auditDir)

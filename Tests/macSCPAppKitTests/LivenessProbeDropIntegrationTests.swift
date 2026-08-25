@@ -79,6 +79,14 @@ private enum DockerError: Error, CustomStringConvertible {
     }
 }
 
+/// Somewhere for the background drain in `Docker.run` to put what it read.
+/// `@unchecked Sendable` because the only handoff is a single write before
+/// `DispatchGroup.wait()` returns and a single read after it, which is the
+/// group's own ordering guarantee rather than a claim about this class.
+private final class DataBox: @unchecked Sendable {
+    var value = Data()
+}
+
 private enum Docker {
     /// `Process` inherits this test runner's environment, whose `PATH` is
     /// whatever launched `swift test` — not something to rely on, so the
@@ -97,20 +105,60 @@ private enum Docker {
         return found
     }
 
-    static func run(_ arguments: [String]) throws -> (status: Int32, output: String) {
+    /// One `docker` invocation, with the two streams kept APART (whole-branch
+    /// final review, finding M-3). They used to share a pipe, and `output`
+    /// was then split into container ids: any daemon chatter on stderr — a
+    /// config-load warning, a context or deprecation notice — would have
+    /// become a phantom "leftover" that `docker rm -f` could not remove, so
+    /// `pruneLeftovers()` would spin to its deadline and throw. Nothing that
+    /// is parsed may share a stream with something that is only ever read by
+    /// a human.
+    struct Result {
+        let status: Int32
+        /// Standard output alone. This is what gets parsed.
+        let output: String
+        /// Standard error alone. Never parsed; carried so a failure message
+        /// can say what the daemon actually complained about.
+        let errorOutput: String
+
+        /// Both streams, for the failure messages — where losing stderr
+        /// would throw away the only sentence that explains the exit code.
+        var combinedOutput: String {
+            [output, errorOutput]
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
+        }
+    }
+
+    static func run(_ arguments: [String]) throws -> Result {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: try executablePath())
         process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
         try process.run()
-        // Drained BEFORE waiting: a command that writes more than the pipe
-        // buffer holds would otherwise block forever on a full pipe while
-        // this side waits for it to exit.
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        // Both pipes drained BEFORE waiting, and CONCURRENTLY: a command
+        // that writes more than a pipe's buffer holds would otherwise block
+        // forever on a full pipe while this side waits for it to exit — and
+        // with two pipes, draining one to the end before starting on the
+        // other is the same deadlock with an extra step.
+        let errorData = DataBox()
+        let drained = DispatchGroup()
+        drained.enter()
+        DispatchQueue.global().async {
+            errorData.value = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            drained.leave()
+        }
+        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        drained.wait()
         process.waitUntilExit()
-        return (process.terminationStatus, String(decoding: data, as: UTF8.self))
+        return Result(
+            status: process.terminationStatus,
+            output: String(decoding: outputData, as: UTF8.self),
+            errorOutput: String(decoding: errorData.value, as: UTF8.self))
     }
 
     /// Reads the image tag out of `compose.yml` instead of repeating it
@@ -171,7 +219,7 @@ private struct DisposableSSHServer {
         ])
         guard started.status == 0 else {
             throw DockerError.commandFailed(
-                "docker run", status: started.status, output: started.output)
+                "docker run", status: started.status, output: started.combinedOutput)
         }
         return DisposableSSHServer(name: name, port: port)
     }
@@ -200,7 +248,7 @@ private struct DisposableSSHServer {
         let stopped = try Docker.run(["stop", "-t", "0", name])
         guard stopped.status == 0 else {
             throw DockerError.commandFailed(
-                "docker stop", status: stopped.status, output: stopped.output)
+                "docker stop", status: stopped.status, output: stopped.combinedOutput)
         }
     }
 
@@ -212,7 +260,7 @@ private struct DisposableSSHServer {
         let paused = try Docker.run(["pause", name])
         guard paused.status == 0 else {
             throw DockerError.commandFailed(
-                "docker pause", status: paused.status, output: paused.output)
+                "docker pause", status: paused.status, output: paused.combinedOutput)
         }
     }
 
@@ -220,7 +268,7 @@ private struct DisposableSSHServer {
         let unpaused = try Docker.run(["unpause", name])
         guard unpaused.status == 0 else {
             throw DockerError.commandFailed(
-                "docker unpause", status: unpaused.status, output: unpaused.output)
+                "docker unpause", status: unpaused.status, output: unpaused.combinedOutput)
         }
     }
 
@@ -257,13 +305,41 @@ private struct DisposableSSHServer {
         }
     }
 
+    /// The ids of this suite's own leftover containers, and only those.
+    ///
+    /// Docker's `name` filter is a REGEX MATCH ON A SUBSTRING, not an
+    /// anchored prefix (whole-branch final review, finding M-4: an earlier
+    /// version of this function and its own doc comment both called it a
+    /// prefix, which it is not). It is still what narrows the listing —
+    /// asking the daemon for less is cheaper than filtering everything it
+    /// owns — but the prefix claim is now ENFORCED here, against the names
+    /// the daemon reports, instead of being assumed of a filter that does
+    /// not make it. A container merely CONTAINING the string, however it
+    /// came to be named that, is not this suite's to remove.
+    ///
+    /// Anchoring the filter itself (`name=^macscp-liveness-drop-`) would
+    /// leave the claim resting on how one Docker version happens to treat
+    /// `^` against a name the API stores with a leading slash. Checking the
+    /// name here rests on nothing but `hasPrefix`.
     private static func leftoverIDs() throws -> [String] {
-        let listed = try Docker.run(["ps", "-aq", "--filter", "name=\(namePrefix)"])
+        let listed = try Docker.run([
+            "ps", "-a", "--filter", "name=\(namePrefix)", "--format", "{{.ID}}\t{{.Names}}",
+        ])
         guard listed.status == 0 else {
             throw DockerError.commandFailed(
-                "docker ps", status: listed.status, output: listed.output)
+                "docker ps", status: listed.status, output: listed.combinedOutput)
         }
-        return listed.output.split(whereSeparator: \.isNewline).map(String.init)
+        return listed.output.split(whereSeparator: \.isNewline).compactMap { line in
+            let fields = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
+            guard fields.count == 2 else { return nil }
+            // A container can carry several names; any one of them starting
+            // with the prefix makes it ours.
+            let names = fields[1].split(separator: ",").map {
+                $0.trimmingCharacters(in: .whitespaces)
+            }
+            guard names.contains(where: { $0.hasPrefix(namePrefix) }) else { return nil }
+            return String(fields[0])
+        }
     }
 }
 
@@ -405,13 +481,19 @@ private struct InertSecretStore: SecretStore {
 /// file mirrors one lap of its inner `probing:` loop, minus the sleeps;
 /// `LivenessProbeWiringGuardTests` is what pins the real loop to that same
 /// shape (interval read every lap, decision through `LivenessProbePolicy
-/// .decide`, `.giveUp` delegating to `onGiveUp`), so the mirror cannot
-/// quietly describe a loop that no longer exists.
+/// .decide`, `.giveUp` delegating to `onGiveUp`, the probe arm going
+/// through `LivenessProbeStep.perform`), so the mirror cannot quietly
+/// describe a loop that no longer exists.
 ///
 /// Isolation, to the standard `ConnectAttemptHandoffTests` set for this
 /// branch: every store handed to `ContentView` is a temp directory or an
-/// in-memory double, and `theRealSessionsFileIsNeverTouched` demonstrates
-/// that rather than assuming it.
+/// in-memory double — `secretStore:` and `managedKeyStore:` included, which
+/// the whole-branch final review found missing here (finding M-2), leaving
+/// this fixture holding a real `KeychainSecretStore` and the real
+/// Application Support directory, harmless only for as long as no test in
+/// this suite called a function that reads them — and
+/// `theRealSessionsFileIsNeverTouched` demonstrates that rather than
+/// assuming it.
 @Suite(
     "Liveness probe against a real connection",
     .enabled(if: ProcessInfo.processInfo.environment["MACSCP_ITEST"] == "1"),
@@ -705,17 +787,21 @@ struct LivenessProbeDropIntegrationTests {
                 consecutiveFailures = 0
                 tab.liveness = .connected
             case .probe, .probeAgainNow:
-                guard let session = tab.session else { break }
                 let timeoutSeconds = LivenessProbePolicy.probeTimeout(forInterval: interval)
-                let alive = await LivenessProbeRace.run(timeoutSeconds: timeoutSeconds) {
-                    (try? await session.remoteFS.stat(path: session.homePath)) != nil
-                }
-                if alive {
+                // Through `LivenessProbeStep.perform`, exactly as the real
+                // loop reaches the race: the race and the write of its
+                // answer live behind that one function now (whole-branch
+                // final review, finding I-1), so a mirror that raced and
+                // wrote here would be mirroring a loop that no longer
+                // exists — and would be probing without the guard the real
+                // path has.
+                switch await LivenessProbeStep.perform(on: tab, timeoutSeconds: timeoutSeconds) {
+                case .alive:
                     consecutiveFailures = 0
-                    tab.liveness = .connected
-                } else {
+                case .failed:
                     consecutiveFailures += 1
-                    tab.liveness = .degraded
+                case .abandoned:
+                    break
                 }
             case .giveUp:
                 await onGiveUp(tab)
@@ -817,7 +903,9 @@ struct LivenessProbeDropIntegrationTests {
             tabCommands: TabCommands(),
             updateModel: UpdateCheckModel(),
             menuBarModel: MenuBarStatusModel(),
-            sessionListViewModel: sessionListViewModel)
+            sessionListViewModel: sessionListViewModel,
+            secretStore: InertSecretStore(),
+            managedKeyStore: ManagedKeyStore(directory: workDirectory))
         return Fixture(
             view: view, settingsStore: settingsStore, workDirectory: workDirectory,
             temporaryDirectories: [workDirectory, settingsDirectory, auditDirectory])
