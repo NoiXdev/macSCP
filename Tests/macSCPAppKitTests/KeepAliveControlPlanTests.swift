@@ -55,4 +55,28 @@ struct KeepAliveControlPlanTests {
             KeepAliveControlPlan.storedValue(togglingTo: true, lastKnownInterval: 300)
                 != SettingsStore.defaultKeepAliveIntervalSeconds)
     }
+
+    // MARK: - storedValue(forIntervalChangeTo:isEnabled:) (fix round 1)
+    //
+    // Added when review found the interval stepper's `set` closure wrote
+    // `store.keepAliveIntervalSeconds` straight from the committed value,
+    // never calling into this plan — safe only because the Stepper's own
+    // `15...600` range and `.disabled` state kept `0` out, not because
+    // anything here said so. These two tests are what makes THAT call
+    // site's own behavior provable by mutating a tested function, once
+    // `KeepAliveStepperWiringGuardTests` (source-scan) confirms the real
+    // call site actually reaches it.
+
+    @Test func aCommitWhileEnabledPassesThroughUnchanged() {
+        #expect(
+            KeepAliveControlPlan.storedValue(forIntervalChangeTo: 200, isEnabled: true) == 200)
+    }
+
+    /// A commit that somehow still fires while disabled must not leak a
+    /// stray interval into the store — it clamps to the `0` sentinel, the
+    /// same value `storedValue(togglingTo: false, ...)` writes.
+    @Test func aCommitWhileDisabledClampsToTheSentinel() {
+        #expect(
+            KeepAliveControlPlan.storedValue(forIntervalChangeTo: 200, isEnabled: false) == 0)
+    }
 }

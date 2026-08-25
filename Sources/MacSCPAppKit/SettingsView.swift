@@ -800,6 +800,21 @@ enum KeepAliveControlPlan {
     static func storedValue(togglingTo isOn: Bool, lastKnownInterval: Int) -> Int {
         isOn ? lastKnownInterval : 0
     }
+
+    /// What to persist when the interval stepper itself commits a value
+    /// (fix round 1 — the stepper's `set` closure used to write
+    /// `store.keepAliveIntervalSeconds` straight from the committed value,
+    /// bypassing this plan entirely; it was safe only because the
+    /// Stepper's own `15...600` range and `.disabled` state kept `0` out,
+    /// not because anything tested said so). `isEnabled` is the SAME
+    /// `isEnabled(storedSeconds:)` check the toggle and the `.disabled`
+    /// modifier already use — passed in here rather than re-derived, so
+    /// this stays a pure function of its own two inputs. A commit that
+    /// somehow still reaches this while disabled clamps to the sentinel
+    /// instead of leaking a stray interval into the store.
+    static func storedValue(forIntervalChangeTo newInterval: Int, isEnabled: Bool) -> Int {
+        isEnabled ? newInterval : 0
+    }
 }
 
 /// The "SSH" protocol section (M18/T7): the external-terminal target picker
@@ -960,7 +975,14 @@ private struct SSHSettingsSection: View {
                         },
                         set: { newValue in
                             lastKnownKeepAliveInterval = newValue
-                            store.keepAliveIntervalSeconds = newValue
+                            // Routed through the plan (fix round 1) — every
+                            // write to `keepAliveIntervalSeconds` now goes
+                            // through `KeepAliveControlPlan`, not just the
+                            // toggle's; see `KeepAliveStepperWiringGuardTests`.
+                            store.keepAliveIntervalSeconds = KeepAliveControlPlan.storedValue(
+                                forIntervalChangeTo: newValue,
+                                isEnabled: KeepAliveControlPlan.isEnabled(
+                                    storedSeconds: store.keepAliveIntervalSeconds))
                         }
                     ),
                     in: 15...600
