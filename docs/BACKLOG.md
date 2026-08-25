@@ -34,6 +34,13 @@ im Eintrag und zieht hier höchstens die Zeile nach.
 | [Snippet-Editor: Bedienung](superpowers/specs/2026-08-21-backlog-snippet-editor-bedienung.md) | Variablen ein- und ausklappbar samt Massenaktionen; Platzhalter beim Tippen vorschlagen. Der Baustein dafür (`NSTextView`) ist schon da. |
 | [Snippet-Probelauf](superpowers/specs/2026-08-20-backlog-snippet-probelauf.md) | Zeigen, was tatsächlich gesendet würde — und damit zugleich der ehrliche Ausstieg aus der Sicherheitsprüfung, pro Snippet statt global. Enthält die gemessene Falle, dass eine einzeilige Präfix-Zuweisung `$VAR` zu früh expandiert. |
 
+## Neue Funktionen
+
+| Eintrag | Kern |
+|---|---|
+| [FTP und SMB/AFP](superpowers/specs/2026-08-25-backlog-weitere-protokolle.md) | Zwei sehr verschiedene Hälften unter einem Wort. SMB/AFP spricht macOS bereits — es ginge um eine Einbindung, und die gewohnten TOFU-Zusagen haben dort keine Entsprechung. FTP bräuchte zuerst eine Entscheidung über Bibliothek und Spielart, denn nacktes FTP überträgt Zugangsdaten im Klartext. **Nicht zusammen angehen.** |
+| [Werkzeuge zum Untersuchen einer Verbindung](superpowers/specs/2026-08-25-backlog-verbindungswerkzeuge.md) | Ping und Trace pro Verbindung, auch ohne gespeicherten Host. Die offene Frage ist, was beides hier heißen soll — ein Protokoll von macSCPs eigenem Aufbau ist vermutlich nützlicher als ein Traceroute und braucht keine erhöhten Rechte. |
+
 ## Werkzeug und Wartung
 
 | Eintrag | Kern |
