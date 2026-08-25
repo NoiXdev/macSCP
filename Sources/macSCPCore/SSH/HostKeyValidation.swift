@@ -123,7 +123,7 @@ final class TOFUHostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @unc
             known = try knownHosts.find(host: host, port: port)
         } catch {
             // Store unreadable → fail closed (no downgrade to "unknown").
-            box.set(.lookupFailed(reason: String(describing: error)))
+            box.set(.lookupFailed(reason: Self.readFailureReason(error)))
             validationCompletePromise.fail(HostKeyError.rejectedByUser)
             return
         }
@@ -139,6 +139,59 @@ final class TOFUHostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @unc
                               presented: candidate.fingerprintSHA256))
             validationCompletePromise.fail(HostKeyError.mismatch(
                 host: host, expected: expected, presented: candidate.fingerprintSHA256))
+        }
+    }
+
+    /// Renders a known-hosts read failure for `.lookupFailed`, whose text
+    /// the connect path shows to a person.
+    ///
+    /// Neither `String(describing:)` nor `localizedDescription` alone is
+    /// right, and the reason is measured rather than assumed. The likeliest
+    /// failure by far is corrupt JSON, which arrives as
+    /// `DecodingError.dataCorrupted` — a Swift enum, but one carrying the
+    /// `NSError` `JSONSerialization` threw, so `String(describing:)` prints
+    /// that error's whole `userInfo` table: keys Foundation chooses, in a
+    /// surface built to show a sentence to a user. `localizedDescription`
+    /// avoids the table but throws away everything that made the text worth
+    /// reading — for a store whose shape is wrong it says only that the
+    /// data "couldn't be read".
+    ///
+    /// So a `DecodingError` is rendered here from its case name and its
+    /// coding path and nothing else. Both come from macSCP's own `Codable`
+    /// keys and the file's own structure; neither can reach
+    /// `context.underlyingError`, which is where the Foundation dictionary
+    /// lives. Everything that is not a `DecodingError` — an unreadable
+    /// file, a permission refusal — keeps `localizedDescription`, which for
+    /// those is the better sentence and names the file.
+    static func readFailureReason(_ error: Error) -> String {
+        guard let decoding = error as? DecodingError else {
+            return error.localizedDescription
+        }
+        switch decoding {
+        case .keyNotFound(let key, let context):
+            return "keyNotFound at \(codingPathText(context.codingPath + [key]))"
+        case .typeMismatch(_, let context):
+            return "typeMismatch at \(codingPathText(context.codingPath))"
+        case .valueNotFound(_, let context):
+            return "valueNotFound at \(codingPathText(context.codingPath))"
+        case .dataCorrupted(let context):
+            return "dataCorrupted at \(codingPathText(context.codingPath))"
+        @unknown default:
+            return "the stored data could not be decoded"
+        }
+    }
+
+    /// A coding path as `[0].keyType`: array indices in brackets, keys
+    /// separated by dots. An empty path is the document itself, which is
+    /// where corrupt JSON fails.
+    private static func codingPathText(_ path: [any CodingKey]) -> String {
+        guard !path.isEmpty else { return "the top level" }
+        return path.reduce(into: "") { text, key in
+            if let index = key.intValue {
+                text += "[\(index)]"
+            } else {
+                text += text.isEmpty ? key.stringValue : ".\(key.stringValue)"
+            }
         }
     }
 }

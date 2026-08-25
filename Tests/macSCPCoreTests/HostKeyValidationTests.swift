@@ -94,10 +94,43 @@ struct TOFUHostKeyValidatorTests {
             store: KnownHostsStore(directory: dir), key: try makeHostKey())
 
         #expect(accepted == false)
-        guard case .lookupFailed = try #require(result) else {
+        guard case .lookupFailed(let reason) = try #require(result) else {
             Issue.record("expected .lookupFailed, got \(String(describing: result))")
             return
         }
+        // The verdict's text is shown to a person, so it is held to the
+        // same standard as the write side's. `JSONSerialization` throws an
+        // `NSError` and `JSONDecoder` hands it on inside
+        // `DecodingError.dataCorrupted` — so a stringified `DecodingError`
+        // prints a Foundation `userInfo` table even though the enum itself
+        // has none. Naming the case is what survives that.
+        #expect(reason.contains("dataCorrupted"))
+        #expect(!reason.contains("UserInfo="))
+        #expect(!reason.contains("NSDebugDescription"))
+    }
+
+    /// The other half of the same argument, and the reason a blanket switch
+    /// to `localizedDescription` would have been a loss: a store that IS
+    /// valid JSON but the wrong shape has something specific to say, and
+    /// `localizedDescription` says only that the data is missing. The
+    /// coding path is macSCP's own — its `Codable` keys and the file's own
+    /// indices — so it can be printed without printing Foundation's table.
+    @Test func wronglyShapedStoreNamesTheMissingKeyAndItsPath() throws {
+        let dir = try makeStoreDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try #"[{"host":"nas.local","port":22,"publicKeyBase64":"QUJD"}]"#
+            .write(to: dir.appendingPathComponent("known_hosts.json"),
+                   atomically: true, encoding: .utf8)
+
+        let (result, accepted) = runValidator(
+            store: KnownHostsStore(directory: dir), key: try makeHostKey())
+
+        #expect(accepted == false)
+        guard case .lookupFailed(let reason) = try #require(result) else {
+            Issue.record("expected .lookupFailed, got \(String(describing: result))")
+            return
+        }
+        #expect(reason == "keyNotFound at [0].keyType")
     }
 
     /// The control for the test above: a store that reads fine and simply
