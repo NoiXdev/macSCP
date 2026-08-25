@@ -69,3 +69,48 @@ dieselbe Sorte Zusicherung, die dieser Zweig wiederholt widerlegt hat.
 Kein Mutationsversuch, der an echte Zugangsdaten-, Sitzungs- oder
 Konfigurationsablagen reichen kann. Verlangt ein Beweis das, ist zuerst der
 Testaufbau zu ändern.
+
+---
+
+## Nachtrag 2026-08-25: `SessionListViewModel` hat dieselbe Naht-Lücke, und sie ist neu folgenreich
+
+Aus der Abschlussdurchsicht des Plans *gescheiterter Aufbau*, hier nur
+**festgehalten**, nicht behoben.
+
+`SessionListViewModel.init` hat Vorgabewerte, die auf die realen
+Verzeichnisse zeigen, und `init` ruft `reload()`. Gezählt in dem Durchgang,
+der diesen Absatz schreibt, über alle Konstruktionsstellen unter `Tests/`:
+
+- **16** Stellen lassen `loginSetStore:` weg und lesen damit die echte
+  `~/Library/Application Support/macSCP/logins.json`
+  (`PaneVisibilityPersistenceTests` 2, `SessionExportTagsTests` 3,
+  `SessionListViewModelTests` 9, `SessionSecretPolicyTests` 2).
+- **51** Stellen lassen `auditStore:` weg. **9** davon rufen danach
+  `vm.delete(...)`, alle in `SessionListViewModelTests`, was ein
+  `removeItem` gegen das **echte** Audit-Verzeichnis auslöst — heute
+  folgenlos, weil die Sitzungs-IDs frisch sind und die Datei nie existiert.
+
+Altlast, aber `c1db9a6` hat sie erstmals folgenreich gemacht: dort wird
+`loginSets = (try? loginSetStore.all()) ?? []` durch ein `do/catch` ersetzt,
+das den Fehler an `errorMessage` **anhängt**. Damit hängt der beobachtbare
+Zustand dieser 16 Tests am Inhalt einer echten Nutzerdatei. Heute geht es
+gut — von den 16 lesen zwei danach `errorMessage`, und beide Zusicherungen
+sind `hasPrefix`-förmig und überleben ein Anhängen. Kein Schreibzugriff auf
+dem Leseweg.
+
+**Billige Behebung, dieselbe Klasse wie oben:** die Vorgabewerte aus dem
+`init` entfernen und die Aufrufstellen explizit machen. Dann ist „liest die
+echte Datei" nichts, was ein Test aus Versehen tun kann.
+
+## Nachtrag 2026-08-25: `catalogDirectories` ist eine hartkodierte Liste
+
+`LocalizationParityTests.catalogDirectories` und `GermanAddressFormTests
+.catalogs` zählen die Katalogorte fest auf. Die *Locales* innerhalb eines
+Ortes werden von der Platte abgeleitet, die **Orte selbst nicht**. Ein
+drittes lokalisiertes Ziel bliebe stillschweigend ungeprüft.
+
+Das ist genau die Klasse, für die `ReconnectWiringGuardTests` eigens
+`everySourceDirectoryIsScannedOrExplicitlyExcluded` besitzt: eine Prüfung,
+die weniger prüft, als sie glaubt, ist schlechter als keine, weil sie Erfolg
+meldet. Heute gibt es genau zwei `Resources/`-Verzeichnisse, also folgenlos
+— und dieselbe Ableitung von der Platte wäre hier so billig wie dort.

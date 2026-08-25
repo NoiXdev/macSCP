@@ -67,3 +67,46 @@ vor dem Schreiben oder gar nicht.
 Zwei weitere Umgehungen sind bekannt und im Wächter selbst dokumentiert:
 ein Keypath-Schreibzugriff und ein `Mirror`-Zugriff über Feldnamen. Beide
 exotisch, beide benannt statt beschwiegen.
+
+---
+
+## Nachtrag 2026-08-25: Runde 6, und was sie über die Priorität sagt
+
+Die Abschlussdurchsicht des Plans *gescheiterter Aufbau* hat den Wächter ein
+sechstes Mal geschlagen — und diesmal **nicht** an der oben benannten
+Grenze. Es war die *benannte, direkte* Form:
+
+```swift
+async let dialed = BackendDescriptor.descriptor(for: config.kind).connect(
+    config, { _ in true }, { _ in true }, 30)
+```
+
+Ein roher Backend-Wählvorgang mit Akzeptiere-alles-Entscheidern, in einer
+neuen App-Datei. Kompiliert, ganze Suite grün. Die Kontrollen im selben
+Durchgang — dieselbe Zeile mit `await`, und ein `Task.detached` darum —
+waren beide rot, der Scan erreichte die Datei also sehr wohl.
+
+Der Grund: die Diskriminierung fragte nach dem **Wort** `await`, und
+`async let` ruft eine `async`-Funktion auf, ohne es zu schreiben. Der
+Suitenkommentar behauptete ausdrücklich das Gegenteil („jeder Wählvorgang in
+diesem Projekt ist `async` und kann daher nicht ohne `await` aufgerufen
+werden"), womit ein Leser der Lückenliste korrekt zu dem Schluss kam, diese
+Form sei erfasst.
+
+Geschlossen (die Diskriminierung kennt jetzt beide Schreibweisen), und die
+Lückenliste sagt jetzt, was sie weiter nicht sieht.
+
+**Was das für diese Notiz bedeutet.** Solange die Grenze oben als „ein Scan
+kann eine umbenannte Core-Funktion nicht sehen" gelesen wurde, war sie
+akademisch. Runde 6 zeigt, dass auch die direkte, benannte Form entkommt,
+sobald die Schreibweise das Muster meidet — und dass die Behebung wieder
+darin bestand, **die gerade gefundene Schreibweise aufzuschreiben**.
+
+> Ein Scan über einer Sprache mit mehreren Schreibweisen pro Semantik
+> verliert dieses Rennen dauerhaft. Nicht weil er schlampig ist, sondern
+> weil er nur aufzählen kann, was jemand schon gedacht hat.
+
+Sechs Runden, sechs Schreibweisen, jede aus dem Inneren der jeweils
+vorherigen Runde vollständig aussehend. Das ist das Argument für die
+Fähigkeitsgrenze — **höher zu priorisieren**, nicht ein siebtes Muster zu
+ergänzen.
