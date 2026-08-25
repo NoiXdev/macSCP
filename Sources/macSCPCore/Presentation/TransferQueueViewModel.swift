@@ -5,6 +5,27 @@ import Observation
 /// Binding for the UI layer (M5b/T4).
 public enum ConflictResolution: Sendable, Equatable { case overwrite, skip, rename }
 
+/// Why `TransferQueueViewModel.cancelAll(reason:)` is being called
+/// (connection-liveness plan, Task 8, fix round 1). Required, not a `Bool`
+/// defaulting to `false`: a default meant a new call site could inherit
+/// "not a drop" by writing nothing at all, and a reviewer flipping a single
+/// literal at the one real call site was enough to silently revert the
+/// whole feature with the full suite still green. Naming both cases makes
+/// a wrong choice something that has to be TYPED, and — paired with a
+/// behavioral test that drives the real give-up path — something that gets
+/// caught when it is.
+public enum CancelReason: Sendable, Equatable {
+    /// A deliberate stop chosen by the person at the keyboard: disconnect,
+    /// tab close, reconnect-in-place, or cancelling a connection attempt.
+    /// Swept items read `.cancelled`.
+    case userRequested
+    /// The connection was found gone (liveness give-up). The running item
+    /// fails with a localized "connection lost" reason and every
+    /// queued/resolving item is marked the same way and kept — see
+    /// `cancelAll(reason:)`'s own doc comment for the full contract.
+    case connectionLost
+}
+
 /// Describes a concrete destination conflict for the `ConflictDecider`.
 public struct TransferConflict: Sendable, Equatable {
     public let fileName: String
@@ -363,7 +384,7 @@ public final class TransferQueueViewModel {
     /// `cancelAll` cancels every one (cooperative cancellation via T2).
     private var runningTransferTasks: [UUID: Task<Void, Error>] = [:]
     private var queueRule: ConflictResolution?                     // active "apply to all" rule; reset on drain
-    /// Populated ONLY by `cancelAll(dueToConnectionLoss:)`, for the jobs that
+    /// Populated ONLY by `cancelAll(reason: .connectionLost)`, for the jobs that
     /// specific call is actively force-cancelling — `process`'s cancellation
     /// branch consumes (removes) an entry when it applies it, and
     /// `slotFinished` drops any leftover for a job that raced to `.finished`
@@ -628,18 +649,28 @@ public final class TransferQueueViewModel {
     /// Cancels everything: cancels the running transfer, queued → `.cancelled`,
     /// waiting continuations throw. Returns only after the worker has stopped.
     ///
-    /// `dueToConnectionLoss` (connection-liveness plan, Task 8), false by
-    /// default, is the seam for a drop rather than a deliberate cancel: when
-    /// true, every item this call would otherwise mark `.cancelled` — the
-    /// running transfer AND every queued/resolving item — becomes
-    /// `.failed(reason)` instead, with `reason` resolved from `CoreL10n`
-    /// here (never passed in from the App layer, which cannot see
-    /// `CoreL10n` — it is internal to this module). A drop is not something
-    /// the user chose, so it must not read the same as a deliberate cancel;
-    /// and unlike `.interrupted`, no job is retained for either kind of
-    /// item — a later retry re-enqueues fresh, through the ordinary
-    /// conflict check, rather than resuming blind onto whatever the far
-    /// side is now holding (no automatic resume, by design).
+    /// `reason` (connection-liveness plan, Task 8; required, not a `Bool`
+    /// with a default — see `CancelReason`'s own doc comment for why) is
+    /// the seam for a drop rather than a deliberate cancel: with
+    /// `.connectionLost`, every item this call would otherwise mark
+    /// `.cancelled` — the running transfer AND every queued/resolving item
+    /// — becomes `.failed(reason)` instead, with the localized text
+    /// resolved from `CoreL10n` here (never passed in from the App layer,
+    /// which cannot see `CoreL10n` — it is internal to this module). A drop
+    /// is not something the user chose, so it must not read the same as a
+    /// deliberate cancel; and unlike `.interrupted`, no job is retained for
+    /// either kind of item — a later retry re-enqueues fresh, through the
+    /// ordinary conflict check, rather than resuming blind onto whatever
+    /// the far side is now holding (no automatic resume, by design).
+    ///
+    /// A side effect worth naming rather than leaving incidental: marking a
+    /// swept item `.failed` instead of `.cancelled` also runs it through
+    /// `totalFailureCount`'s increment (`setStatus`'s own choke point,
+    /// unchanged by this method), which feeds the tab's attention dot. That
+    /// is correct here, not a leak — while `SessionTab.liveness == .lost`
+    /// the maintainer's own ruling suppresses the attention dot in favor of
+    /// the liveness dot, and once reconnected it returns pointing at
+    /// exactly the transfers the drop killed.
     ///
     /// The running transfer is marked ONLY at the SAME choke point that
     /// already decides `.cancelled` vs `.finished` today — the
@@ -654,9 +685,9 @@ public final class TransferQueueViewModel {
     /// they are not in `order`, `resolvingJobIDs`, or `runningTransferTasks`, so
     /// they survive a teardown with their retained jobs intact — the queue
     /// outlives the session and a reconnect can still resume them.
-    public func cancelAll(dueToConnectionLoss: Bool = false) async {
+    public func cancelAll(reason: CancelReason) async {
         let connectionLostReason: String? =
-            dueToConnectionLoss ? CoreL10n.string("core.transfer.connectionLost") : nil
+            reason == .connectionLost ? CoreL10n.string("core.transfer.connectionLost") : nil
         // 0. Stop and await any running tree expansion(s) BEFORE clearing queued
         //    items — so no new items can appear from here on (M5b/T3).
         //    `finishExpansion(succeeded: false)` marks the groups as cancelled;
@@ -785,7 +816,7 @@ public final class TransferQueueViewModel {
     private func slotFinished(_ jobID: UUID) {
         processTasks[jobID] = nil
         // Defensive: a job that raced to `.finished` between
-        // `cancelAll(dueToConnectionLoss:)` marking it and its own task
+        // `cancelAll(reason: .connectionLost)` marking it and its own task
         // actually returning never visits the cancellation branch that
         // would otherwise consume this entry — drop it here instead so it
         // cannot outlive the job it named.
@@ -936,9 +967,9 @@ public final class TransferQueueViewModel {
             progressContinuation.finish()
             await consumer.value
             // `connectionLossReasons` (connection-liveness plan, Task 8) is
-            // populated ONLY by `cancelAll(dueToConnectionLoss:)`, for the
+            // populated ONLY by `cancelAll(reason: .connectionLost)`, for the
             // exact jobs THAT call force-cancelled — a plain user cancel
-            // (`cancelAll()` with the default, or a tree `cancelGroup`)
+            // (`cancelAll(reason: .userRequested)`, or a tree `cancelGroup`)
             // never touches it, so those still land on `.cancelled` below.
             if let reason = connectionLossReasons.removeValue(forKey: jobID) {
                 setStatus(jobID, .failed(reason))

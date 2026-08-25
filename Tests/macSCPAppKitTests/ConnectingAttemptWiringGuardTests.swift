@@ -88,9 +88,12 @@ struct ConnectingAttemptWiringGuardTests {
             — without it `ConnectionViewModel.state` stays `.connecting` after Cancel, and \
             the form reappears still disabled.
             """)
-        #expect(body.contains("teardown(tab)"), """
-            the connecting branch's Cancel no longer calls `teardown(tab)` — the brief \
-            requires Cancel to clean up through the ONE teardown path, not a separate one.
+        #expect(body.contains("teardown(tab, reason: .userRequested)"), """
+            the connecting branch's Cancel no longer calls \
+            `teardown(tab, reason: .userRequested)` — the brief requires Cancel to clean up \
+            through the ONE teardown path, not a separate one, and `.userRequested` (not \
+            `.connectionLost`) is what marks this a deliberate stop rather than a drop \
+            (connection-liveness plan, Task 8, fix round 1).
             """)
     }
 
@@ -131,14 +134,14 @@ struct ConnectingAttemptWiringGuardTests {
                     tab.connectionViewModel.cancelConnecting()
                     tab.reconnectAttempt = UUID()
                     tab.isReconnecting = false
-                    Task { await teardown(tab) }
+                    Task { await teardown(tab, reason: .userRequested) }
                 })
             }
             """
         let body = try Self.strippedBody(after: Self.surfaceAnchor, in: source)
         #expect(body.contains("ConnectionSurfacePlan.surface("))
         #expect(body.contains("tab.connectionViewModel.cancelConnecting()"))
-        #expect(body.contains("teardown(tab)"))
+        #expect(body.contains("teardown(tab, reason: .userRequested)"))
         #expect(body.contains("tab.reconnectAttempt = UUID()"))
         #expect(body.contains("tab.isReconnecting = false"))
     }
@@ -175,7 +178,7 @@ struct ConnectingAttemptWiringGuardTests {
                     // Best-effort (see `ConnectionViewModel.cancelConnecting()`'s own doc comment).
                     tab.reconnectAttempt = UUID()
                     tab.isReconnecting = false
-                    Task { await teardown(tab) }
+                    Task { await teardown(tab, reason: .userRequested) }
                 })
             }
             """
@@ -196,7 +199,7 @@ struct ConnectingAttemptWiringGuardTests {
                     logCancel("did not call tab.connectionViewModel.cancelConnecting() here")
                     tab.reconnectAttempt = UUID()
                     tab.isReconnecting = false
-                    Task { await teardown(tab) }
+                    Task { await teardown(tab, reason: .userRequested) }
                 })
             }
             """

@@ -535,7 +535,7 @@ struct TransferQueueViewModelTests {
         try await started1.wait()
         await waitUntil { vm.items.count == 2 && vm.items[1].status == .queued }
 
-        await vm.cancelAll()
+        await vm.cancelAll(reason: .userRequested)
 
         #expect(vm.items[1].status == .cancelled)          // queued → cancelled immediately
         #expect(vm.items[0].status == .cancelled)          // running → cancelled, NOT failed
@@ -598,7 +598,7 @@ struct TransferQueueViewModelTests {
         try await started1.wait()
         await waitUntil { vm.items.count == 2 && vm.items[1].status == .queued }
 
-        await vm.cancelAll(dueToConnectionLoss: true)
+        await vm.cancelAll(reason: .connectionLost)
 
         let expectedReason = CoreL10n.string("core.transfer.connectionLost")
         #expect(vm.items.count == 2)                                  // nothing discarded
@@ -649,7 +649,7 @@ struct TransferQueueViewModelTests {
             source: source, sourcePath: "/x.txt",
             destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
         try await startedX.wait()
-        await vm.cancelAll()
+        await vm.cancelAll(reason: .userRequested)
         #expect(vm.items[0].status == .cancelled)
 
         // finished: A via enqueueAndWait.
@@ -690,7 +690,7 @@ struct TransferQueueViewModelTests {
         #expect(vm.items[1].status == .queued)
 
         // Cleanup: cancel C/D so no task is left hanging.
-        await vm.cancelAll()
+        await vm.cancelAll(reason: .userRequested)
     }
 
     // MARK: - 9
@@ -988,7 +988,7 @@ struct TransferQueueViewModelTests {
 
         // cancelAll while the decider is open: the item is currently hanging in
         // resolveConflictIfNeeded — neither queued nor runningTransferTask.
-        let cancelTask = Task { @MainActor in await vm.cancelAll() }
+        let cancelTask = Task { @MainActor in await vm.cancelAll(reason: .userRequested) }
         await waitUntil { vm.items[0].status == .cancelled }
         #expect(vm.items[0].status == .cancelled)
 
@@ -1028,7 +1028,7 @@ struct TransferQueueViewModelTests {
 
         try await statEntered.wait()
 
-        let cancelTask = Task { @MainActor in await vm.cancelAll() }
+        let cancelTask = Task { @MainActor in await vm.cancelAll(reason: .userRequested) }
         await waitUntil { vm.items[0].status == .cancelled }
         #expect(vm.items[0].status == .cancelled)
 
@@ -1311,7 +1311,7 @@ struct TransferQueueViewModelTests {
 
         // Expansion hangs in the first list call.
         try await listEntered.wait()
-        await vm.cancelAll()
+        await vm.cancelAll(reason: .userRequested)
 
         #expect(vm.isActive == false)
         #expect(vm.items.isEmpty)         // list never returned → no file items
@@ -1462,7 +1462,7 @@ struct TransferQueueViewModelTests {
         // guards against. 30s keeps an order-of-magnitude margin above that
         // measured contention while still failing well within a CI run
         // instead of requiring the job-level timeout to trip.
-        let returnedInTime = await completesWithin(.seconds(30)) { await vm.cancelAll() }
+        let returnedInTime = await completesWithin(.seconds(30)) { await vm.cancelAll(reason: .userRequested) }
         #expect(returnedInTime)
         #expect(vm.items[0].status == .cancelled)   // NOT .finished
         #expect(vm.isActive == false)
@@ -1620,7 +1620,7 @@ struct TransferQueueViewModelTests {
         // seconds of MainActor-hop delay measured under heavy full-suite
         // contention locally, while still failing fast for a genuine
         // (unbounded) deadlock.
-        let returnedInTime = await completesWithin(.seconds(30)) { await vm.cancelAll() }
+        let returnedInTime = await completesWithin(.seconds(30)) { await vm.cancelAll(reason: .userRequested) }
         #expect(returnedInTime)
         #expect(vm.items[0].status == .cancelled)
         #expect(vm.items[1].status == .cancelled)
@@ -1931,7 +1931,7 @@ struct TransferQueueViewModelTests {
             source: source, sourcePath: "/c.txt",
             destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
         try await startedC.wait()
-        await vm.cancelAll()
+        await vm.cancelAll(reason: .userRequested)
 
         #expect(vm.items[0].status == .interrupted)   // untouched by cancelAll
         #expect(vm.items[1].status == .cancelled)      // running → cancelled
@@ -1963,7 +1963,7 @@ struct TransferQueueViewModelTests {
         await waitUntil { vm.items[0].status == .interrupted }
 
         // Simulated teardown, exactly as ContentView does on disconnect.
-        await vm.cancelAll()
+        await vm.cancelAll(reason: .userRequested)
         #expect(vm.items.count == 1)
         #expect(vm.items[0].status == .interrupted)
 

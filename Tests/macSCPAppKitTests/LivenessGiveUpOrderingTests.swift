@@ -125,6 +125,52 @@ struct LivenessGiveUpOrderingTests {
         #expect(tab.liveness == .lost)
     }
 
+    /// Fix round 1: the property no test previously pinned. The Core suite's
+    /// `cancelAllDueToConnectionLossFailsRunningAndKeepsQueuedListed` proves
+    /// what `TransferQueueViewModel.cancelAll(reason:)` DOES for each
+    /// reason; nothing proved that `handleLivenessGiveUp(_:)` actually
+    /// PASSES `.connectionLost` rather than `.userRequested` at its one
+    /// real call site — a reviewer flipping that single literal left the
+    /// full suite green before this test existed. This drives the real
+    /// give-up path with an item still in the queue and asserts the
+    /// reason it reads afterward, so that flip cannot pass silently again.
+    ///
+    /// The item is enqueued synchronously, immediately before the
+    /// (suspending) call to `handleLivenessGiveUp`, with NO `await` in
+    /// between: `enqueue`'s own `kickWorker()` moves the job into
+    /// `resolvingJobIDs` synchronously (a freshly created `Task`'s body
+    /// cannot run until the CURRENTLY executing MainActor code reaches its
+    /// own first suspension point), so the item is still non-terminal —
+    /// and the bogus paths below are never actually read, since
+    /// `cancelAll`'s synchronous "resolving" sweep marks the item terminal
+    /// before `process` ever gets to open them — at the exact moment
+    /// `teardown(_:reason:)` sweeps the queue. No real disk access happens
+    /// either way, and no network is dialled.
+    @Test func givingUpMarksQueuedTransfersConnectionLost() async {
+        let (view, cleanup) = makeContentView()
+        defer { cleanup() }
+        let tab = makeTab()
+        attachSession(to: tab)
+        let session = tab.session!
+
+        let itemID = tab.transferQueue.enqueue(
+            fileName: "never-touched.txt", direction: .upload,
+            source: session.localFS, sourcePath: "/does/not/exist.txt",
+            destination: session.remoteFS, destinationDirectory: "/does/not/exist",
+            onCompleted: nil)
+
+        await view.handleLivenessGiveUp(tab)
+
+        let item = tab.transferQueue.items.first { $0.id == itemID }
+        let expectedReason = CoreL10n.string("core.transfer.connectionLost")
+        #expect(item?.status == .failed(expectedReason), """
+            expected the queued item to read .failed("\(expectedReason)") after a liveness \
+            give-up, found \(String(describing: item?.status)) instead — \
+            handleLivenessGiveUp(_:) must pass .connectionLost to teardown(_:reason:), not \
+            .userRequested.
+            """)
+    }
+
     /// Demonstrated, not just asserted by construction — same reasoning as
     /// `ConnectAttemptHandoffTests.theRealSessionsFileIsNeverTouched`, whose
     /// own doc comment explains why a snapshot comparison is the standard

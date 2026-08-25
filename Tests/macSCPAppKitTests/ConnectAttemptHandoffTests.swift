@@ -334,7 +334,7 @@ struct ConnectAttemptHandoffTests {
         tab.connectionViewModel.cancelConnecting()
         tab.reconnectAttempt = UUID()
         tab.isReconnecting = false
-        await view.teardown(tab)
+        await view.teardown(tab, reason: .userRequested)
 
         // The abandoned dial "succeeds" now, in the true background.
         continuation.finish()
@@ -418,7 +418,7 @@ struct ConnectAttemptHandoffTests {
         tab.connectionViewModel.cancelConnecting()
         tab.reconnectAttempt = UUID()
         tab.isReconnecting = false
-        await view.teardown(tab)
+        await view.teardown(tab, reason: .userRequested)
 
         continuation.finish()
         _ = await task.value

@@ -1434,7 +1434,7 @@ struct ContentView: View {
             // Defensive only: the sidebar rule always hands over an
             // unconnected tab. Reconnecting in place still tears THIS tab's
             // session down first, never anyone else's.
-            if tab.isConnected { await teardown(tab) }
+            if tab.isConnected { await teardown(tab, reason: .userRequested) }
             let form = tab.connectionViewModel
             let descriptor = BackendDescriptor.descriptor(for: stored.kind)
             // ONE fill for every protocol, shared with the sidebar's
@@ -2037,7 +2037,7 @@ struct ContentView: View {
         tab.isReconnecting = true // synchronous — prevents double teardown (would corrupt lastBrowserSize)
         Task {
             defer { tab.isReconnecting = false }
-            await teardown(tab)
+            await teardown(tab, reason: .userRequested)
             shrinkIfPristine()
         }
     }

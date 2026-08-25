@@ -500,7 +500,7 @@ extension ContentView {
                             tab.connectionViewModel.cancelConnecting()
                             tab.reconnectAttempt = UUID()
                             tab.isReconnecting = false
-                            Task { await teardown(tab) }
+                            Task { await teardown(tab, reason: .userRequested) }
                         })
                     }
                     // Lost surface branch (connection-liveness plan, Task 7)
