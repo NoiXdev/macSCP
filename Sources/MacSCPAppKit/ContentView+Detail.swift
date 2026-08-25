@@ -1377,6 +1377,22 @@ struct ConnectFailureContent: Equatable {
     }
 
     let title: Message
+    /// The general sentence under the headline — and, for an ad-hoc
+    /// attempt, the sentence that says what to do next.
+    ///
+    /// Two keys, chosen by the same `hasStoredSession` flag that decides
+    /// `retryButton` and `editSessionButton` (maintainer decision,
+    /// 2026-08-25, recorded in the design spec under the surface's own
+    /// section). A stored-session failure keeps the plain line: Retry is
+    /// right there and needs no explanation. An ad-hoc failure has no
+    /// Retry at all, so its only way forward is a button labelled for
+    /// EDITING — and a surface that offers that without saying why leaves
+    /// someone hunting for a button that is not there.
+    ///
+    /// This deliberately softens the spec's original "one general message"
+    /// rule. It is still one message per case and still a fixed catalog
+    /// key: what varies is which of two fixed keys, never the text itself,
+    /// so the structural property this whole type exists for is untouched.
     let body: Message
     /// Redial through the same connection path a fresh attempt uses.
     ///
@@ -1436,9 +1452,14 @@ enum ConnectFailurePlan {
         ConnectFailureContent(
             title: .init(
                 key: "connection.failed.title", fallback: "No connection possible"),
-            body: .init(
-                key: "connection.failed.body",
-                fallback: "macSCP could not connect to the host."),
+            body: hasStoredSession
+                ? .init(
+                    key: "connection.failed.body",
+                    fallback: "macSCP could not connect to the host.")
+                : .init(
+                    key: "connection.failed.body.adHoc",
+                    fallback: "macSCP could not connect to the host. Edit the connection to "
+                        + "check its settings and connect again."),
             retryButton: hasStoredSession
                 ? .init(key: "connection.failed.retry", fallback: "Try again") : nil,
             editButton: .init(key: "connection.failed.edit", fallback: "Edit"),

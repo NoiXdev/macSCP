@@ -8,9 +8,11 @@ import Testing
 /// what a failed connect attempt says and which actions it offers.
 /// Nothing in this project renders SwiftUI, so this cannot prove what lands
 /// on screen; what it CAN prove, and does, is the mapping itself: the
-/// general message stays fixed, and the two actions that need something
-/// stored (`retryButton` and `editSessionButton`) toggle together on the
-/// one fact the caller supplies.
+/// headline stays fixed, and everything that depends on there being
+/// something stored — the two actions `retryButton` and
+/// `editSessionButton`, and since the maintainer's decision of 2026-08-25
+/// the `body` sentence as well — turns together on the one fact the caller
+/// supplies.
 ///
 /// Mirrors `ReconnectPlanTests`' "LostConnectionPlan" section for the same
 /// reason: a value that decides which actions appear can be wrong by
@@ -79,25 +81,52 @@ struct ConnectFailurePlanTests {
         #expect(content.detailsTitle.key == "connection.failed.details.title")
     }
 
-    /// The design spec's own point: the surface carries one general
-    /// message, not one text per case. Whether the attempt started from a
-    /// stored session must not change the title or body — only which
-    /// actions are offered changes.
+    /// The headline is the same either way — what happened does not depend
+    /// on where the attempt came from.
     ///
     /// Compares the whole `Message` values against each other, not just
     /// their keys: `Message` is `Equatable` over key AND fallback, so a
     /// version that kept one key and varied its English default with the
     /// flag is caught here. (The first version of this test compared only
     /// `.key`, which its own name did not claim and which would have let
-    /// exactly that through.) The two fixed keys are asserted as well, so
-    /// the test still fails if BOTH sides change together.
-    @Test func theGeneralMessageDoesNotDependOnWhetherASessionIsStored() {
+    /// exactly that through.) The fixed key is asserted as well, so the
+    /// test still fails if both sides change together.
+    @Test func theHeadlineDoesNotDependOnWhetherASessionIsStored() {
         let stored = ConnectFailurePlan.content(hasStoredSession: true)
         let adHoc = ConnectFailurePlan.content(hasStoredSession: false)
         #expect(stored.title == adHoc.title)
-        #expect(stored.body == adHoc.body)
         #expect(stored.title.key == "connection.failed.title")
+    }
+
+    /// The body, however, does depend on it — maintainer decision,
+    /// 2026-08-25, recorded in the design spec.
+    ///
+    /// A stored-session failure keeps the plain line: Retry sits right
+    /// there and needs no explanation. An ad-hoc failure has no Retry at
+    /// all (see `retryAndEditSessionAreAbsentForAnAdHocConnection`), so its
+    /// only way forward is a button labelled for EDITING — and a sentence
+    /// that does not say so leaves someone hunting for a button that is not
+    /// there.
+    ///
+    /// Asserts the two keys DIFFER rather than only spelling each one out:
+    /// a mutation that dropped the branch and returned the general line for
+    /// both cases keeps a key that is inside the fixed set, and would
+    /// satisfy a test written as two independent lookups of whichever arm
+    /// it kept.
+    @Test func theBodyTellsAnAdHocFailureHowToGetBack() {
+        let stored = ConnectFailurePlan.content(hasStoredSession: true)
+        let adHoc = ConnectFailurePlan.content(hasStoredSession: false)
+        #expect(stored.body.key != adHoc.body.key, """
+            both cases now show the same sentence. The ad-hoc case has no Retry button, so \
+            its body is the only thing that can say why "Edit" is the way to try again.
+            """)
         #expect(stored.body.key == "connection.failed.body")
+        #expect(adHoc.body.key == "connection.failed.body.adHoc")
+        // The softening is of WHICH fixed key is chosen, never of the rule
+        // that it is one — both bodies stay inside the enumerated set
+        // `everyReachableMessageComesFromTheFixedCatalogKeySet` sweeps, so
+        // an interpolated host name in either arm is still caught there.
+        #expect(!adHoc.body.fallback.isEmpty)
     }
 
     /// Every message this plan can produce, across both `hasStoredSession`
@@ -122,12 +151,25 @@ struct ConnectFailurePlanTests {
     /// would have to invent a key outside this set, or change one of these
     /// strings, and either fails here.
     ///
-    /// Eight keys, counted while writing this sentence: title, body, the
-    /// four action labels, and the details control's label and headline.
+    /// Nine keys, counted while writing this sentence: the title, the TWO
+    /// bodies (stored and ad-hoc), the four action labels, and the details
+    /// control's label and headline.
+    ///
+    /// The second body is exactly the kind of addition that makes this
+    /// sweep worth keeping. `hasStoredSession` now selects a KEY rather
+    /// than only toggling a button, and this claim — that every string
+    /// reachable from the plan is one of an enumerated set of catalog
+    /// entries, so no host name or server message can be interpolated into
+    /// any of them — has to hold across both arms of that choice, not just
+    /// the arm someone happened to look at. It was measured, not assumed:
+    /// adding the second body turned this test red on both halves (an
+    /// unknown key reached, and the two sets no longer equal) until the key
+    /// was added below.
     @Test func everyReachableMessageComesFromTheFixedCatalogKeySet() {
         let allowedKeys: Set<String> = [
             "connection.failed.title",
             "connection.failed.body",
+            "connection.failed.body.adHoc",
             "connection.failed.retry",
             "connection.failed.edit",
             "connection.failed.editSession",
@@ -240,14 +282,13 @@ struct ConnectFailurePlanTests {
         // "Verbindungsdetails" is not "Connection details", and a check
         // that skips a key it could make is a check that would not notice
         // that key going untranslated. Seven keys are checked, counted
-        // while writing this sentence: title, body, the three action
-        // labels that survive for an ad-hoc attempt plus retry and edit
-        // session, and the details headline — eight reachable keys less
-        // the one exclusion.
+        // while writing this sentence: the title, both bodies, the four
+        // action labels and the details headline — nine reachable keys
+        // less the one exclusion.
         let translated = Set(Self.everyReachableMessage().map(\.key)).subtracting([
             "connection.failed.details",
         ])
-        #expect(translated.count == 7)
+        #expect(translated.count == 8)
         for key in translated.sorted() {
             #expect(german[key] != english[key], """
                 `\(key)` reads the same in German as in English \

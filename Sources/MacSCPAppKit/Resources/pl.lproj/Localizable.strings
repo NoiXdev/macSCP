@@ -945,6 +945,7 @@
 /* Failed-connect surface (failed-connect surface plan, Task 3) */
 "connection.failed.title" = "Połączenie niemożliwe";
 "connection.failed.body" = "macSCP nie mógł połączyć się z hostem.";
+"connection.failed.body.adHoc" = "macSCP nie mógł połączyć się z hostem. Edytuj połączenie, aby sprawdzić ustawienia i połączyć się ponownie.";
 "connection.failed.retry" = "Spróbuj ponownie";
 "connection.failed.edit" = "Edytuj";
 "connection.failed.editSession" = "Edytuj sesję";
