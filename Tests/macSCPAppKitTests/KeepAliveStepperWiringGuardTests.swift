@@ -104,11 +104,16 @@ struct KeepAliveStepperWiringGuardTests {
 
     /// Strips `//` and `/* */` comments and both `"..."` and `"""..."""`
     /// string literals, preserving line breaks. Reused verbatim from
-    /// `ReconnectWiringGuardTests`/`ConnectingAttemptWiringGuardTests`
-    /// (Tasks 6/7) rather than reimplemented: this is the second time on
-    /// this branch a `contains`-based guard was defeated by a comment
-    /// naming the expected call in prose, and both earlier fixes landed
-    /// this exact function.
+    /// `ReconnectWiringGuardTests` rather than reimplemented: this is the
+    /// second time on this branch a `contains`-based guard was defeated by
+    /// a comment naming the expected call in prose.
+    ///
+    /// Copied, not shared, because this project keeps one private copy per
+    /// guard file. The copies have already drifted — the one in
+    /// `ConnectingAttemptWiringGuardTests` handles whitespace and newlines
+    /// differently — so a fix to one does not reach the others, which is
+    /// exactly how this guard came to repeat a mistake already solved
+    /// twice.
     ///
     /// Handles `\"`-escaped quotes and nested `/* */` comments. Does not
     /// parse string interpolation — `\(...)` inside a literal is treated as
