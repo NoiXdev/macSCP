@@ -58,6 +58,7 @@ private enum DockerError: Error, CustomStringConvertible {
     case imagePinNotFound(URL)
     case commandFailed(String, status: Int32, output: String)
     case serverNeverAccepted(name: String, underlying: String)
+    case pruneFailed([String])
 
     var description: String {
         switch self {
@@ -69,6 +70,11 @@ private enum DockerError: Error, CustomStringConvertible {
             return "`\(command)` exited \(status): \(output)"
         case .serverNeverAccepted(let name, let underlying):
             return "the disposable server \(name) never accepted a connection: \(underlying)"
+        case .pruneFailed(let ids):
+            return """
+                containers from an earlier run of this suite could not be \
+                removed and still hold port \(dropServerPort): \(ids.joined(separator: ", "))
+                """
         }
     }
 }
@@ -124,23 +130,39 @@ private enum Docker {
     }
 }
 
-/// An SSH server started and killed by the drop test alone, so it never
-/// touches the shared rig — see the suite's own doc comment for why that
+/// An SSH server started and killed by the drop tests alone, so they never
+/// touch the shared rig — see the suite's own doc comment for why that
 /// separation is not optional. No volumes are mounted, so unlike the compose
 /// rig it has no working-directory dependency; the probe only ever `stat`s
 /// the login home directory.
 private struct DisposableSSHServer {
+    /// Every container this suite creates carries this prefix, followed by a
+    /// per-run suffix. The prefix is what makes the leftovers of an EARLIER
+    /// run findable; the suffix is what keeps two containers in one run from
+    /// colliding.
+    static let namePrefix = "macscp-liveness-drop-"
+
     let name: String
     let port: Int
 
     static func start(port: Int) throws -> DisposableSSHServer {
-        let name = "macscp-liveness-drop-\(UUID().uuidString.prefix(8))"
-        // A leftover from a crashed run would otherwise hold the name and
-        // the port; `rm -f` on a nonexistent container is harmless.
-        _ = try Docker.run(["rm", "-f", name])
+        // Prune FIRST, and by prefix: a leftover from an earlier run holds
+        // port 2224, and its name carries that run's suffix, not this one's
+        // — so removing "the name this run is about to use" could never have
+        // found it. The first version of this code did exactly that, and a
+        // container left paused by a hung run failed every later run with
+        // `Bind for 0.0.0.0:2224 failed: port is already allocated`.
+        try pruneLeftovers()
+        let name = "\(namePrefix)\(UUID().uuidString.prefix(8))"
+        // No `--rm`: an auto-removing container is removed by the daemon in
+        // the BACKGROUND once it stops, which raced the prune — the second
+        // drop test found the first one's id still listed and `docker rm -f`
+        // answered "removal of container … is already in progress". An
+        // explicit lifecycle has no such window: this suite is the only thing
+        // that ever removes these containers.
         let image = try Docker.pinnedSSHImage()
         let started = try Docker.run([
-            "run", "-d", "--rm", "--name", name,
+            "run", "-d", "--name", name,
             "-p", "\(port):2222",
             "-e", "PUID=1000", "-e", "PGID=1000",
             "-e", "PASSWORD_ACCESS=true",
@@ -184,8 +206,8 @@ private struct DisposableSSHServer {
 
     /// Freezes every process in the container without touching its sockets:
     /// the TCP connection stays established and the kernel keeps
-    /// acknowledging, but sshd never answers again. The silent death `kill()`
-    /// above cannot produce.
+    /// acknowledging, but sshd never answers again — the silent death a
+    /// `kill()` cannot produce.
     func freeze() throws {
         let paused = try Docker.run(["pause", name])
         guard paused.status == 0 else {
@@ -204,6 +226,122 @@ private struct DisposableSSHServer {
 
     func remove() {
         _ = try? Docker.run(["rm", "-f", name])
+    }
+
+    /// Removes every container this suite has ever created, whatever run it
+    /// belongs to and whatever state it is in. `docker ps -a` lists paused
+    /// containers like any other, and `docker rm -f` kills a paused one
+    /// rather than refusing — which matters, because the leftover this
+    /// exists to clear is precisely the paused one a hung freeze test
+    /// abandons.
+    ///
+    /// What is checked is the STATE afterwards, not `docker rm -f`'s exit
+    /// code. Removal can legitimately fail for a container the daemon is
+    /// already removing, and that is not a leftover; the only question worth
+    /// answering is whether anything carrying the prefix is still there when
+    /// this returns. A prune that cannot reach that state throws, because
+    /// the alternative is letting the next `docker run` fail on an allocated
+    /// port and having to work backwards from a bind error.
+    static func pruneLeftovers() throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(15))
+        while true {
+            let ids = try leftoverIDs()
+            guard !ids.isEmpty else { return }
+            _ = try? Docker.run(["rm", "-f"] + ids)
+            let remaining = try leftoverIDs()
+            guard !remaining.isEmpty else { return }
+            guard ContinuousClock.now < deadline else {
+                throw DockerError.pruneFailed(remaining)
+            }
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+    }
+
+    private static func leftoverIDs() throws -> [String] {
+        let listed = try Docker.run(["ps", "-aq", "--filter", "name=\(namePrefix)"])
+        guard listed.status == 0 else {
+            throw DockerError.commandFailed(
+                "docker ps", status: listed.status, output: listed.output)
+        }
+        return listed.output.split(whereSeparator: \.isNewline).map(String.init)
+    }
+}
+
+/// Forwards every call to a real `RemoteFileSystem` and counts the `stat`s
+/// that reach it for ONE path: the probe's own target.
+///
+/// Counting the probe's DECISION to stat instead — which an earlier version
+/// of this suite did — measures the wrong thing. A stubbed file system that
+/// always answered "alive" without touching the wire would have satisfied
+/// it, so the success case would have claimed a live round trip it never
+/// made. This counts arrivals at the real connection.
+///
+/// Only the probe's target path is counted, because a transfer legitimately
+/// `stat`s the file it is about to read, and that is real traffic rather
+/// than a probe. Distinguishing them by path is what lets "a busy lap issued
+/// no probe" be checked while a genuine download is in flight.
+private final class ProbeTargetStatCounter: RemoteFileSystem, @unchecked Sendable {
+    private let wrapped: any RemoteFileSystem
+    private let countedPath: String
+    private let lock = NSLock()
+    private var arrivals = 0
+
+    init(wrapping wrapped: any RemoteFileSystem, countingStatsOf countedPath: String) {
+        self.wrapped = wrapped
+        self.countedPath = countedPath
+    }
+
+    var probeStatsOnTheWire: Int { lock.withLock { arrivals } }
+
+    func stat(path: String) async throws -> RemoteFileItem {
+        if path == countedPath { lock.withLock { arrivals += 1 } }
+        return try await wrapped.stat(path: path)
+    }
+
+    var supportsAppendResume: Bool { wrapped.supportsAppendResume }
+
+    func list(path: String) async throws -> [RemoteFileItem] {
+        try await wrapped.list(path: path)
+    }
+
+    func readStream(
+        path: String, fromOffset offset: UInt64
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        try await wrapped.readStream(path: path, fromOffset: offset)
+    }
+
+    func write(
+        path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>
+    ) async throws {
+        try await wrapped.write(path: path, mode: mode, contents: contents)
+    }
+
+    func delete(path: String) async throws {
+        try await wrapped.delete(path: path)
+    }
+
+    func createDirectory(at path: String) async throws {
+        try await wrapped.createDirectory(at: path)
+    }
+
+    func rename(from: String, to: String) async throws {
+        try await wrapped.rename(from: from, to: to)
+    }
+
+    func setPermissions(path: String, permissions: UInt32) async throws {
+        try await wrapped.setPermissions(path: path, permissions: permissions)
+    }
+
+    func deleteTree(at path: String) async throws {
+        try await wrapped.deleteTree(at: path)
+    }
+
+    func homeDirectoryPath() async throws -> String {
+        try await wrapped.homeDirectoryPath()
+    }
+
+    func disconnect() async {
+        await wrapped.disconnect()
     }
 }
 
@@ -243,9 +381,14 @@ private struct InertSecretStore: SecretStore {
 /// `macSCPAppKitTests`.
 ///
 /// **Which server dies.** Not the shared rig. `docker compose … stop sshd`
-/// would sever port 2222 out from under `CitadelFileSystemIntegrationTests`,
-/// `CitadelShellIntegrationTests` and `CrossBackendTransferIntegrationTests`,
-/// which Swift Testing runs in parallel with this one — a suite that breaks
+/// would sever port 2222 out from under five other gated suites, which Swift
+/// Testing runs in parallel with this one: `CitadelFileSystemIntegrationTests`,
+/// `CitadelShellIntegrationTests`, `CrossBackendTransferIntegrationTests`,
+/// `CLIRoundtripITests`, and `WebDAVFileSystemIntegrationTests`, whose
+/// `connectSSH` helper dials 2222 for its cross-backend cases. Counted by
+/// searching every gated suite for that port, not recalled — a first pass
+/// wrote three, and the two it forgot are the two whose names do not say
+/// "Citadel". A suite that breaks
 /// its neighbours nondeterministically proves nothing. The two tests that
 /// need a peer to die start their OWN container instead, from the same
 /// pinned image (read out of `compose.yml`, so the pin cannot drift) on its
@@ -258,8 +401,8 @@ private struct InertSecretStore: SecretStore {
 ///
 /// **What is still not exercised.** `LivenessProbeRunner`'s `.task(id:)`
 /// body itself — this project has no SwiftUI rendering harness, so the loop
-/// that composes these pieces can only be read, not run. `ProbeLoop` below
-/// mirrors one lap of its inner `probing:` loop, minus the sleeps;
+/// that composes these pieces can only be read, not run. `ProbeLoop` in this
+/// file mirrors one lap of its inner `probing:` loop, minus the sleeps;
 /// `LivenessProbeWiringGuardTests` is what pins the real loop to that same
 /// shape (interval read every lap, decision through `LivenessProbePolicy
 /// .decide`, `.giveUp` delegating to `onGiveUp`), so the mirror cannot
@@ -283,8 +426,13 @@ struct LivenessProbeDropIntegrationTests {
     /// mechanism — a `stat` can fail for a wrong path, a closed SFTP
     /// subsystem or a typo in the fixture just as readily as for a dead
     /// socket. This pins the other half: against the live rig the very same
-    /// call the probe makes, through the very same deadline, comes back
-    /// alive and leaves the tab `.connected`.
+    /// call the probe makes, through the very same deadline, reaches the
+    /// connection, comes back alive, and leaves the tab `.connected`.
+    ///
+    /// "Reaches the connection" is the load-bearing half, and it is counted
+    /// at the wire rather than at the decision — an earlier version counted
+    /// the probe's intent to `stat`, which a stub that always answered
+    /// "alive" would have satisfied without ever dialling anything.
     @Test func theProbeSucceedsAgainstALivePeer() async throws {
         let fixture = makeFixture()
         defer { fixture.cleanup() }
@@ -292,26 +440,26 @@ struct LivenessProbeDropIntegrationTests {
         defer { Task { await fs.disconnect() } }
         let home = try await fs.homeDirectoryPath()
         let tab = makeTab()
-        attachSession(to: tab, remoteFS: fs, homePath: home)
+        let counter = attachSession(to: tab, remoteFS: fs, homePath: home)
 
         var loop = fixture.probeLoop(for: tab)
         let action = await loop.lap()
 
         #expect(action == .probe)
-        #expect(loop.probeStatCount == 1)
+        #expect(counter.probeStatsOnTheWire == 1)
         #expect(loop.consecutiveFailures == 0)
         #expect(tab.liveness == .connected)
     }
 
     /// Step 2. Reachable at this layer, and driven by a transfer that really
     /// moves bytes over the rig rather than by a hand-set flag: `isActive`
-    /// is true from the synchronous `enqueue` onward, so the lap below runs
+    /// is true from the synchronous `enqueue` onward, so the probing lap runs
     /// while a genuine download is outstanding. What it demonstrates is that
     /// `decide` answers `.skip` for that real queue state and that the lap
-    /// issues NO `stat` — `probeStatCount` is the check that separates
-    /// "skipped" from "probed and happened to succeed", which an assertion
-    /// on `tab.liveness` alone could not, since both outcomes leave it
-    /// `.connected`.
+    /// issues NO `stat` — the count taken at the connection is what
+    /// separates "skipped" from "probed and happened to succeed", which an
+    /// assertion on `tab.liveness` alone could not, since both outcomes
+    /// leave it `.connected`.
     ///
     /// Two controls keep the result from being vacuous. The transfer is
     /// awaited to completion and its bytes checked, so a queue that was
@@ -326,13 +474,17 @@ struct LivenessProbeDropIntegrationTests {
         defer { Task { await fs.disconnect() } }
         let home = try await fs.homeDirectoryPath()
         let tab = makeTab()
-        attachSession(to: tab, remoteFS: fs, homePath: home)
+        let counter = attachSession(to: tab, remoteFS: fs, homePath: home)
 
         let downloadDirectory = fixture.makeSubdirectory("downloads")
         let localFS = try #require(tab.session?.localFS)
+        // Source is the session's own file system, not the bare connection:
+        // the transfer must travel through the same instrument the probe
+        // does, or "no probe `stat` arrived" would be a claim about an object
+        // the transfer never touched.
         tab.transferQueue.enqueue(
             fileName: seedFileName, direction: .download,
-            source: fs, sourcePath: seedFilePath,
+            source: counter, sourcePath: seedFilePath,
             destination: localFS,
             destinationDirectory: downloadDirectory.path(percentEncoded: false),
             onCompleted: nil)
@@ -345,7 +497,7 @@ struct LivenessProbeDropIntegrationTests {
         let busyAction = await loop.lap()
 
         #expect(busyAction == .skip)
-        #expect(loop.probeStatCount == 0)
+        #expect(counter.probeStatsOnTheWire == 0)
         #expect(tab.liveness == .connected)
 
         await waitForIdleQueue(tab.transferQueue)
@@ -353,13 +505,13 @@ struct LivenessProbeDropIntegrationTests {
             contentsOf: downloadDirectory.appendingPathComponent(seedFileName))
         #expect(!downloaded.isEmpty, """
             the download that made the queue busy produced no bytes — the \
-            `.skip` above would then have been deferring to a broken job \
-            rather than to real traffic.
+            `.skip` this test checks would then have been deferring to a \
+            broken job rather than to real traffic.
             """)
 
         let idleAction = await loop.lap()
         #expect(idleAction == .probe)
-        #expect(loop.probeStatCount == 1)
+        #expect(counter.probeStatsOnTheWire == 1)
         #expect(tab.liveness == .connected)
     }
 
@@ -389,7 +541,7 @@ struct LivenessProbeDropIntegrationTests {
         #expect(beforeDrop == .probe)
         #expect(tab.liveness == .connected, """
             the disposable server was not answering probes before it was \
-            killed — the drop below would prove nothing.
+            killed — the drop this test performs would prove nothing.
             """)
 
         try server.kill()
@@ -427,7 +579,7 @@ struct LivenessProbeDropIntegrationTests {
     /// `LivenessProbeRace` was actually written for: a peer that stops
     /// answering without closing anything. `docker pause` freezes every
     /// process in the container while leaving its sockets established, so
-    /// the `stat` above has nothing to fail on — it simply never comes back,
+    /// the probe's `stat` has nothing to fail on — it simply never comes back,
     /// which is the case Citadel's own path into NIO (a bare
     /// `EventLoopFuture.get()` with no cancellation handler) cannot shorten.
     ///
@@ -440,7 +592,7 @@ struct LivenessProbeDropIntegrationTests {
     /// test is about is the two probe laps and the deadline that bounds
     /// them; `teardown(_:reason:)` against a connection that never answers
     /// is a DIFFERENT question, and not one this suite settles — see the
-    /// task report. `aRealDropIsNoticedAndLeavesTheTabLost` above does run
+    /// task report. `aRealDropIsNoticedAndLeavesTheTabLost` does run
     /// teardown against a genuinely dead peer.
     @Test func aSilentlyFrozenPeerIsNoticedByTheDeadline() async throws {
         let fixture = makeFixture()
@@ -533,16 +685,15 @@ struct LivenessProbeDropIntegrationTests {
     /// unrunnable without a rendering harness); the decision and its effects
     /// are exactly what a real drop has to travel through.
     ///
-    /// `probeStatCount` has no counterpart in the real loop — it exists so a
-    /// `.skip` lap can be shown to have issued no `stat` at all, which no
-    /// assertion on `tab.liveness` could show.
+    /// Whether a lap actually probed is not tracked here but counted at the
+    /// connection, by `ProbeTargetStatCounter` — see that type for why the
+    /// decision is the wrong thing to count.
     @MainActor
     struct ProbeLoop {
         let tab: SessionTab
         let settingsStore: SettingsStore
         let onGiveUp: (SessionTab) async -> Void
         private(set) var consecutiveFailures = 0
-        private(set) var probeStatCount = 0
 
         mutating func lap() async -> LivenessProbeAction {
             let interval = settingsStore.keepAliveIntervalSeconds
@@ -555,7 +706,6 @@ struct LivenessProbeDropIntegrationTests {
                 tab.liveness = .connected
             case .probe, .probeAgainNow:
                 guard let session = tab.session else { break }
-                probeStatCount += 1
                 let timeoutSeconds = LivenessProbePolicy.probeTimeout(forInterval: interval)
                 let alive = await LivenessProbeRace.run(timeoutSeconds: timeoutSeconds) {
                     (try? await session.remoteFS.stat(path: session.homePath)) != nil
@@ -686,23 +836,30 @@ struct LivenessProbeDropIntegrationTests {
 
     /// Same shape as `LivenessGiveUpOrderingTests.attachSession(to:)`, except
     /// that `remoteFS` is a live SSH connection rather than a stand-in — the
-    /// whole difference this suite exists to make.
+    /// whole difference this suite exists to make. The connection is handed
+    /// to the session through `ProbeTargetStatCounter`, so every test in this
+    /// suite probes through the same instrument whether it reads the count or
+    /// not.
+    @discardableResult
     private func attachSession(
         to tab: SessionTab, remoteFS: any RemoteFileSystem, homePath: String
-    ) {
+    ) -> ProbeTargetStatCounter {
         let sessionID = UUID()
+        let counted = ProbeTargetStatCounter(
+            wrapping: remoteFS, countingStatsOf: homePath)
         tab.session = BrowserSession(
             id: sessionID,
             localFS: LocalFileSystem(),
-            remoteFS: remoteFS,
+            remoteFS: counted,
             local: RemoteBrowserViewModel(
                 fs: LocalFileSystem(), startPath: NSTemporaryDirectory()),
-            remote: RemoteBrowserViewModel(fs: remoteFS, startPath: homePath),
+            remote: RemoteBrowserViewModel(fs: counted, startPath: homePath),
             terminal: TerminalPanelViewModel(openShell: { _, _, _ in
                 throw CancellationError()
             }),
             editManager: EditSessionManager(sessionID: sessionID, queue: tab.transferQueue),
             homePath: homePath)
         tab.liveness = .connected
+        return counted
     }
 }
