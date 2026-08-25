@@ -24,9 +24,10 @@ import Testing
 /// continuing on `.abandoned`) is pinned by `LivenessProbeWiringGuardTests`
 /// instead.
 ///
-/// `theTabIsWrittenWhenNothingIntervenes` is the control that keeps the two
-/// refusals from being vacuous: a `perform` that returned `.abandoned`
-/// unconditionally, or never wrote at all, would satisfy them both.
+/// `theTabIsWrittenWhenNothingIntervenes` is the control that keeps the
+/// three refusals from being vacuous: a `perform` that returned
+/// `.abandoned` unconditionally, or never wrote at all, would satisfy every
+/// one of them.
 ///
 /// Isolation: no `ContentView`, no store of any kind, no network. The fake
 /// file system this suite hands its sessions never answers and never touches
@@ -52,7 +53,7 @@ struct LivenessProbeCancellationTests {
         // describing a live connection, and the runner's task is dropped.
         // The session is deliberately LEFT in place here, so the only thing
         // that can refuse the write is the cancellation check itself —
-        // `aProbeWhoseSessionWentAwayWritesNothing` below covers the other
+        // `aProbeWhoseSessionWentAwayWritesNothing` covers the other
         // half of the guard on its own.
         tab.liveness = nil
         probe.cancel()
@@ -121,8 +122,8 @@ struct LivenessProbeCancellationTests {
 
     /// The control. A peer that never answers, left alone to run its
     /// deadline out, DOES leave the tab `.degraded` and reports `.failed` —
-    /// so the two refusals above are refusals of a write that would
-    /// otherwise happen, not descriptions of a function that never writes.
+    /// so the three refusals are refusals of a write that would otherwise
+    /// happen, not descriptions of a function that never writes.
     @Test func theTabIsWrittenWhenNothingIntervenes() async {
         let tab = makeTab()
         attachSession(to: tab)

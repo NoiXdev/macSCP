@@ -280,6 +280,37 @@ struct LivenessProbeWiringGuardTests {
         #expect(probeCase.contains("guard result != .abandoned else { return }"))
     }
 
+    /// Pins the one property every other scanner claim rests on: a case
+    /// body ends where the NEXT arm begins.
+    ///
+    /// Every other fixture here has a single arm, so the scanner could stop
+    /// at the wrong place and each of them would still pass — which is how
+    /// an earlier version, matching only a `case` in column zero, swallowed
+    /// the whole of `.giveUp` into the probe arm while staying green. Both
+    /// arms below are indented, as they are in the real file.
+    @Test func scannerStopsACaseBodyAtTheNextArm() throws {
+        let source = """
+            // Liveness probe (Task 4)
+            while !Task.isCancelled {
+                let interval = settingsStore.keepAliveIntervalSeconds
+                switch LivenessProbePolicy.decide(queueIsBusy: false, consecutiveFailures: 0) {
+                case .probe, .probeAgainNow:
+                    let result = await LivenessProbeStep.perform(on: tab, timeoutSeconds: 10)
+                    guard result != .abandoned else { return }
+                case .giveUp:
+                    await onGiveUp(tab)
+                }
+            }
+            """
+        let body = try Self.loopBody(after: Self.anchor, in: source)
+        let probeCase = try #require(Self.caseBody(named: Self.probeCase, in: body))
+        let giveUpCase = try #require(Self.caseBody(named: ".giveUp", in: body))
+        #expect(probeCase.contains("LivenessProbeStep.perform("))
+        #expect(!probeCase.contains("onGiveUp("), "the probe arm must not swallow the arm after it")
+        #expect(giveUpCase.contains("onGiveUp("))
+        #expect(!giveUpCase.contains("LivenessProbeStep.perform("))
+    }
+
     @Test func scannerThrowsWhenTheAnchorIsMissing() {
         let source = "while !Task.isCancelled { let interval = settingsStore.keepAliveIntervalSeconds }"
         #expect(throws: ScanError.anchorNotFound) {
