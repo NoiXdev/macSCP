@@ -1846,11 +1846,14 @@ private struct ConnectFailureView: View {
     /// in which case the details control is not offered at all rather than
     /// opening an empty dialog.
     ///
-    /// An opaque `ConnectFailureDetailText`, not a `String`, and that is the
-    /// whole point: this view can test it for `nil` and hand it to the
-    /// dialog, and it cannot render it. See that type's own doc comment for
-    /// why a `String?` here — which is what round 1 had — gave this surface
-    /// the structural guarantee and the raw server text side by side.
+    /// An opaque `ConnectFailureDetailText`, not a `String`, and that is
+    /// the whole point: this view tests it for `nil` and hands it to the
+    /// dialog. Naming its string here does not compile, and reflecting it
+    /// here — which does compile, and used to print the server's own
+    /// message — now yields a placeholder. See that type's own doc comment
+    /// for where exactly that boundary runs, and for why a `String?` here,
+    /// which is what round 1 had, gave this surface the structural
+    /// guarantee and the raw server text side by side.
     let details: ConnectFailureDetailText?
     let onRetry: () -> Void
     let onEdit: () -> Void

@@ -314,10 +314,13 @@ struct ConnectFailurePlanTests {
 /// the message, all of the message, and nothing besides.
 ///
 /// **What these tests can and cannot see.** The string is `fileprivate` to
-/// `ConnectFailureDetails.swift`, which is what makes rendering it on the
-/// general surface a compile error — and it also means no test can read it
-/// back and compare characters. So the claims below are made through
-/// `Equatable`: two failures with the same message must be equal however
+/// `ConnectFailureDetails.swift`, so no test can name it and compare
+/// characters — and neither can it be reflected back out any more, which
+/// is what `reflectionDoesNotHandBackTheMessage` below both requires and
+/// proves. (That `fileprivate` alone made rendering the text a compile
+/// error is what round 1 claimed and the review disproved; the type's own
+/// doc comment carries where the boundary actually runs.) So the claims
+/// below are made through `Equatable`: two failures with the same message must be equal however
 /// they differ otherwise, and two with different messages must not be. That
 /// catches anything the reader MIXES IN (the field, a prefix, the state
 /// itself) because such a thing varies where the message does not. It
@@ -346,6 +349,57 @@ struct ConnectFailureDetailsTests {
             ConnectFailureDetailText.read(from: .failed(message: "timed out", field: nil))
                 != ConnectFailureDetailText.read(
                     from: .failed(message: "connection refused", field: nil)))
+    }
+
+    /// The message does not come back out through reflection.
+    ///
+    /// Review round 1 measured the third bypass of the details boundary,
+    /// after the two that fail to compile: `Text(String(describing:
+    /// details))` in `ConnectFailureView` compiled and left the whole suite
+    /// green, because reflection ignores access levels — without a
+    /// `CustomStringConvertible`, `String(describing:)` falls back to a
+    /// `Mirror` over the storage and prints the raw message. `fileprivate`
+    /// closes NAMED access and nothing else.
+    ///
+    /// So this drives the four generic ways to turn a value into text and
+    /// asserts the message is in none of them. It is a real behavioural
+    /// check rather than a scan: it constructs a value whose message it
+    /// knows and looks for that message in the output, which is exactly
+    /// what the mutation did.
+    ///
+    /// The message fixture is a made-up string in the shape of the thing
+    /// that made this worth closing — a base URL carrying its own
+    /// userinfo, which is how a WebDAV password reaches an error text. It
+    /// is not a credential and names no real host.
+    @Test func reflectionDoesNotHandBackTheMessage() throws {
+        let message = "https://dav-user:hunter2SECRET@127.0.0.1/remote.php/dav/ refused"
+        let details = try #require(
+            ConnectFailureDetailText.read(from: .failed(message: message, field: nil)))
+        let secret = "hunter2SECRET"
+
+        #expect(!String(describing: details).contains(secret), """
+            `String(describing:)` handed back the raw message — this is the measured bypass: \
+            `Text(String(describing: details))` compiles, and a reader of the details type's \
+            own doc comment would have concluded it could not.
+            """)
+        #expect(!"\(details)".contains(secret), """
+            plain string interpolation handed back the raw message; it takes the same route \
+            as `String(describing:)`.
+            """)
+        #expect(!String(reflecting: details).contains(secret), """
+            `String(reflecting:)` handed back the raw message — it consults \
+            `CustomDebugStringConvertible` first, so conforming to `CustomStringConvertible` \
+            alone would leave this one open.
+            """)
+        var dumped = ""
+        dump(details, to: &dumped)
+        #expect(!dumped.contains(secret), """
+            `dump(_:)` handed back the raw message — it walks `Mirror` directly, which is why \
+            the type answers with an empty one.
+            """)
+        #expect(
+            Mirror(reflecting: details).children.isEmpty,
+            "a Mirror child named `text` is a label lookup away from the message")
     }
 
     /// No failure, nothing technical to show — and therefore no dialog to

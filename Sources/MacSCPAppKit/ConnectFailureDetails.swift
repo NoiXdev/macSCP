@@ -19,28 +19,83 @@ import macSCPCore
 /// particular spelling; it cannot be taught to notice the next one.
 ///
 /// So the string is `fileprivate`, and the only view that can read it —
-/// `ConnectFailureDetailsSheet`, below — is in this same file. `ConnectFailureView`
-/// lives in `ContentView+Detail.swift`, holds one of these, and can do
-/// exactly two things with it: test it for `nil` to decide whether to offer
-/// the control at all, and hand it to the sheet. Rendering it on the
-/// surface does not compile — measured both ways round:
-/// `Text(details ?? …)` fails on the type, and `Text(details?.text ?? …)`
-/// fails on the access level. There is deliberately no
-/// `CustomStringConvertible` and no accessor that would give either
-/// spelling something to reach.
+/// `ConnectFailureDetailsSheet`, below — is in this same file.
+/// `ConnectFailureView` lives in `ContentView+Detail.swift` and holds one
+/// of these.
 ///
-/// What that does NOT cover, stated plainly: someone editing this file
-/// could add an accessor and put the string back within reach.
-/// `ReconnectWiringGuardTests.theDetailsTextHasNoWayOutOfItsOwnFile` is the
-/// check for that, and it is a scan — the compile-time half of the
-/// guarantee is the file boundary, not the whole of it.
-struct ConnectFailureDetailText: Equatable {
+/// ## Where the boundary actually runs
+///
+/// Two spellings of rendering it on the general surface fail to COMPILE,
+/// measured both ways round: `Text(details ?? …)` fails on the type, and
+/// `Text(details?.text ?? …)` fails on the access level.
+///
+/// A third one compiles, and used to leak. Review round 1 measured
+/// `Text(String(describing: details))` in `ConnectFailureView` compiling
+/// and the whole suite staying green — because reflection ignores access
+/// levels. Without a `CustomStringConvertible`, `String(describing:)`
+/// falls back to a `Mirror` over the STORAGE and prints
+/// `ConnectFailureDetailText(text: "…")`, raw message and all; plain
+/// interpolation, `"\(details)"`, goes down the same road. `fileprivate`
+/// closes NAMED access and nothing else, and this file used to claim more
+/// than that.
+///
+/// So the type answers reflection itself, with a placeholder rather than
+/// the message:
+///
+/// - `CustomStringConvertible` catches `String(describing:)`, `print` and
+///   every string interpolation.
+/// - `CustomDebugStringConvertible` catches `String(reflecting:)` and
+///   `debugPrint`, which consult that protocol FIRST and would otherwise
+///   reach the same mirror.
+/// - `CustomReflectable` catches `dump(_:)` and a hand-written
+///   `Mirror(reflecting:)` label lookup — the one this suite's own "what
+///   this guard cannot see" list calls exotic, and the only remaining way
+///   to walk the storage generically.
+///
+/// What is still NOT covered, stated as plainly as the rest: this file.
+/// Anyone editing it can add an accessor, or make one of the three
+/// conformances above return the real string, and the type system will
+/// not object. `ReconnectWiringGuardTests
+/// .theDetailsTextHasNoWayOutOfItsOwnFile` is the check for that, and it
+/// is a scan over this file's shape — a guard against an edit, not a
+/// guarantee about one.
+struct ConnectFailureDetailText: Equatable, CustomStringConvertible,
+    CustomDebugStringConvertible, CustomReflectable
+{
     /// `fileprivate`, not `private`: `private` is scoped to the enclosing
     /// declaration, which would shut the dialog below out too. The scope
     /// that matches the guarantee is exactly this file — the reader above
     /// and the one view allowed to render it, and nothing else in the
     /// module.
     fileprivate let text: String
+
+    /// What every generic way of turning this value into a string gets:
+    /// the type's name, and no message.
+    ///
+    /// Not localized and not meant to be read by a user — it is what
+    /// appears if someone renders this value by accident, and its job is
+    /// to be obviously a placeholder rather than to be helpful. The one
+    /// place the real string belongs on screen is
+    /// `ConnectFailureDetailsSheet` below, which reads the storage by
+    /// name.
+    ///
+    /// Deliberately carries nothing derived from the message — not its
+    /// length, not whether it is empty. A placeholder that varied with the
+    /// text would be a smaller leak rather than none, and this type's
+    /// whole point is that "no secret on the surface" is a fact about it
+    /// rather than a habit at a call site.
+    private static let placeholder = "ConnectFailureDetailText(hidden)"
+
+    var description: String { Self.placeholder }
+
+    var debugDescription: String { Self.placeholder }
+
+    /// An empty mirror, so `dump(_:)` and a hand-written
+    /// `Mirror(reflecting:)` walk over the children find no `text` to
+    /// read. `displayStyle` stays `nil`: a `.struct` style with no
+    /// children invites a reader to conclude the value is empty, which is
+    /// a different false claim.
+    var customMirror: Mirror { Mirror(self, children: []) }
 
     /// The message `ConnectionViewModel` published, unchanged — the same
     /// text the connection form has always shown, whose producing sites

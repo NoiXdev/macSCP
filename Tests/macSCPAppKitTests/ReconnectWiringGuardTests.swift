@@ -1137,34 +1137,67 @@ struct ReconnectWiringGuardTests {
     /// The half of the details guarantee a compiler cannot hold.
     ///
     /// `ConnectFailureDetailText.text` is `fileprivate`, so
-    /// `ConnectFailureView` — which lives in another file — cannot render
-    /// it: both spellings of the measured mutation
-    /// (`Text(details ?? …)` and `Text(details?.text ?? …)`) fail to
-    /// compile. That covers everyone outside the details file. Inside it,
-    /// nothing stops an accessor being added that puts the string back
-    /// within reach of the whole module, and the next person to widen it
-    /// would not be doing anything the type system objects to.
+    /// `ConnectFailureView` — which lives in another file — cannot NAME
+    /// it: both spellings of the measured mutation (`Text(details ?? …)`
+    /// and `Text(details?.text ?? …)`) fail to compile. What round 1 of
+    /// this test claimed, and what the review then measured, is that this
+    /// makes rendering the text a compile error full stop. It does not:
+    /// `Text(String(describing: details))` compiled and left the whole
+    /// suite green, because reflection reads storage without naming it.
     ///
-    /// So this checks the file's own shape: the storage stays
-    /// `fileprivate`, and the type gains no conformance or member whose
-    /// job is to hand a `String` out. Deliberately crude — `description`,
-    /// `CustomStringConvertible`, `var text` and a `String`-returning
-    /// `func` are banned outright rather than judged — because if this
-    /// type ever genuinely needs one, that is a change worth stopping at.
+    /// That is now closed at the type — `CustomStringConvertible`,
+    /// `CustomDebugStringConvertible` and `CustomReflectable` answer with
+    /// a placeholder — and `ConnectFailurePlanTests
+    /// .reflectionDoesNotHandBackTheMessage` is the check that they do,
+    /// behaviourally, by looking for a known message in the output.
+    ///
+    /// What is left for a scan is this file's shape, which is the one
+    /// thing neither the compiler nor that behavioural test can hold: an
+    /// edit HERE can widen the type again, and nothing about that edit
+    /// would be objectionable to the type system. Two halves, and the
+    /// promise is exactly what the code below does, no wider:
+    ///
+    /// 1. The storage stays `fileprivate let text: String`, and the three
+    ///    reflection answers stay the placeholder rather than the message
+    ///    — each pinned as the literal declaration it is.
+    /// 2. `var text` and `func text` are banned outright, as the two
+    ///    spellings of re-exporting the storage under its own name. That
+    ///    is a ban on TWO SPELLINGS, not on the idea: `var raw: String {
+    ///    text }` or `func message() -> String { text }` walks past it,
+    ///    and saying otherwise here (this test used to promise "a
+    ///    `String`-returning `func`") would be the same overclaim the
+    ///    round-1 comment made about `fileprivate`.
     @Test func theDetailsTextHasNoWayOutOfItsOwnFile() throws {
         let file = Self.file("Sources/MacSCPAppKit/ConnectFailureDetails.swift")
         let stripped = Self.stripCommentsAndStrings(
             try String(contentsOf: file, encoding: .utf8))
         #expect(stripped.contains("fileprivate let text: String"), """
             `ConnectFailureDetailText`'s storage is no longer `fileprivate let text: String`. \
-            That declaration is what makes rendering the raw text on the general surface a \
-            COMPILE error rather than something a scan has to keep noticing.
+            That declaration is what keeps the raw text from being NAMED outside this file.
             """)
-        for escape in ["CustomStringConvertible", "var description", "var text", "func text"] {
+        // The three generic routes to a string, each pinned as the
+        // literal that answers it. Counted here: three required
+        // declarations, one per protocol the type conforms to for this
+        // reason.
+        for required in [
+            "var description: String { Self.placeholder }",
+            "var debugDescription: String { Self.placeholder }",
+            "var customMirror: Mirror { Mirror(self, children: []) }",
+        ] {
+            #expect(stripped.contains(required), """
+                `ConnectFailureDetails.swift` no longer declares `\(required)`. Without it a \
+                generic conversion — `String(describing:)`, an interpolation, \
+                `String(reflecting:)` or `dump(_:)` — falls back to a `Mirror` over the \
+                storage and prints the server's own message, which is the measured bypass \
+                this declaration exists to close.
+                """)
+        }
+        for escape in ["var text", "func text"] {
             #expect(!stripped.contains(escape), """
                 `ConnectFailureDetails.swift` now contains `\(escape)`, which hands the raw \
-                error text back to the whole module — and with it the shape that put a \
-                server's own message on the general surface with the suite green.
+                error text back to the whole module under its own name — and with it the \
+                shape that put a server's own message on the general surface with the suite \
+                green.
                 """)
         }
     }
@@ -1190,6 +1223,25 @@ struct ReconnectWiringGuardTests {
             guarantee that it can only show a fixed, enumerated set of catalog keys — and \
             therefore no host name, server message or typed value — covers only the part that \
             happens to go through the plan.
+            """)
+        // The measured third bypass, kept out of this body as well as
+        // answered by the type: `Text(String(describing: details))`
+        // compiles, and before `ConnectFailureDetailText` grew its own
+        // reflection answers it printed the server's message. Belt beside
+        // braces, and worth being exact about which is which — this line
+        // is the belt, `ConnectFailurePlanTests
+        // .reflectionDoesNotHandBackTheMessage` is the braces.
+        //
+        // The stripper blanks string literals whole, interpolations
+        // included, so `Text("\(details)")` is invisible HERE. That
+        // spelling is covered by the placeholder alone, which is the
+        // reason the placeholder and not this line is the load-bearing
+        // half.
+        #expect(!body.contains("String(describing:"), """
+            `ConnectFailureView` builds a description of a value of its own. The general \
+            surface shows fixed catalog keys and nothing else; the technical text belongs in \
+            the dialog, one click away, and reaching for it here is how it stopped being \
+            one click away once already.
             """)
     }
 
