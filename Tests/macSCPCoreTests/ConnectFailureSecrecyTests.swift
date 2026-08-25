@@ -51,13 +51,82 @@ struct ConnectFailureSecrecyTests {
         /// rendered it would most likely base64 it on the way — so the
         /// encoded form is a sentinel of its own, not a variant of the
         /// plain one.
-        static let agentKeyMaterialBase64 = Data(agentKeyMaterial.utf8).base64EncodedString()
+        ///
+        /// THREE of them, and that is the whole point. Base64 encodes
+        /// three bytes at a time, so what `base64(buffer)` looks like
+        /// around the material depends on WHERE in that buffer the
+        /// material starts: only when it starts on a three-byte boundary
+        /// does its own encoding appear verbatim. A single encoded
+        /// sentinel is therefore blind to two alignments out of three,
+        /// and which one a fixture happens to hit is an accident of how
+        /// long a type name is. That accident silenced this guard once
+        /// already — measured, with a real leak left green.
+        ///
+        /// So the guard carries the encoding at all three alignments and
+        /// no byte position can silence it again.
+        /// `encodedAtEveryAlignment` says how each one is derived, and
+        /// `base64SentinelsCatchEveryAlignment` proves the derivation.
+        static let agentKeyMaterialBase64: [String] =
+            encodedAtEveryAlignment(Data(agentKeyMaterial.utf8))
+
+        /// The material's base64 as it appears when it begins at a byte
+        /// offset congruent to 0, 1 and 2 modulo three.
+        ///
+        /// Each entry is built from the COMPLETE four-character groups
+        /// that fall entirely inside the material at that alignment.
+        /// Every such group is determined by the material's own bytes and
+        /// by nothing around it, which is exactly what makes it a
+        /// substring of the encoding of ANY buffer holding the material
+        /// at that alignment — whatever precedes or follows it.
+        static func encodedAtEveryAlignment(_ material: Data) -> [String] {
+            (0..<3).compactMap { phase in
+                let padded = Data(repeating: 0x5f, count: phase) + material
+                    + Data(repeating: 0x5f, count: 3)
+                let encoded = Array(padded.base64EncodedString())
+                // First byte offset at or after `phase` that starts a group,
+                // and the end of the last group lying wholly in the material.
+                let firstByte = ((phase + 2) / 3) * 3
+                let endByte = ((phase + material.count) / 3) * 3
+                guard endByte > firstByte else { return nil }
+                return String(encoded[(firstByte / 3) * 4 ..< (endByte / 3) * 4])
+            }
+        }
 
         static let all: [String] = [
             password, jumpPassword, passphrase, wrongPassphrase, webdavPassword,
             urlPassword, s3SecretAccessKey, s3SessionToken, keyMaterial,
-            agentKeyMaterial, agentKeyMaterialBase64,
-        ]
+            agentKeyMaterial,
+        ] + agentKeyMaterialBase64
+    }
+
+    /// Proves the sentinel construction rather than trusting it — the
+    /// guard it feeds is the one that was silently dead, and a guard whose
+    /// derivation nobody checked is how that happened.
+    ///
+    /// Sweeps the material across every alignment inside surrounding bytes
+    /// that are themselves noise, and requires one of the three encoded
+    /// sentinels to appear every time. The second half is the control: the
+    /// same surrounding noise WITHOUT the material must match none of
+    /// them, otherwise the guard would be a smoke alarm that is always on.
+    @Test("the base64 sentinels catch the material at every byte alignment")
+    func base64SentinelsCatchEveryAlignment() {
+        let material = Data(Secret.agentKeyMaterial.utf8)
+        var generator = SystemRandomNumberGenerator()
+
+        for offset in 0..<64 {
+            let prefix = Data((0..<offset).map { _ in UInt8.random(in: 0...255, using: &generator) })
+            let suffix = Data((0..<17).map { _ in UInt8.random(in: 0...255, using: &generator) })
+            let encoded = (prefix + material + suffix).base64EncodedString()
+            #expect(Secret.agentKeyMaterialBase64.contains { encoded.contains($0) },
+                    "material at offset \(offset) escaped every base64 sentinel")
+        }
+
+        for length in 40..<160 {
+            let noise = Data((0..<length).map { _ in UInt8.random(in: 0...255, using: &generator) })
+            let encoded = noise.base64EncodedString()
+            #expect(!Secret.agentKeyMaterialBase64.contains { encoded.contains($0) },
+                    "a buffer of \(length) random bytes matched a base64 sentinel")
+        }
     }
 
     /// A dead loopback port: nothing listens on port 1, so every backend's
@@ -341,16 +410,22 @@ struct ConnectFailureSecrecyTests {
         try await withTemporaryAuthSock("/tmp/macscp-secrecy-\(UUID().uuidString).sock") {
             // An agent that is reachable and holds nothing. The sentinel
             // rides along AFTER the zero count, where the codec stops
-            // reading — so the case keeps its shape (`.noIdentities`) while
-            // still putting bytes in the parser's buffer for the secrecy
-            // half to have something to find. Without them that half passes
-            // for the empty reason that nothing secret was ever in scope.
+            // reading, so the case keeps its shape while still putting the
+            // material in the parser's buffer.
+            //
+            // `.noIdentities` carries no string, so this case cannot leak
+            // through its own error at all — a leak here has to change the
+            // error's TYPE, which is why the sweep runs even when the
+            // shape check fails. Measured that way: a codec that turns an
+            // empty listing into a `protocolError` carrying the buffer is
+            // caught in both halves.
             await expectAgentDialFails(
                 answering: Self.agentFrame(type: 12, payload: Self.uint32BE(0) + material),
                 as: { if case AgentError.noIdentities = $0 { return true }; return false },
                 "empty agent")
             // SSH_AGENT_FAILURE, with a payload the type byte makes the
-            // codec ignore — same arrangement, same reason.
+            // codec ignore — same arrangement, and `.refused` is likewise
+            // payload-free, so the same reasoning applies.
             await expectAgentDialFails(
                 answering: Self.agentFrame(type: 5, payload: material),
                 as: { if case AgentError.refused = $0 { return true }; return false },
@@ -661,6 +736,23 @@ struct ConnectFailureSecrecyTests {
     private func expectAgentDialFails(
         answering answer: Data?, as shape: (Error) -> Bool, _ what: String
     ) async {
+        // Applied to every case, here rather than case by case, so a case
+        // added later is held to it without anybody remembering to. The
+        // claim is that IF this case's bytes were base64-leaked, the
+        // sweep would catch them — which is what stopped being true once
+        // a type name moved the material off a three-byte boundary.
+        //
+        // Both the whole frame and its body, because a leak could plausibly
+        // render either, and the four-byte length prefix between them puts
+        // the material at two different alignments.
+        if let answer {
+            for (label, buffer) in [("frame", answer), ("body", Data(answer.dropFirst(4)))] {
+                let encoded = buffer.base64EncodedString()
+                #expect(Secret.agentKeyMaterialBase64.contains { encoded.contains($0) },
+                        "\(what): a base64 leak of this case's \(label) would go unnoticed")
+            }
+        }
+
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         do {
@@ -681,10 +773,14 @@ struct ConnectFailureSecrecyTests {
             }
             Issue.record("\(what): expected the dial to fail")
         } catch {
-            guard shape(error) else {
+            if !shape(error) {
                 Issue.record("\(what): unexpected error \(error)")
-                return
             }
+            // Swept even when the shape is wrong. A leak that ALSO changes
+            // the error's type — the only way the payload-free cases could
+            // ever leak, since `.noIdentities` and `.refused` carry no
+            // string to leak into — must not be able to hide behind an
+            // early return in the shape check.
             await expectNoSecret(in: error, what)
         }
     }
