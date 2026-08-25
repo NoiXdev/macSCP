@@ -1273,6 +1273,76 @@ enum LostConnectionPlan {
     }
 }
 
+/// What a failed-connect surface says, and which actions it offers
+/// (failed-connect surface plan, Task 2). Shown instead of the ordinary
+/// form after a connect attempt ends in `ConnectFailureKind.other` —
+/// timeout, name resolution, refused — as opposed to `.needsPerson`, which
+/// already has its own surface (a host-key or passphrase prompt) untouched
+/// by this task.
+///
+/// Same structural shape as `LostConnectionContent`, and for the same
+/// reason: only `(key, fallback)` message pairs and one flag decide what
+/// shows, so there is no field a host name, a server message, or a raw
+/// error string could occupy. The general message is safe by construction,
+/// not by promise — the full technical text belongs to the details dialog
+/// a later task builds, never to this type.
+struct ConnectFailureContent: Equatable {
+    struct Message: Equatable {
+        let key: String
+        let fallback: String
+    }
+
+    let title: Message
+    let body: Message
+    /// Redial through the same connection path a fresh attempt uses —
+    /// always offered, since this surface exists only right after an
+    /// attempt just failed.
+    let retryButton: Message
+    /// The form, prefilled with what was just typed. A one-off change:
+    /// this button never touches a stored session.
+    let editButton: Message
+    /// The session editor — a durable change to what is stored. `nil` for
+    /// an ad-hoc connection, which was never saved and so has nothing
+    /// stored to edit.
+    ///
+    /// Deliberately a second, separate button from `editButton` rather than
+    /// one button that behaves differently by context: a one-off "is it the
+    /// port?" attempt must not silently rewrite the stored session, and a
+    /// genuine error in the session must stay fixable for good. Two
+    /// intentions; a surface offering only one forces the wrong one onto
+    /// whichever case it does not fit.
+    let editSessionButton: Message?
+    /// Close the tab. Always offered — the way off this surface, redial or
+    /// not, the same as `LostConnectionContent.dismissButton`.
+    let closeButton: Message
+}
+
+/// Builds `ConnectFailureContent` (failed-connect surface plan, Task 2)
+/// from the one fact the surface needs beyond its own fixed text: whether
+/// the failed attempt started from a tab with a stored session. A plain
+/// function over that one flag, the same move `LostConnectionPlan` and
+/// `ConnectionSurfacePlan` made before it — nothing in this project renders
+/// SwiftUI, so the decision of what shows has to live somewhere a test can
+/// call, not inline in a view body.
+enum ConnectFailurePlan {
+    /// `hasStoredSession` is "this tab's failed attempt was dialed from a
+    /// stored session" — resolved at the call site, the same place
+    /// `LostConnectionPlan.content`'s `targetIsKnown` is.
+    static func content(hasStoredSession: Bool) -> ConnectFailureContent {
+        ConnectFailureContent(
+            title: .init(
+                key: "connection.failed.title", fallback: "No connection possible"),
+            body: .init(
+                key: "connection.failed.body",
+                fallback: "macSCP could not connect to the host."),
+            retryButton: .init(key: "connection.failed.retry", fallback: "Try again"),
+            editButton: .init(key: "connection.failed.edit", fallback: "Edit"),
+            editSessionButton: hasStoredSession
+                ? .init(key: "connection.failed.editSession", fallback: "Edit session") : nil,
+            closeButton: .init(key: "connection.failed.close", fallback: "Close"))
+    }
+}
+
 /// Whether an unattended reconnect attempt is due, and when (connection-
 /// liveness plan, Task 7) — the whole `offerOnly`/`onceThenAsk`/`automatic`
 /// rule as a plain function, so `ReconnectRunner` below is left with
