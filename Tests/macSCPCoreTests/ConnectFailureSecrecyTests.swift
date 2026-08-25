@@ -314,23 +314,35 @@ struct ConnectFailureSecrecyTests {
     /// on ARE the sentinel, so a parser that echoed its buffer would be
     /// caught here.
     ///
-    /// The last case is the one where key material is genuinely in hand:
-    /// the agent answers with a well-formed identity whose blob is the
-    /// sentinel, `listIdentities` parses it, and the dial then fails on the
-    /// transport with those identities live.
+    /// The identity case is the one where key material is genuinely in
+    /// hand: the agent answers with a well-formed identity whose blob is
+    /// the sentinel, `listIdentities` parses it, and the dial then fails on
+    /// the transport with those identities live.
+    ///
+    /// Every case but the socket one puts the sentinel into the agent's
+    /// answer, including where the codec ignores it — a shape check whose
+    /// secrecy half runs over a buffer with nothing secret in it proves
+    /// nothing about secrecy, and reads as though it did. The socket case
+    /// says at its own site why it is the exception.
     @Test("every ssh-agent refusal reports the condition, not the key material")
     func agentFailuresCarryNoSecret() async throws {
         let material = Array(Secret.agentKeyMaterial.utf8)
 
         try await withTemporaryAuthSock("/tmp/macscp-secrecy-\(UUID().uuidString).sock") {
-            // An agent that is reachable and holds nothing.
+            // An agent that is reachable and holds nothing. The sentinel
+            // rides along AFTER the zero count, where the codec stops
+            // reading — so the case keeps its shape (`.noIdentities`) while
+            // still putting bytes in the parser's buffer for the secrecy
+            // half to have something to find. Without them that half passes
+            // for the empty reason that nothing secret was ever in scope.
             await expectAgentDialFails(
-                answering: Self.agentFrame(type: 12, payload: Self.uint32BE(0)),
+                answering: Self.agentFrame(type: 12, payload: Self.uint32BE(0) + material),
                 as: { if case AgentError.noIdentities = $0 { return true }; return false },
                 "empty agent")
-            // SSH_AGENT_FAILURE.
+            // SSH_AGENT_FAILURE, with a payload the type byte makes the
+            // codec ignore — same arrangement, same reason.
             await expectAgentDialFails(
-                answering: Self.agentFrame(type: 5),
+                answering: Self.agentFrame(type: 5, payload: material),
                 as: { if case AgentError.refused = $0 { return true }; return false },
                 "agent refusal")
             // A frame whose declared length lies about its body, with the
@@ -347,7 +359,18 @@ struct ConnectFailureSecrecyTests {
                 "overrunning agent string")
             // A usable identity whose blob is the sentinel: the listing
             // succeeds, and the failure comes from the dead port afterwards.
-            let blob = Self.sshString(Array("ssh-ed25519".utf8)) + Self.sshString(material)
+            //
+            // `ssh-rsa` rather than `ssh-ed25519`, and the choice is the
+            // whole reason the base64 sentinel can fire. Base64 encodes in
+            // groups of three bytes, so `base64(material)` is a substring
+            // of `base64(blob)` only when the material starts on a
+            // three-byte boundary. It starts after two length prefixes and
+            // the type name: `4 + 7 + 4 = 15` for `ssh-rsa`, divisible by
+            // three. With `ssh-ed25519` the offset is 19, the encodings are
+            // out of phase, and a leak that base64-encoded the blob would
+            // pass the guard unnoticed — measured, not reasoned: that exact
+            // leak left the suite green.
+            let blob = Self.sshString(Array("ssh-rsa".utf8)) + Self.sshString(material)
             await expectAgentDialFails(
                 answering: Self.agentFrame(
                     type: 12,
@@ -357,6 +380,14 @@ struct ConnectFailureSecrecyTests {
         }
 
         // No agent at all — the guard before the factory is ever consulted.
+        // The one case here whose secrecy half cannot be given anything to
+        // find, and it is worth naming why rather than leaving it looking
+        // like an oversight: the refusal is raised before a single agent
+        // byte exists, so the only string in scope is `SSH_AUTH_SOCK`
+        // itself, and it has to be EMPTY for this arm to be the one taken.
+        // A path carrying a sentinel would be a non-empty path, which is a
+        // different case entirely. This one is a shape check and nothing
+        // more.
         try await withTemporaryAuthSock("") {
             await expectAgentDialFails(
                 answering: nil,
@@ -399,6 +430,67 @@ struct ConnectFailureSecrecyTests {
             }
             await expectNoSecret(in: error, "rejected WebDAV password")
         }
+    }
+
+    /// The leak this suite is named for, on the one path where the secret
+    /// leaves over the wire rather than in a message: `URLSession` follows
+    /// redirects itself, and it raises the redirect TARGET's authentication
+    /// challenge on the very same delegate. Before the origin guard, a
+    /// server answering `302 Location: http://other/` had the user's WebDAV
+    /// password sent to `other` — worse over plain http, where anyone on
+    /// the path can inject the redirect.
+    ///
+    /// Two stubs, because one cannot show this: the first redirects, the
+    /// second challenges, and the assertion is about what the second never
+    /// saw. `sawAuthorizationHeader` is the whole test — the error shape
+    /// below only pins that the refusal is reported as itself rather than
+    /// as URLSession's cancellation, or as a rejected password nobody
+    /// rejected.
+    @Test("a redirected login challenge is refused, and the other host gets no credentials")
+    func webdavRedirectedChallengeNeverReachesTheOtherHost() async throws {
+        let elsewhere = try LoopbackHTTPStub(response: LoopbackHTTPStub.basicAuthAlwaysRejects)
+        defer { elsewhere.stop() }
+        let configured = try LoopbackHTTPStub(
+            response: LoopbackHTTPStub.movedTemporarily(
+                to: "http://127.0.0.1:\(elsewhere.port)/elsewhere"))
+        defer { configured.stop() }
+
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let config = WebDAVConnectionConfig(
+            baseURL: "http://127.0.0.1:\(configured.port)/dav", username: "tester",
+            useNextcloudPath: false, password: Secret.webdavPassword)
+        var thrown: Error?
+        do {
+            _ = try await WebDAVFileSystem.connect(
+                config, trustStore: TrustedCertificateStore(directory: directory),
+                decider: { _ in false })
+        } catch {
+            thrown = error
+        }
+
+        // The credential question first, and reached unconditionally: the
+        // error analysis below has early returns in it, and this is the
+        // assertion the test exists for. That the second host was reached
+        // at all is asserted too — otherwise "it saw no credentials" would
+        // hold for the trivial reason that the redirect never happened.
+        #expect(!elsewhere.requests.isEmpty)
+        #expect(elsewhere.sawAuthorizationHeader == false)
+        #expect(configured.sawAuthorizationHeader == false)
+
+        guard let thrown else {
+            Issue.record("expected the redirected challenge to fail the connect")
+            return
+        }
+        // Not `authenticationFailed`: nobody rejected anything, and telling
+        // the user to check their password would send them after a
+        // credential that never left the machine.
+        guard case RemoteFSError.connectionFailed(let reason) = thrown else {
+            Issue.record("expected a connection failure, got \(thrown)")
+            return
+        }
+        #expect(reason.contains("the password was not sent"))
+        await expectNoSecret(in: thrown, "redirected WebDAV challenge")
     }
 
     // MARK: - known_hosts write
