@@ -989,18 +989,6 @@ struct EmbeddedKeyPorterTests {
     }
 }
 
-/// Thread-safe box so a value produced on a background queue can be read back
-/// after a semaphore hand-off without tripping concurrency checking.
-private final class TestBox<T>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var storage: T
-    init(_ value: T) { storage = value }
-    var value: T {
-        get { lock.lock(); defer { lock.unlock() }; return storage }
-        set { lock.lock(); defer { lock.unlock() }; storage = newValue }
-    }
-}
-
 /// Test double for the rollback legs: like `InMemorySecretStore`, but it
 /// records which ids were written/deleted and can be told to fail every save.
 /// (`FailingSecretStore` in `SessionListViewModelTests` covers the same

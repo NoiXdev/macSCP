@@ -109,6 +109,67 @@ struct WebDAVSessionDelegateTests {
         #expect(reason.contains("https://nas.local:443"))
     }
 
+    /// The server-trust ARM guard, on its own.
+    ///
+    /// `decideCertificate` refuses a foreign candidate too, and the
+    /// loopback test exercises both at once — so it passes with either one
+    /// present and proves the pair rather than the parts. This one is
+    /// specifically the arm guard, because the arm guard is what returns
+    /// BEFORE the system-trust shortcut. Without it, a redirect target
+    /// whose chain the system already trusts is answered with
+    /// `performDefaultHandling` and the connection continues silently:
+    /// `decideCertificate` is never consulted at all on that path, so its
+    /// own guard cannot help. That is the half a user would never see.
+    ///
+    /// A synthesized protection space carries no `SecTrust`, so what is
+    /// measured here is that the arm REFUSED AND RECORDED before reaching
+    /// any trust handling — the recording is the only observable that
+    /// distinguishes the guard from the `serverTrust == nil` path below it,
+    /// which also cancels but says nothing.
+    @Test func aForeignServerTrustChallengeIsRefusedByTheArmItself() async throws {
+        let (store, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let asked = TestBox(false)
+        let delegate = WebDAVSessionDelegate(
+            baseURL: URL(string: "https://nas.local/dav")!,
+            username: "u", password: "p", trustStore: store,
+            decider: { _ in asked.value = true; return true })
+
+        let (disposition, credential) = answer(
+            delegate, host: "elsewhere.test", port: 443, scheme: "https",
+            method: NSURLAuthenticationMethodServerTrust)
+
+        #expect(disposition == .cancelAuthenticationChallenge)
+        #expect(credential == nil)
+        #expect(asked.value == false)
+        // The assertion that kills the mutation: with the arm guard gone
+        // this is nil, because the fall-through cancels without recording.
+        let reason = try #require(delegate.lastForeignChallenge)
+        #expect(reason.contains("https://elsewhere.test:443"))
+        #expect(reason.contains("https://nas.local:443"))
+        #expect(try store.allCertificates().isEmpty)
+    }
+
+    /// The control for the test above, and the reason its assertion is
+    /// about the RECORDING rather than the disposition: a challenge for the
+    /// configured origin also cancels here — a synthesized space has no
+    /// `SecTrust` to evaluate — but it must record nothing, because the arm
+    /// guard let it through.
+    @Test func aServerTrustChallengeForTheConfiguredOriginRecordsNoRefusal() async throws {
+        let (store, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let delegate = WebDAVSessionDelegate(
+            baseURL: URL(string: "https://nas.local/dav")!,
+            username: "u", password: "p", trustStore: store, decider: { _ in true })
+
+        let (disposition, _) = answer(
+            delegate, host: "nas.local", port: 443, scheme: "https",
+            method: NSURLAuthenticationMethodServerTrust)
+
+        #expect(disposition == .cancelAuthenticationChallenge)
+        #expect(delegate.lastForeignChallenge == nil)
+    }
+
     /// A base URL of `http://nas.local` means a TLS handshake for that host
     /// is somebody else's idea — the redirect that plants a certificate for
     /// the very name the user is about to configure. Same port, same host,
@@ -309,7 +370,12 @@ struct WebDAVSessionDelegateTests {
 }
 
 /// Minimal mutable box for capturing a flag out of an escaping closure.
-private final class TestBox<Value>: @unchecked Sendable {
+/// Thread-safe box, shared across this target's suites: it lets a value
+/// written by an escaping closure or produced on a background queue be
+/// read back without tripping concurrency checking. Internal rather than
+/// private so a suite that needs one does not grow its own copy under
+/// another name — which had happened twice.
+final class TestBox<Value>: @unchecked Sendable {
     private let lock = NSLock()
     private var stored: Value
     init(_ value: Value) { stored = value }

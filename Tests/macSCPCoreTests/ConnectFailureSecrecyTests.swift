@@ -3,16 +3,6 @@ import NIOCore
 import Testing
 @testable import macSCPCore
 
-/// A thread-safe boolean for recording whether an escaping closure ran.
-private final class FlagBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stored = false
-    var value: Bool {
-        get { lock.lock(); defer { lock.unlock() }; return stored }
-        set { lock.lock(); defer { lock.unlock() }; stored = newValue }
-    }
-}
-
 /// The failed-connect surface gains a details dialog showing the FULL
 /// technical message — the first surface in the product to render a raw
 /// error text rather than a fixed catalog key. This suite pins what that
@@ -445,17 +435,18 @@ struct ConnectFailureSecrecyTests {
             // A usable identity whose blob is the sentinel: the listing
             // succeeds, and the failure comes from the dead port afterwards.
             //
-            // `ssh-rsa` rather than `ssh-ed25519`, and the choice is the
-            // whole reason the base64 sentinel can fire. Base64 encodes in
-            // groups of three bytes, so `base64(material)` is a substring
-            // of `base64(blob)` only when the material starts on a
-            // three-byte boundary. It starts after two length prefixes and
-            // the type name: `4 + 7 + 4 = 15` for `ssh-rsa`, divisible by
-            // three. With `ssh-ed25519` the offset is 19, the encodings are
-            // out of phase, and a leak that base64-encoded the blob would
-            // pass the guard unnoticed — measured, not reasoned: that exact
-            // leak left the suite green.
-            let blob = Self.sshString(Array("ssh-rsa".utf8)) + Self.sshString(material)
+            // The type name is free. It decides where in the blob the
+            // material lands — after two length prefixes and the name
+            // itself — and that offset used to decide whether a
+            // base64-encoded leak was caught at all, because a single
+            // encoded sentinel only matches when the material starts on a
+            // three-byte boundary. The guard now carries all three
+            // alignments (`Secret.agentKeyMaterialBase64`), so the offset
+            // decides nothing any more; this reads `ssh-ed25519` again
+            // because that is the ordinary key type, not because 19 is a
+            // useful number. Any type `AgentPrivateKeyFactory` supports
+            // gives the same case.
+            let blob = Self.sshString(Array("ssh-ed25519".utf8)) + Self.sshString(material)
             await expectAgentDialFails(
                 answering: Self.agentFrame(
                     type: 12,
@@ -606,7 +597,7 @@ struct ConnectFailureSecrecyTests {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = TrustedCertificateStore(directory: directory)
-        let asked = FlagBox()
+        let asked = TestBox(false)
         let config = WebDAVConnectionConfig(
             baseURL: "http://127.0.0.1:\(configured.port)/dav", username: "tester",
             useNextcloudPath: false, password: Secret.webdavPassword)
@@ -633,7 +624,7 @@ struct ConnectFailureSecrecyTests {
         // caught the original hole even without a trust store to inspect.
         // Its own flag, not the one above — sharing one would let the
         // first phase's YES satisfy this check for free.
-        let askedAgain = FlagBox()
+        let askedAgain = TestBox(false)
         let laterDelegate = WebDAVSessionDelegate(
             baseURL: URL(string: "https://127.0.0.1:\(tls.port)")!,
             username: "tester", password: Secret.webdavPassword,
