@@ -7,6 +7,7 @@
 "core.transfer.failed %@" = "Transfer failed: %@";
 "core.transfer.noFreeName" = "No available filename found.";
 "core.transfer.interrupted" = "Connection lost — transfer interrupted.";
+"core.transfer.connectionLost" = "Connection lost.";
 
 /* RemoteBrowserViewModel.message(for:path:) */
 "core.browse.notFound %@" = "Path not found: %@";

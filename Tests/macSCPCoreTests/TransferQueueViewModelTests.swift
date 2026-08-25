@@ -555,6 +555,75 @@ struct TransferQueueViewModelTests {
         #expect(vm.isActive == false)
     }
 
+    /// Connection-liveness plan, Task 8: the property the plan's own Step 1
+    /// asks for directly — after a drop, the number of LISTED entries is
+    /// unchanged, and every one of them carries the "connection lost"
+    /// reason (not `.cancelled`, which would misattribute the drop to the
+    /// user). Built on the same shape as `cancelAllCancelsQueuedAndRunning`
+    /// above so the only thing that differs is the flag passed to
+    /// `cancelAll` and the status it produces.
+    @Test func cancelAllDueToConnectionLossFailsRunningAndKeepsQueuedListed() async throws {
+        let content = Data("c".utf8)
+        let started1 = TestSignal()
+        let gate1 = TestSignal()   // never fired; the drop must release it anyway
+        let source = QueueTestFS(reads: [
+            "/1.txt": .init(content: content, started: started1, gate: gate1),
+            "/2.txt": .init(content: content),
+            "/3.txt": .init(content: content),
+        ])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1   // determinism: item 2 must stay .queued until the drop
+        vm.enqueue(
+            fileName: "1.txt", direction: .upload,
+            source: source, sourcePath: "/1.txt",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: nil)
+        // Item 2 with a waiting enqueueAndWait — a drop must still throw it,
+        // exactly like a plain cancel (nothing succeeded).
+        let waiterThrew = Counter()
+        let waitTask = Task { @MainActor in
+            do {
+                try await vm.enqueueAndWait(
+                    fileName: "2.txt", direction: .upload,
+                    source: source, sourcePath: "/2.txt",
+                    destination: destination, destinationDirectory: "/ziel")
+            } catch {
+                waiterThrew.increment()
+            }
+        }
+
+        // Wait until item 1 is running AND item 2 is enqueued.
+        try await started1.wait()
+        await waitUntil { vm.items.count == 2 && vm.items[1].status == .queued }
+
+        await vm.cancelAll(dueToConnectionLoss: true)
+
+        let expectedReason = CoreL10n.string("core.transfer.connectionLost")
+        #expect(vm.items.count == 2)                                  // nothing discarded
+        #expect(vm.items[0].status == .failed(expectedReason))        // was running
+        #expect(vm.items[1].status == .failed(expectedReason))        // was queued, now marked
+        await waitTask.value
+        #expect(waiterThrew.value == 1)                                // waiter still throws
+        #expect(vm.isActive == false)
+        #expect(vm.hasInterrupted == false)                            // no automatic-resume path
+
+        // The queue keeps working afterward: a fresh, ordinary enqueue (the
+        // user manually restarting what the drop marked) still runs through
+        // the normal FIFO worker and finishes — the invariants `cancelAll`
+        // already holds survive this parameter unchanged.
+        let done3 = TestSignal()
+        vm.enqueue(
+            fileName: "3.txt", direction: .upload,
+            source: source, sourcePath: "/3.txt",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { await done3.fire() })
+        try await done3.wait()
+        #expect(vm.items.last?.status == .finished)
+        #expect(vm.isActive == false)
+    }
+
     // MARK: - 8
 
     @Test func clearCompletedRemovesOnlyDone() async throws {

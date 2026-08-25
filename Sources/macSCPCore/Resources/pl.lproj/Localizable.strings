@@ -9,6 +9,7 @@
 "core.transfer.failed %@" = "Transfer nieudany: %@";
 "core.transfer.noFreeName" = "Nie znaleziono dostępnej nazwy pliku.";
 "core.transfer.interrupted" = "Utracono połączenie — transfer przerwany.";
+"core.transfer.connectionLost" = "Utracono połączenie.";
 
 /* RemoteBrowserViewModel.message(for:path:) */
 "core.browse.notFound %@" = "Nie znaleziono ścieżki: %@";

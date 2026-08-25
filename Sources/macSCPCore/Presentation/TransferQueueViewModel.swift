@@ -363,6 +363,12 @@ public final class TransferQueueViewModel {
     /// `cancelAll` cancels every one (cooperative cancellation via T2).
     private var runningTransferTasks: [UUID: Task<Void, Error>] = [:]
     private var queueRule: ConflictResolution?                     // active "apply to all" rule; reset on drain
+    /// Populated ONLY by `cancelAll(dueToConnectionLoss:)`, for the jobs that
+    /// specific call is actively force-cancelling — `process`'s cancellation
+    /// branch consumes (removes) an entry when it applies it, and
+    /// `slotFinished` drops any leftover for a job that raced to `.finished`
+    /// instead, so nothing here ever outlives the job it names.
+    private var connectionLossReasons: [UUID: String] = [:]
 
     /// A minimal FIFO gate serializing conflict-decider prompts across slots:
     /// at most one prompt is open at a time, and waiters are woken in arrival
@@ -622,11 +628,35 @@ public final class TransferQueueViewModel {
     /// Cancels everything: cancels the running transfer, queued → `.cancelled`,
     /// waiting continuations throw. Returns only after the worker has stopped.
     ///
+    /// `dueToConnectionLoss` (connection-liveness plan, Task 8), false by
+    /// default, is the seam for a drop rather than a deliberate cancel: when
+    /// true, every item this call would otherwise mark `.cancelled` — the
+    /// running transfer AND every queued/resolving item — becomes
+    /// `.failed(reason)` instead, with `reason` resolved from `CoreL10n`
+    /// here (never passed in from the App layer, which cannot see
+    /// `CoreL10n` — it is internal to this module). A drop is not something
+    /// the user chose, so it must not read the same as a deliberate cancel;
+    /// and unlike `.interrupted`, no job is retained for either kind of
+    /// item — a later retry re-enqueues fresh, through the ordinary
+    /// conflict check, rather than resuming blind onto whatever the far
+    /// side is now holding (no automatic resume, by design).
+    ///
+    /// The running transfer is marked ONLY at the SAME choke point that
+    /// already decides `.cancelled` vs `.finished` today — the
+    /// `catch is CancellationError` branch in `process`, gated by
+    /// `connectionLossReasons` (populated below) — never by writing `items`
+    /// directly from here. A transfer whose `copyFile` had already
+    /// returned successfully by the time `task.cancel()` runs below still
+    /// takes the success branch there and finishes normally; only an
+    /// ACTUAL cancellation can land on the reason this call supplies.
+    ///
     /// `.interrupted` items are already terminal and are NOT swept here (M5d/T3):
     /// they are not in `order`, `resolvingJobIDs`, or `runningTransferTasks`, so
     /// they survive a teardown with their retained jobs intact — the queue
     /// outlives the session and a reconnect can still resume them.
-    public func cancelAll() async {
+    public func cancelAll(dueToConnectionLoss: Bool = false) async {
+        let connectionLostReason: String? =
+            dueToConnectionLoss ? CoreL10n.string("core.transfer.connectionLost") : nil
         // 0. Stop and await any running tree expansion(s) BEFORE clearing queued
         //    items — so no new items can appear from here on (M5b/T3).
         //    `finishExpansion(succeeded: false)` marks the groups as cancelled;
@@ -640,7 +670,7 @@ public final class TransferQueueViewModel {
         let queued = order
         order.removeAll()
         for id in queued {
-            setStatus(id, .cancelled)
+            setStatus(id, connectionLostReason.map { .failed($0) } ?? .cancelled)
             jobs[id] = nil
             resumeWaiter(id, with: .failure(CancellationError()))
         }
@@ -653,13 +683,20 @@ public final class TransferQueueViewModel {
         let resolving = resolvingJobIDs
         resolvingJobIDs.removeAll()
         for id in resolving {
-            setStatus(id, .cancelled)
+            setStatus(id, connectionLostReason.map { .failed($0) } ?? .cancelled)
             jobs[id] = nil
             resumeWaiter(id, with: .failure(CancellationError()))
         }
         // 2. Cancel every active transfer — each copyFile ends with
-        //    CancellationError (cooperative, T2) and `process` marks its item
-        //    `.cancelled`.
+        //    CancellationError (cooperative, T2); `process` marks its item
+        //    `.cancelled`, or `.failed(connectionLostReason)` when this call
+        //    was given one — `connectionLossReasons`, populated just below,
+        //    is what tells `process` which of the two applies to a given id.
+        if let connectionLostReason {
+            for id in runningTransferTasks.keys {
+                connectionLossReasons[id] = connectionLostReason
+            }
+        }
         for task in runningTransferTasks.values { task.cancel() }
         // 3. Await all slot tasks to unwind. `order` is now empty, so no slot
         //    re-fills; each `process` runs out and calls `slotFinished`. May
@@ -747,6 +784,12 @@ public final class TransferQueueViewModel {
     /// batch-scoped "apply to all" rule expires (as in the old serial drain).
     private func slotFinished(_ jobID: UUID) {
         processTasks[jobID] = nil
+        // Defensive: a job that raced to `.finished` between
+        // `cancelAll(dueToConnectionLoss:)` marking it and its own task
+        // actually returning never visits the cancellation branch that
+        // would otherwise consume this entry — drop it here instead so it
+        // cannot outlive the job it named.
+        connectionLossReasons[jobID] = nil
         kickWorker()
         if processTasks.isEmpty && order.isEmpty {
             queueRule = nil
@@ -892,7 +935,16 @@ public final class TransferQueueViewModel {
         } catch is CancellationError {
             progressContinuation.finish()
             await consumer.value
-            setStatus(jobID, .cancelled)
+            // `connectionLossReasons` (connection-liveness plan, Task 8) is
+            // populated ONLY by `cancelAll(dueToConnectionLoss:)`, for the
+            // exact jobs THAT call force-cancelled — a plain user cancel
+            // (`cancelAll()` with the default, or a tree `cancelGroup`)
+            // never touches it, so those still land on `.cancelled` below.
+            if let reason = connectionLossReasons.removeValue(forKey: jobID) {
+                setStatus(jobID, .failed(reason))
+            } else {
+                setStatus(jobID, .cancelled)
+            }
             jobs[jobID] = nil
             runningTransferTasks[jobID] = nil
             resumeWaiter(jobID, with: .failure(CancellationError()))

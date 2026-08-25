@@ -300,14 +300,24 @@ extension ContentView {
     /// `cancelAll` → `editManager.stopAll` → `terminal.shutdown` →
     /// `remote.disconnect`. Touches ONLY this tab; other tabs' sessions,
     /// queues and forms are untouched.
-    func teardown(_ tab: SessionTab) async {
+    ///
+    /// `connectionLost` (connection-liveness plan, Task 8), false by
+    /// default, forwards straight into `cancelAll(dueToConnectionLoss:)`:
+    /// the ONE caller that passes true is `handleLivenessGiveUp(_:)` below,
+    /// so the running transfer fails with a "connection lost" reason and
+    /// every queued item is marked and kept — instead of the plain
+    /// `.cancelled` every OTHER caller here means (a deliberate disconnect,
+    /// not a drop). The order itself (`cancelAll` first, everything else
+    /// after) is unchanged by this parameter — it only changes what
+    /// `cancelAll` writes onto the queue's own items, not when it runs.
+    func teardown(_ tab: SessionTab, connectionLost: Bool = false) async {
         tab.editErrorMessage = nil
         if let session = tab.session {
             // MUST run before `cancelAll()`: an open conflict sheet would
             // otherwise keep the decider prompt open, which `cancelAll`
             // (documented) hangs on until it's answered — deadlock on disconnect.
             tab.conflictBridge.cancelOpenPrompt()
-            await tab.transferQueue.cancelAll()
+            await tab.transferQueue.cancelAll(dueToConnectionLoss: connectionLost)
             // Binding order (M5e/T4 plan): AFTER `cancelAll` (any in-flight
             // edit download/upload has already been cancelled/settled by the
             // queue, so `stopAll` isn't racing a still-running transfer) and
@@ -391,7 +401,11 @@ extension ContentView {
     /// which is what `LivenessGiveUpOrderingTests` pins.
     func handleLivenessGiveUp(_ tab: SessionTab) async {
         let storedSessionID = tab.activeStoredSessionID
-        await teardown(tab)
+        // `connectionLost: true` (connection-liveness plan, Task 8): this
+        // is the ONE call site that means an actual drop rather than a
+        // deliberate disconnect, so the queue's own items read "connection
+        // lost" instead of "cancelled" — see `teardown(_:connectionLost:)`.
+        await teardown(tab, connectionLost: true)
         tab.lostConnection = LostConnection(
             reason: .probeGaveUp, storedSessionID: storedSessionID)
         tab.liveness = .lost
