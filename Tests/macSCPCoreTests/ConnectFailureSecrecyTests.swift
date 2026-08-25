@@ -35,10 +35,18 @@ struct ConnectFailureSecrecyTests {
         static let s3SecretAccessKey = "sentinel-s3-secret-key-5e7a"
         static let s3SessionToken = "sentinel-s3-session-token-8f2c"
         static let keyMaterial = "sentinel-key-material-3c6e"
+        static let agentKeyMaterial = "sentinel-agent-key-material-0b5d"
+
+        /// The agent hands key material over as bytes, and anything that
+        /// rendered it would most likely base64 it on the way — so the
+        /// encoded form is a sentinel of its own, not a variant of the
+        /// plain one.
+        static let agentKeyMaterialBase64 = Data(agentKeyMaterial.utf8).base64EncodedString()
 
         static let all: [String] = [
             password, jumpPassword, passphrase, wrongPassphrase, webdavPassword,
             urlPassword, s3SecretAccessKey, s3SessionToken, keyMaterial,
+            agentKeyMaterial, agentKeyMaterialBase64,
         ]
     }
 
@@ -290,6 +298,210 @@ struct ConnectFailureSecrecyTests {
                 return
             }
             await expectNoSecret(in: error, "rejected configuration")
+        }
+    }
+
+    // MARK: - ssh-agent
+
+    /// `AgentError` is the one type on this path whose every value was
+    /// cleared by reading rather than by measurement, and reading is what
+    /// this task exists to replace. `CitadelFileSystem.AgentClientFactory`
+    /// is a `@TaskLocal` seam, so each of these is a real error from the
+    /// real codec — no prepared `SSH_AUTH_SOCK` agent, no rig.
+    ///
+    /// The two `protocolError` cases matter most: their `reason` is the
+    /// only free text `AgentError` carries, and the bytes the codec chokes
+    /// on ARE the sentinel, so a parser that echoed its buffer would be
+    /// caught here.
+    ///
+    /// The last case is the one where key material is genuinely in hand:
+    /// the agent answers with a well-formed identity whose blob is the
+    /// sentinel, `listIdentities` parses it, and the dial then fails on the
+    /// transport with those identities live.
+    @Test("every ssh-agent refusal reports the condition, not the key material")
+    func agentFailuresCarryNoSecret() async throws {
+        let material = Array(Secret.agentKeyMaterial.utf8)
+
+        try await withTemporaryAuthSock("/tmp/macscp-secrecy-\(UUID().uuidString).sock") {
+            // An agent that is reachable and holds nothing.
+            await expectAgentDialFails(
+                answering: Self.agentFrame(type: 12, payload: Self.uint32BE(0)),
+                as: { if case AgentError.noIdentities = $0 { return true }; return false },
+                "empty agent")
+            // SSH_AGENT_FAILURE.
+            await expectAgentDialFails(
+                answering: Self.agentFrame(type: 5),
+                as: { if case AgentError.refused = $0 { return true }; return false },
+                "agent refusal")
+            // A frame whose declared length lies about its body, with the
+            // sentinel as that body.
+            await expectAgentDialFails(
+                answering: Data(Self.uint32BE(4) + [12] + material),
+                as: { if case AgentError.protocolError = $0 { return true }; return false },
+                "malformed agent frame")
+            // A well-formed frame whose inner string overruns it.
+            await expectAgentDialFails(
+                answering: Self.agentFrame(
+                    type: 12, payload: Self.uint32BE(1) + Self.uint32BE(9999) + material),
+                as: { if case AgentError.protocolError = $0 { return true }; return false },
+                "overrunning agent string")
+            // A usable identity whose blob is the sentinel: the listing
+            // succeeds, and the failure comes from the dead port afterwards.
+            let blob = Self.sshString(Array("ssh-ed25519".utf8)) + Self.sshString(material)
+            await expectAgentDialFails(
+                answering: Self.agentFrame(
+                    type: 12,
+                    payload: Self.uint32BE(1) + Self.sshString(blob) + Self.sshString(Array("comment".utf8))),
+                as: { if case RemoteFSError.connectionFailed = $0 { return true }; return false },
+                "dial failure with agent identities held")
+        }
+
+        // No agent at all — the guard before the factory is ever consulted.
+        try await withTemporaryAuthSock("") {
+            await expectAgentDialFails(
+                answering: nil,
+                as: { if case AgentError.socketUnavailable = $0 { return true }; return false },
+                "no agent socket")
+        }
+    }
+
+    // MARK: - WebDAV, credential rejected
+
+    /// A mistyped WebDAV password used to read "Connection failed:
+    /// cancelled". `WebDAVSessionDelegate` declines the repeated challenge,
+    /// `URLSession` abandons the request as cancelled, and the 401 that
+    /// caused it never reaches `mapStatus` — so the surface reported the
+    /// symptom instead of the cause, in the sentence the details dialog
+    /// will show in large type.
+    ///
+    /// The challenge is raised by `URLSession` itself, below the
+    /// `HTTPTransport` seam the other WebDAV tests stub, so this needs
+    /// something that really speaks HTTP: a loopback socket serving one
+    /// canned 401, never a remote host and never the rig.
+    @Test("a rejected WebDAV password says so, and says nothing else")
+    func webdavRejectedPasswordIsReportedAsAuthenticationFailure() async throws {
+        let stub = try LoopbackHTTPStub(response: LoopbackHTTPStub.basicAuthAlwaysRejects)
+        defer { stub.stop() }
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let config = WebDAVConnectionConfig(
+            baseURL: "http://127.0.0.1:\(stub.port)/dav", username: "tester",
+            useNextcloudPath: false, password: Secret.webdavPassword)
+        do {
+            _ = try await WebDAVFileSystem.connect(
+                config, trustStore: TrustedCertificateStore(directory: directory),
+                decider: { _ in false })
+            Issue.record("expected the rejected credential to fail the connect")
+        } catch {
+            guard case RemoteFSError.authenticationFailed = error else {
+                Issue.record("expected authenticationFailed, got \(error)")
+                return
+            }
+            await expectNoSecret(in: error, "rejected WebDAV password")
+        }
+    }
+
+    // MARK: - known_hosts write
+
+    /// The premise behind wrapping the known-hosts write, measured rather
+    /// than asserted: a real store failure is an `NSError`, and
+    /// `String(describing:)` on one prints its entire `userInfo` table
+    /// while `localizedDescription` prints the sentence a person can read.
+    /// The bare `try` that used to sit on that write handed the first form
+    /// to the same catch-all arm this whole commit is about.
+    ///
+    /// What this does NOT reach is the accept arm itself: getting there
+    /// needs a server presenting a host key for a person to accept, which
+    /// means the gated rig. This pins the difference the wrap relies on;
+    /// the wrap's own placement is read, not measured.
+    @Test("a real known-hosts write failure has a readable form and a dumping one")
+    func knownHostsWriteFailureHasAReadableForm() throws {
+        let occupied = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: occupied) }
+        // A FILE where the store wants its directory, so `createDirectory`
+        // fails for a real reason rather than a simulated one.
+        try Data("occupied".utf8).write(to: occupied)
+        let store = KnownHostsStore(directory: occupied.appendingPathComponent("inside"))
+        do {
+            try store.upsert(KnownHostKey(
+                host: "example.test", port: 22, keyType: "ssh-ed25519",
+                publicKeyBase64: "AAAAC3NzaC1lZDI1NTE5AAAA"))
+            Issue.record("expected the known-hosts write to fail")
+        } catch {
+            #expect(String(describing: error).contains("UserInfo="))
+            #expect(!error.localizedDescription.contains("UserInfo="))
+            #expect(!error.localizedDescription.isEmpty)
+        }
+    }
+
+    // MARK: - ssh-agent helpers
+
+    private static func uint32BE(_ value: UInt32) -> [UInt8] {
+        [UInt8(value >> 24 & 0xff), UInt8(value >> 16 & 0xff),
+         UInt8(value >> 8 & 0xff), UInt8(value & 0xff)]
+    }
+
+    /// The agent protocol's `string`: a big-endian length then the bytes.
+    private static func sshString(_ bytes: [UInt8]) -> [UInt8] {
+        uint32BE(UInt32(bytes.count)) + bytes
+    }
+
+    private static func agentFrame(type: UInt8, payload: [UInt8] = []) -> Data {
+        let body = [type] + payload
+        return Data(uint32BE(UInt32(body.count)) + body)
+    }
+
+    /// `SSH_AUTH_SOCK` is process-global, and a second suite
+    /// (`AgentAuthTests`) mutates it too — `AgentEnvLock` is the
+    /// cross-suite lock that keeps the two from interleaving.
+    private func withTemporaryAuthSock(
+        _ value: String, _ body: () async throws -> Void
+    ) async rethrows {
+        try await AgentEnvLock.shared.run {
+            let original = ProcessInfo.processInfo.environment["SSH_AUTH_SOCK"]
+            setenv("SSH_AUTH_SOCK", value, 1)
+            defer {
+                if let original {
+                    setenv("SSH_AUTH_SOCK", original, 1)
+                } else {
+                    unsetenv("SSH_AUTH_SOCK")
+                }
+            }
+            try await body()
+        }
+    }
+
+    /// Dials the dead port with `.agent` auth, optionally with the agent
+    /// client factory answering `answer`, and checks the resulting error
+    /// against `shape` before sweeping it for sentinels.
+    private func expectAgentDialFails(
+        answering answer: Data?, as shape: (Error) -> Bool, _ what: String
+    ) async {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        do {
+            let config = try SSHConnectionConfig(
+                host: "127.0.0.1", port: Self.deadPort, username: "tester", auth: .agent)
+            let dial = {
+                _ = try await CitadelFileSystem.connect(
+                    config: config, connectTimeout: .seconds(5),
+                    knownHosts: KnownHostsStore(directory: directory),
+                    onUnknownHostKey: { _ in false })
+            }
+            if let answer {
+                try await CitadelFileSystem.AgentClientFactory.$override.withValue({ _ in
+                    SSHAgentClient(transport: MockAgentTransport(response: answer))
+                }) { try await dial() }
+            } else {
+                try await dial()
+            }
+            Issue.record("\(what): expected the dial to fail")
+        } catch {
+            guard shape(error) else {
+                Issue.record("\(what): unexpected error \(error)")
+                return
+            }
+            await expectNoSecret(in: error, what)
         }
     }
 }

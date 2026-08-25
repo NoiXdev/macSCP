@@ -72,6 +72,16 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
             if let certificateError = delegate.lastCertificateError {
                 throw certificateError
             }
+            // A rejected password is the same story as a refused
+            // certificate, one layer over: the delegate declines the
+            // repeated challenge, URLSession abandons the request, and what
+            // arrives here is `NSURLErrorCancelled` -- so `mapStatus` never
+            // sees the 401 and the honest `authenticationFailed` it would
+            // have produced. Asking the delegate what it did is the only
+            // way to tell a mistyped password from a cancelled request.
+            if delegate.credentialWasRejected {
+                throw RemoteFSError.authenticationFailed
+            }
             // Everything macSCP already typed keeps its own shape; anything
             // else is a foreign error -- in practice a `URLError` from
             // `URLSession` -- and gets wrapped rather than rethrown, the same

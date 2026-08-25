@@ -204,9 +204,36 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                     guard acceptRetries < maxAcceptRetries else { throw mapStageAware(error) }
                     let accepted = await onUnknownHostKey(candidate)
                     guard accepted else { throw HostKeyError.rejectedByUser }
-                    try knownHosts.upsert(KnownHostKey(
-                        host: candidate.host, port: candidate.port,
-                        keyType: candidate.keyType, publicKeyBase64: candidate.publicKeyBase64))
+                    // Wrapped, not bare. `upsert` reads, re-encodes and
+                    // writes a file, so an unwritable directory or a corrupt
+                    // store throws a Foundation error here -- and a bare
+                    // `try` sent that straight to `ConnectionViewModel
+                    // .failedState`'s catch-all arm, which stringifies it.
+                    // An `NSError`'s `description` prints its whole
+                    // `userInfo`, a table Foundation fills and macSCP does
+                    // not control, into a surface built to show the message
+                    // to a person. `localizedDescription` is the localized
+                    // sentence alone -- for a permission refusal it still
+                    // names the file, which is the part worth reading.
+                    //
+                    // No secret is at stake: a remembered host key is public
+                    // material and the path is the store's own. The reason
+                    // is the shape of the text, the same reason
+                    // `WebDAVFileSystem.connect` wraps what `URLSession`
+                    // hands it.
+                    //
+                    // `connectionFailed` mirrors the READ side's verdict a
+                    // few arms up (`.lookupFailed`): both mean the
+                    // known-hosts store could not do its job, and neither is
+                    // a question a person can answer by retrying.
+                    do {
+                        try knownHosts.upsert(KnownHostKey(
+                            host: candidate.host, port: candidate.port,
+                            keyType: candidate.keyType, publicKeyBase64: candidate.publicKeyBase64))
+                    } catch {
+                        throw RemoteFSError.connectionFailed(
+                            reason: "known_hosts store not writable: \(error.localizedDescription)")
+                    }
                     acceptRetries += 1
                     continue  // full reconnect of both hops
                 case .none:

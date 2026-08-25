@@ -24,6 +24,7 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
 
     private let lock = NSLock()
     private var certificateError: ServerCertificateError?
+    private var credentialRejected = false
     private var bodyStreamRefusal: String?
 
     /// Set when a challenge was refused, so the connect path can report the
@@ -31,6 +32,21 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
     public var lastCertificateError: ServerCertificateError? {
         lock.lock(); defer { lock.unlock() }
         return certificateError
+    }
+
+    /// Set when the server challenged a SECOND time for the same request,
+    /// which is how URLSession reports that the credential this delegate
+    /// supplied was rejected.
+    ///
+    /// It has to be recorded rather than derived from the request's own
+    /// error, because refusing the repeated challenge is what makes
+    /// URLSession abandon the request: the caller sees `NSURLErrorCancelled`
+    /// and nothing else. There is no response to read, so `mapStatus` never
+    /// sees the 401 that caused all this — without this flag, a mistyped
+    /// password reads as "cancelled".
+    public var credentialWasRejected: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return credentialRejected
     }
 
     /// Set when URLSession asked to replay a request body and was refused —
@@ -95,6 +111,11 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
         certificateError = error
     }
 
+    private func setCredentialRejected() {
+        lock.lock(); defer { lock.unlock() }
+        credentialRejected = true
+    }
+
     // MARK: - URLSessionTaskDelegate
 
     public func urlSession(
@@ -107,6 +128,10 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
             // Repeated challenge means the credential was rejected — answering
             // again would loop.
             guard challenge.previousFailureCount == 0 else {
+                // Recorded BEFORE cancelling: cancelling is what destroys the
+                // evidence, since URLSession then reports the request as
+                // cancelled rather than as the 401 it actually got.
+                setCredentialRejected()
                 completionHandler(.cancelAuthenticationChallenge, nil)
                 return
             }
