@@ -23,6 +23,7 @@ struct WebDAVSessionDelegateTests {
 
         let asked = TestBox(false)
         let delegate = WebDAVSessionDelegate(
+            baseURL: URL(string: "https://nas.local")!,
             username: "u", password: "p", trustStore: store,
             decider: { _ in asked.value = true; return true })
 
@@ -43,6 +44,7 @@ struct WebDAVSessionDelegateTests {
         let (store, directory) = try makeStore()
         defer { try? FileManager.default.removeItem(at: directory) }
         let delegate = WebDAVSessionDelegate(
+            baseURL: URL(string: "https://nas.local")!,
             username: "u", password: "p", trustStore: store, decider: { _ in true })
 
         let decision = await delegate.decideCertificate(
@@ -60,6 +62,7 @@ struct WebDAVSessionDelegateTests {
         let (store, directory) = try makeStore()
         defer { try? FileManager.default.removeItem(at: directory) }
         let delegate = WebDAVSessionDelegate(
+            baseURL: URL(string: "https://nas.local")!,
             username: "u", password: "p", trustStore: store, decider: { _ in false })
 
         let decision = await delegate.decideCertificate(
@@ -84,6 +87,7 @@ struct WebDAVSessionDelegateTests {
 
         let asked = TestBox(false)
         let delegate = WebDAVSessionDelegate(
+            baseURL: URL(string: "https://nas.local")!,
             username: "u", password: "p", trustStore: store,
             decider: { _ in asked.value = true; return true })
 
@@ -118,6 +122,7 @@ struct WebDAVSessionDelegateTests {
         let store = TrustedCertificateStore(directory: file)
 
         let delegate = WebDAVSessionDelegate(
+            baseURL: URL(string: "https://nas.local")!,
             username: "u", password: "p", trustStore: store, decider: { _ in true })
         #expect(delegate.lastTrustStoreWriteFailure == nil)
 
@@ -151,6 +156,7 @@ struct WebDAVSessionDelegateTests {
         let (store, directory) = try makeStore()
         defer { try? FileManager.default.removeItem(at: directory) }
         let delegate = WebDAVSessionDelegate(
+            baseURL: URL(string: "https://nas.local")!,
             username: "u", password: "p", trustStore: store, decider: { _ in true })
         #expect(delegate.lastBodyStreamRefusal == nil)
 

@@ -34,7 +34,7 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
             throw RemoteFSError.connectionFailed(reason: "WebDAV base URL is not a valid URL")
         }
         let delegate = WebDAVSessionDelegate(
-            username: config.username, password: config.password,
+            baseURL: url, username: config.username, password: config.password,
             trustStore: trustStore, decider: decider)
         let configuration = URLSessionConfiguration.ephemeral
         // The server-trust challenge is answered INSIDE this request's
@@ -71,6 +71,20 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
             // cancellation from URLSession; report the precise cause instead.
             if let certificateError = delegate.lastCertificateError {
                 throw certificateError
+            }
+            // A challenge from somewhere other than the configured server
+            // was refused unanswered, so the request died the same
+            // `NSURLErrorCancelled` death a rejected password does — but it
+            // is not a rejected password, and reporting it as one would
+            // send the user off to check credentials that were never sent.
+            // The delegate's own sentence names both origins instead.
+            //
+            // Read BEFORE `credentialWasRejected` because it is the more
+            // specific condition: a refused challenge is never answered, so
+            // it can never produce the repeat that sets that flag, and
+            // whichever of the two is set is the whole story.
+            if let foreignChallenge = delegate.lastForeignChallenge {
+                throw RemoteFSError.connectionFailed(reason: foreignChallenge)
             }
             // A rejected password is the same story as a refused
             // certificate, one layer over: the delegate declines the

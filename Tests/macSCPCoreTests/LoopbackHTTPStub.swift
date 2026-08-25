@@ -12,10 +12,12 @@ import Foundation
 /// 127.0.0.1 on a port the kernel picks, serves for the length of one test,
 /// and is torn down with it.
 ///
-/// Deliberately not a general server. It never parses the request, and it
-/// answers every one of them identically, which is all a fixed-status test
-/// needs. Requests are served one after another; `Connection: close` in the
-/// canned responses below is what keeps that honest.
+/// Deliberately not a general server. Nothing in a request influences what
+/// it answers — every one gets the same canned response, which is all a
+/// fixed-status test needs. It does keep the request heads it read, so a
+/// test can assert on what a server was and was not sent. Requests are
+/// served one after another; `Connection: close` in the canned responses
+/// below is what keeps that honest.
 final class LoopbackHTTPStub: @unchecked Sendable {
     /// A 401 that asks for Basic credentials — so `URLSession` raises an
     /// authentication challenge, and raises it AGAIN when the credential it
@@ -29,12 +31,50 @@ final class LoopbackHTTPStub: @unchecked Sendable {
 
         """
 
+    /// A redirect to another URL, so a test can put a SECOND stub on the
+    /// far side of one. `Content-Length: 0` and `Connection: close` keep
+    /// this stub's one-request-at-a-time serving honest across the hop.
+    static func movedTemporarily(to location: String) -> String {
+        """
+        HTTP/1.1 302 Found\r
+        Location: \(location)\r
+        Content-Length: 0\r
+        Connection: close\r
+        \r
+
+        """
+    }
+
     let port: Int
 
     private let listener: Int32
     private let response: [UInt8]
     private let running = NSLock()
     private var isStopped = false
+    private var seenRequests: [String] = []
+
+    /// Every request head this stub has served, in order — the whole thing
+    /// up to the blank line, headers included. It is the only way to assert
+    /// what a server did NOT receive.
+    var requests: [String] {
+        running.lock(); defer { running.unlock() }
+        return seenRequests
+    }
+
+    /// Whether any request carried an `Authorization` header. The question
+    /// a redirect test exists to ask.
+    var sawAuthorizationHeader: Bool {
+        requests.contains { request in
+            request.split(separator: "\r\n").contains { line in
+                line.lowercased().hasPrefix("authorization:")
+            }
+        }
+    }
+
+    private func record(_ request: String) {
+        running.lock(); defer { running.unlock() }
+        seenRequests.append(request)
+    }
 
     init(response: String) throws {
         self.response = Array(response.utf8)
@@ -74,7 +114,7 @@ final class LoopbackHTTPStub: @unchecked Sendable {
                 let client = accept(listenerFD, nil, nil)
                 guard client >= 0 else { return }  // the listener was closed
                 guard let self, !self.stopped else { close(client); return }
-                Self.serve(client, canned)
+                self.record(Self.serve(client, canned))
             }
         }
     }
@@ -95,11 +135,13 @@ final class LoopbackHTTPStub: @unchecked Sendable {
         close(listener)
     }
 
-    /// Reads the request head and discards it, then writes the canned
-    /// response. The read matters only for pacing — a client whose request
-    /// is never consumed can see the close as a connection error instead of
-    /// as the response it was sent.
-    private static func serve(_ client: Int32, _ response: [UInt8]) {
+    /// Reads the request head, then writes the canned response, and returns
+    /// the head it read. The read matters for pacing first of all — a
+    /// client whose request is never consumed can see the close as a
+    /// connection error instead of as the response it was sent — and the
+    /// returned text is what lets a test assert on the headers that
+    /// arrived.
+    private static func serve(_ client: Int32, _ response: [UInt8]) -> String {
         defer { close(client) }
         var seen = [UInt8]()
         var byte: UInt8 = 0
@@ -118,6 +160,7 @@ final class LoopbackHTTPStub: @unchecked Sendable {
                 written += count
             }
         }
+        return String(decoding: seen, as: UTF8.self)
     }
 
     enum StubError: Error {

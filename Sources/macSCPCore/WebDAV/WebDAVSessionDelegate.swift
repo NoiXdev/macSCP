@@ -13,9 +13,24 @@ import os
 public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     public typealias CertificateDecider = @Sendable (ServerCertificateCandidate) async -> Bool
 
+    /// Scheme, host and port together — the unit a credential belongs to.
+    /// The password the user stored is for ONE server, and this is the
+    /// identity of that server, so it is what an authentication challenge
+    /// has to match before the password is handed over.
+    struct Origin: Equatable, Sendable {
+        let scheme: String
+        let host: String
+        let port: Int
+    }
+
     private let username: String
     /// Warning: plaintext secret — never log, interpolate or persist it.
     private let password: String
+    /// The origin of the configured base URL. `nil` when the base URL has
+    /// no scheme, no host, or a scheme with no port this code knows — in
+    /// which case no challenge matches and none is answered, which is the
+    /// safe direction to fail.
+    private let configuredOrigin: Origin?
     private let trustStore: TrustedCertificateStore
     private let decider: CertificateDecider
 
@@ -27,6 +42,7 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
     private var credentialRejected = false
     private var bodyStreamRefusal: String?
     private var trustStoreWriteFailure: String?
+    private var foreignChallenge: String?
 
     /// Set when a challenge was refused, so the connect path can report the
     /// precise cause instead of URLSession's generic cancellation.
@@ -75,13 +91,61 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
         return trustStoreWriteFailure
     }
 
-    public init(username: String, password: String,
+    /// Set when an authentication challenge arrived from an origin other
+    /// than the configured one and was therefore refused unanswered — see
+    /// the Basic/Digest arm for what that means. Carries the origin that
+    /// asked and the one the user configured, so the connect path can say
+    /// what happened instead of reporting URLSession's cancellation.
+    public var lastForeignChallenge: String? {
+        lock.lock(); defer { lock.unlock() }
+        return foreignChallenge
+    }
+
+    public init(baseURL: URL, username: String, password: String,
                 trustStore: TrustedCertificateStore,
                 decider: @escaping CertificateDecider) {
         self.username = username
         self.password = password
+        self.configuredOrigin = Self.origin(of: baseURL)
         self.trustStore = trustStore
         self.decider = decider
+    }
+
+    /// The origin of a configured base URL. A base URL usually omits the
+    /// port, so the scheme's default is filled in here — a challenge always
+    /// names a port, and comparing one against `nil` would never match.
+    /// An unknown scheme yields `nil` rather than a guessed port: nothing
+    /// but http and https reaches `URLSession` as a WebDAV base anyway, and
+    /// inventing a port for one would be inventing a match.
+    static func origin(of url: URL) -> Origin? {
+        guard let scheme = url.scheme?.lowercased(), let host = url.host()?.lowercased(),
+              !host.isEmpty
+        else { return nil }
+        let defaultPort: Int
+        switch scheme {
+        case "https": defaultPort = 443
+        case "http": defaultPort = 80
+        default: return nil
+        }
+        return Origin(scheme: scheme, host: host, port: url.port ?? defaultPort)
+    }
+
+    /// Whether an authentication challenge came from the very server the
+    /// user configured. Scheme and host are compared case-insensitively
+    /// (both are case-insensitive by definition); the port is compared
+    /// exactly, after `origin(of:)` has filled in the scheme's default.
+    ///
+    /// A proxy challenge never matches. `URLSession` raises proxy
+    /// authentication under the same Basic/Digest methods, and a proxy is
+    /// by construction not the origin the password belongs to.
+    static func challengeIsForConfiguredOrigin(
+        _ space: URLProtectionSpace, configured: Origin?
+    ) -> Bool {
+        guard let configured, !space.isProxy() else { return false }
+        guard let scheme = space.protocol?.lowercased() else { return false }
+        return scheme == configured.scheme
+            && space.host.lowercased() == configured.host
+            && space.port == configured.port
     }
 
     /// The TOFU decision, separated from the URLSession plumbing so it is
@@ -178,6 +242,28 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
         credentialRejected = true
     }
 
+    /// Records a refused foreign challenge, and logs it: this is a
+    /// credential the product deliberately did not send, which is worth a
+    /// line whether or not anybody reads the connect error.
+    ///
+    /// Naming the origin that asked is the whole diagnostic value — "your
+    /// server sent us somewhere else" is not actionable without the
+    /// somewhere. It is the only server-influenced text in this message,
+    /// and it is a host and a port parsed by Foundation out of a URL, not
+    /// free-form server prose.
+    private func recordForeignChallenge(_ space: URLProtectionSpace) {
+        let asked = "\(space.host):\(space.port)"
+        let expected = configuredOrigin.map { "\($0.host):\($0.port)" } ?? "the configured server"
+        let reason = space.isProxy()
+            ? "an HTTP proxy at \(asked) asked for the WebDAV password; it was not sent"
+            : "the login was challenged by \(asked) instead of \(expected), "
+                + "which means the server redirected it elsewhere; the password was not sent"
+        lock.lock()
+        foreignChallenge = reason
+        lock.unlock()
+        Self.logger.error("\(reason, privacy: .public)")
+    }
+
     // MARK: - URLSessionTaskDelegate
 
     public func urlSession(
@@ -187,6 +273,36 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
     ) {
         switch challenge.protectionSpace.authenticationMethod {
         case NSURLAuthenticationMethodHTTPBasic, NSURLAuthenticationMethodHTTPDigest:
+            // A challenge is answered ONLY for the server the user typed
+            // into the form. `URLSession` follows redirects on its own, and
+            // it raises the redirect TARGET's challenge on this same
+            // delegate — so without this guard any server that answers with
+            // `302 Location: http://elsewhere/` is handed the user's WebDAV
+            // password, and over plain http anyone on the path can inject
+            // that redirect. The challenge carries no proof of who is
+            // asking; the configured origin is the only thing that does.
+            //
+            // Refused unanswered rather than followed: there is no way to
+            // ask the user mid-request whether this other server should get
+            // their password, and answering silently is the leak itself.
+            // The redirect is still followed — that part is URLSession's —
+            // so the target sees the request, but never a credential.
+            //
+            // The match is strict on all three parts, which costs one real
+            // convenience: a base URL of `http://host` whose server
+            // upgrades to `https://host` now fails instead of logging in,
+            // because the scheme and the port both moved. That is the right
+            // trade for a redirect arriving over plaintext, and the refusal
+            // names both origins, so the fix — configure the `https` URL —
+            // is readable straight out of the error. A redirect that stays
+            // within the origin (the usual `/dav` → `/dav/`) is unaffected.
+            guard Self.challengeIsForConfiguredOrigin(
+                challenge.protectionSpace, configured: configuredOrigin)
+            else {
+                recordForeignChallenge(challenge.protectionSpace)
+                completionHandler(.cancelAuthenticationChallenge, nil)
+                return
+            }
             // Repeated challenge means the credential was rejected — answering
             // again would loop.
             guard challenge.previousFailureCount == 0 else {
@@ -204,6 +320,17 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
                                             persistence: .forSession))
 
         case NSURLAuthenticationMethodServerTrust:
+            // Not origin-guarded, deliberately, and the asymmetry with the
+            // credential arm above is the point: a certificate is public
+            // material in both directions, so a redirect target that gets
+            // TOFU-evaluated here learns nothing. The prompt names the host
+            // actually being validated, and anything pinned is pinned under
+            // THAT host, so a redirect cannot touch what the configured
+            // host is trusted with. What it can do is put a question in
+            // front of the user about a host they never typed — noted, not
+            // a leak, and the connect fails at the credential arm directly
+            // afterwards anyway, with a message that explains itself far
+            // better than a refused certificate would.
             guard let trust = challenge.protectionSpace.serverTrust,
                   let candidate = Self.candidate(from: trust,
                                                  host: challenge.protectionSpace.host,
