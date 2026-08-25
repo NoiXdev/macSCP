@@ -353,7 +353,7 @@ struct ReconnectPlanTests {
             ConnectAttemptLivenessPlan.write(
                 for: .failed(message: "timed out", field: nil), hasSession: false,
                 describesLostConnection: true, failureKind: .other)
-                != .failedConnect)
+                == .lost(.reconnectFailed))
     }
 
     /// `.failed` is not exclusively "the dial failed" — `showFailure` is

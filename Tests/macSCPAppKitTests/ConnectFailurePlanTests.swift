@@ -8,8 +8,9 @@ import Testing
 /// what a failed connect attempt says and which actions it offers.
 /// Nothing in this project renders SwiftUI, so this cannot prove what lands
 /// on screen; what it CAN prove, and does, is the mapping itself: the
-/// general message stays fixed, and exactly one of the actions
-/// (`editSessionButton`) toggles on the one fact the caller supplies.
+/// general message stays fixed, and the two actions that need something
+/// stored (`retryButton` and `editSessionButton`) toggle together on the
+/// one fact the caller supplies.
 ///
 /// Mirrors `ReconnectPlanTests`' "LostConnectionPlan" section for the same
 /// reason: a value that decides which actions appear can be wrong by
@@ -31,24 +32,39 @@ struct ConnectFailurePlanTests {
     /// under this same condition — so every button's key is asserted.
     @Test func allFourActionsAppearWithAStoredSession() {
         let content = ConnectFailurePlan.content(hasStoredSession: true)
-        #expect(content.retryButton.key == "connection.failed.retry")
+        #expect(content.retryButton?.key == "connection.failed.retry")
         #expect(content.editButton.key == "connection.failed.edit")
         #expect(content.editSessionButton?.key == "connection.failed.editSession")
         #expect(content.closeButton.key == "connection.failed.close")
     }
 
     /// The other direction: an ad-hoc connection, never saved, has nothing
-    /// stored to edit for good — `editSessionButton` is absent — while the
-    /// three actions that make sense regardless are still there. A mutation
-    /// that swapped which `hasStoredSession` value turns `editSessionButton`
+    /// stored to edit for good AND nothing stored to redial, so BOTH
+    /// `editSessionButton` and `retryButton` are absent — while the two
+    /// actions that make sense regardless are still there.
+    ///
+    /// `retryButton` joined `editSessionButton` in round 2, after review.
+    /// Round 1 offered Retry unconditionally and had `retryConnect(_:)`
+    /// hand an ad-hoc tab back to the form — the same call `onEdit` makes,
+    /// so pressing "Erneut versuchen" produced the prefilled form and no
+    /// dial at all, which is the behaviour this whole surface exists to
+    /// stop. The alternative, a second ad-hoc dial site, is the thing the
+    /// branch's security argument refuses.
+    ///
+    /// A mutation that swapped which `hasStoredSession` value turns these
     /// on fails BOTH this test and the one above: the one above asserts the
-    /// key is present, this one asserts it is absent, and an inversion
+    /// keys are present, this one asserts they are absent, and an inversion
     /// violates each. (Task 2's own report claimed it would fail "exactly
     /// one of the two"; that was wrong, and the report has been corrected.)
-    @Test func editSessionIsAbsentForAnAdHocConnection() {
+    @Test func retryAndEditSessionAreAbsentForAnAdHocConnection() {
         let content = ConnectFailurePlan.content(hasStoredSession: false)
         #expect(content.editSessionButton == nil)
-        #expect(content.retryButton.key == "connection.failed.retry")
+        #expect(content.retryButton == nil, """
+            an ad-hoc failure has no stored session to redial, and there is deliberately no \
+            second dial site to redial it with — so a Retry button here could only return the \
+            user to the form, which is what Edit already does and what the maintainer \
+            complained about in the first place.
+            """)
         #expect(content.editButton.key == "connection.failed.edit")
         #expect(content.closeButton.key == "connection.failed.close")
     }
@@ -91,9 +107,9 @@ struct ConnectFailurePlanTests {
         [true, false].flatMap { hasStoredSession -> [ConnectFailureContent.Message] in
             let content = ConnectFailurePlan.content(hasStoredSession: hasStoredSession)
             return [
-                content.title, content.body, content.retryButton, content.editButton,
+                content.title, content.body, content.editButton,
                 content.closeButton, content.detailsButton, content.detailsTitle,
-            ] + [content.editSessionButton].compactMap { $0 }
+            ] + [content.retryButton, content.editSessionButton].compactMap { $0 }
         }
     }
 
@@ -217,14 +233,21 @@ struct ConnectFailurePlanTests {
     @Test func theGermanCatalogActuallyTranslatesThisSurface() throws {
         let english = try Self.catalog("en")
         let german = try Self.catalog("de")
-        // The details control is deliberately excluded: "Details" is the
-        // German word too, so an identical value there is a translation,
-        // not an omission. Six keys are checked, counted while writing this
-        // sentence: title, body and the four action labels.
+        // One key is excluded, and only one: `connection.failed.details`
+        // reads "Details…" in German too, so an identical value there is a
+        // translation rather than an omission. `connection.failed.details
+        // .title` was excluded alongside it in round 1 without earning it —
+        // "Verbindungsdetails" is not "Connection details", and a check
+        // that skips a key it could make is a check that would not notice
+        // that key going untranslated. Seven keys are checked, counted
+        // while writing this sentence: title, body, the three action
+        // labels that survive for an ad-hoc attempt plus retry and edit
+        // session, and the details headline — eight reachable keys less
+        // the one exclusion.
         let translated = Set(Self.everyReachableMessage().map(\.key)).subtracting([
-            "connection.failed.details", "connection.failed.details.title",
+            "connection.failed.details",
         ])
-        #expect(translated.count == 6)
+        #expect(translated.count == 7)
         for key in translated.sorted() {
             #expect(german[key] != english[key], """
                 `\(key)` reads the same in German as in English \
@@ -235,7 +258,7 @@ struct ConnectFailurePlanTests {
     }
 }
 
-/// Direct tests over `ConnectFailureDetails.text(for:)` (failed-connect
+/// Direct tests over `ConnectFailureDetailText.read(from:)` (failed-connect
 /// surface plan, Task 3) — where the details dialog's technical text comes
 /// from.
 ///
@@ -246,37 +269,50 @@ struct ConnectFailurePlanTests {
 /// connection form has always shown, whose producing sites this branch's
 /// groundwork task audited. So what these tests pin is not "the message is
 /// clean" (that is a property of the sources, tested there) but the weaker
-/// and checkable thing this function is responsible for: it passes that
-/// message through unchanged and cannot reach past it.
+/// and checkable thing this reader is responsible for: what it carries is
+/// the message, all of the message, and nothing besides.
+///
+/// **What these tests can and cannot see.** The string is `fileprivate` to
+/// `ConnectFailureDetails.swift`, which is what makes rendering it on the
+/// general surface a compile error — and it also means no test can read it
+/// back and compare characters. So the claims below are made through
+/// `Equatable`: two failures with the same message must be equal however
+/// they differ otherwise, and two with different messages must not be. That
+/// catches anything the reader MIXES IN (the field, a prefix, the state
+/// itself) because such a thing varies where the message does not. It
+/// cannot catch a transformation applied uniformly to every message — a
+/// trim, say. `ReconnectWiringGuardTests`' sanctioned line
+/// `return ConnectFailureDetailText(text: message)` is the check for that
+/// one: the construction is pinned character for character.
 @Suite("Connect failure details")
 struct ConnectFailureDetailsTests {
-    /// Byte-for-byte the published message: not trimmed, not prefixed with
-    /// a headline, not wrapped in a "Details:" label. Anything added here
-    /// would be text no audit of the producing sites ever covered.
-    @Test func theDetailsTextIsThePublishedMessageUnchanged() {
-        let published = "Connection to 10.0.0.9:22 timed out after 15 seconds."
+    /// The field a failure carries is meaningful only to the on-screen form
+    /// (see `ContentView.fillForm`); it must not reach the dialog. A reader
+    /// that appended it would make these two unequal.
+    @Test func theHighlightedFormFieldDoesNotReachTheDetails() {
+        let message = "Connection to 10.0.0.9:22 timed out after 15 seconds."
         #expect(
-            ConnectFailureDetails.text(for: .failed(message: published, field: nil))
-                == published)
+            ConnectFailureDetailText.read(from: .failed(message: message, field: nil))
+                == ConnectFailureDetailText.read(
+                    from: .failed(message: message, field: .schema("SSHField.host"))))
     }
 
-    /// The field a failure carries is meaningful only to the on-screen form
-    /// (see `ContentView.fillForm`); it must not change what the dialog
-    /// shows, and must not leak into it.
-    @Test func theHighlightedFormFieldDoesNotChangeTheText() {
-        let published = "Authentication failed."
+    /// And the message IS what it carries, so the test above is not
+    /// satisfied by a reader that carries nothing at all: two failures that
+    /// differ only in their message must not be equal.
+    @Test func theMessageIsWhatTheDetailsCarry() {
         #expect(
-            ConnectFailureDetails.text(
-                for: .failed(message: published, field: .schema("SSHField.host")))
-                == published)
+            ConnectFailureDetailText.read(from: .failed(message: "timed out", field: nil))
+                != ConnectFailureDetailText.read(
+                    from: .failed(message: "connection refused", field: nil)))
     }
 
     /// No failure, nothing technical to show — and therefore no dialog to
-    /// open. Both non-failure states are checked, so a mutation that
-    /// answered with an empty string for one of them, which would offer an
-    /// empty dialog rather than none, is caught.
+    /// open. Both non-failure states are checked, so a reader that answered
+    /// with an empty value for one of them, which would offer an empty
+    /// dialog rather than none, is caught.
     @Test(arguments: [ConnectionViewModel.State.idle, .connecting])
     func aStateThatIsNotAFailureHasNoDetails(state: ConnectionViewModel.State) {
-        #expect(ConnectFailureDetails.text(for: state) == nil)
+        #expect(ConnectFailureDetailText.read(from: state) == nil)
     }
 }

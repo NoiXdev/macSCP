@@ -1609,20 +1609,15 @@ struct ContentView: View {
     /// those could be forgotten, which is the property
     /// `ReconnectWiringGuardTests` exists to hold.
     ///
-    /// An ad-hoc attempt — typed into the form and never saved — has no
-    /// stored session to redial, and there is deliberately no second dial
-    /// on this branch to redial it WITH: the values it would use live on
-    /// the form, and the form's own Connect button is the one place an
-    /// ad-hoc dial happens in this app. So this hands such a tab back to
-    /// that form, filled exactly as the failed attempt left it. That makes
-    /// Retry and Edit land in the same place for an ad-hoc attempt, which
-    /// is a UI cost accepted knowingly in exchange for there being exactly
-    /// one way to dial.
+    /// The guard is the same shape as `reconnect(_:)`'s and means the same
+    /// thing: nothing to dial, so nothing happens. It is not reachable from
+    /// the surface — `ConnectFailurePlan` omits the button entirely without
+    /// a stored session (round 2, after review; round 1 offered it and made
+    /// it return the user to the form, which is a button that does the
+    /// opposite of its name). It stays because a target can be deleted from
+    /// another window between the render and the click.
     func retryConnect(_ tab: SessionTab) {
-        guard let stored = failedConnectTarget(for: tab) else {
-            dismissConnectFailure(tab)
-            return
-        }
+        guard let stored = failedConnectTarget(for: tab) else { return }
         connect(in: tab, stored: stored)
     }
 
@@ -1649,9 +1644,16 @@ struct ContentView: View {
     /// that one tab's content), which is the tab `editStored`'s own target
     /// rule then picks — and it picks it because a tab showing this surface
     /// is unconnected by construction.
+    ///
+    /// Deliberately no `dismissConnectFailure(_:)` of its own (round 2,
+    /// after review): `editStored` resolves its target through
+    /// `formTarget()`, which returns `nil` while a dial is in flight and
+    /// then opens nothing — so clearing the surface here first would leave
+    /// the tab on the form with no editor and no explanation. `formTarget()`
+    /// already clears both surfaces on the path where it DOES hand a tab
+    /// back, which is the one path that needs it.
     func editFailedSession(_ tab: SessionTab) {
         guard let stored = failedConnectTarget(for: tab) else { return }
-        dismissConnectFailure(tab)
         editStored(stored)
     }
 

@@ -509,9 +509,17 @@ struct ReconnectPathTests {
 
     /// An ad-hoc attempt — typed into the form, never saved — has no stored
     /// session to redial and no second dial on this branch to redial it
-    /// with, so Retry hands the tab back to the form it came from. Nothing
-    /// is dialed, and the surface is gone.
-    @Test func retryOnAnAdHocFailureDialsNothingAndReturnsToTheForm() async {
+    /// with, so the surface does not offer Retry at all (round 2, after
+    /// review). Two halves, and the second is the one that matters: the
+    /// plan omits the button, AND the tab is left exactly as it was rather
+    /// than being quietly sent back to the form.
+    ///
+    /// Round 1 had `retryConnect(_:)` call `dismissConnectFailure(_:)` in
+    /// this case — the same call `onEdit` makes — so a user who pressed
+    /// "Erneut versuchen" got the prefilled form and no dial, which is the
+    /// complaint this whole surface answers. Both #expects below fail
+    /// against that version.
+    @Test func anAdHocFailureOffersNoRetryAtAll() async {
         let workDir = makeTempDirectory("retry-adhoc")
         defer { try? FileManager.default.removeItem(at: workDir) }
         let (view, cleanup) = makeContentView(
@@ -525,12 +533,19 @@ struct ReconnectPathTests {
         })
         tab.connectFailure = ConnectFailure(storedSessionID: nil)
 
+        #expect(view.failedConnectTarget(for: tab) == nil)
+        #expect(
+            ConnectFailurePlan.content(
+                hasStoredSession: view.failedConnectTarget(for: tab) != nil).retryButton == nil,
+            "the surface must not offer a Retry the app has no way to perform")
+
+        // Reachable only if a target vanished between render and click.
         view.retryConnect(tab)
 
         #expect(await recorder.dialCount == 0)
-        #expect(tab.connectFailure == nil, """
-            Retry on an ad-hoc failure left the surface up, so the button appears to do \
-            nothing at all.
+        #expect(tab.connectFailure != nil, """
+            `retryConnect(_:)` cleared the surface for an ad-hoc failure — that is round 1's \
+            defect: a button named "try again" that dials nothing and returns the form.
             """)
     }
 

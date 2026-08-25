@@ -531,7 +531,8 @@ extension ContentView {
                     // Also `ReconnectWiringGuardTests`' anchor for this
                     // branch, the same way the lost branch above is one.
                     //
-                    // Every action here delegates: Retry to
+                    // Every action here delegates: Retry — offered only
+                    // when there is a stored session to dial — to
                     // `retryConnect(_:)`, which redials through the one
                     // shared `connect(in:stored:)` a sidebar click uses, so
                     // this surface adds no second place a security rule
@@ -540,14 +541,14 @@ extension ContentView {
                     // through; Close to the ordinary tab-close entry point,
                     // warnings and all. What the surface SAYS is
                     // `ConnectFailurePlan.content`'s answer, and the
-                    // technical text is `ConnectFailureDetails.text`'s —
+                    // technical text is `ConnectFailureDetailText.read`'s —
                     // this branch decides nothing of its own.
                     else if surface == .failed {
                         ConnectFailureView(
                             content: ConnectFailurePlan.content(
                                 hasStoredSession: failedConnectTarget(for: tab) != nil),
-                            details: ConnectFailureDetails.text(
-                                for: tab.connectionViewModel.state),
+                            details: ConnectFailureDetailText.read(
+                                from: tab.connectionViewModel.state),
                             onRetry: { retryConnect(tab) },
                             onEdit: { dismissConnectFailure(tab) },
                             onEditSession: { editFailedSession(tab) },
@@ -1225,7 +1226,7 @@ struct LostConnection: Equatable {
 /// show is bounded by what this type can hold. The full technical text the
 /// details dialog shows is deliberately NOT kept here — it is read from
 /// `ConnectionViewModel`'s own published `.failed` state when the dialog
-/// asks for it (`ConnectFailureDetails.text(for:)`), so there is one text,
+/// asks for it (`ConnectFailureDetailText.read(from:)`), so there is one text,
 /// the one the layer below published, and no second copy that could drift
 /// from it or outlive the attempt it describes.
 struct ConnectFailure: Equatable {
@@ -1377,10 +1378,19 @@ struct ConnectFailureContent: Equatable {
 
     let title: Message
     let body: Message
-    /// Redial through the same connection path a fresh attempt uses —
-    /// always offered, since this surface exists only right after an
-    /// attempt just failed.
-    let retryButton: Message
+    /// Redial through the same connection path a fresh attempt uses.
+    ///
+    /// `nil` for an ad-hoc attempt (round 2, after review), for exactly the
+    /// reason `editSessionButton` is: there is nothing stored to dial. The
+    /// values an ad-hoc retry would use live on the form, and the form's
+    /// own Connect button is the one place an ad-hoc dial happens — adding
+    /// a second dial site to serve this button is the trade this whole
+    /// surface exists to refuse. Round 1 offered the button anyway and had
+    /// it hand the tab back to the form: no dial, no "Connecting…", which
+    /// is precisely the behaviour the maintainer complained about, under a
+    /// button named for the opposite. An action that cannot act is worse
+    /// than an action that is not offered.
+    let retryButton: Message?
     /// The form, prefilled with what was just typed. A one-off change:
     /// this button never touches a stored session.
     let editButton: Message
@@ -1401,7 +1411,7 @@ struct ConnectFailureContent: Equatable {
     /// Opens the details dialog (failed-connect surface plan, Task 3). The
     /// LABEL is a catalog key like every other string on the surface; the
     /// dialog's own body is the one raw text in this whole feature, and it
-    /// is not carried by this type — see `ConnectFailureDetails.text(for:)`.
+    /// is not carried by this type — see `ConnectFailureDetailText`.
     let detailsButton: Message
     /// The details dialog's own headline. A field here rather than a
     /// literal in the dialog for the reason `LostConnectionContent`'s own
@@ -1429,7 +1439,8 @@ enum ConnectFailurePlan {
             body: .init(
                 key: "connection.failed.body",
                 fallback: "macSCP could not connect to the host."),
-            retryButton: .init(key: "connection.failed.retry", fallback: "Try again"),
+            retryButton: hasStoredSession
+                ? .init(key: "connection.failed.retry", fallback: "Try again") : nil,
             editButton: .init(key: "connection.failed.edit", fallback: "Edit"),
             editSessionButton: hasStoredSession
                 ? .init(key: "connection.failed.editSession", fallback: "Edit session") : nil,
@@ -1437,37 +1448,6 @@ enum ConnectFailurePlan {
             detailsButton: .init(key: "connection.failed.details", fallback: "Details…"),
             detailsTitle: .init(
                 key: "connection.failed.details.title", fallback: "Connection details"))
-    }
-}
-
-/// The technical text the failed-connect details dialog shows (failed-
-/// connect surface plan, Task 3).
-///
-/// A plain function over `ConnectionViewModel.State` — which is the whole
-/// point of it existing at all rather than the dialog reading the state
-/// itself. The maintainer's decision for this surface is "general message
-/// on the surface, everything precise in a dialog for debugging", and the
-/// design spec attaches a condition to it: the dialog may show what the
-/// user typed or stored, and **never** a secret, not even inside a
-/// library's own embedded error text. That condition is met by taking
-/// exactly the message `ConnectionViewModel` already published — the text
-/// the connection form has always shown, which the groundwork task of this
-/// branch audited and repaired at the sources that produce it — and adding
-/// nothing to it.
-///
-/// So this function is deliberately incapable of enriching: it returns the
-/// published message unchanged or nothing at all. Reaching past it for a
-/// rawer form of the error (a `String(describing:)` of the thrown value,
-/// say, or the config that was dialed) would put text on screen that no
-/// audit covered, which is the one way this dialog could become the leak
-/// the rest of the branch was spent closing.
-enum ConnectFailureDetails {
-    /// `nil` for any state that is not a failure — there is nothing
-    /// technical to show, and a dialog offering an empty body would be a
-    /// worse answer than no dialog.
-    static func text(for state: ConnectionViewModel.State) -> String? {
-        guard case .failed(let message, _) = state else { return nil }
-        return message
     }
 }
 
@@ -1835,17 +1815,22 @@ private struct LostConnectionView: View {
 /// `ReconnectWiringGuardTests` scans this body to keep it true. The one
 /// piece of text that is NOT a catalog key is the technical message, and it
 /// is not on this surface: it lives behind the details control, in a dialog
-/// of its own (`ConnectFailureDetailsSheet`), which is the maintainer's
+/// of its own (`ConnectFailureDetailsSheet`, in its own file so that this
+/// view cannot read the string at all), which is the maintainer's
 /// decision — a general sentence here, everything precise one click away
 /// for debugging.
 private struct ConnectFailureView: View {
     let content: ConnectFailureContent
     /// The technical text, or `nil` when the layer below published none —
     /// in which case the details control is not offered at all rather than
-    /// opening an empty dialog. Comes from `ConnectFailureDetails
-    /// .text(for:)`; see that function for why it is the published message
-    /// and nothing richer.
-    let details: String?
+    /// opening an empty dialog.
+    ///
+    /// An opaque `ConnectFailureDetailText`, not a `String`, and that is the
+    /// whole point: this view can test it for `nil` and hand it to the
+    /// dialog, and it cannot render it. See that type's own doc comment for
+    /// why a `String?` here — which is what round 1 had — gave this surface
+    /// the structural guarantee and the raw server text side by side.
+    let details: ConnectFailureDetailText?
     let onRetry: () -> Void
     let onEdit: () -> Void
     let onEditSession: () -> Void
@@ -1865,10 +1850,10 @@ private struct ConnectFailureView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             HStack(spacing: 12) {
-                Button(
-                    L10n.string(content.retryButton.key, content.retryButton.fallback),
-                    action: onRetry)
-                    .buttonStyle(.polished)
+                if let retry = content.retryButton {
+                    Button(L10n.string(retry.key, retry.fallback), action: onRetry)
+                        .buttonStyle(.polished)
+                }
                 Button(
                     L10n.string(content.editButton.key, content.editButton.fallback),
                     action: onEdit)
@@ -1893,54 +1878,12 @@ private struct ConnectFailureView: View {
         .padding(24)
         .frame(minWidth: 420, maxWidth: 460)
         .sheet(isPresented: $showsDetails) {
-            ConnectFailureDetailsSheet(
-                title: content.detailsTitle, message: details ?? "",
-                onClose: { showsDetails = false })
-        }
-    }
-}
-
-/// The failed-connect details dialog (failed-connect surface plan, Task 3):
-/// the full technical message, for debugging.
-///
-/// The only surface in this branch that renders text macSCP did not choose
-/// word for word, which is why the design spec attaches an explicit
-/// condition to it — it may show what the user typed or stored, and never a
-/// secret, not even inside a library's own embedded error text. That
-/// condition is met upstream, at the sources that produce the message, and
-/// held here by taking `message` as a plain `String` from
-/// `ConnectFailureDetails.text(for:)` and doing nothing to it: this view has
-/// no access to a config, a form or an `Error` from which it could assemble
-/// anything richer.
-///
-/// `textSelection` because the point of the dialog is to get the text INTO
-/// a bug report, and a scrolling body because a server's own refusal text
-/// has no length this layout could assume.
-private struct ConnectFailureDetailsSheet: View {
-    let title: ConnectFailureContent.Message
-    let message: String
-    let onClose: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(L10n.string(title.key, title.fallback))
-                .font(.headline)
-            ScrollView {
-                Text(message)
-                    .font(.system(size: 12, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(minHeight: 80, maxHeight: 220)
-            HStack {
-                Spacer()
-                Button(L10n.string("common.ok", "OK"), action: onClose)
-                    .buttonStyle(.polished)
-                    .keyboardShortcut(.defaultAction)
+            if let details {
+                ConnectFailureDetailsSheet(
+                    title: content.detailsTitle, details: details,
+                    onClose: { showsDetails = false })
             }
         }
-        .padding(20)
-        .frame(minWidth: 420, maxWidth: 520)
     }
 }
 

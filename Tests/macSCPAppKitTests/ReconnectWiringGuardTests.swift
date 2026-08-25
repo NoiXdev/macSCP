@@ -196,8 +196,37 @@ struct ReconnectWiringGuardTests {
     }
 
     private static let chokePoints: [ChokePoint] = [
+        // Round 5, review-measured — and the same lesson a fifth time: a
+        // detector that matches a SPELLING loses to a spelling. This one
+        // required a literal dot, and Swift's implicit `self` inside a
+        // same-type extension removes it. The defeating mutation was one
+        // line in a brand-new App-layer file —
+        // `extension ConnectionViewModel { func redial() async -> (any
+        // RemoteFileSystem)? { await connect() } }` — called from the
+        // failed-connect surface: the whole suite stayed green while the
+        // call bypassed `fillForm`, the plaintext confirmation,
+        // `startSession`, the audit recorder and both hand-off locks. The
+        // reviewer ran the dotted spelling of the same helper first and it
+        // WAS red, so the walk does reach unanchored files; only the
+        // receiver's absence escaped.
+        //
+        // So the pattern is now over the IDENTIFIER, with no claim about
+        // how the receiver is written or whether there is one:
+        // `.connect`, `self.connect`, a bare `connect` inside an
+        // extension, `\.connect` as a key path and `Type.connect` as an
+        // unapplied reference all match. `reconnect`/`retryConnect`/
+        // `connected`/`connecting` do not — the lookbehind rejects a
+        // preceding identifier character and `\b` rejects a following one.
+        //
+        // The App layer's OWN synchronous funnel calls
+        // (`connect(in:stored:)` and its declaration) now match too, and
+        // are excused by the discrimination rather than by the pattern:
+        // they are applied and carry no `await`, while every dial in this
+        // project is `async`. That is the honest split — "is this a dial"
+        // is answered by whether it suspends, not by whether someone
+        // spelled a receiver.
         ChokePoint(
-            pattern: #"\.connect\b"#,
+            pattern: #"(?<![A-Za-z0-9_])connect\b"#,
             describes: "obtaining a connection",
             discrimination: .unlessSynchronousCall),
         // `[A-Z]` (round 4, review-measured): the lookaheads are
@@ -248,8 +277,8 @@ struct ReconnectWiringGuardTests {
         // and a second, unsanctioned dialog fed from somewhere else is
         // exactly the change that should stop a reader.
         ChokePoint(
-            pattern: #"\bConnectFailureContent\s*(?:\(|\.init\b)"#,
-            describes: "building the failed-connect surface's content"),
+            pattern: #"\bConnectFailure(?:Content|DetailText)\s*(?:\(|\.init\b)"#,
+            describes: "building the failed-connect surface's content or its details text"),
         ChokePoint(
             pattern: #"\bConnectFailure(?:View|DetailsSheet)\s*(?:\(|\.init\b)"#,
             describes: "rendering the failed-connect surface or its details dialog"),
@@ -285,8 +314,8 @@ struct ReconnectWiringGuardTests {
         let reason: String
     }
 
-    /// Fourteen entries, counted while writing this sentence. Adding a
-    /// fifteenth is a deliberate edit here, with a reason, which is the
+    /// Fifteen entries, counted while writing this sentence. Adding a
+    /// sixteenth is a deliberate edit here, with a reason, which is the
     /// entire mechanism: a new dial cannot become invisible by being
     /// somewhere nobody anchored on.
     private static let sanctionedSites: [SanctionedSite] = [
@@ -355,6 +384,11 @@ struct ReconnectWiringGuardTests {
             code: "ConnectFailureDetailsSheet(",
             occurrences: 1,
             reason: "`ConnectFailureView`'s own sheet — the only site that opens the details dialog, which is the one surface on this branch showing a raw error text and therefore the one whose single source matters."),
+        SanctionedSite(
+            file: "Sources/MacSCPAppKit/ConnectFailureDetails.swift",
+            code: "return ConnectFailureDetailText(text: message)",
+            occurrences: 1,
+            reason: "`ConnectFailureDetailText.read(from:)` — the only construction of the details text in the App layer, and the line that decides it is the published message and nothing else."),
         SanctionedSite(
             file: "Sources/MacSCPAppKit/TabStripView.swift",
             code: "case .attention: dot(.red, pulse: false)",
@@ -649,13 +683,54 @@ struct ReconnectWiringGuardTests {
         let body = try Self.strippedBody(
             after: "private struct LostConnectionView: View", in: Self.detailFile)
         #expect(body.contains("L10n.string("), "the surface renders no localized text at all?")
-        #expect(!body.contains("L10n.string( "), """
-            `LostConnectionView` passes a string literal to `L10n.string(`. Every string on \
-            this surface has to come through `LostConnectionContent`, or the guarantee that \
-            it can only show a fixed, enumerated set of catalog keys — and therefore no host \
-            name, server message or typed value — covers only the part that happens to go \
-            through the plan.
+        let literals = Self.localizedCallsWithALiteralArgument(in: body)
+        #expect(literals.isEmpty, """
+            `LostConnectionView` passes a string literal to `L10n.string(`: \(literals). Every \
+            string on this surface has to come through `LostConnectionContent`, or the \
+            guarantee that it can only show a fixed, enumerated set of catalog keys — and \
+            therefore no host name, server message or typed value — covers only the part that \
+            happens to go through the plan.
             """)
+    }
+
+    /// The literal reader, on every shape the two surface tests depend on
+    /// — including the wrapped one that defeated the line-based version.
+    @Test func theLiteralReaderSeesAWrappedCallTheSameAsAnInlineOne() {
+        let stripped = Self.stripCommentsAndStrings("""
+            Text(L10n.string(content.title.key, content.title.fallback))
+            Text(L10n.string(
+                content.body.key,
+                content.body.fallback))
+            Text(L10n.string(nested(a, b), content.body.fallback))
+            """)
+        #expect(Self.localizedCallsWithALiteralArgument(in: stripped).isEmpty, """
+            a call whose arguments are identifier paths must pass however it is wrapped, and \
+            a nested call's own comma must not be read as an argument separator: \
+            \(Self.localizedCallsWithALiteralArgument(in: stripped))
+            """)
+
+        let inlineLiteral = Self.stripCommentsAndStrings("""
+            Text(L10n.string("connection.failed.close", "Close"))
+            """)
+        #expect(Self.localizedCallsWithALiteralArgument(in: inlineLiteral).count == 1)
+
+        // The measured escape: identical call, wrapped.
+        let wrappedLiteral = Self.stripCommentsAndStrings("""
+            Text(L10n.string(
+                "connection.failed.body",
+                "Host: prod-db.internal"))
+            """)
+        #expect(Self.localizedCallsWithALiteralArgument(in: wrappedLiteral).count == 1, """
+            a hardcoded label wrapped onto the next line is invisible to a line-based check, \
+            and it is what actually put raw text on the surface with the whole suite green.
+            """)
+
+        // A literal in the SECOND position only — the shape a check that
+        // looked at the first argument alone would wave through.
+        let literalFallback = Self.stripCommentsAndStrings("""
+            Text(L10n.string(content.body.key, "Host: prod-db.internal"))
+            """)
+        #expect(Self.localizedCallsWithALiteralArgument(in: literalFallback).count == 1)
     }
 
     /// Runs the detectors over synthetic source the way the real scan does,
@@ -686,6 +761,8 @@ struct ReconnectWiringGuardTests {
             let fs = try await CitadelFileSystem.connect(config, decider)
             let client = SSHClient.self
             tab.session = BrowserSession.init(id: id)
+            let viaImplicitSelf = await connect()
+            let unqualifiedReference = connect
             """)
 
         #expect(!flagged.contains { $0.contains("harmless") }, """
@@ -703,7 +780,17 @@ struct ReconnectWiringGuardTests {
         #expect(flagged.contains("tab.session = BrowserSession.init(id: id)"), """
             an `.init` spelling must be seen the same as a `(` one.
             """)
-        #expect(flagged.count == 6, "expected exactly the six real hits, found \(flagged)")
+        #expect(flagged.contains("let viaImplicitSelf = await connect()"), """
+            a dial written with Swift's implicit `self` — which is what an `extension \
+            ConnectionViewModel` in the App layer gets for free — has no dot anywhere, and \
+            round 4's pattern required one. This is the spelling that defeated the whole \
+            suite while bypassing `fillForm`, the plaintext confirmation, `startSession`, \
+            the audit recorder and both hand-off locks.
+            """)
+        #expect(flagged.contains("let unqualifiedReference = connect"), """
+            the same shape unapplied: no dot AND no paren.
+            """)
+        #expect(flagged.count == 8, "expected exactly the eight real hits, found \(flagged)")
     }
 
     /// The other direction, and the one round 3 got wrong: ordinary code
@@ -722,10 +809,22 @@ struct ReconnectWiringGuardTests {
             cancellable = publisher.connect()
             let connected = liveness == .connected
             if state == .connecting { return }
+            reconnect(tab)
+            retryConnect(tab)
+            func connect(
+            connect(in: tab, stored: stored)
+            connect(in: target, stored: stored, paneVisibility: .terminalOnly)
             """)
         #expect(flagged.isEmpty, """
             ordinary code was flagged as touching a dial choke point: \(flagged)
             """)
+        // The last four lines are the price of widening the pattern from
+        // `\.connect` to the bare identifier (round 5): the App layer's own
+        // funnel — `ContentView.connect(in:stored:)`, its declaration and
+        // its callers — now matches the pattern and is cleared by the
+        // discrimination instead, because it is applied and carries no
+        // `await`. `reconnect`/`retryConnect` never matched: the lookbehind
+        // rejects a preceding identifier character.
     }
 
     /// …but the narrowing must not have gone so far that the real thing
@@ -962,11 +1061,11 @@ struct ReconnectWiringGuardTests {
     /// would be spelled.
     @Test func theDetailsDialogShowsWhatTheViewModelPublished() throws {
         let body = try Self.strippedBody(after: Self.failedBranchAnchor, in: Self.detailFile)
-        #expect(body.contains("ConnectFailureDetails.text("), """
-            the failed-connect branch no longer asks `ConnectFailureDetails.text(` for the \
+        #expect(body.contains("ConnectFailureDetailText.read("), """
+            the failed-connect branch no longer asks `ConnectFailureDetailText.read(` for the \
             dialog's text.
             """)
-        #expect(body.contains("for: tab.connectionViewModel.state"), """
+        #expect(body.contains("from: tab.connectionViewModel.state"), """
             the details text is no longer taken from `tab.connectionViewModel.state` — the \
             published failure is the only text this dialog may show.
             """)
@@ -975,6 +1074,41 @@ struct ReconnectWiringGuardTests {
             shows what the layer below published and nothing richer; a `String(describing:)` \
             of a thrown error or a config is text no audit of the producing sites covered.
             """)
+    }
+
+    /// The half of the details guarantee a compiler cannot hold.
+    ///
+    /// `ConnectFailureDetailText.text` is `fileprivate`, so
+    /// `ConnectFailureView` — which lives in another file — cannot render
+    /// it: both spellings of the measured mutation
+    /// (`Text(details ?? …)` and `Text(details?.text ?? …)`) fail to
+    /// compile. That covers everyone outside the details file. Inside it,
+    /// nothing stops an accessor being added that puts the string back
+    /// within reach of the whole module, and the next person to widen it
+    /// would not be doing anything the type system objects to.
+    ///
+    /// So this checks the file's own shape: the storage stays
+    /// `fileprivate`, and the type gains no conformance or member whose
+    /// job is to hand a `String` out. Deliberately crude — `description`,
+    /// `CustomStringConvertible`, `var text` and a `String`-returning
+    /// `func` are banned outright rather than judged — because if this
+    /// type ever genuinely needs one, that is a change worth stopping at.
+    @Test func theDetailsTextHasNoWayOutOfItsOwnFile() throws {
+        let file = Self.file("Sources/MacSCPAppKit/ConnectFailureDetails.swift")
+        let stripped = Self.stripCommentsAndStrings(
+            try String(contentsOf: file, encoding: .utf8))
+        #expect(stripped.contains("fileprivate let text: String"), """
+            `ConnectFailureDetailText`'s storage is no longer `fileprivate let text: String`. \
+            That declaration is what makes rendering the raw text on the general surface a \
+            COMPILE error rather than something a scan has to keep noticing.
+            """)
+        for escape in ["CustomStringConvertible", "var description", "var text", "func text"] {
+            #expect(!stripped.contains(escape), """
+                `ConnectFailureDetails.swift` now contains `\(escape)`, which hands the raw \
+                error text back to the whole module — and with it the shape that put a \
+                server's own message on the general surface with the suite green.
+                """)
+        }
     }
 
     /// The same last gap `theLostSurfaceRendersNoStringOfItsOwn` closes, for
@@ -991,12 +1125,13 @@ struct ReconnectWiringGuardTests {
         let body = try Self.strippedBody(
             after: "private struct ConnectFailureView: View", in: Self.detailFile)
         #expect(body.contains("L10n.string("), "the surface renders no localized text at all?")
-        #expect(!body.contains("L10n.string( "), """
-            `ConnectFailureView` passes a string literal to `L10n.string(`. Every string on \
-            this surface has to come through `ConnectFailureContent`, or the guarantee that \
-            it can only show a fixed, enumerated set of catalog keys — and therefore no host \
-            name, server message or typed value — covers only the part that happens to go \
-            through the plan.
+        let literals = Self.localizedCallsWithALiteralArgument(in: body)
+        #expect(literals.isEmpty, """
+            `ConnectFailureView` passes a string literal to `L10n.string(`: \(literals). Every \
+            string on this surface has to come through `ConnectFailureContent`, or the \
+            guarantee that it can only show a fixed, enumerated set of catalog keys — and \
+            therefore no host name, server message or typed value — covers only the part that \
+            happens to go through the plan.
             """)
     }
 
@@ -1321,6 +1456,65 @@ struct ReconnectWiringGuardTests {
     /// Collapses every run of whitespace to one space and trims — so an
     /// allow-list entry survives reindentation and line rewrapping without
     /// surviving an actual change to the code on the line.
+    /// Every `L10n.string(` in `body` that is handed a string literal,
+    /// returned as the compacted call text.
+    ///
+    /// Round 5, review-measured: the previous check was `!body.contains(
+    /// "L10n.string( ")` — a claim about ONE LINE. `stripCommentsAndStrings`
+    /// turns a literal into a single space, so a hardcoded label reads as
+    /// `L10n.string( , )` and was caught, but the identical call with its
+    /// arguments wrapped onto the next line reads as `L10n.string(` followed
+    /// by a NEWLINE and was green — with `Host: prod-db.internal` on the
+    /// surface. Wrapping is not a semantic difference, and a check that a
+    /// reformat can defeat is not a check.
+    ///
+    /// So this reads the CALL: whitespace is removed entirely, the argument
+    /// list is taken by matching parentheses, and it is split at top-level
+    /// commas. A blanked literal leaves an EMPTY argument in any position —
+    /// `L10n.string(,)`, `L10n.string(key,)` — while every legitimate
+    /// argument is an identifier path and survives compaction intact.
+    /// Nesting is handled by the depth counter, so `L10n.string(key(a, b),
+    /// fallback)` is not mistaken for three arguments.
+    private static func localizedCallsWithALiteralArgument(in body: String) -> [String] {
+        let compact = String(body.filter { !$0.isWhitespace })
+        let token = "L10n.string("
+        var found: [String] = []
+        var searchStart = compact.startIndex
+        while let hit = compact.range(of: token, range: searchStart..<compact.endIndex) {
+            searchStart = hit.upperBound
+            var depth = 1
+            var arguments: [String] = []
+            var current = ""
+            var index = hit.upperBound
+            while index < compact.endIndex, depth > 0 {
+                let character = compact[index]
+                if character == "(" { depth += 1 }
+                if character == ")" {
+                    depth -= 1
+                    if depth == 0 { break }
+                }
+                if character == ",", depth == 1 {
+                    arguments.append(current)
+                    current = ""
+                } else {
+                    current.append(character)
+                }
+                index = compact.index(after: index)
+            }
+            // An unbalanced call means the scan read past the end of the
+            // body — report it rather than silently deciding it is clean.
+            guard depth == 0 else {
+                found.append(token + current + "  <unbalanced>")
+                break
+            }
+            arguments.append(current)
+            if arguments.contains(where: \.isEmpty) {
+                found.append(token + arguments.joined(separator: ",") + ")")
+            }
+        }
+        return found
+    }
+
     private static func normalized(_ line: String) -> String {
         line.split(whereSeparator: { $0 == " " || $0 == "\t" }).joined(separator: " ")
     }
