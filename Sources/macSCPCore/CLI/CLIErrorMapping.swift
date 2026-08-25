@@ -137,15 +137,32 @@ public enum CLIErrorMapping {
                 return "Error: \(reason)"
             }
         default:
-            // Stringifying an arbitrary, unmapped error is safe ONLY because
-            // no error type reachable from a subcommand's `run()` today
-            // carries user-supplied secret material (passwords, private key
-            // bytes, passphrases) in an associated value — every error type
-            // that touches a credential is already handled by a case above.
-            // Adding a new error type that embeds user input (e.g. a raw
-            // credential in a `.protocolError`-shaped case) without also
-            // adding an explicit case here would silently start leaking it
-            // to stderr through this fallback.
+            // Stringifying an arbitrary, unmapped error is a FLOOR, not a
+            // guarantee, and this comment used to claim the opposite: that
+            // no error type reachable from a subcommand's `run()` carries
+            // user-supplied secret material in an associated value. That
+            // was measured false. A `URLError` from `URLSession` reached
+            // here through any WebDAV operation, and an `NSError`'s
+            // `description` prints its whole `userInfo` — including the
+            // failing URL verbatim, userinfo component and all, so a stored
+            // WebDAV session whose base URL carries `user:password@` handed
+            // that password to stderr through this line.
+            //
+            // What makes the fallback safe is not a property of this switch
+            // but a habit at every throw site: each backend wraps foreign
+            // errors before they leave it (`WebDAVFileSystem.surfaceable`,
+            // `S3FileSystem`'s `localizedDescription` wrapping,
+            // `CitadelFileSystem`'s mapping). A backend that forgets is a
+            // leak here, and this fallback cannot tell the difference —
+            // which is exactly what happened on the WebDAV path, where the
+            // wrap sat on the dial alone while six other operations threw
+            // straight through.
+            //
+            // So: an error type that embeds user input, or a backend that
+            // rethrows a foreign one unwrapped, leaks to stderr through
+            // this line. Adding a case here is one fix; wrapping at the
+            // throw site is the better one, because this fallback is not
+            // the only thing that stringifies an error.
             return "Error: \(error)"
         }
     }

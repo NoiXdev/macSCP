@@ -98,33 +98,105 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
             if delegate.credentialWasRejected {
                 throw RemoteFSError.authenticationFailed
             }
-            // Everything macSCP already typed keeps its own shape; anything
-            // else is a foreign error -- in practice a `URLError` from
-            // `URLSession` -- and gets wrapped rather than rethrown, the same
-            // shape `S3FileSystem.fetchPage` already uses for the same
-            // situation.
-            //
-            // The wrapping is what keeps a secret out of the text, and
-            // `localizedDescription` rather than `String(describing:)` is the
-            // whole point: an `NSError`'s `description` prints its ENTIRE
-            // `userInfo`, and Foundation puts the failing URL in there under
-            // `NSErrorFailingURLStringKey` -- verbatim, userinfo component
-            // included, so a base URL of the form
-            // `https://user:password@host/dav` hands that password to
-            // whatever renders the error. `localizedDescription` is the
-            // localized sentence alone ("Could not connect to the server."),
-            // which carries no URL and no dictionary whose keys Foundation,
-            // not macSCP, decides.
-            //
-            // Second effect, not a side effect: an unwrapped rethrow reached
-            // `ConnectionViewModel.failedState`'s catch-all arm, so an
-            // ordinary WebDAV network failure read "Unexpected error: <NSError
-            // dump>" instead of the connection-failure text every other
-            // backend produces for the same condition.
-            if let fsError = error as? RemoteFSError { throw fsError }
-            throw RemoteFSError.connectionFailed(reason: error.localizedDescription)
+            // Everything else goes through the same wrap every other
+            // operation on this backend uses -- see `surfaceable(_:)`, which
+            // is where the reasoning for it lives.
+            throw Self.surfaceable(error)
         }
         return fs
+    }
+
+    // MARK: - The network boundary
+
+    /// Turns a foreign error from the network into one this app can put in
+    /// front of a user, and is the ONLY thing in this file that talks to
+    /// `transport`.
+    ///
+    /// **Why every call goes through here.** `WebDAVURL` builds every
+    /// request from `baseURL.absoluteString`, and `WebDAVFieldSchema
+    /// .makeConfig` accepts a base URL with a `user:password@` component --
+    /// it checks for "not empty" and trims, nothing more. So the password
+    /// is in the URL of EVERY request, not just the first one.
+    ///
+    /// An `NSError`'s `description` prints its entire `userInfo`, and
+    /// Foundation puts the failing URL in there under
+    /// `NSErrorFailingURLStringKey`, verbatim, userinfo component included.
+    /// Measured against a dead loopback port: the secret is present in
+    /// `String(describing:)` and absent from `localizedDescription`. The
+    /// reachable sinks all stringify: the CLI's stderr fallback, the
+    /// transfer-failure text and the browse-error text. No attacker is
+    /// needed to reach them -- a timeout, a DNS failure or a dropped
+    /// connection during an ordinary session is enough.
+    ///
+    /// Round 1 of this fix wrapped `connect` alone, which left `list`,
+    /// `stat`, `readStream`, `delete`, `createDirectory` and `rename`
+    /// handing the raw `URLError` through. Wrapping at the transport
+    /// boundary instead of at each operation is deliberate: a seventh
+    /// operation added later gets this for free, and "which methods
+    /// remembered to wrap" stops being a thing anyone has to know.
+    ///
+    /// Two kinds of error pass through unchanged, and both are the app's
+    /// own vocabulary rather than the network's: `RemoteFSError`, already
+    /// mapped and already safe, and `CancellationError`, which the transfer
+    /// queue distinguishes from a failure and would report as one if it
+    /// were wrapped.
+    static func surfaceable(_ error: Error) -> Error {
+        if let fsError = error as? RemoteFSError { return fsError }
+        if error is CancellationError { return error }
+        // `localizedDescription` is the localized sentence alone ("Could
+        // not connect to the server."), which carries no URL and no
+        // dictionary whose keys Foundation, not macSCP, decides.
+        //
+        // Second effect, not a side effect: an unwrapped rethrow reaches
+        // `ConnectionViewModel.failedState`'s catch-all arm, so an ordinary
+        // WebDAV network failure read "Unexpected error: <NSError dump>"
+        // instead of the connection-failure text every other backend
+        // produces for the same condition.
+        return RemoteFSError.connectionFailed(reason: error.localizedDescription)
+    }
+
+    /// `transport.send`, with the wrap above. Every request in this file
+    /// goes through this rather than through `transport` directly.
+    private func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        do {
+            return try await transport.send(request)
+        } catch {
+            throw Self.surfaceable(error)
+        }
+    }
+
+    /// `transport.sendStreaming`, with the wrap above applied BOTH to the
+    /// call and to the body it returns. A download that dies halfway
+    /// through throws from inside the stream, long after this function has
+    /// returned, and that error reaches the same transfer-failure text as
+    /// any other.
+    private func sendStreaming(_ request: URLRequest) async throws
+        -> (body: AsyncThrowingStream<Data, Error>, response: HTTPURLResponse)
+    {
+        do {
+            let (body, response) = try await transport.sendStreaming(request)
+            return (Self.surfacing(body), response)
+        } catch {
+            throw Self.surfaceable(error)
+        }
+    }
+
+    /// Re-emits a body stream with `surfaceable(_:)` applied to whatever it
+    /// throws.
+    static func surfacing(
+        _ body: AsyncThrowingStream<Data, Error>
+    ) -> AsyncThrowingStream<Data, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await chunk in body { continuation.yield(chunk) }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: surfaceable(error))
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
     }
 
     // MARK: - Reads
@@ -192,7 +264,7 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         </d:prop></d:propfind>
         """.utf8)
 
-        let (data, response) = try await transport.send(request)
+        let (data, response) = try await send(request)
         try Self.mapStatus(response.statusCode, path: path, method: "PROPFIND")
         return data
     }
@@ -205,7 +277,7 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         if offset > 0 {
             request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
         }
-        let (body, response) = try await transport.sendStreaming(request)
+        let (body, response) = try await sendStreaming(request)
         try Self.mapStatus(response.statusCode, path: path, method: "GET")
         // A server that ignores Range answers 200 with the WHOLE body. Handing
         // that to a caller who asked for byte N onward would append the head a
@@ -337,7 +409,7 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
 
         let response: HTTPURLResponse
         do {
-            response = try await transport.send(request).1
+            response = try await send(request).1
         } catch {
             // The request is over; nothing will drain the body again. Stop
             // the pump BEFORE looking at its outcome — awaiting a pump that
@@ -428,7 +500,7 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         request.setValue(base.url(forPath: to, isDirectory: false).absoluteString,
                          forHTTPHeaderField: "Destination")
         request.setValue("F", forHTTPHeaderField: "Overwrite")
-        let (_, response) = try await transport.send(request)
+        let (_, response) = try await send(request)
         try Self.mapStatus(response.statusCode, path: from, method: "MOVE")
     }
 
@@ -448,7 +520,7 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
     private func simple(method: String, path: String, isDirectory: Bool) async throws {
         var request = URLRequest(url: base.url(forPath: path, isDirectory: isDirectory))
         request.httpMethod = method
-        let (_, response) = try await transport.send(request)
+        let (_, response) = try await send(request)
         try Self.mapStatus(response.statusCode, path: path, method: method)
     }
 

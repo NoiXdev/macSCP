@@ -328,6 +328,90 @@ struct ConnectFailureSecrecyTests {
         }
     }
 
+    /// Every OTHER WebDAV operation, held to the same thing as the dial.
+    ///
+    /// Review round 1 measured the fix above sitting on `connect` alone.
+    /// The credential is not in the dial, it is in the base URL, so it is
+    /// in every request this backend ever makes — and `list`, `stat`,
+    /// `readStream`, `delete`, `createDirectory`, `rename` and `write` all
+    /// reached `URLSession` with no `catch` between them and the surface.
+    /// A timeout or a dropped connection mid-session was enough; the
+    /// resulting `URLError` went to the CLI's stderr, to the transfer
+    /// failure text and to the browse error text, each of which
+    /// stringifies.
+    ///
+    /// Driven against a dead loopback port through a REAL
+    /// `URLSessionHTTPTransport`, for the same reason the dial test is: the
+    /// risk lives in Foundation's own `userInfo` dump, and a hand-built
+    /// error would prove nothing about it. Nothing listens on port 1, so
+    /// every one of these fails immediately without a network, a server or
+    /// a gate.
+    @Test(
+        "every WebDAV operation reports the transport, not the URL's credentials",
+        arguments: WebDAVOperation.allCases)
+    func webdavOperationFailureCarriesNoSecret(operation: WebDAVOperation) async {
+        let config = WebDAVConnectionConfig(
+            baseURL: "http://inurl:\(Secret.urlPassword)@127.0.0.1:\(Self.deadPort)/dav",
+            username: "tester", useNextcloudPath: false,
+            password: Secret.webdavPassword)
+        let fs = WebDAVFileSystem(
+            config: config,
+            transport: URLSessionHTTPTransport(
+                session: URLSession(configuration: .ephemeral)))
+        do {
+            try await operation.run(on: fs)
+            Issue.record("expected \(operation.rawValue) to fail against a dead port")
+        } catch {
+            guard case RemoteFSError.connectionFailed = error else {
+                Issue.record("expected a connection failure from \(operation.rawValue), got \(error)")
+                return
+            }
+            await expectNoSecret(in: error, "WebDAV \(operation.rawValue)")
+        }
+    }
+
+    /// The half of `readStream` that is not the call: a download that dies
+    /// after the response headers have already arrived throws from INSIDE
+    /// the body stream, long after `readStream` returned. That error
+    /// reaches the same transfer-failure text as any other, so it is
+    /// wrapped in the same place.
+    ///
+    /// The error is a real `URLError` carrying a real `userInfo`, built the
+    /// way Foundation builds it — a fake transport is used only to decide
+    /// WHEN it arrives, which is the one thing a dead port cannot arrange.
+    @Test("a WebDAV download that dies mid-body reports the transport, not the URL")
+    func webdavStreamFailureCarriesNoSecret() async {
+        let failingURL = "http://inurl:\(Secret.urlPassword)@127.0.0.1:\(Self.deadPort)/dav/big.bin"
+        let midStream = URLError(
+            .networkConnectionLost,
+            userInfo: [
+                NSURLErrorFailingURLStringErrorKey: failingURL,
+                NSLocalizedDescriptionKey: "The network connection was lost.",
+            ])
+        #expect(String(describing: midStream).contains(Secret.urlPassword), """
+            the fixture no longer carries the secret it was built to carry, so this test \
+            would pass against an unwrapped stream too.
+            """)
+
+        var thrown: Error?
+        do {
+            for try await _ in WebDAVFileSystem.surfacing(
+                AsyncThrowingStream { $0.finish(throwing: midStream) })
+            {
+                Issue.record("the stream yielded a chunk it was never given")
+            }
+        } catch {
+            thrown = error
+        }
+
+        let error = thrown
+        guard case .some(RemoteFSError.connectionFailed) = error else {
+            Issue.record("expected a connection failure from the body stream, got \(String(describing: error))")
+            return
+        }
+        await expectNoSecret(in: error!, "WebDAV mid-body failure")
+    }
+
     // MARK: - S3
 
     @Test("a refused S3 dial reports the transport, not the secret key")
@@ -773,6 +857,41 @@ struct ConnectFailureSecrecyTests {
             // string to leak into — must not be able to hide behind an
             // early return in the shape check.
             await expectNoSecret(in: error, what)
+        }
+    }
+}
+
+/// The WebDAV operations `webdavOperationFailureCarriesNoSecret` drives.
+///
+/// Seven cases, counted while writing this sentence: the five
+/// `RemoteFileSystem` reads and writes that reach the network through
+/// `transport.send`, the streaming read, and the streaming write. The list
+/// is the point — the round-1 fix covered the dial and left exactly these
+/// behind, so what is enumerated here is "every way this backend can touch
+/// the network after it is connected", not a sample of them.
+///
+/// `deleteTree` and `homeDirectoryPath` are deliberately absent:
+/// `deleteTree` reaches the network through the same `simple(...)` as
+/// `delete` and `createDirectory`, one argument apart, and
+/// `homeDirectoryPath` never touches it at all.
+enum WebDAVOperation: String, CaseIterable, Sendable {
+    case list, stat, readStream, delete, createDirectory, rename, write
+
+    func run(on fs: WebDAVFileSystem) async throws {
+        switch self {
+        case .list: _ = try await fs.list(path: "/")
+        case .stat: _ = try await fs.stat(path: "/file.txt")
+        case .readStream: _ = try await fs.readStream(path: "/file.txt", fromOffset: 0)
+        case .delete: try await fs.delete(path: "/file.txt")
+        case .createDirectory: try await fs.createDirectory(at: "/folder")
+        case .rename: try await fs.rename(from: "/a.txt", to: "/b.txt")
+        case .write:
+            try await fs.write(
+                path: "/a.txt", mode: .overwrite,
+                contents: AsyncThrowingStream { continuation in
+                    continuation.yield(Data("hello".utf8))
+                    continuation.finish()
+                })
         }
     }
 }
