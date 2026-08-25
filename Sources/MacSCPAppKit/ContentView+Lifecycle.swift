@@ -409,7 +409,7 @@ extension ContentView {
         // deliberate disconnect, so the queue's own items read "connection
         // lost" instead of "cancelled" — see `teardown(_:reason:)`. Pinned
         // behaviorally by `LivenessGiveUpOrderingTests
-        // .givingUpMarksQueueItemsConnectionLost` (fix round 1): that test
+        // .givingUpMarksQueuedTransfersConnectionLost` (fix round 1): that test
         // drives this exact path with real queue items and fails if this
         // literal is ever `.userRequested` instead.
         await teardown(tab, reason: .connectionLost)
