@@ -943,7 +943,7 @@
 /* Failed-connect surface (failed-connect surface plan, Task 3) */
 "connection.failed.title" = "Keine Verbindung möglich";
 "connection.failed.body" = "macSCP konnte den Host nicht erreichen.";
-"connection.failed.body.adHoc" = "macSCP konnte den Host nicht erreichen. Bearbeiten Sie die Verbindung, um die Angaben zu prüfen und erneut zu verbinden.";
+"connection.failed.body.adHoc" = "macSCP konnte den Host nicht erreichen. Bearbeite die Verbindung, um die Angaben zu prüfen und erneut zu verbinden.";
 "connection.failed.retry" = "Erneut versuchen";
 "connection.failed.edit" = "Bearbeiten";
 "connection.failed.editSession" = "Sitzung bearbeiten";
