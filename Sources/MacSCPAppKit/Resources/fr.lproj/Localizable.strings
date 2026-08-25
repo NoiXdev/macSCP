@@ -70,7 +70,7 @@
 "settings.connection.keepAlive.header" = "Keep-Alive";
 "settings.connection.keepAlive" = "Vérifier la connexion en cas d'inactivité";
 "settings.connection.keepAliveInterval %lld" = "Toutes les %lld secondes";
-"settings.connection.keepAlive.footer" = "Envoie une petite sonde sur une connexion inactive afin qu'une coupure réseau soit détectée avant que vous n'essayiez de l'utiliser. Désactivé, macSCP ne s'en aperçoit que lorsque vous agissez. Désactiver cette option ne conserve pas l'intervalle choisi — le réactiver repart de la valeur par défaut.";
+"settings.connection.keepAlive.footer" = "Envoie une petite sonde sur une connexion inactive afin qu'une coupure réseau soit détectée avant que vous n'essayiez de l'utiliser. Désactivé, macSCP ne s'en aperçoit que lorsque vous agissez. Désactiver cette option conserve l'intervalle choisi, et le réactiver le rétablit. Cette mémoire n'est pas enregistrée : après un redémarrage, et peut-être dès que vous quittez cette section, l'intervalle repart de la valeur par défaut.";
 "settings.connection.reconnect.header" = "Reconnexion";
 "settings.connection.reconnect" = "Quand une connexion est perdue";
 "settings.connection.reconnect.offerOnly" = "Proposer de se reconnecter";

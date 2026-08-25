@@ -70,7 +70,7 @@
 "settings.connection.keepAlive.header" = "Keep-Alive";
 "settings.connection.keepAlive" = "Sprawdzaj połączenie w bezczynności";
 "settings.connection.keepAliveInterval %lld" = "Co %lld sekund";
-"settings.connection.keepAlive.footer" = "Wysyła krótki sygnał kontrolny na nieaktywnym połączeniu, aby zerwanie sieci było widoczne, zanim spróbujesz z niego skorzystać. Wyłączone — macSCP zauważy to dopiero, gdy zaczniesz działać. Wyłączenie tego sprawdzania nie zapamiętuje wybranego odstępu — ponowne włączenie zaczyna od wartości domyślnej.";
+"settings.connection.keepAlive.footer" = "Wysyła krótki sygnał kontrolny na nieaktywnym połączeniu, aby zerwanie sieci było widoczne, zanim spróbujesz z niego skorzystać. Wyłączone — macSCP zauważy to dopiero, gdy zaczniesz działać. Wyłączenie tej opcji zapamiętuje wybrany odstęp, a ponowne włączenie go przywraca. Ta pamięć nie jest zapisywana: po ponownym uruchomieniu — a być może już po opuszczeniu tej sekcji — odstęp zaczyna się od wartości domyślnej.";
 "settings.connection.reconnect.header" = "Ponowne łączenie";
 "settings.connection.reconnect" = "Gdy połączenie zostanie utracone";
 "settings.connection.reconnect.offerOnly" = "Zaproponuj ponowne połączenie";

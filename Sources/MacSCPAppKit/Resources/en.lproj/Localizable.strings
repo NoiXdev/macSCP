@@ -68,7 +68,7 @@
 "settings.connection.keepAlive.header" = "Keep-Alive";
 "settings.connection.keepAlive" = "Check the connection while idle";
 "settings.connection.keepAliveInterval %lld" = "Every %lld seconds";
-"settings.connection.keepAlive.footer" = "Sends a small probe on a quiet connection so a dropped network shows up before you try to use it. Off, macSCP only notices when you act. Turning this off does not remember the interval you chose; turning it back on starts over at the default.";
+"settings.connection.keepAlive.footer" = "Sends a small probe on a quiet connection so a dropped network shows up before you try to use it. Off, macSCP only notices when you act. Turning this off remembers the interval you chose, and turning it back on restores it. That memory is not saved: after a relaunch, and possibly as soon as you leave this section, the interval starts over at the default.";
 "settings.connection.reconnect.header" = "Reconnect";
 "settings.connection.reconnect" = "When a connection is lost";
 "settings.connection.reconnect.offerOnly" = "Offer to reconnect";

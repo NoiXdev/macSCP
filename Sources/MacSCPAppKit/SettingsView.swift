@@ -998,11 +998,35 @@ private struct SSHSettingsSection: View {
             } header: {
                 Text(L10n.string("settings.connection.keepAlive.header", "Keep-Alive"))
             } footer: {
+                // The last two sentences describe what the toggle actually
+                // does with the interval, corrected by the whole-branch
+                // final review (finding I-2). A previous wording claimed
+                // the interval is NOT remembered, which
+                // `KeepAliveControlPlan.storedValue(togglingTo:
+                // lastKnownInterval:)` contradicts and
+                // `KeepAliveControlPlanTests
+                // .togglingOnRestoresTheRememberedValueNotTheStoreDefault`
+                // pins: turning probing back on restores what the user had.
+                // How LONG that memory lasts is the part this project
+                // cannot verify — `lastKnownKeepAliveInterval` is `@State`
+                // on this view, so a relaunch certainly loses it and
+                // leaving this section may, and nothing here can render a
+                // view to find out which. Hence a sentence that promises
+                // the restore and hedges only the lifetime, rather than
+                // one that denies the restore to stay safe.
+                //
+                // The fallback text spells the whole footer out, unlike
+                // the shorter one it replaced: a fallback that says less
+                // than the catalog is a second, quieter version of the
+                // disclosure for anyone whose catalog fails to load.
                 Text(L10n.string(
                     "settings.connection.keepAlive.footer",
                     "Sends a small probe on a quiet connection so a dropped network shows "
                         + "up before you try to use it. Off, macSCP only notices when you "
-                        + "act."))
+                        + "act. Turning this off remembers the interval you chose, and "
+                        + "turning it back on restores it. That memory is not saved: after "
+                        + "a relaunch, and possibly as soon as you leave this section, the "
+                        + "interval starts over at the default."))
                     .foregroundStyle(.secondary)
             }
 
