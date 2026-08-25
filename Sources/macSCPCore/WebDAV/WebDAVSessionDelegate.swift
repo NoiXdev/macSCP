@@ -91,11 +91,19 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
         return trustStoreWriteFailure
     }
 
-    /// Set when an authentication challenge arrived from an origin other
-    /// than the configured one and was therefore refused unanswered — see
-    /// the Basic/Digest arm for what that means. Carries the origin that
-    /// asked and the one the user configured, so the connect path can say
-    /// what happened instead of reporting URLSession's cancellation.
+    /// Set when a challenge — for a credential or for a certificate —
+    /// arrived from an origin other than the configured one and was
+    /// therefore refused. Carries both origins, scheme included, so the
+    /// connect path can say what happened instead of reporting
+    /// URLSession's cancellation.
+    ///
+    /// KNOWN GAP, recorded rather than closed: `WebDAVFileSystem.connect`
+    /// is the only reader, so a foreign challenge raised during a LATER
+    /// operation — a list, a PUT — is still refused and still logged, but
+    /// the operation itself surfaces as a bare cancellation. Closing it
+    /// means threading this state into every operation's error mapping,
+    /// which is a wider change than the refusal itself; the refusal, which
+    /// is the security-relevant half, holds everywhere.
     public var lastForeignChallenge: String? {
         lock.lock(); defer { lock.unlock() }
         return foreignChallenge
@@ -148,9 +156,38 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
             && space.port == configured.port
     }
 
+    /// The origin a certificate candidate belongs to. A candidate is only
+    /// ever built from a completed TLS handshake, so its scheme is `https`
+    /// by construction — which is also why a base URL of `http://host`
+    /// never matches one: a TLS challenge for that host is a redirect's
+    /// doing, not the user's.
+    static func origin(of candidate: ServerCertificateCandidate) -> Origin {
+        Origin(scheme: "https", host: candidate.host.lowercased(), port: candidate.port)
+    }
+
     /// The TOFU decision, separated from the URLSession plumbing so it is
     /// testable without a network stack.
     func decideCertificate(_ candidate: ServerCertificateCandidate) async -> Bool {
+        // A trust decision may only be ASKED, and a pin may only be
+        // WRITTEN, for the origin the user configured. This function is
+        // where both of those happen, which is why the check lives here
+        // and not only at the challenge arm that calls it.
+        //
+        // The danger is not that a redirect target learns something — a
+        // certificate is public material in both directions. It is that
+        // the ATTACKER WRITES THE `Location` HEADER and therefore chooses
+        // the host this runs for, including the configured host's own name
+        // on 443. A pin is a state change that outlives the failed
+        // connect: once one is written for a host, `ServerCertificateValidation`
+        // sees a KNOWN certificate for it and `.mismatch` — this project's
+        // hard stop — can never fire for that host again. So a plaintext
+        // base URL, one injected redirect and one accepted prompt are
+        // enough to plant a certificate that a later, correctly configured
+        // https connect then accepts in silence.
+        guard configuredOrigin == Self.origin(of: candidate) else {
+            recordForeignCertificate(candidate)
+            return false
+        }
         let known: TrustedCertificate?
         do {
             known = try trustStore.find(host: candidate.host, port: candidate.port)
@@ -242,26 +279,71 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
         credentialRejected = true
     }
 
-    /// Records a refused foreign challenge, and logs it: this is a
-    /// credential the product deliberately did not send, which is worth a
-    /// line whether or not anybody reads the connect error.
+    /// The credential half of the refusal.
+    private func recordForeignChallenge(_ space: URLProtectionSpace) {
+        let asked = Self.describe(scheme: space.protocol, host: space.host, port: space.port)
+        let reason = space.isProxy()
+            ? "an HTTP proxy at \(asked) asked for the WebDAV password; it was not sent"
+            : "the login was challenged by \(asked) instead of the configured "
+                + "\(configuredOriginText); the server redirected it elsewhere, "
+                + "so the password was not sent"
+        record(foreignChallenge: reason)
+    }
+
+    /// The certificate half of the same refusal. Worded around what was
+    /// withheld rather than around the password, because nothing secret was
+    /// at stake here — what was withheld is a trust decision and the pin
+    /// that would have followed it.
+    private func recordForeignCertificate(_ candidate: ServerCertificateCandidate) {
+        recordForeignCertificate(scheme: "https", host: candidate.host, port: candidate.port)
+    }
+
+    private func recordForeignCertificate(scheme: String?, host: String, port: Int) {
+        let asked = Self.describe(scheme: scheme, host: host, port: port)
+        record(foreignChallenge:
+            "a certificate was presented by \(asked) instead of the configured "
+            + "\(configuredOriginText); the server redirected the connection elsewhere, "
+            + "so the certificate was neither trusted nor remembered")
+    }
+
+    /// First refusal wins. The two arms cannot both fire in one `connect`
+    /// — a refused TLS handshake never gets as far as a login challenge —
+    /// but if that ever changed, the earlier refusal is the one that
+    /// explains the later, and overwriting it would report the symptom.
+    ///
+    /// Logged as well as recorded: this is a credential or a trust decision
+    /// the product deliberately withheld, which is worth a line whether or
+    /// not anybody reads the connect error.
     ///
     /// Naming the origin that asked is the whole diagnostic value — "your
     /// server sent us somewhere else" is not actionable without the
-    /// somewhere. It is the only server-influenced text in this message,
-    /// and it is a host and a port parsed by Foundation out of a URL, not
-    /// free-form server prose.
-    private func recordForeignChallenge(_ space: URLProtectionSpace) {
-        let asked = "\(space.host):\(space.port)"
-        let expected = configuredOrigin.map { "\($0.host):\($0.port)" } ?? "the configured server"
-        let reason = space.isProxy()
-            ? "an HTTP proxy at \(asked) asked for the WebDAV password; it was not sent"
-            : "the login was challenged by \(asked) instead of \(expected), "
-                + "which means the server redirected it elsewhere; the password was not sent"
+    /// somewhere — and naming its SCHEME is what makes the two origins
+    /// distinguishable when a redirect only upgrades the transport, where
+    /// host and port alone would print the same name twice. It is the only
+    /// server-influenced text in these messages, and it is a scheme, a host
+    /// and a port that Foundation parsed out of a URL, not free-form
+    /// server prose.
+    private func record(foreignChallenge reason: String) {
         lock.lock()
-        foreignChallenge = reason
+        let alreadyRecorded = foreignChallenge != nil
+        if !alreadyRecorded { foreignChallenge = reason }
         lock.unlock()
+        guard !alreadyRecorded else { return }
         Self.logger.error("\(reason, privacy: .public)")
+    }
+
+    /// `scheme://host:port`, with the port always spelled out even when it
+    /// is the scheme's default — the difference between the configured
+    /// origin and the one that asked is exactly what these messages exist
+    /// to show.
+    private static func describe(scheme: String?, host: String, port: Int) -> String {
+        "\(scheme?.lowercased() ?? "?")://\(host):\(port)"
+    }
+
+    private var configuredOriginText: String {
+        guard let configuredOrigin else { return "server" }
+        return Self.describe(scheme: configuredOrigin.scheme,
+                             host: configuredOrigin.host, port: configuredOrigin.port)
     }
 
     // MARK: - URLSessionTaskDelegate
@@ -320,17 +402,26 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
                                             persistence: .forSession))
 
         case NSURLAuthenticationMethodServerTrust:
-            // Not origin-guarded, deliberately, and the asymmetry with the
-            // credential arm above is the point: a certificate is public
-            // material in both directions, so a redirect target that gets
-            // TOFU-evaluated here learns nothing. The prompt names the host
-            // actually being validated, and anything pinned is pinned under
-            // THAT host, so a redirect cannot touch what the configured
-            // host is trusted with. What it can do is put a question in
-            // front of the user about a host they never typed — noted, not
-            // a leak, and the connect fails at the credential arm directly
-            // afterwards anyway, with a message that explains itself far
-            // better than a refused certificate would.
+            // Same rule as the credential arm, for a different reason. A
+            // certificate is public, so nothing leaks here — but the TOFU
+            // question and the pin that follows it are a state change, and
+            // a redirect lets the server choose the host they are made
+            // for. `decideCertificate` carries the argument in full.
+            //
+            // Checked here as well as there so a refusal costs no trust
+            // evaluation and no prompt: this returns before the system
+            // trust check below, which would otherwise silently accept a
+            // foreign host whose chain happens to be valid.
+            guard Self.challengeIsForConfiguredOrigin(
+                challenge.protectionSpace, configured: configuredOrigin)
+            else {
+                recordForeignCertificate(
+                    scheme: challenge.protectionSpace.protocol,
+                    host: challenge.protectionSpace.host,
+                    port: challenge.protectionSpace.port)
+                completionHandler(.cancelAuthenticationChallenge, nil)
+                return
+            }
             guard let trust = challenge.protectionSpace.serverTrust,
                   let candidate = Self.candidate(from: trust,
                                                  host: challenge.protectionSpace.host,

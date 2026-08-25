@@ -3,6 +3,16 @@ import NIOCore
 import Testing
 @testable import macSCPCore
 
+/// A thread-safe boolean for recording whether an escaping closure ran.
+private final class FlagBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored = false
+    var value: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return stored }
+        set { lock.lock(); defer { lock.unlock() }; stored = newValue }
+    }
+}
+
 /// The failed-connect surface gains a details dialog showing the FULL
 /// technical message — the first surface in the product to render a raw
 /// error text rather than a fixed catalog key. This suite pins what that
@@ -491,6 +501,88 @@ struct ConnectFailureSecrecyTests {
         }
         #expect(reason.contains("the password was not sent"))
         await expectNoSecret(in: thrown, "redirected WebDAV challenge")
+    }
+
+    /// The Critical this arm was reopened for. A certificate is public
+    /// material, so nothing leaks here — the danger is the STATE CHANGE.
+    /// The attacker writes the `Location` header, so the attacker chooses
+    /// which host the TOFU question is asked about and which host a pin is
+    /// written under, INCLUDING the configured host's own name on 443.
+    /// A pin outlives the failed connect: once one exists for a host,
+    /// `ServerCertificateValidation` sees a known certificate for it and
+    /// `.mismatch` — this project's hard stop — can never fire for that
+    /// host again. Plaintext base URL, one injected redirect, one accepted
+    /// prompt, and the next correctly configured https connect accepts a
+    /// planted certificate in silence.
+    ///
+    /// Measured the way it was broken: a plaintext stub redirects to a
+    /// real TLS stub with a self-signed certificate. The decider says YES
+    /// to everything it is asked, so if the arm ran at all, a pin would be
+    /// written and the assertions below would fail.
+    @Test("a redirected certificate challenge is refused, and nothing is pinned")
+    func webdavRedirectedCertificateChallengePinsNothing() async throws {
+        let tls = try LoopbackTLSStub(response: LoopbackHTTPStub.basicAuthAlwaysRejects)
+        defer { tls.stop() }
+        let configured = try LoopbackHTTPStub(
+            response: LoopbackHTTPStub.movedTemporarily(
+                to: "https://127.0.0.1:\(tls.port)/elsewhere"))
+        defer { configured.stop() }
+
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = TrustedCertificateStore(directory: directory)
+        let asked = FlagBox()
+        let config = WebDAVConnectionConfig(
+            baseURL: "http://127.0.0.1:\(configured.port)/dav", username: "tester",
+            useNextcloudPath: false, password: Secret.webdavPassword)
+
+        var thrown: Error?
+        do {
+            // Accepts anything it is asked about. The refusal has to come
+            // from the origin check, not from a decider that says no.
+            _ = try await WebDAVFileSystem.connect(
+                config, trustStore: store,
+                decider: { _ in asked.value = true; return true })
+        } catch {
+            thrown = error
+        }
+
+        // The three assertions the ruling names, reached unconditionally.
+        #expect(asked.value == false)
+        #expect(try store.find(host: "127.0.0.1", port: tls.port) == nil)
+        #expect(try store.allCertificates().isEmpty)
+
+        // And the consequence spelled out: a later connect configured FOR
+        // that host still has to ask. A planted pin is exactly what would
+        // make this stop asking, so this is the assertion that would have
+        // caught the original hole even without a trust store to inspect.
+        // Its own flag, not the one above — sharing one would let the
+        // first phase's YES satisfy this check for free.
+        let askedAgain = FlagBox()
+        let laterDelegate = WebDAVSessionDelegate(
+            baseURL: URL(string: "https://127.0.0.1:\(tls.port)")!,
+            username: "tester", password: Secret.webdavPassword,
+            trustStore: store, decider: { _ in askedAgain.value = true; return false })
+        _ = await laterDelegate.decideCertificate(ServerCertificateCandidate(
+            host: "127.0.0.1", port: tls.port, derBase64: "QUJD",
+            subject: "CN=127.0.0.1", issuer: "CN=127.0.0.1", notAfter: nil))
+        #expect(askedAgain.value == true)
+
+        guard let thrown else {
+            Issue.record("expected the redirected certificate challenge to fail the connect")
+            return
+        }
+        guard case RemoteFSError.connectionFailed(let reason) = thrown else {
+            Issue.record("expected a connection failure, got \(thrown)")
+            return
+        }
+        #expect(reason.contains("neither trusted nor remembered"))
+        // Both origins named WITH their schemes. Host and port alone would
+        // print two names that differ only in a number here, and would be
+        // outright identical for the plain upgrade case.
+        #expect(reason.contains("https://127.0.0.1:\(tls.port)"))
+        #expect(reason.contains("http://127.0.0.1:\(configured.port)"))
+        await expectNoSecret(in: thrown, "redirected WebDAV certificate challenge")
     }
 
     // MARK: - known_hosts write

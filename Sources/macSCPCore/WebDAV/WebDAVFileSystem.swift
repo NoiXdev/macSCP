@@ -79,10 +79,12 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
             // send the user off to check credentials that were never sent.
             // The delegate's own sentence names both origins instead.
             //
-            // Read BEFORE `credentialWasRejected` because it is the more
-            // specific condition: a refused challenge is never answered, so
-            // it can never produce the repeat that sets that flag, and
-            // whichever of the two is set is the whole story.
+            // The order these two are read in cannot matter: a refused
+            // challenge is never answered, so it can never produce the
+            // repeat that marks a credential rejected, and the two flags
+            // therefore describe disjoint outcomes. That disjointness is
+            // the load-bearing part, so it is pinned by a test rather than
+            // claimed here — see `WebDAVSessionDelegateTests`.
             if let foreignChallenge = delegate.lastForeignChallenge {
                 throw RemoteFSError.connectionFailed(reason: foreignChallenge)
             }

@@ -2,8 +2,135 @@ import Foundation
 import Testing
 @testable import macSCPCore
 
+/// A challenge needs a sender; nothing here ever calls back through it.
+private final class SilentChallengeSender: NSObject, URLAuthenticationChallengeSender {
+    func use(_ credential: URLCredential, for challenge: URLAuthenticationChallenge) {}
+    func continueWithoutCredential(for challenge: URLAuthenticationChallenge) {}
+    func cancel(_ challenge: URLAuthenticationChallenge) {}
+}
+
 @Suite("WebDAVSessionDelegate")
 struct WebDAVSessionDelegateTests {
+    /// Drives the real delegate method with a synthesized challenge and
+    /// reports what it answered. The task is created but never resumed —
+    /// nothing is dialled.
+    private func answer(
+        _ delegate: WebDAVSessionDelegate, host: String, port: Int,
+        scheme: String, method: String = NSURLAuthenticationMethodHTTPBasic,
+        previousFailureCount: Int = 0
+    ) -> (URLSession.AuthChallengeDisposition, URLCredential?) {
+        let space = URLProtectionSpace(
+            host: host, port: port, protocol: scheme, realm: "macSCP test",
+            authenticationMethod: method)
+        let challenge = URLAuthenticationChallenge(
+            protectionSpace: space, proposedCredential: nil,
+            previousFailureCount: previousFailureCount, failureResponse: nil, error: nil,
+            sender: SilentChallengeSender())
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let task = session.dataTask(with: URL(string: "http://127.0.0.1:1/")!)
+        var answered: (URLSession.AuthChallengeDisposition, URLCredential?)?
+        delegate.urlSession(session, task: task, didReceive: challenge) { disposition, credential in
+            answered = (disposition, credential)
+        }
+        return answered ?? (.performDefaultHandling, nil)
+    }
+
+    /// The plain-upgrade case, which is the one host and port alone cannot
+    /// describe: a base URL of `http://nas.local` challenged from
+    /// `https://nas.local:443`. Without the scheme the message reads
+    /// "nas.local:443 instead of nas.local:80" — two names for what looks
+    /// like the same server, and no hint that the fix is to configure the
+    /// https URL.
+    ///
+    /// The second half is the disjointness the connect path's read order
+    /// rests on: a refused challenge is never answered, so it can never
+    /// produce the repeat that marks a credential rejected. That is why
+    /// the order those two flags are read in cannot matter — pinned here
+    /// rather than asserted in a comment.
+    @Test func anUpgradedSchemeIsRefusedAndBothSchemesAreNamed() async throws {
+        let (store, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let delegate = WebDAVSessionDelegate(
+            baseURL: URL(string: "http://nas.local/dav")!,
+            username: "u", password: "p", trustStore: store, decider: { _ in true })
+
+        let (disposition, credential) = answer(
+            delegate, host: "nas.local", port: 443, scheme: "https")
+
+        #expect(disposition == .cancelAuthenticationChallenge)
+        #expect(credential == nil)
+        let reason = try #require(delegate.lastForeignChallenge)
+        #expect(reason.contains("https://nas.local:443"))
+        #expect(reason.contains("http://nas.local:80"))
+        #expect(delegate.credentialWasRejected == false)
+    }
+
+    /// The control, and the proof that the guard above is not simply
+    /// refusing everything: the configured origin is answered, with the
+    /// credential the user stored.
+    @Test func theConfiguredOriginStillGetsTheCredential() async throws {
+        let (store, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let delegate = WebDAVSessionDelegate(
+            baseURL: URL(string: "https://nas.local/dav")!,
+            username: "u", password: "p", trustStore: store, decider: { _ in true })
+
+        let (disposition, credential) = answer(
+            delegate, host: "nas.local", port: 443, scheme: "https")
+
+        #expect(disposition == .useCredential)
+        #expect(credential?.user == "u")
+        #expect(delegate.lastForeignChallenge == nil)
+    }
+
+    /// A certificate candidate for a host other than the configured one is
+    /// refused without asking and without writing. The decider says YES to
+    /// everything, so a pin would appear if the arm ran at all.
+    @Test func aForeignCertificateCandidateIsNeitherAskedAboutNorPinned() async throws {
+        let (store, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let asked = TestBox(false)
+        let delegate = WebDAVSessionDelegate(
+            baseURL: URL(string: "https://nas.local/dav")!,
+            username: "u", password: "p", trustStore: store,
+            decider: { _ in asked.value = true; return true })
+
+        let decision = await delegate.decideCertificate(ServerCertificateCandidate(
+            host: "elsewhere.test", port: 443, derBase64: "QUJD",
+            subject: "CN=elsewhere.test", issuer: "CN=elsewhere.test", notAfter: nil))
+
+        #expect(decision == false)
+        #expect(asked.value == false)
+        #expect(try store.find(host: "elsewhere.test", port: 443) == nil)
+        #expect(try store.allCertificates().isEmpty)
+        let reason = try #require(delegate.lastForeignChallenge)
+        #expect(reason.contains("https://elsewhere.test:443"))
+        #expect(reason.contains("https://nas.local:443"))
+    }
+
+    /// A base URL of `http://nas.local` means a TLS handshake for that host
+    /// is somebody else's idea — the redirect that plants a certificate for
+    /// the very name the user is about to configure. Same port, same host,
+    /// refused on the scheme alone.
+    @Test func aTLSCandidateForAPlaintextBaseURLIsRefused() async throws {
+        let (store, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let asked = TestBox(false)
+        let delegate = WebDAVSessionDelegate(
+            baseURL: URL(string: "http://nas.local/dav")!,
+            username: "u", password: "p", trustStore: store,
+            decider: { _ in asked.value = true; return true })
+
+        let decision = await delegate.decideCertificate(ServerCertificateCandidate(
+            host: "nas.local", port: 443, derBase64: "QUJD",
+            subject: "CN=nas.local", issuer: "CN=nas.local", notAfter: nil))
+
+        #expect(decision == false)
+        #expect(asked.value == false)
+        #expect(try store.allCertificates().isEmpty)
+    }
+
     private func makeStore() throws -> (TrustedCertificateStore, URL) {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("macscp-deleg-\(UUID().uuidString)")
