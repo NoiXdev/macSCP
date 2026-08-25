@@ -378,6 +378,23 @@ extension ContentView {
         // exception it is for `liveness` — it writes this afterwards,
         // deliberately after this line has run.
         tab.lostConnection = nil
+        // And the third fact describing a connection that is over
+        // (failed-connect surface plan, review round 1): a FAILED ATTEMPT.
+        // Measured before this line existed: on a window with one tab —
+        // the normal case at launch — typing a host, timing out and
+        // pressing "Close" ran `performClose`, which tears the tab down
+        // but does NOT remove the last tab, and the failed-connect surface
+        // stayed up with all four buttons while the window shrank around
+        // it. A button named "Close" that visibly does nothing is the
+        // exact complaint this whole surface was written to answer.
+        //
+        // The sibling surface never had this defect because it hangs off
+        // `liveness == .lost`, which the line above clears; this one hangs
+        // off a property teardown did not touch. Same sentence as both
+        // lines above, therefore: every caller of this function is leaving
+        // this connection on purpose, so a record of an attempt that
+        // failed is describing something the tab has been taken past.
+        tab.connectFailure = nil
     }
 
     /// The liveness probe's own route off a session (connection-liveness

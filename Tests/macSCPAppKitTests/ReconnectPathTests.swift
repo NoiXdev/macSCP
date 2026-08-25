@@ -573,6 +573,78 @@ struct ReconnectPathTests {
         #expect(await recorder.dialCount == 0)
     }
 
+    /// "Close" on the only tab leads back to the form.
+    ///
+    /// Review round 1, measured on this path before the fix: `performClose`
+    /// tears the tab down and then removes it — except on the LAST tab,
+    /// which `TabsViewModel.closeTab` refuses to remove, so it stays as a
+    /// torn-down form tab. `teardown(_:reason:)` cleared `liveness` and
+    /// `lostConnection` but not `connectFailure`, and
+    /// `ConnectionSurfacePlan` reads nothing else for this surface: the
+    /// window shrank and the surface stood there with all four buttons.
+    /// One tab is the normal case at launch, so this was the ordinary way
+    /// to meet it.
+    ///
+    /// Driven through `performClose` rather than through the property, so
+    /// what is pinned is the path a click takes, and asserted through
+    /// `ConnectionSurfacePlan.surface` rather than only the property, so a
+    /// future second source for this surface cannot pass this test while
+    /// leaving the view up.
+    @Test func closingTheOnlyTabLeavesTheFailedSurface() async {
+        let workDir = makeTempDirectory("close-last-tab")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, cleanup) = makeContentView(
+            secrets: ReconnectSecretStore(), storeDirectory: workDir)
+        defer { cleanup() }
+
+        let tab = view.tabsModel.activeTab
+        tab.connectFailure = ConnectFailure(storedSessionID: nil)
+        #expect(view.tabsModel.isLastTab, "the case this test exists for is the single tab")
+        #expect(
+            ConnectionSurfacePlan.surface(
+                for: tab.liveness, hostKeyPromptPending: false,
+                connectAttemptFailed: tab.connectFailure != nil) == .failed,
+            "the surface has to be up before Close can be measured against it")
+
+        await view.performClose(tab)
+
+        #expect(tab.connectFailure == nil, """
+            `teardown(_:reason:)` left the failed-connect record on the tab, so "Close" on \
+            the only tab does visibly nothing — the window shrinks and the surface stays.
+            """)
+        #expect(
+            ConnectionSurfacePlan.surface(
+                for: tab.liveness, hostKeyPromptPending: false,
+                connectAttemptFailed: tab.connectFailure != nil) == .form,
+            "closing a tab has to end on the entry form, whatever the tab was showing")
+    }
+
+    /// The sibling fact, on the same path: a tab that LOST its connection
+    /// survives its own Close in neither form. This was already true —
+    /// `teardown` has always cleared `liveness` — and is pinned here so the
+    /// two surfaces cannot drift apart again in the direction the fix above
+    /// came from.
+    @Test func closingTheOnlyTabLeavesTheLostSurface() async {
+        let workDir = makeTempDirectory("close-last-tab-lost")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, cleanup) = makeContentView(
+            secrets: ReconnectSecretStore(), storeDirectory: workDir)
+        defer { cleanup() }
+
+        let tab = view.tabsModel.activeTab
+        tab.lostConnection = LostConnection(reason: .probeGaveUp, storedSessionID: UUID())
+        tab.liveness = .lost
+
+        await view.performClose(tab)
+
+        #expect(tab.liveness == nil)
+        #expect(tab.lostConnection == nil)
+        #expect(
+            ConnectionSurfacePlan.surface(
+                for: tab.liveness, hostKeyPromptPending: false,
+                connectAttemptFailed: tab.connectFailure != nil) == .form)
+    }
+
     /// "Edit session" opens the real session editor on the session that
     /// failed, and leaves the surface — the form it puts up would otherwise
     /// sit behind an error view, which is the same defect `newConnection()`

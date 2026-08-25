@@ -286,7 +286,7 @@ final class SessionTab: Identifiable {
     /// dropped, and the tab-strip dot reads `liveness` for a tab that has
     /// no connection either way.
     ///
-    /// Two writers, counted while writing this sentence:
+    /// Three writers, counted while writing this sentence:
     /// - `ConnectAttemptLivenessMirror` SETS it, from
     ///   `ConnectAttemptLivenessPlan.write`'s `.failedConnect` answer, and
     ///   clears it on `.connecting` (a new attempt speaks for the tab now)
@@ -294,12 +294,24 @@ final class SessionTab: Identifiable {
     /// - `ContentView.dismissConnectFailure(_:)` clears it — the way off
     ///   this surface back to the form, from the surface's own Edit control
     ///   and from the sidebar commands that fill the form.
+    /// - `ContentView.teardown(_:reason:)` clears it, for the same reason
+    ///   it clears `liveness` and `lostConnection`: every caller of that
+    ///   function is leaving this connection on purpose.
     ///
-    /// Nothing else writes it. In particular `teardown(_:)` does not: a tab
-    /// whose session is being torn down had a session, so its next failure
-    /// is a `lostConnection`, not this. `ContentView.newConnection()` and
-    /// `formTarget()` reach it only THROUGH `dismissConnectFailure(_:)`,
-    /// which is why they are not a third and fourth writer.
+    /// The third one was missing until review round 1, and the sentence
+    /// that stood here is why. It argued that `teardown(_:)` cannot matter
+    /// because "a tab whose session is being torn down HAD a session, so
+    /// its next failure is a `lostConnection`, not this" — true of the
+    /// tab's next failure, and irrelevant to the one already on record.
+    /// `performClose` tears a tab down and, on the LAST tab, does not
+    /// remove it; the failed-connect surface therefore survived its own
+    /// Close button, measured, while the window shrank around it. A
+    /// premise that is true about the future and silently read as a claim
+    /// about the present is the shape of that mistake.
+    ///
+    /// `ContentView.newConnection()` and `formTarget()` reach it only
+    /// THROUGH `dismissConnectFailure(_:)`, which is why they are not a
+    /// fourth and fifth writer.
     var connectFailure: ConnectFailure?
 
     /// The stored session `ContentView.connect(in:stored:)` is dialing
