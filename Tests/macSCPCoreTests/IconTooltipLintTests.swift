@@ -110,6 +110,9 @@ struct IconTooltipLintTests {
         DecorativeIcon(
             file: "ContentView+Detail.swift", symbol: "exclamationmark.triangle.fill",
             reason: "Heads the lost-connection surface, directly above its own headline (\"Connection lost\") and a sentence saying what happened; it takes no click, and a tooltip could only repeat the two lines under it."),
+        DecorativeIcon(
+            file: "ContentView+Detail.swift", symbol: "bolt.horizontal.circle.fill",
+            reason: "Heads the failed-connect surface, directly above its own headline (\"No connection possible\") and a sentence saying what happened, exactly as the lost-connection icon above it does; it takes no click, and the technical detail a tooltip could add lives behind that surface's own Details control instead."),
     ]
 
     /// How far below an icon a hover hint still counts as belonging to it.

@@ -415,12 +415,195 @@ struct ReconnectPathTests {
         #expect(step == .stop, sourceLocation: sourceLocation)
     }
 
+    // MARK: - The failed-connect surface's own actions (Task 3)
+
+    /// The load-bearing claim of the failed-connect surface, run rather
+    /// than read: "Try again" reaches the connector THROUGH
+    /// `connect(in:stored:)`, which means through `fillForm(_:from:)`, the
+    /// form's own validation and the host-key decider Core hands every
+    /// backend — with the stored session's own configuration, on the tab
+    /// that failed.
+    ///
+    /// `ReconnectWiringGuardTests` can only prove `retryConnect(_:)` names
+    /// the shared function; this proves the dial that comes out the other
+    /// end is the stored session's.
+    @Test func retryDialsTheStoredSessionThroughTheSharedConnect() async {
+        let workDir = makeTempDirectory("retry-dial")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, cleanup) = makeContentView(
+            secrets: ReconnectSecretStore(), storeDirectory: workDir)
+        defer { cleanup() }
+
+        // `.agent` auth for the same reason
+        // `reconnectDialsTheStoredSessionAndBringsTheTabBack` uses it: it
+        // passes the form's pre-dial validation without a typed password
+        // or a keychain lookup.
+        let stored = StoredSession(
+            name: uniqueSaveName("retry-target"), kind: .ssh,
+            ssh: StoredSSHConfig(host: "retry.example.com", username: "tim", authKind: .agent))
+        try? SessionStore(directory: workDir).upsert(stored)
+        view.sessionListViewModel.reload()
+
+        let recorder = DialRecorder()
+        let tab = makeTab(connector: { config, _ in
+            await recorder.record(config)
+            return RecordingFileSystem(recorder: recorder)
+        })
+        tab.connectFailure = ConnectFailure(storedSessionID: stored.id)
+
+        view.retryConnect(tab)
+
+        guard await waitUntil("the retry must reach the connector", {
+            await recorder.dialCount == 1
+        }) else { return }
+        guard await waitUntil("the retry must hand a session to the tab", {
+            tab.session != nil
+        }) else { return }
+
+        #expect(await recorder.dialedHost == "retry.example.com", """
+            the retry dialed something other than the stored session the failed attempt \
+            recorded.
+            """)
+        #expect(tab.activeStoredSessionID == stored.id)
+        #expect(tab.dialingStoredSessionID == stored.id, """
+            `connect(in:stored:)` did not record which stored session it is dialing, so a \
+            second failure would offer no way to edit the session it failed on.
+            """)
+    }
+
+    /// A `fillForm` refusal never dials, and must therefore leave no origin
+    /// behind either — the reason `dialingStoredSessionID` is written after
+    /// the fill rather than at the top of `connect(in:stored:)`. An origin
+    /// recorded here would outlive an attempt that never happened and be
+    /// read by whatever failed next.
+    @Test func afillRefusalRecordsNoDialOrigin() async {
+        let workDir = makeTempDirectory("retry-refusal")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, cleanup) = makeContentView(
+            secrets: ReconnectSecretStore(), storeDirectory: workDir)
+        defer { cleanup() }
+
+        let stored = StoredSession(
+            name: uniqueSaveName("dangling-on-retry"),
+            loginSetID: UUID(),  // no such set in the isolated store
+            kind: .ssh,
+            ssh: StoredSSHConfig(host: "example.com", username: "tim"))
+        try? SessionStore(directory: workDir).upsert(stored)
+        view.sessionListViewModel.reload()
+
+        let recorder = DialRecorder()
+        let tab = makeTab(connector: { config, _ in
+            await recorder.record(config)
+            return RecordingFileSystem(recorder: recorder)
+        })
+        tab.connectFailure = ConnectFailure(storedSessionID: stored.id)
+
+        view.retryConnect(tab)
+
+        guard await waitUntil("the refusal must reach the form", {
+            tab.connectionViewModel.lastFailureKind != nil
+        }) else { return }
+        #expect(await recorder.dialCount == 0, "a dangling login set must refuse before the dial")
+        #expect(tab.dialingStoredSessionID == nil)
+    }
+
+    /// An ad-hoc attempt — typed into the form, never saved — has no stored
+    /// session to redial and no second dial on this branch to redial it
+    /// with, so Retry hands the tab back to the form it came from. Nothing
+    /// is dialed, and the surface is gone.
+    @Test func retryOnAnAdHocFailureDialsNothingAndReturnsToTheForm() async {
+        let workDir = makeTempDirectory("retry-adhoc")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, cleanup) = makeContentView(
+            secrets: ReconnectSecretStore(), storeDirectory: workDir)
+        defer { cleanup() }
+
+        let recorder = DialRecorder()
+        let tab = makeTab(connector: { config, _ in
+            await recorder.record(config)
+            return RecordingFileSystem(recorder: recorder)
+        })
+        tab.connectFailure = ConnectFailure(storedSessionID: nil)
+
+        view.retryConnect(tab)
+
+        #expect(await recorder.dialCount == 0)
+        #expect(tab.connectFailure == nil, """
+            Retry on an ad-hoc failure left the surface up, so the button appears to do \
+            nothing at all.
+            """)
+    }
+
+    /// A session deleted while its tab sat on this surface: `Edit session`
+    /// resolves to nothing and Retry dials nothing, because
+    /// `failedConnectTarget(for:)` is answered against the live list on
+    /// every call rather than remembered.
+    @Test func aDeletedSessionLeavesNothingToRetryOrEdit() async {
+        let workDir = makeTempDirectory("retry-missing")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, cleanup) = makeContentView(
+            secrets: ReconnectSecretStore(), storeDirectory: workDir)
+        defer { cleanup() }
+
+        let recorder = DialRecorder()
+        let tab = makeTab(connector: { config, _ in
+            await recorder.record(config)
+            return RecordingFileSystem(recorder: recorder)
+        })
+        tab.connectFailure = ConnectFailure(storedSessionID: UUID())  // never in the store
+
+        #expect(view.failedConnectTarget(for: tab) == nil)
+
+        view.retryConnect(tab)
+        #expect(await recorder.dialCount == 0)
+    }
+
+    /// "Edit session" opens the real session editor on the session that
+    /// failed, and leaves the surface — the form it puts up would otherwise
+    /// sit behind an error view, which is the same defect `newConnection()`
+    /// and `formTarget()` already carry a clear for.
+    @Test func editSessionOpensTheEditorAndLeavesTheSurface() async {
+        let workDir = makeTempDirectory("retry-edit")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, cleanup) = makeContentView(
+            secrets: ReconnectSecretStore(), storeDirectory: workDir)
+        defer { cleanup() }
+
+        let stored = StoredSession(
+            name: uniqueSaveName("edit-target"), kind: .ssh,
+            ssh: StoredSSHConfig(host: "edit.example.com", username: "tim", authKind: .agent))
+        try? SessionStore(directory: workDir).upsert(stored)
+        view.sessionListViewModel.reload()
+
+        // The view's OWN active tab, not a detached one: `editStored(_:)`
+        // resolves its target through `formTarget()`, which reads
+        // `activeTab` — the tab this surface is rendered for by
+        // construction.
+        let tab = view.tabsModel.activeTab
+        tab.connectFailure = ConnectFailure(storedSessionID: stored.id)
+
+        view.editFailedSession(tab)
+
+        #expect(tab.connectFailure == nil)
+        #expect(tab.connectionViewModel.mode == .edit(sessionID: stored.id), """
+            "Edit session" did not put the form into edit mode for the session that failed.
+            """)
+        #expect(tab.connectionViewModel.host == "edit.example.com")
+    }
+
     // MARK: - Isolation proof
 
     @Test func theRealSessionsFileIsNeverTouched() async {
         let before = snapshotRealSessionsFile()
         await reconnectDialsTheStoredSessionAndBringsTheTabBack()
         await givingUpRemembersWhichStoredSessionToRedial()
+        // The failed-connect surface's own two store-writing scenarios
+        // (Task 3), added here rather than trusted to look isolated: both
+        // upsert a session and both drive the real `connect`/`editStored`
+        // paths, which is exactly the shape that wrote into the
+        // maintainer's real store on an earlier round of this branch.
+        await retryDialsTheStoredSessionThroughTheSharedConnect()
+        await editSessionOpensTheEditorAndLeavesTheSurface()
         let after = snapshotRealSessionsFile()
         #expect(before == after, """
             the real on-disk session store changed while this suite ran. `before` had \

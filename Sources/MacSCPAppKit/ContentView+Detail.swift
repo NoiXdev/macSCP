@@ -477,7 +477,8 @@ extension ContentView {
                     // Connecting surface branch (connection-liveness plan, Task 6)
                     let surface = ConnectionSurfacePlan.surface(
                         for: tab.liveness,
-                        hostKeyPromptPending: tab.connectionViewModel.hostKeyPrompt != nil)
+                        hostKeyPromptPending: tab.connectionViewModel.hostKeyPrompt != nil,
+                        connectAttemptFailed: tab.connectFailure != nil)
                     if surface == .connecting {
                         ConnectingAttemptView(onCancel: {
                             // Best-effort on the dial itself (see
@@ -524,6 +525,33 @@ extension ContentView {
                                 attempts: tab.lostConnection?.automaticAttempts ?? 0),
                             onReconnect: { reconnect(tab) },
                             onDismiss: { dismissLostConnection(tab) })
+                    }
+                    // Failed-connect surface branch (failed-connect surface plan, Task 3)
+                    //
+                    // Also `ReconnectWiringGuardTests`' anchor for this
+                    // branch, the same way the lost branch above is one.
+                    //
+                    // Every action here delegates: Retry to
+                    // `retryConnect(_:)`, which redials through the one
+                    // shared `connect(in:stored:)` a sidebar click uses, so
+                    // this surface adds no second place a security rule
+                    // could be forgotten; Edit and "Edit session" to the
+                    // functions the sidebar's own Edit already goes
+                    // through; Close to the ordinary tab-close entry point,
+                    // warnings and all. What the surface SAYS is
+                    // `ConnectFailurePlan.content`'s answer, and the
+                    // technical text is `ConnectFailureDetails.text`'s —
+                    // this branch decides nothing of its own.
+                    else if surface == .failed {
+                        ConnectFailureView(
+                            content: ConnectFailurePlan.content(
+                                hasStoredSession: failedConnectTarget(for: tab) != nil),
+                            details: ConnectFailureDetails.text(
+                                for: tab.connectionViewModel.state),
+                            onRetry: { retryConnect(tab) },
+                            onEdit: { dismissConnectFailure(tab) },
+                            onEditSession: { editFailedSession(tab) },
+                            onClose: { requestClose(tab) })
                     } else {
                         // Align the form to the top instead of centering it
                         // vertically (user feedback 2026-07-10, M5c/T0) —
@@ -1065,11 +1093,14 @@ enum LivenessProbeRace {
 
 /// What the tab's connection area should show while it has no active
 /// session (connection-liveness plan, Task 6) — the ONE surface Task 6's
-/// `.connecting` case renders through, and which Task 7 then added its own
-/// `lost` case to without redesigning this type or its call site in
-/// `ContentView.detail`. Named per the design spec's own
-/// framing (`docs/superpowers/specs/2026-08-21-verbindungszustand-design.md`
-/// §4): "dieselbe Tab-Fläche" for connecting, connected, and lost.
+/// `.connecting` case renders through, which Task 7 then added its own
+/// `lost` case to without touching this type's call site in
+/// `ContentView.detail`, and which the failed-connect surface plan's Task 3
+/// added `failed` to — that one DID change the call site, which now passes
+/// a third fact (see `ConnectionSurfacePlan.surface`). Named per the design
+/// spec's own framing
+/// (`docs/superpowers/specs/2026-08-21-verbindungszustand-design.md` §4):
+/// one and the same tab area for connecting, connected and lost.
 enum ConnectionAttemptSurface: Equatable {
     /// The ordinary new-connection/edit form (`ConnectionFormView`).
     case form
@@ -1078,9 +1109,14 @@ enum ConnectionAttemptSurface: Equatable {
     /// The lost-connection surface: what happened, and the way back (Task
     /// 7) — `LostConnectionView`, driven by `LostConnectionPlan.content`.
     case lost
+    /// The failed-connect surface: an attempt that never reached a session
+    /// (failed-connect surface plan, Task 3) — `ConnectFailureView`, driven
+    /// by `ConnectFailurePlan.content`. Distinct from `.lost`, which is
+    /// about a connection that existed and dropped.
+    case failed
 }
 
-/// Decides `ConnectionAttemptSurface` from the two facts `ContentView
+/// Decides `ConnectionAttemptSurface` from the facts `ContentView
 /// .detail` already has in hand — pulled out as a plain function so
 /// `Tests/macSCPAppKitTests/` can exercise every combination directly,
 /// rather than the decision living inline in a view body this project has
@@ -1104,14 +1140,34 @@ enum ConnectionSurfacePlan {
     /// covers it too: an automatic reconnect that raises a trust card while
     /// the tab still reads `.lost` must show that card, not an error view
     /// explaining that the connection dropped.
+    ///
+    /// `connectAttemptFailed` is `tab.connectFailure != nil` at the call
+    /// site (failed-connect surface plan, Task 3) — a connect attempt that
+    /// ended on the wire, with nothing connected and no earlier connection
+    /// to explain. Before this task every such attempt left `liveness` at
+    /// `nil` and therefore landed in the `.form` group below, which is the
+    /// maintainer's complaint this surface answers: the tab fell back to
+    /// the entry mask as if nothing had been asked for.
+    ///
+    /// It is consulted ONLY in the `nil` arm, deliberately. `.lost` is
+    /// answered above it, so a reconnect that fails from the lost surface
+    /// still returns to the surface that explains the drop rather than
+    /// being reclassified as a fresh failure. `.connected`/`.degraded` keep
+    /// answering `.form` unconditionally: a tab with a live session does
+    /// not render this area at all (`ContentView.detail` reaches this
+    /// function only while `tab.session == nil`), and letting a stale
+    /// failure speak for a connected tab would be a new way to be wrong
+    /// about a tab that is fine.
     static func surface(
-        for liveness: ConnectionLiveness?, hostKeyPromptPending: Bool
+        for liveness: ConnectionLiveness?, hostKeyPromptPending: Bool,
+        connectAttemptFailed: Bool
     ) -> ConnectionAttemptSurface {
         guard !hostKeyPromptPending else { return .form }
         switch liveness {
         case .connecting: return .connecting
         case .lost: return .lost
-        case .connected, .degraded, nil: return .form
+        case .connected, .degraded: return .form
+        case nil: return connectAttemptFailed ? .failed : .form
         }
     }
 }
@@ -1156,6 +1212,31 @@ struct LostConnection: Equatable {
     /// attempts finished — an attempt that is still dialing must not be
     /// started a second time by the same schedule.
     var automaticAttempts = 0
+}
+
+/// What a tab remembers about a connect attempt that failed on the wire
+/// (failed-connect surface plan, Task 3) — stored on `SessionTab
+/// .connectFailure`, and the fact `ConnectionSurfacePlan` reads to put the
+/// failed-connect surface up instead of the form.
+///
+/// The same shape, and the same reason, as `LostConnection` above: an
+/// optional id and nothing else. There is no field a host name, a typed
+/// value or a server message could be put into, so what the SURFACE can
+/// show is bounded by what this type can hold. The full technical text the
+/// details dialog shows is deliberately NOT kept here — it is read from
+/// `ConnectionViewModel`'s own published `.failed` state when the dialog
+/// asks for it (`ConnectFailureDetails.text(for:)`), so there is one text,
+/// the one the layer below published, and no second copy that could drift
+/// from it or outlive the attempt it describes.
+struct ConnectFailure: Equatable {
+    /// The stored session the failed attempt dialed, or `nil` when it was
+    /// ad-hoc — typed into the form and never saved, so there is nothing
+    /// stored to open an editor on. Resolved against the LIVE session list
+    /// when read (`ContentView.failedConnectTarget(for:)`), never trusted
+    /// as a session that still exists, for the same reason
+    /// `LostConnection.storedSessionID` is not: a session can be deleted
+    /// while its tab sits on this surface.
+    var storedSessionID: UUID?
 }
 
 /// The lost-connection surface's whole content (connection-liveness plan,
@@ -1285,7 +1366,9 @@ enum LostConnectionPlan {
 /// shows, so there is no field a host name, a server message, or a raw
 /// error string could occupy. The general message is safe by construction,
 /// not by promise — the full technical text belongs to the details dialog
-/// a later task builds, never to this type.
+/// (`ConnectFailureDetailsSheet`, Task 3), never to this type; what this
+/// type carries for that dialog is its LABEL and its headline, both catalog
+/// keys like everything else here.
 struct ConnectFailureContent: Equatable {
     struct Message: Equatable {
         let key: String
@@ -1315,6 +1398,17 @@ struct ConnectFailureContent: Equatable {
     /// Close the tab. Always offered — the way off this surface, redial or
     /// not, the same as `LostConnectionContent.dismissButton`.
     let closeButton: Message
+    /// Opens the details dialog (failed-connect surface plan, Task 3). The
+    /// LABEL is a catalog key like every other string on the surface; the
+    /// dialog's own body is the one raw text in this whole feature, and it
+    /// is not carried by this type — see `ConnectFailureDetails.text(for:)`.
+    let detailsButton: Message
+    /// The details dialog's own headline. A field here rather than a
+    /// literal in the dialog for the reason `LostConnectionContent`'s own
+    /// doc comment gives for its two button labels: a type that covers the
+    /// text of a surface has to cover all of it, or the claim that the keys
+    /// are enumerable is true only of the part that happens to live here.
+    let detailsTitle: Message
 }
 
 /// Builds `ConnectFailureContent` (failed-connect surface plan, Task 2)
@@ -1339,7 +1433,41 @@ enum ConnectFailurePlan {
             editButton: .init(key: "connection.failed.edit", fallback: "Edit"),
             editSessionButton: hasStoredSession
                 ? .init(key: "connection.failed.editSession", fallback: "Edit session") : nil,
-            closeButton: .init(key: "connection.failed.close", fallback: "Close"))
+            closeButton: .init(key: "connection.failed.close", fallback: "Close"),
+            detailsButton: .init(key: "connection.failed.details", fallback: "Details…"),
+            detailsTitle: .init(
+                key: "connection.failed.details.title", fallback: "Connection details"))
+    }
+}
+
+/// The technical text the failed-connect details dialog shows (failed-
+/// connect surface plan, Task 3).
+///
+/// A plain function over `ConnectionViewModel.State` — which is the whole
+/// point of it existing at all rather than the dialog reading the state
+/// itself. The maintainer's decision for this surface is "general message
+/// on the surface, everything precise in a dialog for debugging", and the
+/// design spec attaches a condition to it: the dialog may show what the
+/// user typed or stored, and **never** a secret, not even inside a
+/// library's own embedded error text. That condition is met by taking
+/// exactly the message `ConnectionViewModel` already published — the text
+/// the connection form has always shown, which the groundwork task of this
+/// branch audited and repaired at the sources that produce it — and adding
+/// nothing to it.
+///
+/// So this function is deliberately incapable of enriching: it returns the
+/// published message unchanged or nothing at all. Reaching past it for a
+/// rawer form of the error (a `String(describing:)` of the thrown value,
+/// say, or the config that was dialed) would put text on screen that no
+/// audit covered, which is the one way this dialog could become the leak
+/// the rest of the branch was spent closing.
+enum ConnectFailureDetails {
+    /// `nil` for any state that is not a failure — there is nothing
+    /// technical to show, and a dialog offering an empty body would be a
+    /// worse answer than no dialog.
+    static func text(for state: ConnectionViewModel.State) -> String? {
+        guard case .failed(let message, _) = state else { return nil }
+        return message
     }
 }
 
@@ -1458,6 +1586,13 @@ struct ConnectAttemptLivenessMirror: View {
                 {
                 case .connecting:
                     tab.liveness = .connecting
+                    // A new attempt is what this tab is about now, so the
+                    // previous one's failure stops speaking for it. Every
+                    // dial reaches `.connecting` — the stored-session one
+                    // and the form's own — so this one line is what keeps
+                    // the failed surface from outliving the attempt that
+                    // raised it, without a second clearing rule per path.
+                    tab.connectFailure = nil
                 case .lost(let reason):
                     // The reason is refreshed in the same step as the state
                     // it explains: an attempt that stopped at a host key or
@@ -1467,11 +1602,32 @@ struct ConnectAttemptLivenessMirror: View {
                     // the reason of the attempt BEFORE it.
                     tab.lostConnection?.reason = reason
                     tab.liveness = .lost
+                case .failedConnect:
+                    // Failed-connect surface (failed-connect surface plan,
+                    // Task 3). `liveness` still goes to `nil` — no
+                    // connection exists, and the tab-strip dot's own
+                    // reading of this tab is unchanged by this task — and
+                    // the surface is chosen by `connectFailure` instead,
+                    // which is why `ConnectionSurfacePlan` takes it as its
+                    // own argument rather than deriving it from `liveness`.
+                    tab.liveness = nil
+                    tab.connectFailure = ConnectFailure(
+                        storedSessionID: tab.dialingStoredSessionID)
                 case .clear:
                     tab.liveness = nil
+                    tab.connectFailure = nil
                 case .leaveAlone:
                     break
                 }
+                // The dial's origin is consumed here and nowhere else (see
+                // `SessionTab.dialingStoredSessionID`). Any state that is
+                // not `.connecting` means no dial of this tab's is in
+                // flight, so whatever origin was recorded belongs to an
+                // attempt that has already ended — keeping it would let the
+                // NEXT attempt, which may well be an ad-hoc one from the
+                // form, inherit a stored session it never dialed and offer
+                // to edit it.
+                if newState != .connecting { tab.dialingStoredSessionID = nil }
             }
     }
 }
@@ -1490,6 +1646,13 @@ enum ConnectAttemptLivenessPlan {
         case connecting
         /// Back to the lost surface, with the reason this attempt earned.
         case lost(LostConnectionReason)
+        /// Onto the failed-connect surface (failed-connect surface plan,
+        /// Task 3): the attempt reached the wire and failed there, on a tab
+        /// that has no session and no earlier connection to explain. Split
+        /// out of `.clear`, which is where every failed first attempt used
+        /// to land — and `.clear` means "show the form", which is exactly
+        /// the fallback this surface replaces.
+        case failedConnect
         case clear
         case leaveAlone
     }
@@ -1509,7 +1672,20 @@ enum ConnectAttemptLivenessPlan {
             return .connecting
         case .failed:
             guard !hasSession else { return .leaveAlone }
-            guard describesLostConnection else { return .clear }
+            guard describesLostConnection else {
+                // Failed-connect surface (Task 3). `.other` is the design
+                // spec's own boundary for it: a timeout, a name that did
+                // not resolve, a refused connection. `.needsPerson` — an
+                // unknown or changed host key, a missing passphrase, and
+                // every pre-dial refusal, which are `.needsPerson` by
+                // construction (see `ConnectFailureKind`) — keeps clearing
+                // to the form, because the form is where the question that
+                // stopped the attempt is actually asked and where its text
+                // has always lived. A `nil` verdict is not a failed dial
+                // this surface knows how to describe, and falls the same
+                // way.
+                return failureKind == .other ? .failedConnect : .clear
+            }
             return .lost(failureKind == .needsPerson ? .needsPerson : .reconnectFailed)
         case .idle:
             return .leaveAlone
@@ -1595,7 +1771,8 @@ struct ReconnectRunner: View {
 
 /// The lost-connection surface (connection-liveness plan, Task 7): what
 /// happened, and the way back. Shown instead of `ConnectionFormView` while
-/// `ConnectionSurfacePlan.surface(for:hostKeyPromptPending:)` answers
+/// `ConnectionSurfacePlan.surface(for:hostKeyPromptPending:connectAttemptFailed:)`
+/// answers
 /// `.lost`.
 ///
 /// Every string on it comes from `LostConnectionContent`, which holds
@@ -1641,9 +1818,136 @@ private struct LostConnectionView: View {
     }
 }
 
+/// The failed-connect surface (failed-connect surface plan, Task 3): the
+/// attempt did not get through, and what can be done about it. Shown
+/// instead of `ConnectionFormView` while `ConnectionSurfacePlan
+/// .surface(for:hostKeyPromptPending:connectAttemptFailed:)` answers
+/// `.failed`.
+///
+/// The maintainer's own words for why it exists: after a real timeout
+/// against an unreachable host, the connection form simply came back, and
+/// being handed the entry mask again reads as "nothing happened" rather
+/// than as an answer.
+///
+/// Every string on the surface itself comes from `ConnectFailureContent`,
+/// which holds catalog keys and nothing else — the same property
+/// `LostConnectionView` has, for the same reason, and
+/// `ReconnectWiringGuardTests` scans this body to keep it true. The one
+/// piece of text that is NOT a catalog key is the technical message, and it
+/// is not on this surface: it lives behind the details control, in a dialog
+/// of its own (`ConnectFailureDetailsSheet`), which is the maintainer's
+/// decision — a general sentence here, everything precise one click away
+/// for debugging.
+private struct ConnectFailureView: View {
+    let content: ConnectFailureContent
+    /// The technical text, or `nil` when the layer below published none —
+    /// in which case the details control is not offered at all rather than
+    /// opening an empty dialog. Comes from `ConnectFailureDetails
+    /// .text(for:)`; see that function for why it is the published message
+    /// and nothing richer.
+    let details: String?
+    let onRetry: () -> Void
+    let onEdit: () -> Void
+    let onEditSession: () -> Void
+    let onClose: () -> Void
+
+    @State private var showsDetails = false
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "bolt.horizontal.circle.fill")
+                .font(.system(size: 28))
+                .foregroundStyle(DesignTokens.statusLost)
+            Text(L10n.string(content.title.key, content.title.fallback))
+                .font(.title2.bold())
+            Text(L10n.string(content.body.key, content.body.fallback))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            HStack(spacing: 12) {
+                Button(
+                    L10n.string(content.retryButton.key, content.retryButton.fallback),
+                    action: onRetry)
+                    .buttonStyle(.polished)
+                Button(
+                    L10n.string(content.editButton.key, content.editButton.fallback),
+                    action: onEdit)
+                if let editSession = content.editSessionButton {
+                    Button(
+                        L10n.string(editSession.key, editSession.fallback),
+                        action: onEditSession)
+                }
+                Button(
+                    L10n.string(content.closeButton.key, content.closeButton.fallback),
+                    action: onClose)
+            }
+            if details != nil {
+                Button(
+                    L10n.string(content.detailsButton.key, content.detailsButton.fallback)
+                ) {
+                    showsDetails = true
+                }
+                .buttonStyle(.link)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 420, maxWidth: 460)
+        .sheet(isPresented: $showsDetails) {
+            ConnectFailureDetailsSheet(
+                title: content.detailsTitle, message: details ?? "",
+                onClose: { showsDetails = false })
+        }
+    }
+}
+
+/// The failed-connect details dialog (failed-connect surface plan, Task 3):
+/// the full technical message, for debugging.
+///
+/// The only surface in this branch that renders text macSCP did not choose
+/// word for word, which is why the design spec attaches an explicit
+/// condition to it — it may show what the user typed or stored, and never a
+/// secret, not even inside a library's own embedded error text. That
+/// condition is met upstream, at the sources that produce the message, and
+/// held here by taking `message` as a plain `String` from
+/// `ConnectFailureDetails.text(for:)` and doing nothing to it: this view has
+/// no access to a config, a form or an `Error` from which it could assemble
+/// anything richer.
+///
+/// `textSelection` because the point of the dialog is to get the text INTO
+/// a bug report, and a scrolling body because a server's own refusal text
+/// has no length this layout could assume.
+private struct ConnectFailureDetailsSheet: View {
+    let title: ConnectFailureContent.Message
+    let message: String
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(L10n.string(title.key, title.fallback))
+                .font(.headline)
+            ScrollView {
+                Text(message)
+                    .font(.system(size: 12, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(minHeight: 80, maxHeight: 220)
+            HStack {
+                Spacer()
+                Button(L10n.string("common.ok", "OK"), action: onClose)
+                    .buttonStyle(.polished)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 420, maxWidth: 520)
+    }
+}
+
 /// "Connecting…" with a Cancel control (connection-liveness plan, Task 6) —
 /// shown instead of `ConnectionFormView` while `ConnectionSurfacePlan
-/// .surface(for:hostKeyPromptPending:)` answers `.connecting`. The design
+/// .surface(for:hostKeyPromptPending:connectAttemptFailed:)` answers
+/// `.connecting`. The design
 /// spec's own framing for this surface
 /// (`docs/superpowers/specs/2026-08-21-verbindungszustand-design.md` §4):
 /// the connection attempt becomes a cancellable task on the same tab area,

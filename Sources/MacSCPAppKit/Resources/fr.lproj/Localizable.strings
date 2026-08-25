@@ -942,3 +942,13 @@
 "connection.lost.hint.onceDone" = "macSCP a déjà essayé une fois de lui-même.";
 "connection.lost.reconnect" = "Se reconnecter";
 "connection.lost.dismiss" = "Revenir au formulaire";
+
+/* Failed-connect surface (failed-connect surface plan, Task 3) */
+"connection.failed.title" = "Connexion impossible";
+"connection.failed.body" = "macSCP n'a pas pu joindre l'hôte.";
+"connection.failed.retry" = "Réessayer";
+"connection.failed.edit" = "Modifier";
+"connection.failed.editSession" = "Modifier la session";
+"connection.failed.close" = "Fermer";
+"connection.failed.details" = "Détails…";
+"connection.failed.details.title" = "Détails de la connexion";

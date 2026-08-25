@@ -1443,6 +1443,14 @@ struct ContentView: View {
             // on screen, so there is nothing more to show here.
             guard try fillForm(form, from: stored) else { return }
 
+            // The dial's origin (failed-connect surface plan, Task 3),
+            // recorded immediately before the dial and consumed by
+            // `ConnectAttemptLivenessMirror` the moment the attempt ends —
+            // see `SessionTab.dialingStoredSessionID`. Set HERE rather than
+            // at the top of this method so a `fillForm` refusal, which
+            // returns above without ever dialing, leaves no origin behind.
+            tab.dialingStoredSessionID = stored.id
+
             if let fs = await form.connect() {
                 // Accept only usable absolute paths (M9d final review): an
                 // empty/relative realpath result would land the pane in
@@ -1572,6 +1580,79 @@ struct ContentView: View {
     func dismissLostConnection(_ tab: SessionTab) {
         tab.lostConnection = nil
         tab.liveness = nil
+    }
+
+    /// The stored session this tab's FAILED ATTEMPT dialed, if it is still
+    /// in the list (failed-connect surface plan, Task 3).
+    ///
+    /// Resolved live rather than remembered, exactly as
+    /// `reconnectTarget(for:)` is and for the same reason: `ConnectFailure`
+    /// keeps only an id, and a session can be deleted — from another window
+    /// — while its tab sits on this surface. A deleted one turns "Edit
+    /// session" off and turns Retry into the ad-hoc case, instead of
+    /// offering two controls that cannot work.
+    func failedConnectTarget(for tab: SessionTab) -> StoredSession? {
+        guard let id = tab.connectFailure?.storedSessionID else { return nil }
+        return sessionListViewModel.sessions.first(where: { $0.id == id })
+    }
+
+    /// The failed-connect surface's "Try again" (failed-connect surface
+    /// plan, Task 3).
+    ///
+    /// One line of substance, and — as with `reconnect(_:)` above — that is
+    /// the point: it dials through `connect(in:stored:)`, the SAME function
+    /// a sidebar click goes through, so TOFU stays the hard stop it is, the
+    /// keychain and login-set rules are the ones `fillForm(_:from:)`
+    /// applies, the plaintext confirmation still gets asked, and the
+    /// attempt token and `isReconnecting` lock still guard the hand-off. A
+    /// dial written out here instead would be a second place every one of
+    /// those could be forgotten, which is the property
+    /// `ReconnectWiringGuardTests` exists to hold.
+    ///
+    /// An ad-hoc attempt — typed into the form and never saved — has no
+    /// stored session to redial, and there is deliberately no second dial
+    /// on this branch to redial it WITH: the values it would use live on
+    /// the form, and the form's own Connect button is the one place an
+    /// ad-hoc dial happens in this app. So this hands such a tab back to
+    /// that form, filled exactly as the failed attempt left it. That makes
+    /// Retry and Edit land in the same place for an ad-hoc attempt, which
+    /// is a UI cost accepted knowingly in exchange for there being exactly
+    /// one way to dial.
+    func retryConnect(_ tab: SessionTab) {
+        guard let stored = failedConnectTarget(for: tab) else {
+            dismissConnectFailure(tab)
+            return
+        }
+        connect(in: tab, stored: stored)
+    }
+
+    /// Leaves the failed-connect surface for the ordinary connection form
+    /// (failed-connect surface plan, Task 3) — the surface's own "Edit",
+    /// and the way every sidebar command that fills the form gets past it.
+    ///
+    /// Clears only `connectFailure`: that is the single fact
+    /// `ConnectionSurfacePlan` reads for this surface, `liveness` is
+    /// already `nil` for a tab showing it, and the FORM is deliberately
+    /// left exactly as the failed attempt filled it — "Edit" means "change
+    /// something and try again", and blanking the fields it is named for
+    /// would be the opposite.
+    func dismissConnectFailure(_ tab: SessionTab) {
+        tab.connectFailure = nil
+    }
+
+    /// The failed-connect surface's "Edit session" (failed-connect surface
+    /// plan, Task 3): the durable change, as opposed to "Edit"'s one-off.
+    ///
+    /// Goes through `editStored(_:)`, the same function the sidebar's own
+    /// "Edit…" entry uses, so the editor is opened one way. The surface is
+    /// only ever rendered for the ACTIVE tab (`ContentView.detail` renders
+    /// that one tab's content), which is the tab `editStored`'s own target
+    /// rule then picks — and it picks it because a tab showing this surface
+    /// is unconnected by construction.
+    func editFailedSession(_ tab: SessionTab) {
+        guard let stored = failedConnectTarget(for: tab) else { return }
+        dismissConnectFailure(tab)
+        editStored(stored)
     }
 
     /// Fills `form` from a stored session — the ONE fill both callers of a
@@ -2007,6 +2088,11 @@ struct ContentView: View {
         // be blanked behind an error view and the command would look like
         // it did nothing.
         dismissLostConnection(tab)
+        // Same argument for the failed-connect surface (failed-connect
+        // surface plan, Task 3): a tab showing it is "unconnected" too, so
+        // without this the blanked fields would sit behind an error view
+        // and the command would look like it did nothing.
+        dismissConnectFailure(tab)
         tab.connectionViewModel.endEditing()
     }
 
@@ -2026,6 +2112,9 @@ struct ContentView: View {
         // Task 7): every caller of this fills the FORM, which a tab still
         // showing the lost-connection surface would not be displaying.
         dismissLostConnection(tab)
+        // And past the failed-connect surface (failed-connect surface plan,
+        // Task 3), for the identical reason.
+        dismissConnectFailure(tab)
         return tab
     }
 

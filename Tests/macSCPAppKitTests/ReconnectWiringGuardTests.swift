@@ -238,6 +238,21 @@ struct ReconnectWiringGuardTests {
         ChokePoint(
             pattern: #"\bLostConnectionView\s*(?:\(|\.init\b)"#,
             describes: "rendering the lost-connection surface"),
+        // The failed-connect surface's own pair (failed-connect surface
+        // plan, Task 3), added for the reason the two above exist: the
+        // claim that this surface can only show a fixed set of catalog
+        // keys holds only while ONE function builds its content and ONE
+        // view renders it. The dialog is in the second pattern rather than
+        // a third entry because it is part of the same surface — it is
+        // where the surface puts the one text that is NOT a catalog key,
+        // and a second, unsanctioned dialog fed from somewhere else is
+        // exactly the change that should stop a reader.
+        ChokePoint(
+            pattern: #"\bConnectFailureContent\s*(?:\(|\.init\b)"#,
+            describes: "building the failed-connect surface's content"),
+        ChokePoint(
+            pattern: #"\bConnectFailure(?:View|DetailsSheet)\s*(?:\(|\.init\b)"#,
+            describes: "rendering the failed-connect surface or its details dialog"),
         ChokePoint(
             pattern: #"\bdot\s*\(\s*\.red\b"#,
             describes: "drawing the attention dot"),
@@ -270,8 +285,8 @@ struct ReconnectWiringGuardTests {
         let reason: String
     }
 
-    /// Eleven entries, counted while writing this sentence. Adding a
-    /// twelfth is a deliberate edit here, with a reason, which is the
+    /// Fourteen entries, counted while writing this sentence. Adding a
+    /// fifteenth is a deliberate edit here, with a reason, which is the
     /// entire mechanism: a new dial cannot become invisible by being
     /// somewhere nobody anchored on.
     private static let sanctionedSites: [SanctionedSite] = [
@@ -325,6 +340,21 @@ struct ReconnectWiringGuardTests {
             code: "LostConnectionView(",
             occurrences: 1,
             reason: "`ContentView.detail`'s lost branch — the only site that renders the error view."),
+        SanctionedSite(
+            file: "Sources/MacSCPAppKit/ContentView+Detail.swift",
+            code: "ConnectFailureContent(",
+            occurrences: 1,
+            reason: "`ConnectFailurePlan.content` — the only builder of the failed-connect surface's content, which is what keeps that surface to a fixed set of catalog keys (see `ConnectFailurePlanTests`)."),
+        SanctionedSite(
+            file: "Sources/MacSCPAppKit/ContentView+Detail.swift",
+            code: "ConnectFailureView(",
+            occurrences: 1,
+            reason: "`ContentView.detail`'s failed-connect branch — the only site that renders that surface, and the one place its four actions are wired to the functions they delegate to."),
+        SanctionedSite(
+            file: "Sources/MacSCPAppKit/ContentView+Detail.swift",
+            code: "ConnectFailureDetailsSheet(",
+            occurrences: 1,
+            reason: "`ConnectFailureView`'s own sheet — the only site that opens the details dialog, which is the one surface on this branch showing a raw error text and therefore the one whose single source matters."),
         SanctionedSite(
             file: "Sources/MacSCPAppKit/TabStripView.swift",
             code: "case .attention: dot(.red, pulse: false)",
@@ -784,10 +814,14 @@ struct ReconnectWiringGuardTests {
     // `ReconnectPlanTests` pins.
 
     private static let reconnectAnchor = "func reconnect(_ tab: SessionTab)"
+    private static let retryAnchor = "func retryConnect(_ tab: SessionTab)"
+    private static let failedBranchAnchor =
+        "// Failed-connect surface branch (failed-connect surface plan, Task 3)"
     private static let lostBranchAnchor = "// Lost surface branch (connection-liveness plan, Task 7)"
     private static let runnerAnchor = "struct ReconnectRunner: View"
     private static let runnerMountAnchor = "// Unattended reconnect (Task 7)"
     private static let mirrorWriteAnchor = "// Liveness mirror write (connection-liveness plan, Task 7)"
+    private static let mirrorAnchor = "struct ConnectAttemptLivenessMirror: View"
     private static let indicatorAnchor = "private var indicator: TabIndicatorPlan.Indicator"
 
     private enum ScanError: Error, Equatable, CustomStringConvertible {
@@ -826,6 +860,22 @@ struct ReconnectWiringGuardTests {
             """)
     }
 
+    /// The failed-connect surface's "Try again" (failed-connect surface
+    /// plan, Task 3) reaches the wire the same single way everything else
+    /// does. The whole security argument for adding a retry control at all
+    /// is that it adds no dial: TOFU stays a hard stop, the keychain and
+    /// login-set rules stay `fillForm`'s, and the plaintext confirmation
+    /// still gets asked, because this function delegates rather than
+    /// dialling. The allow-list scan above is the half that catches a dial
+    /// written ANYWHERE in the App layer; this is the half that catches
+    /// this function quietly ceasing to delegate at all.
+    @Test func theRetryDialsThroughTheSharedConnect() throws {
+        let body = try Self.strippedBody(after: Self.retryAnchor, in: Self.contentViewFile)
+        #expect(body.contains("connect(in: tab, stored: stored)"), """
+            `ContentView.retryConnect(_:)` no longer calls `connect(in:stored:)`.
+            """)
+    }
+
     /// The site the first version of this suite missed entirely: the
     /// schedule reaches the shared path through this mount's `onAttempt`,
     /// not through anything in `reconnect(_:)`'s own neighbourhood.
@@ -859,6 +909,94 @@ struct ReconnectWiringGuardTests {
             the lost surface's dismissal no longer calls `dismissLostConnection(tab)` — \
             clearing only one of `liveness`/`lostConnection` inline would leave either the \
             surface up or an unattended schedule running behind the form.
+            """)
+    }
+
+    @Test func theFailedBranchRendersThePlansContent() throws {
+        let body = try Self.strippedBody(after: Self.failedBranchAnchor, in: Self.detailFile)
+        #expect(body.contains("surface == .failed"), """
+            the failed-connect branch no longer tests `surface == .failed` — the surface \
+            choice must stay `ConnectionSurfacePlan.surface`'s answer, which is where the \
+            rule that a pending host-key prompt overrides every surface lives.
+            """)
+        #expect(body.contains("ConnectFailurePlan.content("), """
+            the failed-connect branch no longer asks `ConnectFailurePlan.content(` — which \
+            action appears for which state would then be decided in a view body no test in \
+            this project can render.
+            """)
+    }
+
+    /// Every one of the four actions goes to the function that owns it,
+    /// rather than to an inline reimplementation. Named individually
+    /// because "the surface has four buttons" is not the property — the
+    /// property is that each button reaches the same code the rest of the
+    /// app reaches for that action.
+    @Test func theFailedBranchRoutesAllFourActionsToTheirRealHandlers() throws {
+        let body = try Self.strippedBody(after: Self.failedBranchAnchor, in: Self.detailFile)
+        #expect(body.contains("retryConnect(tab)"), """
+            the failed-connect surface's Retry no longer calls `retryConnect(tab)` — the one \
+            function that routes it through the shared `connect(in:stored:)`.
+            """)
+        #expect(body.contains("dismissConnectFailure(tab)"), """
+            the failed-connect surface's Edit no longer calls `dismissConnectFailure(tab)`.
+            """)
+        #expect(body.contains("editFailedSession(tab)"), """
+            the failed-connect surface's "Edit session" no longer calls \
+            `editFailedSession(tab)`, which is what routes it through the same `editStored` \
+            the sidebar's own Edit uses.
+            """)
+        #expect(body.contains("requestClose(tab)"), """
+            the failed-connect surface's Close no longer calls `requestClose(tab)` — closing \
+            a tab any other way skips the active-transfer confirmation.
+            """)
+    }
+
+    /// Where the details dialog's text comes from, which is the one place
+    /// on this branch a raw error string reaches a surface at all.
+    ///
+    /// It must be the message `ConnectionViewModel` published — the text
+    /// the connection form has always shown, whose producing sites this
+    /// branch's groundwork task audited and repaired. Reaching around that
+    /// for a rawer form would put text on screen no audit covered, and
+    /// `String(describing:)` over a thrown error is precisely how that
+    /// would be spelled.
+    @Test func theDetailsDialogShowsWhatTheViewModelPublished() throws {
+        let body = try Self.strippedBody(after: Self.failedBranchAnchor, in: Self.detailFile)
+        #expect(body.contains("ConnectFailureDetails.text("), """
+            the failed-connect branch no longer asks `ConnectFailureDetails.text(` for the \
+            dialog's text.
+            """)
+        #expect(body.contains("for: tab.connectionViewModel.state"), """
+            the details text is no longer taken from `tab.connectionViewModel.state` — the \
+            published failure is the only text this dialog may show.
+            """)
+        #expect(!body.contains("String(describing:"), """
+            the failed-connect branch now builds a description of its own. The details dialog \
+            shows what the layer below published and nothing richer; a `String(describing:)` \
+            of a thrown error or a config is text no audit of the producing sites covered.
+            """)
+    }
+
+    /// The same last gap `theLostSurfaceRendersNoStringOfItsOwn` closes, for
+    /// this surface: the allow-list pins that one function builds the
+    /// content, but the view could still render a literal of its own beside
+    /// it, and then the enumerable-keys claim would cover only the part
+    /// that happens to go through the plan.
+    ///
+    /// Scoped to `ConnectFailureView` and NOT to the details dialog, on
+    /// purpose: the dialog's whole body is a raw string by design, and it
+    /// dismisses itself with the shared `common.ok` label the rest of the
+    /// app uses.
+    @Test func theFailedSurfaceRendersNoStringOfItsOwn() throws {
+        let body = try Self.strippedBody(
+            after: "private struct ConnectFailureView: View", in: Self.detailFile)
+        #expect(body.contains("L10n.string("), "the surface renders no localized text at all?")
+        #expect(!body.contains("L10n.string( "), """
+            `ConnectFailureView` passes a string literal to `L10n.string(`. Every string on \
+            this surface has to come through `ConnectFailureContent`, or the guarantee that \
+            it can only show a fixed, enumerated set of catalog keys — and therefore no host \
+            name, server message or typed value — covers only the part that happens to go \
+            through the plan.
             """)
     }
 
@@ -900,6 +1038,42 @@ struct ReconnectWiringGuardTests {
             """)
     }
 
+    /// The two writes the failed-connect surface depends on, pinned the
+    /// same way the reason write-back above is: this mirror is a SwiftUI
+    /// `.onChange` closure, and nothing in this project renders one, so a
+    /// scan of its stripped source is the only check there can be that it
+    /// still performs them.
+    ///
+    /// Both are load-bearing and neither is visible from the plain
+    /// functions the suites around it drive.
+    /// `ConnectAttemptLivenessPlan.write` can answer `.failedConnect`
+    /// forever without a surface ever appearing, if the mirror stops
+    /// recording it; and the consume of the dial's origin is what keeps a
+    /// stored session dialed earlier from being offered for editing after
+    /// a LATER ad-hoc attempt fails.
+    @Test func theLivenessMirrorRecordsTheFailedAttemptAndConsumesItsOrigin() throws {
+        // The WHOLE mirror, not just its `switch` (round 1 of this test,
+        // measured): `mirrorWriteAnchor`'s body is brace-matched from the
+        // switch's own `{`, so it ends at the switch — and the consume
+        // below deliberately sits after it, where it runs for every state
+        // rather than once per case.
+        let body = try Self.strippedBody(after: Self.mirrorAnchor, in: Self.detailFile)
+        #expect(body.contains("tab.connectFailure = ConnectFailure("), """
+            the mirror no longer records the failed attempt on the tab — `ConnectionSurfacePlan` \
+            reads `tab.connectFailure` and nothing else to put that surface up, so the tab \
+            would fall back to the form exactly as it did before this task.
+            """)
+        #expect(body.contains("storedSessionID: tab.dialingStoredSessionID"), """
+            the recorded failure no longer carries the dial's origin, so "Edit session" would \
+            never be offered — or, worse, would be offered for whatever id replaced it.
+            """)
+        #expect(body.contains("if newState != .connecting { tab.dialingStoredSessionID = nil }"), """
+            the mirror no longer consumes the dial's origin when an attempt ends. It is written \
+            by `connect(in:stored:)` and read here; without the clear, an ad-hoc attempt that \
+            fails LATER inherits a stored session it never dialed and offers to edit it.
+            """)
+    }
+
     @Test func theTabIndicatorAsksItsPlanAndHandsItTheLiveness() throws {
         let body = try Self.strippedBody(after: Self.indicatorAnchor, in: Self.tabStripFile)
         #expect(body.contains("TabIndicatorPlan.indicator("), """
@@ -933,10 +1107,13 @@ struct ReconnectWiringGuardTests {
 
     @Test(arguments: [
         (reconnectAnchor, "Sources/MacSCPAppKit/ContentView.swift"),
+        (retryAnchor, "Sources/MacSCPAppKit/ContentView.swift"),
+        (failedBranchAnchor, "Sources/MacSCPAppKit/ContentView+Detail.swift"),
         (lostBranchAnchor, "Sources/MacSCPAppKit/ContentView+Detail.swift"),
         (runnerAnchor, "Sources/MacSCPAppKit/ContentView+Detail.swift"),
         (runnerMountAnchor, "Sources/MacSCPAppKit/ContentView+Detail.swift"),
         (mirrorWriteAnchor, "Sources/MacSCPAppKit/ContentView+Detail.swift"),
+        (mirrorAnchor, "Sources/MacSCPAppKit/ContentView+Detail.swift"),
         (indicatorAnchor, "Sources/MacSCPAppKit/TabStripView.swift"),
     ])
     func everyAnchorAppearsExactlyOnceInItsRealFile(anchor: String, relativePath: String) throws {

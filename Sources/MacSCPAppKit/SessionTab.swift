@@ -279,6 +279,46 @@ final class SessionTab: Identifiable {
     /// runner's counter — touch nothing `liveness` describes.
     var lostConnection: LostConnection?
 
+    /// This tab's failed connect ATTEMPT (failed-connect surface plan,
+    /// Task 3) — the sibling of `lostConnection` above, and deliberately a
+    /// separate value rather than a fifth `ConnectionLiveness` case: a
+    /// connection that never existed is a different thing from one that
+    /// dropped, and the tab-strip dot reads `liveness` for a tab that has
+    /// no connection either way.
+    ///
+    /// Two writers, counted while writing this sentence:
+    /// - `ConnectAttemptLivenessMirror` SETS it, from
+    ///   `ConnectAttemptLivenessPlan.write`'s `.failedConnect` answer, and
+    ///   clears it on `.connecting` (a new attempt speaks for the tab now)
+    ///   and on `.clear`.
+    /// - `ContentView.dismissConnectFailure(_:)` clears it — the way off
+    ///   this surface back to the form, from the surface's own Edit control
+    ///   and from the sidebar commands that fill the form.
+    ///
+    /// Nothing else writes it. In particular `teardown(_:)` does not: a tab
+    /// whose session is being torn down had a session, so its next failure
+    /// is a `lostConnection`, not this. `ContentView.newConnection()` and
+    /// `formTarget()` reach it only THROUGH `dismissConnectFailure(_:)`,
+    /// which is why they are not a third and fourth writer.
+    var connectFailure: ConnectFailure?
+
+    /// The stored session `ContentView.connect(in:stored:)` is dialing
+    /// right now (failed-connect surface plan, Task 3), or `nil` when the
+    /// dial in flight is the form's own ad-hoc one.
+    ///
+    /// Written immediately before that dial and CONSUMED — read and
+    /// cleared — by `ConnectAttemptLivenessMirror` on the first state that
+    /// is not `.connecting`, which is to say the moment the attempt ends.
+    /// One writer, one consumer, and a lifetime no longer than the attempt
+    /// itself: that is what stops a stored session dialed earlier from
+    /// still being on record when a LATER ad-hoc attempt fails, which would
+    /// offer to edit a session the user never dialed.
+    ///
+    /// Not merged into `connectFailure`: this is what the attempt is
+    /// dialing, `connectFailure` is what a finished attempt left behind,
+    /// and only the second one decides what is on screen.
+    var dialingStoredSessionID: UUID?
+
     var displayTitle: String {
         titleName ?? L10n.string("tabs.newConnection", "New Connection")
     }

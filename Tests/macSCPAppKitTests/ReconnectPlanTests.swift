@@ -302,12 +302,58 @@ struct ReconnectPlanTests {
                 == .lost(.needsPerson))
     }
 
+    /// A failure only a person can resolve — an unknown or changed host
+    /// key, a missing passphrase, and every pre-dial refusal, which are
+    /// `.needsPerson` by construction — keeps clearing to the form, because
+    /// the form is where that question is asked and where its text has
+    /// always lived.
     @Test func aFailedAttemptWithNoLostEpisodeClearsTheLiveness() {
         #expect(
             ConnectAttemptLivenessPlan.write(
                 for: .failed(message: "nope", field: nil), hasSession: false,
                 describesLostConnection: false, failureKind: .needsPerson)
                 == .clear)
+    }
+
+    /// The case the failed-connect surface plan's Task 3 added: a dial that
+    /// reached the wire and failed there, on a tab with no session and no
+    /// earlier connection to explain, goes to its OWN surface. Before that
+    /// task this answered `.clear`, which means "show the form" — the
+    /// maintainer's complaint, being handed the entry mask again as if
+    /// nothing had been asked for.
+    @Test func aFailedDialWithNoLostEpisodeGoesToTheFailedSurface() {
+        #expect(
+            ConnectAttemptLivenessPlan.write(
+                for: .failed(message: "timed out", field: nil), hasSession: false,
+                describesLostConnection: false, failureKind: .other)
+                == .failedConnect)
+    }
+
+    /// No verdict at all is not a failed dial this surface knows how to
+    /// describe, so it falls the same way `.needsPerson` does. Checked
+    /// because `.other` is the ONLY value that may open this surface: a
+    /// mutation reading the condition as "not `.needsPerson`" passes the
+    /// test above and fails here.
+    @Test func aFailureWithNoVerdictStillClears() {
+        #expect(
+            ConnectAttemptLivenessPlan.write(
+                for: .failed(message: "nope", field: nil), hasSession: false,
+                describesLostConnection: false, failureKind: nil)
+                == .clear)
+    }
+
+    /// The failed-connect surface never displaces the lost one: a tab that
+    /// is describing a dropped connection stays on that surface even when
+    /// the attempt that just failed is an ordinary wire failure. Otherwise
+    /// the first unattended retry would replace the explanation of the drop
+    /// — and the schedule that is still running behind it — with a fresh
+    /// "could not connect".
+    @Test func aFailedDialOnALostTabStaysWithTheLostSurface() {
+        #expect(
+            ConnectAttemptLivenessPlan.write(
+                for: .failed(message: "timed out", field: nil), hasSession: false,
+                describesLostConnection: true, failureKind: .other)
+                != .failedConnect)
     }
 
     /// `.failed` is not exclusively "the dial failed" — `showFailure` is

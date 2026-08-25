@@ -938,3 +938,13 @@
 "connection.lost.hint.onceDone" = "macSCP already tried once on its own.";
 "connection.lost.reconnect" = "Reconnect";
 "connection.lost.dismiss" = "Back to the form";
+
+/* Failed-connect surface (failed-connect surface plan, Task 3) */
+"connection.failed.title" = "No connection possible";
+"connection.failed.body" = "macSCP could not connect to the host.";
+"connection.failed.retry" = "Try again";
+"connection.failed.edit" = "Edit";
+"connection.failed.editSession" = "Edit session";
+"connection.failed.close" = "Close";
+"connection.failed.details" = "Details…";
+"connection.failed.details.title" = "Connection details";
