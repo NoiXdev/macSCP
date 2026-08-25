@@ -72,7 +72,31 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
             if let certificateError = delegate.lastCertificateError {
                 throw certificateError
             }
-            throw error
+            // Everything macSCP already typed keeps its own shape; anything
+            // else is a foreign error -- in practice a `URLError` from
+            // `URLSession` -- and gets wrapped rather than rethrown, the same
+            // shape `S3FileSystem.fetchPage` already uses for the same
+            // situation.
+            //
+            // The wrapping is what keeps a secret out of the text, and
+            // `localizedDescription` rather than `String(describing:)` is the
+            // whole point: an `NSError`'s `description` prints its ENTIRE
+            // `userInfo`, and Foundation puts the failing URL in there under
+            // `NSErrorFailingURLStringKey` -- verbatim, userinfo component
+            // included, so a base URL of the form
+            // `https://user:password@host/dav` hands that password to
+            // whatever renders the error. `localizedDescription` is the
+            // localized sentence alone ("Could not connect to the server."),
+            // which carries no URL and no dictionary whose keys Foundation,
+            // not macSCP, decides.
+            //
+            // Second effect, not a side effect: an unwrapped rethrow reached
+            // `ConnectionViewModel.failedState`'s catch-all arm, so an
+            // ordinary WebDAV network failure read "Unexpected error: <NSError
+            // dump>" instead of the connection-failure text every other
+            // backend produces for the same condition.
+            if let fsError = error as? RemoteFSError { throw fsError }
+            throw RemoteFSError.connectionFailed(reason: error.localizedDescription)
         }
         return fs
     }
