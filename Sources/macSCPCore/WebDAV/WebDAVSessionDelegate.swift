@@ -26,6 +26,7 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
     private var certificateError: ServerCertificateError?
     private var credentialRejected = false
     private var bodyStreamRefusal: String?
+    private var trustStoreWriteFailure: String?
 
     /// Set when a challenge was refused, so the connect path can report the
     /// precise cause instead of URLSession's generic cancellation.
@@ -59,6 +60,19 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
     public var lastBodyStreamRefusal: String? {
         lock.lock(); defer { lock.unlock() }
         return bodyStreamRefusal
+    }
+
+    /// Set when the user accepted an unknown certificate but remembering it
+    /// failed — see `decideCertificate` for why that does not fail the
+    /// connection. Sticky for the life of the delegate, and deliberately
+    /// separate from `certificateError`: this connection succeeded, and
+    /// `WebDAVFileSystem.connect` reads that property as the reason one did
+    /// not. Carries the host, the port and the store's own complaint, so a
+    /// bug report can name what was not pinned; no secret is at stake, a
+    /// server certificate is public material.
+    public var lastTrustStoreWriteFailure: String? {
+        lock.lock(); defer { lock.unlock() }
+        return trustStoreWriteFailure
     }
 
     public init(username: String, password: String,
@@ -98,12 +112,60 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
                 setError(.rejectedByUser)
                 return false
             }
-            try? trustStore.upsert(TrustedCertificate(
-                host: candidate.host, port: candidate.port,
-                derBase64: candidate.derBase64, subject: candidate.subject,
-                issuer: candidate.issuer, notAfter: candidate.notAfter))
+            // Recorded, not thrown — deliberately unlike the host-key
+            // path, and for the same reason the file header already gives
+            // for not copying its retry dance. In
+            // `CitadelFileSystem.connectWithTOFURetries` this write is
+            // load-bearing: accepting a host key reconnects from scratch and
+            // re-reads the store, so a lost write leaves the reconnect
+            // facing the same unknown key it just asked about — which is why
+            // it throws `RemoteFSError.connectionFailed` there rather than
+            // ask again. Here the handshake continues in place with the very
+            // certificate the user just approved, so refusing the connection
+            // would refuse a session that is exactly as trustworthy as the
+            // user said it was.
+            //
+            // What IS lost is TOFU for this host: nothing was pinned, so
+            // every later connect sees an unknown certificate and asks
+            // again, and `.mismatch` — the hard stop this whole path exists
+            // for — can never fire for a substituted one. Too quiet to leave
+            // to a `try?`, hence a recorded condition plus a log line, the
+            // same treatment `needNewBodyStream` gives a refused body
+            // replay.
+            //
+            // The log splits its privacy where that one did not have to:
+            // this message names the host and quotes Foundation's error,
+            // which spells out the store's path and with it the account
+            // name. The static half is `.public` so the line is findable;
+            // the specifics stay `.private` and live in
+            // `lastTrustStoreWriteFailure` for a bug report.
+            do {
+                try trustStore.upsert(TrustedCertificate(
+                    host: candidate.host, port: candidate.port,
+                    derBase64: candidate.derBase64, subject: candidate.subject,
+                    issuer: candidate.issuer, notAfter: candidate.notAfter))
+            } catch {
+                recordTrustStoreWriteFailure(candidate: candidate, error: error)
+            }
             return true
         }
+    }
+
+    private func recordTrustStoreWriteFailure(
+        candidate: ServerCertificateCandidate, error: Error
+    ) {
+        let reason = "accepted certificate for \(candidate.host):\(candidate.port) "
+            + "could not be remembered — \(error.localizedDescription); "
+            + "this host will be asked about again on every connect"
+        lock.lock()
+        trustStoreWriteFailure = reason
+        lock.unlock()
+        Self.logger.error(
+            """
+            trusted-certificate store not writable; the accepted certificate \
+            was not pinned and this host stays unpinned: \
+            \(reason, privacy: .private)
+            """)
     }
 
     private func setError(_ error: ServerCertificateError) {

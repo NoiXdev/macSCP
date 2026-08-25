@@ -100,6 +100,48 @@ struct WebDAVSessionDelegateTests {
         }
     }
 
+    /// The accept path writes the certificate and then keeps going: unlike
+    /// the host-key path, the handshake is not restarted, so the connection
+    /// succeeds whether or not the write did. What must not happen is the
+    /// write failing invisibly — a certificate that was never pinned means
+    /// every later connect sees it as unknown and asks again, so a
+    /// substituted certificate can never reach `.mismatch`, the hard stop.
+    @Test func acceptedCertificateThatCannotBeRememberedIsRecorded() async throws {
+        // A directory path that is actually a FILE (the M9a pattern): the
+        // store's `createDirectory` fails, so `upsert` throws. A real store
+        // on a real unwritable path — the failure being tested lives in
+        // Foundation's write, and a fake would only prove the fake's shape.
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macscp-deleg-blocked-\(UUID().uuidString)")
+        try Data().write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let store = TrustedCertificateStore(directory: file)
+
+        let delegate = WebDAVSessionDelegate(
+            username: "u", password: "p", trustStore: store, decider: { _ in true })
+        #expect(delegate.lastTrustStoreWriteFailure == nil)
+
+        let decision = await delegate.decideCertificate(
+            ServerCertificateCandidate(
+                host: "nas.local", port: 443, derBase64: "QUJD",
+                subject: "CN=nas.local", issuer: "CN=nas.local", notAfter: nil))
+
+        // The user approved this certificate, so the connection proceeds ...
+        #expect(decision == true)
+        // ... and must NOT be reported as a certificate failure: nothing
+        // about the certificate itself went wrong, and `lastCertificateError`
+        // is what the connect path reads as the reason a connect failed.
+        #expect(delegate.lastCertificateError == nil)
+        // ... but the lost pin is on the record, naming the host it was lost
+        // for. Without this the store write is the only step in the TOFU
+        // path that can fail without leaving a trace.
+        let failure = try #require(delegate.lastTrustStoreWriteFailure)
+        #expect(failure.contains("nas.local"))
+        #expect(failure.contains("443"))
+        // And nothing was pinned — that is the state the record describes.
+        #expect(try store.allCertificates().isEmpty)
+    }
+
     /// A WebDAV upload body is a single-use bound stream fed from a one-shot
     /// async sequence, so a replay request can only be refused. What must not
     /// happen is refusing it *silently*: URLSession then fails the task with
