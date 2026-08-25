@@ -545,6 +545,45 @@ struct CitadelFileSystemIntegrationTests {
         #expect(try store.find(host: "127.0.0.1", port: 2222) == nil)
     }
 
+    /// Accepting an unknown key writes it and then RECONNECTS, so the write
+    /// is load-bearing here — unlike the certificate path, where the
+    /// handshake continues in place and a failed write is only recorded. If
+    /// the store cannot be written, the reconnect meets the very same
+    /// unknown key: the connect must fail with a typed error instead of
+    /// asking the user again for a key that can never be remembered.
+    @Test func acceptedHostKeyThatCannotBeStoredFailsTheConnect() async throws {
+        // A store directory that is actually a FILE, so `upsert`'s
+        // `createDirectory` throws — a real store on a real unwritable path.
+        let file = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-tofu-blocked-\(UUID().uuidString)")
+        try Data().write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let store = KnownHostsStore(directory: file)
+        let config = try SSHConnectionConfig(
+            host: "127.0.0.1", port: 2222, username: "testuser",
+            auth: .password("testpass"))
+
+        let asked = CallCounterBox()
+        do {
+            _ = try await CitadelFileSystem.connect(
+                config: config, connectTimeout: .seconds(30), knownHosts: store,
+                onUnknownHostKey: { _ in asked.increment(); return true })
+            Issue.record("expected the connect to fail")
+        } catch let error as RemoteFSError {
+            guard case .connectionFailed(let reason) = error else {
+                Issue.record("expected .connectionFailed, got \(error)")
+                return
+            }
+            // Named, not a stringified Foundation error: the read side's
+            // verdict a few arms up reads the same way, and neither is a
+            // question the user can answer by retrying.
+            #expect(reason.hasPrefix("known_hosts store not writable"))
+        }
+        // Asked once. The point of failing rather than continuing is that
+        // the user is not put in front of the same prompt on every retry.
+        #expect(asked.value == 1)
+    }
+
     /// Cleans up a test folder under /config via `docker exec rm -rf`. Used
     /// for directories and as a catch-all after a test's own `fs.delete`
     /// (RemoteFileSystem only deletes FILES, no rmdir/remove for directories).
