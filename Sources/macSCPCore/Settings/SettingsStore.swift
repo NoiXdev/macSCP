@@ -478,6 +478,15 @@ public final class SettingsStore {
     /// duplicating the literal `10` a second time somewhere easy to drift.
     public nonisolated static let defaultConnectTimeoutSeconds = Defaults.connectTimeoutSeconds
 
+    /// The non-zero default `keepAliveIntervalSeconds` falls back to once a
+    /// probe is turned back ON after having been off (Task 9's Settings UI:
+    /// the view has no other source for "what interval to resume at" the
+    /// first time it ever sees the "off" sentinel `0`). Reachable without a
+    /// `SettingsStore` instance for the same reason as
+    /// `defaultConnectTimeoutSeconds` above — a single source of truth
+    /// instead of the literal `60` duplicated in `SettingsView.swift`.
+    public nonisolated static let defaultKeepAliveIntervalSeconds = Defaults.keepAliveIntervalSeconds
+
     /// Convenience: association lookup with the SAME normalization applied.
     public func associatedApp(forExtension ext: String) -> String? {
         let normalizedExtension = Self.normalizeExtension(ext)

@@ -63,6 +63,21 @@
 "settings.terminal.target.builtInFallback.footer" = "Gdy wybrano „Wbudowany”, ta pozycja menu otwiera Twoją własną aplikację, jeśli jest ustawiona, w przeciwnym razie Terminal.";
 "settings.terminal.target.noneChosen" = "Nie wybrano aplikacji";
 
+/* Settings — SSH tab, connection behaviour (Task 9) */
+"settings.connection.timeout.header" = "Limit czasu połączenia";
+"settings.connection.timeout %lld" = "Przerwij po %lld sekundach";
+"settings.connection.timeout.footer" = "Określa, jak długo macSCP czeka na odpowiedź pierwszego odcinka połączenia, zanim zrezygnuje. Przy hoście pośredniczącym (jump host) obejmuje to tylko ten pierwszy odcinek — drugi korzysta ze stałego limitu czasu, którego to ustawienie nie zmienia.";
+"settings.connection.keepAlive.header" = "Keep-Alive";
+"settings.connection.keepAlive" = "Sprawdzaj połączenie w bezczynności";
+"settings.connection.keepAliveInterval %lld" = "Co %lld sekund";
+"settings.connection.keepAlive.footer" = "Wysyła krótki sygnał kontrolny na nieaktywnym połączeniu, aby zerwanie sieci było widoczne, zanim spróbujesz z niego skorzystać. Wyłączone — macSCP zauważy to dopiero, gdy zaczniesz działać.";
+"settings.connection.reconnect.header" = "Ponowne łączenie";
+"settings.connection.reconnect" = "Gdy połączenie zostanie utracone";
+"settings.connection.reconnect.offerOnly" = "Zaproponuj ponowne połączenie";
+"settings.connection.reconnect.onceThenAsk" = "Połącz ponownie raz, potem zapytaj";
+"settings.connection.reconnect.automatic" = "Łącz ponownie automatycznie";
+"settings.connection.reconnect.footer" = "„Zaproponuj ponowne połączenie” czeka na kliknięcie. „Połącz ponownie raz, potem zapytaj” próbuje raz automatycznie, a potem pyta. „Łącz ponownie automatycznie” próbuje bez końca samodzielnie. Zmieniony klucz hosta zawsze zatrzymuje połączenie i pyta o potwierdzenie, niezależnie od wybranej opcji.";
+
 /* Ustawienia — zakładka Otwórz za pomocą */
 "settings.tab.openWith" = "Otwórz za pomocą";
 "settings.openWith.defaultEditor.header" = "Domyślny edytor";

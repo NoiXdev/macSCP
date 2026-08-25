@@ -61,6 +61,21 @@
 "settings.terminal.target.builtInFallback.footer" = "When “Built-in” is selected, that menu item opens your custom app if one is set, otherwise Terminal.";
 "settings.terminal.target.noneChosen" = "No app chosen";
 
+/* Settings — SSH tab, connection behaviour (Task 9) */
+"settings.connection.timeout.header" = "Connect Timeout";
+"settings.connection.timeout %lld" = "Give up after %lld seconds";
+"settings.connection.timeout.footer" = "Bounds how long macSCP waits for the first hop to answer before giving up. Through a jump host, only that first hop is covered — the second hop runs through a fixed timeout this setting cannot change.";
+"settings.connection.keepAlive.header" = "Keep-Alive";
+"settings.connection.keepAlive" = "Check the connection while idle";
+"settings.connection.keepAliveInterval %lld" = "Every %lld seconds";
+"settings.connection.keepAlive.footer" = "Sends a small probe on a quiet connection so a dropped network shows up before you try to use it. Off, macSCP only notices when you act.";
+"settings.connection.reconnect.header" = "Reconnect";
+"settings.connection.reconnect" = "When a connection is lost";
+"settings.connection.reconnect.offerOnly" = "Offer to reconnect";
+"settings.connection.reconnect.onceThenAsk" = "Reconnect once, then ask";
+"settings.connection.reconnect.automatic" = "Reconnect automatically";
+"settings.connection.reconnect.footer" = "“Offer to reconnect” waits for a click. “Reconnect once, then ask” retries automatically one time, then falls back to asking. “Reconnect automatically” keeps retrying on its own. A changed host key always stops and asks, no matter which option is selected.";
+
 /* Settings — Open with tab */
 "settings.tab.openWith" = "Open with";
 "settings.openWith.defaultEditor.header" = "Default editor";

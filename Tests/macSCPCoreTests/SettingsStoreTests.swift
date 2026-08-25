@@ -834,6 +834,18 @@ struct SettingsStoreTests {
         #expect(reloaded.keepAliveIntervalSeconds == 0)
     }
 
+    /// Pins `SettingsStore.defaultKeepAliveIntervalSeconds` (Task 9's
+    /// Settings UI resumes the Keep-Alive stepper at this value when the
+    /// probe is turned back on from "off") against a FRESH store's own
+    /// default — same tie, and same reason to pin it, as
+    /// `defaultConnectTimeoutSecondsMatchesAFreshStore` below.
+    @Test func defaultKeepAliveIntervalSecondsMatchesAFreshStore() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(SettingsStore.defaultKeepAliveIntervalSeconds == store.keepAliveIntervalSeconds)
+    }
+
     /// Asserts through the persisted file, not just the getter — see
     /// `theKeepAliveIntervalIsClampedOnBothEnds`'s comment for why.
     @Test func theConnectTimeoutIsClampedAndDefaultsBelowCitadelsThirty() throws {

@@ -61,6 +61,21 @@
 "settings.terminal.target.builtInFallback.footer" = "Ist „Eingebautes Terminal“ gewählt, öffnet dieser Menüpunkt deine eigene App, falls eine festgelegt ist, sonst Terminal.";
 "settings.terminal.target.noneChosen" = "Keine App gewählt";
 
+/* Settings — SSH tab, connection behaviour (Task 9) */
+"settings.connection.timeout.header" = "Verbindungs-Timeout";
+"settings.connection.timeout %lld" = "Nach %lld Sekunden abbrechen";
+"settings.connection.timeout.footer" = "Legt fest, wie lange macSCP auf die Antwort des ersten Verbindungsabschnitts wartet, bevor abgebrochen wird. Bei einem Jump-Host gilt das nur für diesen ersten Abschnitt – der zweite läuft über ein festes Zeitlimit, das diese Einstellung nicht ändern kann.";
+"settings.connection.keepAlive.header" = "Keep-Alive";
+"settings.connection.keepAlive" = "Verbindung im Leerlauf prüfen";
+"settings.connection.keepAliveInterval %lld" = "Alle %lld Sekunden";
+"settings.connection.keepAlive.footer" = "Sendet in ruhigen Momenten einen kleinen Prüfimpuls, damit ein Verbindungsabbruch auffällt, bevor du die Verbindung nutzen willst. Ausgeschaltet bemerkt macSCP das erst, wenn du etwas tust.";
+"settings.connection.reconnect.header" = "Wiederverbindung";
+"settings.connection.reconnect" = "Wenn eine Verbindung getrennt wird";
+"settings.connection.reconnect.offerOnly" = "Wiederverbindung anbieten";
+"settings.connection.reconnect.onceThenAsk" = "Einmal automatisch wiederverbinden, danach fragen";
+"settings.connection.reconnect.automatic" = "Automatisch wiederverbinden";
+"settings.connection.reconnect.footer" = "„Wiederverbindung anbieten“ wartet auf einen Klick. „Einmal automatisch wiederverbinden, danach fragen“ versucht es einmal automatisch und fragt danach nach. „Automatisch wiederverbinden“ versucht es fortlaufend von selbst. Ein geänderter Host-Schlüssel stoppt in jedem Fall und fragt nach – unabhängig von dieser Einstellung.";
+
 /* Settings — Tab „Öffnen mit" */
 "settings.tab.openWith" = "Öffnen mit";
 "settings.openWith.defaultEditor.header" = "Standard-Editor";

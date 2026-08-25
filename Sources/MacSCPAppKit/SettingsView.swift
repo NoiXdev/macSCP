@@ -764,21 +764,75 @@ private struct ShortcutsSettingsTab: View {
     }
 }
 
+/// The pure mapping behind the Keep-Alive toggle and interval stepper
+/// (Task 9). `SettingsStore.keepAliveIntervalSeconds` is a SINGLE stored
+/// integer where `0` means "off" — unlike `autoRefreshEnabled`/
+/// `autoRefreshIntervalSeconds` above, which are two separate settings, so
+/// their toggle and stepper each bind straight to their own property. This
+/// task deliberately added no second persisted setting for Keep-Alive, so
+/// the toggle and stepper both have to be derived from that one integer
+/// plus a view-local "what to resume at" value the view remembers while
+/// probing is off (see `SSHSettingsSection.lastKnownKeepAliveInterval`).
+///
+/// Pulled out for the same reason as `LivenessDotPlan` in TabStripView.swift
+/// — nothing in this project renders SwiftUI in a test, so this static,
+/// no-SwiftUI mapping is what a test CAN prove about the two controls: what
+/// each shows, and which is enabled, for a given stored value.
+enum KeepAliveControlPlan {
+    /// The toggle's own state: on iff the stored value is not the "off"
+    /// sentinel `0`.
+    static func isEnabled(storedSeconds: Int) -> Bool {
+        storedSeconds != 0
+    }
+
+    /// What the interval stepper displays. While probing is off, the
+    /// stored value IS `0` — showing that in a "every N seconds" field
+    /// would read as a broken stepper, not "no probe" — so it falls back
+    /// to `lastKnownInterval`, the view's own remembered on-value.
+    static func displayedInterval(storedSeconds: Int, lastKnownInterval: Int) -> Int {
+        storedSeconds != 0 ? storedSeconds : lastKnownInterval
+    }
+
+    /// What to persist when the toggle flips. Off writes the sentinel `0`
+    /// directly. On restores `lastKnownInterval` rather than
+    /// `SettingsStore`'s own clamp default, so turning probing off and
+    /// back on returns to what the user had before, not to the default 60.
+    static func storedValue(togglingTo isOn: Bool, lastKnownInterval: Int) -> Int {
+        isOn ? lastKnownInterval : 0
+    }
+}
+
 /// The "SSH" protocol section (M18/T7): the external-terminal target picker
 /// (moved out of the former "Terminal" tab).
 ///
 /// It used to carry a second, one-button section linking to `SSHKeysSheet`;
 /// that link moved to "Manage Data", which gathers all five management
-/// overlays in one list. What is left here is a single setting — worth
-/// knowing before adding to it, since a one-setting section under
-/// "Protocols" is thin, and the section would be empty if that setting ever
-/// moved too.
+/// overlays in one list. External-terminal target was, for a while, the
+/// only setting left here — Task 9 ended that by adding three more
+/// sections below it: connect timeout, keep-alive probing, and reconnect
+/// behaviour, all three read straight off `SettingsStore` (the Keep-Alive
+/// pair through `KeepAliveControlPlan` above, the other two directly).
 private struct SSHSettingsSection: View {
     @Bindable var store: SettingsStore
     /// Drives the custom-terminal-app picker (M11d/T2) — same
     /// `.fileImporter` pattern as `OpenWithSettingsTab`'s default-editor
     /// picker.
     @State private var showCustomAppPicker = false
+    /// Remembers the keep-alive interval across turning the probe off —
+    /// `store.keepAliveIntervalSeconds` collapses to `0` while off (Task 9's
+    /// "no second setting" constraint), so without this the stepper would
+    /// have nothing of its own to show and re-enabling would always land
+    /// back on `SettingsStore.defaultKeepAliveIntervalSeconds` instead of
+    /// what the user had. View-local only — never persisted, resets to the
+    /// stored value (or the default, if that is `0`) on every fresh launch.
+    @State private var lastKnownKeepAliveInterval: Int
+
+    init(store: SettingsStore) {
+        self.store = store
+        let current = store.keepAliveIntervalSeconds
+        _lastKnownKeepAliveInterval = State(
+            initialValue: current != 0 ? current : SettingsStore.defaultKeepAliveIntervalSeconds)
+    }
 
     /// Display name for `store.customTerminalAppPath`, or a placeholder when
     /// none is chosen yet — same idea as `OpenWithSettingsTab.appDisplayName`
@@ -844,6 +898,123 @@ private struct SSHSettingsSection: View {
                             + "custom app if one is set, otherwise Terminal."))
                 }
                 .foregroundStyle(.secondary)
+            }
+
+            // Connect timeout (Task 9): bounds the dial itself, before a
+            // session exists to show liveness for at all.
+            Section {
+                Stepper(
+                    value: Binding(
+                        get: { store.connectTimeoutSeconds },
+                        set: { store.connectTimeoutSeconds = $0 }
+                    ),
+                    in: 5...120
+                ) {
+                    Text(String(
+                        format: L10n.string(
+                            "settings.connection.timeout %lld", "Give up after %lld seconds"),
+                        store.connectTimeoutSeconds))
+                }
+            } header: {
+                Text(L10n.string("settings.connection.timeout.header", "Connect Timeout"))
+            } footer: {
+                // Honest about scope: measured against the vendored Citadel
+                // source (see `SettingsStore.connectTimeoutSeconds`'s own
+                // doc comment) — a jump host's second hop has no TCP
+                // connect step of its own for this setting to bound, and
+                // its handshake wait is Citadel's own fixed 10s instead. An
+                // earlier draft of this text overstated coverage and was
+                // corrected after that measurement.
+                Text(L10n.string(
+                    "settings.connection.timeout.footer",
+                    "Bounds how long macSCP waits for the first hop to answer before giving "
+                        + "up. Through a jump host, only that first hop is covered — the "
+                        + "second hop runs through a fixed timeout this setting cannot "
+                        + "change."))
+                    .foregroundStyle(.secondary)
+            }
+
+            // Keep-Alive (Task 9): the idle-connection probe interval.
+            // `0` means "off" and is the ONLY value the toggle/stepper
+            // pair below writes outside 15...600 — see
+            // `KeepAliveControlPlan` for the pure mapping and
+            // `lastKnownKeepAliveInterval` for why a disabled stepper
+            // still shows a sensible number.
+            Section {
+                Toggle(
+                    L10n.string(
+                        "settings.connection.keepAlive", "Check the connection while idle"),
+                    isOn: Binding(
+                        get: { KeepAliveControlPlan.isEnabled(storedSeconds: store.keepAliveIntervalSeconds) },
+                        set: { isOn in
+                            store.keepAliveIntervalSeconds = KeepAliveControlPlan.storedValue(
+                                togglingTo: isOn, lastKnownInterval: lastKnownKeepAliveInterval)
+                        }
+                    ))
+                Stepper(
+                    value: Binding(
+                        get: {
+                            KeepAliveControlPlan.displayedInterval(
+                                storedSeconds: store.keepAliveIntervalSeconds,
+                                lastKnownInterval: lastKnownKeepAliveInterval)
+                        },
+                        set: { newValue in
+                            lastKnownKeepAliveInterval = newValue
+                            store.keepAliveIntervalSeconds = newValue
+                        }
+                    ),
+                    in: 15...600
+                ) {
+                    Text(String(
+                        format: L10n.string(
+                            "settings.connection.keepAliveInterval %lld", "Every %lld seconds"),
+                        KeepAliveControlPlan.displayedInterval(
+                            storedSeconds: store.keepAliveIntervalSeconds,
+                            lastKnownInterval: lastKnownKeepAliveInterval)))
+                }
+                .disabled(!KeepAliveControlPlan.isEnabled(storedSeconds: store.keepAliveIntervalSeconds))
+            } header: {
+                Text(L10n.string("settings.connection.keepAlive.header", "Keep-Alive"))
+            } footer: {
+                Text(L10n.string(
+                    "settings.connection.keepAlive.footer",
+                    "Sends a small probe on a quiet connection so a dropped network shows "
+                        + "up before you try to use it. Off, macSCP only notices when you "
+                        + "act."))
+                    .foregroundStyle(.secondary)
+            }
+
+            // Reconnect behaviour (Task 9): what happens once a connection
+            // is found gone.
+            Section {
+                Picker(
+                    L10n.string("settings.connection.reconnect", "When a connection is lost"),
+                    selection: $store.reconnectBehaviour
+                ) {
+                    Text(L10n.string("settings.connection.reconnect.offerOnly", "Offer to reconnect"))
+                        .tag(ReconnectBehaviour.offerOnly)
+                    Text(L10n.string(
+                        "settings.connection.reconnect.onceThenAsk", "Reconnect once, then ask"))
+                        .tag(ReconnectBehaviour.onceThenAsk)
+                    Text(L10n.string(
+                        "settings.connection.reconnect.automatic", "Reconnect automatically"))
+                        .tag(ReconnectBehaviour.automatic)
+                }
+            } header: {
+                Text(L10n.string("settings.connection.reconnect.header", "Reconnect"))
+            } footer: {
+                // The host-key sentence holds regardless of which option is
+                // picked (architecture invariant: a key mismatch is a hard
+                // stop, never auto-accepted) — stated here so "automatic"
+                // does not read as "no confirmation ever".
+                Text(L10n.string(
+                    "settings.connection.reconnect.footer",
+                    "\u{201C}Offer to reconnect\u{201D} waits for a click. "
+                        + "\u{201C}Reconnect once, then ask\u{201D} retries automatically one "
+                        + "time, then falls back to asking. \u{201C}Reconnect "
+                        + "automatically\u{201D} keeps retrying on its own. A changed host key "
+                        + "always stops and asks, no matter which option is selected."))
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
