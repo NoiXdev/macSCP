@@ -931,8 +931,8 @@
 "connection.lost.title" = "Verbindung verloren";
 "connection.lost.body.probe" = "Der Host hat nicht mehr geantwortet, deshalb hat macSCP die Sitzung geschlossen.";
 "connection.lost.body.retryFailed" = "macSCP hat den Host nicht wieder erreicht.";
-"connection.lost.body.needsPerson" = "Der letzte Versuch endete bei einer Frage, die nur Sie beantworten können.";
-"connection.lost.hint.noSavedSession" = "Diese Verbindung war nicht gespeichert; zum Wiederverbinden füllen Sie das Formular erneut aus.";
+"connection.lost.body.needsPerson" = "Der letzte Versuch endete bei einer Frage, die nur du beantworten kannst.";
+"connection.lost.hint.noSavedSession" = "Diese Verbindung war nicht gespeichert; zum Wiederverbinden füllst du das Formular erneut aus.";
 "connection.lost.hint.stopped" = "macSCP versucht es nicht von selbst erneut, solange die Frage offen ist.";
 "connection.lost.hint.automatic" = "macSCP versucht es von selbst weiter, mit wachsendem Abstand.";
 "connection.lost.hint.onceUpcoming" = "macSCP versucht es gleich einmal von selbst.";
