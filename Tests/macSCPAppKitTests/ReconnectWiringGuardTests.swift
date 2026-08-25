@@ -41,7 +41,7 @@ import Testing
 ///
 /// ## What this guard cannot see
 ///
-/// Green here is not proof that no dial escapes the shared path. Four
+/// Green here is not proof that no dial escapes the shared path. Five
 /// known gaps, named so the next person does not mistake one for the
 /// other:
 ///
@@ -61,16 +61,41 @@ import Testing
 ///    for.
 /// 3. **`Mirror`-based label lookup** reaches a property without naming
 ///    it in source at all.
-/// 4. **An `await` more than one wrapped line above its call.** The
+/// 4. **A suspension more than one wrapped line above its call.** The
 ///    `.connect` discrimination reads a two-line window (see
 ///    `Discrimination.unlessSynchronousCall`), so a dial split across
 ///    three lines reads as an ordinary synchronous call and is excused.
+/// 5. **The next spelling that suspends.** `suspends(_:)` knows the two
+///    Swift has today — `await`, and the `async let` that round 6
+///    measured slipping past a check that only knew the first. It knows
+///    them because they were written down after being found, not because
+///    anything here derives them from the language: a future spelling, or
+///    a synchronous-looking wrapper whose own body does the awaiting
+///    somewhere this scan does not read, is excused for the same reason
+///    `async let` was.
 ///
 /// Gaps 2 and 3 are exotic — they would not survive code review as
 /// ordinary code, which is the layer that catches them. Gap 4 is the price
 /// of clearing a false positive that would otherwise have taught someone
-/// to switch this suite off. Gap 1 is real, and is why this suite's green
-/// is a floor, not a ceiling.
+/// to switch this suite off.
+///
+/// Gaps 1 and 5 are the real ones, and they are the same gap seen from two
+/// sides. `async let` was the sixth time on this branch that a SPELLING
+/// beat a detector, and the fix for it was, once again, to write the
+/// spelling down. That is a race this method loses permanently: a scan
+/// over a language with several ways to spell one meaning can only ever
+/// enumerate the ways someone has already thought of, and every round of
+/// this suite has ended by adding one more. Round 6's addition is not
+/// evidence that the enumeration is now complete — the previous five
+/// rounds each looked equally complete from the inside.
+///
+/// So this suite's green is a floor, not a ceiling, and the thing that
+/// would make it a ceiling is not a seventh pattern: it is the capability
+/// boundary named in gap 1 — the App layer being unable to OBTAIN a
+/// connection except through one type it must hold, which no spelling can
+/// work around because there is nothing to spell. Recorded as backlog by
+/// the coordinator, 2026-08-22; round 6 is the argument for raising its
+/// priority rather than for extending this list again.
 @Suite("Reconnect wiring guard")
 struct ReconnectWiringGuardTests {
     /// `#filePath` here is
@@ -175,12 +200,22 @@ struct ReconnectWiringGuardTests {
         /// Every match counts.
         case always
         /// A match counts unless it is an ordinary SYNCHRONOUS call: an
-        /// applied `(…)` with no `await` in its window. Exists for exactly
+        /// applied `(…)` whose window does not suspend. Exists for exactly
         /// one shape — Combine's `ConnectablePublisher.connect()`, which is
-        /// not async and never awaited, while every dial in this project is
-        /// `async` and therefore cannot be called without `await`. Round 3
-        /// flagged such a call as a dial, and a guard that cries wolf on
-        /// unrelated code is a guard the next person switches off.
+        /// not async and is never awaited. Round 3 flagged such a call as a
+        /// dial, and a guard that cries wolf on unrelated code is a guard
+        /// the next person switches off.
+        ///
+        /// Every dial in this project is `async`, so it has to suspend to
+        /// be a dial — but round 6 measured what that does NOT imply: it
+        /// does not imply the word `await` is written. `async let` calls an
+        /// `async` function without it, and the version of this comment
+        /// that said a dial "cannot be called without `await`" was the
+        /// reason nobody looked. `suspends(_:)` is what answers the
+        /// question now, and it knows about both spellings — see its own
+        /// doc comment for the mutation, and this suite's "what this guard
+        /// cannot see" for why knowing about two is not the same as
+        /// knowing about all of them.
         ///
         /// An unapplied reference (`let dial = x.connect`) is never
         /// excused: it has no parentheses, and it is the round-2 evasion.
@@ -763,6 +798,7 @@ struct ReconnectWiringGuardTests {
             tab.session = BrowserSession.init(id: id)
             let viaImplicitSelf = await connect()
             let unqualifiedReference = connect
+            async let dialed = BackendDescriptor.descriptor(for: kind).connect(config, d, d, 30)
             """)
 
         #expect(!flagged.contains { $0.contains("harmless") }, """
@@ -790,7 +826,16 @@ struct ReconnectWiringGuardTests {
         #expect(flagged.contains("let unqualifiedReference = connect"), """
             the same shape unapplied: no dot AND no paren.
             """)
-        #expect(flagged.count == 8, "expected exactly the eight real hits, found \(flagged)")
+        #expect(
+            flagged.contains(
+                "async let dialed = BackendDescriptor.descriptor(for: kind).connect(config, d, d, 30)"),
+            """
+            an `async let` dial was excused as a synchronous call. This is round 6's measured \
+            escape: `async let` calls an `async` function without ever writing `await`, so a \
+            raw backend dial with accept-anything host-key deciders — in a brand-new App-layer \
+            file — compiled and left the whole suite green.
+            """)
+        #expect(flagged.count == 9, "expected exactly the nine real hits, found \(flagged)")
     }
 
     /// The other direction, and the one round 3 got wrong: ordinary code
@@ -814,6 +859,8 @@ struct ReconnectWiringGuardTests {
             func connect(
             connect(in: tab, stored: stored)
             connect(in: target, stored: stored, paneVisibility: .terminalOnly)
+            func mount() async {
+            cancellable = publisher.connect()
             """)
         #expect(flagged.isEmpty, """
             ordinary code was flagged as touching a dial choke point: \(flagged)
@@ -822,9 +869,15 @@ struct ReconnectWiringGuardTests {
         // `\.connect` to the bare identifier (round 5): the App layer's own
         // funnel — `ContentView.connect(in:stored:)`, its declaration and
         // its callers — now matches the pattern and is cleared by the
-        // discrimination instead, because it is applied and carries no
-        // `await`. `reconnect`/`retryConnect` never matched: the lookbehind
+        // discrimination instead, because it is applied and does not
+        // suspend. `reconnect`/`retryConnect` never matched: the lookbehind
         // rejects a preceding identifier character.
+        //
+        // The last two lines are the false positive round 6's `async let`
+        // fix had to avoid buying: `async` and `let` are adjacent TOKENS
+        // there, but a brace stands between them, so a Combine
+        // `connect()` opening the body of an `async` function is still
+        // read as the synchronous call it is.
     }
 
     /// …but the narrowing must not have gone so far that the real thing
@@ -836,9 +889,14 @@ struct ReconnectWiringGuardTests {
             self.session = BrowserSession(id: id)
             tab.session = otherTab.session
             tab.session = nil
+            async let fs = publisher.connect()
             let fs = await publisher.connect()
             """)
-        #expect(flagged.count == 5, """
+        #expect(flagged.contains("async let fs = publisher.connect()"), """
+            the `async let` twin of the Combine call above was excused: it is applied and \
+            writes no `await`, which is exactly what round 6 measured slipping past.
+            """)
+        #expect(flagged.count == 6, """
             a dangerous line was excused by the narrowing that cleared the false positives: \
             \(flagged)
             """)
@@ -1424,7 +1482,7 @@ struct ReconnectWiringGuardTests {
             case .always:
                 return detector.point.describes
             case .unlessSynchronousCall:
-                if !isAppliedCall(of: detector.regex, in: line) || containsAwait(window) {
+                if !isAppliedCall(of: detector.regex, in: line) || suspends(window) {
                     return detector.point.describes
                 }
             }
@@ -1443,8 +1501,36 @@ struct ReconnectWiringGuardTests {
         return rest.first == "("
     }
 
-    private static func containsAwait(_ text: String) -> Bool {
-        text.split(whereSeparator: { !$0.isLetter && $0 != "_" }).contains("await")
+    /// Whether the window SUSPENDS — which is the question
+    /// `.unlessSynchronousCall` actually wants answered, and is not the
+    /// same question as "does the word `await` appear".
+    ///
+    /// Round 6, review-measured: the previous version asked only for
+    /// `await`, and `async let dialed = BackendDescriptor.descriptor(for:
+    /// config.kind).connect(config, { _ in true }, { _ in true }, 30)` — a
+    /// raw backend dial with an accept-anything host-key decider, in a
+    /// brand-new App-layer file — calls an `async` function without ever
+    /// writing the word. It compiled and left the whole suite green. The
+    /// controls run in the same pass were red (the same line with `await`,
+    /// and a `Task.detached` around it), so the walk did reach the file;
+    /// only the spelling escaped.
+    ///
+    /// `async let` is matched as two WHITESPACE-separated words, not as
+    /// two tokens somewhere in the window: `func f() async {` followed by
+    /// a body that opens with `let x = publisher.connect()` has `async`
+    /// and `let` adjacent in token order but a brace between them, and
+    /// reading that as a suspension would reintroduce exactly the false
+    /// positive `.unlessSynchronousCall` exists to clear.
+    private static func suspends(_ text: String) -> Bool {
+        if text.split(whereSeparator: { !$0.isLetter && $0 != "_" }).contains("await") {
+            return true
+        }
+        let words = text.split(whereSeparator: { $0.isWhitespace })
+        for (offset, word) in words.enumerated()
+        where word == "async" && offset + 1 < words.count && words[offset + 1] == "let" {
+            return true
+        }
+        return false
     }
 
     private static func relativePath(of file: URL) -> String {
