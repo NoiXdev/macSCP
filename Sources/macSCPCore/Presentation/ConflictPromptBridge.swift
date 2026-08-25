@@ -166,7 +166,7 @@ public final class ConflictPromptBridge {
     }
 
     /// Teardown entry point: cancels whichever prompt is open, if any. MUST
-    /// run before `transferQueue.cancelAll()` — `cancelAll` blocks
+    /// run before `transferQueue.cancelAll(reason:)` — `cancelAll` blocks
     /// (documented) on an open decider prompt that would otherwise never be
     /// answered (deadlock on disconnect with an open sheet).
     ///

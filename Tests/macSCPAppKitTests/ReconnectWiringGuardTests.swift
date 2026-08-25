@@ -37,7 +37,8 @@ import Testing
 /// Fail-closed throughout: an unreadable file, a missing anchor, an
 /// unbalanced brace, a walk that finds implausibly few files, a symbolic
 /// link among the sources, and a sanctioned site that no longer exists are
-/// all failures.///
+/// all failures.
+///
 /// ## What this guard cannot see
 ///
 /// Green here is not proof that no dial escapes the shared path. Four

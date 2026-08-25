@@ -128,7 +128,7 @@ enum TabIndicatorPlan {
     /// suppressing those would be a claim about what a torn-down tab's
     /// queue can be doing, and this function is not the place that knows
     /// it. In practice `ContentView.teardown(_:)` has already run
-    /// `cancelAll()` by the time a tab reads `.lost`, so the activity
+    /// `cancelAll(reason:)` by the time a tab reads `.lost`, so the activity
     /// branch answers `.none` on its own — by fact, not by a second rule
     /// here that could disagree with it.
     static func indicator(

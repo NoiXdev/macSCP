@@ -316,7 +316,7 @@ extension ContentView {
     func teardown(_ tab: SessionTab, reason: CancelReason) async {
         tab.editErrorMessage = nil
         if let session = tab.session {
-            // MUST run before `cancelAll()`: an open conflict sheet would
+            // MUST run before `cancelAll(reason:)`: an open conflict sheet would
             // otherwise keep the decider prompt open, which `cancelAll`
             // (documented) hangs on until it's answered — deadlock on disconnect.
             tab.conflictBridge.cancelOpenPrompt()
