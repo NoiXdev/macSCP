@@ -189,7 +189,9 @@ final class SessionTab: Identifiable {
     /// which there is no session anymore, so the value has to be able to
     /// outlive the session it describes.
     ///
-    /// Six writers, recounted while writing this sentence, at Task 7 (five
+    /// Seven writers, recounted while writing this sentence, at the
+    /// whole-branch final review's finding I-1, which split the probe's own
+    /// write off into a function that can refuse it (six as of Task 7, five
     /// as of Task 6 fix round 1, four as of Task 4 fix round 3) —
     /// `LivenessGiveUpOrderingTests` pins the second of these by mutation,
     /// since a comment describing this order is exactly what went stale
@@ -210,8 +212,14 @@ final class SessionTab: Identifiable {
     /// - `ContentView.dismissLostConnection(_:)` (Task 7) resets it to
     ///   `nil` when the user leaves the lost surface for the form, and
     ///   clears `lostConnection` in the same breath.
-    /// - `LivenessProbeRunner`'s probe loop writes `.connected`/`.degraded`
-    ///   directly while a session is live.
+    /// - `LivenessProbeRunner`'s probe loop writes `.connected` directly
+    ///   for a lap it SKIPPED because the queue was busy — running traffic
+    ///   is its own proof, and no probe was issued to answer for it.
+    /// - `LivenessProbeStep.perform` writes `.connected`/`.degraded` for a
+    ///   probe that actually ran — but only if the probing task is still
+    ///   live and still on the same session, since the race it waits on
+    ///   cannot be cut short and would otherwise answer for a connection
+    ///   that is already gone. See that type's own doc comment.
     /// - `ConnectAttemptLivenessMirror` (Task 6, extended in Task 7) writes
     ///   `.connecting` when this tab's own `connectionViewModel.state`
     ///   reaches `.connecting`, and, on `.failed` while this tab has no

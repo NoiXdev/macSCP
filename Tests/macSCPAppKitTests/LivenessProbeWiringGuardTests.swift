@@ -4,7 +4,7 @@ import Testing
 /// Guards the shape of the liveness-probe loop in `ContentView+Detail.swift`
 /// (connection-liveness plan, Task 4; fix round 1 moved the loop from
 /// `ContentView.detail` into `LivenessProbeRunner.body`, still in the same
-/// file — see that type's own doc comment for why): three claims about that
+/// file — see that type's own doc comment for why): four claims about that
 /// loop, each checked by scanning source text rather than by running it.
 ///
 /// 1. The keep-alive interval is read INSIDE the `while`, every lap — not
@@ -16,6 +16,15 @@ import Testing
 ///    noticing.
 /// 3. A `.giveUp` verdict delegates to `onGiveUp` — not a second,
 ///    ad-hoc route reimplementing what that callback already does.
+/// 4. The probe arm races and writes through `LivenessProbeStep.perform`,
+///    writes no liveness of its own, and STOPS on `.abandoned` (whole-branch
+///    final review, finding I-1). A race spelled out here again, with the
+///    write straight after its `await`, is the defect itself: the race
+///    cannot be cut short by cancelling the task around it, so that write
+///    lands on a tab already torn down. `LivenessProbeCancellationTests`
+///    proves the guarded function refuses it; this claim is what keeps the
+///    loop asking that function rather than inlining a second, unguarded
+///    copy — the same split as claim 3.
 ///
 /// Claim 3 used to assert the `.giveUp` case called `teardown(_:)`
 /// literally, which a reviewer defeated (fix round 3) by swapping that
@@ -54,6 +63,11 @@ struct LivenessProbeWiringGuardTests {
     /// (checked by `theAnchorAppearsExactlyOnceInTheRealFile`).
     private static let anchor = "// Liveness probe (Task 4)"
 
+    /// The probe arm's own `case` label, spelled exactly as the loop
+    /// spells it — `caseBody(named:)` matches the whole label, so both
+    /// actions have to be named here.
+    private static let probeCase = ".probe, .probeAgainNow"
+
     private enum ScanError: Error { case anchorNotFound, openBraceNotFound, unbalancedBraces }
 
     // MARK: - The three guarded claims, run against the real file
@@ -91,6 +105,31 @@ struct LivenessProbeWiringGuardTests {
             its `teardown(_:)`-then-`.lost` order inline here would bring back the \
             exact ordering bug `LivenessGiveUpOrderingTests` exists to catch, since \
             that order is no longer provable by reading this file alone.
+            """)
+    }
+
+    @Test func theProbeArmGoesThroughTheGuardedStep() throws {
+        let source = try String(contentsOf: Self.detailFile, encoding: .utf8)
+        let body = try Self.loopBody(after: Self.anchor, in: source)
+        guard let probeCase = Self.caseBody(named: Self.probeCase, in: body) else {
+            Issue.record("no `case \(Self.probeCase):` found inside the probe loop — re-anchor this guard.")
+            return
+        }
+        #expect(probeCase.contains("LivenessProbeStep.perform("), """
+            the probe arm no longer calls `LivenessProbeStep.perform(` — that function is \
+            where the race and the write of its result sit together with the cancellation \
+            guard between them, and a race run here instead would put the write back \
+            straight after an `await` that cancellation cannot shorten.
+            """)
+        #expect(!probeCase.contains("tab.liveness ="), """
+            the probe arm writes `tab.liveness` itself again — every write of a probe's \
+            answer belongs behind `LivenessProbeStep.perform`'s own guard, since a write \
+            spelled out here is a write with nothing in front of it.
+            """)
+        #expect(probeCase.contains("guard result != .abandoned else { return }"), """
+            the probe arm no longer stops on `.abandoned` — a probe whose task was \
+            cancelled, or whose session went away, must end the loop rather than be \
+            counted as a failed probe against a connection nobody is watching any more.
             """)
     }
 
@@ -183,6 +222,64 @@ struct LivenessProbeWiringGuardTests {
         #expect(giveUpCase.contains("await onGiveUp(tab)"))
     }
 
+    @Test func scannerFlagsAProbeArmThatRacesAndWritesInline() throws {
+        let source = """
+            // Liveness probe (Task 4)
+            while !Task.isCancelled {
+                let interval = settingsStore.keepAliveIntervalSeconds
+                switch LivenessProbePolicy.decide(queueIsBusy: false, consecutiveFailures: 0) {
+                case .probe, .probeAgainNow:
+                    let alive = await LivenessProbeRace.run(timeoutSeconds: 10) { true }
+                    tab.liveness = alive ? .connected : .degraded
+                }
+            }
+            """
+        let body = try Self.loopBody(after: Self.anchor, in: source)
+        let probeCase = try #require(Self.caseBody(named: Self.probeCase, in: body))
+        #expect(!probeCase.contains("LivenessProbeStep.perform("))
+        #expect(probeCase.contains("tab.liveness ="))
+    }
+
+    @Test func scannerFlagsAProbeArmThatCountsAnAbandonedProbeAsAFailure() throws {
+        let source = """
+            // Liveness probe (Task 4)
+            while !Task.isCancelled {
+                let interval = settingsStore.keepAliveIntervalSeconds
+                switch LivenessProbePolicy.decide(queueIsBusy: false, consecutiveFailures: 0) {
+                case .probe, .probeAgainNow:
+                    let result = await LivenessProbeStep.perform(on: tab, timeoutSeconds: 10)
+                    if result == .alive { break probing }
+                    consecutiveFailures += 1
+                }
+            }
+            """
+        let body = try Self.loopBody(after: Self.anchor, in: source)
+        let probeCase = try #require(Self.caseBody(named: Self.probeCase, in: body))
+        #expect(probeCase.contains("LivenessProbeStep.perform("))
+        #expect(!probeCase.contains("guard result != .abandoned else { return }"))
+    }
+
+    @Test func scannerAcceptsAProbeArmThatDelegatesAndStops() throws {
+        let source = """
+            // Liveness probe (Task 4)
+            while !Task.isCancelled {
+                let interval = settingsStore.keepAliveIntervalSeconds
+                switch LivenessProbePolicy.decide(queueIsBusy: false, consecutiveFailures: 0) {
+                case .probe, .probeAgainNow:
+                    let result = await LivenessProbeStep.perform(on: tab, timeoutSeconds: 10)
+                    guard result != .abandoned else { return }
+                    if result == .alive { break probing }
+                    consecutiveFailures += 1
+                }
+            }
+            """
+        let body = try Self.loopBody(after: Self.anchor, in: source)
+        let probeCase = try #require(Self.caseBody(named: Self.probeCase, in: body))
+        #expect(probeCase.contains("LivenessProbeStep.perform("))
+        #expect(!probeCase.contains("tab.liveness ="))
+        #expect(probeCase.contains("guard result != .abandoned else { return }"))
+    }
+
     @Test func scannerThrowsWhenTheAnchorIsMissing() {
         let source = "while !Task.isCancelled { let interval = settingsStore.keepAliveIntervalSeconds }"
         #expect(throws: ScanError.anchorNotFound) {
@@ -227,17 +324,30 @@ struct LivenessProbeWiringGuardTests {
     }
 
     /// The text of one `case <marker>:` arm, from just after its colon up to
-    /// (but not including) the next `case ` at the start of a line, or the
-    /// end of `text` if this is the switch's last arm. No brace-depth
-    /// tracking needed: none of this loop's `case` bodies open a nested
-    /// `switch`, so the next line-leading `case ` unambiguously belongs to
-    /// the same enclosing `switch`.
+    /// (but not including) the next line that BEGINS a `case` — leading
+    /// whitespace ignored, since every arm in the real file is indented —
+    /// or the end of `text` if this is the switch's last arm. No brace-depth
+    /// tracking needed: none of this loop's `case` bodies opens a nested
+    /// `switch`, so the next such line unambiguously belongs to the same
+    /// enclosing `switch`.
+    ///
+    /// The indentation-insensitive stop is what makes a claim of the form
+    /// "this arm does NOT contain X" mean the arm rather than the rest of
+    /// the switch: an earlier version matched only a `case` at column zero,
+    /// which in the real file never matched at all, so every arm's text ran
+    /// on to the end of the loop and a negative claim silently spoke about
+    /// its neighbours too.
     private static func caseBody(named marker: String, in text: String) -> String? {
         guard let markerRange = text.range(of: "case \(marker):") else { return nil }
         let rest = text[markerRange.upperBound...]
-        if let nextCaseRange = rest.range(of: "\ncase ") {
-            return String(rest[..<nextCaseRange.lowerBound])
+        var body = ""
+        var isFirstLine = true
+        for line in rest.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if !isFirstLine, trimmed.hasPrefix("case ") || trimmed == "default:" { break }
+            body += (isFirstLine ? "" : "\n") + line
+            isFirstLine = false
         }
-        return String(rest)
+        return body
     }
 }

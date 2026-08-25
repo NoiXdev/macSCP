@@ -817,7 +817,13 @@ struct LivenessProbeRunner: View {
             .frame(width: 0, height: 0)
             .allowsHitTesting(false)
             .task(id: tab.session?.id) {
-                guard let session = tab.session else { return }
+                // Nothing to probe without a session. The session is NOT
+                // captured here for the probe itself to use — each probe
+                // re-reads it inside `LivenessProbeStep.perform`, so a tab
+                // that disconnected and reconnected while a probe was in
+                // flight cannot have the old connection's answer written
+                // onto the new one.
+                guard tab.session != nil else { return }
                 var consecutiveFailures = 0
                 // Liveness probe (Task 4): reads settings fresh every lap so
                 // a mid-session change applies without restart; skipped laps
@@ -862,16 +868,21 @@ struct LivenessProbeRunner: View {
                             break probing
                         case .probe, .probeAgainNow:
                             let timeoutSeconds = LivenessProbePolicy.probeTimeout(forInterval: interval)
-                            let alive = await LivenessProbeRace.run(timeoutSeconds: timeoutSeconds) {
-                                (try? await session.remoteFS.stat(path: session.homePath)) != nil
-                            }
-                            if alive {
+                            // The race AND the write of its result both live
+                            // in `LivenessProbeStep.perform` — see that
+                            // type's own doc comment for why they cannot be
+                            // separated: the guard that makes the write
+                            // legitimate has to sit between them, and a
+                            // write spelled out here would be a write with
+                            // no guard in front of it.
+                            let result = await LivenessProbeStep.perform(
+                                on: tab, timeoutSeconds: timeoutSeconds)
+                            guard result != .abandoned else { return }
+                            if result == .alive {
                                 consecutiveFailures = 0
-                                tab.liveness = .connected
                                 break probing
                             } else {
                                 consecutiveFailures += 1
-                                tab.liveness = .degraded
                                 // Loop again immediately, without sleeping
                                 // the full interval: `decide` now sees the
                                 // incremented failure count and answers
@@ -884,6 +895,14 @@ struct LivenessProbeRunner: View {
                             // time (fix round 3) — see `onGiveUp`'s own doc
                             // comment for why, and `handleLivenessGiveUp`'s
                             // for the order itself and why it matters.
+                            //
+                            // No cancellation guard of its own, unlike the
+                            // probe arm: this one is reached only by
+                            // the enclosing `while !Task.isCancelled`, and
+                            // `decide` is synchronous, so nothing can
+                            // suspend between that check and this call on
+                            // the main actor. A guard here would restate a
+                            // condition that cannot have changed.
                             await onGiveUp(tab)
                             return
                         }
@@ -893,11 +912,76 @@ struct LivenessProbeRunner: View {
     }
 }
 
+/// One liveness probe and the write of its answer, together (connection-
+/// liveness plan, whole-branch final review, finding I-1) — the race and
+/// the `tab.liveness` write cannot be separated, because the guard that
+/// makes the write legitimate is what has to sit between them.
+///
+/// `LivenessProbeRace.run` is deliberately NOT cancellation-aware: it
+/// resolves a `withCheckedContinuation` from two unstructured tasks, so
+/// cancelling the probing task does not make it return early — only the
+/// operation finishing or `LivenessProbePolicy.probeTimeout(forInterval:)`
+/// elapsing does (see `LivenessProbeRace`'s own doc comment for why that
+/// shape was chosen, and what the structured alternative did instead). The
+/// probing task therefore resumes AFTER it was cancelled, up to a full
+/// probe timeout later, and a write placed straight after the `await` would
+/// land on a tab whose session `teardown(_:)` has already torn down and
+/// whose `liveness` it has already cleared to `nil`.
+///
+/// Two things that write would do, both closed by refusing it:
+///
+/// - a liveness dot on a tab that is sitting on the connection form with no
+///   session at all, which is the same "state that outlives what it
+///   describes" class that moved `liveness` onto the tab in the first
+///   place, attacked from the other side;
+/// - worse, the loss of the way to abandon a dial. `ConnectionSurfacePlan
+///   .surface` answers `.form` for `.connected` and for `.degraded` alike,
+///   so a stale write arriving during the reconnect-in-place dial replaces
+///   the "Connecting…" surface, and with it the Cancel control, while that
+///   dial is still running.
+///
+/// The guard is two conditions, not one. `Task.isCancelled` catches the
+/// cancelled runner; re-reading `tab.session` and comparing its id catches
+/// the tab that disconnected and reconnected during the flight, where the
+/// task is alive and healthy and the answer in hand is nevertheless about a
+/// connection that no longer exists.
+///
+/// `LivenessProbeCancellationTests` drives this function inside a task it
+/// cancels mid-flight, against a `stat` that never responds — the real
+/// race, really cancelled — and pins that nothing is written.
+@MainActor
+enum LivenessProbeStep {
+    /// What one probe settled on. `.abandoned` is not a failure and must
+    /// not be counted as one: it says the question stopped being worth
+    /// answering, not that the peer failed to answer it.
+    enum Result: Equatable {
+        /// The peer answered inside the deadline; the tab now reads `.connected`.
+        case alive
+        /// The deadline won, or the `stat` failed; the tab now reads `.degraded`.
+        case failed
+        /// Cancelled, or the session went away, while the probe was in
+        /// flight. NOTHING was written and the caller must stop.
+        case abandoned
+    }
+
+    static func perform(on tab: SessionTab, timeoutSeconds: Int) async -> Result {
+        guard let session = tab.session else { return .abandoned }
+        let alive = await LivenessProbeRace.run(timeoutSeconds: timeoutSeconds) {
+            (try? await session.remoteFS.stat(path: session.homePath)) != nil
+        }
+        guard !Task.isCancelled, tab.session?.id == session.id else { return .abandoned }
+        tab.liveness = alive ? .connected : .degraded
+        return alive ? .alive : .failed
+    }
+}
+
 /// Races an async operation against a deadline, `false` if the deadline
 /// wins (connection-liveness plan, Task 4, fix round 1) — pulled out of
 /// `LivenessProbeRunner` so `Tests/macSCPAppKitTests/` can drive it directly
 /// with a fake `RemoteFileSystem` whose `stat` never resumes: the exact case
-/// the previous shape (`withTaskGroup`) could not survive.
+/// the previous shape (`withTaskGroup`) could not survive. Its caller is
+/// `LivenessProbeStep.perform`, which is where the answer this returns is
+/// turned into a write, and where the guard in front of that write lives.
 ///
 /// `withTaskGroup` implicitly awaits every remaining child before its own
 /// scope returns, even one abandoned via `cancelAll()` — that is a
