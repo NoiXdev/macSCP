@@ -91,6 +91,7 @@
 "core.session.groupSaveFailed %@" = "Could not save group: %@";
 
 /* Login sets (M10b/T2) */
+"core.login.loadFailed %@" = "Failed to load logins: %@";
 "core.login.saveFailed %@" = "Failed to save login: %@";
 "core.login.deleteFailed %@" = "Failed to delete login: %@";
 "core.login.mergeFailed %@" = "Failed to merge logins: %@";

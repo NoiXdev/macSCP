@@ -93,6 +93,7 @@
 "core.session.groupSaveFailed %@" = "Nie udało się zapisać grupy: %@";
 
 /* Login sets (M10b/T2) */
+"core.login.loadFailed %@" = "Nie udało się wczytać loginów: %@";
 "core.login.saveFailed %@" = "Nie udało się zapisać loginu: %@";
 "core.login.deleteFailed %@" = "Nie udało się usunąć loginu: %@";
 "core.login.mergeFailed %@" = "Nie udało się scalić loginów: %@";

@@ -93,6 +93,7 @@
 "core.session.groupSaveFailed %@" = "Impossible d'enregistrer le groupe : %@";
 
 /* Login sets (M10b/T2) */
+"core.login.loadFailed %@" = "Échec du chargement des logins : %@";
 "core.login.saveFailed %@" = "Échec de l'enregistrement du login : %@";
 "core.login.deleteFailed %@" = "Échec de la suppression du login : %@";
 "core.login.mergeFailed %@" = "Échec de la fusion des logins : %@";

@@ -852,6 +852,57 @@ struct SessionListViewModelTests {
         #expect(try secrets.password(for: planned.session.id) == nil)
     }
 
+    /// `reload()` reports an unreadable SESSION store — and swallowed an
+    /// unreadable LOGIN-SET store three lines below it. The two stores are
+    /// separate files, so `logins.json` can be unreadable while
+    /// `sessions.json` is perfectly fine: the sets then vanish from the
+    /// sheet as "No login sets yet", a state indistinguishable from a store
+    /// that legitimately holds none, while every set-bound session shows its
+    /// login as missing. Nothing else in the app reports it, because nothing
+    /// else reads that store on the way in.
+    @Test func unreadableLoginSetStoreIsReportedInsteadOfLookingEmpty() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // Only the login-set store is broken — a real store on real corrupt
+        // JSON, the same shape the trust stores are tested with.
+        try "not valid json".write(to: dir.appendingPathComponent("logins.json"),
+                                   atomically: true, encoding: .utf8)
+
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: InMemorySecretStore(),
+            loginSetStore: LoginSetStore(directory: dir))
+
+        // The sessions themselves are readable, so that half stays quiet.
+        #expect(vm.sessions.isEmpty)
+        #expect(vm.loginSets.isEmpty)
+        let message = try #require(vm.errorMessage)
+        #expect(message.contains("login"))
+    }
+
+    /// The other half of the same `reload()`: when BOTH stores fail, neither
+    /// message may swallow the other. Reporting only one would leave the
+    /// user fixing half a problem.
+    @Test func bothStoreFailuresAreReportedTogether() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try "not valid json".write(to: dir.appendingPathComponent("sessions-v2.json"),
+                                   atomically: true, encoding: .utf8)
+        try "not valid json".write(to: dir.appendingPathComponent("logins.json"),
+                                   atomically: true, encoding: .utf8)
+
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: InMemorySecretStore(),
+            loginSetStore: LoginSetStore(directory: dir))
+
+        let message = try #require(vm.errorMessage)
+        #expect(message.contains("session"))
+        #expect(message.contains("login"))
+    }
+
     // MARK: - Login sets (M10b)
 
     @Test func saveWithLoginSetSkipsSessionSecret() throws {

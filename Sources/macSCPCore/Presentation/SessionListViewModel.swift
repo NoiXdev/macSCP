@@ -67,7 +67,27 @@ public final class SessionListViewModel {
             errorMessage = String(
                 format: CoreL10n.string("core.session.loadFailed %@"), String(describing: error))
         }
-        loginSets = (try? loginSetStore.all()) ?? []
+        // Reported, not swallowed. `logins.json` is its own file, so it can
+        // be unreadable while `sessions.json` reads fine — and nothing else
+        // on the way in reads that store, so a `try?` here was the whole
+        // story: the sets simply were not there. An empty `loginSets` is
+        // also what a store holding no sets looks like, which is the state
+        // the sheet renders as "No login sets yet", so the user has no way
+        // to tell a broken store from an empty one. The same distinction
+        // `jumpSetDemonstrablyCoversItsLogin` goes to the store directly to
+        // make, because a deletion must not hang on it.
+        //
+        // Appended rather than assigned: when both reads fail, each message
+        // names a different file, and a reader who fixes only the one they
+        // were told about is left with the other.
+        do {
+            loginSets = try loginSetStore.all()
+        } catch {
+            loginSets = []
+            let message = String(
+                format: CoreL10n.string("core.login.loadFailed %@"), String(describing: error))
+            errorMessage = errorMessage.map { $0 + "\n" + message } ?? message
+        }
     }
 
     /// Sessions belonging to the given group, or ungrouped sessions when
