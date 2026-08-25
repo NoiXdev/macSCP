@@ -281,10 +281,16 @@ struct ConnectFailurePlanTests {
         // .title` was excluded alongside it in round 1 without earning it —
         // "Verbindungsdetails" is not "Connection details", and a check
         // that skips a key it could make is a check that would not notice
-        // that key going untranslated. Seven keys are checked, counted
-        // while writing this sentence: the title, both bodies, the four
-        // action labels and the details headline — nine reachable keys
-        // less the one exclusion.
+        // that key going untranslated. Eight keys are checked, counted in
+        // the pass that writes this sentence: the title, both bodies, the
+        // four action labels (retry, edit, edit-session, close) and the
+        // details headline — nine reachable keys less the one exclusion,
+        // which is also what the assertion below says.
+        //
+        // It said "seven" until review round 1, with the same enumeration
+        // and the same subtraction beside it, both of which come to eight.
+        // A number written into a comment is a claim to be checked, not a
+        // decoration on the list next to it.
         let translated = Set(Self.everyReachableMessage().map(\.key)).subtracting([
             "connection.failed.details",
         ])

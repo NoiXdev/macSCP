@@ -5,12 +5,22 @@ import Testing
 /// it.
 ///
 /// Measured before it was written, because the rule was not obvious from
-/// the outside: the App catalog uses `du` in eight strings, imperatives
-/// included ("Prüfe deine Internetverbindung und versuche es erneut.",
-/// "Verschiebe macSCP in deinen Programme-Ordner"), and Core's addresses
-/// the user in neither register — its one imperative is the neutral bare
-/// infinitive ("Bitte alle erforderlichen S3-Felder ausfüllen."). Two
-/// strings used the polite form until the failed-connect surface's own
+/// the outside: **ten** strings in the App catalog carry a du-pronoun
+/// (`du`, `dich`, `dir`, `dein…`) — counted in the pass that writes this
+/// sentence, over the catalog as it stands — and more use the du-imperative
+/// without one ("Prüfe deine Internetverbindung und versuche es erneut.",
+/// "Verschiebe macSCP in deinen Programme-Ordner", "Bearbeite die
+/// Verbindung…"). Core's catalog addresses the user in neither register:
+/// its one imperative is the neutral bare infinitive ("Bitte alle
+/// erforderlichen S3-Felder ausfüllen.").
+///
+/// The pronouns are what gets counted, because they are what a count can
+/// be checked against — an imperative is recognized by reading, and a
+/// number nobody can recompute is a number that drifts. This one said
+/// "eight" when it was written, in the same commit that moved two more
+/// strings into the du-register.
+///
+/// Two strings used the polite form until the failed-connect surface's own
 /// round 4, and both sat in `connection.lost.*`, which is how a user met
 /// them one after the other.
 ///
@@ -172,8 +182,9 @@ struct GermanAddressFormTests {
             German string(s) addressing the user in the polite form:
             \(offenders.joined(separator: "\n"))
 
-            This app says du — eight strings in the App catalog do, imperatives included \
-            ("Prüfe deine Internetverbindung und versuche es erneut."). Two strings in \
+            This app says du — ten strings in the App catalog carry a du-pronoun and more \
+            use the du-imperative ("Prüfe deine Internetverbindung und versuche es \
+            erneut."). Two strings in \
             `connection.lost.*` used Sie until the failed-connect surface's own round 4, \
             which is how a user met both registers one after the other. Reword in the \
             du-form; if a string genuinely needs the polite form, that is a decision to make \

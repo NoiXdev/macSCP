@@ -72,7 +72,7 @@ schon über die beiden Knöpfe entscheidet:
 | Fall | Schlüssel | Deutsch |
 |---|---|---|
 | gespeicherte Sitzung | `connection.failed.body` | „macSCP konnte den Host nicht erreichen." |
-| ad hoc | `connection.failed.body.adHoc` | „macSCP konnte den Host nicht erreichen. Bearbeiten Sie die Verbindung, um die Angaben zu prüfen und erneut zu verbinden." |
+| ad hoc | `connection.failed.body.adHoc` | „macSCP konnte den Host nicht erreichen. Bearbeite die Verbindung, um die Angaben zu prüfen und erneut zu verbinden." |
 
 **Was dabei ausdrücklich NICHT aufgeweicht wird:** die Fläche trägt weiter
 ausschließlich feste Katalogschlüssel. Aufgeweicht ist nur, *welcher* von
