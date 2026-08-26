@@ -79,6 +79,7 @@ public final class SettingsStore {
         static let reconnectBehaviour = "reconnectBehaviour"
         static let keepAliveIntervalSeconds = "keepAliveIntervalSeconds"
         static let connectTimeoutSeconds = "connectTimeoutSeconds"
+        static let sidebarWidth = "sidebarWidth"
     }
 
     private enum Defaults {
@@ -97,6 +98,7 @@ public final class SettingsStore {
         static let reconnectBehaviour = ReconnectBehaviour.offerOnly
         static let keepAliveIntervalSeconds = 60
         static let connectTimeoutSeconds = 10
+        static let sidebarWidth = 190
     }
 
     /// Identical to `SessionStore.defaultDirectory` — both stores share the
@@ -388,6 +390,55 @@ public final class SettingsStore {
     private static var defaultVisibleColumns: Set<FileColumn> {
         Set(FileColumn.allCases.filter(\.defaultVisible))
     }
+
+    /// How wide the session sidebar opens, in points. Written back after the
+    /// user drags the split divider, so the width the window comes up with
+    /// is the width that window was left at.
+    ///
+    /// Clamped to `sidebarWidthRange` on BOTH ends, same forward-compat
+    /// pattern as `autoRefreshIntervalSeconds`: a width typed into
+    /// settings.json by hand cannot open a sidebar too narrow to read a
+    /// session name in, nor one so wide the file browser has nowhere left
+    /// to go. Default 190 — the ideal width the sidebar opened at back when
+    /// it could not be dragged at all, so a settings.json predating this key
+    /// changes nothing about how the window looks.
+    public var sidebarWidth: Int {
+        get {
+            clamp(
+                intValue(for: Keys.sidebarWidth, default: Defaults.sidebarWidth),
+                Self.sidebarWidthRange.lowerBound, Self.sidebarWidthRange.upperBound)
+        }
+        set {
+            setInt(
+                clamp(newValue, Self.sidebarWidthRange.lowerBound, Self.sidebarWidthRange.upperBound),
+                for: Keys.sidebarWidth)
+        }
+    }
+
+    /// The bounds `sidebarWidth` clamps to, reachable without a
+    /// `SettingsStore` instance for the same reason
+    /// `defaultConnectTimeoutSeconds` is: the sidebar's own frame is built
+    /// from these two numbers, and a frame that repeated them as literals
+    /// could drift from the clamp that decides what a stored width means.
+    ///
+    /// The floor is the frame minimum the sidebar has always had, which this
+    /// task left alone. The ceiling is arithmetic rather than taste: a
+    /// connected window holds its content to a minimum width of 930 and the
+    /// detail pane beside the sidebar to a minimum of 590, leaving 340
+    /// points for the sidebar in the narrowest window the user can drag the
+    /// window itself to. A larger stored width would be a width no window
+    /// could ever show. (The split divider takes a point out of those 340,
+    /// so at exactly that narrowest window the sidebar comes to rest one
+    /// point below the ceiling; every wider window reaches it.)
+    ///
+    /// A window in its pristine state — a single unconnected tab, content
+    /// minimum 700 against a 500-point detail minimum — has only 200 points
+    /// to give, so a sidebar near this ceiling IS squeezed while the window
+    /// is in that state. Deliberately not a second, smaller ceiling: the
+    /// squeeze lasts as long as the window is that small, and what keeps it
+    /// from being mistaken for something the user asked for is the App
+    /// layer's recording rule, not this range.
+    public nonisolated static let sidebarWidthRange: ClosedRange<Int> = 170...340
 
     /// Default expiry the share-link sheet pre-fills (M14). The user can
     /// still override it per link; this only sets the initial selection.

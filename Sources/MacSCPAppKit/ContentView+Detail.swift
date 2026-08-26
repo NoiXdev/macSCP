@@ -105,7 +105,23 @@ extension ContentView {
             hiddenImportsCount: hiddenImportAliases.count,
             hiddenImportsErrorMessage: hiddenImportsErrorMessage
         )
-        .frame(minWidth: 170, idealWidth: 190, maxWidth: 260)
+        // Opens at the width this window was last left at and can be
+        // dragged anywhere inside `SettingsStore.sidebarWidthRange` — see
+        // that range for where its two ends come from. The old hardcoded
+        // ceiling of 260 was the whole complaint: the divider simply
+        // stopped there, and nothing about the width survived a relaunch.
+        .frame(
+            minWidth: CGFloat(SettingsStore.sidebarWidthRange.lowerBound),
+            idealWidth: sidebarOpeningWidth,
+            maxWidth: CGFloat(SettingsStore.sidebarWidthRange.upperBound))
+        // Publishes the width the split view actually gave the sidebar, so
+        // the recorder below sees it together with the container it sits in.
+        // A background changes nothing about the sidebar's own size.
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(key: SidebarMeasuredWidthKey.self, value: proxy.size.width)
+            }
+        }
 
         VStack(spacing: 0) {
             // Hidden in the pristine (single unconnected tab) state — a
@@ -162,6 +178,21 @@ extension ContentView {
                 tab: tab, settingsStore: settingsStore,
                 targetIsKnown: { reconnectTarget(for: $0) != nil },
                 onAttempt: { reconnect($0) })
+        }
+    }
+    // Writes the dragged sidebar width back to `SettingsStore` — see
+    // `SidebarWidthRecorder` for what it takes to tell a drag apart from
+    // the split view rearranging itself. The sidebar's measured width
+    // arrives as a preference, the container's width from the reader here,
+    // so both describe the same layout. Zero-size and non-hit-testing, the
+    // same shape as the three `.background` layers above; a fourth layer
+    // composes with them rather than replacing any.
+    .backgroundPreferenceValue(SidebarMeasuredWidthKey.self) { measuredSidebarWidth in
+        GeometryReader { proxy in
+            SidebarWidthRecorder(
+                settingsStore: settingsStore,
+                sample: SidebarWidthSample(
+                    container: proxy.size.width, sidebar: measuredSidebarWidth))
         }
     }
     }
@@ -1776,6 +1807,103 @@ struct ReconnectRunner: View {
                 // depend on how long a dial takes.
                 tab.lostConnection?.automaticAttempts += 1
                 onAttempt(tab)
+            }
+    }
+}
+
+/// The width the split view actually gave the sidebar, carried up from the
+/// sidebar's own background to `SidebarWidthRecorder` beside the split
+/// container.
+///
+/// A preference rather than a second piece of view state for one reason:
+/// the recorder has to see this width and the container's width as they
+/// were in ONE layout pass. Two `@State` values, each written by its own
+/// reader, can be read a pass apart — and a container width from before a
+/// window resize next to a sidebar width from after it is exactly the pair
+/// that looks like a drag.
+private struct SidebarMeasuredWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    /// The sidebar publishes exactly one value; this exists because the
+    /// protocol requires it. Last non-zero wins, so a pass that measures
+    /// nothing cannot overwrite a real measurement with 0.
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        let next = nextValue()
+        if next > 0 { value = next }
+    }
+}
+
+/// One layout pass, as the two widths a width change has to be judged by.
+private struct SidebarWidthSample: Equatable {
+    let container: CGFloat
+    let sidebar: CGFloat
+}
+
+/// Writes the sidebar's width back to `SettingsStore` after the user drags
+/// the split divider.
+///
+/// Measured rather than bound, because `HSplitView` reports no drag: the
+/// divider moves the sidebar's width, and the only place that width can be
+/// read is the layout it produced. Which means everything else that moves
+/// the sidebar's width arrives here looking identical to a drag — and one
+/// of those is destructive. A pristine window (one unconnected tab) holds
+/// its content to 700 points against a 500-point detail minimum, leaving
+/// 200 for the sidebar, well under the 340 `SettingsStore
+/// .sidebarWidthRange` allows. Disconnecting the last tab shrinks the
+/// window to exactly that; a recorder that wrote down every width it saw
+/// would take a sidebar the user had dragged to 340 and store 200 in its
+/// place, having been told nothing by the user at all.
+///
+/// So a width is only written when the container it sits in is the same
+/// width it was — a divider drag moves the sidebar inside a container that
+/// does not move, and every squeeze comes from a container that does. The
+/// comparison is between SETTLED samples, not between consecutive ones:
+/// during a window resize the two widths change in whatever order SwiftUI
+/// delivers them, and a pair caught mid-resize can show a still-old
+/// container beside an already-squeezed sidebar. Waiting for the whole
+/// thing to stop and comparing the endpoints has no such ordering to get
+/// wrong.
+///
+/// The first settled sample after this view is built is never written: it
+/// is the width the window opened at, which is where it came from.
+///
+/// Disk cost: `SettingsStore` writes the whole settings.json on every
+/// assignment, and a divider drag produces a layout pass per mouse point.
+/// The settle interval is what keeps those apart — a drag costs ONE write,
+/// when the pointer comes to rest, not one per point crossed.
+private struct SidebarWidthRecorder: View {
+    let settingsStore: SettingsStore
+    let sample: SidebarWidthSample
+
+    /// The last sample that survived the settle interval — the baseline the
+    /// next settled one is judged against. `nil` until the first one
+    /// settles, which is why the opening width is never written back.
+    @State private var settled: SidebarWidthSample?
+
+    /// Long enough to sit out a drag (the pointer keeps moving, so the task
+    /// keeps restarting) and a window resize, short enough that letting go
+    /// of the divider and quitting straight afterwards still saves the
+    /// width.
+    private static let settleSeconds = 0.4
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+            .task(id: sample) {
+                try? await Task.sleep(for: .seconds(Self.settleSeconds))
+                guard !Task.isCancelled else { return }
+                // A pass that measured nothing is not a sample at all: let
+                // it become the baseline and the real measurement arriving
+                // after it would read as the user having dragged the
+                // sidebar down to nothing.
+                guard sample.sidebar > 0 else { return }
+                let previous = settled
+                settled = sample
+                guard let previous, previous.container == sample.container else { return }
+                let width = Int(sample.sidebar.rounded())
+                guard width != settingsStore.sidebarWidth else { return }
+                settingsStore.sidebarWidth = width
             }
     }
 }

@@ -916,4 +916,71 @@ struct SettingsStoreTests {
         let store = SettingsStore(directory: dir)
         #expect(store.reconnectBehaviour == .offerOnly)
     }
+
+    // MARK: - Sidebar width
+
+    /// A `settings.json` predating this feature has no width in it at all,
+    /// and must keep opening the sidebar exactly as wide as it always did.
+    @Test func sidebarWidthDefaultsToTheWidthTheSidebarAlwaysOpenedAt() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(SettingsStore(directory: dir).sidebarWidth == 190)
+    }
+
+    /// Asserts through the persisted file, not just the getter — see
+    /// `theKeepAliveIntervalIsClampedOnBothEnds`'s comment for why.
+    @Test func theSidebarWidthIsClampedOnBothEnds() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+
+        store.sidebarWidth = 10
+        #expect(store.sidebarWidth == 170)
+        #expect(try persistedRaw(dir)["sidebarWidth"] == .number(170))
+
+        store.sidebarWidth = 4_000
+        #expect(store.sidebarWidth == 340)
+        #expect(try persistedRaw(dir)["sidebarWidth"] == .number(340))
+    }
+
+    /// The getter's own clamp, reached the only way that skips the setter:
+    /// a width typed straight into the file by hand. Both ends in one test,
+    /// because a getter that clamps one end only is the failure this pins.
+    @Test func sidebarWidthClampsWhatWasTypedIntoTheFileByHand() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        try Data(#"{"sidebarWidth": 1}"#.utf8).write(to: fileURL(dir))
+        #expect(SettingsStore(directory: dir).sidebarWidth == 170)
+
+        try Data(#"{"sidebarWidth": 9000}"#.utf8).write(to: fileURL(dir))
+        #expect(SettingsStore(directory: dir).sidebarWidth == 340)
+    }
+
+    @Test func sidebarWidthRoundtrips() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.sidebarWidth = 275
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.sidebarWidth == 275)
+    }
+
+    /// Pins the bounds the view reads (`SettingsStore.sidebarWidthRange`,
+    /// which is what the sidebar's own frame is built from) against the
+    /// clamp the store applies. The two are the same range by construction;
+    /// nothing else in the suite ties them, so a future edit that re-literals
+    /// the frame's end of it would otherwise go unnoticed.
+    @Test func sidebarWidthRangeMatchesWhatTheStoreClampsTo() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+
+        store.sidebarWidth = Int.min
+        #expect(store.sidebarWidth == SettingsStore.sidebarWidthRange.lowerBound)
+
+        store.sidebarWidth = Int.max
+        #expect(store.sidebarWidth == SettingsStore.sidebarWidthRange.upperBound)
+    }
 }

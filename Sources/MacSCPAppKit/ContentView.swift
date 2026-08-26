@@ -213,6 +213,17 @@ struct ContentView: View {
     /// Last browser window size, remembered on disconnect — the next
     /// connect grows to it instead of the minimum size, if it's larger.
     @State var lastBrowserSize: CGSize?
+    /// The width the session sidebar comes up at, read from `SettingsStore`
+    /// once, when the window is built.
+    ///
+    /// Read once and never written again, deliberately: while the window is
+    /// open the live width belongs to the split view, which is what the
+    /// user's drag actually moves. Feeding a changing value back into the
+    /// sidebar's ideal width would push against that drag. What flows the
+    /// other way — the dragged width back into `SettingsStore` — is
+    /// `SidebarWidthRecorder`'s job, and it deliberately does not come back
+    /// through here.
+    @State var sidebarOpeningWidth: CGFloat
     /// Tab pending a destructive close confirmation (active transfers) — nil
     /// when no confirmation is showing (M8a/T4).
     @State var closeRequest: SessionTab?
@@ -451,6 +462,7 @@ struct ContentView: View {
         self.tabCommands = tabCommands
         self.updateModel = updateModel
         self.menuBarModel = menuBarModel
+        _sidebarOpeningWidth = State(initialValue: CGFloat(settingsStore.sidebarWidth))
         _tabsModel = State(initialValue: TabsViewModel(
             initial: Self.makeTab(settingsStore: settingsStore, limiter: bandwidthLimiter)))
         // Test seam (connection-liveness plan, Task 6 fix round 2, review-
