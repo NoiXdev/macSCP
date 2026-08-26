@@ -117,176 +117,6 @@ enum SessionRowTerminalMenuPlan: Equatable {
     }
 }
 
-/// One pointer or keyboard event a session row can receive, at the
-/// coarseness `SessionRowActivation` reads it — the row's gesture modifiers
-/// forward these and decide nothing themselves.
-enum SessionRowInput: Equatable {
-    case singleClick
-    case doubleClick
-    /// Return on the row that currently holds the sidebar's selection.
-    case returnKey
-}
-
-/// What a session row does with a `SessionRowInput`.
-///
-/// The rule this type exists for: a single click used to open a connection.
-/// A sidebar row is the first thing a pointer lands on in this window, and
-/// dialling a host — with its keychain read, its TOFU prompt and its new tab
-/// — was one stray click away, with no way to merely point at a session
-/// first. The rule is now Finder's: pointing and opening are two different
-/// gestures.
-///
-/// A type rather than an `if` inside a gesture modifier, for the reason this
-/// project has paid for repeatedly (see `SessionRowTerminalMenuPlan`): a
-/// decision that only exists inside a SwiftUI body is a decision no test can
-/// reach, and this one is about NOT doing something, which is the shape that
-/// silently comes back.
-///
-/// `.doNothing` while a row is being renamed covers every input, clicks
-/// included: the inline rename field owns both the pointer and the keyboard
-/// while it is up, and a click that re-selected the row underneath it would
-/// pull focus out of the field and cancel the edit.
-///
-/// Untested claim, stated rather than implied: that macOS delivers a second
-/// click as a `count: 2` tap and Return to the focused row at all. This type
-/// only proves which activation each input maps to — the delivery is
-/// AppKit's, and this project has no rendering harness to observe it (same
-/// boundary `SessionRowSnippetMenuPlan` states for itself).
-enum SessionRowActivation: Equatable {
-    /// The input is swallowed: nothing selected, nothing connected.
-    case doNothing
-    /// The row becomes the sidebar's selection, nothing more.
-    case select
-    /// The row becomes the selection AND a connection is opened — the
-    /// selection first, so the connection always names the row the user can
-    /// see is meant.
-    case selectAndConnect
-
-    /// Whether this activation changes anything at all.
-    var acts: Bool { self != .doNothing }
-    /// Whether this activation opens a connection.
-    var connects: Bool { self == .selectAndConnect }
-
-    /// Runs the two effects a session row has, as this activation dictates,
-    /// and reports whether either ran.
-    ///
-    /// The effects are applied HERE rather than by an `if activation
-    /// .connects` at the call site, and that is the point of the method
-    /// existing at all (fix round 1). A condition written in a SwiftUI view
-    /// is a condition a later edit can drop — a refactor, a merge
-    /// resolution, an "always select on connect" tidy-up — and dropping
-    /// THAT one turns every single click into a dial with a keychain read
-    /// and a possible TOFU prompt behind it. As a total `switch` over the
-    /// enum it is instead a place where the connecting case is written
-    /// once, exercised by spies in `SessionRowActivationApplyTests`, and
-    /// where a fourth activation added later cannot compile until it says
-    /// what it does.
-    ///
-    /// `onSelect` runs before `onConnect` for `.selectAndConnect`, so the
-    /// highlight already names the row by the time the connection starts.
-    ///
-    /// Both effects are spelled the way this project spells callbacks, which
-    /// is also what keeps the App layer's dial lint out of this file: it
-    /// reads a bare `connect` identifier — parameter names included — as a
-    /// connection being obtained, and rightly so.
-    ///
-    /// Generic in the value it hands both effects, so this type stays free
-    /// of any knowledge about what a session is.
-    @discardableResult
-    func apply<Value>(
-        to value: Value, onSelect: (Value) -> Void, onConnect: (Value) -> Void
-    ) -> Bool {
-        switch self {
-        case .doNothing:
-            return false
-        case .select:
-            onSelect(value)
-            return true
-        case .selectAndConnect:
-            onSelect(value)
-            onConnect(value)
-            return true
-        }
-    }
-
-    static func build(
-        for input: SessionRowInput, isRenaming: Bool, isSelected: Bool
-    ) -> SessionRowActivation {
-        guard !isRenaming else { return .doNothing }
-        switch input {
-        case .singleClick: return .select
-        case .doubleClick: return .selectAndConnect
-        // A key press that reaches a row the selection is not on names no
-        // session the user pointed at; it is left unhandled so whatever
-        // else the window would do with Return still can.
-        case .returnKey: return isSelected ? .selectAndConnect : .doNothing
-        }
-    }
-}
-
-/// Which background a session row draws, and in what order the three
-/// reasons to draw one win.
-///
-/// Selection beats the connected state deliberately: the selection is the
-/// row the double click and the Return key act on, so it has to be readable
-/// at all times, while "this session is the active tab" keeps two channels
-/// of its own on the same row — the phosphor dot and the row name's blue,
-/// semibold treatment — that no background can take away.
-enum SessionRowHighlight: Equatable {
-    case selected
-    case connected
-    case hovered
-    case none
-
-    static func build(
-        isActive: Bool, isSelected: Bool, isHovering: Bool
-    ) -> SessionRowHighlight {
-        if isSelected { return .selected }
-        if isActive { return .connected }
-        return isHovering ? .hovered : .none
-    }
-
-    /// The colour each case draws. Here rather than in the row so that the
-    /// one claim a test CAN make about a background it cannot see — that
-    /// the four cases are four different colours, so the highlight is a
-    /// distinction and not a repainted default — is reachable
-    /// (`SessionRowHighlightTests`).
-    ///
-    /// The selection tint is the hover tint deepened rather than a colour of
-    /// its own: pointing at a row and having selected it are the same kind
-    /// of statement about where the user is, one of them stronger.
-    var fill: Color {
-        switch self {
-        case .selected: return Color.secondary.opacity(0.20)
-        case .connected: return DesignTokens.remoteSoft
-        case .hovered: return Color.secondary.opacity(0.08)
-        case .none: return Color.clear
-        }
-    }
-}
-
-/// Whether activating one session row must first end an inline rename that
-/// is open on a DIFFERENT row (fix round 1).
-///
-/// The failure this answers: activating a row moves the keyboard focus to
-/// it, which takes the first responder out of the other row's rename field.
-/// Left to the focus-loss handler alone, that row can keep drawing an
-/// editable field with an uncommitted draft in it that nothing reaches —
-/// it is not focusable while it is being renamed, and a click on it is
-/// swallowed by the rename guard, so the only way back in is a click landing
-/// precisely inside the field. Ending the rename deliberately, in the same
-/// step that moves the focus, is what keeps that state from existing.
-///
-/// Cancels rather than commits, matching what this sidebar already does
-/// whenever a rename loses focus: an edit is committed by Return or by the
-/// menu, never by a click landing somewhere else.
-enum SidebarRenameHandoff {
-    static func endsOpenRename(renamingID: UUID?, activating session: UUID) -> Bool {
-        guard let renamingID else { return false }
-        return renamingID != session
-    }
-}
-
 /// Left column: stored sessions, grouped into collapsible sections. A click
 /// selects a session, a double click or Return connects it; context menus
 /// cover connect/edit/rename/move/delete on sessions, rename/dissolve on
@@ -297,16 +127,17 @@ struct SessionSidebar: View {
     let importedHosts: [SSHConfigHost]
     let activeSessionID: UUID?
     let interactionsDisabled: Bool
-    /// Opens a connection to one stored session — named for what it does
-    /// since fix round 1, when a single click stopped being one of the ways
-    /// to get here.
+    /// Opens a connection to one stored session.
     ///
-    /// This sidebar CALLS it in exactly one place: the closure it hands the
-    /// row for the "Connect" context-menu entry. The gesture paths never
-    /// call it; they pass it to `SessionRowActivation.apply`, which invokes
-    /// it only for `.selectAndConnect` — a double click, or Return on the
-    /// selected row.
-    let onConnect: (StoredSession) -> Void
+    /// An effect value rather than a closure (fix round 2), and this view
+    /// cannot fire it: `SessionRowConnectEffect.run` is private to the file
+    /// that declares it, so the only thing reachable from here is handing
+    /// the effect to `SessionRowActivation.apply`, which runs it for
+    /// `.selectAndConnect` and nothing else. Every route by which a single
+    /// click could dial — the effect in the select slot, a call from the
+    /// function that moves the selection, a call from another row — stopped
+    /// being a mistake this file can express.
+    let onConnect: SessionRowConnectEffect<StoredSession>
     /// Performs the actual deletion and returns the jump-restoration outcome
     /// (M11a/T3) — the sidebar surfaces `secretFailures` as its own red
     /// inline message, same pattern as `LoginSetsSheet.deleteSelected()`.
@@ -651,14 +482,11 @@ struct SessionSidebar: View {
                 focusedRenameID: $focusedRenameID,
                 focusedRowID: $focusedRowID,
                 groups: viewModel.groups,
-                onInput: { input in activate(input, on: session) },
-                // The context menu's own "Connect" entry: an explicit
-                // request, so it connects without consulting
-                // `SessionRowActivation` — that plan answers what a click
-                // or a key press means, not what a menu item the user
-                // picked by name means. The inner name is this view's own
-                // callback; the label is the row's.
-                onConnect: { onConnect(session) },
+                // Handed over as the activation method itself, not wrapped
+                // in a closure: a closure here would be a second place
+                // where an input could be swapped for another on its way
+                // to the plan, and review round 2 planted exactly that.
+                onInput: activate(_:on:),
                 onEdit: { onEdit(session) },
                 onOpenTerminal: { onOpenTerminal(session) },
                 onOpenExternalTerminal: { onOpenExternalTerminal(session) },
@@ -803,10 +631,10 @@ struct SessionSidebar: View {
     /// row is renaming when it is THE renaming row, and selected when it is
     /// THE selected one, and this is the scope that holds both.
     ///
-    /// `onConnect` is handed to `apply`, never called here (fix round 1):
-    /// the mapping from an answer to an effect belongs to the tested type,
-    /// and a view that only passes the callback along has no condition of
-    /// its own to lose.
+    /// Both effects are handed to `apply`, which is the only code anywhere
+    /// that can fire either: this view has no way to run a
+    /// `SessionRowConnectEffect` itself, and cannot pass one where the
+    /// selection effect belongs, because the two are different types.
     private func activate(_ input: SessionRowInput, on session: StoredSession) -> Bool {
         let activation = SessionRowActivation.build(
             for: input,
@@ -816,7 +644,10 @@ struct SessionSidebar: View {
            SidebarRenameHandoff.endsOpenRename(renamingID: renamingID, activating: session.id) {
             endRename()
         }
-        return activation.apply(to: session, onSelect: moveSelection(to:), onConnect: onConnect)
+        return activation.apply(
+            to: session,
+            onSelect: SessionRowSelectEffect(moveSelection(to:)),
+            onConnect: onConnect)
     }
 
     /// Puts the sidebar's selection, and the keyboard with it, on one row.
@@ -943,14 +774,18 @@ private struct SessionRow: View {
     /// to the inline rename field inside this row.
     var focusedRowID: FocusState<UUID?>.Binding
     let groups: [StoredGroup]
-    /// One click, double click or Return, forwarded raw: what each of them
-    /// means is `SessionRowActivation`'s answer, given in `SessionSidebar
-    /// .activate`, not this view's. Returns whether the input did anything,
-    /// which the Return handler reports back to SwiftUI.
-    let onInput: (SessionRowInput) -> Bool
-    /// The context menu's "Connect" entry — the explicit, named request,
-    /// unchanged by the gesture rules `onInput` routes through.
-    let onConnect: () -> Void
+    /// Every input this row can receive — its clicks, its Return, and its
+    /// "Connect" menu entry — forwarded raw with the session it happened
+    /// on. What each of them MEANS is `SessionRowActivation`'s answer,
+    /// given in `SessionSidebar.activate`, not this view's. Returns whether
+    /// the input did anything, which the Return handler reports back to
+    /// SwiftUI.
+    ///
+    /// The row has no connect callback of its own any more (fix round 2):
+    /// one way in means the menu entry cannot drift from what the gestures
+    /// do, and there is nothing here that could reach a connection except
+    /// by naming an input.
+    let onInput: (SessionRowInput, StoredSession) -> Bool
     let onEdit: () -> Void
     let onOpenTerminal: () -> Void
     let onOpenExternalTerminal: () -> Void
@@ -1069,8 +904,8 @@ private struct SessionRow: View {
         // single click would wait out the double-click interval before the
         // selection appears. Both handlers only forward; the meaning of
         // each count is `SessionRowActivation`'s.
-        .onTapGesture(count: 2) { _ = onInput(.doubleClick) }
-        .onTapGesture(count: 1) { _ = onInput(.singleClick) }
+        .onTapGesture(count: 2) { _ = onInput(.doubleClick, session) }
+        .onTapGesture(count: 1) { _ = onInput(.singleClick, session) }
         // Focusable only while it is not being renamed: the inline rename
         // field inside this row owns the keyboard while it is up, and a
         // focusable row around it would compete for Return with the field
@@ -1081,11 +916,11 @@ private struct SessionRow: View {
         // different marks for one state.
         .focusEffectDisabled()
         .focused(focusedRowID, equals: session.id)
-        .onKeyPress(.return) { onInput(.returnKey) ? .handled : .ignored }
+        .onKeyPress(.return) { onInput(.returnKey, session) ? .handled : .ignored }
         .onHover { isHovering = $0 }
         .draggable(session.id.uuidString)
         .contextMenu {
-            Button(L10n.string("sidebar.connect", "Connect")) { onConnect() }
+            Button(L10n.string("sidebar.connect", "Connect")) { _ = onInput(.contextMenuEntry, session) }
             // The two terminal entries (P3c/T2), directly under "Connect"
             // because that is what they are: "Open Terminal" IS a connect
             // and differs only in which half of the window comes up, and

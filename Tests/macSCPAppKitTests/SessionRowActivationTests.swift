@@ -8,7 +8,7 @@ import Testing
 /// click and Return do to a session row.
 ///
 /// The behaviour this replaces: a single click opened a connection. That is
-/// the property every test below is really about — pointing at a session and
+/// the property this whole suite is really about — pointing at a session and
 /// opening it are now two different gestures — and it is a property about NOT
 /// acting, which is the kind that silently comes back once nothing states it.
 ///
@@ -67,13 +67,13 @@ struct SessionRowActivationTests {
                 == .doNothing)
     }
 
-    /// The rename guard, over every input rather than the click alone: while
-    /// a row is being renamed its text field owns both the pointer and the
-    /// keyboard. A click that re-selected the row underneath would pull
+    /// The rename guard, over every GESTURE rather than the click alone:
+    /// while a row is being renamed its text field owns both the pointer and
+    /// the keyboard. A click that re-selected the row underneath would pull
     /// focus out of the field and cancel the edit; Return belongs to the
     /// field's own submit.
-    @Test(arguments: [SessionRowInput.singleClick, .doubleClick, .returnKey])
-    func renamingSwallowsEveryInput(input: SessionRowInput) {
+    @Test(arguments: SessionRowInput.allCases.filter { $0 != .contextMenuEntry })
+    func renamingSwallowsEveryGesture(input: SessionRowInput) {
         for isSelected in [true, false] {
             let activation = SessionRowActivation.build(
                 for: input, isRenaming: true, isSelected: isSelected)
@@ -81,6 +81,30 @@ struct SessionRowActivationTests {
             #expect(!activation.acts)
             #expect(!activation.connects)
         }
+    }
+
+    /// The one input the rename guard does not apply to. A menu entry the
+    /// user read and chose must not silently do nothing because the row
+    /// happens to be in rename mode — the interruption is the lesser
+    /// surprise, and it is handled: selecting the row takes focus off the
+    /// field, which cancels the edit the way leaving it any other way does.
+    @Test func theMenuEntryConnectsEvenWhileTheRowIsBeingRenamed() {
+        for isSelected in [true, false] {
+            #expect(
+                SessionRowActivation.build(
+                    for: .contextMenuEntry, isRenaming: true, isSelected: isSelected)
+                    == .selectAndConnect)
+        }
+    }
+
+    /// And it selects rather than connecting behind the highlight's back:
+    /// after any route to a connection, the row that was connected is the
+    /// row that is marked.
+    @Test func theMenuEntrySelectsTheRowItConnects() {
+        #expect(SessionRowActivation.build(
+            for: .contextMenuEntry, isRenaming: false, isSelected: false).connects)
+        #expect(SessionRowActivation.build(
+            for: .contextMenuEntry, isRenaming: false, isSelected: false) == .selectAndConnect)
     }
 
     /// `acts` and `connects` are what `SessionSidebar.activate` branches on,
@@ -98,26 +122,24 @@ struct SessionRowActivationTests {
     }
 
     /// A `build` that answered `.selectAndConnect` for everything would pass
-    /// several checks above one at a time; this is what rules out a constant
+    /// the per-input checks one at a time; this is what rules out a constant
     /// answer across the inputs that exist.
     @Test func everyActivationIsReachableFromSomeInput() {
-        let answers = [
-            SessionRowActivation.build(for: .singleClick, isRenaming: false, isSelected: false),
-            SessionRowActivation.build(for: .doubleClick, isRenaming: false, isSelected: false),
-            SessionRowActivation.build(for: .returnKey, isRenaming: false, isSelected: false),
-        ]
+        let answers = SessionRowInput.allCases.map {
+            SessionRowActivation.build(for: $0, isRenaming: false, isSelected: false)
+        }
         #expect(answers.contains(.select))
         #expect(answers.contains(.selectAndConnect))
         #expect(answers.contains(.doNothing))
     }
 
-    /// Nothing but a double click or a selected row's Return may connect —
-    /// stated over the whole input space rather than case by case, so a
-    /// fourth input added later has to be classified deliberately instead of
-    /// inheriting a connect by default.
-    @Test func onlyTwoOfEveryInputCombinationEverConnect() {
+    /// Nothing but a double click, a selected row's Return and the menu
+    /// entry may connect — stated over the whole input space rather than
+    /// case by case, so a further input has to be classified deliberately
+    /// instead of inheriting a connect by default.
+    @Test func onlyThreeOfEveryInputCombinationEverConnect() {
         var connecting: [(SessionRowInput, Bool, Bool)] = []
-        for input in [SessionRowInput.singleClick, .doubleClick, .returnKey] {
+        for input in SessionRowInput.allCases {
             for isRenaming in [true, false] {
                 for isSelected in [true, false] {
                     let activation = SessionRowActivation.build(
@@ -127,8 +149,9 @@ struct SessionRowActivationTests {
             }
         }
         #expect(connecting.allSatisfy { input, isRenaming, isSelected in
-            !isRenaming && (input == .doubleClick || (input == .returnKey && isSelected))
-        }, "an input outside double-click / selected-row Return connects: \(connecting)")
+            input == .contextMenuEntry
+                || (!isRenaming && (input == .doubleClick || (input == .returnKey && isSelected)))
+        }, "an input outside double click / selected-row Return / menu entry connects: \(connecting)")
         #expect(!connecting.isEmpty, "no combination connects at all — the row would be inert")
     }
 }
@@ -158,7 +181,9 @@ struct SessionRowActivationApplyTests {
     private func run(_ activation: SessionRowActivation) -> (log: [String], applied: Bool) {
         let effects = Effects()
         let applied = activation.apply(
-            to: "row", onSelect: effects.select(_:), onConnect: effects.connect(_:))
+            to: "row",
+            onSelect: SessionRowSelectEffect(effects.select(_:)),
+            onConnect: SessionRowConnectEffect(effects.connect(_:)))
         return (effects.log, applied)
     }
 
@@ -212,19 +237,20 @@ struct SessionRowActivationApplyTests {
         }
     }
 
-    /// The whole chain in one statement, from input to effect: only a double
-    /// click and Return on the selected row may reach `connect`. This is the
-    /// property the wiring guard cannot express, tested end to end over the
-    /// value layer.
-    @Test func onlyTwoInputCombinationsEverReachTheConnectEffect() {
-        for input in [SessionRowInput.singleClick, .doubleClick, .returnKey] {
+    /// The whole chain in one statement, from input to effect: only a
+    /// double click, Return on the selected row and the menu entry may
+    /// reach the connect effect. This is the property the wiring guard
+    /// cannot express, tested end to end over the value layer.
+    @Test func onlyTheThreeIntendedInputsEverReachTheConnectEffect() {
+        for input in SessionRowInput.allCases {
             for isRenaming in [true, false] {
                 for isSelected in [true, false] {
                     let activation = SessionRowActivation.build(
                         for: input, isRenaming: isRenaming, isSelected: isSelected)
                     let connected = run(activation).log.contains { $0.hasPrefix("connect") }
-                    let expected = !isRenaming
-                        && (input == .doubleClick || (input == .returnKey && isSelected))
+                    let expected = input == .contextMenuEntry
+                        || (!isRenaming
+                            && (input == .doubleClick || (input == .returnKey && isSelected)))
                     #expect(
                         connected == expected,
                         "input \(input), isRenaming \(isRenaming), isSelected \(isSelected)")
@@ -329,7 +355,7 @@ struct SessionRowHighlightTests {
 
     /// Every case is reachable across the eight combinations — a `build`
     /// that could never answer `.selected` would satisfy the precedence
-    /// checks above only by accident.
+    /// checks only by accident.
     @Test func everyCaseIsReachable() {
         var answers: Set<SessionRowHighlight> = []
         for isActive in [true, false] {
