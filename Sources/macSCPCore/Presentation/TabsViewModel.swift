@@ -58,7 +58,7 @@ public final class TabsViewModel<Tab: Identifiable> where Tab.ID == UUID {
 
     /// Sidebar-connect rule (spec 1.2): an unconnected active tab is reused
     /// in place; a connected one spawns a fresh tab so the running session
-    /// is never torn down by a sidebar click.
+    /// is never torn down by a sidebar connect.
     public func sidebarConnectTarget(
         activeTabIsConnected: Bool, makeTab: () -> Tab
     ) -> Tab {

@@ -117,15 +117,110 @@ enum SessionRowTerminalMenuPlan: Equatable {
     }
 }
 
-/// Left column: stored sessions, grouped into collapsible sections. Click
-/// connects; context menus cover connect/edit/rename/move/delete on
-/// sessions, rename/dissolve on groups, and new-connection/new-group on the
-/// background. The phosphor dot marks the active connection.
+/// One pointer or keyboard event a session row can receive, at the
+/// coarseness `SessionRowActivation` reads it — the row's gesture modifiers
+/// forward these and decide nothing themselves.
+enum SessionRowInput: Equatable {
+    case singleClick
+    case doubleClick
+    /// Return on the row that currently holds the sidebar's selection.
+    case returnKey
+}
+
+/// What a session row does with a `SessionRowInput`.
+///
+/// The rule this type exists for: a single click used to open a connection.
+/// A sidebar row is the first thing a pointer lands on in this window, and
+/// dialling a host — with its keychain read, its TOFU prompt and its new tab
+/// — was one stray click away, with no way to merely point at a session
+/// first. The rule is now Finder's: pointing and opening are two different
+/// gestures.
+///
+/// A type rather than an `if` inside a gesture modifier, for the reason this
+/// project has paid for repeatedly (see `SessionRowTerminalMenuPlan`): a
+/// decision that only exists inside a SwiftUI body is a decision no test can
+/// reach, and this one is about NOT doing something, which is the shape that
+/// silently comes back.
+///
+/// `.doNothing` while a row is being renamed covers every input, clicks
+/// included: the inline rename field owns both the pointer and the keyboard
+/// while it is up, and a click that re-selected the row underneath it would
+/// pull focus out of the field and cancel the edit.
+///
+/// Untested claim, stated rather than implied: that macOS delivers a second
+/// click as a `count: 2` tap and Return to the focused row at all. This type
+/// only proves which activation each input maps to — the delivery is
+/// AppKit's, and this project has no rendering harness to observe it (same
+/// boundary `SessionRowSnippetMenuPlan` states for itself).
+enum SessionRowActivation: Equatable {
+    /// The input is swallowed: nothing selected, nothing connected.
+    case doNothing
+    /// The row becomes the sidebar's selection, nothing more.
+    case select
+    /// The row becomes the selection AND a connection is opened — the
+    /// selection first, so the connection always names the row the user can
+    /// see is meant.
+    case selectAndConnect
+
+    /// Whether this activation changes anything at all.
+    var acts: Bool { self != .doNothing }
+    /// Whether this activation opens a connection.
+    var connects: Bool { self == .selectAndConnect }
+
+    static func build(
+        for input: SessionRowInput, isRenaming: Bool, isSelected: Bool
+    ) -> SessionRowActivation {
+        guard !isRenaming else { return .doNothing }
+        switch input {
+        case .singleClick: return .select
+        case .doubleClick: return .selectAndConnect
+        // A key press that reaches a row the selection is not on names no
+        // session the user pointed at; it is left unhandled so whatever
+        // else the window would do with Return still can.
+        case .returnKey: return isSelected ? .selectAndConnect : .doNothing
+        }
+    }
+}
+
+/// Which background a session row draws, and in what order the three
+/// reasons to draw one win.
+///
+/// Selection beats the connected state deliberately: the selection is the
+/// row the double click and the Return key act on, so it has to be readable
+/// at all times, while "this session is the active tab" keeps two channels
+/// of its own on the same row — the phosphor dot and the row name's blue,
+/// semibold treatment — that no background can take away.
+enum SessionRowHighlight: Equatable {
+    case selected
+    case connected
+    case hovered
+    case none
+
+    static func build(
+        isActive: Bool, isSelected: Bool, isHovering: Bool
+    ) -> SessionRowHighlight {
+        if isSelected { return .selected }
+        if isActive { return .connected }
+        return isHovering ? .hovered : .none
+    }
+}
+
+/// Left column: stored sessions, grouped into collapsible sections. A click
+/// selects a session, a double click or Return connects it; context menus
+/// cover connect/edit/rename/move/delete on sessions, rename/dissolve on
+/// groups, and new-connection/new-group on the background. The phosphor dot
+/// marks the active connection.
 struct SessionSidebar: View {
     let viewModel: SessionListViewModel
     let importedHosts: [SSHConfigHost]
     let activeSessionID: UUID?
     let interactionsDisabled: Bool
+    /// Opens a connection to one stored session. Reached from exactly two
+    /// places in here: `activate`, when `SessionRowActivation` answers
+    /// `.selectAndConnect`, and the row's own "Connect" context-menu entry.
+    /// A single click on a row does NOT reach it — it only moves the
+    /// sidebar's selection. Keeps its name because the caller's argument
+    /// label is part of a call site this task does not touch.
     let onSelect: (StoredSession) -> Void
     /// Performs the actual deletion and returns the jump-restoration outcome
     /// (M11a/T3) — the sidebar surfaces `secretFailures` as its own red
@@ -201,6 +296,22 @@ struct SessionSidebar: View {
     /// this value is interpreted; nothing else in this file re-derives what
     /// it means.
     @State private var activeTag: String?
+
+    /// Which session row the sidebar's selection sits on — the row a double
+    /// click or Return connects, and the only thing a single click changes.
+    ///
+    /// View state, like `activeTag`, and for the same reason: a
+    /// pointer position is not a setting. It is deliberately unrelated to
+    /// `activeSessionID`, which says which session the ACTIVE TAB has
+    /// connected; a user can point at one session while another is on
+    /// screen, and both facts are drawn on the row (see
+    /// `SessionRowHighlight`).
+    @State private var selectedSessionID: UUID?
+    /// Keyboard focus for the selected row, so Return reaches it. Set from
+    /// `activate` together with `selectedSessionID`, never on its own —
+    /// a focused row that is not the selected one would connect something
+    /// other than what is highlighted.
+    @FocusState private var focusedRowID: UUID?
 
     /// Shared inline-rename state: works for both session rows and group
     /// headers, since only one row can be renaming at a time.
@@ -426,11 +537,19 @@ struct SessionSidebar: View {
             SessionRow(
                 session: session,
                 isActive: session.id == activeSessionID,
+                isSelected: session.id == selectedSessionID,
                 isRenaming: renamingID == session.id,
                 renameDraft: $renameDraft,
                 focusedRenameID: $focusedRenameID,
+                focusedRowID: $focusedRowID,
                 groups: viewModel.groups,
-                onSelect: { onSelect(session) },
+                onInput: { input in activate(input, on: session) },
+                // The context menu's own "Connect" entry: an explicit
+                // request, so it connects without consulting
+                // `SessionRowActivation` — that plan answers what a click
+                // or a key press means, not what a menu item the user
+                // picked by name means.
+                onConnect: { onSelect(session) },
                 onEdit: { onEdit(session) },
                 onOpenTerminal: { onOpenTerminal(session) },
                 onOpenExternalTerminal: { onOpenExternalTerminal(session) },
@@ -559,6 +678,28 @@ struct SessionSidebar: View {
         Button(L10n.string("import.menu", "Import…")) { onImport() }
     }
 
+    // MARK: - Row activation
+
+    /// Applies `SessionRowActivation.build`'s answer for one input on one
+    /// row, and reports whether it did anything — the row's Return handler
+    /// passes that on to SwiftUI as handled/ignored, so a key press this
+    /// sidebar has no use for stays available to the rest of the window.
+    ///
+    /// Both facts the plan needs are read here rather than in the row: the
+    /// row is renaming when it is THE renaming row, and selected when it is
+    /// THE selected one, and this is the scope that holds both.
+    private func activate(_ input: SessionRowInput, on session: StoredSession) -> Bool {
+        let activation = SessionRowActivation.build(
+            for: input,
+            isRenaming: renamingID == session.id,
+            isSelected: selectedSessionID == session.id)
+        guard activation.acts else { return false }
+        selectedSessionID = session.id
+        focusedRowID = session.id
+        if activation.connects { onSelect(session) }
+        return true
+    }
+
     // MARK: - Inline rename
 
     private func startRename(id: UUID, currentName: String) {
@@ -651,16 +792,28 @@ private struct HostTagFilterRow: View {
     }
 }
 
-/// A single session row: dot, name (or inline rename field), hover/active
-/// styling, drag source, context menu.
+/// A single session row: dot, name (or inline rename field),
+/// hover/selection/active styling, drag source, context menu.
 private struct SessionRow: View {
     let session: StoredSession
     let isActive: Bool
+    let isSelected: Bool
     let isRenaming: Bool
     @Binding var renameDraft: String
     var focusedRenameID: FocusState<UUID?>.Binding
+    /// Keyboard focus for the row itself, so its Return handler has
+    /// something to fire on. Distinct from `focusedRenameID`, which belongs
+    /// to the inline rename field inside this row.
+    var focusedRowID: FocusState<UUID?>.Binding
     let groups: [StoredGroup]
-    let onSelect: () -> Void
+    /// One click, double click or Return, forwarded raw: what each of them
+    /// means is `SessionRowActivation`'s answer, given in `SessionSidebar
+    /// .activate`, not this view's. Returns whether the input did anything,
+    /// which the Return handler reports back to SwiftUI.
+    let onInput: (SessionRowInput) -> Bool
+    /// The context menu's "Connect" entry — the explicit, named request,
+    /// unchanged by the gesture rules `onInput` routes through.
+    let onConnect: () -> Void
     let onEdit: () -> Void
     let onOpenTerminal: () -> Void
     let onOpenExternalTerminal: () -> Void
@@ -700,6 +853,22 @@ private struct SessionRow: View {
     /// a type and why the entries are hidden rather than disabled.
     private var terminalPlan: SessionRowTerminalMenuPlan {
         SessionRowTerminalMenuPlan.build(for: session.kind)
+    }
+
+    /// The row's background colour — the mapping only; WHICH of the three
+    /// reasons to draw one wins is `SessionRowHighlight.build`'s answer.
+    /// The selection tint is the hover tint deepened rather than a colour of
+    /// its own: pointing at a row and having selected it are the same kind
+    /// of statement about where the user is, one of them stronger.
+    private var highlightFill: Color {
+        switch SessionRowHighlight.build(
+            isActive: isActive, isSelected: isSelected, isHovering: isHovering)
+        {
+        case .selected: return Color.secondary.opacity(0.20)
+        case .connected: return DesignTokens.remoteSoft
+        case .hovered: return Color.secondary.opacity(0.08)
+        case .none: return Color.clear
+        }
     }
 
     private var snippetPlan: SessionRowSnippetMenuPlan {
@@ -753,17 +922,29 @@ private struct SessionRow: View {
         .padding(.vertical, 5)
         .padding(.horizontal, 10)
         .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isActive
-                      ? DesignTokens.remoteSoft
-                      : (isHovering ? Color.secondary.opacity(0.08) : Color.clear))
+            RoundedRectangle(cornerRadius: 6).fill(highlightFill)
         )
         .contentShape(Rectangle())
-        .onTapGesture { if !isRenaming { onSelect() } }
+        // Double before single, the order `PathBar` already uses for the
+        // same pair of gestures. Both handlers only forward; the meaning of
+        // each count is `SessionRowActivation`'s.
+        .onTapGesture(count: 2) { _ = onInput(.doubleClick) }
+        .onTapGesture(count: 1) { _ = onInput(.singleClick) }
+        // Focusable only while it is not being renamed: the inline rename
+        // field inside this row owns the keyboard while it is up, and a
+        // focusable row around it would compete for Return with the field
+        // that is being edited.
+        .focusable(!isRenaming)
+        // The selection background is this row's focus indicator; a
+        // second, system-drawn ring on top of it would read as two
+        // different marks for one state.
+        .focusEffectDisabled()
+        .focused(focusedRowID, equals: session.id)
+        .onKeyPress(.return) { onInput(.returnKey) ? .handled : .ignored }
         .onHover { isHovering = $0 }
         .draggable(session.id.uuidString)
         .contextMenu {
-            Button(L10n.string("sidebar.connect", "Connect")) { onSelect() }
+            Button(L10n.string("sidebar.connect", "Connect")) { onConnect() }
             // The two terminal entries (P3c/T2), directly under "Connect"
             // because that is what they are: "Open Terminal" IS a connect
             // and differs only in which half of the window comes up, and

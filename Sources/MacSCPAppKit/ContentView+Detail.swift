@@ -37,7 +37,7 @@ extension ContentView {
             importedHosts: importedHosts,
             activeSessionID: activeTab.activeStoredSessionID,
             // A running transfer no longer locks the sidebar (M8a): a
-            // sidebar click opens a NEW tab instead of tearing the
+            // sidebar connect opens a NEW tab instead of tearing the
             // connected one down. Only the active tab's own in-flight
             // connect/reconnect blocks interaction.
             interactionsDisabled: activeTab.isReconnecting
@@ -534,7 +534,7 @@ extension ContentView {
                     // Every action here delegates: Retry — offered only
                     // when there is a stored session to dial — to
                     // `retryConnect(_:)`, which redials through the one
-                    // shared `connect(in:stored:)` a sidebar click uses, so
+                    // shared `connect(in:stored:)` a sidebar connect uses, so
                     // this surface adds no second place a security rule
                     // could be forgotten; Edit and "Edit session" to the
                     // functions the sidebar's own Edit already goes
@@ -1707,7 +1707,7 @@ enum ConnectAttemptLivenessPlan {
 /// and remounted between attempts, which `.task(id:)` guarantees will
 /// happen), and the attempt itself is `ContentView.reconnect(_:)` —
 /// which dials through the ordinary `connect(in:stored:)`, the same path a
-/// sidebar click takes. That last point is the load-bearing security
+/// sidebar connect takes. That last point is the load-bearing security
 /// decision of this task and is guarded by `ReconnectWiringGuardTests`:
 /// a second dial here would be a second place to forget TOFU.
 ///

@@ -1367,9 +1367,12 @@ struct ContentView: View {
         sessionListViewModel.updatePaneVisibility(for: sessionID, to: visibility)
     }
 
-    /// Sidebar click: pick the target tab per the tab rule — the active tab
-    /// when it is unconnected, otherwise a FRESH tab. A running session is
-    /// therefore never torn down by a sidebar click (M8a spec 1.2).
+    /// Sidebar connect — a double click on a row, Return on the selected
+    /// row, or the row's own "Connect" entry, never a single click (see
+    /// `SessionRowActivation`): pick the target tab per the tab rule — the
+    /// active tab when it is unconnected, otherwise a FRESH tab. A running
+    /// session is therefore never torn down by a sidebar connect (M8a spec
+    /// 1.2).
     func connectFromSidebar(_ stored: StoredSession) {
         let target = tabsModel.sidebarConnectTarget(
             activeTabIsConnected: activeTab.isConnected, makeTab: makeTab)
@@ -1377,7 +1380,7 @@ struct ContentView: View {
     }
 
     /// Sidebar row "Open Terminal" (P3c/T2): the SAME connect a sidebar
-    /// click performs, differing in one argument — the session comes up
+    /// row performs, differing in one argument — the session comes up
     /// showing the terminal instead of the file browser.
     ///
     /// The tab rule (`sidebarConnectTarget`), the in-flight guard, an
@@ -1554,7 +1557,7 @@ struct ContentView: View {
     /// unattended schedule alike.
     ///
     /// One line of substance, and that is the point: this dials through
-    /// `connect(in:stored:)`, the SAME function a sidebar click goes
+    /// `connect(in:stored:)`, the SAME function a sidebar connect goes
     /// through, so TOFU stays the hard stop it is, the keychain rules are
     /// the ones `fillForm(_:from:)` already applies, the plaintext
     /// confirmation still gets asked, and the attempt token/`isReconnecting`
@@ -1601,7 +1604,7 @@ struct ContentView: View {
     ///
     /// One line of substance, and — as with `reconnect(_:)` above — that is
     /// the point: it dials through `connect(in:stored:)`, the SAME function
-    /// a sidebar click goes through, so TOFU stays the hard stop it is, the
+    /// a sidebar connect goes through, so TOFU stays the hard stop it is, the
     /// keychain and login-set rules are the ones `fillForm(_:from:)`
     /// applies, the plaintext confirmation still gets asked, and the
     /// attempt token and `isReconnecting` lock still guard the hand-off. A
