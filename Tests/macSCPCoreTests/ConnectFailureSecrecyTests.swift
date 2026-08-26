@@ -671,7 +671,7 @@ struct ConnectFailureSecrecyTests {
     /// written and the assertions below would fail.
     @Test("a redirected certificate challenge is refused, and nothing is pinned")
     func webdavRedirectedCertificateChallengePinsNothing() async throws {
-        let tls = try LoopbackTLSStub(response: LoopbackHTTPStub.basicAuthAlwaysRejects)
+        let tls = try await LoopbackTLSStub.make(response: LoopbackHTTPStub.basicAuthAlwaysRejects)
         defer { tls.stop() }
         let configured = try LoopbackHTTPStub(
             response: LoopbackHTTPStub.movedTemporarily(

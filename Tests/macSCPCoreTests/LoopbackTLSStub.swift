@@ -38,6 +38,32 @@ final class LoopbackTLSStub: @unchecked Sendable {
         }
     }
 
+    /// Builds a stub without occupying a thread of the Swift concurrency
+    /// cooperative pool.
+    ///
+    /// The initializer below blocks twice — `openssl` through
+    /// `Process.waitUntilExit`, then the listener's readiness through a
+    /// semaphore. Called straight from an `async` test, both blocks land on
+    /// a cooperative-pool thread, and that pool is only as wide as the
+    /// machine has cores — so on a small CI runner one such construction
+    /// holds a real share of the whole package's concurrency for as long as
+    /// it waits. Hopping onto a global dispatch queue moves the waiting
+    /// onto a pool that grows a thread instead of starving.
+    ///
+    /// This is a hazard removed, not the diagnosis of a specific failure:
+    /// what CI actually reported was `listenerNeverBecameReady` after the
+    /// old 20s bound, in a run whose main actor was so far behind that a 1s
+    /// deadline elsewhere took 25s to fire. Whether the listener was late
+    /// because of this blocking or merely alongside it is not established
+    /// here.
+    static func make(response: String) async throws -> LoopbackTLSStub {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(with: Result { try LoopbackTLSStub(response: response) })
+            }
+        }
+    }
+
     init(response: String) throws {
         let identity = try Self.makeEphemeralIdentity()
 
@@ -76,7 +102,12 @@ final class LoopbackTLSStub: @unchecked Sendable {
         }
         listener.start(queue: .global())
 
-        guard ready.wait(timeout: .now() + 20) == .success else {
+        // Generous rather than tight: this wait now runs on a global
+        // dispatch queue (see `make`), so waiting longer costs a thread
+        // that pool is willing to grow, not one of the cooperative pool's
+        // few. It stays bounded so a listener that never arrives fails the
+        // test instead of wedging the whole run.
+        guard ready.wait(timeout: .now() + 60) == .success else {
             listener.cancel()
             throw StubError.listenerNeverBecameReady
         }

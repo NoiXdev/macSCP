@@ -73,7 +73,17 @@ struct LivenessProbeRaceTests {
         func disconnect() async {}
     }
 
-    @Test func aStatThatNeverRespondsStillReportsFailureWithinTheDeadline() async {
+    // The deadline this test is about is enforced by the harness, not by a
+    // wall-clock `#expect` below. An earlier version asserted
+    // `elapsed < .seconds(20)` and CI failed it at 24.999s: both of
+    // `LivenessProbeRace`'s tasks are `@MainActor`, and the main actor is
+    // ONE serial executor shared by every other main-actor test running in
+    // parallel. Elapsed time here therefore measures the queue depth of the
+    // whole suite, not this race. Raising the number would only move the
+    // hostage line; `.timeLimit` states the actual claim — this must not
+    // hang — and lets the harness enforce it independently of contention.
+    @Test(.timeLimit(.minutes(1)))
+    func aStatThatNeverRespondsStillReportsFailureWithinTheDeadline() async {
         let fs = NeverRespondingFileSystem()
         let start = ContinuousClock.now
         let alive = await LivenessProbeRace.run(timeoutSeconds: 1) {
@@ -83,25 +93,14 @@ struct LivenessProbeRaceTests {
         #expect(alive == false)
         // Lower bound: an implementation that returned `false`
         // immediately (never actually waiting out `timeoutSeconds`) would
-        // still pass `alive == false` and the upper bound alike — this is
-        // what rules that out. A small margin under the 1s deadline itself
+        // still satisfy `alive == false` — this is what rules that out.
+        // Contention cannot make this one fire falsely; it only ever pushes
+        // elapsed time up. A small margin under the 1s deadline itself
         // (rather than requiring the full 1s) tolerates the deadline
         // firing a hair early on a busy scheduler without weakening what
         // this checks: the race genuinely waited, it did not just answer
         // `false` on the spot.
         #expect(elapsed >= .milliseconds(900))
-        // Upper bound, generous rather than exact — this suite runs
-        // alongside the rest of the package's tests under Swift Testing's
-        // default parallel execution, and MainActor scheduling under that
-        // contention measured as high as 4.3s for this same 1s deadline in
-        // one observed run. What this assertion actually separates is
-        // "timed out as designed" from "hung on the abandoned operation
-        // forever": manually swapping this file's implementation back to
-        // the `withTaskGroup` shape it replaced never completed this same
-        // test at all (60+ seconds, killed by hand) against the identical
-        // never-responding fake, so 20s leaves generous headroom past
-        // realistic scheduling noise while staying far short of that.
-        #expect(elapsed < .seconds(20))
     }
 
     @Test func aStatThatSucceedsQuicklyReportsSuccess() async {
