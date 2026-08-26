@@ -222,15 +222,24 @@ extension ContentView {
                 // central dispatcher left to route through.
                 //
                 // Read HERE, at the moment this connect attempt actually
-                // runs, not once at `makeTab` time — `settingsStore` is
-                // `@MainActor`, and the closure only ever runs from a
-                // `connect()` call already on the main actor (`ConnectionViewModel`
-                // itself is `@MainActor`), so this is a same-actor read, not
-                // a hop. Capturing the `Int` up front instead would have
-                // baked in whatever the setting was when the tab was
-                // CREATED, silently ignoring any later change (Task 9 adds
-                // the Settings UI, which is what makes that observable).
-                let connectTimeoutSeconds = settingsStore.connectTimeoutSeconds
+                // runs, not once at `makeTab` time: capturing the `Int` up
+                // front would have baked in whatever the setting was when
+                // the tab was CREATED, silently ignoring any later change
+                // (the Settings UI is what makes that observable).
+                //
+                // Hop explicitly instead of reading `settingsStore` — which
+                // is `@MainActor` — as if this closure were already on that
+                // actor. `Connector` is a nonisolated `@Sendable` function
+                // type, so whether the closure counts as main-actor-isolated
+                // is left to closure-isolation inference, and that inference
+                // differs between toolchains: the direct read compiles under
+                // Swift 6.3 and is rejected by the older compiler CI builds
+                // with. `MainActor.run` is accepted by both and costs
+                // nothing when the caller already is the main actor, which
+                // it always is here (`ConnectionViewModel` is `@MainActor`).
+                let connectTimeoutSeconds = await MainActor.run {
+                    settingsStore.connectTimeoutSeconds
+                }
                 return try await BackendDescriptor.descriptor(for: config.kind).connect(
                     config, decider, { candidate in await certificateBridge.ask(candidate) },
                     connectTimeoutSeconds)
