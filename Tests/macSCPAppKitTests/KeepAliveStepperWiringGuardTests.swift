@@ -241,6 +241,33 @@ struct KeepAliveStepperWiringGuardTests {
         return results
     }
 
+    /// Extract the anchored `set` closure's body, canonicalize it, and list
+    /// its write sites — the same steps the real-file check performs, in one
+    /// call, so the synthetic-source self-tests exercise the scanner rather
+    /// than a hand-assembled variant of it.
+    ///
+    /// Unwraps with `#require` rather than optional-chaining the rest of the
+    /// checks through a `String?`: a missing anchor and an unbalanced brace
+    /// both leave nothing to count, and letting that surface as a failed
+    /// count assertion reports the wrong cause. Fail-closed either way — the
+    /// `#require` throws, so the calling test fails and can never pass on a
+    /// source the scanner could not read. `sourceLocation` is forwarded so
+    /// the failure is attributed to the calling test, not to this helper.
+    private static func writeSiteRHSesOfSetClosure(
+        in source: String,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) throws -> [Substring] {
+        let body = try #require(
+            Self.setClosureBody(in: source),
+            """
+            no `\(Self.anchor)` closure could be extracted from this source — \
+            the anchor is missing or its braces are unbalanced, so the scanner \
+            has nothing to check.
+            """,
+            sourceLocation: sourceLocation)
+        return try Self.writeSiteRHSes(in: Self.canonicalize(body))
+    }
+
     // MARK: - The guarded claim, run against the real file
 
     @Test func theIntervalStepperWritesOnlyThroughThePlan() throws {
@@ -294,10 +321,9 @@ struct KeepAliveStepperWiringGuardTests {
                     forIntervalChangeTo: newValue, isEnabled: true)
             }
             """
-        let body = try? #require(Self.setClosureBody(in: source))
-        let rhses = try body.map { try Self.writeSiteRHSes(in: Self.canonicalize($0)) }
-        #expect(rhses?.count == 1)
-        #expect(rhses?.first?.hasPrefix(Self.sanctionedRHS) == true)
+        let rhses = try Self.writeSiteRHSesOfSetClosure(in: source)
+        #expect(rhses.count == 1)
+        #expect(rhses.first?.hasPrefix(Self.sanctionedRHS) == true)
     }
 
     /// Wrapped-argument call shape — the ACTUAL shape the real file uses
@@ -315,10 +341,9 @@ struct KeepAliveStepperWiringGuardTests {
                         storedSeconds: store.keepAliveIntervalSeconds))
             }
             """
-        let body = try? #require(Self.setClosureBody(in: source))
-        let rhses = try body.map { try Self.writeSiteRHSes(in: Self.canonicalize($0)) }
-        #expect(rhses?.count == 1)
-        #expect(rhses?.first?.hasPrefix(Self.sanctionedRHS) == true)
+        let rhses = try Self.writeSiteRHSesOfSetClosure(in: source)
+        #expect(rhses.count == 1)
+        #expect(rhses.first?.hasPrefix(Self.sanctionedRHS) == true)
     }
 
     @Test func scannerFlagsABypassedRawAssignment() throws {
@@ -328,10 +353,9 @@ struct KeepAliveStepperWiringGuardTests {
                 store.keepAliveIntervalSeconds = newValue
             }
             """
-        let body = try? #require(Self.setClosureBody(in: source))
-        let rhses = try body.map { try Self.writeSiteRHSes(in: Self.canonicalize($0)) }
-        #expect(rhses?.count == 1)
-        #expect(rhses?.first?.hasPrefix(Self.sanctionedRHS) == false)
+        let rhses = try Self.writeSiteRHSesOfSetClosure(in: source)
+        #expect(rhses.count == 1)
+        #expect(rhses.first?.hasPrefix(Self.sanctionedRHS) == false)
     }
 
     /// The reviewer's exact fix-round-1 mutation: an intermediate local
@@ -350,10 +374,9 @@ struct KeepAliveStepperWiringGuardTests {
                 store.keepAliveIntervalSeconds = committedInterval
             }
             """
-        let body = try? #require(Self.setClosureBody(in: source))
-        let rhses = try body.map { try Self.writeSiteRHSes(in: Self.canonicalize($0)) }
-        #expect(rhses?.count == 1)
-        #expect(rhses?.first?.hasPrefix(Self.sanctionedRHS) == false)
+        let rhses = try Self.writeSiteRHSesOfSetClosure(in: source)
+        #expect(rhses.count == 1)
+        #expect(rhses.first?.hasPrefix(Self.sanctionedRHS) == false)
     }
 
     /// A second, DIFFERENT mutation from the reviewer's — round 1's guard
@@ -373,10 +396,9 @@ struct KeepAliveStepperWiringGuardTests {
                 store.keepAliveIntervalSeconds=newValue
             }
             """
-        let body = try? #require(Self.setClosureBody(in: source))
-        let rhses = try body.map { try Self.writeSiteRHSes(in: Self.canonicalize($0)) }
-        #expect(rhses?.count == 1)
-        #expect(rhses?.first?.hasPrefix(Self.sanctionedRHS) == false)
+        let rhses = try Self.writeSiteRHSesOfSetClosure(in: source)
+        #expect(rhses.count == 1)
+        #expect(rhses.first?.hasPrefix(Self.sanctionedRHS) == false)
     }
 
     @Test func scannerFlagsASelfStoreQualifiedBypass() throws {
@@ -386,10 +408,9 @@ struct KeepAliveStepperWiringGuardTests {
                 self.store.keepAliveIntervalSeconds = newValue
             }
             """
-        let body = try? #require(Self.setClosureBody(in: source))
-        let rhses = try body.map { try Self.writeSiteRHSes(in: Self.canonicalize($0)) }
-        #expect(rhses?.count == 1)
-        #expect(rhses?.first?.hasPrefix(Self.sanctionedRHS) == false)
+        let rhses = try Self.writeSiteRHSesOfSetClosure(in: source)
+        #expect(rhses.count == 1)
+        #expect(rhses.first?.hasPrefix(Self.sanctionedRHS) == false)
     }
 
     @Test func scannerFailsClosedOnAMissingAnchor() {
