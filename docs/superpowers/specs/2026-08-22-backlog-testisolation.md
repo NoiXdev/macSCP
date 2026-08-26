@@ -85,10 +85,14 @@ der diesen Absatz schreibt, über alle Konstruktionsstellen unter `Tests/`:
   `~/Library/Application Support/macSCP/logins.json`
   (`PaneVisibilityPersistenceTests` 2, `SessionExportTagsTests` 3,
   `SessionListViewModelTests` 9, `SessionSecretPolicyTests` 2).
-- **51** Stellen lassen `auditStore:` weg. **9** davon rufen danach
-  `vm.delete(...)`, alle in `SessionListViewModelTests`, was ein
+- **51** Stellen lassen `auditStore:` weg. **8** davon (6 verschiedene
+  Konstruktionsstellen, eine davon — `makeVM()` — dreifach genutzt) rufen
+  danach `vm.delete(...)`, alle in `SessionListViewModelTests`, was ein
   `removeItem` gegen das **echte** Audit-Verzeichnis auslöst — heute
   folgenlos, weil die Sitzungs-IDs frisch sind und die Datei nie existiert.
+  (Ein neunter `vm.delete(...)`-Aufruf, in `deleteRemovesTheSessionsAuditLog`,
+  zählt nicht mit: der `vm` dort bekommt `auditStore:` explizit gegen ein
+  Temp-Verzeichnis injiziert.)
 
 Altlast, aber `c1db9a6` hat sie erstmals folgenreich gemacht: dort wird
 `loginSets = (try? loginSetStore.all()) ?? []` durch ein `do/catch` ersetzt,
@@ -114,3 +118,33 @@ Das ist genau die Klasse, für die `ReconnectWiringGuardTests` eigens
 die weniger prüft, als sie glaubt, ist schlechter als keine, weil sie Erfolg
 meldet. Heute gibt es genau zwei `Resources/`-Verzeichnisse, also folgenlos
 — und dieselbe Ableitung von der Platte wäre hier so billig wie dort.
+
+## Nachtrag 2026-08-26: `LoopbackTLSStub` importiert `Security` ungegated
+
+Aus der Abschlussdurchsicht des Plans *gescheiterter Aufbau* (M5 dort), hier
+nachgetragen, weil sie nur in der gitignorten `.superpowers/`-Ablage stand
+und mit dem Arbeitsverzeichnis verschwunden wäre. **Nur begründet, nicht
+ausgeführt** — kein Verstoß, aber die dünnste Stelle der
+Isolationszusage im ganzen Baum, und neu.
+
+`Tests/macSCPCoreTests/LoopbackTLSStub.swift` ist das einzige `import
+Security` unter `Tests/` und ruft `SecPKCS12Import` **ungegated** — bei
+jedem `swift test`, nicht hinter `MACSCP_KEYCHAIN`. Dass dabei nichts im
+Login-Keychain landet, hängt an einer einzelnen Wörterbuchzeile:
+
+```swift
+kSecImportToMemoryOnly as String: kCFBooleanTrue as Any,
+```
+
+Der SDK-Header bestätigt beide Richtungen: mit dem Flag nur im
+Prozessspeicher (`API_AVAILABLE(macos(15.0))`, das Paketminimum passt), ohne
+es Import in die Default-Keychain. Die Datei dokumentiert das bereits in
+ihrem eigenen Kopfkommentar.
+
+**Warum trotzdem im Backlog:** jede Zeile, die diesen Import löscht oder
+die Flag-Zeile entfernt — ein Refactoring, ein Merge-Konflikt, ein
+Copy-Paste in eine neue Stub-Datei — schaltet den Schutz stumm ab, bei
+jedem ungegateten Testlauf, nicht nur einem gegateten. Billige Behebung:
+denselben Wächter-Gedanken anwenden, der `MACSCP_KEYCHAIN` schon für die
+gegatete Suite durchsetzt — ein Selbsttest, der `SecPKCS12Import`-Aufrufe
+unter `Tests/` auf `kSecImportToMemoryOnly: true` prüft.

@@ -1,6 +1,6 @@
 # macSCP — Backlog
 
-**Stand:** 2026-08-25. Ein Index über die Einträge unter
+**Stand:** 2026-08-26. Ein Index über die Einträge unter
 `docs/superpowers/specs/`, damit sie nicht einzeln gesucht werden müssen.
 Jeder Eintrag dort ist eine **gesicherte Idee oder ein gemessener Befund**,
 kein Entwurf — die Entwürfe entstehen erst beim Angehen.
@@ -24,6 +24,7 @@ im Eintrag und zieht hier höchstens die Zeile nach.
 | [Tests, die an echte Ablagen kommen](superpowers/specs/2026-08-22-backlog-testisolation.md) | `ContentView` verdrahtete Keychain und Sitzungs-Store fest. Ein Test hat dadurch in den echten Keychain geschrieben. Naht ist inzwischen da; der Eintrag hält die Regel und die Restfälle. |
 | [Wie weit lässt sich die Oberfläche prüfen?](superpowers/specs/2026-08-21-backlog-ui-testabdeckung.md) | Vier belegte Fälle, die kein Test dieses Projekts sehen kann. Abwägung zwischen Wächtern, ViewInspector und XCUITest — mit der Empfehlung, XCUITest als eigenes Vorhaben zu terminieren. |
 | [Abbau gegen eine eingefrorene Gegenseite](superpowers/specs/2026-08-25-backlog-abbau-bei-eingefrorenem-peer.md) | Ob `disconnect()` gegen einen nie antwortenden Peer zurückkommt, ist ungeprüft. Kommt es nicht zurück, wird der Zustand „verloren" nie geschrieben. |
+| [Zwei offene Fragen aus der Abschlussdurchsicht](superpowers/specs/2026-08-26-backlog-offene-fragen-durchsicht.md) | Beide nur begründet, nicht gemessen: ein noch nicht gewählter gespeicherter Sitzungsursprung kann einem ad-hoc-Fehlschlag zugeschrieben werden (kosmetisch); ob S3s handgesetzter `Authorization`-Header eine Redirect-Origin-Grenze übersteht, ist ohne Netzversuch offen. |
 
 ## Oberfläche
 
