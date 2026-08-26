@@ -7,30 +7,67 @@ import macSCPCore
 // is load-bearing rather than tidiness — see `SessionRowConnectEffect`.
 
 /// One input a session row can receive, at the coarseness
-/// `SessionRowActivation` reads it — the row's modifiers and menu entry
+/// `SessionRowActivation` reads it — the row's modifiers and menu entries
 /// forward these and decide nothing themselves.
+///
+/// Which inputs are here is not "everything the context menu offers": the
+/// line is whether the entry STARTS A SESSION on the user's host. Connect,
+/// "Open Terminal" and "Open in External Terminal" do; rename, export,
+/// move and "Audit Log…" stay inside this window, and the snippet submenu
+/// types into a shell the window already holds — all of them stay plain
+/// callbacks on the row. Drawing the line anywhere else would either leave
+/// a way onto the host outside the plan — which is what fix round 4 had to
+/// close — or turn this type into the router of a whole menu.
+///
 /// `CaseIterable` on purpose: the tests that state "only these inputs ever
-/// connect" iterate the whole enum, so a fifth input has to be classified
-/// deliberately instead of slipping in unexamined behind a hand-written list.
+/// reach a host" iterate the whole enum, so a seventh input has to be
+/// classified deliberately instead of slipping in unexamined behind a
+/// hand-written list.
 enum SessionRowInput: Equatable, CaseIterable {
     case singleClick
     case doubleClick
     /// Return on the row that currently holds the sidebar's selection.
     case returnKey
-    /// The row's own "Connect" context-menu entry — the one input that is
-    /// not a gesture but a thing the user picked by name.
+    /// The row's own "Connect" context-menu entry — one of three inputs
+    /// that are not gestures but things the user picked by name.
     case contextMenuEntry
+    /// The row's "Open Terminal" entry: the same connect `contextMenuEntry`
+    /// asks for, with the session coming up showing the terminal instead of
+    /// the file browser.
+    case terminalMenuEntry
+    /// The row's "Open in External Terminal" entry: macSCP resolves what
+    /// this session would connect with and hands it to another program,
+    /// which is what dials.
+    case externalTerminalMenuEntry
+
+    /// Whether the user picked this input by name from a menu rather than
+    /// making a gesture whose meaning has to be inferred. The rename guard
+    /// applies to gestures only — see `SessionRowActivation.build`.
+    ///
+    /// A `switch` rather than a list, so a seventh input is a compile error
+    /// here instead of quietly counting as a gesture.
+    var isMenuEntry: Bool {
+        switch self {
+        case .contextMenuEntry, .terminalMenuEntry, .externalTerminalMenuEntry:
+            return true
+        case .singleClick, .doubleClick, .returnKey:
+            return false
+        }
+    }
 }
 
 /// The effect that moves the sidebar's selection onto a row.
 ///
-/// A type of its own, holding the same closure shape its sibling holds,
-/// for one reason: `SessionRowActivation.apply` takes both, and two
-/// parameters of the same function type are interchangeable by a
-/// one-token edit. Review round 2 planted exactly that — `onSelect:
-/// onConnect` — and the whole suite stayed green while every single click
-/// dialled a host. With distinct types that edit does not compile, which is
-/// a class of mistake removed rather than a mistake watched for.
+/// A type of its own, holding the same closure shape its siblings hold, for
+/// one reason: `SessionRowActivation.apply` takes all of them at once, and
+/// parameters of the same function type are interchangeable by a one-token
+/// edit. Review round 2 planted exactly that — `onSelect: onConnect` — and
+/// the whole suite stayed green while every single click dialled a host.
+/// With distinct types that edit does not compile, which is a class of
+/// mistake removed rather than a mistake watched for. The same argument is
+/// why the three host-reaching effects are three types and not one repeated:
+/// swapping two of THOSE would send a double click to the terminal-only
+/// layout, or the terminal entry to a plain connect.
 struct SessionRowSelectEffect<Value> {
     fileprivate let run: (Value) -> Void
 
@@ -43,16 +80,27 @@ struct SessionRowSelectEffect<Value> {
 /// obtain one, reduced to a value it can hold and hand over but not fire.
 ///
 /// `run` is `fileprivate`, and that is why these types live in this file
-/// rather than in the one holding the view: no code in `SessionSidebar
-/// .swift` can call it, unwrap it, reach it by key path, or pass it where
-/// the selection effect belongs — each of those is a compile error, and
-/// each was a green mutation before.
+/// rather than in the one holding the view: no code in `SessionSidebar.swift`
+/// can call it, unwrap it, reach it by key path, or pass it where the
+/// selection effect belongs — each of those is a compile error, and each was
+/// a green mutation before.
+///
+/// **The rule this type and its two host-reaching siblings share.** Every
+/// callback of the sidebar whose far end reaches the user's host is one of
+/// these values, and the only way to fire any of them is to name an input.
+/// Fix round 4 exists because that rule held for `onConnect` alone while
+/// `onOpenTerminal` — a connect by its own doc comment and by
+/// `ContentView.openTerminalFromSidebar` — stayed a plain closure: one
+/// line, `onOpenTerminal(session)` in the function that moves the
+/// selection, made every single click dial with the full suite green.
+/// Three successive enumerations of "every way a click could connect"
+/// missed it, each by reading the previous round's list.
 ///
 /// **What this is and is not.** It raises the cost of an accidental
 /// connect from "write a plausible line" to "defeat the type system", and
 /// that is the whole of the claim. It is not a capability boundary in the
 /// sense `ReconnectWiringGuardTests`' header uses, and the difference is
-/// worth stating because the last two rounds overstated it:
+/// worth stating because two earlier rounds overstated it:
 ///
 /// - `fileprivate` is a FILE boundary. An extension added to THIS file —
 ///   `var asClosure: (Value) -> Void { run }`, a `callAsFunction`,
@@ -67,11 +115,44 @@ struct SessionRowSelectEffect<Value> {
 /// against either would be an anchor against a spelling — the exact move
 /// three rounds have shown to lose.
 ///
-/// Also outside it: the sidebar's two terminal callbacks, which connect as
-/// well and remain plain closures (guarded, not typed — see
-/// `SessionRowActivationWiringTests`), and any connect path in another file
-/// — `ContentView` constructs this effect and can dial without it.
+/// Also outside it: any connect path in another file — `ContentView`
+/// constructs these effects and can dial without them.
 struct SessionRowConnectEffect<Value> {
+    fileprivate let run: (Value) -> Void
+
+    init(_ run: @escaping (Value) -> Void) {
+        self.run = run
+    }
+}
+
+/// The effect behind the row's "Open Terminal" entry: the same dial
+/// `SessionRowConnectEffect` performs, with the session coming up showing
+/// the terminal instead of the file browser.
+///
+/// Its own type rather than a second `SessionRowConnectEffect` for the
+/// reason `SessionRowSelectEffect` states: `apply` takes both, and two
+/// parameters of one type are swappable by a one-token edit. Everything
+/// said at `SessionRowConnectEffect` about what `fileprivate` does and does
+/// not buy applies here unchanged.
+struct SessionRowTerminalEffect<Value> {
+    fileprivate let run: (Value) -> Void
+
+    init(_ run: @escaping (Value) -> Void) {
+        self.run = run
+    }
+}
+
+/// The effect behind the row's "Open in External Terminal" entry.
+///
+/// Held to the same rule as `SessionRowConnectEffect` and
+/// `SessionRowTerminalEffect` although macSCP itself never dials on this
+/// route — `ContentView.openExternalTerminalFromSidebar`
+/// resolves what the session would connect with, keychain read included,
+/// and hands it to a program that dials. The user's host is reached either
+/// way, which is what a stray click would amount to; "who runs the socket"
+/// is not a distinction the user makes when a terminal window opens onto
+/// their server.
+struct SessionRowExternalTerminalEffect<Value> {
     fileprivate let run: (Value) -> Void
 
     init(_ run: @escaping (Value) -> Void) {
@@ -97,8 +178,8 @@ struct SessionRowConnectEffect<Value> {
 /// `.doNothing` while a row is being renamed covers every gesture: the
 /// inline rename field owns both the pointer and the keyboard while it is
 /// up, and a click that re-selected the row underneath it would pull focus
-/// out of the field and cancel the edit. The menu entry is deliberately not
-/// subject to that — see `build`.
+/// out of the field and cancel the edit. The menu entries are deliberately
+/// not subject to that — see `build`.
 ///
 /// Untested claim, stated rather than implied: that macOS delivers a second
 /// click as a `count: 2` tap and Return to the focused row at all. This type
@@ -112,20 +193,33 @@ enum SessionRowActivation: Equatable {
     case select
     /// The row becomes the selection AND a connection is opened — the
     /// selection first, so the connection always names the row the user can
-    /// see is meant.
+    /// see is meant. Every case that reaches a host selects first.
     case selectAndConnect
+    /// The selection, then the same connection with the terminal showing
+    /// instead of the file browser.
+    case selectAndOpenTerminal
+    /// The selection, then the resolved configuration handed to an external
+    /// terminal. macSCP opens no connection of its own here; the program it
+    /// launches does.
+    case selectAndOpenExternalTerminal
 
     /// Whether this activation changes anything at all.
     var acts: Bool { self != .doNothing }
-    /// Whether this activation opens a connection.
-    var connects: Bool { self == .selectAndConnect }
+    /// Whether macSCP itself opens a connection — a tab of its own, a
+    /// keychain read, a TOFU prompt. False for the external terminal, where
+    /// another program dials.
+    var connects: Bool { self == .selectAndConnect || self == .selectAndOpenTerminal }
+    /// Whether the user's host is contacted at all, by macSCP or by the
+    /// program it hands a configuration to. This is the predicate the "a
+    /// single click must not connect" property is stated over: from the
+    /// pointer's side the external terminal is the same surprise.
+    var reachesTheHost: Bool { connects || self == .selectAndOpenExternalTerminal }
 
-    /// `.contextMenuEntry` answers `.selectAndConnect` unconditionally: it
-    /// is not a gesture whose meaning has to be inferred but an entry the
-    /// user read and chose, so neither the rename guard nor the selection
-    /// rule applies to it. A menu item that silently did nothing because
-    /// the row happened to be in rename mode would be worse than the
-    /// interruption.
+    /// The three menu entries answer unconditionally: they are not gestures
+    /// whose meaning has to be inferred but entries the user read and chose,
+    /// so neither the rename guard nor the selection rule applies to them. A
+    /// menu item that silently did nothing because the row happened to be in
+    /// rename mode would be worse than the interruption.
     ///
     /// What ends that rename is `SidebarRenameHandoff`, not this type and
     /// not SwiftUI: any activation that ACTS while a rename is open ends it
@@ -135,15 +229,20 @@ enum SessionRowActivation: Equatable {
     /// the row being renamed, which left the draft neither committed nor
     /// discarded with a connection opening underneath it.
     ///
-    /// It also selects, rather than connecting without selecting: after any
-    /// route to a connection the highlight must name the row that was
-    /// connected.
+    /// They also select, rather than acting without selecting: after any
+    /// route to a host the highlight must name the row that was reached.
+    /// Fix round 4 gave the two terminal entries that property, which they
+    /// did not have while they were plain callbacks on the row.
     static func build(
         for input: SessionRowInput, isRenaming: Bool, isSelected: Bool
     ) -> SessionRowActivation {
         switch input {
         case .contextMenuEntry:
             return .selectAndConnect
+        case .terminalMenuEntry:
+            return .selectAndOpenTerminal
+        case .externalTerminalMenuEntry:
+            return .selectAndOpenExternalTerminal
         case .singleClick:
             return isRenaming ? .doNothing : .select
         case .doubleClick:
@@ -156,27 +255,30 @@ enum SessionRowActivation: Equatable {
         }
     }
 
-    /// Runs the two effects a session row has, as this activation dictates,
-    /// and reports whether either ran.
+    /// Runs the effects a session row has, as this activation dictates, and
+    /// reports whether any of them ran.
     ///
     /// `fileprivate`, because being internal made it the firing site: an
     /// activation is a value anyone can construct, so
     /// `SessionRowActivation.selectAndConnect.apply(to:…)` written into any
     /// function of the view dialled on every single click with the whole
     /// suite green. Round 2 turned an unguarded slot into an unguarded
-    /// `self`. Callers now reach `perform`, which decides the activation
-    /// itself and never hands one back.
+    /// `self`. Callers reach `performSessionRowInput` instead, which decides
+    /// the activation itself and never hands one back.
     ///
-    /// `onSelect` runs before `onConnect` for `.selectAndConnect`, so the
-    /// highlight already names the row by the time the connection starts.
+    /// `onSelect` runs first in every case that acts on a host, so the
+    /// highlight already names the row by the time anything is dialled.
+    /// Exactly one host-reaching effect runs per activation.
     ///
-    /// Generic in the value it hands both effects, so this type stays free
-    /// of any knowledge about what a session is.
+    /// Generic in the value it hands the effects, so this type stays free of
+    /// any knowledge about what a session is.
     @discardableResult
     fileprivate func apply<Value>(
         to value: Value,
         onSelect: SessionRowSelectEffect<Value>,
-        onConnect: SessionRowConnectEffect<Value>
+        onConnect: SessionRowConnectEffect<Value>,
+        onOpenTerminal: SessionRowTerminalEffect<Value>,
+        onOpenExternalTerminal: SessionRowExternalTerminalEffect<Value>
     ) -> Bool {
         switch self {
         case .doNothing:
@@ -187,6 +289,14 @@ enum SessionRowActivation: Equatable {
         case .selectAndConnect:
             onSelect.run(value)
             onConnect.run(value)
+            return true
+        case .selectAndOpenTerminal:
+            onSelect.run(value)
+            onOpenTerminal.run(value)
+            return true
+        case .selectAndOpenExternalTerminal:
+            onSelect.run(value)
+            onOpenExternalTerminal.run(value)
             return true
         }
     }
@@ -201,9 +311,9 @@ enum SessionRowActivation: Equatable {
 /// and firing one are different capabilities. A view can ask what an input
 /// would mean; it cannot pick the answer it would like to fire.
 ///
-/// The two effects are separate types with `fileprivate` storage, so they
-/// cannot be swapped for one another or unwrapped by a caller. What that
-/// does NOT amount to is stated at `SessionRowConnectEffect`.
+/// The effects are separate types with `fileprivate` storage, so none of
+/// them can be swapped for another or unwrapped by a caller. What that does
+/// NOT amount to is stated at `SessionRowConnectEffect`.
 @discardableResult
 func performSessionRowInput<Value>(
     _ input: SessionRowInput,
@@ -211,10 +321,14 @@ func performSessionRowInput<Value>(
     isRenaming: Bool,
     isSelected: Bool,
     onSelect: SessionRowSelectEffect<Value>,
-    onConnect: SessionRowConnectEffect<Value>
+    onConnect: SessionRowConnectEffect<Value>,
+    onOpenTerminal: SessionRowTerminalEffect<Value>,
+    onOpenExternalTerminal: SessionRowExternalTerminalEffect<Value>
 ) -> Bool {
     SessionRowActivation.build(for: input, isRenaming: isRenaming, isSelected: isSelected)
-        .apply(to: value, onSelect: onSelect, onConnect: onConnect)
+        .apply(
+            to: value, onSelect: onSelect, onConnect: onConnect,
+            onOpenTerminal: onOpenTerminal, onOpenExternalTerminal: onOpenExternalTerminal)
 }
 
 /// Which background a session row draws, and in what order the three

@@ -129,14 +129,19 @@ struct SessionSidebar: View {
     let interactionsDisabled: Bool
     /// Opens a connection to one stored session.
     ///
-    /// An effect value rather than a closure (fix round 2), and this view
-    /// cannot fire it: `SessionRowConnectEffect.run` is private to the file
-    /// that declares it, so the only thing reachable from here is handing
-    /// the effect to `SessionRowActivation.apply`, which runs it for
-    /// `.selectAndConnect` and nothing else. Every route by which a single
-    /// click could dial — the effect in the select slot, a call from the
-    /// function that moves the selection, a call from another row — stopped
-    /// being a mistake this file can express.
+    /// The first of this sidebar's three host-reaching callbacks, and all
+    /// three are effect values rather than closures. This view cannot fire
+    /// any of them: their `run` is private to the file that declares them,
+    /// and `SessionRowActivation.apply` — the only code that runs one — is
+    /// `fileprivate` there too. What is reachable from here is
+    /// `performSessionRowInput`, which states an input and the two facts
+    /// about the row and picks nothing.
+    ///
+    /// Fix round 2 gave `onConnect` that shape; round 3 put the firing
+    /// decision out of reach; round 4 extended both to the two terminal
+    /// callbacks, which had stayed plain closures while being connects —
+    /// `onOpenTerminal(session)`, written into the function that moves the
+    /// selection, dialled on every single click with the whole suite green.
     let onConnect: SessionRowConnectEffect<StoredSession>
     /// Performs the actual deletion and returns the jump-restoration outcome
     /// (M11a/T3) — the sidebar surfaces `secretFailures` as its own red
@@ -149,13 +154,16 @@ struct SessionSidebar: View {
     /// `onConnect` does and differs from it in the pane layout alone (the
     /// session comes up showing the terminal instead of the file browser).
     /// Only ever offered when the backend has a shell — see
-    /// `SessionRowTerminalMenuPlan`.
-    let onOpenTerminal: (StoredSession) -> Void
+    /// `SessionRowTerminalMenuPlan`. Because it connects, it is an effect
+    /// value under the rule stated at `onConnect`, and the entry that runs
+    /// it is an input (`.terminalMenuEntry`), not a callback the row holds.
+    let onOpenTerminal: SessionRowTerminalEffect<StoredSession>
     /// Session-row "Open in External Terminal" entry (P3c/T2) — resolves the
     /// session's configuration and hands it to the external terminal;
     /// macSCP itself does NOT connect. Same visibility rule as
-    /// `onOpenTerminal` above.
-    let onOpenExternalTerminal: (StoredSession) -> Void
+    /// `onOpenTerminal`, and the same effect-value rule: the dialling
+    /// program differs, the host reached does not.
+    let onOpenExternalTerminal: SessionRowExternalTerminalEffect<StoredSession>
     /// Sidebar export entries (M9a/T3): session/group/background context
     /// menus all funnel into this one callback with the scope they cover.
     let onExport: (SessionListViewModel.ExportScope) -> Void
@@ -488,8 +496,6 @@ struct SessionSidebar: View {
                 // to the plan, and review round 2 planted exactly that.
                 onInput: activate(_:on:),
                 onEdit: { onEdit(session) },
-                onOpenTerminal: { onOpenTerminal(session) },
-                onOpenExternalTerminal: { onOpenExternalTerminal(session) },
                 onStartRename: { startRename(id: session.id, currentName: session.name) },
                 onCommitRename: { commitSessionRename(session) },
                 onCancelRename: endRename,
@@ -631,12 +637,18 @@ struct SessionSidebar: View {
     /// row is renaming when it is THE renaming row, and selected when it is
     /// THE selected one, and this is the scope that holds both.
     ///
-    /// Both effects are handed to `performSessionRowInput`, which is the
-    /// only reachable code that runs either: this view cannot fire a
-    /// `SessionRowConnectEffect`, cannot pass one where the selection
-    /// effect belongs, and — since `apply` stopped being reachable — cannot
-    /// choose which activation gets fired either. It states the input and
-    /// the two facts about the row, and the answer is not its to pick.
+    /// All four effects are handed to `performSessionRowInput`, which is the
+    /// only reachable code that runs any of them: this view cannot fire an
+    /// effect, cannot pass one where another belongs, and — since `apply`
+    /// stopped being reachable — cannot choose which activation gets fired
+    /// either. It states the input and the two facts about the row, and the
+    /// answer is not its to pick.
+    ///
+    /// Since fix round 4 that covers the two terminal entries as well, which
+    /// used to reach their callbacks straight from the row. Two things
+    /// changed for them besides being unreachable from a gesture: they now
+    /// move the selection onto the row they act on, and they end an open
+    /// rename the way every other acting input does.
     private func activate(_ input: SessionRowInput, on session: StoredSession) -> Bool {
         let isRenaming = renamingID == session.id
         let isSelected = selectedSessionID == session.id
@@ -648,7 +660,9 @@ struct SessionSidebar: View {
         return performSessionRowInput(
             input, on: session, isRenaming: isRenaming, isSelected: isSelected,
             onSelect: SessionRowSelectEffect(moveSelection(to:)),
-            onConnect: onConnect)
+            onConnect: onConnect,
+            onOpenTerminal: onOpenTerminal,
+            onOpenExternalTerminal: onOpenExternalTerminal)
     }
 
     /// Puts the sidebar's selection, and the keyboard with it, on one row.
@@ -661,6 +675,15 @@ struct SessionSidebar: View {
 
     // MARK: - Inline rename
 
+    /// Deliberately NOT routed through `endRename()` when a rename is
+    /// already open on another row — this is a rename MOVING, not one
+    /// ending. Of the three pieces of state `endRename` owns, two
+    /// (`renamingID` and `focusedRenameID`) are reassigned in this body
+    /// anyway, and the third is the one that must not run here: handing
+    /// `focusedRowID` back to the selected row would fight the field this
+    /// call is about to focus for the first responder. The draft on the
+    /// previous row is dropped, which is what this sidebar does with any
+    /// draft not committed by Return or by the menu.
     private func startRename(id: UUID, currentName: String) {
         renamingID = id
         renameDraft = currentName
@@ -775,21 +798,22 @@ private struct SessionRow: View {
     /// to the inline rename field inside this row.
     var focusedRowID: FocusState<UUID?>.Binding
     let groups: [StoredGroup]
-    /// Every input this row can receive — its clicks, its Return, and its
-    /// "Connect" menu entry — forwarded raw with the session it happened
-    /// on. What each of them MEANS is `SessionRowActivation`'s answer,
-    /// given in `SessionSidebar.activate`, not this view's. Returns whether
-    /// the input did anything, which the Return handler reports back to
-    /// SwiftUI.
+    /// Every input this row can receive — its clicks, its Return, and the
+    /// three menu entries that reach a host — forwarded raw with the
+    /// session it happened on. What each of them MEANS is
+    /// `SessionRowActivation`'s answer, given in `SessionSidebar.activate`,
+    /// not this view's. Returns whether the input did anything, which the
+    /// Return handler reports back to SwiftUI.
     ///
-    /// The row has no connect callback of its own any more (fix round 2):
-    /// one way in means the menu entry cannot drift from what the gestures
-    /// do, and there is nothing here that could reach a connection except
-    /// by naming an input.
+    /// The row holds no callback that starts a session on the user's host
+    /// any more: the connect one went in fix round 2, the two terminal ones
+    /// in round 4. One way in means the menu entries cannot drift from what
+    /// the gestures do, and nothing here can put macSCP — or another
+    /// program — onto that host except by naming an input. (The snippet
+    /// submenu types into a shell this window already holds; it opens
+    /// nothing.)
     let onInput: (SessionRowInput, StoredSession) -> Bool
     let onEdit: () -> Void
-    let onOpenTerminal: () -> Void
-    let onOpenExternalTerminal: () -> Void
     let onStartRename: () -> Void
     let onCommitRename: () -> Void
     let onCancelRename: () -> Void
@@ -826,6 +850,20 @@ private struct SessionRow: View {
     /// a type and why the entries are hidden rather than disabled.
     private var terminalPlan: SessionRowTerminalMenuPlan {
         SessionRowTerminalMenuPlan.build(for: session.kind)
+    }
+
+    /// The two terminal entries' titles, hoisted out of their `Button`
+    /// lines. Every other entry in this menu spells its `L10n.string` call
+    /// inline; these two cannot, because their line has to carry the input
+    /// they forward as well, and `SessionRowActivationWiringTests`' Guard A
+    /// reads a handler and its input on ONE line — it fails closed on a
+    /// handler split across lines, deliberately.
+    private var openTerminalTitle: String {
+        L10n.string("sidebar.openTerminal", "Open Terminal")
+    }
+
+    private var externalTerminalTitle: String {
+        L10n.string("sidebar.openExternalTerminal", "Open in External Terminal")
     }
 
     /// The row's background — which of the reasons to draw one wins and
@@ -928,11 +966,15 @@ private struct SessionRow: View {
             // "Open in External Terminal" is the same host reached another
             // way. Whether they appear at all is `terminalPlan`'s decision,
             // not this `if`'s — see `SessionRowTerminalMenuPlan`.
+            //
+            // Both forward an input rather than calling a callback (fix
+            // round 4): each starts a session on the user's host, which
+            // makes them exactly as dangerous on a stray click as
+            // "Connect", and the row holds nothing they could be called
+            // through any more.
             if terminalPlan.isShown {
-                Button(L10n.string("sidebar.openTerminal", "Open Terminal")) { onOpenTerminal() }
-                Button(L10n.string("sidebar.openExternalTerminal", "Open in External Terminal")) {
-                    onOpenExternalTerminal()
-                }
+                Button(openTerminalTitle) { _ = onInput(.terminalMenuEntry, session) }
+                Button(externalTerminalTitle) { _ = onInput(.externalTerminalMenuEntry, session) }
             }
             Button(L10n.string("sidebar.edit", "Edit…")) { onEdit() }
             Button(L10n.string("export.menu.single", "Export…")) { onExport() }

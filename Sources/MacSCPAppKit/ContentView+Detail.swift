@@ -42,9 +42,14 @@ extension ContentView {
             // connect/reconnect blocks interaction.
             interactionsDisabled: activeTab.isReconnecting
                 || activeTab.connectionViewModel.state == .connecting,
-            // The sidebar's whole ability to obtain a connection, as a
-            // value it can hand to `SessionRowActivation.apply` and cannot
-            // fire itself — see `SessionRowConnectEffect`.
+            // The sidebar's whole ability to reach a host, as three values
+            // it can hold and hand on but not fire: `apply`, the only code
+            // that runs one, is `fileprivate` to the file declaring the
+            // effect types, and the sidebar's own way in states an input
+            // instead of picking an activation. See
+            // `SessionRowConnectEffect` for what that does and does not
+            // buy. The two terminal effects sit beside the entries they
+            // belong to rather than here.
             onConnect: SessionRowConnectEffect { stored in connectFromSidebar(stored) },
             onDelete: { stored in
                 // Return value (M11a/T3): the sidebar surfaces
@@ -76,9 +81,11 @@ extension ContentView {
             // `connectFromSidebar` with one argument added, so it cannot
             // drift from what the sidebar's own connect does; "Open in External
             // Terminal" resolves the session and launches without macSCP
-            // connecting at all.
-            onOpenTerminal: { stored in openTerminalFromSidebar(stored) },
-            onOpenExternalTerminal: { stored in openExternalTerminalFromSidebar(stored) },
+            // connecting at all — the program it launches is what dials.
+            // Both are effect values for the same reason `onConnect` is: a
+            // stray click reaching either one reaches the user's host.
+            onOpenTerminal: SessionRowTerminalEffect { stored in openTerminalFromSidebar(stored) },
+            onOpenExternalTerminal: SessionRowExternalTerminalEffect { stored in openExternalTerminalFromSidebar(stored) },
             onExport: { scope in exportSheetItem = ExportSheetItem(scope: scope) },
             onImport: { showImportFileImporter = true },
             onShowAuditLog: { stored in auditLogSession = stored },

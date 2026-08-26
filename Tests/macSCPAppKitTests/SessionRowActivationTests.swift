@@ -72,92 +72,133 @@ struct SessionRowActivationTests {
     /// the keyboard. A click that re-selected the row underneath would pull
     /// focus out of the field and cancel the edit; Return belongs to the
     /// field's own submit.
-    @Test(arguments: SessionRowInput.allCases.filter { $0 != .contextMenuEntry })
+    @Test(arguments: SessionRowInput.allCases.filter { !$0.isMenuEntry })
     func renamingSwallowsEveryGesture(input: SessionRowInput) {
         for isSelected in [true, false] {
             let activation = SessionRowActivation.build(
                 for: input, isRenaming: true, isSelected: isSelected)
             #expect(activation == .doNothing, "input \(input), isSelected \(isSelected)")
             #expect(!activation.acts)
-            #expect(!activation.connects)
+            #expect(!activation.reachesTheHost)
         }
     }
 
-    /// The one input the rename guard does not apply to. A menu entry the
-    /// user read and chose must not silently do nothing because the row
-    /// happens to be in rename mode — the interruption is the lesser
-    /// surprise, and it is handled: selecting the row takes focus off the
-    /// field, which cancels the edit the way leaving it any other way does.
-    @Test func theMenuEntryConnectsEvenWhileTheRowIsBeingRenamed() {
+    /// The inputs the rename guard does not apply to. A menu entry the user
+    /// read and chose must not silently do nothing because the row happens
+    /// to be in rename mode — the interruption is the lesser surprise, and
+    /// it is handled: `SidebarRenameHandoff` ends the edit first.
+    @Test(arguments: SessionRowInput.allCases.filter(\.isMenuEntry))
+    func aMenuEntryActsEvenWhileTheRowIsBeingRenamed(input: SessionRowInput) {
         for isSelected in [true, false] {
-            #expect(
-                SessionRowActivation.build(
-                    for: .contextMenuEntry, isRenaming: true, isSelected: isSelected)
-                    == .selectAndConnect)
+            let activation = SessionRowActivation.build(
+                for: input, isRenaming: true, isSelected: isSelected)
+            #expect(activation.reachesTheHost, "input \(input), isSelected \(isSelected)")
         }
     }
 
-    /// And it selects rather than connecting behind the highlight's back:
-    /// after any route to a connection, the row that was connected is the
-    /// row that is marked.
-    @Test func theMenuEntrySelectsTheRowItConnects() {
-        #expect(SessionRowActivation.build(
-            for: .contextMenuEntry, isRenaming: false, isSelected: false).connects)
+    /// Each menu entry maps to its own far end, and nothing else does. Two
+    /// entries that answered the same activation would be one entry the
+    /// user cannot tell from the other.
+    ///
+    /// Each also selects the row it acts on — the two terminal entries did
+    /// not, while they were callbacks the row called directly. That the
+    /// selection effect actually RUNS, and runs first, is pinned in
+    /// `PerformSessionRowInputTests` by
+    /// `everyHostReachIsPrecededBySelectingTheSameRow`; here it is only the
+    /// activation each entry maps to.
+    @Test func eachMenuEntryReachesItsOwnFarEnd() {
         #expect(SessionRowActivation.build(
             for: .contextMenuEntry, isRenaming: false, isSelected: false) == .selectAndConnect)
+        #expect(SessionRowActivation.build(
+            for: .terminalMenuEntry, isRenaming: false, isSelected: false)
+            == .selectAndOpenTerminal)
+        #expect(SessionRowActivation.build(
+            for: .externalTerminalMenuEntry, isRenaming: false, isSelected: false)
+            == .selectAndOpenExternalTerminal)
     }
 
-    /// `acts` and `connects` are what `SessionSidebar.activate` branches on,
-    /// so what each one answers per case is part of the contract, not a
-    /// convenience: `acts` false is the only case that leaves a key press
-    /// unhandled, `connects` true the only one that dials.
-    @Test func theTwoQuestionsTheSidebarAsksAnswerPerCase() {
+    /// What each predicate answers per case is part of the contract, not a
+    /// convenience: `acts` false is the only thing that leaves a key press
+    /// unhandled and the only thing that leaves an open rename alone,
+    /// `connects` marks the routes on which macSCP itself dials, and
+    /// `reachesTheHost` adds the one on which another program does.
+    ///
+    /// The split between the last two is deliberate, and it is the reason
+    /// the external terminal is inside this type at all: macSCP opens no
+    /// connection there and the user's server is contacted all the same, so
+    /// the property a stray click must not violate is the wider one.
+    @Test func theThreePredicatesAnswerPerCase() {
         #expect(!SessionRowActivation.doNothing.acts)
         #expect(SessionRowActivation.select.acts)
         #expect(SessionRowActivation.selectAndConnect.acts)
+        #expect(SessionRowActivation.selectAndOpenTerminal.acts)
+        #expect(SessionRowActivation.selectAndOpenExternalTerminal.acts)
 
         #expect(!SessionRowActivation.doNothing.connects)
         #expect(!SessionRowActivation.select.connects)
         #expect(SessionRowActivation.selectAndConnect.connects)
+        #expect(SessionRowActivation.selectAndOpenTerminal.connects)
+        #expect(!SessionRowActivation.selectAndOpenExternalTerminal.connects)
+
+        #expect(!SessionRowActivation.doNothing.reachesTheHost)
+        #expect(!SessionRowActivation.select.reachesTheHost)
+        #expect(SessionRowActivation.selectAndConnect.reachesTheHost)
+        #expect(SessionRowActivation.selectAndOpenTerminal.reachesTheHost)
+        #expect(SessionRowActivation.selectAndOpenExternalTerminal.reachesTheHost)
     }
 
     /// A `build` that answered `.selectAndConnect` for everything would pass
     /// the per-input checks one at a time; this is what rules out a constant
-    /// answer across the inputs that exist.
+    /// answer across the inputs that exist. Stated over the enum's own cases
+    /// rather than a list, so an activation nothing can ever answer — a case
+    /// added and never wired — fails here.
     @Test func everyActivationIsReachableFromSomeInput() {
-        let answers = SessionRowInput.allCases.map {
-            SessionRowActivation.build(for: $0, isRenaming: false, isSelected: false)
+        var answers: Set<SessionRowActivation> = []
+        for input in SessionRowInput.allCases {
+            for isRenaming in [true, false] {
+                for isSelected in [true, false] {
+                    answers.insert(SessionRowActivation.build(
+                        for: input, isRenaming: isRenaming, isSelected: isSelected))
+                }
+            }
         }
-        #expect(answers.contains(.select))
-        #expect(answers.contains(.selectAndConnect))
-        #expect(answers.contains(.doNothing))
+        #expect(answers == [
+            .doNothing, .select, .selectAndConnect,
+            .selectAndOpenTerminal, .selectAndOpenExternalTerminal,
+        ])
     }
 
     /// Nothing but a double click, a selected row's Return and the menu
-    /// entry may connect — stated over the whole input space rather than
-    /// case by case, so a further input has to be classified deliberately
-    /// instead of inheriting a connect by default.
-    @Test func onlyThreeOfEveryInputCombinationEverConnect() {
-        var connecting: [(SessionRowInput, Bool, Bool)] = []
+    /// entries may reach the user's host — stated over the whole input space
+    /// rather than case by case, so a further input has to be classified
+    /// deliberately instead of inheriting a host reach by default.
+    ///
+    /// `reachesTheHost` rather than `connects`, because a single click that
+    /// launched an external terminal onto the server would be the same
+    /// surprise this whole task removed, and `connects` is false for it.
+    @Test func nothingOutsideTheIntendedInputsEverReachesTheHost() {
+        var reaching: [(SessionRowInput, Bool, Bool)] = []
         for input in SessionRowInput.allCases {
             for isRenaming in [true, false] {
                 for isSelected in [true, false] {
                     let activation = SessionRowActivation.build(
                         for: input, isRenaming: isRenaming, isSelected: isSelected)
-                    if activation.connects { connecting.append((input, isRenaming, isSelected)) }
+                    if activation.reachesTheHost {
+                        reaching.append((input, isRenaming, isSelected))
+                    }
                 }
             }
         }
-        #expect(connecting.allSatisfy { input, isRenaming, isSelected in
-            input == .contextMenuEntry
+        #expect(reaching.allSatisfy { input, isRenaming, isSelected in
+            input.isMenuEntry
                 || (!isRenaming && (input == .doubleClick || (input == .returnKey && isSelected)))
-        }, "an input outside double click / selected-row Return / menu entry connects: \(connecting)")
-        #expect(!connecting.isEmpty, "no combination connects at all — the row would be inert")
+        }, "an input outside double click / selected-row Return / a menu entry reaches the host: \(reaching)")
+        #expect(!reaching.isEmpty, "no combination reaches a host at all — the row would be inert")
     }
 }
 
 /// Pins `performSessionRowInput` — the one reachable way to act on a row,
-/// and therefore the whole chain from an input to a connection.
+/// and therefore the whole chain from an input to a host.
 ///
 /// It replaced a test over `apply` in fix round 3, because `apply` stopped
 /// being reachable: as an internal method on a freely constructible enum it
@@ -166,9 +207,14 @@ struct SessionRowActivationTests {
 /// the full suite green. Testing the entry point instead is both the
 /// stronger statement — build and apply together — and the only one left.
 ///
-/// The spies record the ORDER as well as the count, because "select before
-/// connect" is a promise the highlight depends on: the row has to name the
-/// session before the connection starts.
+/// All three host-reaching effects are spied on, not just connect: fix round
+/// 4 brought the two terminal entries onto this path, and a chain that ran
+/// the wrong one of them would be invisible to a spy that only watched the
+/// connect slot.
+///
+/// The spies record the ORDER as well as the count, because "select first"
+/// is a promise the highlight depends on: the row has to name the session
+/// before anything reaches its host.
 @Suite("performSessionRowInput")
 struct PerformSessionRowInputTests {
     /// Records which effects ran, in order.
@@ -176,7 +222,13 @@ struct PerformSessionRowInputTests {
         private(set) var log: [String] = []
         func select(_ value: String) { log.append("select(\(value))") }
         func connect(_ value: String) { log.append("connect(\(value))") }
+        func openTerminal(_ value: String) { log.append("terminal(\(value))") }
+        func openExternalTerminal(_ value: String) { log.append("external(\(value))") }
     }
+
+    /// The log entries that mean the user's host was reached — everything
+    /// but the selection.
+    private static let hostReaches = ["connect", "terminal", "external"]
 
     private func run(
         _ input: SessionRowInput, isRenaming: Bool = false, isSelected: Bool = false
@@ -185,19 +237,28 @@ struct PerformSessionRowInputTests {
         let applied = performSessionRowInput(
             input, on: "row", isRenaming: isRenaming, isSelected: isSelected,
             onSelect: SessionRowSelectEffect(effects.select(_:)),
-            onConnect: SessionRowConnectEffect(effects.connect(_:)))
+            onConnect: SessionRowConnectEffect(effects.connect(_:)),
+            onOpenTerminal: SessionRowTerminalEffect(effects.openTerminal(_:)),
+            onOpenExternalTerminal:
+                SessionRowExternalTerminalEffect(effects.openExternalTerminal(_:)))
         return (effects.log, applied)
+    }
+
+    /// Whether this log records the host being reached, by any of the three
+    /// routes.
+    private func reachesHost(_ log: [String]) -> Bool {
+        log.contains { entry in Self.hostReaches.contains { entry.hasPrefix($0) } }
     }
 
     /// The regression the whole task is about, stated where the effects
     /// actually run rather than where they are classified.
-    @Test func aSingleClickSelectsAndNeverReachesTheConnectEffect() {
+    @Test func aSingleClickSelectsAndNeverReachesAnyHostEffect() {
         let result = run(.singleClick)
         #expect(result.log == ["select(row)"])
         #expect(result.applied)
     }
 
-    @Test func aSwallowedInputRunsNeitherEffect() {
+    @Test func aSwallowedInputRunsNoEffectAtAll() {
         let result = run(.singleClick, isRenaming: true)
         #expect(result.log.isEmpty)
         #expect(!result.applied)
@@ -214,20 +275,49 @@ struct PerformSessionRowInputTests {
         #expect(run(.returnKey, isSelected: false).log.isEmpty)
     }
 
-    @Test func theMenuEntryConnectsEvenOnARowBeingRenamed() {
+    /// Each menu entry runs its OWN far end and no other. The two terminal
+    /// entries reached theirs through the row before fix round 4, which is
+    /// how a single click could reach one of them.
+    @Test func eachMenuEntryRunsItsOwnEffectAndNoOther() {
         #expect(run(.contextMenuEntry, isRenaming: true).log == ["select(row)", "connect(row)"])
+        #expect(run(.terminalMenuEntry).log == ["select(row)", "terminal(row)"])
+        #expect(run(.externalTerminalMenuEntry).log == ["select(row)", "external(row)"])
+    }
+
+    @Test(arguments: SessionRowInput.allCases.filter(\.isMenuEntry))
+    func aMenuEntryActsEvenOnARowBeingRenamed(input: SessionRowInput) {
+        let result = run(input, isRenaming: true)
+        #expect(result.log.first == "select(row)")
+        #expect(reachesHost(result.log))
     }
 
     /// Each effect runs at most once — a chain that connected twice would
     /// open two connections from one double click, and the order check alone
-    /// would not see it.
-    @Test func neitherEffectRunsTwiceForAnyInput() {
+    /// would not see it. Over the whole log rather than a chosen pair, so an
+    /// effect added later is counted without this test being revisited.
+    @Test func noEffectRunsTwiceForAnyInput() {
         for input in SessionRowInput.allCases {
             for isRenaming in [true, false] {
                 for isSelected in [true, false] {
                     let log = run(input, isRenaming: isRenaming, isSelected: isSelected).log
-                    #expect(log.filter { $0.hasPrefix("select") }.count <= 1, "\(input)")
-                    #expect(log.filter { $0.hasPrefix("connect") }.count <= 1, "\(input)")
+                    #expect(Set(log).count == log.count, "\(input): \(log)")
+                }
+            }
+        }
+    }
+
+    /// And at most one of them reaches the host: an activation that both
+    /// connected and opened an external terminal would dial twice from one
+    /// entry.
+    @Test func atMostOneHostEffectRunsForAnyInput() {
+        for input in SessionRowInput.allCases {
+            for isRenaming in [true, false] {
+                for isSelected in [true, false] {
+                    let log = run(input, isRenaming: isRenaming, isSelected: isSelected).log
+                    let reaches = log.filter { entry in
+                        Self.hostReaches.contains { entry.hasPrefix($0) }
+                    }
+                    #expect(reaches.count <= 1, "\(input): \(log)")
                 }
             }
         }
@@ -247,35 +337,39 @@ struct PerformSessionRowInputTests {
     }
 
     /// The property of the whole task, over the entire input space and at
-    /// the point where the effect actually runs: only a double click,
-    /// Return on the selected row, and the menu entry ever reach a
-    /// connection. A further input added later is iterated by `allCases`
-    /// and has to be classified deliberately.
-    @Test func onlyTheThreeIntendedInputsEverReachTheConnectEffect() {
+    /// the point where the effects actually run: only a double click, Return
+    /// on the selected row, and the menu entries ever reach the user's host.
+    /// A further input added later is iterated by `allCases` and has to be
+    /// classified deliberately.
+    ///
+    /// Over ALL THREE host-reaching effects. Watching the connect slot alone
+    /// is exactly the gap fix round 4 closed: `onOpenTerminal` dialled and
+    /// no test in this project could see it.
+    @Test func onlyTheIntendedInputsEverReachTheHost() {
         for input in SessionRowInput.allCases {
             for isRenaming in [true, false] {
                 for isSelected in [true, false] {
-                    let connected = run(input, isRenaming: isRenaming, isSelected: isSelected)
-                        .log.contains { $0.hasPrefix("connect") }
-                    let expected = input == .contextMenuEntry
+                    let reached = reachesHost(
+                        run(input, isRenaming: isRenaming, isSelected: isSelected).log)
+                    let expected = input.isMenuEntry
                         || (!isRenaming
                             && (input == .doubleClick || (input == .returnKey && isSelected)))
                     #expect(
-                        connected == expected,
+                        reached == expected,
                         "input \(input), isRenaming \(isRenaming), isSelected \(isSelected)")
                 }
             }
         }
     }
 
-    /// And the selection effect runs for exactly the inputs that act — a
-    /// connection is never opened on a row the highlight does not name.
-    @Test func everyConnectIsPrecededBySelectingTheSameRow() {
+    /// And the selection effect runs first whenever one does — the host is
+    /// never reached on a row the highlight does not name.
+    @Test func everyHostReachIsPrecededBySelectingTheSameRow() {
         for input in SessionRowInput.allCases {
             for isRenaming in [true, false] {
                 for isSelected in [true, false] {
                     let log = run(input, isRenaming: isRenaming, isSelected: isSelected).log
-                    if log.contains(where: { $0.hasPrefix("connect") }) {
+                    if reachesHost(log) {
                         #expect(log.first == "select(row)", "\(input)")
                     }
                 }
@@ -296,15 +390,17 @@ struct SidebarRenameHandoffTests {
             renamingID: UUID(), input: .singleClick, isRenaming: false, isSelected: false))
     }
 
-    /// The case fix round 3 exists for: the menu entry on the row that is
-    /// BEING renamed. It is the one input that acts there, so it is the one
-    /// input that has to end the edit — otherwise the field stays open with
+    /// The case fix round 3 exists for: a menu entry on the row that is
+    /// BEING renamed. Those are the inputs that act there, so they are the
+    /// ones that have to end the edit — otherwise the field stays open with
     /// a draft that is neither committed nor discarded while a connection
-    /// opens underneath it.
-    @Test func theMenuEntryEndsTheRenameOnTheRowItActsOn() {
+    /// opens underneath it. Over every menu entry since round 4 brought the
+    /// two terminal ones onto the same path.
+    @Test(arguments: SessionRowInput.allCases.filter(\.isMenuEntry))
+    func aMenuEntryEndsTheRenameOnTheRowItActsOn(input: SessionRowInput) {
         let id = UUID()
         #expect(SidebarRenameHandoff.endsOpenRename(
-            renamingID: id, input: .contextMenuEntry, isRenaming: true, isSelected: false))
+            renamingID: id, input: input, isRenaming: true, isSelected: false), "\(input)")
     }
 
     /// A gesture on the row being renamed does not act, so it must not end
@@ -327,9 +423,10 @@ struct SidebarRenameHandoffTests {
     }
 
     /// The rule stated over the whole space: a rename ends exactly when one
-    /// is open and the input acts. Without this, the cases above could all
-    /// hold while some combination fell through the gap the previous rule
-    /// left — which is precisely how the menu entry got missed.
+    /// is open and the input acts. Without this, every per-case check in
+    /// this suite could hold while some combination fell through the gap the
+    /// previous rule left — which is precisely how the menu entry got
+    /// missed.
     @Test func aRenameEndsExactlyWhenOneIsOpenAndTheInputActs() {
         let id = UUID()
         for input in SessionRowInput.allCases {

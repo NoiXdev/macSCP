@@ -3,20 +3,25 @@ import Testing
 
 @testable import MacSCPAppKit
 
-/// Guards what is left of "a single click never connects" once the parts
-/// that could be made impossible have been.
+/// Guards what is left of "a single click never reaches a host" once the
+/// parts that could be made impossible have been.
 ///
-/// The property: **a connection is reached only for `.doubleClick`,
-/// `.returnKey` on the selected row, and `.contextMenuEntry` — never for a
-/// single click, and never for a hover.**
+/// The property: **the user's host is reached only for `.doubleClick`,
+/// `.returnKey` on the selected row, and the three menu entries the user
+/// picks by name — never for a single click, and never for a hover.**
+/// "Host", not "connection": "Open in External Terminal" opens no
+/// connection macSCP holds and reaches the server all the same.
 ///
-/// Three rounds of review have each found the same shape of hole, and the
+/// Four rounds of review have each found the same shape of hole, and the
 /// lesson is written here rather than re-learned: every violation is spelled
 /// correctly, so an anchor against a spelling loses. Round 1 left an
 /// unguarded condition; round 2 replaced it with an unguarded slot; round 3
-/// found the slot had become an unguarded `self`. What follows is therefore
-/// split by what KIND of thing holds each site, and the split is the claim —
-/// each line of it was checked by planting the mutation, not by reading.
+/// found the slot had become an unguarded `self`; round 4 found the rule had
+/// only ever been applied to one of the sidebar's three host-reaching
+/// callbacks, while `onOpenTerminal` — a connect — stayed a plain closure
+/// that any function in the file could call. What follows is therefore split
+/// by what KIND of thing holds each site, and the split is the claim — each
+/// line of it was checked by planting the mutation, not by reading.
 ///
 /// 1. `build` misclassifies an input. → `SessionRowActivationTests`; the
 ///    mutation is inside the function under test.
@@ -36,17 +41,24 @@ import Testing
 ///    an input the caller did not receive. → **Guard A** (every input
 ///    literal in the file sits on its own site) and **Guard B** (one call
 ///    site, inside `activate`).
-/// 6. A handler acts through a DIFFERENT connecting callback instead of
-///    forwarding — the two terminal callbacks are plain closures and always
-///    were. → **Guard D** in the row's body, **Guard E** in `activate`.
-///    Reached by `.onHover` while this suite only read two modifiers, which
-///    is what round 3 corrected.
+/// 6. A handler acts through a DIFFERENT host-reaching callback instead of
+///    forwarding. → **Guard D** in the row's body, **Guard E** in
+///    `activate`. Reached by `.onHover` while this suite only read two
+///    modifiers, which is what round 3 corrected — and, until round 4, by
+///    any function of the file at all, because the callback it acted
+///    through was a closure rather than an effect (site 9).
 /// 7. The input is rewritten between the row and the plan. → The closure
 ///    that allowed it is deleted; **Guard I** keeps it deleted.
 /// 8. A connect path in a DIFFERENT file. → Out of reach, measured rather
 ///    than assumed: a dial planted in `ContentView.swift` leaves this suite
-///    green. **Guard J** pins only that the sidebar is given a live effect
+///    green. **Guard J** pins only that the sidebar is given live effects
 ///    at all, not what other files do with theirs.
+/// 9. A host-reaching callback is spelled as a plain closure, so calling it
+///    compiles anywhere. → **Guard K**, over the declarations rather than
+///    the calls: while the declaration is an effect type, every call that
+///    site 6 watches for is a compile error instead of a scan result. This
+///    is the one that was missed three times, and it was missed by taking
+///    the previous round's list of routes as the starting point.
 ///
 /// `SessionSidebar` and `SessionRow` cannot be DRIVEN from a test here:
 /// `ViewTestabilitySpike` shows views of this package can be instantiated
@@ -72,18 +84,52 @@ struct SessionRowActivationWiringTests {
     private static let detailFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Detail.swift")
 
-    /// Which site is allowed to name which input. The menu entry is in the
-    /// table for the same reason the gestures are: it is an input now, not a
-    /// separate connect path.
+    /// Which site is allowed to name which input. The three menu entries are
+    /// in the table for the same reason the gestures are: each is an input
+    /// now, not a connect path of its own.
     private static let inputRoutes: [(input: String, site: String)] = [
         (".singleClick", ".onTapGesture(count: 1)"),
         (".doubleClick", ".onTapGesture(count: 2)"),
         (".returnKey", ".onKeyPress(.return)"),
         (".contextMenuEntry", "\"sidebar.connect\""),
+        (".terminalMenuEntry", "Button(openTerminalTitle)"),
+        (".externalTerminalMenuEntry", "Button(externalTerminalTitle)"),
+    ]
+
+    /// Every callback of this sidebar whose far end reaches the user's host,
+    /// with the effect type each one must be declared as (Guard K). Derived
+    /// from `SessionSidebar`'s own properties and each one's far end, not
+    /// from any earlier round's list: `onConnect` dials through
+    /// `ContentView.connectFromSidebar`, `onOpenTerminal` through
+    /// `openTerminalFromSidebar` (the same dial plus a pane layout), and
+    /// `onOpenExternalTerminal` through `openExternalTerminalFromSidebar`,
+    /// which resolves a configuration — keychain read included — and hands
+    /// it to a program that dials. Every other callback the sidebar holds
+    /// ends in this app's own window: a sheet, the store, a form, or the
+    /// active tab's existing shell.
+    private static let hostReachingDeclarations = [
+        "let onConnect: SessionRowConnectEffect<StoredSession>",
+        "let onOpenTerminal: SessionRowTerminalEffect<StoredSession>",
+        "let onOpenExternalTerminal: SessionRowExternalTerminalEffect<StoredSession>",
+    ]
+
+    private static let hostReachingNames = [
+        "onConnect", "onOpenTerminal", "onOpenExternalTerminal",
+    ]
+
+    /// The far end of each host-reaching effect, as `ContentView+Detail.swift`
+    /// has to spell it (Guard J).
+    private static let effectHandOvers: [(prefix: String, method: String)] = [
+        ("onConnect: SessionRowConnectEffect", "connectFromSidebar("),
+        ("onOpenTerminal: SessionRowTerminalEffect", "openTerminalFromSidebar("),
+        (
+            "onOpenExternalTerminal: SessionRowExternalTerminalEffect",
+            "openExternalTerminalFromSidebar("
+        ),
     ]
 
     /// The table is hand-written while `SessionRowInput` is `CaseIterable`;
-    /// without this, a fifth input would be classified by every value test
+    /// without this, a seventh input would be classified by every value test
     /// and simply not carried here.
     @Test func theRoutingTableCoversEveryInputTheEnumHas() {
         #expect(Self.inputRoutes.count == SessionRowInput.allCases.count, """
@@ -171,6 +217,13 @@ struct SessionRowActivationWiringTests {
     /// File-wide, therefore, and staying that way: a countless tap gesture
     /// fires on the FIRST click, which is the behaviour this whole task
     /// removed from the session row.
+    ///
+    /// It watches the GESTURE, not what the gesture does — the reviewer's
+    /// probe that added a click count to the same connecting line went from
+    /// red to green on that one token. That blind spot is covered from the
+    /// other side since fix round 4 rather than by widening this scan:
+    /// a line in this file that reaches a host no longer compiles unless it
+    /// names an input, which Guard A routes.
     @Test func noTapGestureInTheFileOmitsItsClickCount() throws {
         let lines = try Self.sourceLines()
         let countless = lines.indices.filter { index in
@@ -188,18 +241,22 @@ struct SessionRowActivationWiringTests {
 
     // MARK: - Guard D: outside its menu, the row forwards and nothing else
 
-    /// Violation site 6. The row holds callbacks that connect —
-    /// `onOpenTerminal` and `onOpenExternalTerminal` are a connect plus a
-    /// pane layout — and no type protects them. Inside the context menu,
-    /// calling them is the entire point: those are entries the user picked
-    /// by name. Everywhere else in the body, the only callback that may be
-    /// called is `onInput`.
+    /// Violation site 6. The row's remaining callbacks stay inside this
+    /// window — a sheet, the store, a form, the active tab's shell — and no
+    /// type protects them; inside the context menu, calling them is the
+    /// entire point. Everywhere else in the body, the only callback that may
+    /// be called is `onInput`.
     ///
     /// Round 2's version of this read `.onTapGesture` and `.onKeyPress`
     /// lines only, which left `.onHover` free: a mouseover that dialled was
     /// green. The rule is now about WHERE a callback is called, not which
     /// modifier is on the line, so a modifier nobody has thought of yet is
     /// covered too.
+    ///
+    /// What it is NOT, and what fix round 4 had to close elsewhere: this
+    /// scan reads `SessionRow`'s body. A gesture in the imported-hosts row,
+    /// or a call in `moveSelection`, is outside it entirely. Guard K is what
+    /// covers those, by making the call itself impossible.
     @Test func outsideItsContextMenuTheRowCallsNoCallbackButTheInputForward() throws {
         let body = try Self.sessionRowBody()
         guard let menu = Self.range(ofBlockStartingWith: ".contextMenu {", in: body.lines) else {
@@ -385,33 +442,123 @@ struct SessionRowActivationWiringTests {
             """)
     }
 
-    // MARK: - Guard J: the sidebar is given a connection to open
+    // MARK: - Guard J: the sidebar is given the abilities it cannot fake
 
-    /// The counter-direction to everything else here, and the one thing no
-    /// guard held until fix round 3: handing the sidebar a do-nothing effect
-    /// (`SessionRowConnectEffect { _ in }`) leaves it unable to connect by
-    /// ANY route, with the suite green. Everything above says a click must
-    /// not connect; this says a double click still must.
-    @Test func theSidebarIsHandedAnEffectThatActuallyConnects() throws {
+    /// The counter-direction to every other guard in this suite, and the one
+    /// thing nothing held until fix round 3: handing the sidebar a do-nothing
+    /// effect (`SessionRowConnectEffect { _ in }`) leaves it unable to act by
+    /// ANY route, with the suite green. The rest of this suite says a click
+    /// must not reach a host; this one says a double click and the menu
+    /// entries still must.
+    ///
+    /// One row per host-reaching effect since round 4 — an inert effect is
+    /// exactly as invisible for the terminal entries as it was for connect.
+    @Test func theSidebarIsHandedEffectsThatActuallyReachTheHost() throws {
         let lines = try String(contentsOf: Self.detailFile, encoding: .utf8)
             .components(separatedBy: "\n")
-        let handOvers = lines.indices.filter { index in
-            Self.isCode(lines[index]) && lines[index].contains("onConnect: SessionRowConnectEffect")
+        for wiring in Self.effectHandOvers {
+            let handOvers = lines.indices.filter { index in
+                Self.isCode(lines[index]) && lines[index].contains(wiring.prefix)
+            }
+            #expect(handOvers.count == 1, """
+                expected exactly one `\(wiring.prefix)` in ContentView+Detail.swift, found \
+                \(handOvers.count) at line(s) \(handOvers.map { $0 + 1 }) — re-anchor this guard.
+                """)
+            guard let only = handOvers.first else { continue }
+            #expect(lines[only].contains(wiring.method), """
+                the effect handed to the sidebar no longer calls `\(wiring.method)` (line \
+                \(only + 1)) — that route would reach nothing at all, and every other guard in \
+                this suite would still pass.
+                """)
         }
-        #expect(handOvers.count == 1, """
-            expected exactly one `onConnect: SessionRowConnectEffect` in \
-            ContentView+Detail.swift, found \(handOvers.count) at line(s) \
-            \(handOvers.map { $0 + 1 }) — re-anchor this guard.
-            """)
-        guard let only = handOvers.first else { return }
-        #expect(lines[only].contains("connectFromSidebar("), """
-            the effect handed to the sidebar no longer calls `connectFromSidebar(` (line \
-            \(only + 1)) — the sidebar would be unable to open a connection by any route at \
-            all, and every other guard in this suite would still pass.
+    }
+
+    // MARK: - Guard K: every callback that reaches the host is an effect value
+
+    /// The route three rounds of enumeration missed, each time by reading
+    /// the previous round's list instead of the sidebar's callbacks.
+    /// `onConnect` was wrapped in a type this view cannot fire; the two
+    /// terminal callbacks were left plain closures — and "Open Terminal" IS
+    /// a connect, by its own doc comment and by
+    /// `ContentView.openTerminalFromSidebar`, which is `connectFromSidebar`
+    /// plus `paneVisibility:`. A single line, `onOpenTerminal(session)` in
+    /// the function that moves the selection, made every single click dial
+    /// with the whole suite green; the same line in the imported-hosts row
+    /// did it with a correct `count: 1`.
+    ///
+    /// `onOpenExternalTerminal` is held to the same rule although macSCP
+    /// itself never dials on that route: it reads the keychain and hands the
+    /// resolved configuration to a program that does. The user's host is
+    /// reached either way, which is what a stray click would amount to.
+    ///
+    /// What this guard pins is the DECLARATIONS, not a behaviour: spelling
+    /// one of them as a closure again re-opens every route at once and
+    /// changes nothing any behavioural test in this project can observe.
+    ///
+    /// Its limit, stated rather than implied: it knows these callbacks by
+    /// name. A FOURTH callback that reaches a host, added under a new name,
+    /// is a new capability nothing here would notice — no syntactic rule
+    /// separates it from `onEdit`, which takes the same `StoredSession` and
+    /// only opens a form. What holds then is `SessionRowInput`'s doc: an
+    /// entry that starts a session on the user's host is an input, and
+    /// anything else is not.
+    @Test func everyHostReachingCallbackOfTheSidebarIsAnEffectValue() throws {
+        let lines = try Self.sourceLines()
+        for declaration in Self.hostReachingDeclarations {
+            let sites = lines.indices.filter {
+                Self.isCode(lines[$0])
+                    && lines[$0].trimmingCharacters(in: .whitespaces) == declaration
+            }
+            #expect(sites.count == 1, """
+                `SessionSidebar` does not declare `\(declaration)` exactly once (found \
+                \(sites.count)) — a callback that reaches the user's host and is spelled as a \
+                plain closure can be called from any function in this file, which is how a \
+                single click connected while every other guard here stayed green.
+                """)
+        }
+    }
+
+    /// The row's half of the same rule. A callback the row holds is one any
+    /// modifier attached to the row can call, and Guard D only watches the
+    /// body: the row's route to the host is the input forward, and nothing
+    /// else.
+    @Test func theRowHoldsNoHostReachingCallbackOfItsOwn() throws {
+        let declarations = try Self.sessionRowDeclarations()
+        let held = Self.hostReachingNames.filter { name in
+            declarations.contains { line in
+                Self.isCode(line)
+                    && line.trimmingCharacters(in: .whitespaces).hasPrefix("let \(name):")
+            }
+        }
+        #expect(held.isEmpty, """
+            `SessionRow` declares \(held.joined(separator: ", ")) — the row reaches the user's \
+            host through its input forward alone, so a callback of its own is a second route \
+            that any gesture, hover or drag on the row can take.
             """)
     }
 
     // MARK: - Scanner reacts (self-tests over synthetic sources)
+
+    /// Guard K's scanner must tell a plain closure from an effect value, and
+    /// must see a host-reaching callback the row holds under any spelling of
+    /// its type.
+    @Test func theDeclarationScannerTellsAClosureFromAnEffectValue() {
+        let closure = "    let onOpenTerminal: (StoredSession) -> Void"
+        #expect(!Self.hostReachingDeclarations.contains(
+            closure.trimmingCharacters(in: .whitespaces)))
+        let effect = "    let onOpenTerminal: SessionRowTerminalEffect<StoredSession>"
+        #expect(Self.hostReachingDeclarations.contains(
+            effect.trimmingCharacters(in: .whitespaces)))
+
+        let rowHoldsOne = ["    let onOpenTerminal: () -> Void"]
+        #expect(Self.hostReachingNames.contains { name in
+            rowHoldsOne.contains { $0.trimmingCharacters(in: .whitespaces).hasPrefix("let \(name):") }
+        })
+        let rowHoldsNone = ["    let onInput: (SessionRowInput, StoredSession) -> Bool"]
+        #expect(!Self.hostReachingNames.contains { name in
+            rowHoldsNone.contains { $0.trimmingCharacters(in: .whitespaces).hasPrefix("let \(name):") }
+        })
+    }
 
     /// A handler that forwards a second, connecting input — the shape that
     /// survived an earlier round.
@@ -434,6 +581,8 @@ struct SessionRowActivationWiringTests {
             "        .onTapGesture(count: 1) { _ = onInput(.singleClick, session) }",
             "        .onKeyPress(.return) { onInput(.returnKey, session) ? .handled : .ignored }",
             "            Button(L10n.string(\"sidebar.connect\", \"Connect\")) { _ = onInput(.contextMenuEntry, session) }",
+            "                Button(openTerminalTitle) { _ = onInput(.terminalMenuEntry, session) }",
+            "                Button(externalTerminalTitle) { _ = onInput(.externalTerminalMenuEntry, session) }",
         ]
         for route in Self.inputRoutes {
             let carriers = body.filter { $0.contains(route.input) }
@@ -449,12 +598,17 @@ struct SessionRowActivationWiringTests {
     /// the hover that dialled is the one that got past its predecessor —
     /// and must not mistake the forward itself, the modifier it is attached
     /// to, or a non-callback call for one.
+    ///
+    /// The synthetic lines name callbacks the row still holds. The hover
+    /// that dialled named `onOpenTerminal`, which is no longer a callback
+    /// anywhere: writing that line is a compile error since fix round 4, so
+    /// a scanner test over it would prove nothing about anything reachable.
     @Test func callbackScannerSeesAForeignCallbackWhicheverModifierHoldsIt() {
-        let hover = "        .onHover { isHovering = $0; if $0 { onOpenTerminal() } }"
-        #expect(Self.callbackCalls(in: hover).filter { $0 != "onInput" } == ["onOpenTerminal"])
+        let hover = "        .onHover { isHovering = $0; if $0 { onShowAuditLog() } }"
+        #expect(Self.callbackCalls(in: hover).filter { $0 != "onInput" } == ["onShowAuditLog"])
 
-        let tap = "        .onTapGesture(count: 1) { onOpenExternalTerminal() }"
-        #expect(Self.callbackCalls(in: tap).filter { $0 != "onInput" } == ["onOpenExternalTerminal"])
+        let tap = "        .onTapGesture(count: 1) { onEdit() }"
+        #expect(Self.callbackCalls(in: tap).filter { $0 != "onInput" } == ["onEdit"])
 
         let compliant = "        .onTapGesture(count: 1) { _ = onInput(.singleClick, session) }"
         #expect(Self.callbackCalls(in: compliant).filter { $0 != "onInput" }.isEmpty)
@@ -551,6 +705,23 @@ struct SessionRowActivationWiringTests {
             throw ScanFailure.anchorMissing("var body: some View { inside SessionRow")
         }
         return (Array(tail[body]), structStart + body.lowerBound)
+    }
+
+    /// `SessionRow`'s stored properties: its lines from the struct
+    /// declaration up to its `var body`, which is where Guard D takes over.
+    private static func sessionRowDeclarations() throws -> [String] {
+        let lines = try sourceLines()
+        guard let structStart = lines.firstIndex(where: {
+            $0.contains("struct SessionRow: View {")
+        }) else {
+            throw ScanFailure.anchorMissing("struct SessionRow: View {")
+        }
+        let tail = Array(lines[structStart...])
+        guard let bodyStart = tail.firstIndex(where: { $0.contains("var body: some View {") })
+        else {
+            throw ScanFailure.anchorMissing("var body: some View { inside SessionRow")
+        }
+        return Array(tail[..<bodyStart])
     }
 
     private enum ScanFailure: Error {
