@@ -398,11 +398,12 @@ extension ContentView {
         // exact complaint this whole surface was written to answer.
         //
         // The sibling surface never had this defect because it hangs off
-        // `liveness == .lost`, which the line above clears; this one hangs
-        // off a property teardown did not touch. Same sentence as both
-        // lines above, therefore: every caller of this function is leaving
-        // this connection on purpose, so a record of an attempt that
-        // failed is describing something the tab has been taken past.
+        // `liveness == .lost`, which `tab.liveness = nil` above clears;
+        // this one hangs off a property teardown did not touch. Same
+        // sentence as both lines above, therefore: every caller of this
+        // function is leaving this connection on purpose, so a record of
+        // an attempt that failed is describing something the tab has been
+        // taken past.
         tab.connectFailure = nil
     }
 
