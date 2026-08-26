@@ -49,6 +49,50 @@ abgezweigt und seitdem eigene Wege gegangen. Die Nummerierung ist ebenfalls
 eigen — Apple hat gar keinen Tag `0.3.6`. Was in Apples 91 Commits steckt,
 ist damit noch nicht bewertet; dass es **nicht** hier ankommt, ist es.
 
+### Was in Apples 91 Commits steckt (bewertet 2026-08-26)
+
+Der Fork ist erkennbar ein **Funktions-Fork**, kein verdächtiger: RSA-Schlüssel
+auf der Client-Seite, eigene Transport- und Schlüsselaustausch-Algorithmen,
+Zertifikats-Authentifizierung, Plattformunterstützung (visionOS, Musl, Bionic,
+Mac Catalyst). Nachvollziehbare Gründe, die Apples Mainline nicht übernommen
+hat. Sein letzter Merge von `apple/main` ist vom **2022-05-06**; alles danach
+fehlt.
+
+Von Apples 91 Commits sind die meisten CI, Benchmarks und Swift-Versionssprünge.
+Relevant bleibt dreierlei:
+
+**1. Die Nebenläufigkeits-Übernahme — und sie kostet uns bereits etwas.**
+Apple hat `Sendable` 2023 vollständig übernommen (#151) und 2025 strikte
+Nebenläufigkeit nachgezogen (#196, #197, #200). Beim Fork kam nichts davon an:
+
+| | Fork (ausgeliefert) | `apple/main` |
+|---|---|---|
+| `NIOSSHUserAuthenticationOffer` | `public struct … {` | `public struct …: Sendable {` |
+
+Das ist **einer der sechs Fehler**, die eine Umstellung auf
+`.swiftLanguageMode(.v6)` in `macSCPCore` heute auswirft. Wir würden also eine
+Umgehung für etwas bauen, das drei Jahre lang stromaufwärts behoben ist und
+uns nur nicht erreicht. (Der zweite Citadel-Fehler betrifft
+`SSHAuthenticationMethod` — eine `public final class` von Citadel selbst,
+nicht vom Fork.)
+
+**2. Die Härtung von 2026 fehlt.** `Limit buffered state` (#244),
+`Configurable max packet size` (#245) und `Limit client auth attempts` (#247)
+sind Schranken gegen einen Gegenüber, der zu viel schickt. Für einen Client,
+der sich mit fremden Servern verbindet, ist vor allem die erste einschlägig.
+
+**3. Apples Absturz-Fix ist für uns gegenstandslos — aus einem Grund, der
+selbst der Befund ist.** `Fix readVersion() crash on bare LF as first byte`
+(#238, 2026-06) bewacht einen `advanced(by: -1)`-Zugriff. Diesen Code gibt es
+im Fork nicht: `readVersion` ist dort **vollständig neu geschrieben** (Schleife
+über Zeilen, Vorzeilen werden übersprungen bis eine mit `SSH-` beginnt, kein
+Index-Rechnen). Der Absturz existiert bei uns also nicht.
+
+Die Kehrseite: die Zeichenkettenzerlegung, die ein Client als **allererstes auf
+unauthentifizierte Bytes eines fremden Servers** anwendet, ist beim Fork
+Eigenbau und hat Apples Prüfung nie durchlaufen. Das ist keine Feststellung
+eines Fehlers — nur die Feststellung, wo die Beweislast liegt.
+
 ### Ein Ausweichen ist nicht bloß Geschmackssache
 
 Getestet, ob sich Apples Paket im Wurzelmanifest erzwingen lässt (`.package`
