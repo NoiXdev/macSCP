@@ -61,6 +61,28 @@ final class LoopbackHTTPStub: @unchecked Sendable {
         return seenRequests
     }
 
+    /// Waits until at least `count` requests have been recorded, or the
+    /// deadline passes; answers whether the count was reached.
+    ///
+    /// The accept loop appends to `seenRequests` only after it has written
+    /// the response, so a client can finish -- or fail -- before that
+    /// append happens. Reading `requests` straight after the operation
+    /// under test races that append.
+    ///
+    /// Waiting cannot weaken an assertion: a request that was never made
+    /// never arrives, the deadline runs out, and the assertion fails as it
+    /// did before. What it removes is the opposite outcome -- a question
+    /// like `sawAuthorizationHeader` answering "no header" for the wrong
+    /// reason, because the request carrying one had not been recorded yet.
+    func waitForRequests(atLeast count: Int, within seconds: Int = 5) async -> Bool {
+        let deadline = ContinuousClock.now + .seconds(seconds)
+        while ContinuousClock.now < deadline {
+            if requests.count >= count { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return requests.count >= count
+    }
+
     /// Whether any request carried an `Authorization` header. The question
     /// a redirect test exists to ask.
     var sawAuthorizationHeader: Bool {

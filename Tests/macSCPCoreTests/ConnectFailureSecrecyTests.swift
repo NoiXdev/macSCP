@@ -629,6 +629,15 @@ struct ConnectFailureSecrecyTests {
             thrown = error
         }
 
+        // Both stubs record on their own accept thread, after writing the
+        // response, so `connect` can return before either append happens.
+        // Wait for the record rather than racing it — see
+        // `waitForRequests`. Without this the emptiness check below failed
+        // roughly one run in five on a loaded machine, and the credential
+        // checks could have answered "no header" for the wrong reason.
+        _ = await elsewhere.waitForRequests(atLeast: 1)
+        _ = await configured.waitForRequests(atLeast: 1)
+
         // The credential question first, and reached unconditionally: the
         // error analysis below has early returns in it, and this is the
         // assertion the test exists for. That the second host was reached
