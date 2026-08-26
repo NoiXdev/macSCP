@@ -42,7 +42,7 @@ extension ContentView {
             // connect/reconnect blocks interaction.
             interactionsDisabled: activeTab.isReconnecting
                 || activeTab.connectionViewModel.state == .connecting,
-            onSelect: { stored in connectFromSidebar(stored) },
+            onConnect: { stored in connectFromSidebar(stored) },
             onDelete: { stored in
                 // Return value (M11a/T3): the sidebar surfaces
                 // `secretFailures` as its own red inline message, the
@@ -71,7 +71,7 @@ extension ContentView {
             onEdit: { stored in editStored(stored) },
             // The two terminal entries (P3c/T2). "Open Terminal" is
             // `connectFromSidebar` with one argument added, so it cannot
-            // drift from what `onSelect` above does; "Open in External
+            // drift from what `onConnect` above does; "Open in External
             // Terminal" resolves the session and launches without macSCP
             // connecting at all.
             onOpenTerminal: { stored in openTerminalFromSidebar(stored) },

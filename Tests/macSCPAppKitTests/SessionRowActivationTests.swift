@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 
 @testable import MacSCPAppKit
@@ -132,6 +133,132 @@ struct SessionRowActivationTests {
     }
 }
 
+/// Pins `SessionRowActivation.apply(to:onSelect:onConnect:)` — the one mapping
+/// from an activation to the two effects a session row has.
+///
+/// This is the load-bearing half of "a single click never connects", and
+/// until fix round 1 it did not exist: the mapping was an `if activation
+/// .connects` inside the view, where the reviewer's probe deleted the
+/// condition and the whole suite stayed green while every click dialled.
+/// Written as a method over spies, that mutation is a failing test rather
+/// than a source scan the next edit outgrows.
+///
+/// The spies record the ORDER as well as the count, because "select before
+/// connect" is a promise the highlight depends on: the row has to name the
+/// session before the connection starts.
+@Suite("SessionRowActivation.apply")
+struct SessionRowActivationApplyTests {
+    /// Records which effects ran, in order.
+    private final class Effects {
+        private(set) var log: [String] = []
+        func select(_ value: String) { log.append("select(\(value))") }
+        func connect(_ value: String) { log.append("connect(\(value))") }
+    }
+
+    private func run(_ activation: SessionRowActivation) -> (log: [String], applied: Bool) {
+        let effects = Effects()
+        let applied = activation.apply(
+            to: "row", onSelect: effects.select(_:), onConnect: effects.connect(_:))
+        return (effects.log, applied)
+    }
+
+    /// The property, exercised rather than scanned for: a `.select` answer
+    /// must not reach the connect effect.
+    @Test func selectRunsOnlyTheSelectEffect() {
+        let result = run(.select)
+        #expect(result.log == ["select(row)"])
+        #expect(result.applied)
+    }
+
+    @Test func doNothingRunsNeitherEffect() {
+        let result = run(.doNothing)
+        #expect(result.log.isEmpty)
+        #expect(!result.applied)
+    }
+
+    @Test func selectAndConnectRunsBothInThatOrder() {
+        let result = run(.selectAndConnect)
+        #expect(result.log == ["select(row)", "connect(row)"])
+        #expect(result.applied)
+    }
+
+    /// Each effect runs at most once per activation — a mapping that called
+    /// `connect` twice would open two connections from one double click, and
+    /// the order check alone would not see it.
+    @Test func neitherEffectRunsTwice() {
+        for activation in [SessionRowActivation.doNothing, .select, .selectAndConnect] {
+            let log = run(activation).log
+            #expect(log.filter { $0.hasPrefix("select") }.count <= 1, "\(activation)")
+            #expect(log.filter { $0.hasPrefix("connect") }.count <= 1, "\(activation)")
+        }
+    }
+
+    /// `apply`'s answer is what the row reports to SwiftUI as
+    /// handled/ignored, so it must agree with `acts` for every case rather
+    /// than being a second, independently drifting statement of the same
+    /// thing.
+    @Test func whatApplyReportsAgreesWithActsForEveryActivation() {
+        for activation in [SessionRowActivation.doNothing, .select, .selectAndConnect] {
+            #expect(run(activation).applied == activation.acts, "\(activation)")
+        }
+    }
+
+    /// And the connect effect runs exactly for the activations `connects`
+    /// names — stated over every case, so the two cannot drift apart.
+    @Test func theConnectEffectRunsExactlyForTheConnectingActivations() {
+        for activation in [SessionRowActivation.doNothing, .select, .selectAndConnect] {
+            let connected = run(activation).log.contains { $0.hasPrefix("connect") }
+            #expect(connected == activation.connects, "\(activation)")
+        }
+    }
+
+    /// The whole chain in one statement, from input to effect: only a double
+    /// click and Return on the selected row may reach `connect`. This is the
+    /// property the wiring guard cannot express, tested end to end over the
+    /// value layer.
+    @Test func onlyTwoInputCombinationsEverReachTheConnectEffect() {
+        for input in [SessionRowInput.singleClick, .doubleClick, .returnKey] {
+            for isRenaming in [true, false] {
+                for isSelected in [true, false] {
+                    let activation = SessionRowActivation.build(
+                        for: input, isRenaming: isRenaming, isSelected: isSelected)
+                    let connected = run(activation).log.contains { $0.hasPrefix("connect") }
+                    let expected = !isRenaming
+                        && (input == .doubleClick || (input == .returnKey && isSelected))
+                    #expect(
+                        connected == expected,
+                        "input \(input), isRenaming \(isRenaming), isSelected \(isSelected)")
+                }
+            }
+        }
+    }
+}
+
+/// Pins `SidebarRenameHandoff.endsOpenRename` (fix round 1): whether
+/// activating one row must first end an inline rename open on another.
+@Suite("SidebarRenameHandoff")
+struct SidebarRenameHandoffTests {
+    /// The case that strands a row: A is being renamed, the user clicks B,
+    /// and the focus moves out of A's field whether or not anyone ends the
+    /// rename.
+    @Test func aRenameOnAnotherRowIsEnded() {
+        #expect(SidebarRenameHandoff.endsOpenRename(renamingID: UUID(), activating: UUID()))
+    }
+
+    /// Nothing to end.
+    @Test func noOpenRenameEndsNothing() {
+        #expect(!SidebarRenameHandoff.endsOpenRename(renamingID: nil, activating: UUID()))
+    }
+
+    /// The row being renamed is the row being activated: its own activation
+    /// is `.doNothing` anyway, and ending the rename here would cancel the
+    /// edit the user is in the middle of.
+    @Test func aRenameOnTheActivatedRowSurvives() {
+        let id = UUID()
+        #expect(!SidebarRenameHandoff.endsOpenRename(renamingID: id, activating: id))
+    }
+}
+
 /// Pins `SessionRowHighlight.build`: which of the three reasons to draw a
 /// row background wins when more than one holds at once.
 ///
@@ -165,6 +292,33 @@ struct SessionRowHighlightTests {
         #expect(
             SessionRowHighlight.build(isActive: false, isSelected: false, isHovering: true)
                 == .hovered)
+    }
+
+    /// The claim a background test can make without pixels: the four cases
+    /// are four DIFFERENT colours. A mapping that quietly returned the same
+    /// fill for `.selected` as for `.none` would satisfy every precedence
+    /// check in this suite while the selection was invisible — the failure
+    /// the brief names outright, a selection that is only a colouring being
+    /// worse than none.
+    ///
+    /// What it still does not prove: that the row DRAWS the fill, or that
+    /// any of them is legible against the sidebar's surface in either
+    /// appearance. Rendering a `SessionRow` offscreen the way
+    /// `ViewTestabilitySpike` renders its views would need the row made
+    /// internal and two `FocusState` bindings built outside a view; that was
+    /// weighed and left, and the boundary is stated here rather than implied.
+    @Test func theFourCasesAreFourDifferentColours() {
+        let cases: [SessionRowHighlight] = [.selected, .connected, .hovered, .none]
+        for (index, first) in cases.enumerated() {
+            for second in cases[(index + 1)...] {
+                #expect(first.fill != second.fill, "\(first) and \(second) draw the same colour")
+            }
+        }
+    }
+
+    /// The one case that is defined by drawing nothing.
+    @Test func nothingIsDrawnForTheNoneCase() {
+        #expect(SessionRowHighlight.none.fill == Color.clear)
     }
 
     @Test func aPlainRowDrawsNoBackground() {
