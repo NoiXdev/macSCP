@@ -2,15 +2,6 @@ import AppKit
 import SwiftUI
 import macSCPCore
 
-/// Wraps a `KnownHostKey` with a stable identity for `Table`/`List`
-/// selection — `KnownHostKey` itself carries no id; host+port is its natural
-/// key (the same pair `KnownHostsStore.remove(host:port:)` uses to identify
-/// an entry).
-private struct KnownHostRow: Identifiable {
-    let key: KnownHostKey
-    var id: String { "\(key.host):\(key.port)" }
-}
-
 /// Known-hosts management sheet (M10a/T2, mockup section 1): lists every
 /// remembered TOFU host key (`KnownHostsStore.allKeys()`), with search over
 /// host+fingerprint, multi-selection "Remove…" (forgets the host — the next
@@ -31,7 +22,9 @@ private struct KnownHostRow: Identifiable {
 /// fixed columns (Host/Port/Key type/Fingerprint/Added) map directly onto
 /// `TableColumn`s, and `Table` gives free multi-selection via
 /// cmd/shift-click without any extra plumbing — a `List` would need its own
-/// `EditButton`/selection-mode dance for the same behavior.
+/// `EditButton`/selection-mode dance for the same behavior. Each column is
+/// click-to-sort; the rules live in `KnownHostsSorting`, which also says
+/// why the chosen order is not remembered past the sheet closing.
 struct KnownHostsSheet: View {
     let store: KnownHostsStore
 
@@ -40,6 +33,7 @@ struct KnownHostsSheet: View {
     @State private var selection: Set<String> = []
     @State private var searchText = ""
     @State private var searchIsRegex = false
+    @State private var sortOrder: [KnownHostComparator] = KnownHostsSorting.defaultOrder
     @State private var errorMessage: String?
     @State private var isShowingRemoveConfirm = false
 
@@ -56,6 +50,11 @@ struct KnownHostsSheet: View {
     private var filteredRows: [KnownHostRow] {
         let (predicate, _) = sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)
         return rows.filter { predicate.matches("\($0.key.host) \($0.key.fingerprintSHA256)") }
+    }
+
+    /// What the table draws: the search result in the user's chosen order.
+    private var sortedRows: [KnownHostRow] {
+        KnownHostsSorting.sorted(filteredRows, using: sortOrder)
     }
 
     private var isUnfiltered: Bool { searchText.isEmpty }
@@ -89,26 +88,41 @@ struct KnownHostsSheet: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                 Spacer(minLength: 0)
             } else {
-                Table(filteredRows, selection: $selection) {
-                    TableColumn(L10n.string("knownHosts.column.host", "Host")) { row in
+                Table(sortedRows, selection: $selection, sortOrder: $sortOrder) {
+                    TableColumn(
+                        L10n.string("knownHosts.column.host", "Host"),
+                        sortUsing: KnownHostComparator(key: .host)
+                    ) { row in
                         Text(row.key.host)
                     }
                     .width(min: 140, ideal: 200)
-                    TableColumn(L10n.string("knownHosts.column.port", "Port")) { row in
+                    TableColumn(
+                        L10n.string("knownHosts.column.port", "Port"),
+                        sortUsing: KnownHostComparator(key: .port)
+                    ) { row in
                         Text(String(row.key.port))
                     }
                     .width(min: 50, ideal: 60, max: 70)
-                    TableColumn(L10n.string("knownHosts.column.keyType", "Key type")) { row in
+                    TableColumn(
+                        L10n.string("knownHosts.column.keyType", "Key type"),
+                        sortUsing: KnownHostComparator(key: .keyType)
+                    ) { row in
                         keyTypeBadge(row.key.keyType)
                     }
                     .width(min: 70, ideal: 90, max: 110)
-                    TableColumn(L10n.string("knownHosts.column.fingerprint", "Fingerprint")) { row in
+                    TableColumn(
+                        L10n.string("knownHosts.column.fingerprint", "Fingerprint"),
+                        sortUsing: KnownHostComparator(key: .fingerprint)
+                    ) { row in
                         Text(row.key.fingerprintSHA256)
                             .font(.system(size: 11.5, design: .monospaced))
                             .foregroundStyle(DesignTokens.inkSecondary)
                     }
                     .width(min: 180, ideal: 240)
-                    TableColumn(L10n.string("knownHosts.column.added", "Added")) { row in
+                    TableColumn(
+                        L10n.string("knownHosts.column.added", "Added"),
+                        sortUsing: KnownHostComparator(key: .added)
+                    ) { row in
                         Text(dateText(row.key.addedAt))
                     }
                     .width(min: 90, ideal: 100, max: 120)
