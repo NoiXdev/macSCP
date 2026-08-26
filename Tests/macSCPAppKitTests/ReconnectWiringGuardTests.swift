@@ -443,7 +443,7 @@ struct ReconnectWiringGuardTests {
         var unsanctioned: [String] = []
         for file in try Self.appSwiftFiles() {
             let relative = Self.relativePath(of: file)
-            let stripped = Self.stripCommentsAndStrings(
+            let stripped = try Self.stripCommentsAndStrings(
                 try String(contentsOf: file, encoding: .utf8))
             let codeLines = stripped.split(separator: "\n", omittingEmptySubsequences: false)
                 .map { Self.normalized(String($0)) }
@@ -478,7 +478,7 @@ struct ReconnectWiringGuardTests {
     /// sanctioned one is riding on its allowance.
     @Test func everySanctionedSiteStillExistsExactlyAsOftenAsDeclared() throws {
         for site in Self.sanctionedSites {
-            let stripped = Self.stripCommentsAndStrings(
+            let stripped = try Self.stripCommentsAndStrings(
                 try String(contentsOf: Self.file(site.file), encoding: .utf8))
             let matches = stripped
                 .split(separator: "\n", omittingEmptySubsequences: false)
@@ -730,8 +730,8 @@ struct ReconnectWiringGuardTests {
 
     /// The literal reader, on every shape the two surface tests depend on
     /// — including the wrapped one that defeated the line-based version.
-    @Test func theLiteralReaderSeesAWrappedCallTheSameAsAnInlineOne() {
-        let stripped = Self.stripCommentsAndStrings("""
+    @Test func theLiteralReaderSeesAWrappedCallTheSameAsAnInlineOne() throws {
+        let stripped = try Self.stripCommentsAndStrings("""
             Text(L10n.string(content.title.key, content.title.fallback))
             Text(L10n.string(
                 content.body.key,
@@ -744,13 +744,13 @@ struct ReconnectWiringGuardTests {
             \(Self.localizedCallsWithALiteralArgument(in: stripped))
             """)
 
-        let inlineLiteral = Self.stripCommentsAndStrings("""
+        let inlineLiteral = try Self.stripCommentsAndStrings("""
             Text(L10n.string("connection.failed.close", "Close"))
             """)
         #expect(Self.localizedCallsWithALiteralArgument(in: inlineLiteral).count == 1)
 
         // The measured escape: identical call, wrapped.
-        let wrappedLiteral = Self.stripCommentsAndStrings("""
+        let wrappedLiteral = try Self.stripCommentsAndStrings("""
             Text(L10n.string(
                 "connection.failed.body",
                 "Host: prod-db.internal"))
@@ -762,7 +762,7 @@ struct ReconnectWiringGuardTests {
 
         // A literal in the SECOND position only — the shape a check that
         // looked at the first argument alone would wave through.
-        let literalFallback = Self.stripCommentsAndStrings("""
+        let literalFallback = try Self.stripCommentsAndStrings("""
             Text(L10n.string(content.body.key, "Host: prod-db.internal"))
             """)
         #expect(Self.localizedCallsWithALiteralArgument(in: literalFallback).count == 1)
@@ -772,7 +772,7 @@ struct ReconnectWiringGuardTests {
     /// window and all.
     private static func flaggedLines(in source: String) throws -> [String] {
         let detectors = try chokePointDetectors()
-        let lines = stripCommentsAndStrings(source)
+        let lines = try stripCommentsAndStrings(source)
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { normalized(String($0)) }
         return lines.enumerated().compactMap { index, code in
@@ -865,19 +865,21 @@ struct ReconnectWiringGuardTests {
         #expect(flagged.isEmpty, """
             ordinary code was flagged as touching a dial choke point: \(flagged)
             """)
-        // The last four lines are the price of widening the pattern from
-        // `\.connect` to the bare identifier (round 5): the App layer's own
-        // funnel — `ContentView.connect(in:stored:)`, its declaration and
-        // its callers — now matches the pattern and is cleared by the
-        // discrimination instead, because it is applied and does not
-        // suspend. `reconnect`/`retryConnect` never matched: the lookbehind
-        // rejects a preceding identifier character.
+        // `reconnect(tab)` and `retryConnect(tab)` never match at all: the
+        // lookbehind rejects a preceding identifier character. `func
+        // connect(` and both `connect(in:...)` callers — the App layer's
+        // own funnel, `ContentView.connect(in:stored:)` — are the price of
+        // widening the pattern from `\.connect` to the bare identifier
+        // (round 5): they DO match it, and are cleared by the
+        // discrimination instead, because each is applied and does not
+        // suspend.
         //
-        // The last two lines are the false positive round 6's `async let`
-        // fix had to avoid buying: `async` and `let` are adjacent TOKENS
-        // there, but a brace stands between them, so a Combine
-        // `connect()` opening the body of an `async` function is still
-        // read as the synchronous call it is.
+        // `func mount() async {` and the `cancellable =
+        // publisher.connect()` inside its body are the false positive
+        // round 6's `async let` fix had to avoid buying: `async` and `let`
+        // are adjacent TOKENS there, but a brace stands between them, so a
+        // Combine `connect()` opening the body of an `async` function is
+        // still read as the synchronous call it is.
     }
 
     /// …but the narrowing must not have gone so far that the real thing
@@ -914,6 +916,50 @@ struct ReconnectWiringGuardTests {
             """)
     }
 
+    /// Fail-closed self-test, the exact shape a re-review measured as a
+    /// gap in this suite: `stripCommentsAndStrings` did not know Swift's
+    /// raw-string delimiters (`#"…"#`). `#"""#` — an entirely ordinary
+    /// literal for one quote character — desynchronized the plain-quote
+    /// counting instead, reading it as one opening quote, one closing
+    /// quote, and a fresh string that swallowed everything up to the next
+    /// real `"` in the file. Measured: a real backend dial with
+    /// accept-anything host-key deciders, sitting after such a line in a
+    /// brand-new App-layer file, vanished from the scan along with it, and
+    /// all 38 tests in this suite passed GREEN. The fix must throw instead
+    /// of silently reading less than the source it claims to have checked.
+    @Test func theScanFailsClosedOnARawStringDelimiterRatherThanHidingWhatFollowsIt() {
+        let source =
+            "static let quote = #\"\"\"#\n"
+            + "async let dialed = BackendDescriptor.descriptor(for: kind).connect(config, d, d, 30)"
+        #expect(throws: (any Error).self) {
+            _ = try Self.flaggedLines(in: source)
+        }
+    }
+
+    /// The other half of the same proof: with the raw-string line gone,
+    /// the identical dial must still be caught. The fix must not have
+    /// traded a silent truncation for a blanket refusal that also
+    /// swallows source that never had a raw string in it.
+    @Test func theControlDialIsStillCaughtOnceTheRawStringIsGone() throws {
+        let flagged = try Self.flaggedLines(
+            in: "async let dialed = BackendDescriptor.descriptor(for: kind).connect(config, d, d, 30)")
+        #expect(flagged.contains(
+            "async let dialed = BackendDescriptor.descriptor(for: kind).connect(config, d, d, 30)"))
+    }
+
+    /// Fail-closed self-test: a string or block comment that never closes
+    /// must not be treated as "closed at end of file" — that is the same
+    /// truncation risk under a different cause, and just as capable of
+    /// hiding whatever comes after it.
+    @Test func theScanFailsClosedOnAnUnterminatedLiteral() {
+        #expect(throws: (any Error).self) {
+            _ = try Self.flaggedLines(in: "let x = \"unterminated")
+        }
+        #expect(throws: (any Error).self) {
+            _ = try Self.flaggedLines(in: "/* never closes")
+        }
+    }
+
     /// Nothing may enter these targets that is not on `permittedImports` —
     /// a hand-rolled dial has to reach a transport somehow, and this is the
     /// door it would come through.
@@ -938,7 +984,7 @@ struct ReconnectWiringGuardTests {
         var seen: Set<String> = []
         var forbidden: [String] = []
         for file in try Self.appSwiftFiles() {
-            let stripped = Self.stripCommentsAndStrings(
+            let stripped = try Self.stripCommentsAndStrings(
                 try String(contentsOf: file, encoding: .utf8))
             for module in try Self.importedModules(in: stripped) {
                 seen.insert(module)
@@ -986,6 +1032,8 @@ struct ReconnectWiringGuardTests {
         case openBraceNotFound
         case unbalancedBraces
         case symbolicLinkInSources([String])
+        case unrecognizedStringDelimiter
+        case unterminatedLiteral
 
         var description: String {
             switch self {
@@ -1002,6 +1050,13 @@ struct ReconnectWiringGuardTests {
                     what a link pointing outside the repository means for `sanctionedSites`' \
                     repo-relative paths.
                     """
+            case .unrecognizedStringDelimiter:
+                return """
+                    unrecognized string delimiter (a raw string's `#"`, `##"`, …) — this \
+                    stripper does not parse raw strings and refuses to guess where one ends
+                    """
+            case .unterminatedLiteral:
+                return "unterminated string or comment literal"
             }
         }
     }
@@ -1169,7 +1224,7 @@ struct ReconnectWiringGuardTests {
     ///    round-1 comment made about `fileprivate`.
     @Test func theDetailsTextHasNoWayOutOfItsOwnFile() throws {
         let file = Self.file("Sources/MacSCPAppKit/ConnectFailureDetails.swift")
-        let stripped = Self.stripCommentsAndStrings(
+        let stripped = try Self.stripCommentsAndStrings(
             try String(contentsOf: file, encoding: .utf8))
         #expect(stripped.contains("fileprivate let text: String"), """
             `ConnectFailureDetailText`'s storage is no longer `fileprivate let text: String`. \
@@ -1403,7 +1458,7 @@ struct ReconnectWiringGuardTests {
         #expect(!body.contains("connect(in: tab, stored: stored)"))
     }
 
-    @Test func stripperSelfTestRemovesLineAndBlockCommentsAndStringLiterals() {
+    @Test func stripperSelfTestRemovesLineAndBlockCommentsAndStringLiterals() throws {
         let source = #"""
             let a = "ReconnectPlan.step(" // ReconnectPlan.step(
             /* ReconnectPlan.step( */ let b = 1
@@ -1412,7 +1467,7 @@ struct ReconnectWiringGuardTests {
                 """
             ReconnectPlan.step(
             """#
-        let stripped = Self.stripCommentsAndStrings(source)
+        let stripped = try Self.stripCommentsAndStrings(source)
         #expect(stripped.components(separatedBy: "ReconnectPlan.step(").count - 1 == 1, """
             expected exactly 1 real occurrence of `ReconnectPlan.step(` to survive stripping; \
             found \(stripped.components(separatedBy: "ReconnectPlan.step(").count - 1).
@@ -1421,8 +1476,8 @@ struct ReconnectWiringGuardTests {
 
     /// The stripper must not swallow line breaks, or the allow-list scan
     /// would see one enormous line and match nothing.
-    @Test func stripperKeepsLineStructure() {
-        let stripped = Self.stripCommentsAndStrings("""
+    @Test func stripperKeepsLineStructure() throws {
+        let stripped = try Self.stripCommentsAndStrings("""
             let a = 1 /* a
             comment across lines */
             let b = "text"
@@ -1672,7 +1727,7 @@ struct ReconnectWiringGuardTests {
     /// comments a global strip would delete first.
     private static func strippedBody(after anchor: String, in source: String) throws -> String {
         guard let anchorRange = source.range(of: anchor) else { throw ScanError.anchorNotFound }
-        let stripped = stripCommentsAndStrings(String(source[anchorRange.upperBound...]))
+        let stripped = try stripCommentsAndStrings(String(source[anchorRange.upperBound...]))
         guard let openBraceIndex = stripped.firstIndex(of: "{") else {
             throw ScanError.openBraceNotFound
         }
@@ -1703,7 +1758,20 @@ struct ReconnectWiringGuardTests {
     /// parse string interpolation — `\(...)` inside a literal is treated as
     /// string content, which can only make a check find LESS text, never
     /// invent a match that was not code.
-    private static func stripCommentsAndStrings(_ source: String) -> String {
+    ///
+    /// Fails closed: a raw-string delimiter (`#"…"#`) is a form this
+    /// stripper does not parse, and an unterminated string or comment means
+    /// it ran off the end of the file without finding what it was looking
+    /// for. Both throw rather than return whatever was collected so far —
+    /// the alternative is a scan that silently reads less than the file it
+    /// claims to have checked. Measured necessary, not theoretical: an
+    /// unhandled `#"""#` — an entirely ordinary raw-string literal for one
+    /// quote character — desynchronized the plain-quote counting instead,
+    /// reading it as one opening quote, one closing quote, and a fresh
+    /// string that swallowed everything up to the next real `"` in the
+    /// file, silently. A raw backend dial with accept-anything host-key
+    /// deciders sitting past that point left the whole suite green.
+    private static func stripCommentsAndStrings(_ source: String) throws -> String {
         var result = ""
         result.reserveCapacity(source.count)
         let chars = Array(source)
@@ -1738,6 +1806,13 @@ struct ReconnectWiringGuardTests {
                 i += 2
                 continue
             }
+            if c == "#" {
+                var j = i
+                while j < chars.count, chars[j] == "#" { j += 1 }
+                if j < chars.count, chars[j] == "\"" {
+                    throw ScanError.unrecognizedStringDelimiter
+                }
+            }
             if c == "\"", i + 2 < chars.count, chars[i + 1] == "\"", chars[i + 2] == "\"" {
                 i += 3
                 while i + 2 < chars.count,
@@ -1746,7 +1821,8 @@ struct ReconnectWiringGuardTests {
                     result.append(chars[i] == "\n" ? "\n" : " ")
                     i += 1
                 }
-                i = min(i + 3, chars.count)
+                guard i + 2 < chars.count else { throw ScanError.unterminatedLiteral }
+                i += 3
                 result.append(" ")
                 continue
             }
@@ -1755,13 +1831,15 @@ struct ReconnectWiringGuardTests {
                 while i < chars.count, chars[i] != "\"" {
                     if chars[i] == "\\", i + 1 < chars.count { i += 2 } else { i += 1 }
                 }
-                i = min(i + 1, chars.count)
+                guard i < chars.count else { throw ScanError.unterminatedLiteral }
+                i += 1
                 result.append(" ")
                 continue
             }
             result.append(c)
             i += 1
         }
+        guard blockCommentDepth == 0 else { throw ScanError.unterminatedLiteral }
         return result
     }
 }

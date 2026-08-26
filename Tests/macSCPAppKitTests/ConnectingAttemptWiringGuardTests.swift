@@ -68,7 +68,10 @@ struct ConnectingAttemptWiringGuardTests {
     /// (checked by `theSurfaceAnchorAppearsExactlyOnceInTheRealFile`).
     private static let surfaceAnchor = "// Connecting surface branch (connection-liveness plan, Task 6)"
 
-    private enum ScanError: Error { case anchorNotFound, openBraceNotFound, unbalancedBraces }
+    private enum ScanError: Error {
+        case anchorNotFound, openBraceNotFound, unbalancedBraces
+        case unrecognizedStringDelimiter, unterminatedLiteral
+    }
 
     // MARK: - The three guarded claims, run against the real file
 
@@ -210,7 +213,7 @@ struct ConnectingAttemptWiringGuardTests {
             """)
     }
 
-    @Test func stripperSelfTestRemovesLineAndBlockCommentsAndStringLiterals() {
+    @Test func stripperSelfTestRemovesLineAndBlockCommentsAndStringLiterals() throws {
         let source = #"""
             let a = "cancelConnecting()" // cancelConnecting()
             /* cancelConnecting() */ let b = 1
@@ -219,12 +222,39 @@ struct ConnectingAttemptWiringGuardTests {
                 """
             cancelConnecting()
             """#
-        let stripped = Self.stripCommentsAndStrings(source)
+        let stripped = try Self.stripCommentsAndStrings(source)
         #expect(stripped.components(separatedBy: "cancelConnecting()").count - 1 == 1, """
             expected exactly 1 real occurrence of `cancelConnecting()` to survive stripping \
             (the un-commented, un-quoted call on the last line); found \
             \(stripped.components(separatedBy: "cancelConnecting()").count - 1).
             """)
+    }
+
+    /// Fail-closed self-test: a raw-string delimiter (`#"…"#`) is a form
+    /// this stripper does not parse. Left unhandled, it used to
+    /// desynchronize the plain-quote counting instead — `#"""#`, an
+    /// entirely ordinary literal for one quote character, is read as one
+    /// opening quote, one closing quote, and a fresh string that swallows
+    /// everything up to the next real `"` in the file, which could hide a
+    /// deleted `cancelConnecting()` call past that point. The fix must
+    /// throw instead.
+    @Test func stripperFailsClosedOnARawStringDelimiter() {
+        let source = "static let quote = #\"\"\"#\ncancelConnecting()"
+        #expect(throws: ScanError.unrecognizedStringDelimiter) {
+            _ = try Self.stripCommentsAndStrings(source)
+        }
+    }
+
+    /// Fail-closed self-test: a string or block comment that never closes
+    /// must not be treated as "closed at end of file" — that is the same
+    /// truncation risk under a different cause.
+    @Test func stripperFailsClosedOnAnUnterminatedLiteral() {
+        #expect(throws: ScanError.unterminatedLiteral) {
+            _ = try Self.stripCommentsAndStrings("let x = \"unterminated")
+        }
+        #expect(throws: ScanError.unterminatedLiteral) {
+            _ = try Self.stripCommentsAndStrings("/* never closes")
+        }
     }
 
     // MARK: - Scanner
@@ -266,7 +296,7 @@ struct ConnectingAttemptWiringGuardTests {
     /// be searched for.
     private static func strippedBody(after anchor: String, in source: String) throws -> String {
         guard let anchorRange = source.range(of: anchor) else { throw ScanError.anchorNotFound }
-        let stripped = stripCommentsAndStrings(String(source[anchorRange.upperBound...]))
+        let stripped = try stripCommentsAndStrings(String(source[anchorRange.upperBound...]))
         guard let openBraceIndex = stripped.firstIndex(of: "{") else {
             throw ScanError.openBraceNotFound
         }
@@ -313,7 +343,13 @@ struct ConnectingAttemptWiringGuardTests {
     /// its enclosing string is the safe direction for this guard's purpose
     /// (it can only make a `contains` check find LESS text, never invent a
     /// match that was not really code).
-    private static func stripCommentsAndStrings(_ source: String) -> String {
+    /// Fails closed: a raw-string delimiter (`#"…"#`) is a form this
+    /// stripper does not parse, and an unterminated string or comment means
+    /// it ran off the end of the file without finding what it was looking
+    /// for. Both throw rather than return whatever was collected so far —
+    /// the alternative is a scan that silently reads less than the file it
+    /// claims to have checked.
+    private static func stripCommentsAndStrings(_ source: String) throws -> String {
         var result = ""
         result.reserveCapacity(source.count)
         let chars = Array(source)
@@ -344,6 +380,13 @@ struct ConnectingAttemptWiringGuardTests {
                 i += 2
                 continue
             }
+            if c == "#" {
+                var j = i
+                while j < chars.count, chars[j] == "#" { j += 1 }
+                if j < chars.count, chars[j] == "\"" {
+                    throw ScanError.unrecognizedStringDelimiter
+                }
+            }
             if c == "\"", i + 2 < chars.count, chars[i + 1] == "\"", chars[i + 2] == "\"" {
                 // Triple-quoted literal: skip to the closing `"""`.
                 i += 3
@@ -352,7 +395,8 @@ struct ConnectingAttemptWiringGuardTests {
                 {
                     i += 1
                 }
-                i = min(i + 3, chars.count)
+                guard i + 2 < chars.count else { throw ScanError.unterminatedLiteral }
+                i += 3
                 result.append(" ")
                 continue
             }
@@ -361,13 +405,15 @@ struct ConnectingAttemptWiringGuardTests {
                 while i < chars.count, chars[i] != "\"" {
                     if chars[i] == "\\", i + 1 < chars.count { i += 2 } else { i += 1 }
                 }
-                i = min(i + 1, chars.count)
+                guard i < chars.count else { throw ScanError.unterminatedLiteral }
+                i += 1
                 result.append(" ")
                 continue
             }
             result.append(c)
             i += 1
         }
+        guard blockCommentDepth == 0 else { throw ScanError.unterminatedLiteral }
         return result
     }
 }

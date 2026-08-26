@@ -119,7 +119,31 @@ struct KeepAliveStepperWiringGuardTests {
     /// parse string interpolation — `\(...)` inside a literal is treated as
     /// string content, which can only make a check find LESS text, never
     /// invent a match that was not code.
-    private static func stripCommentsAndStrings(_ source: String) -> String {
+    ///
+    /// Fails closed: a raw-string delimiter (`#"…"#`) is a form this
+    /// stripper does not parse, and an unterminated string or comment means
+    /// it ran off the end of the file without finding what it was looking
+    /// for. Both throw rather than return whatever was collected so far —
+    /// the alternative is a scan that silently reads less than the file it
+    /// claims to have checked.
+    private enum StripError: Error, CustomStringConvertible {
+        case unrecognizedDelimiter
+        case unterminatedLiteral
+
+        var description: String {
+            switch self {
+            case .unrecognizedDelimiter:
+                return """
+                    unrecognized string delimiter (a raw string's `#"`, `##"`, …) — this \
+                    stripper does not parse raw strings and refuses to guess where one ends
+                    """
+            case .unterminatedLiteral:
+                return "unterminated string or comment literal"
+            }
+        }
+    }
+
+    private static func stripCommentsAndStrings(_ source: String) throws -> String {
         var result = ""
         result.reserveCapacity(source.count)
         let chars = Array(source)
@@ -154,6 +178,13 @@ struct KeepAliveStepperWiringGuardTests {
                 i += 2
                 continue
             }
+            if c == "#" {
+                var j = i
+                while j < chars.count, chars[j] == "#" { j += 1 }
+                if j < chars.count, chars[j] == "\"" {
+                    throw StripError.unrecognizedDelimiter
+                }
+            }
             if c == "\"", i + 2 < chars.count, chars[i + 1] == "\"", chars[i + 2] == "\"" {
                 i += 3
                 while i + 2 < chars.count,
@@ -162,7 +193,8 @@ struct KeepAliveStepperWiringGuardTests {
                     result.append(chars[i] == "\n" ? "\n" : " ")
                     i += 1
                 }
-                i = min(i + 3, chars.count)
+                guard i + 2 < chars.count else { throw StripError.unterminatedLiteral }
+                i += 3
                 result.append(" ")
                 continue
             }
@@ -171,21 +203,23 @@ struct KeepAliveStepperWiringGuardTests {
                 while i < chars.count, chars[i] != "\"" {
                     if chars[i] == "\\", i + 1 < chars.count { i += 2 } else { i += 1 }
                 }
-                i = min(i + 1, chars.count)
+                guard i < chars.count else { throw StripError.unterminatedLiteral }
+                i += 1
                 result.append(" ")
                 continue
             }
             result.append(c)
             i += 1
         }
+        guard blockCommentDepth == 0 else { throw StripError.unterminatedLiteral }
         return result
     }
 
     /// Comment/string-stripped, then whitespace-collapsed — canonical form
     /// a mutation cannot evade by reformatting, wrapping arguments onto new
     /// lines, or writing prose that merely mentions the expected call.
-    private static func canonicalize(_ body: String) -> String {
-        Self.stripCommentsAndStrings(body).filter { !$0.isWhitespace }
+    private static func canonicalize(_ body: String) throws -> String {
+        try Self.stripCommentsAndStrings(body).filter { !$0.isWhitespace }
     }
 
     /// Every right-hand side that follows a `keepAliveIntervalSeconds=`
@@ -215,7 +249,7 @@ struct KeepAliveStepperWiringGuardTests {
             no `\(Self.anchor)` closure found in SettingsView.swift — \
             re-anchor this guard.
             """)
-        let rhses = Self.writeSiteRHSes(in: Self.canonicalize(body))
+        let rhses = try Self.writeSiteRHSes(in: Self.canonicalize(body))
         #expect(rhses.count == 1, """
             expected exactly 1 write to `keepAliveIntervalSeconds` in the \
             interval stepper's `set` closure (comments and strings stripped, \
@@ -252,7 +286,7 @@ struct KeepAliveStepperWiringGuardTests {
     // MARK: - Scanner self-tests (synthetic source, so the scanner cannot
     // silently pass just because the real file moved or failed to read)
 
-    @Test func scannerAcceptsARoutedCommitOnOneLine() {
+    @Test func scannerAcceptsARoutedCommitOnOneLine() throws {
         let source = """
             set: { newValue in
                 lastKnownKeepAliveInterval = newValue
@@ -261,7 +295,7 @@ struct KeepAliveStepperWiringGuardTests {
             }
             """
         let body = try? #require(Self.setClosureBody(in: source))
-        let rhses = body.map { Self.writeSiteRHSes(in: Self.canonicalize($0)) }
+        let rhses = try body.map { try Self.writeSiteRHSes(in: Self.canonicalize($0)) }
         #expect(rhses?.count == 1)
         #expect(rhses?.first?.hasPrefix(Self.sanctionedRHS) == true)
     }
@@ -271,7 +305,7 @@ struct KeepAliveStepperWiringGuardTests {
     /// This is the case that first defeated a single concatenated-literal
     /// `contains` check in round 1 — kept here so the scanner itself, not
     /// just the real-file assertion, is pinned against it.
-    @Test func scannerAcceptsARoutedCommitWithWrappedArguments() {
+    @Test func scannerAcceptsARoutedCommitWithWrappedArguments() throws {
         let source = """
             set: { newValue in
                 lastKnownKeepAliveInterval = newValue
@@ -282,12 +316,12 @@ struct KeepAliveStepperWiringGuardTests {
             }
             """
         let body = try? #require(Self.setClosureBody(in: source))
-        let rhses = body.map { Self.writeSiteRHSes(in: Self.canonicalize($0)) }
+        let rhses = try body.map { try Self.writeSiteRHSes(in: Self.canonicalize($0)) }
         #expect(rhses?.count == 1)
         #expect(rhses?.first?.hasPrefix(Self.sanctionedRHS) == true)
     }
 
-    @Test func scannerFlagsABypassedRawAssignment() {
+    @Test func scannerFlagsABypassedRawAssignment() throws {
         let source = """
             set: { newValue in
                 lastKnownKeepAliveInterval = newValue
@@ -295,7 +329,7 @@ struct KeepAliveStepperWiringGuardTests {
             }
             """
         let body = try? #require(Self.setClosureBody(in: source))
-        let rhses = body.map { Self.writeSiteRHSes(in: Self.canonicalize($0)) }
+        let rhses = try body.map { try Self.writeSiteRHSes(in: Self.canonicalize($0)) }
         #expect(rhses?.count == 1)
         #expect(rhses?.first?.hasPrefix(Self.sanctionedRHS) == false)
     }
@@ -307,7 +341,7 @@ struct KeepAliveStepperWiringGuardTests {
     /// not: stripping comments removes the decoy, and the real assignment's
     /// right-hand side (`committedInterval`, not the plan call) fails the
     /// prefix check.
-    @Test func scannerFlagsTheReviewersIntermediateLocalMutation() {
+    @Test func scannerFlagsTheReviewersIntermediateLocalMutation() throws {
         let source = """
             set: { newValue in
                 lastKnownKeepAliveInterval = newValue
@@ -317,7 +351,7 @@ struct KeepAliveStepperWiringGuardTests {
             }
             """
         let body = try? #require(Self.setClosureBody(in: source))
-        let rhses = body.map { Self.writeSiteRHSes(in: Self.canonicalize($0)) }
+        let rhses = try body.map { try Self.writeSiteRHSes(in: Self.canonicalize($0)) }
         #expect(rhses?.count == 1)
         #expect(rhses?.first?.hasPrefix(Self.sanctionedRHS) == false)
     }
@@ -331,7 +365,7 @@ struct KeepAliveStepperWiringGuardTests {
     /// = newValue")`, with spaces) without slipping past this one — the
     /// canonical form already collapses all whitespace before the write
     /// count runs, so reformatting the assignment changes nothing here.
-    @Test func scannerFlagsARespacedRawAssignmentBehindADecorativeComment() {
+    @Test func scannerFlagsARespacedRawAssignmentBehindADecorativeComment() throws {
         let source = """
             set: { newValue in
                 lastKnownKeepAliveInterval = newValue
@@ -340,12 +374,12 @@ struct KeepAliveStepperWiringGuardTests {
             }
             """
         let body = try? #require(Self.setClosureBody(in: source))
-        let rhses = body.map { Self.writeSiteRHSes(in: Self.canonicalize($0)) }
+        let rhses = try body.map { try Self.writeSiteRHSes(in: Self.canonicalize($0)) }
         #expect(rhses?.count == 1)
         #expect(rhses?.first?.hasPrefix(Self.sanctionedRHS) == false)
     }
 
-    @Test func scannerFlagsASelfStoreQualifiedBypass() {
+    @Test func scannerFlagsASelfStoreQualifiedBypass() throws {
         let source = """
             set: { newValue in
                 lastKnownKeepAliveInterval = newValue
@@ -353,7 +387,7 @@ struct KeepAliveStepperWiringGuardTests {
             }
             """
         let body = try? #require(Self.setClosureBody(in: source))
-        let rhses = body.map { Self.writeSiteRHSes(in: Self.canonicalize($0)) }
+        let rhses = try body.map { try Self.writeSiteRHSes(in: Self.canonicalize($0)) }
         #expect(rhses?.count == 1)
         #expect(rhses?.first?.hasPrefix(Self.sanctionedRHS) == false)
     }
@@ -367,7 +401,33 @@ struct KeepAliveStepperWiringGuardTests {
         #expect(Self.setClosureBody(in: source) == nil)
     }
 
-    @Test func stripperSelfTestRemovesLineAndBlockCommentsAndStringLiterals() {
+    /// Fail-closed self-test: a raw-string delimiter (`#"…"#`) is a form
+    /// this stripper does not parse. Left unhandled, it used to
+    /// desynchronize the plain-quote counting instead — `#"""#`, an
+    /// entirely ordinary literal for one quote character, is read as one
+    /// opening quote, one closing quote, and a fresh string that swallows
+    /// everything up to the next real `"` in the file, which could hide a
+    /// bypassed write past that point. The fix must throw instead.
+    @Test func stripperFailsClosedOnARawStringDelimiter() throws {
+        let source = "static let quote = #\"\"\"#\nstore.keepAliveIntervalSeconds = newValue"
+        #expect(throws: (any Error).self) {
+            try Self.stripCommentsAndStrings(source)
+        }
+    }
+
+    /// Fail-closed self-test: a string or block comment that never closes
+    /// must not be treated as "closed at end of file" — that is the same
+    /// truncation risk under a different cause.
+    @Test func stripperFailsClosedOnAnUnterminatedLiteral() throws {
+        #expect(throws: (any Error).self) {
+            try Self.stripCommentsAndStrings("let x = \"unterminated")
+        }
+        #expect(throws: (any Error).self) {
+            try Self.stripCommentsAndStrings("/* never closes")
+        }
+    }
+
+    @Test func stripperSelfTestRemovesLineAndBlockCommentsAndStringLiterals() throws {
         let source = #"""
             let a = "KeepAliveControlPlan.storedValue(" // KeepAliveControlPlan.storedValue(
             /* KeepAliveControlPlan.storedValue( */ let b = 1
@@ -376,7 +436,7 @@ struct KeepAliveStepperWiringGuardTests {
                 """
             KeepAliveControlPlan.storedValue(
             """#
-        let stripped = Self.stripCommentsAndStrings(source)
+        let stripped = try Self.stripCommentsAndStrings(source)
         #expect(stripped.components(separatedBy: "KeepAliveControlPlan.storedValue(").count - 1 == 1, """
             expected exactly 1 real occurrence of `KeepAliveControlPlan.storedValue(` \
             to survive stripping; found \
