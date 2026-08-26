@@ -31,6 +31,11 @@ struct AuditLogTextDocument: FileDocument {
 /// once on open; deliberately no live refresh while the sheet is up (spec
 /// M9b §5/§7 — closing and reopening is enough, auto-refresh is an M9c
 /// topic).
+///
+/// Each column is click-to-sort; the rules live in `AuditLogSorting`, which
+/// also says why the log still opens newest-first, why the sort is applied
+/// to the filter result, and why the chosen order is not remembered past
+/// the sheet closing.
 struct AuditLogSheet: View {
     let session: StoredSession
     let store: AuditLogStore
@@ -40,6 +45,7 @@ struct AuditLogSheet: View {
     @State private var filter: Filter = .all
     @State private var searchText = ""
     @State private var searchIsRegex = false
+    @State private var sortOrder: [AuditEventComparator] = AuditLogSorting.defaultOrder
     @State private var isShowingClearConfirm = false
     @State private var isExporting = false
     @State private var exportDocument: AuditLogTextDocument?
@@ -65,15 +71,16 @@ struct AuditLogSheet: View {
 
     private static let isoFormatter = ISO8601DateFormatter()
 
-    /// Newest first (spec M9b §5) — `store.events(for:)` returns
-    /// chronological order.
-    private var sortedEvents: [AuditEvent] {
-        events.sorted { $0.timestamp > $1.timestamp }
-    }
-
     private var filteredEvents: [AuditEvent] {
         let (predicate, _) = sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)
-        return sortedEvents.filter { matchesFilter($0) && predicate.matches(searchString(for: $0)) }
+        return events.filter { matchesFilter($0) && predicate.matches(searchString(for: $0)) }
+    }
+
+    /// What the table draws: the filter/search result in the user's chosen
+    /// order, which starts out newest-first (spec M9b §5) — the order
+    /// `store.events(for:)` hands over, reversed.
+    private var sortedEvents: [AuditEvent] {
+        AuditLogSorting.sorted(filteredEvents, using: sortOrder)
     }
 
     private var isUnfiltered: Bool {
@@ -112,22 +119,31 @@ struct AuditLogSheet: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                 Spacer(minLength: 0)
             } else {
-                Table(filteredEvents) {
-                    TableColumn(L10n.string("audit.column.time", "Time")) { event in
+                Table(sortedEvents, sortOrder: $sortOrder) {
+                    TableColumn(
+                        L10n.string("audit.column.time", "Time"),
+                        sortUsing: AuditEventComparator(key: .time)
+                    ) { event in
                         rowText(Self.timeFormatter.string(from: event.timestamp), isError: event.isError)
                     }
                     .width(min: 100, ideal: 110, max: 130)
-                    TableColumn(L10n.string("audit.column.kind", "Event")) { event in
-                        rowText(kindLabel(event.kind), isError: event.isError)
+                    TableColumn(
+                        L10n.string("audit.column.kind", "Event"),
+                        sortUsing: AuditEventComparator(key: .kind)
+                    ) { event in
+                        rowText(AuditEventText.kindLabel(event.kind), isError: event.isError)
                     }
                     .width(min: 120, ideal: 150, max: 200)
-                    TableColumn(L10n.string("audit.column.detail", "Detail")) { event in
+                    TableColumn(
+                        L10n.string("audit.column.detail", "Detail"),
+                        sortUsing: AuditEventComparator(key: .detail)
+                    ) { event in
                         // M9b/T4 review (finding 4): the error message was
                         // already in `errorMessage` (search and export both
                         // already include it), but the sheet's own detail
                         // cell silently dropped it — display only, no change
                         // to the stored event.
-                        rowText(detailText(for: event), isError: event.isError, monospaced: true)
+                        rowText(AuditEventText.detail(for: event), isError: event.isError, monospaced: true)
                     }
                 }
             }
@@ -188,14 +204,6 @@ struct AuditLogSheet: View {
         }
     }
 
-    /// Detail cell text (M9b/T4 review, finding 4): error rows append
-    /// ` — <errorMessage>` so the failure reason is visible without opening
-    /// search or export — both of which already included it.
-    private func detailText(for event: AuditEvent) -> String {
-        guard event.isError, let errorMessage = event.errorMessage else { return event.detail }
-        return "\(event.detail) — \(errorMessage)"
-    }
-
     @ViewBuilder
     private func rowText(_ text: String, isError: Bool, monospaced: Bool = false) -> some View {
         Text(text)
@@ -204,7 +212,7 @@ struct AuditLogSheet: View {
     }
 
     private var footerText: String {
-        let total = sortedEvents.count
+        let total = events.count
         if isUnfiltered {
             return String(format: L10n.string("audit.count %lld", "%lld entries"), total)
         }
@@ -252,27 +260,23 @@ struct AuditLogSheet: View {
     }
 
     /// Mirrors exactly what the row renders (time + event kind + detail,
-    /// the latter already including the error suffix via `detailText`) so a
-    /// search matches whatever the user can actually see in the table
-    /// (M18/T2 — same rationale as reusing `detailText` for the detail cell
-    /// itself, M9b/T4 finding 4).
+    /// the latter already including the error suffix) so a search matches
+    /// whatever the user can actually see in the table (M18/T2 — same
+    /// rationale as drawing the detail cell from `AuditEventText`, M9b/T4
+    /// finding 4). Drawing, searching and sorting all read the row's text
+    /// from `AuditEventText` for that reason.
     private func searchString(for event: AuditEvent) -> String {
-        "\(Self.timeFormatter.string(from: event.timestamp)) \(kindLabel(event.kind)) \(detailText(for: event))"
+        let kind = AuditEventText.kindLabel(event.kind)
+        return "\(Self.timeFormatter.string(from: event.timestamp)) \(kind) \(AuditEventText.detail(for: event))"
     }
 
-    /// Kind labels are the only localized part of an event row — `detail`
-    /// (and `errorMessage`) are finished English plain text and are always
-    /// shown verbatim (spec M9b §1).
-    private func kindLabel(_ kind: AuditEvent.Kind) -> String {
-        L10n.string("audit.kind.\(kind.rawValue)", kind.rawValue)
-    }
-
-    /// Exports exactly what's currently on screen (filter + search applied,
-    /// newest-first) — one line per event, `[<ISO8601>] <KIND-rawValue>
-    /// <detail>`, with an ` — error: <message>` suffix for error rows (spec
-    /// M9b §5).
+    /// Exports exactly what's currently on screen — filter and search
+    /// applied, and in the order the table is showing, which is newest-first
+    /// until the user clicks a header (spec M9b §5). One line per event,
+    /// `[<ISO8601>] <KIND-rawValue> <detail>`, with an ` — error: <message>`
+    /// suffix for error rows.
     private func performExport() {
-        let lines = filteredEvents.map(exportLine)
+        let lines = sortedEvents.map(exportLine)
         exportDocument = AuditLogTextDocument(text: lines.joined(separator: "\n"))
         isExporting = true
     }
