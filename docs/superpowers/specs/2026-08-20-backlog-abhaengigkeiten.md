@@ -28,9 +28,43 @@ Citadel-Autors.
 
 Damit steht das Paket, das jede SSH-Verbindung dieser App aushandelt, in der
 Vertrauenskette als **persönlicher Fork einer Apple-Bibliothek**, und der
-Versionsstand liegt weit hinter Apples 0.15.0. Ob der Fork Apples 0.3.x-Zweig
-nachführt oder eigene Wege geht, ist an den Tags allein **nicht ablesbar und
-gehört gemessen**, bevor daraus eine Bewertung wird.
+Versionsstand liegt weit hinter Apples 0.15.0.
+
+### Gemessen am 2026-08-26
+
+Die offene Frage — führt der Fork Apples Zweig nach oder geht er eigene Wege —
+ist beantwortet. Beide Repositorien in ein leeres Arbeitsverzeichnis geholt
+und die Historien verglichen:
+
+| | |
+|---|---|
+| Gemeinsame Basis mit `apple/main` | `b0591e4c`, **2022-04-21** |
+| Commits, die der Fork seit der Basis hinzufügt | 76 |
+| **Commits, die Apple seit der Basis hat und hier nie ankommen** | **91** |
+| Zweig des angehefteten Commits | `citadel2`, in keinem Apple-Zweig enthalten |
+| Angehefteter Commit | `a05e6bbe`, 2026-04-02, Mac-Catalyst-Fix |
+
+Der Fork führt Apple also **nicht** nach: er ist vor über vier Jahren
+abgezweigt und seitdem eigene Wege gegangen. Die Nummerierung ist ebenfalls
+eigen — Apple hat gar keinen Tag `0.3.6`. Was in Apples 91 Commits steckt,
+ist damit noch nicht bewertet; dass es **nicht** hier ankommt, ist es.
+
+### Ein Ausweichen ist nicht bloß Geschmackssache
+
+Getestet, ob sich Apples Paket im Wurzelmanifest erzwingen lässt (`.package`
+auf `apple/swift-nio-ssh` ab 0.15.0, danach zurückgenommen). Die Auflösung
+scheitert:
+
+```
+error: Dependencies could not be resolved because root depends on
+'citadel' 0.12.1..<1.0.0 and root depends on 'swift-nio-ssh' 0.15.0..<1.0.0.
+```
+
+Citadel schreibt in seinem eigenen Manifest den Bereich `"0.3.4" ..< "0.4.0"`
+fest. **Ohne Citadel selbst zu ändern, führt kein Weg an dem Fork vorbei** —
+ein Versions-Override im Wurzelpaket genügt nicht. Damit fällt der Weg
+„einfach auf Apple umbiegen" weg; übrig bleiben: Citadel-Upstream ansprechen,
+Citadel selbst forken, oder auf Sicht bleiben und die Lage dokumentieren.
 
 Das ist der Punkt, der eine Entscheidung braucht — nicht die Zahlen in der
 Tabelle. Mögliche Wege: mit Citadel-Upstream klären, ob der Fork wegkann; den
