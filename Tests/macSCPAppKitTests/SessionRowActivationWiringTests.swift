@@ -3,61 +3,59 @@ import Testing
 
 @testable import MacSCPAppKit
 
-/// Guards what is left of "a single click never connects" after fix round 2
-/// made most of it impossible to express.
+/// Guards what is left of "a single click never connects" once the parts
+/// that could be made impossible have been.
 ///
 /// The property: **a connection is reached only for `.doubleClick`,
 /// `.returnKey` on the selected row, and `.contextMenuEntry` — never for a
-/// single click.** Where each part of it is held, enumerated by asking where
-/// it could be violated FROM rather than by collecting the mutations someone
-/// happened to run (two rounds of exactly that is how three of the reviewers'
-/// probes ended up green):
+/// single click, and never for a hover.**
 ///
-/// 1. `SessionRowActivation.build` misclassifies an input.
-///    → `SessionRowActivationTests`, which mutates red because the mistake
-///    is inside the function under test. Not guarded here.
-/// 2. `apply` runs the wrong effect for an activation.
-///    → `SessionRowActivationApplyTests`, spies over both effects. Same
-///    reason. Not guarded here.
-/// 3. The view fires the connect effect itself, or puts it where the
-///    selection effect belongs.
-///    → **Compile error**, not a guard. `SessionRowConnectEffect.run` is
-///    `fileprivate` to the file that declares it, and the two effects are
-///    different types. The three mutations the reviewers ran green against
-///    the previous round — the effect in the select slot, a call from
-///    `moveSelection` with its parameter renamed, a call from the
-///    imported-hosts row — no longer build.
-/// 4. Another handler in this file reaches a connection some other way.
-///    → Same boundary for the connect effect. NOT covered for the sidebar's
-///    two terminal callbacks, which also connect and are still plain
-///    closures; Guard B covers the gesture half of that.
-/// 5. A gesture handler lies about which input happened — a count-1 handler
-///    forwarding `.doubleClick`. No type can prevent it: the input is a
-///    value the handler chooses. → **Guard A**, the honest residue.
-/// 6. A gesture handler calls a connecting callback instead of forwarding
-///    an input at all. → **Guard B**.
-/// 7. The input is rewritten between the row and the plan. The closure that
-///    made this possible is **deleted** — `sessionRows` hands over the
-///    activation method itself — and → **Guard C** keeps it deleted.
-/// 8. A connect path in a DIFFERENT file. `ContentView` constructs the
-///    effect and can dial without the sidebar; nothing here sees that, and
-///    saying so is the honest boundary rather than an implied one.
+/// Three rounds of review have each found the same shape of hole, and the
+/// lesson is written here rather than re-learned: every violation is spelled
+/// correctly, so an anchor against a spelling loses. Round 1 left an
+/// unguarded condition; round 2 replaced it with an unguarded slot; round 3
+/// found the slot had become an unguarded `self`. What follows is therefore
+/// split by what KIND of thing holds each site, and the split is the claim —
+/// each line of it was checked by planting the mutation, not by reading.
 ///
-/// Everything the previous round guarded about sites 3 and 4 has been
-/// deleted rather than kept as belt-and-braces: a guard nobody can violate
-/// reads as coverage and is not.
+/// 1. `build` misclassifies an input. → `SessionRowActivationTests`; the
+///    mutation is inside the function under test.
+/// 2. The chain from an input to an effect misroutes. →
+///    `PerformSessionRowInputTests`, spies over the one entry point.
+/// 3. The view fires the connect effect by choosing an activation for it —
+///    `SessionRowActivation.selectAndConnect.apply(…)`. → **Compile error**:
+///    `apply` is `fileprivate`, and `performSessionRowInput` never hands an
+///    activation back.
+/// 4. The view fires the effect directly: calling it, unwrapping `run`,
+///    reaching it by key path, or passing it where the selection effect
+///    belongs. → **Compile error** on all four spellings. NOT closed against
+///    an extension added to the effects' own file, or `Mirror` — both
+///    deliberately left; see `SessionRowConnectEffect` for why a guard
+///    against those would be worth less than the stated limit.
+/// 5. The entry point is called from somewhere else in the sidebar, or with
+///    an input the caller did not receive. → **Guard A** (every input
+///    literal in the file sits on its own site) and **Guard B** (one call
+///    site, inside `activate`).
+/// 6. A handler acts through a DIFFERENT connecting callback instead of
+///    forwarding — the two terminal callbacks are plain closures and always
+///    were. → **Guard D** in the row's body, **Guard E** in `activate`.
+///    Reached by `.onHover` while this suite only read two modifiers, which
+///    is what round 3 corrected.
+/// 7. The input is rewritten between the row and the plan. → The closure
+///    that allowed it is deleted; **Guard I** keeps it deleted.
+/// 8. A connect path in a DIFFERENT file. → Out of reach, measured rather
+///    than assumed: a dial planted in `ContentView.swift` leaves this suite
+///    green. **Guard J** pins only that the sidebar is given a live effect
+///    at all, not what other files do with theirs.
 ///
 /// `SessionSidebar` and `SessionRow` cannot be DRIVEN from a test here:
 /// `ViewTestabilitySpike` shows views of this package can be instantiated
 /// and rendered offscreen, but there is no way to inject a click or a key
-/// press. Every guard here is therefore a SOURCE-TEXT scan over
-/// `Sources/MacSCPAppKit/SessionSidebar.swift`; they say which handler
-/// routes which input, never that macOS delivers it.
-///
-/// Known blind spots: the scans are line-based and literal, so a handler
-/// split across lines reads as a MISSING route rather than a compliant one
-/// — every guard fails closed, and a reformat costs a re-anchor instead of
-/// silent cover.
+/// press. Every guard here is a source-text scan; they say which handler
+/// routes which input, never that macOS delivers it. The scans are
+/// line-based and literal, so a handler split across lines reads as a
+/// MISSING route rather than a compliant one — they fail closed, and a
+/// reformat costs a re-anchor instead of silent cover.
 @Suite("Session row activation wiring guard")
 struct SessionRowActivationWiringTests {
     /// `#filePath` here is
@@ -71,11 +69,12 @@ struct SessionRowActivationWiringTests {
 
     private static let sourceFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/SessionSidebar.swift")
+    private static let detailFile = repoRoot
+        .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Detail.swift")
 
-    /// Which site is allowed to forward which input — the whole of Guard A
-    /// is this table plus "exactly one line each, and nothing else on it".
-    /// The menu entry is in it for the same reason the gestures are: it is
-    /// an input now, not a separate connect path.
+    /// Which site is allowed to name which input. The menu entry is in the
+    /// table for the same reason the gestures are: it is an input now, not a
+    /// separate connect path.
     private static let inputRoutes: [(input: String, site: String)] = [
         (".singleClick", ".onTapGesture(count: 1)"),
         (".doubleClick", ".onTapGesture(count: 2)"),
@@ -83,103 +82,178 @@ struct SessionRowActivationWiringTests {
         (".contextMenuEntry", "\"sidebar.connect\""),
     ]
 
-    // MARK: - Guard A: each input is forwarded from exactly one site
+    /// The table is hand-written while `SessionRowInput` is `CaseIterable`;
+    /// without this, a fifth input would be classified by every value test
+    /// and simply not carried here.
+    @Test func theRoutingTableCoversEveryInputTheEnumHas() {
+        #expect(Self.inputRoutes.count == SessionRowInput.allCases.count, """
+            `inputRoutes` lists \(Self.inputRoutes.count) inputs but `SessionRowInput` has \
+            \(SessionRowInput.allCases.count) — an input nothing in this table names is an \
+            input Guard A does not route.
+            """)
+    }
 
-    /// Violation site 5. Presence alone is not the property: a count-1
-    /// handler that ALSO forwards `.doubleClick` satisfies "each input is
-    /// routed somewhere" while a single click connects. Each input must
-    /// appear on exactly one line, that line must be its own site, and it
-    /// must forward no other input.
-    @Test func eachInputIsForwardedFromExactlyOneSiteAndThatSiteForwardsNothingElse() throws {
-        let body = try Self.sessionRowBody()
+    // MARK: - Guard A: every input literal sits on its own site, file-wide
+
+    /// Violation site 5, and the "a handler lies about which gesture
+    /// happened" half of it. File-wide rather than scoped to the row's body:
+    /// naming an input is how anything in this file reaches the entry point,
+    /// so a literal anywhere else — in `moveSelection`, in the imported-hosts
+    /// row — is a second, unrouted way in.
+    @Test func everyInputLiteralInTheFileSitsOnItsOwnSiteAndNamesNoOther() throws {
+        let lines = try Self.sourceLines()
         for route in Self.inputRoutes {
-            let carriers = body.lines.indices.filter { index in
-                Self.isCode(body.lines[index]) && body.lines[index].contains(route.input)
+            let carriers = lines.indices.filter { index in
+                Self.isCode(lines[index]) && lines[index].contains(route.input)
             }
             #expect(carriers.count == 1, """
-                `\(route.input)` is forwarded from \(carriers.count) site(s) in `SessionRow`'s \
-                body (line(s) \(carriers.map { body.offset + $0 + 1 })), expected exactly one — \
-                a second site forwarding it means some other input now claims to be that one, \
-                and for the connecting inputs that is a single click opening a connection.
+                `\(route.input)` is named at \(carriers.count) place(s) in SessionSidebar.swift \
+                (line(s) \(carriers.map { $0 + 1 })), expected exactly one — a second one is \
+                either a handler claiming an input that did not happen, or a function other \
+                than the row's own handlers reaching the activation path.
                 """)
             guard let only = carriers.first else { continue }
-            let line = body.lines[only]
-            #expect(line.contains(route.site), """
-                `\(route.input)` is forwarded from a site that is not `\(route.site)` (line \
-                \(body.offset + only + 1)) — the input a handler forwards must be the thing \
-                that actually happened.
+            #expect(lines[only].contains(route.site), """
+                `\(route.input)` is named at a place that is not `\(route.site)` (line \
+                \(only + 1)) — the input a handler forwards must be the thing that actually \
+                happened.
                 """)
             for other in Self.inputRoutes.map(\.input) where other != route.input {
-                #expect(!line.contains(other), """
-                    the `\(route.site)` handler (line \(body.offset + only + 1)) forwards \
-                    `\(other)` as well as `\(route.input)` — one gesture reported as two inputs \
-                    is how a single click reaches a connecting activation.
+                #expect(!lines[only].contains(other), """
+                    the `\(route.site)` handler (line \(only + 1)) names `\(other)` as well as \
+                    `\(route.input)` — one gesture reported as two inputs is how a single click \
+                    reaches a connecting activation.
                     """)
             }
         }
     }
 
-    // MARK: - Guard B: a gesture handler forwards, and does nothing else
+    // MARK: - Guard B: one way in, from one place
 
-    /// Violation site 6. The row still holds callbacks that connect —
+    /// Violation site 5's other half: the entry point called with an input
+    /// that was passed in rather than made up is safe, so what has to be
+    /// pinned is WHERE it is called from. `activate` is the sidebar's single
+    /// door; a second call — in the function that moves the selection, in
+    /// another row — is a second door with no handler behind it.
+    @Test func theEntryPointIsCalledOnceAndOnlyFromTheActivationPath() throws {
+        let lines = try Self.sourceLines()
+        let calls = lines.indices.filter { index in
+            Self.isCode(lines[index]) && lines[index].contains("performSessionRowInput(")
+        }
+        #expect(calls.count == 1, """
+            expected exactly one call to `performSessionRowInput(` in SessionSidebar.swift, \
+            found \(calls.count) at line(s) \(calls.map { $0 + 1 }) — that function is the only \
+            thing in this file that can open a connection, so every call to it is a connect \
+            path somebody has to have read.
+            """)
+        guard let only = calls.first,
+              let activate = Self.range(ofBlockStartingWith: "private func activate(", in: lines)
+        else {
+            Issue.record("`private func activate(` not found — re-anchor this guard")
+            return
+        }
+        #expect(activate.contains(only), """
+            the call to `performSessionRowInput(` at line \(only + 1) is outside `activate` — \
+            the rename hand-off and the selection rules live there, and a call that skips them \
+            connects without either.
+            """)
+    }
+
+    // MARK: - Guard C: no tap gesture without a click count, file-wide
+
+    /// Restored in fix round 3. It was deleted in round 2 as "covered by the
+    /// routing table", and that was simply wrong: the table was scoped to
+    /// `SessionRow`'s body, so nothing watched the imported-hosts row any
+    /// more. The reviewer then planted a countless `.onTapGesture` there
+    /// that connected, and the suite stayed green — the day this guard's own
+    /// doc comment had predicted when it was written.
+    ///
+    /// File-wide, therefore, and staying that way: a countless tap gesture
+    /// fires on the FIRST click, which is the behaviour this whole task
+    /// removed from the session row.
+    @Test func noTapGestureInTheFileOmitsItsClickCount() throws {
+        let lines = try Self.sourceLines()
+        let countless = lines.indices.filter { index in
+            let line = lines[index]
+            guard Self.isCode(line) else { return false }
+            return line.contains(".onTapGesture") && !line.contains("count:")
+        }
+        #expect(countless.isEmpty, """
+            `SessionSidebar.swift` attaches a tap gesture without a `count:` at line(s) \
+            \(countless.map { $0 + 1 }) — a countless tap gesture fires on the FIRST click. \
+            Every row in this sidebar spells out which click count it answers, including the \
+            imported-hosts row, which answers one click deliberately and does not connect.
+            """)
+    }
+
+    // MARK: - Guard D: outside its menu, the row forwards and nothing else
+
+    /// Violation site 6. The row holds callbacks that connect —
     /// `onOpenTerminal` and `onOpenExternalTerminal` are a connect plus a
-    /// pane layout — and those are ordinary closures no type protects. A
-    /// gesture may name exactly one callback, `onInput`; anything else it
-    /// could call, it must not.
-    @Test func noGestureHandlerNamesAnyCallbackButTheInputForward() throws {
+    /// pane layout — and no type protects them. Inside the context menu,
+    /// calling them is the entire point: those are entries the user picked
+    /// by name. Everywhere else in the body, the only callback that may be
+    /// called is `onInput`.
+    ///
+    /// Round 2's version of this read `.onTapGesture` and `.onKeyPress`
+    /// lines only, which left `.onHover` free: a mouseover that dialled was
+    /// green. The rule is now about WHERE a callback is called, not which
+    /// modifier is on the line, so a modifier nobody has thought of yet is
+    /// covered too.
+    @Test func outsideItsContextMenuTheRowCallsNoCallbackButTheInputForward() throws {
         let body = try Self.sessionRowBody()
+        guard let menu = Self.range(ofBlockStartingWith: ".contextMenu {", in: body.lines) else {
+            Issue.record("`.contextMenu {` not found inside `SessionRow`'s body — re-anchor this guard")
+            return
+        }
         var violations: [String] = []
-        for index in body.lines.indices {
+        for index in body.lines.indices where !menu.contains(index) {
             let line = body.lines[index]
             guard Self.isCode(line) else { continue }
-            guard line.contains(".onTapGesture") || line.contains(".onKeyPress") else { continue }
             let foreign = Self.callbackCalls(in: line).filter { $0 != "onInput" }
             if !foreign.isEmpty {
-                violations.append("line \(body.offset + index + 1): \(foreign.joined(separator: ", "))")
+                violations.append(
+                    "line \(body.offset + index + 1): \(foreign.joined(separator: ", "))")
             }
-            #expect(line.contains("onInput("), """
-                the gesture at line \(body.offset + index + 1) does not forward an input at all \
-                — a gesture in this row exists to hand `SessionRowActivation` something to \
-                decide about, never to act by itself.
-                """)
         }
         #expect(violations.isEmpty, """
-            gesture handler(s) in `SessionRow`'s body call a callback other than `onInput`: \
-            \(violations.joined(separator: "; ")) — a gesture that calls `onOpenTerminal`, or \
-            any other callback that ends in a connection, walks around the plan entirely, and \
-            no type stops it because those callbacks are plain closures.
+            `SessionRow`'s body calls a callback other than `onInput` outside its context \
+            menu: \(violations.joined(separator: "; ")) — a hover, a drag or a gesture that \
+            calls `onOpenTerminal`, or any other callback ending in a connection, walks around \
+            the plan entirely. Only entries the user picks by name may act directly.
             """)
     }
 
-    // MARK: - Guard C: nothing stands between the row and the plan
+    // MARK: - Guard E: the activation path forwards and nothing else
 
-    /// Violation site 7. The sidebar hands the row its activation method
-    /// verbatim; a closure there would be a second place to relabel an
-    /// input, which is what the reviewer's probe did while every guard
-    /// stayed green. Deleting the site is the fix — this keeps it deleted.
-    @Test func theRowReceivesTheActivationMethodItselfNotAClosureAroundIt() throws {
+    /// Violation site 6 inside the sidebar rather than the row: `activate`
+    /// can hand the plan exactly the right input and then also act on its
+    /// own account, which leaves every guard that looks for the right call
+    /// perfectly satisfied. It may reach the entry point, the rename
+    /// hand-off and its own state — no callback.
+    @Test func theActivationPathCallsNoCallbackOfItsOwn() throws {
         let lines = try Self.sourceLines()
-        // The declaration (`let onInput: …`) names the same label and is not
-        // a hand-over.
-        let handOvers = lines.indices.filter { index in
-            let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
-            return Self.isCode(lines[index]) && trimmed.contains("onInput:")
-                && !trimmed.hasPrefix("let ")
+        guard let activate = Self.range(ofBlockStartingWith: "private func activate(", in: lines)
+        else {
+            Issue.record("`private func activate(` not found — re-anchor this guard")
+            return
         }
-        #expect(handOvers.count == 1, """
-            expected exactly one `onInput:` hand-over in SessionSidebar.swift, found \
-            \(handOvers.count) at line(s) \(handOvers.map { $0 + 1 }) — re-anchor this guard.
-            """)
-        guard let only = handOvers.first else { return }
-        let trimmed = lines[only].trimmingCharacters(in: .whitespaces)
-        #expect(trimmed == "onInput: activate(_:on:),", """
-            the row's input callback is no longer the bare `activate(_:on:)` method reference \
-            (found `\(trimmed)`) — anything with a body here can rewrite the input on its way \
-            to the plan, so that a single click arrives as a double click and connects.
+        var violations: [String] = []
+        for index in activate where Self.isCode(lines[index]) {
+            let called = Self.callbackCalls(in: lines[index])
+            if !called.isEmpty {
+                violations.append("line \(index + 1): \(called.joined(separator: ", "))")
+            }
+        }
+        #expect(violations.isEmpty, """
+            `activate` calls a callback itself: \(violations.joined(separator: "; ")) — it \
+            forwards an input and applies what comes back; anything it does beside that is a \
+            second action on the same gesture, invisible to every guard that only checks the \
+            forward is still there.
             """)
     }
 
-    // MARK: - Guard D: the row stops being focusable while it is renamed
+    // MARK: - Guard F: the row stops being focusable while it is renamed
 
     /// The rename must keep the keyboard: a focusable row competing with its
     /// own inline `TextField` would take Return away from the field that is
@@ -196,7 +270,7 @@ struct SessionRowActivationWiringTests {
             """)
     }
 
-    // MARK: - Guard E: a rename that ends hands the keyboard back
+    // MARK: - Guard G: a rename that ends hands the keyboard back
 
     /// `selectedSessionID` survives a rename, the row's focus does not. A row
     /// that draws as selected while Return does nothing on it is exactly the
@@ -243,9 +317,6 @@ struct SessionRowActivationWiringTests {
                 — a second rename-ending path is a second place to forget the hand-back.
                 """)
         }
-        // The two cancel WIRINGS, which the previous round left uncovered: a
-        // rename abandoned with Escape, from a row or from a group header,
-        // reaches `endRename` only through these.
         for wiring in ["onCancelRename: endRename,", ".onExitCommand(perform: endRename)"] {
             let wired = lines.contains { Self.isCode($0) && $0.contains(wiring) }
             #expect(wired, """
@@ -255,13 +326,14 @@ struct SessionRowActivationWiringTests {
         }
     }
 
-    // MARK: - Guard F: activating a row ends its neighbour's rename
+    // MARK: - Guard H: activating a row ends an open rename
 
-    /// A click on row B while row A is being renamed moves the first
-    /// responder to B, which takes focus out of A's text field. Left to the
-    /// focus-loss handler alone, A can keep drawing an editable field that
-    /// nothing can reach. `activate` ends it deliberately instead.
-    @Test func activatingARowEndsARenameOpenOnADifferentRow() throws {
+    /// Acting on a row moves the first responder to it, which takes focus
+    /// out of whatever rename field held it. Left to the focus-loss handler
+    /// alone, that row can keep drawing an editable field with a draft in it
+    /// that is neither committed nor discarded — including, since the menu
+    /// entry stopped being subject to the rename guard, its OWN row.
+    @Test func theActivationPathEndsAnOpenRename() throws {
         let lines = try Self.sourceLines()
         guard let activate = Self.range(ofBlockStartingWith: "private func activate(", in: lines)
         else {
@@ -272,40 +344,78 @@ struct SessionRowActivationWiringTests {
             Self.isCode(lines[$0]) && lines[$0].contains("SidebarRenameHandoff.endsOpenRename(")
         }
         #expect(asks, """
-            `activate` never asks `SidebarRenameHandoff.endsOpenRename(` — a click on another \
-            row would pull the first responder out of an open rename field and leave that row \
-            editable, unfocused and unreachable except by clicking inside the field itself.
+            `activate` never asks `SidebarRenameHandoff.endsOpenRename(` — an activation would \
+            pull the first responder out of an open rename field and leave that row editable, \
+            unfocused and unreachable except by clicking inside the field itself.
+            """)
+        let ends = activate.contains {
+            Self.isCode(lines[$0]) && lines[$0].contains("endRename()")
+        }
+        #expect(ends, """
+            `activate` asks whether a rename must end and never ends one — the question would \
+            be answered and dropped.
             """)
     }
 
-    // MARK: - Guard G: the plan is actually consulted
+    // MARK: - Guard I: nothing stands between the row and the plan
 
-    /// Not a safety guard — sites 3 and 4 are compile errors now — but the
-    /// "the rule is right and is not wired in" check the plan's own tests
-    /// cannot be: an `activate` that stopped asking would leave every test
-    /// in `SessionRowActivationTests` green over code nothing calls.
-    @Test func theActivationPathAsksThePlanAndAppliesItsAnswer() throws {
+    /// Violation site 7. The sidebar hands the row its activation method
+    /// verbatim; a closure there would be a second place to relabel an
+    /// input, which is what a reviewer's probe did while every guard stayed
+    /// green. Deleting the site is the fix — this keeps it deleted.
+    @Test func theRowReceivesTheActivationMethodItselfNotAClosureAroundIt() throws {
         let lines = try Self.sourceLines()
-        guard let activate = Self.range(ofBlockStartingWith: "private func activate(", in: lines)
-        else {
-            Issue.record("`private func activate(` not found — re-anchor this guard")
-            return
+        // The declaration (`let onInput: …`) names the same label and is not
+        // a hand-over.
+        let handOvers = lines.indices.filter { index in
+            let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
+            return Self.isCode(lines[index]) && trimmed.contains("onInput:")
+                && !trimmed.hasPrefix("let ")
         }
-        for expected in ["SessionRowActivation.build(", ".apply("] {
-            let found = activate.contains { Self.isCode(lines[$0]) && lines[$0].contains(expected) }
-            #expect(found, """
-                `activate` no longer contains `\(expected)` — the decision would be back inside \
-                the view, where no test can reach it.
-                """)
+        #expect(handOvers.count == 1, """
+            expected exactly one `onInput:` hand-over in SessionSidebar.swift, found \
+            \(handOvers.count) at line(s) \(handOvers.map { $0 + 1 }) — re-anchor this guard.
+            """)
+        guard let only = handOvers.first else { return }
+        let trimmed = lines[only].trimmingCharacters(in: .whitespaces)
+        #expect(trimmed == "onInput: activate(_:on:),", """
+            the row's input callback is no longer the bare `activate(_:on:)` method reference \
+            (found `\(trimmed)`) — anything with a body here can rewrite the input on its way \
+            to the plan, so that a single click arrives as a double click and connects.
+            """)
+    }
+
+    // MARK: - Guard J: the sidebar is given a connection to open
+
+    /// The counter-direction to everything else here, and the one thing no
+    /// guard held until fix round 3: handing the sidebar a do-nothing effect
+    /// (`SessionRowConnectEffect { _ in }`) leaves it unable to connect by
+    /// ANY route, with the suite green. Everything above says a click must
+    /// not connect; this says a double click still must.
+    @Test func theSidebarIsHandedAnEffectThatActuallyConnects() throws {
+        let lines = try String(contentsOf: Self.detailFile, encoding: .utf8)
+            .components(separatedBy: "\n")
+        let handOvers = lines.indices.filter { index in
+            Self.isCode(lines[index]) && lines[index].contains("onConnect: SessionRowConnectEffect")
         }
+        #expect(handOvers.count == 1, """
+            expected exactly one `onConnect: SessionRowConnectEffect` in \
+            ContentView+Detail.swift, found \(handOvers.count) at line(s) \
+            \(handOvers.map { $0 + 1 }) — re-anchor this guard.
+            """)
+        guard let only = handOvers.first else { return }
+        #expect(lines[only].contains("connectFromSidebar("), """
+            the effect handed to the sidebar no longer calls `connectFromSidebar(` (line \
+            \(only + 1)) — the sidebar would be unable to open a connection by any route at \
+            all, and every other guard in this suite would still pass.
+            """)
     }
 
     // MARK: - Scanner reacts (self-tests over synthetic sources)
 
-    /// The reviewer's probe against the previous round: the count-1 handler
-    /// forwards the connecting input as well. Both halves of Guard A must
-    /// reject it — the duplicate carrier, and the foreign input on the line.
-    @Test func scannerFlagsAHandlerThatForwardsASecondInput() {
+    /// A handler that forwards a second, connecting input — the shape that
+    /// survived an earlier round.
+    @Test func scannerFlagsAHandlerThatNamesASecondInput() {
         let body = [
             "        .onTapGesture(count: 2) { _ = onInput(.doubleClick, session) }",
             "        .onTapGesture(count: 1) { _ = onInput(.singleClick, session); _ = onInput(.doubleClick, session) }",
@@ -335,21 +445,32 @@ struct SessionRowActivationWiringTests {
         }
     }
 
-    /// Guard B's scanner must see a callback smuggled into a gesture — and
-    /// must not mistake the forward itself, or a non-callback call like
-    /// `L10n.string(`, for one.
-    @Test func callbackScannerSeesAForeignCallbackInAGesture() {
-        let smuggled = "        .onTapGesture(count: 1) { onOpenTerminal() }"
-        #expect(Self.callbackCalls(in: smuggled).filter { $0 != "onInput" } == ["onOpenTerminal"])
+    /// Guard D's scanner must see a callback smuggled into any modifier —
+    /// the hover that dialled is the one that got past its predecessor —
+    /// and must not mistake the forward itself, the modifier it is attached
+    /// to, or a non-callback call for one.
+    @Test func callbackScannerSeesAForeignCallbackWhicheverModifierHoldsIt() {
+        let hover = "        .onHover { isHovering = $0; if $0 { onOpenTerminal() } }"
+        #expect(Self.callbackCalls(in: hover).filter { $0 != "onInput" } == ["onOpenTerminal"])
+
+        let tap = "        .onTapGesture(count: 1) { onOpenExternalTerminal() }"
+        #expect(Self.callbackCalls(in: tap).filter { $0 != "onInput" } == ["onOpenExternalTerminal"])
 
         let compliant = "        .onTapGesture(count: 1) { _ = onInput(.singleClick, session) }"
         #expect(Self.callbackCalls(in: compliant).filter { $0 != "onInput" }.isEmpty)
 
+        let plainHover = "        .onHover { isHovering = $0 }"
+        #expect(Self.callbackCalls(in: plainHover).isEmpty)
+
         let menuEntry = "            Button(L10n.string(\"sidebar.connect\", \"Connect\")) { _ = onInput(.contextMenuEntry, session) }"
         #expect(Self.callbackCalls(in: menuEntry).filter { $0 != "onInput" }.isEmpty)
+
+        // A hand-over is not a call: the name is not followed by a paren.
+        let handOver = "                    .onSubmit(onCommitRename)"
+        #expect(Self.callbackCalls(in: handOver).isEmpty)
     }
 
-    /// A closure around the hand-over — the shape that let the reviewer
+    /// A closure around the hand-over — the shape that let a reviewer
     /// rewrite the input — must not read as the bare method reference.
     @Test func handOverScannerRejectsAClosureAroundTheActivationMethod() {
         let rewritten = "                onInput: { input, session in activate(input == .singleClick ? .doubleClick : input, on: session) },"
@@ -377,9 +498,11 @@ struct SessionRowActivationWiringTests {
     /// for them: an identifier starting `on` + capital, immediately applied,
     /// and NOT reached through a dot. The dot is what separates a callback
     /// the view holds (`onInput(`) from the modifier the handler is attached
-    /// to (`.onTapGesture(`, `.onKeyPress(`), which would otherwise read as
-    /// a callback call on every line this scans. A label (`onInput:`) has a
-    /// colon rather than a paren and is not a call either.
+    /// to (`.onTapGesture(`, `.onHover(`), which would otherwise read as a
+    /// callback call on every line this scans. A label (`onInput:`) has a
+    /// colon rather than a paren and is not a call either, nor is a
+    /// hand-over (`.onSubmit(onCommitRename)`), where the name is followed
+    /// by `)`.
     private static func callbackCalls(in line: String) -> [String] {
         var found: [String] = []
         let characters = Array(line)

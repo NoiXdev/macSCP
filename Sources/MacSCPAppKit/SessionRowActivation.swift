@@ -43,25 +43,34 @@ struct SessionRowSelectEffect<Value> {
 /// obtain one, reduced to a value it can hold and hand over but not fire.
 ///
 /// `run` is `fileprivate`, and that is why these types live in this file
-/// rather than beside the view: nothing in `SessionSidebar.swift` can call
-/// it. A connection can be obtained there in exactly one way — by handing
-/// this effect to `apply`, which fires it only for `.selectAndConnect`.
-/// Every other route is a compile error, including the three the reviewers
-/// found by mutation and no test caught: putting this value in the select
-/// slot, calling it from the function that moves the selection, and calling
-/// it from the imported-hosts row.
+/// rather than in the one holding the view: no code in `SessionSidebar
+/// .swift` can call it, unwrap it, reach it by key path, or pass it where
+/// the selection effect belongs — each of those is a compile error, and
+/// each was a green mutation before.
 ///
-/// This is the shape `ReconnectWiringGuardTests`' own header names as the
-/// only real answer to a spelling that keeps escaping detection — "unable
-/// to obtain a connection except through one type it must hold, which no
-/// spelling can work around because there is nothing to spell" — applied
-/// here to one view instead of the whole App layer.
+/// **What this is and is not.** It raises the cost of an accidental
+/// connect from "write a plausible line" to "defeat the type system", and
+/// that is the whole of the claim. It is not a capability boundary in the
+/// sense `ReconnectWiringGuardTests`' header uses, and the difference is
+/// worth stating because the last two rounds overstated it:
 ///
-/// What it does NOT cover, stated rather than implied: the sidebar's two
-/// terminal callbacks, which connect as well and remain plain closures
-/// (`SessionRowActivationWiringTests` covers the gesture side of that
-/// instead), and any connect path in a different file — `ContentView`
-/// constructs this effect and could dial without it.
+/// - `fileprivate` is a FILE boundary. An extension added to THIS file —
+///   `var asClosure: (Value) -> Void { run }`, a `callAsFunction`,
+///   `@dynamicMemberLookup` — hands the closure out in three lines, and no
+///   guard in this project reads this file.
+/// - `Mirror(reflecting:)` reads stored properties from anywhere,
+///   visibility notwithstanding, and the cast succeeds at runtime.
+///
+/// Both are left open deliberately. The property worth having is that no
+/// plausible future edit makes a single click connect by accident; nobody
+/// writes reflection or a hand-out accessor by accident, and a guard
+/// against either would be an anchor against a spelling — the exact move
+/// three rounds have shown to lose.
+///
+/// Also outside it: the sidebar's two terminal callbacks, which connect as
+/// well and remain plain closures (guarded, not typed — see
+/// `SessionRowActivationWiringTests`), and any connect path in another file
+/// — `ContentView` constructs this effect and can dial without it.
 struct SessionRowConnectEffect<Value> {
     fileprivate let run: (Value) -> Void
 
@@ -116,9 +125,15 @@ enum SessionRowActivation: Equatable {
     /// user read and chose, so neither the rename guard nor the selection
     /// rule applies to it. A menu item that silently did nothing because
     /// the row happened to be in rename mode would be worse than the
-    /// interruption — and the interruption is handled, since selecting the
-    /// row takes focus off the field and the focus-loss handler cancels the
-    /// edit the way it does for every other way of leaving it.
+    /// interruption.
+    ///
+    /// What ends that rename is `SidebarRenameHandoff`, not this type and
+    /// not SwiftUI: any activation that ACTS while a rename is open ends it
+    /// first. An earlier version of this comment claimed instead that
+    /// taking focus off the field would cancel the edit by itself — an
+    /// untested runtime assertion, and the wrong one for a menu entry on
+    /// the row being renamed, which left the draft neither committed nor
+    /// discarded with a connection opening underneath it.
     ///
     /// It also selects, rather than connecting without selecting: after any
     /// route to a connection the highlight must name the row that was
@@ -144,12 +159,13 @@ enum SessionRowActivation: Equatable {
     /// Runs the two effects a session row has, as this activation dictates,
     /// and reports whether either ran.
     ///
-    /// The effects are applied here rather than by an `if activation
-    /// .connects` at the call site, and this is the only place either is
-    /// ever fired: their `run` is `fileprivate`, so no caller can invoke one
-    /// itself. A condition written in a SwiftUI view is a condition a later
-    /// edit can drop, and dropping THAT one turns every single click into a
-    /// dial with a keychain read and a possible TOFU prompt behind it.
+    /// `fileprivate`, because being internal made it the firing site: an
+    /// activation is a value anyone can construct, so
+    /// `SessionRowActivation.selectAndConnect.apply(to:…)` written into any
+    /// function of the view dialled on every single click with the whole
+    /// suite green. Round 2 turned an unguarded slot into an unguarded
+    /// `self`. Callers now reach `perform`, which decides the activation
+    /// itself and never hands one back.
     ///
     /// `onSelect` runs before `onConnect` for `.selectAndConnect`, so the
     /// highlight already names the row by the time the connection starts.
@@ -157,7 +173,7 @@ enum SessionRowActivation: Equatable {
     /// Generic in the value it hands both effects, so this type stays free
     /// of any knowledge about what a session is.
     @discardableResult
-    func apply<Value>(
+    fileprivate func apply<Value>(
         to value: Value,
         onSelect: SessionRowSelectEffect<Value>,
         onConnect: SessionRowConnectEffect<Value>
@@ -174,6 +190,31 @@ enum SessionRowActivation: Equatable {
             return true
         }
     }
+}
+
+/// The one way to act on a session row: decide what an input means and run
+/// the effects that follow, in a single call that never yields an
+/// activation the caller could have chosen for itself.
+///
+/// Split from `build` (which stays reachable, and stays pure — it answers a
+/// question and touches nothing) precisely so that holding an activation
+/// and firing one are different capabilities. A view can ask what an input
+/// would mean; it cannot pick the answer it would like to fire.
+///
+/// The two effects are separate types with `fileprivate` storage, so they
+/// cannot be swapped for one another or unwrapped by a caller. What that
+/// does NOT amount to is stated at `SessionRowConnectEffect`.
+@discardableResult
+func performSessionRowInput<Value>(
+    _ input: SessionRowInput,
+    on value: Value,
+    isRenaming: Bool,
+    isSelected: Bool,
+    onSelect: SessionRowSelectEffect<Value>,
+    onConnect: SessionRowConnectEffect<Value>
+) -> Bool {
+    SessionRowActivation.build(for: input, isRenaming: isRenaming, isSelected: isSelected)
+        .apply(to: value, onSelect: onSelect, onConnect: onConnect)
 }
 
 /// Which background a session row draws, and in what order the three
@@ -217,24 +258,37 @@ enum SessionRowHighlight: Equatable {
     }
 }
 
-/// Whether activating one session row must first end an inline rename that
-/// is open on a DIFFERENT row.
+/// Whether an input must first end an inline rename that is open.
 ///
-/// The failure this answers: activating a row moves the keyboard focus to
-/// it, which takes the first responder out of the other row's rename field.
-/// Left to the focus-loss handler alone, that row can keep drawing an
+/// The failure this answers: acting on a row moves the keyboard focus to
+/// it, which takes the first responder out of whatever rename field held
+/// it. Left to the focus-loss handler alone, that row can keep drawing an
 /// editable field with an uncommitted draft in it that nothing reaches —
 /// it is not focusable while it is being renamed, and a click on it is
-/// swallowed by the rename guard, so the only way back in is a click landing
-/// precisely inside the field. Ending the rename deliberately, in the same
-/// step that moves the focus, is what keeps that state from existing.
+/// swallowed by the rename guard, so the only way back in is a click
+/// landing precisely inside the field. Ending the rename deliberately, in
+/// the same step that moves the focus, is what keeps that state from
+/// existing.
+///
+/// The rule is "any activation that ACTS ends any open rename", which is
+/// both simpler and wider than the "a rename on a DIFFERENT row" it
+/// replaced. That earlier rule was correct only while an activation on the
+/// renamed row was always `.doNothing`; `.contextMenuEntry` broke that, and
+/// the case fell through the gap — the entry connected while the field
+/// stayed open with a draft that was neither committed nor discarded. The
+/// `acts` half is inside this function rather than an `if` beside its call
+/// for the reason this task has now paid for repeatedly: a condition in a
+/// view is a condition no test reaches.
 ///
 /// Cancels rather than commits, matching what this sidebar already does
 /// whenever a rename loses focus: an edit is committed by Return or by the
 /// menu, never by a click landing somewhere else.
 enum SidebarRenameHandoff {
-    static func endsOpenRename(renamingID: UUID?, activating session: UUID) -> Bool {
-        guard let renamingID else { return false }
-        return renamingID != session
+    static func endsOpenRename(
+        renamingID: UUID?, input: SessionRowInput, isRenaming: Bool, isSelected: Bool
+    ) -> Bool {
+        guard renamingID != nil else { return false }
+        return SessionRowActivation.build(
+            for: input, isRenaming: isRenaming, isSelected: isSelected).acts
     }
 }

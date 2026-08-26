@@ -631,21 +631,22 @@ struct SessionSidebar: View {
     /// row is renaming when it is THE renaming row, and selected when it is
     /// THE selected one, and this is the scope that holds both.
     ///
-    /// Both effects are handed to `apply`, which is the only code anywhere
-    /// that can fire either: this view has no way to run a
-    /// `SessionRowConnectEffect` itself, and cannot pass one where the
-    /// selection effect belongs, because the two are different types.
+    /// Both effects are handed to `performSessionRowInput`, which is the
+    /// only reachable code that runs either: this view cannot fire a
+    /// `SessionRowConnectEffect`, cannot pass one where the selection
+    /// effect belongs, and — since `apply` stopped being reachable — cannot
+    /// choose which activation gets fired either. It states the input and
+    /// the two facts about the row, and the answer is not its to pick.
     private func activate(_ input: SessionRowInput, on session: StoredSession) -> Bool {
-        let activation = SessionRowActivation.build(
-            for: input,
-            isRenaming: renamingID == session.id,
-            isSelected: selectedSessionID == session.id)
-        if activation.acts,
-           SidebarRenameHandoff.endsOpenRename(renamingID: renamingID, activating: session.id) {
+        let isRenaming = renamingID == session.id
+        let isSelected = selectedSessionID == session.id
+        if SidebarRenameHandoff.endsOpenRename(
+            renamingID: renamingID, input: input,
+            isRenaming: isRenaming, isSelected: isSelected) {
             endRename()
         }
-        return activation.apply(
-            to: session,
+        return performSessionRowInput(
+            input, on: session, isRenaming: isRenaming, isSelected: isSelected,
             onSelect: SessionRowSelectEffect(moveSelection(to:)),
             onConnect: onConnect)
     }

@@ -156,21 +156,21 @@ struct SessionRowActivationTests {
     }
 }
 
-/// Pins `SessionRowActivation.apply(to:onSelect:onConnect:)` — the one mapping
-/// from an activation to the two effects a session row has.
+/// Pins `performSessionRowInput` — the one reachable way to act on a row,
+/// and therefore the whole chain from an input to a connection.
 ///
-/// This is the load-bearing half of "a single click never connects", and
-/// until fix round 1 it did not exist: the mapping was an `if activation
-/// .connects` inside the view, where the reviewer's probe deleted the
-/// condition and the whole suite stayed green while every click dialled.
-/// Written as a method over spies, that mutation is a failing test rather
-/// than a source scan the next edit outgrows.
+/// It replaced a test over `apply` in fix round 3, because `apply` stopped
+/// being reachable: as an internal method on a freely constructible enum it
+/// WAS the firing site, and `SessionRowActivation.selectAndConnect.apply(…)`
+/// written into any function of the view dialled on every single click with
+/// the full suite green. Testing the entry point instead is both the
+/// stronger statement — build and apply together — and the only one left.
 ///
 /// The spies record the ORDER as well as the count, because "select before
 /// connect" is a promise the highlight depends on: the row has to name the
 /// session before the connection starts.
-@Suite("SessionRowActivation.apply")
-struct SessionRowActivationApplyTests {
+@Suite("performSessionRowInput")
+struct PerformSessionRowInputTests {
     /// Records which effects ran, in order.
     private final class Effects {
         private(set) var log: [String] = []
@@ -178,76 +178,85 @@ struct SessionRowActivationApplyTests {
         func connect(_ value: String) { log.append("connect(\(value))") }
     }
 
-    private func run(_ activation: SessionRowActivation) -> (log: [String], applied: Bool) {
+    private func run(
+        _ input: SessionRowInput, isRenaming: Bool = false, isSelected: Bool = false
+    ) -> (log: [String], applied: Bool) {
         let effects = Effects()
-        let applied = activation.apply(
-            to: "row",
+        let applied = performSessionRowInput(
+            input, on: "row", isRenaming: isRenaming, isSelected: isSelected,
             onSelect: SessionRowSelectEffect(effects.select(_:)),
             onConnect: SessionRowConnectEffect(effects.connect(_:)))
         return (effects.log, applied)
     }
 
-    /// The property, exercised rather than scanned for: a `.select` answer
-    /// must not reach the connect effect.
-    @Test func selectRunsOnlyTheSelectEffect() {
-        let result = run(.select)
+    /// The regression the whole task is about, stated where the effects
+    /// actually run rather than where they are classified.
+    @Test func aSingleClickSelectsAndNeverReachesTheConnectEffect() {
+        let result = run(.singleClick)
         #expect(result.log == ["select(row)"])
         #expect(result.applied)
     }
 
-    @Test func doNothingRunsNeitherEffect() {
-        let result = run(.doNothing)
+    @Test func aSwallowedInputRunsNeitherEffect() {
+        let result = run(.singleClick, isRenaming: true)
         #expect(result.log.isEmpty)
         #expect(!result.applied)
     }
 
-    @Test func selectAndConnectRunsBothInThatOrder() {
-        let result = run(.selectAndConnect)
+    @Test func aDoubleClickSelectsBeforeItConnects() {
+        let result = run(.doubleClick)
         #expect(result.log == ["select(row)", "connect(row)"])
         #expect(result.applied)
     }
 
-    /// Each effect runs at most once per activation — a mapping that called
-    /// `connect` twice would open two connections from one double click, and
-    /// the order check alone would not see it.
-    @Test func neitherEffectRunsTwice() {
-        for activation in [SessionRowActivation.doNothing, .select, .selectAndConnect] {
-            let log = run(activation).log
-            #expect(log.filter { $0.hasPrefix("select") }.count <= 1, "\(activation)")
-            #expect(log.filter { $0.hasPrefix("connect") }.count <= 1, "\(activation)")
+    @Test func returnConnectsTheSelectedRowAndNothingElse() {
+        #expect(run(.returnKey, isSelected: true).log == ["select(row)", "connect(row)"])
+        #expect(run(.returnKey, isSelected: false).log.isEmpty)
+    }
+
+    @Test func theMenuEntryConnectsEvenOnARowBeingRenamed() {
+        #expect(run(.contextMenuEntry, isRenaming: true).log == ["select(row)", "connect(row)"])
+    }
+
+    /// Each effect runs at most once — a chain that connected twice would
+    /// open two connections from one double click, and the order check alone
+    /// would not see it.
+    @Test func neitherEffectRunsTwiceForAnyInput() {
+        for input in SessionRowInput.allCases {
+            for isRenaming in [true, false] {
+                for isSelected in [true, false] {
+                    let log = run(input, isRenaming: isRenaming, isSelected: isSelected).log
+                    #expect(log.filter { $0.hasPrefix("select") }.count <= 1, "\(input)")
+                    #expect(log.filter { $0.hasPrefix("connect") }.count <= 1, "\(input)")
+                }
+            }
         }
     }
 
-    /// `apply`'s answer is what the row reports to SwiftUI as
-    /// handled/ignored, so it must agree with `acts` for every case rather
-    /// than being a second, independently drifting statement of the same
-    /// thing.
-    @Test func whatApplyReportsAgreesWithActsForEveryActivation() {
-        for activation in [SessionRowActivation.doNothing, .select, .selectAndConnect] {
-            #expect(run(activation).applied == activation.acts, "\(activation)")
+    /// What the entry point reports is what the row hands SwiftUI as
+    /// handled/ignored, so it must agree with whether anything ran.
+    @Test func whatItReportsAgreesWithWhetherAnEffectRan() {
+        for input in SessionRowInput.allCases {
+            for isRenaming in [true, false] {
+                for isSelected in [true, false] {
+                    let result = run(input, isRenaming: isRenaming, isSelected: isSelected)
+                    #expect(result.applied == !result.log.isEmpty, "\(input)")
+                }
+            }
         }
     }
 
-    /// And the connect effect runs exactly for the activations `connects`
-    /// names — stated over every case, so the two cannot drift apart.
-    @Test func theConnectEffectRunsExactlyForTheConnectingActivations() {
-        for activation in [SessionRowActivation.doNothing, .select, .selectAndConnect] {
-            let connected = run(activation).log.contains { $0.hasPrefix("connect") }
-            #expect(connected == activation.connects, "\(activation)")
-        }
-    }
-
-    /// The whole chain in one statement, from input to effect: only a
-    /// double click, Return on the selected row and the menu entry may
-    /// reach the connect effect. This is the property the wiring guard
-    /// cannot express, tested end to end over the value layer.
+    /// The property of the whole task, over the entire input space and at
+    /// the point where the effect actually runs: only a double click,
+    /// Return on the selected row, and the menu entry ever reach a
+    /// connection. A further input added later is iterated by `allCases`
+    /// and has to be classified deliberately.
     @Test func onlyTheThreeIntendedInputsEverReachTheConnectEffect() {
         for input in SessionRowInput.allCases {
             for isRenaming in [true, false] {
                 for isSelected in [true, false] {
-                    let activation = SessionRowActivation.build(
-                        for: input, isRenaming: isRenaming, isSelected: isSelected)
-                    let connected = run(activation).log.contains { $0.hasPrefix("connect") }
+                    let connected = run(input, isRenaming: isRenaming, isSelected: isSelected)
+                        .log.contains { $0.hasPrefix("connect") }
                     let expected = input == .contextMenuEntry
                         || (!isRenaming
                             && (input == .doubleClick || (input == .returnKey && isSelected)))
@@ -258,30 +267,84 @@ struct SessionRowActivationApplyTests {
             }
         }
     }
+
+    /// And the selection effect runs for exactly the inputs that act — a
+    /// connection is never opened on a row the highlight does not name.
+    @Test func everyConnectIsPrecededBySelectingTheSameRow() {
+        for input in SessionRowInput.allCases {
+            for isRenaming in [true, false] {
+                for isSelected in [true, false] {
+                    let log = run(input, isRenaming: isRenaming, isSelected: isSelected).log
+                    if log.contains(where: { $0.hasPrefix("connect") }) {
+                        #expect(log.first == "select(row)", "\(input)")
+                    }
+                }
+            }
+        }
+    }
 }
 
-/// Pins `SidebarRenameHandoff.endsOpenRename` (fix round 1): whether
-/// activating one row must first end an inline rename open on another.
+/// Pins `SidebarRenameHandoff.endsOpenRename`: whether an input must first
+/// end an inline rename that is open.
 @Suite("SidebarRenameHandoff")
 struct SidebarRenameHandoffTests {
     /// The case that strands a row: A is being renamed, the user clicks B,
     /// and the focus moves out of A's field whether or not anyone ends the
     /// rename.
-    @Test func aRenameOnAnotherRowIsEnded() {
-        #expect(SidebarRenameHandoff.endsOpenRename(renamingID: UUID(), activating: UUID()))
+    @Test func anActingInputEndsARenameOpenOnAnotherRow() {
+        #expect(SidebarRenameHandoff.endsOpenRename(
+            renamingID: UUID(), input: .singleClick, isRenaming: false, isSelected: false))
     }
 
-    /// Nothing to end.
-    @Test func noOpenRenameEndsNothing() {
-        #expect(!SidebarRenameHandoff.endsOpenRename(renamingID: nil, activating: UUID()))
-    }
-
-    /// The row being renamed is the row being activated: its own activation
-    /// is `.doNothing` anyway, and ending the rename here would cancel the
-    /// edit the user is in the middle of.
-    @Test func aRenameOnTheActivatedRowSurvives() {
+    /// The case fix round 3 exists for: the menu entry on the row that is
+    /// BEING renamed. It is the one input that acts there, so it is the one
+    /// input that has to end the edit — otherwise the field stays open with
+    /// a draft that is neither committed nor discarded while a connection
+    /// opens underneath it.
+    @Test func theMenuEntryEndsTheRenameOnTheRowItActsOn() {
         let id = UUID()
-        #expect(!SidebarRenameHandoff.endsOpenRename(renamingID: id, activating: id))
+        #expect(SidebarRenameHandoff.endsOpenRename(
+            renamingID: id, input: .contextMenuEntry, isRenaming: true, isSelected: false))
+    }
+
+    /// A gesture on the row being renamed does not act, so it must not end
+    /// the edit either — that is the click the rename guard swallows.
+    @Test func aSwallowedGestureLeavesTheRenameAlone() {
+        let id = UUID()
+        for input in [SessionRowInput.singleClick, .doubleClick, .returnKey] {
+            #expect(!SidebarRenameHandoff.endsOpenRename(
+                renamingID: id, input: input, isRenaming: true, isSelected: true), "\(input)")
+        }
+    }
+
+    /// Nothing open, nothing to end — for every input, so an acting one
+    /// cannot end a rename that does not exist.
+    @Test func noOpenRenameEndsNothing() {
+        for input in SessionRowInput.allCases {
+            #expect(!SidebarRenameHandoff.endsOpenRename(
+                renamingID: nil, input: input, isRenaming: false, isSelected: true), "\(input)")
+        }
+    }
+
+    /// The rule stated over the whole space: a rename ends exactly when one
+    /// is open and the input acts. Without this, the cases above could all
+    /// hold while some combination fell through the gap the previous rule
+    /// left — which is precisely how the menu entry got missed.
+    @Test func aRenameEndsExactlyWhenOneIsOpenAndTheInputActs() {
+        let id = UUID()
+        for input in SessionRowInput.allCases {
+            for isRenaming in [true, false] {
+                for isSelected in [true, false] {
+                    let acts = SessionRowActivation.build(
+                        for: input, isRenaming: isRenaming, isSelected: isSelected).acts
+                    #expect(
+                        SidebarRenameHandoff.endsOpenRename(
+                            renamingID: id, input: input,
+                            isRenaming: isRenaming, isSelected: isSelected) == acts,
+                        "\(input), isRenaming \(isRenaming), isSelected \(isSelected)")
+                }
+            }
+        }
     }
 }
 
