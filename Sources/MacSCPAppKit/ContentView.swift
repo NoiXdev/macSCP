@@ -234,6 +234,14 @@ struct ContentView: View {
     /// mid-dialog if the underlying transfers finish while it's still open —
     /// blank text under a destructive "Close" button.
     @State var closeWarningText: String = ""
+    /// The tab whose SIBLINGS a pending "Close Other Tabs" would close —
+    /// nil when no such confirmation is showing. The tab held here is the
+    /// one that SURVIVES, which is also the one the menu was opened on.
+    @State var closeOthersRequest: SessionTab?
+    /// Warning text for `closeOthersRequest`, frozen for the same reason
+    /// `closeWarningText` above is: the dialog reads a snapshot rather than
+    /// recomputing counts that can change while it is on screen.
+    @State var closeOthersWarningText: String = ""
 
     // MARK: - Audit log (M9b/T3)
 
@@ -2112,11 +2120,13 @@ struct ContentView: View {
         tab.connectionViewModel.endEditing()
     }
 
-    /// Target tab for the form-filling sidebar actions ("Edit…", ssh-config
-    /// import): the active tab if it is unconnected and idle, otherwise a new
-    /// tab. `nil` while the active tab is mid-connect (the click is ignored,
-    /// as it is today).
-    private func formTarget() -> SessionTab? {
+    /// Target tab for the form-filling actions ("Edit…", ssh-config import,
+    /// and the tab menu's "Save as Session…", which lives in
+    /// `ContentView+Lifecycle.swift` and is why this is no longer
+    /// `private`): the active tab if it is unconnected and idle, otherwise a
+    /// new tab. `nil` while the active tab is mid-connect (the click is
+    /// ignored, as it is today).
+    func formTarget() -> SessionTab? {
         let tab = activeTab
         if tab.isConnected {
             let fresh = makeTab()

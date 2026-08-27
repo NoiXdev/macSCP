@@ -797,6 +797,170 @@ extension ContentView {
         shrinkIfPristine()
     }
 
+    // MARK: - Tab context menu
+
+    /// The one route out of the tab strip's context menu: every entry
+    /// `TabContextMenu.entries` can produce lands here, and every case does
+    /// something. Nothing in this switch re-asks whether the entry should
+    /// have been offered — its precondition was already decided (and
+    /// tested) in Core, and asking again here is how two answers to one
+    /// question start to disagree.
+    func handleTabMenuEntry(_ entry: TabMenuEntry, for tab: SessionTab) {
+        switch entry {
+        case .close:
+            requestClose(tab)
+        case .closeOthers:
+            requestCloseOthers(of: tab)
+        case .moveLeft:
+            moveTab(tab, by: -1)
+        case .moveRight:
+            moveTab(tab, by: 1)
+        case .openTerminal:
+            openTerminalPane(in: tab)
+        case .saveAsSession:
+            saveAsSession(from: tab)
+        }
+    }
+
+    /// Moves a tab one position, through the SAME `TabsViewModel.move`
+    /// dragging will call — the reordering rule exists once.
+    ///
+    /// The destination is the tab's current index plus the offset, with no
+    /// clamping: `move(tabID:to:)` refuses an out-of-range destination as a
+    /// no-op, and `.moveLeft`/`.moveRight` are only offered when the
+    /// neighbour they move onto exists, so the two facts meet in the
+    /// middle rather than each guessing about the other.
+    func moveTab(_ tab: SessionTab, by offset: Int) {
+        guard let from = tabsModel.tabs.firstIndex(where: { $0.id == tab.id }) else { return }
+        tabsModel.move(tabID: tab.id, to: from + offset)
+    }
+
+    /// "Close Other Tabs": everything except `tab` goes, whether or not
+    /// `tab` is the active one — the menu hangs off a particular row and
+    /// the user means that row.
+    ///
+    /// One question for the whole group, asked only when there is something
+    /// to warn about (`TabCloseWarning.bulkMessage` answers empty
+    /// otherwise), and the text is frozen here for the same reason
+    /// `requestClose` freezes its own: a dialog that recomputes its counts
+    /// per render can go blank while it is on screen.
+    func requestCloseOthers(of tab: SessionTab) {
+        let closing = tabsModel.tabs.filter { $0.id != tab.id }
+        guard !closing.isEmpty else { return }
+        let message = TabCloseWarning.bulkMessage(
+            tabsClosing: closing.count,
+            transferring: TabCloseWarning.transferringCount(among: closing),
+            incoming: TabCloseWarning.incomingCount(among: closing, in: tabsModel.tabs))
+        if message.isEmpty {
+            Task { await performCloseOthers(of: tab) }
+        } else {
+            closeOthersWarningText = message
+            closeOthersRequest = tab
+        }
+    }
+
+    /// Tears every other tab down through `teardown(_:reason:)`, one at a
+    /// time, and leaves `tab` active.
+    ///
+    /// The list is captured before the loop so a tab cannot be missed while
+    /// the model shrinks underneath it. `TabsViewModel.closeTab` refuses to
+    /// remove the last tab, which cannot bite here: `tab` itself is never in
+    /// `closing`, so every removal happens while at least two tabs remain.
+    ///
+    /// The attention indicator is reset only when the tab that was active is
+    /// among the ones closing — the same rule `performClose` follows: a tab
+    /// the user did not actually visit must not have its failures
+    /// acknowledged for it.
+    func performCloseOthers(of tab: SessionTab) async {
+        let closing = tabsModel.tabs.filter { $0.id != tab.id }
+        let survivorTakesOver = tabsModel.activeTabID != tab.id
+        for other in closing {
+            await teardown(other, reason: .userRequested)
+            tabsModel.closeTab(other.id)
+        }
+        tabsModel.activate(tab.id)
+        if survivorTakesOver {
+            tab.seenFailureCount = tab.transferQueue.totalFailureCount
+        }
+        shrinkIfPristine()
+    }
+
+    /// "Open Terminal" on a tab that is ALREADY connected: this reveals the
+    /// terminal half of a running session, and dials nothing.
+    ///
+    /// Deliberately not `openTerminalFromSidebar`, which looks similar and
+    /// is not: that one goes through `connect(in:stored:paneVisibility:)`
+    /// and opens a NEW connection, which is the right thing for a stored
+    /// session in the sidebar and the wrong thing entirely for a tab whose
+    /// session is up. What changes pane visibility on a LIVE tab is
+    /// `TerminalPanelViewModel.toggle()` — the same call the toolbar's
+    /// Terminal button and the "Terminal" menu's Show/Hide entry make, and
+    /// the only call that owns the shell's lifecycle — followed by
+    /// `persistActivePaneVisibility()` so the session remembers what is on
+    /// screen, exactly as a click on that button would.
+    ///
+    /// Toggling is guarded on the terminal not already being visible, which
+    /// is what separates "open" from "toggle": the entry is offered for a
+    /// connected shell backend whether or not the panel happens to be up,
+    /// and an entry named "Open Terminal" that closes one would be a lie.
+    /// The pane lock needs no check here for the same reason — it forbids
+    /// hiding the last visible half, never showing a hidden one.
+    ///
+    /// The tab is activated first: it is the tab whose terminal is being
+    /// opened, and revealing a panel in a tab the user cannot see would be
+    /// an invisible result. Activating also makes
+    /// `persistActivePaneVisibility()` describe this tab rather than
+    /// whichever one happened to be in front.
+    func openTerminalPane(in tab: SessionTab) {
+        guard let session = tab.session else { return }
+        // Capability re-check, the same belt-and-suspenders every other
+        // terminal entry point carries: the menu entry is not offered
+        // without a shell, and a silent no-op is never the fallback.
+        guard BackendDescriptor.descriptor(for: tab.connectionViewModel.kind)
+            .capabilities.supportsShell
+        else {
+            presentTerminalUnavailable()
+            return
+        }
+        activate(tab.id)
+        guard !session.terminal.isVisible else { return }
+        session.terminal.toggle()
+        persistActivePaneVisibility()
+    }
+
+    /// "Save as Session…" on a connected ad-hoc tab: fills the connection
+    /// FORM with what this tab is currently connected with and arms its
+    /// "Save session" switch, so the user names it and reviews the fields
+    /// before anything is written. There is no second save path — the form
+    /// reaches the same `SessionListViewModel.save` every saved connect
+    /// does, and it is also what already answers whether the secret goes
+    /// along.
+    ///
+    /// The values come from `ConnectionViewModel.values`, the form's own
+    /// single source of truth, and not from `lastConnectedConfig`: that is
+    /// an `SSHConnectionConfig?` and carries neither S3 nor WebDAV.
+    ///
+    /// `kind` is assigned BEFORE `values`, because changing it resets
+    /// `values` to that backend's defaults (see its `didSet`) — the other
+    /// order would wipe what was just copied in.
+    ///
+    /// Same target rule as "Edit…" and the ssh-config import
+    /// (`formTarget()`): the active tab when it is free to show a form,
+    /// otherwise a fresh tab, so the running session this is saving is
+    /// never displaced by the form that saves it.
+    func saveAsSession(from tab: SessionTab) {
+        let kind = tab.connectionViewModel.kind
+        let values = tab.connectionViewModel.values
+        let name = tab.displayTitle
+        guard let target = formTarget() else { return }
+        let form = target.connectionViewModel
+        form.exitEditMode()
+        form.kind = kind
+        form.values = values
+        form.saveName = name
+        form.shouldSaveSession = true
+    }
+
     // MARK: - Window geometry
 
     /// Actively grows/shrinks the window (animated) to the target size while

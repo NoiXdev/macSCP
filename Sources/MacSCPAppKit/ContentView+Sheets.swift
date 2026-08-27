@@ -38,6 +38,32 @@ extension ContentView {
         } message: {
             Text(closeWarningText)
         }
+        // Bulk close confirmation ("Close Other Tabs") — the same shape as
+        // the single-tab dialog above, asked ONCE for the whole group.
+        // Declining cancels the entire operation rather than sparing the
+        // busy tabs; see `TabCloseWarning.bulkMessage`. Tabs that are all
+        // idle never reach this: `requestCloseOthers` closes them straight
+        // away, exactly as `requestClose` does for one idle tab.
+        .confirmationDialog(
+            L10n.string("tabs.closeOthers.title", "Close other tabs?"),
+            isPresented: Binding(
+                get: { closeOthersRequest != nil },
+                set: { isPresented in if !isPresented { closeOthersRequest = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(L10n.string("tabs.close.confirm", "Close"), role: .destructive) {
+                if let tab = closeOthersRequest {
+                    closeOthersRequest = nil
+                    Task { await performCloseOthers(of: tab) }
+                }
+            }
+            Button(L10n.string("common.cancel", "Cancel"), role: .cancel) {
+                closeOthersRequest = nil
+            }
+        } message: {
+            Text(closeOthersWarningText)
+        }
         // Export sheet (M9a/T3): one view for all three scopes, opened by
         // the sidebar's context menus via `exportSheetItem`.
         .sheet(item: $exportSheetItem) { item in

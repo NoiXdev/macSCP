@@ -105,12 +105,8 @@ struct PaneVisibilityWiringGuardTests {
             """)
     }
 
-    /// Each of the FOUR call sites that flip built-in pane visibility (the
-    /// Files toolbar button, the Terminal toolbar button in `.builtIn` mode,
-    /// the `tabCommands.toggleTerminal` menu bridge, and — since the
-    /// whole-phase review's Fix 3 — `ContentView.triggerSnippet`, which
-    /// reveals the panel for a snippet) must be immediately followed by
-    /// `persistActivePaneVisibility()` — see
+    /// Every call site that flips built-in pane visibility must be
+    /// immediately followed by `persistActivePaneVisibility()` — see
     /// `ContentView.persistActivePaneVisibility`'s own doc comment for why
     /// this has to run at every site rather than once centrally (there is
     /// no single chokepoint all four funnel through).
@@ -122,8 +118,18 @@ struct PaneVisibilityWiringGuardTests {
     /// existing shape list found it, and the persist it was missing became a
     /// failure here rather than a documented blind spot. What did change is
     /// the FILE list: `ContentView.swift` is scanned too now.
+    ///
+    /// The counts below are what the scanner finds in each file, recounted
+    /// whenever this line changes. In `ContentView+Lifecycle.swift`: the
+    /// Files toolbar button, the Terminal toolbar button in `.builtIn`
+    /// mode, the `tabCommands.toggleTerminal` menu bridge, and the tab
+    /// context menu's "Open Terminal" (`openTerminalPane`), which reveals
+    /// the panel on a tab that is already connected. In `ContentView.swift`:
+    /// `triggerSnippet` alone — `restorePaneVisibility`'s own toggle is the
+    /// read direction and is exempted by name, which
+    /// `scannerIgnoresTheRestorePathsOwnToggle` pins.
     @Test func everyToggleSiteIsFollowedByAPersist() throws {
-        for (file, expected) in [(Self.lifecycleFile, 3), (Self.contentViewFile, 1)] {
+        for (file, expected) in [(Self.lifecycleFile, 4), (Self.contentViewFile, 1)] {
             let source = try String(contentsOf: file, encoding: .utf8)
             let lines = source.components(separatedBy: "\n")
             let sites = Self.userToggleSiteEndLines(in: lines)
@@ -175,7 +181,7 @@ struct PaneVisibilityWiringGuardTests {
     /// The scanner's own honesty check: `activeTab.transfersPanelVisible.toggle()`,
     /// a few lines below the Files/Terminal buttons in the same file, is a
     /// DIFFERENT toggle (the transfers bar, not a pane) and must not be
-    /// mistaken for one of the three sites above.
+    /// mistaken for a pane-visibility site.
     @Test func scannerIgnoresTheUnrelatedTransfersToggle() throws {
         let source = try String(contentsOf: Self.lifecycleFile, encoding: .utf8)
         #expect(source.contains("activeTab.transfersPanelVisible.toggle()"),

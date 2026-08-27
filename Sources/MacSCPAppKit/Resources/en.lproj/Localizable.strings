@@ -394,6 +394,15 @@
 "tabs.closeOthers.activeTransfers %1$lld %2$lld" = "Closing %1$lld tabs cancels active transfers in %2$lld of them.";
 "tabs.closeOthers.incomingTransfers %lld" = "%lld of them are receiving transfers from other tabs; closing cancels those.";
 
+/* Tab context menu */
+"tabs.menu.close" = "Close Tab";
+"tabs.menu.closeOthers" = "Close Other Tabs";
+"tabs.menu.moveLeft" = "Move Left";
+"tabs.menu.moveRight" = "Move Right";
+"tabs.menu.openTerminal" = "Open Terminal";
+"tabs.menu.saveAsSession" = "Save as Session…";
+"tabs.closeOthers.title" = "Close other tabs?";
+
 /* Session export/import — sidebar menus (M9a/T3) */
 "export.menu.single" = "Export…";
 "export.menu.group" = "Export Group…";

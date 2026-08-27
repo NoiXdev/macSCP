@@ -397,6 +397,15 @@
 "tabs.closeOthers.activeTransfers %1$lld %2$lld" = "%1$lld karty zostaną zamknięte, co anuluje aktywne transfery w %2$lld z nich.";
 "tabs.closeOthers.incomingTransfers %lld" = "%lld karty odbierają transfery z innych kart; zamknięcie anuluje te transfery.";
 
+/* Menu kontekstowe karty */
+"tabs.menu.close" = "Zamknij kartę";
+"tabs.menu.closeOthers" = "Zamknij pozostałe karty";
+"tabs.menu.moveLeft" = "Przesuń w lewo";
+"tabs.menu.moveRight" = "Przesuń w prawo";
+"tabs.menu.openTerminal" = "Otwórz terminal";
+"tabs.menu.saveAsSession" = "Zapisz jako sesję…";
+"tabs.closeOthers.title" = "Zamknąć pozostałe karty?";
+
 /* Eksport/import sesji — menu paska bocznego (M9a/T3) */
 "export.menu.single" = "Eksportuj…";
 "export.menu.group" = "Eksportuj grupę…";

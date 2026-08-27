@@ -398,6 +398,15 @@
 "tabs.closeOthers.activeTransfers %1$lld %2$lld" = "La fermeture de %1$lld onglets annule les transferts actifs dans %2$lld d'entre eux.";
 "tabs.closeOthers.incomingTransfers %lld" = "%lld d'entre eux reçoivent des transferts d'autres onglets ; la fermeture annule ces transferts.";
 
+/* Menu contextuel des onglets */
+"tabs.menu.close" = "Fermer l'onglet";
+"tabs.menu.closeOthers" = "Fermer les autres onglets";
+"tabs.menu.moveLeft" = "Déplacer vers la gauche";
+"tabs.menu.moveRight" = "Déplacer vers la droite";
+"tabs.menu.openTerminal" = "Ouvrir le terminal";
+"tabs.menu.saveAsSession" = "Enregistrer comme session…";
+"tabs.closeOthers.title" = "Fermer les autres onglets ?";
+
 /* Export/import de sessions — menus de la barre latérale (M9a/T3) */
 "export.menu.single" = "Exporter…";
 "export.menu.group" = "Exporter le groupe…";

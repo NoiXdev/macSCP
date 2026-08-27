@@ -133,7 +133,8 @@ extension ContentView {
                     activeTabID: tabsModel.activeTabID,
                     onActivate: { activate($0) },
                     onClose: { requestClose($0) },
-                    onAdd: { tabsModel.addTab(makeTab()) }
+                    onAdd: { tabsModel.addTab(makeTab()) },
+                    onMenuEntry: { tab, entry in handleTabMenuEntry(entry, for: tab) }
                 )
             }
             detail

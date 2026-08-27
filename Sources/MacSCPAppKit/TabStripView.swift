@@ -9,17 +9,28 @@ struct TabStripView: View {
     let onActivate: (UUID) -> Void
     let onClose: (SessionTab) -> Void
     let onAdd: () -> Void
+    /// One route out of the tab context menu for every entry the menu can
+    /// draw. The strip does not know what any entry means — it hands the
+    /// tab and the chosen `TabMenuEntry` back to `ContentView`, which owns
+    /// the tab lifecycle those actions run through.
+    let onMenuEntry: (SessionTab, TabMenuEntry) -> Void
 
     var body: some View {
         HStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 0) {
-                    ForEach(tabs) { tab in
+                    // Enumerated, because the context menu's move/close-others
+                    // entries are decided from the tab's POSITION and the
+                    // total count — see `TabContextMenu.entries`.
+                    ForEach(Array(tabs.enumerated()), id: \.element.id) { position, tab in
                         TabItemView(
                             tab: tab,
+                            index: position,
+                            tabCount: tabs.count,
                             isActive: tab.id == activeTabID,
                             onActivate: { onActivate(tab.id) },
-                            onClose: { onClose(tab) })
+                            onClose: { onClose(tab) },
+                            onMenuEntry: { entry in onMenuEntry(tab, entry) })
                     }
                 }
             }
@@ -143,11 +154,40 @@ enum TabIndicatorPlan {
     }
 }
 
+/// The localized title for one `TabMenuEntry`. A TOTAL mapping: every case
+/// answers a string, and there is no way to answer "nothing". Which entries
+/// exist at all is `TabContextMenu.entries`' decision, made in Core and
+/// tested there — this type only names them.
+enum TabMenuEntryTitle {
+    static func title(for entry: TabMenuEntry) -> String {
+        switch entry {
+        case .close:
+            return L10n.string("tabs.menu.close", "Close Tab")
+        case .closeOthers:
+            return L10n.string("tabs.menu.closeOthers", "Close Other Tabs")
+        case .moveLeft:
+            return L10n.string("tabs.menu.moveLeft", "Move Left")
+        case .moveRight:
+            return L10n.string("tabs.menu.moveRight", "Move Right")
+        case .openTerminal:
+            return L10n.string("tabs.menu.openTerminal", "Open Terminal")
+        case .saveAsSession:
+            return L10n.string("tabs.menu.saveAsSession", "Save as Session…")
+        }
+    }
+}
+
 private struct TabItemView: View {
     let tab: SessionTab
+    /// This tab's position in the strip and the strip's total, the two
+    /// facts `TabContextMenu.entries` turns into the move and bulk-close
+    /// entries.
+    let index: Int
+    let tabCount: Int
     let isActive: Bool
     let onActivate: () -> Void
     let onClose: () -> Void
+    let onMenuEntry: (TabMenuEntry) -> Void
 
     @State private var isHovering = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -229,6 +269,22 @@ private struct TabItemView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(perform: onActivate)
+        // The tab context menu. Everything about WHICH entries appear is
+        // `TabContextMenu.entries`' answer, drawn here without a single
+        // condition of this view's own: no `if` around an item, no filter
+        // over the list, no `.disabled` standing in for a missing entry
+        // (the design rejects greyed-out entries outright). A rule spelled
+        // a second time here is a rule that can disagree with the one Core
+        // tests — which is exactly what `TabContextMenuWiringGuardTests`
+        // watches this closure for.
+        .contextMenu {
+            ForEach(Array(TabContextMenu.entries(
+                atIndex: index, ofTabCount: tabCount,
+                supportsShell: supportsShell, isAdHoc: isAdHoc, isConnected: tab.isConnected
+            ).enumerated()), id: \.offset) { _, entry in
+                Button(TabMenuEntryTitle.title(for: entry)) { onMenuEntry(entry) }
+            }
+        }
         .onHover { isHovering = $0 }
         .accessibilityElement(children: .combine)
         .accessibilityValue(accessibilityState)
@@ -243,6 +299,19 @@ private struct TabItemView: View {
         let descriptor = BackendDescriptor.descriptor(for: tab.connectionViewModel.kind)
         return L10n.string(descriptor.badgeLabelKey, descriptor.badgeLabelDefault)
     }
+
+    /// The backend capability half of the "Open Terminal" precondition,
+    /// read the same way `ContentView.activeTabSupportsShell` reads it —
+    /// from the descriptor, never from a `ConnectionKind` comparison.
+    private var supportsShell: Bool {
+        BackendDescriptor.descriptor(for: tab.connectionViewModel.kind).capabilities.supportsShell
+    }
+
+    /// Ad hoc means "dialed without a stored session behind it".
+    /// `SessionTab.activeStoredSessionID` is set only once a connect
+    /// actually landed on a stored session, and is cleared again by
+    /// `ContentView.teardown(_:reason:)`, so it is the fact, not a guess.
+    private var isAdHoc: Bool { tab.activeStoredSessionID == nil }
 
     private var accessibilityState: String {
         switch indicator {
