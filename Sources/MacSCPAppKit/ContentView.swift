@@ -239,7 +239,7 @@ struct ContentView: View {
     /// one that SURVIVES, which is also the one the menu was opened on.
     @State var closeOthersRequest: SessionTab?
     /// Warning text for `closeOthersRequest`, frozen for the same reason
-    /// `closeWarningText` above is: the dialog reads a snapshot rather than
+    /// `closeWarningText` is: the dialog reads a snapshot rather than
     /// recomputing counts that can change while it is on screen.
     @State var closeOthersWarningText: String = ""
 

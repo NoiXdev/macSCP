@@ -101,8 +101,8 @@ struct HostTagsWiringGuardTests {
             """)
     }
 
-    /// Fail-closed companion: the anchor names ONE write, and the claim
-    /// above is that it is the app's only one. A second
+    /// Fail-closed companion: the anchor names ONE write, and this suite's
+    /// claim is that it is the app's only one. A second
     /// `sessionListViewModel.save(` appearing in this file would mean a
     /// second new-session write path exists that this guard never looks at
     /// — which is exactly what splitting the save out of the dial was

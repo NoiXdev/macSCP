@@ -119,8 +119,8 @@ struct PaneVisibilityWiringGuardTests {
     /// failure here rather than a documented blind spot. What did change is
     /// the FILE list: `ContentView.swift` is scanned too now.
     ///
-    /// The counts below are what the scanner finds in each file, recounted
-    /// whenever this line changes. In `ContentView+Lifecycle.swift`: the
+    /// These are the counts the scanner finds in each file, recounted
+    /// whenever this sentence changes. In `ContentView+Lifecycle.swift`: the
     /// Files toolbar button, the Terminal toolbar button in `.builtIn`
     /// mode, the `tabCommands.toggleTerminal` menu bridge, and the tab
     /// context menu's "Open Terminal" (`openTerminalPane`), which reveals

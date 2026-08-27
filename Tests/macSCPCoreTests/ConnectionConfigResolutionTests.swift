@@ -38,9 +38,12 @@ private final class ConnectorGate: @unchecked Sendable {
     }
 }
 
-/// The equivalence guard between the two callers of one resolution
-/// (P3c/T1): `connect()` dials the config it resolves, the context-menu
-/// route resolves the same config and dials nothing. Every test here fills
+/// The equivalence guard between dialing and not dialing one shared
+/// resolution (P3c/T1): `connect()` dials the config it resolves, while the
+/// external-terminal route resolves the same config and hands it to a
+/// launcher. (`validateForNewSave()` is a third caller of that resolution
+/// and is guarded by `SaveWithoutDialingTests` instead — it discards the
+/// config, so there is nothing here to compare it against.) Every test here fills
 /// TWO identically configured view models and compares what one dialed with
 /// what the other resolved, so the guard goes red as soon as either path
 /// grows a step the other does not have — which is the whole reason this

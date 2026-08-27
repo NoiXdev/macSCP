@@ -521,7 +521,7 @@ struct ConnectionFormView: View {
                     // toggle off there is no session being described and no
                     // name field on screen, so a Save button would be an
                     // offer the form cannot keep. Same submit sequence as
-                    // edit mode's own Save above — resolve the login set,
+                    // edit mode's own Save — resolve the login set,
                     // validate, then hand out — so a refusal highlights the
                     // offending field instead of failing silently.
                     if viewModel.shouldSaveSession {

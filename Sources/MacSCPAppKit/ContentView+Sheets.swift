@@ -39,7 +39,7 @@ extension ContentView {
             Text(closeWarningText)
         }
         // Bulk close confirmation ("Close Other Tabs") — the same shape as
-        // the single-tab dialog above, asked ONCE for the whole group.
+        // the single-tab dialog, asked ONCE for the whole group.
         // Declining cancels the entire operation rather than sparing the
         // busy tabs; see `TabCloseWarning.bulkMessage`. Tabs that are all
         // idle never reach this: `requestCloseOthers` closes them straight

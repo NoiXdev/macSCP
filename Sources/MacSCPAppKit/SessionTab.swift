@@ -203,12 +203,12 @@ final class SessionTab: Identifiable {
     ///   `teardown(_:)`, not before — seeing `.lost` at all depends on that
     ///   order.
     /// - `ContentView.teardown(_:)` itself resets this to `nil`
-    ///   unconditionally, for its four other callers (`disconnectToForm`,
-    ///   `performClose`, the reconnect-in-place branch of `connect(in:
-    ///   stored:)`, and Cancel's `onCancel` in `ContentView+Detail.swift`,
-    ///   connection-liveness plan Task 6) — every one of them is a
-    ///   deliberate "leave this connection", with nothing left for a stale
-    ///   dot to describe.
+    ///   unconditionally, for its five other callers (`disconnectToForm`,
+    ///   `performClose`, `performCloseOthers`, the reconnect-in-place branch
+    ///   of `connect(in:stored:)`, and Cancel's `onCancel` in
+    ///   `ContentView+Detail.swift`; recounted at the tab-context-menu
+    ///   plan's final review) — every one of them is a deliberate "leave
+    ///   this connection", with nothing left for a stale dot to describe.
     /// - `ContentView.dismissLostConnection(_:)` (Task 7) resets it to
     ///   `nil` when the user leaves the lost surface for the form, and
     ///   clears `lostConnection` in the same breath.

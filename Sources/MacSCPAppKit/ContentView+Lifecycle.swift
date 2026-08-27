@@ -368,20 +368,22 @@ extension ContentView {
         tab.activeStoredSessionID = nil
         tab.titleName = nil
         // Stale liveness (connection-liveness plan, Task 4, fix round 2;
-        // recounted for Task 6): this function has exactly four OTHER
-        // callers — `disconnectToForm` (the toolbar "Disconnect" button),
-        // `performClose` (closing a tab), the reconnect-in-place branch of
-        // `connect(in:stored:)`, and `ConnectingAttemptView`'s `onCancel` in
-        // `ContentView+Detail.swift` (Task 6) — and every one of them is a
-        // deliberate "leave this connection". There is no connection left to describe
-        // afterward, so a dot left reading `.degraded`/`.lost` from before
-        // this call would be describing a session that is no longer there.
+        // recounted for the tab-context-menu plan's final review): this
+        // function has exactly five OTHER callers — `disconnectToForm` (the
+        // toolbar "Disconnect" button), `performClose` (closing a tab),
+        // `performCloseOthers` (closing every other tab), the
+        // reconnect-in-place branch of `connect(in:stored:)`, and
+        // `ConnectingAttemptView`'s `onCancel` in `ContentView+Detail.swift`
+        // — and every one of them is a deliberate "leave this connection".
+        // There is no connection left to describe afterward, so a dot left
+        // reading `.degraded`/`.lost` from before this call would be
+        // describing a session that is no longer there.
         // The ONE exception is `handleLivenessGiveUp`, which writes
         // `.lost` AFTER calling this function precisely so that write is
         // not the one this line clears.
         tab.liveness = nil
         // Same rule, same sentence, for the lost-connection record (Task
-        // 7): every caller listed above is leaving this connection on
+        // 7): every one of those five callers is leaving this connection on
         // purpose, and a record of a DROP would be describing something
         // that did not happen. `handleLivenessGiveUp` is the same one
         // exception it is for `liveness` — it writes this afterwards,
@@ -398,12 +400,12 @@ extension ContentView {
         // exact complaint this whole surface was written to answer.
         //
         // The sibling surface never had this defect because it hangs off
-        // `liveness == .lost`, which `tab.liveness = nil` above clears;
-        // this one hangs off a property teardown did not touch. Same
-        // sentence as both lines above, therefore: every caller of this
-        // function is leaving this connection on purpose, so a record of
-        // an attempt that failed is describing something the tab has been
-        // taken past.
+        // `liveness == .lost`, which this function's own `tab.liveness`
+        // reset clears; this one hangs off a property teardown did not
+        // touch. Same sentence as the other two resets, therefore: every one
+        // of those five callers is leaving this connection on purpose, so a
+        // record of an attempt that failed is describing something the tab
+        // has been taken past.
         tab.connectFailure = nil
     }
 
@@ -805,35 +807,26 @@ extension ContentView {
     /// have been offered — its precondition was already decided (and
     /// tested) in Core, and asking again here is how two answers to one
     /// question start to disagree.
+    ///
+    /// The move case forwards the step it was handed instead of turning it
+    /// into a number: a direction translated here is a translation nothing
+    /// can call with a value, and the pair of numbers that used to stand in
+    /// this switch could be swapped without a single test noticing (final
+    /// review, I1). `TabsViewModel.move(tabID:oneStep:)` takes the step, and
+    /// takes it where both directions are asked for by their names.
     func handleTabMenuEntry(_ entry: TabMenuEntry, for tab: SessionTab) {
         switch entry {
         case .close:
             requestClose(tab)
         case .closeOthers:
             requestCloseOthers(of: tab)
-        case .moveLeft:
-            moveTab(tab, by: -1)
-        case .moveRight:
-            moveTab(tab, by: 1)
+        case .move(let step):
+            tabsModel.move(tabID: tab.id, oneStep: step)
         case .openTerminal:
             openTerminalPane(in: tab)
         case .saveAsSession:
             saveAsSession(from: tab)
         }
-    }
-
-    /// Moves a tab one position, through the SAME `TabsViewModel.move`
-    /// dragging reaches through `move(tabID:onto:)` — the reordering rule
-    /// exists once.
-    ///
-    /// The destination is the tab's current index plus the offset, with no
-    /// clamping: `move(tabID:to:)` refuses an out-of-range destination as a
-    /// no-op, and `.moveLeft`/`.moveRight` are only offered when the
-    /// neighbour they move onto exists, so the two facts meet in the
-    /// middle rather than each guessing about the other.
-    func moveTab(_ tab: SessionTab, by offset: Int) {
-        guard let from = tabsModel.tabs.firstIndex(where: { $0.id == tab.id }) else { return }
-        tabsModel.move(tabID: tab.id, to: from + offset)
     }
 
     /// Which entries one tab's context menu offers.
@@ -981,7 +974,7 @@ extension ContentView {
     /// block is IN USE does not, and `buildJumpSpec()` returns `nil` without
     /// it. A session only reachable through its bastion would have been
     /// saved as a direct one, with nothing on screen to show it. The rest of
-    /// what is carried below is the same class of fact: the login-set
+    /// what this type carries is the same class of fact: the login-set
     /// binding, the jump's own source/login mode, the group and the tags.
     ///
     /// Deliberately NOT carried: `saveAsNewLoginSet`/`newLoginSetName`.

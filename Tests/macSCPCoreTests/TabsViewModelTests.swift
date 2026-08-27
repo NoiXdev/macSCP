@@ -157,6 +157,74 @@ struct TabsViewModelTests {
         #expect(vm.activeTabID == c.id)
     }
 
+    // MARK: - Moving one step (what the context menu asks for)
+    //
+    // The direction of "Move Left"/"Move Right" was the last arithmetic of
+    // this feature and the only part of it no test reached: while the step
+    // was taken in the app layer, swapping the two numbers left the whole
+    // suite green (final review, I1). The step is taken in the model now,
+    // and these say what each direction owes.
+
+    @Test func movingOneStepLeftPutsTheTabBeforeItsLeftNeighbour() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID()), c = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b); vm.addTab(c)
+        vm.move(tabID: b.id, oneStep: .left)
+        #expect(vm.tabs.map(\.id) == [b.id, a.id, c.id])
+    }
+
+    @Test func movingOneStepRightPutsTheTabAfterItsRightNeighbour() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID()), c = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b); vm.addTab(c)
+        vm.move(tabID: b.id, oneStep: .right)
+        #expect(vm.tabs.map(\.id) == [a.id, c.id, b.id])
+    }
+
+    /// A tab with no neighbour on the side it is asked to move to stays
+    /// where it is, rather than trapping on an index off the end. The menu
+    /// does not offer that step, so this only ever arrives from a menu that
+    /// went stale between opening and clicking.
+    @Test func aStepPastEitherEndOfTheStripDoesNothing() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b)
+        vm.move(tabID: a.id, oneStep: .left)
+        #expect(vm.tabs.map(\.id) == [a.id, b.id])
+        vm.move(tabID: b.id, oneStep: .right)
+        #expect(vm.tabs.map(\.id) == [a.id, b.id])
+    }
+
+    @Test func steppingATabTheModelDoesNotKnowIsANoOp() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b)
+        vm.move(tabID: UUID(), oneStep: .right)
+        #expect(vm.tabs.map(\.id) == [a.id, b.id])
+    }
+
+    /// The reported failure, end to end: the first tab is offered exactly
+    /// one move entry, and taking that entry moves it towards the tab next
+    /// to it. Both halves of the direction are in this test — which step the
+    /// edge tab is offered, and where that step puts it — so a disagreement
+    /// between them shows up as the tab not moving, which is precisely what
+    /// the user saw.
+    @Test func theOnlyMoveTheFirstTabIsOfferedTakesItPastItsNeighbour() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID()), c = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b); vm.addTab(c)
+        let entries = TabContextMenu.entries(
+            atIndex: 0, ofTabCount: vm.tabs.count,
+            supportsShell: false, isAdHoc: false, isConnected: true)
+        let steps = entries.compactMap { entry -> TabMoveStep? in
+            guard case .move(let step) = entry else { return nil }
+            return step
+        }
+        #expect(steps == [.right])
+        for step in steps { vm.move(tabID: a.id, oneStep: step) }
+        #expect(vm.tabs.map(\.id) == [b.id, a.id, c.id])
+    }
+
     // MARK: - Moving onto another tab (what a drop reports)
 
     /// The drag's way in: two identities, no index. The destination is the

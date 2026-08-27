@@ -214,9 +214,9 @@ enum TabMenuEntryTitle {
             return L10n.string("tabs.menu.close", "Close Tab")
         case .closeOthers:
             return L10n.string("tabs.menu.closeOthers", "Close Other Tabs")
-        case .moveLeft:
+        case .move(.left):
             return L10n.string("tabs.menu.moveLeft", "Move Left")
-        case .moveRight:
+        case .move(.right):
             return L10n.string("tabs.menu.moveRight", "Move Right")
         case .openTerminal:
             return L10n.string("tabs.menu.openTerminal", "Open Terminal")

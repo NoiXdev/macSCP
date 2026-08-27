@@ -33,9 +33,11 @@ public final class TabsViewModel<Tab: Identifiable> where Tab.ID == UUID {
         activeTabID = tab.id
     }
 
-    /// Moves a tab to another position. The only reordering there is —
-    /// the context menu calls it with the neighbouring index, dragging
-    /// reaches it through `move(tabID:onto:)`, so the rule exists once.
+    /// Moves a tab to another position. The only reordering there is — the
+    /// context menu reaches it through `move(tabID:oneStep:)` and dragging
+    /// through `move(tabID:onto:)`, so the rule exists once. Neither route
+    /// names a position of its own: both hand this function one derived
+    /// here, from the array that defines it.
     ///
     /// `activeTabID` is deliberately untouched: it names a tab, not a
     /// position, so the active tab stays active however the order changes.
@@ -71,6 +73,34 @@ public final class TabsViewModel<Tab: Identifiable> where Tab.ID == UUID {
     public func move(tabID: UUID, onto targetID: UUID) {
         guard let destination = tabs.firstIndex(where: { $0.id == targetID }) else { return }
         move(tabID: tabID, to: destination)
+    }
+
+    /// Moves a tab one place in the direction its menu entry names — the
+    /// context menu's way in, phrased in the only thing that entry knows:
+    /// which way the user asked for.
+    ///
+    /// **Why a direction and not an offset.** The step used to be taken in
+    /// the app layer, which turned each move entry into a number and handed
+    /// that number to `move(tabID:to:)`. Nothing there could be called with a
+    /// value, so the pair of numbers was the one piece of arithmetic in the
+    /// whole feature that no test reached: swapping them left every test
+    /// green and made "Move Right" on the first tab a silent no-op, because
+    /// that tab is offered no other move entry and the swapped step aimed
+    /// off the end of the strip (final review, I1). Taking the step here
+    /// puts it where both directions can be asked for and the resulting
+    /// order read back.
+    ///
+    /// No clamping, for the same reason `move(tabID:to:)` needs none: an
+    /// end tab is offered only the step that has a neighbour
+    /// (`TabContextMenu.entries`), and a menu that went stale between
+    /// opening and clicking aims past the end, which that function already
+    /// answers by leaving the order alone.
+    public func move(tabID: UUID, oneStep step: TabMoveStep) {
+        guard let from = tabs.firstIndex(where: { $0.id == tabID }) else { return }
+        switch step {
+        case .left: move(tabID: tabID, to: from - 1)
+        case .right: move(tabID: tabID, to: from + 1)
+        }
     }
 
     /// No-op for unknown ids (defensive: a stale click on a closing tab).
@@ -109,8 +139,8 @@ public final class TabsViewModel<Tab: Identifiable> where Tab.ID == UUID {
     /// rather than inside a view where nothing can check it.
     ///
     /// Order is preserved, and an unknown id yields every tab: the caller
-    /// then has nothing to keep, which `closeOthers(besides:)` below
-    /// refuses to act on.
+    /// then has nothing to keep, which `closeOthers(besides:)` refuses to
+    /// act on.
     public func tabsToClose(besides id: UUID) -> [Tab] {
         tabs.filter { $0.id != id }
     }

@@ -29,7 +29,7 @@ import Testing
 /// the exact shape the design rejects — can only be caught by reading the
 /// source.
 ///
-/// **Where the property could be violated FROM.** The checks below were
+/// **Where the property could be violated FROM.** This suite's checks were
 /// derived from this list, not from the lines that happened to get written:
 ///
 /// - **V1** A condition inside the menu closure wrapping an item (`if`,
@@ -350,8 +350,8 @@ struct TabContextMenuWiringGuardTests {
     // MARK: - The guarded claims, run against the real file
 
     /// V5: a second `.contextMenu` in the file would carry items no
-    /// decision produced, and would also mean the extraction above has been
-    /// silently reading whichever one comes first.
+    /// decision produced, and would also mean this suite's extraction has
+    /// been silently reading whichever one comes first.
     @Test func theMenuIsAttachedExactlyOnceInTheFile() throws {
         let source = try Self.stripped(String(contentsOf: Self.sourceFile, encoding: .utf8))
         let count = Self.occurrences(of: Self.anchor, in: source)
@@ -496,8 +496,8 @@ struct TabContextMenuWiringGuardTests {
 
     // MARK: - Scanner self-tests: a probe for every violation site
 
-    /// The shape the real file has — the scanner must accept it, or every
-    /// negative probe below proves nothing.
+    /// The shape the real file has — the scanner must accept it, or none of
+    /// the negative probes proves anything.
     private static let sanctionedSource = """
         .contextMenu {
             ForEach(Array(menuEntries().enumerated()), id: \\.offset) { _, entry in
@@ -523,7 +523,7 @@ struct TabContextMenuWiringGuardTests {
         let source = """
             .contextMenu {
                 ForEach(Array(menuEntries().enumerated()), id: \\.offset) { _, entry in
-                    // decided by TabContextMenu.entries( above
+                    // decided by TabContextMenu.entries(
                     if entry != .saveAsSession {
                         Button(TabMenuEntryTitle.title(for: entry)) { onMenuEntry(entry) }
                     }
@@ -1134,8 +1134,8 @@ struct TabContextMenuWiringGuardTests {
         // MARK: - The five remaining claims
 
         /// One drag source, one drop target. A second of either is a second
-        /// gesture path, and would also make "the drop closure" ambiguous
-        /// for the claim below it.
+        /// gesture path, and would also make "the drop closure" ambiguous for
+        /// `theDropHandsOverBothIdentitiesAndDoesNothingElse`.
         @Test func theDragAndTheDropAreAttachedExactlyOnceEach() throws {
             let source = try Self.canonicalStrip()
             let drags = Self.occurrences(of: Self.dragSource, in: source)
@@ -1320,7 +1320,7 @@ struct TabContextMenuWiringGuardTests {
             let body = try Self.dropBody(in: """
                 .dropDestination(for: String.self) { payload, _ in
                     guard let draggedID = TabDropPlan.draggedTabID(from: payload) else { return false }
-                    onMenuEntry(.moveLeft)
+                    onMenuEntry(.move(.left))
                     return true
                 }
                 """)

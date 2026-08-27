@@ -3,12 +3,15 @@ import Testing
 
 @testable import MacSCPAppKit
 
-/// Guards the two `%lld`-count messages that read as "1 snippets"/"1 logins"
-/// without real plural support: `snippets.export.confirm.message %lld` and
-/// `logins.export.summary %lld`. Both are backed by a `Localizable.stringsdict`
-/// per language (alongside the existing `Localizable.strings`, which still
-/// carries the same keys — see the suite doc comment on `catalogKeys()`
-/// below for why both must exist).
+/// Guards the `%lld`-count messages that would read as "1 snippets"/"1
+/// logins"/"1 of them" without real plural support. Counted while writing
+/// this sentence, `catalogKeys()` carries three:
+/// `snippets.export.confirm.message %lld`, `logins.export.summary %lld` and
+/// `tabs.closeOthers.incomingTransfers %lld`. A fourth key,
+/// `tabs.closeOthers.activeTransfers %1$lld %2$lld`, is held on its own
+/// (`activeTransfersKey`) because only its first argument is pluralized.
+/// Each is backed by a `Localizable.stringsdict` per language, alongside the
+/// existing `Localizable.strings`, which still carries the same keys.
 ///
 /// Measured before writing this suite (not assumed):
 /// - `L10n.string` wraps `NSLocalizedString(key:bundle:value:comment:)`,
@@ -22,9 +25,10 @@ import Testing
 ///   `Package.swift`) copies a `.stringsdict` sitting in `<lang>.lproj`
 ///   into the built resource bundle exactly like `.strings` — confirmed by
 ///   inspecting the built `macSCP_MacSCPAppKit.bundle` after `swift build`.
-/// - Plain `String(format:)` (no explicit `Locale`, matching the call sites
-///   in `SnippetsSheet.swift`/`SessionExportImportSheets.swift`) selects the
-///   plural category using the CURRENT PROCESS locale, not the language of
+/// - Plain `String(format:)` (no explicit `Locale`, matching every
+///   production call site — `SnippetsSheet.swift`,
+///   `SessionExportImportSheets.swift` and `TabCloseWarning.swift`) selects
+///   the plural category using the CURRENT PROCESS locale, not the language of
 ///   the `.lproj` the format string came from. A specific language's
 ///   category rules (Polish `few`/`many`, French treating 0 like 1) are
 ///   therefore only exercised correctly here by pairing an explicitly
@@ -51,7 +55,7 @@ struct PluralCatalogTests {
     /// warning) carries a SECOND, non-pluralized `%2$lld` argument
     /// (`transferring`) alongside the pluralized `%1$lld` (`tabsClosing`),
     /// so it doesn't fit `catalogKeys()`'s single-`count` shape and gets its
-    /// own helpers/tests below rather than folding into the generic ones.
+    /// own helpers and tests rather than folding into the generic ones.
     /// The `.stringsdict` ties plural selection to argument 1 only
     /// (`NSStringLocalizedFormatKey` = `%1$#@tabs@`, variable name `tabs`
     /// not `count`) — `transferring` never changes the noun's category.
@@ -106,7 +110,7 @@ struct PluralCatalogTests {
     }
 
     @Test(arguments: PluralCatalogTests.languages)
-    func everyLanguageDistinguishesOneFromTwoForBothKeys(language: String) {
+    func everyLanguageDistinguishesOneFromTwoForEveryCountKey(language: String) {
         for entry in Self.catalogKeys() {
             let one = Self.resolvedForm(key: entry.key, defaultValue: entry.defaultValue, language: language, count: 1)
             let two = Self.resolvedForm(key: entry.key, defaultValue: entry.defaultValue, language: language, count: 2)
@@ -149,12 +153,17 @@ struct PluralCatalogTests {
         }
     }
 
-    /// The production call sites (`SnippetsSheet.swift`,
-    /// `SessionExportImportSheets.swift`) use `L10n.string` and plain
+    /// The production call sites use `L10n.string` and plain
     /// `String(format:)` with no explicit bundle or locale override — this
     /// exercises that exact path end to end, proving the `.stringsdict`
-    /// entry is reachable through it rather than only through the
-    /// per-language bundle helper above.
+    /// entry is reachable through it rather than only through this suite's
+    /// per-language bundle helper.
+    ///
+    /// One call site per key in `catalogKeys()`, counted while writing this
+    /// sentence: `SnippetsSheet.swift` for the snippet export,
+    /// `SessionExportImportSheets.swift` for the login export, and
+    /// `TabCloseWarning.bulkMessage` for the incoming-transfer line of the
+    /// bulk-close warning.
     @Test
     func resolvesThroughTheProductionLookupPath() {
         for entry in Self.catalogKeys() {
@@ -198,7 +207,8 @@ struct PluralCatalogTests {
 
     // MARK: - `tabs.closeOthers.activeTransfers %1$lld %2$lld` (two-argument key)
     //
-    // Same five properties as above, adapted for a plural variable driven by
+    // The same five properties the `catalogKeys()` tests check — counted
+    // while writing this sentence — adapted for a plural variable driven by
     // argument 1 (`tabsClosing`) while argument 2 (`transferring`) rides
     // along unpluralized — `catalogKeys()`'s single-`count` helpers can't
     // exercise that, so these are separate rather than folded in.

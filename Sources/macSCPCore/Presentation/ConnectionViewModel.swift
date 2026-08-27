@@ -602,11 +602,15 @@ public final class ConnectionViewModel {
     /// hand-written, because they are form rules rather than backend fields:
     /// the save name, and the jump block.
     ///
-    /// Exists because a second caller needs exactly these steps and must NOT
-    /// take the fourth: the App's "Open in External Terminal" entry, which
-    /// P3c/T2 wires onto this, hands the resolved config to a launcher for a
-    /// session macSCP itself never connects to. Writing those steps a second
-    /// time is what the equivalence guard in
+    /// Exists because callers other than the dial need exactly these steps
+    /// and must NOT take the fourth. Counted while writing this sentence,
+    /// there are three in all: `connect()`; the App's "Open in External
+    /// Terminal" entry (`ContentView.openExternalTerminalFromSidebar`, wired
+    /// by P3c/T2), which hands the resolved config to a launcher for a
+    /// session macSCP itself never connects to; and `validateForNewSave()`,
+    /// which asks whether a running connection may be written as a session
+    /// and dials nothing either. Writing those steps a second time is what
+    /// the equivalence guard in
     /// `ConnectionConfigResolutionTests` exists to prevent: it compares what
     /// `connect()` dials against what this returns, and goes red if
     /// `connect()` ever resolves anything on its own again. Measured, so it
@@ -630,11 +634,14 @@ public final class ConnectionViewModel {
     /// clearing reaches.
     ///
     /// Answers ONE question — can this connection be resolved — and therefore
-    /// does NOT check the save name. That check stays in `connect()`, ahead
-    /// of the call: it is a rule of the form's SAVE, and a form legitimately
-    /// carries `shouldSaveSession == true` with a blank name while the user
-    /// is still typing an ad-hoc "save & connect". Refusing a caller that
-    /// saves nothing (the context-menu route) for a missing save name would
+    /// does NOT check the save name. That check belongs to whichever caller
+    /// actually writes a session, and each of them makes it ahead of this
+    /// call: `connect()` when `shouldSaveSession` is set, and
+    /// `validateForNewSave()` always, since writing is all it does. It is a
+    /// rule of the form's SAVE, and a form legitimately carries
+    /// `shouldSaveSession == true` with a blank name while the user is still
+    /// typing an ad-hoc "save & connect". Refusing the caller that saves
+    /// nothing (the external-terminal route) for a missing save name would
     /// be a refusal for a reason unrelated to what it is doing.
     public func resolveConfigWithoutDialing() -> ConfigResolution {
         let descriptor = BackendDescriptor.descriptor(for: kind)
@@ -681,12 +688,12 @@ public final class ConnectionViewModel {
     /// double-click doesn't open a second (orphaned) connection.
     ///
     /// Everything up to and including the resolved config comes from
-    /// `resolveConfigWithoutDialing()`, the one resolution both callers share
-    /// (P3c/T1). What is left here is the save name — a rule of THIS
-    /// submission, which saves, and of no other caller — plus the dial:
-    /// publishing the resolution's failure into `state`, the `.connecting`
-    /// transition, the host-key decider, and the record of what was actually
-    /// connected.
+    /// `resolveConfigWithoutDialing()`, the one resolution its three callers
+    /// share (P3c/T1). What is left here is the save name — a rule of every
+    /// caller that writes a session, which since the tab-context-menu plan
+    /// means this one and `validateForNewSave()` — plus the dial: publishing
+    /// the resolution's failure into `state`, the `.connecting` transition,
+    /// the host-key decider, and the record of what was actually connected.
     ///
     /// Attempt-scoped since Task 6 fix round 1 (`myAttempt`, captured once
     /// at the top and compared against `currentAttempt` at every write from
@@ -1346,8 +1353,8 @@ public final class ConnectionViewModel {
     /// a plaintext secret in a caller's hands for no purpose, and
     /// `SessionSecretPolicy` reads the form directly at write time anyway.
     ///
-    /// Edit mode has its own validator (`validateForEditSave()` below) with
-    /// a different secret rule — empty means "leave the stored one alone" —
+    /// Edit mode has its own validator (`validateForEditSave()`) with a
+    /// different secret rule — empty means "leave the stored one alone" —
     /// so this refuses outright rather than quietly doing the wrong one.
     public func validateForNewSave() -> Bool {
         guard case .new = mode else { return false }
@@ -1541,8 +1548,8 @@ public final class ConnectionViewModel {
     /// where required, so this never needs to fail -- true because its
     /// direct caller `attachingJump(to:)` is reached only through
     /// `resolveConfigWithoutDialing()`, which always validates with
-    /// `requireSecret: true` regardless of which of its two callers invoked
-    /// it (see `validateJump`'s own doc comment).
+    /// `requireSecret: true` no matter which of its callers invoked it (see
+    /// `validateJump`'s own doc comment).
     private func buildJumpConfig() -> SSHConnectionConfig.Jump? {
         guard jumpEnabled else { return nil }
         let auth: SSHConnectionConfig.AuthMethod

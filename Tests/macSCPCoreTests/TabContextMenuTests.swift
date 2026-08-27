@@ -13,21 +13,21 @@ struct TabContextMenuTests {
         #expect(TabContextMenu.entries(
             atIndex: 0, ofTabCount: 3,
             supportsShell: false, isAdHoc: false, isConnected: true)
-            == [.close, .closeOthers, .moveRight])
+            == [.close, .closeOthers, .move(.right)])
     }
 
     @Test func theLastOfThreeCannotMoveRight() {
         #expect(TabContextMenu.entries(
             atIndex: 2, ofTabCount: 3,
             supportsShell: false, isAdHoc: false, isConnected: true)
-            == [.close, .closeOthers, .moveLeft])
+            == [.close, .closeOthers, .move(.left)])
     }
 
     @Test func aMiddleTabMovesBothWays() {
         #expect(TabContextMenu.entries(
             atIndex: 1, ofTabCount: 3,
             supportsShell: false, isAdHoc: false, isConnected: true)
-            == [.close, .closeOthers, .moveLeft, .moveRight])
+            == [.close, .closeOthers, .move(.left), .move(.right)])
     }
 
     @Test func onlyAShellBackendOffersATerminal() {
@@ -68,6 +68,6 @@ struct TabContextMenuTests {
         #expect(TabContextMenu.entries(
             atIndex: 1, ofTabCount: 3,
             supportsShell: true, isAdHoc: true, isConnected: true)
-            == [.close, .closeOthers, .moveLeft, .moveRight, .openTerminal, .saveAsSession])
+            == [.close, .closeOthers, .move(.left), .move(.right), .openTerminal, .saveAsSession])
     }
 }

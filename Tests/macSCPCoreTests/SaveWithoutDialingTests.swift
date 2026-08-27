@@ -81,9 +81,9 @@ struct SaveWithoutDialingTests {
         #expect(field == .jumpHost)
     }
 
-    /// A complete jump block passes — otherwise the test above would be
-    /// green for the wrong reason (any jump refused, rather than an
-    /// incomplete one).
+    /// A complete jump block passes — otherwise
+    /// `anIncompleteJumpBlockIsRefused` would be green for the wrong reason
+    /// (any jump refused, rather than an incomplete one).
     @Test func aCompleteJumpBlockValidates() {
         let vm = makeVM()
         vm.jumpEnabled = true
