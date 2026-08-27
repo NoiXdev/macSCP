@@ -61,12 +61,29 @@ import Testing
 /// **Deliberately NOT guarded here**, so a green run is not read as more
 /// than it is:
 ///
-/// - A handler that does nothing (`case .saveAsSession: break` in
-///   `ContentView+Lifecycle.swift`). That makes an entry inert, not
+/// - **A handler that does nothing.** That makes an entry inert, not
 ///   invisible — a different property, and one this scanner cannot judge.
+///   The arm this actually costs something at is `.pane` in
+///   `ContentView+Lifecycle.swift`'s `handleTabMenuEntry`: replacing
+///   `togglePane(toggle, in: tab)` with `break` compiles, leaves this suite
+///   and every other one green, and gives the user two menu entries that
+///   silently do nothing. (An earlier version of this bullet illustrated
+///   the hole with `case .saveAsSession: break`, which has read
+///   `saveAsSession(from: tab)` since the commit that wrote the sentence.
+///   Naming an arm that is fine, while the one that can go inert is named
+///   nowhere, is worse than saying nothing.)
+///
+///   The edge of the hole was measured rather than guessed, and it is
+///   narrower than "an inert handler is uncatchable": deleting `togglePane`
+///   as well DOES go red, because `PaneVisibilityWiringGuardTests` counts
+///   the toggle sites in that file and finds three where it expects five.
+///   What nothing sees is the function surviving while its one caller stops
+///   calling it — Swift emits no warning for an uncalled method. That, and
+///   only that, is unguarded.
 /// - The title mapping answering an empty string. The item still exists and
 ///   is still clickable; and `TabMenuEntryTitle.title(for:)` is a total
-///   `switch`, so the compiler already refuses to let a case be dropped.
+///   `switch` over `TabMenuEntry` with no `default`, so the compiler already
+///   refuses to let a case be dropped.
 ///
 /// **What this guard does NOT catch.** Corrected in fix round 1 after a
 /// reviewer got four mutations past it; the technique was kept and the

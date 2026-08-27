@@ -33,9 +33,11 @@ public enum TabMenuEntry: Equatable, Sendable {
     /// Requires a neighbour on that side — a tab at either end is offered
     /// only the step that has somewhere to go.
     case move(TabMoveStep)
-    /// Show or hide one of the window's two halves. Present only while the
-    /// pane's own `PaneToggleState` reports `isEnabled` — which is false for
-    /// the last visible half, so no entry here can empty the window.
+    /// Show or hide one of the window's two halves. Requires both a live
+    /// connection and the pane's own `PaneToggleState` reporting
+    /// `isEnabled`: there are no halves to switch on a tab still showing a
+    /// connection form, and `isEnabled` is false for the last visible half,
+    /// so no entry here can empty the window.
     /// Always the built-in terminal; `SettingsStore.terminalTarget` has no
     /// say, for the same reason the Terminal menu's entries ignore it.
     case pane(PaneToggle, PaneAction)

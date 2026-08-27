@@ -60,6 +60,22 @@ struct TabContextMenuTests {
         #expect(entries.contains(.pane(.terminal, .show)))
     }
 
+    /// The mirror of the test above, and not a restatement of it: the
+    /// locked half is the TERMINAL this time. That layout is not
+    /// hypothetical — it is exactly what the sidebar row's "Open Terminal"
+    /// entry produces (`PaneVisibility.terminalOnly`), so a menu that
+    /// offered "Hide Terminal" there would empty the window on the one
+    /// route that reaches it most often.
+    @Test func theOnlyVisibleHalfOffersNoEntryEitherWayRound() {
+        let entries = TabContextMenu.entries(
+            atIndex: 0, ofTabCount: 1,
+            supportsShell: true, isAdHoc: false, isConnected: true,
+            filesToggle: Self.hidden, terminalToggle: Self.visibleAndLocked)
+        #expect(!entries.contains(.pane(.terminal, .hide)))
+        #expect(!entries.contains(.pane(.terminal, .show)))
+        #expect(entries.contains(.pane(.files, .show)))
+    }
+
     @Test func aDisconnectedTabOffersNoPaneEntries() {
         let entries = TabContextMenu.entries(
             atIndex: 0, ofTabCount: 1,

@@ -447,32 +447,6 @@ final class SessionTab: Identifiable {
             .toggleState(for: toggle, hasShell: hasShell)
     }
 
-    /// Applies a click on the Files toggle: flips `showsFiles` through
-    /// `effectivePaneVisibility(...).applyingClick`, which folds in the
-    /// same lock and `hasShell` rule `paneToggleState` reads above, so a
-    /// click that would otherwise empty the window is a no-op inside the
-    /// model itself, not a check reimplemented here.
-    ///
-    /// The computed result's `showsTerminal` is intentionally never written
-    /// back to the terminal panel: `toggle()` is the one call that changes
-    /// `TerminalPanelViewModel.isVisible` from outside that type, and it
-    /// owns the shell's lifecycle (opening it on the way in) — a bare bool
-    /// write here would bypass that. Stated precisely, because an earlier
-    /// version of this comment was not (whole-phase review, Fix 3): the type
-    /// itself also writes `isVisible` in `shutdown()`, which is its own
-    /// business; `openIfNeeded()` never writes it at all; and until Fix 3
-    /// `ContentView.triggerSnippet` DID write it directly, which made the
-    /// old wording ("only ever changes through its own `toggle()`/
-    /// `openIfNeeded()`") false at the moment it was written. No App-layer
-    /// call site writes it directly today. This is safe even if some OTHER call site
-    /// ever set `terminalIsVisible` to `true` while `hasShell` is `false`
-    /// (today, every call site that could do that refuses first — see
-    /// `ContentView.presentTerminalUnavailable` — but that is a fact about
-    /// those call sites, established by reading them, not pinned by a test
-    /// here): `effectivePaneVisibility` folds `terminalIsVisible &&
-    /// hasShell` before this ever runs, so a stray `true` with no shell
-    /// behind it already reads as `false` by the time `applyingClick` sees
-    /// it, the same way it would for `paneToggleState` or the render.
     /// Applies a stored session's SAVED pane visibility to this tab and
     /// answers whether the terminal panel has to be revealed for it
     /// (P2 terminal-chrome milestone; whole-phase re-review, item 2).
@@ -506,6 +480,36 @@ final class SessionTab: Identifiable {
             terminalIsVisible: saved.showsTerminal, hasShell: hasShell).showsTerminal
     }
 
+    /// Applies a click on the Files toggle: flips `showsFiles` through
+    /// `effectivePaneVisibility(...).applyingClick`, which folds in the
+    /// same lock and `hasShell` rule `paneToggleState` reads above, so a
+    /// click that would otherwise empty the window is a no-op inside the
+    /// model itself, not a check reimplemented here.
+    ///
+    /// Called by the Files toolbar button and by the tab context menu's
+    /// `.pane(.files, _)` entry (`ContentView.togglePane`); neither of them
+    /// re-derives the lock.
+    ///
+    /// The computed result's `showsTerminal` is intentionally never written
+    /// back to the terminal panel: `toggle()` is the one call that changes
+    /// `TerminalPanelViewModel.isVisible` from outside that type, and it
+    /// owns the shell's lifecycle (opening it on the way in) — a bare bool
+    /// write here would bypass that. Stated precisely, because an earlier
+    /// version of this comment was not (whole-phase review, Fix 3): the type
+    /// itself also writes `isVisible` in `shutdown()`, which is its own
+    /// business; `openIfNeeded()` never writes it at all; and until Fix 3
+    /// `ContentView.triggerSnippet` DID write it directly, which made the
+    /// old wording ("only ever changes through its own `toggle()`/
+    /// `openIfNeeded()`") false at the moment it was written. No App-layer
+    /// call site writes it directly today. This is safe even if some OTHER call site
+    /// ever set `terminalIsVisible` to `true` while `hasShell` is `false`
+    /// (today, every call site that could do that refuses first — see
+    /// `ContentView.presentTerminalUnavailable` — but that is a fact about
+    /// those call sites, established by reading them, not pinned by a test
+    /// here): `effectivePaneVisibility` folds `terminalIsVisible &&
+    /// hasShell` before this ever runs, so a stray `true` with no shell
+    /// behind it already reads as `false` by the time `applyingClick` sees
+    /// it, the same way it would for `paneToggleState` or the render.
     func applyFilesToggleClick(terminalIsVisible: Bool, hasShell: Bool) {
         let next = effectivePaneVisibility(terminalIsVisible: terminalIsVisible, hasShell: hasShell)
             .applyingClick(on: .files, hasShell: hasShell)

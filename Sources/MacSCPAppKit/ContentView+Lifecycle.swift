@@ -809,12 +809,18 @@ extension ContentView {
     /// question start to disagree.
     ///
     /// That rule is why the pane arm carries no capability re-check of its
-    /// own, unlike the toolbar button and the "Terminal" menu bridge: those
-    /// two are reachable while `PaneToggleState` says nothing about them
-    /// (the menu lives in a Scene that cannot see `tabsModel`), whereas a
-    /// `.pane` entry only exists because `toggleState(for:hasShell:)`
-    /// reported it enabled, which already folds in the missing shell and
-    /// the lock on the last visible half.
+    /// own. The Terminal toolbar button and the `tabCommands.toggleTerminal`
+    /// bridge both carry one, and neither is a precedent for this arm — for
+    /// two different reasons. The toolbar button's own `.disabled` already
+    /// reads `SessionTab.paneToggleState` on the live value; its in-closure
+    /// guard is belt-and-suspenders over a control it owns, which is what
+    /// its comment there calls it. The bridge is the one that genuinely
+    /// needs its own check: its entry is built in `MacSCPApp`'s separate
+    /// Scene, which cannot see `tabsModel`, so what disables it is a flag
+    /// mirrored across rather than the value itself. This arm has neither
+    /// problem: a `.pane` entry exists only because
+    /// `toggleState(for:hasShell:)` reported it enabled, which already folds
+    /// in the missing shell and the lock on the last visible half.
     ///
     /// The pane arm ignores the `PaneAction` it was handed: that value is
     /// the entry's LABEL — which of "Show"/"Hide" the user read — and the
@@ -976,15 +982,17 @@ extension ContentView {
     /// toolbar button and the `tabCommands.toggleTerminal` bridge — both of
     /// which DO check it right before their own `toggle()` — is worth being
     /// precise about. `TerminalPanelViewModel.toggle()` carries no lock of
-    /// its own, so somebody has to hold it. Those two are reached from a
-    /// button and a keystroke whose enabled state is decided elsewhere and
-    /// may be stale by the time the closure runs; this arm is reached only
-    /// from an entry `TabContextMenu.entries` produced, and it produces the
-    /// terminal entry only while `PaneToggleState.isEnabled` — which is
-    /// false exactly when the terminal is the last visible half. The files
-    /// half needs no such argument at all: `applyingClick` repairs "neither
-    /// visible" back to files-only by itself. See `handleTabMenuEntry` for
-    /// why this arm re-asks nothing.
+    /// its own, so somebody has to hold it before every call. Each of the
+    /// three holds it somewhere else: the toolbar button in its `.disabled`,
+    /// which reads `SessionTab.paneToggleState` live; the bridge in its own
+    /// closure, because the entry that reaches it is disabled by a flag
+    /// mirrored into another Scene rather than by that value; and this one
+    /// in the entry's very existence, since `TabContextMenu.entries`
+    /// produces the terminal entry only while `PaneToggleState.isEnabled`,
+    /// which is false exactly when the terminal is the last visible half.
+    /// The files half needs no such argument at all: `applyingClick`
+    /// repairs "neither visible" back to files-only by itself. See
+    /// `handleTabMenuEntry` for why this arm re-asks nothing.
     ///
     /// The tab is activated first: it is the tab whose half is being
     /// switched, and changing a pane in a tab the user cannot see would be
