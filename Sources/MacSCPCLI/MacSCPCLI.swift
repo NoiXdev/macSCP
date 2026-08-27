@@ -1,4 +1,20 @@
-import ArgumentParser
+// `@preconcurrency` because `asyncParseAsRoot()` hands back an
+// `any ParsableCommand`, and ArgumentParser does not declare that
+// existential `Sendable`. Returning it across the await therefore counts as
+// sending a non-Sendable value out of a nonisolated context.
+//
+// The toolchain used to build this locally accepts it and the older one CI
+// builds with rejects it, so the plain import compiles here and breaks
+// there -- the same divergence recorded in
+// `docs/superpowers/specs/2026-08-26-backlog-toolchain-abweichung.md`.
+//
+// What stops being checked: Sendable violations involving ArgumentParser's
+// types are no longer diagnosed in this file. That is affordable precisely
+// here and nowhere else -- the value never leaves this function. It is
+// parsed, run, and dropped, all within `main()`, with no concurrency of our
+// own anywhere near it. An edit that stores the command, hands it to a task,
+// or returns it would break that argument without breaking the build.
+@preconcurrency import ArgumentParser
 import Foundation
 import macSCPCore
 
