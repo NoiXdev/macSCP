@@ -9,13 +9,15 @@ public enum TabMenuEntry: Equatable, Sendable {
     case closeOthers
     case moveLeft
     case moveRight
-    /// Only where the backend has a shell at all — see
-    /// `ProtocolCapabilities.supportsShell`, which is `true` for SSH and
-    /// `false` for S3 and WebDAV.
+    /// Requires both a shell-capable backend and a live connection: see
+    /// `ProtocolCapabilities.supportsShell` (`true` for SSH, `false` for S3
+    /// and WebDAV) for the capability half, and a connected tab for the
+    /// state half — there is no terminal to attach to otherwise.
     case openTerminal
-    /// Persisting a connection that was dialed ad hoc. Absent for a tab
-    /// that already belongs to a stored session, because there is nothing
-    /// to save.
+    /// Requires both an ad-hoc-dialed tab and a live connection: persisting
+    /// a connection that was dialed ad hoc, and only once it is actually
+    /// connected. Absent for a tab that already belongs to a stored
+    /// session, because there is nothing to save.
     case saveAsSession
 }
 
@@ -23,9 +25,10 @@ public enum TabContextMenu {
     /// Which entries a tab offers.
     ///
     /// `index` and `count` decide the movement and the bulk close; the
-    /// three flags decide the rest. Nothing here reaches for a
-    /// `ConnectionKind`: what an entry depends on is a capability or a
-    /// state, never which protocol it happens to be.
+    /// three flags decide the rest (see each `TabMenuEntry` case for its
+    /// precondition). Nothing here reaches for a `ConnectionKind`: what an
+    /// entry depends on is a capability or a state, never which protocol it
+    /// happens to be.
     public static func entries(
         atIndex index: Int, ofTabCount count: Int,
         supportsShell: Bool, isAdHoc: Bool, isConnected: Bool
@@ -34,9 +37,6 @@ public enum TabContextMenu {
         if count > 1 { entries.append(.closeOthers) }
         if index > 0 { entries.append(.moveLeft) }
         if index < count - 1 { entries.append(.moveRight) }
-        // A terminal needs a shell AND a live connection: the capability
-        // says the backend could have one, the state says there is
-        // something to attach it to.
         if supportsShell && isConnected { entries.append(.openTerminal) }
         if isAdHoc && isConnected { entries.append(.saveAsSession) }
         return entries
