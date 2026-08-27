@@ -43,20 +43,48 @@ private final class RemoteFilePromiseDelegate: NSObject, NSFilePromiseProviderDe
         let download = self.download
         // AppKit hands the completion handler in as a plain non-`Sendable`
         // closure, and the download that decides its argument can only be
-        // awaited from a task — so the handler has to cross into one. There
-        // is no race to lose: the handler is called from exactly one place,
-        // exactly once per promise, on the single task started right here,
-        // and nothing else in this file retains or reads it. That argument
-        // breaks the moment a second call site appears, or the handler is
-        // stored beyond this method.
-        nonisolated(unsafe) let completionHandler = completionHandler
+        // awaited from a task — so the handler has to cross into one.
+        //
+        // Carried in a box rather than marked `nonisolated(unsafe)` here.
+        // The marking applies to the binding and does not lift the
+        // requirement on what the task's closure CAPTURES: the toolchain
+        // used locally proves the capture safe and accepts it, the older one
+        // CI builds with does not, and rejected the build. A `Sendable` box
+        // is a statement about the type and is read the same way by both.
+        let carrier = CompletionCarrier(handler: completionHandler)
         Task {
             do {
                 try await download(item, url)
-                completionHandler(nil)
+                carrier.finish(nil)
             } catch {
-                completionHandler(error)
+                carrier.finish(error)
             }
+        }
+    }
+
+    /// Carries AppKit's completion handler into the download task.
+    ///
+    /// `@unchecked Sendable` because the handler is a plain closure AppKit
+    /// gives us and we cannot annotate it. What makes that safe here is not
+    /// a promise but the box itself: `finish` takes the handler under a lock
+    /// and leaves `nil` behind, so a second call is a no-op rather than a
+    /// second delivery, and no two threads can be inside the handler at
+    /// once. AppKit's contract is one completion per promise; this makes
+    /// over-delivery impossible instead of merely unintended.
+    private final class CompletionCarrier: @unchecked Sendable {
+        private let lock = NSLock()
+        private var handler: ((Error?) -> Void)?
+
+        init(handler: @escaping (Error?) -> Void) {
+            self.handler = handler
+        }
+
+        func finish(_ error: Error?) {
+            lock.lock()
+            let handler = self.handler
+            self.handler = nil
+            lock.unlock()
+            handler?(error)
         }
     }
 }
