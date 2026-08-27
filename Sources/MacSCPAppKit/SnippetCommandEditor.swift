@@ -59,9 +59,15 @@ struct SnippetCommandEditor: NSViewRepresentable {
     /// the inset on the view; `intrinsicHeight`, which reserves room for
     /// both; and `firstBaselineOffset`, which the sheet aligns the row's
     /// label to.
-    static let verticalInset: CGFloat = 4
-    static let lineHeight: CGFloat = 16
-    static var font: NSFont {
+    /// The statics below are `nonisolated` because `SnippetCommandEditor`
+    /// inherits main-actor isolation from `NSViewRepresentable`, while
+    /// `SnippetsSheet` reads the baseline from an `.alignmentGuide` closure,
+    /// which SwiftUI declares `@Sendable`. Nothing in this group needs the
+    /// main actor: they are constants, a font derived from the system font,
+    /// and pure arithmetic over the two.
+    nonisolated static let verticalInset: CGFloat = 4
+    nonisolated static let lineHeight: CGFloat = 16
+    nonisolated static var font: NSFont {
         .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
     }
 
@@ -72,9 +78,9 @@ struct SnippetCommandEditor: NSViewRepresentable {
     /// edge instead and the label ends up sitting well above the text it
     /// names. The sheet hands this value to `.alignmentGuide` to put the
     /// label back on the first line — see `SnippetsSheet`'s command row.
-    static var firstBaselineOffset: CGFloat { verticalInset + font.ascender }
+    nonisolated static var firstBaselineOffset: CGFloat { verticalInset + font.ascender }
 
-    static func intrinsicHeight(for text: String) -> CGFloat {
+    nonisolated static func intrinsicHeight(for text: String) -> CGFloat {
         let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).count
         let clamped = min(max(lines, 1), 8)
         return CGFloat(clamped) * lineHeight + verticalInset * 2
@@ -165,6 +171,11 @@ struct SnippetCommandEditor: NSViewRepresentable {
         context.coordinator.apply(text, to: textView)
     }
 
+    /// Main-actor isolated for the same reason as `RemoteFileTableView`'s
+    /// coordinator: SwiftUI creates it on the main actor and `NSTextView`
+    /// delegate callbacks arrive there, so `apply` and `recolour` — which
+    /// are ours, not protocol witnesses — may reach into the text view.
+    @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: SnippetCommandEditor
 

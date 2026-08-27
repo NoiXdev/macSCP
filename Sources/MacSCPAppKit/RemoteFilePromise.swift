@@ -41,6 +41,15 @@ private final class RemoteFilePromiseDelegate: NSObject, NSFilePromiseProviderDe
     ) {
         let item = self.item
         let download = self.download
+        // AppKit hands the completion handler in as a plain non-`Sendable`
+        // closure, and the download that decides its argument can only be
+        // awaited from a task — so the handler has to cross into one. There
+        // is no race to lose: the handler is called from exactly one place,
+        // exactly once per promise, on the single task started right here,
+        // and nothing else in this file retains or reads it. That argument
+        // breaks the moment a second call site appears, or the handler is
+        // stored beyond this method.
+        nonisolated(unsafe) let completionHandler = completionHandler
         Task {
             do {
                 try await download(item, url)

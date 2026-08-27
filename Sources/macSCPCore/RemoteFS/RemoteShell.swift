@@ -16,7 +16,13 @@ public protocol RemoteShell: AnyObject, Sendable {
 
 /// The capability to open shells over an existing connection. The UI queries
 /// it via `as?` on the remote file system (LocalFileSystem doesn't have it).
-public protocol RemoteShellProvider: AnyObject {
+/// `Sendable` for the same reason `RemoteShell` is: the shell opener is
+/// handed to `TerminalPanelViewModel` as a `@Sendable` closure that captures
+/// the provider, and the capability is always the remote file system itself,
+/// which `RemoteFileSystem` already requires to be `Sendable`. Stating it
+/// here makes the requirement checked at the conformance instead of assumed
+/// at the capture.
+public protocol RemoteShellProvider: AnyObject, Sendable {
     /// Opens a PTY shell (TERM=`terminal`) with an initial size.
     func openShell(terminal: String, cols: Int, rows: Int) async throws -> any RemoteShell
 }

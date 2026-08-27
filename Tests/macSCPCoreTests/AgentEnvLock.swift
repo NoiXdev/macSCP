@@ -45,9 +45,23 @@ actor AgentEnvLock {
 
     /// Runs `body` with exclusive ownership of the lock, for the whole
     /// duration `SSH_AUTH_SOCK` is set to a test-owned value.
-    func run<T>(_ body: () async throws -> T) async rethrows -> T {
+    ///
+    /// `nonisolated` so `body` and its result never cross this actor's
+    /// boundary — the callers hand in closures that capture test-local,
+    /// non-`Sendable` state, and there is no reason for that state to visit
+    /// the lock. Only `acquire`/`release` are isolated, and neither carries
+    /// a value. The release is spelled out on both paths rather than left to
+    /// `defer`, because it now has to be awaited: the ordering is unchanged
+    /// — the lock is still given up before `run` returns or rethrows.
+    nonisolated func run<T>(_ body: () async throws -> T) async rethrows -> T {
         await acquire()
-        defer { release() }
-        return try await body()
+        do {
+            let result = try await body()
+            await release()
+            return result
+        } catch {
+            await release()
+            throw error
+        }
     }
 }

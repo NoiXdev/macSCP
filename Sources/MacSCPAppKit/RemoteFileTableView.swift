@@ -413,6 +413,13 @@ struct RemoteFileTableView: NSViewRepresentable {
         }
     }
 
+    /// Main-actor isolated because every way into this object already runs
+    /// there: SwiftUI builds it from `makeCoordinator()`, and AppKit invokes
+    /// data-source, delegate and menu callbacks on the main thread. Without
+    /// it, the helper methods that are not protocol witnesses — `open` and
+    /// `updateSortIndicators` among them — stay nonisolated and cannot touch
+    /// the `NSTableView` they exist to drive.
+    @MainActor
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
         var items: [RemoteFileItem] = []
         var onOpen: (RemoteFileItem) -> Void

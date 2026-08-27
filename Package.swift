@@ -40,7 +40,7 @@ let package = Package(
                 "macSCPCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .target(
             name: "MacSCPAppKit",
@@ -49,17 +49,17 @@ let package = Package(
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
             resources: [.process("Resources")],
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .executableTarget(
             name: "MacSCPMain",
             dependencies: ["MacSCPAppKit"],
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
             name: "macSCPAppKitTests",
             dependencies: ["MacSCPAppKit"],
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
             name: "macSCPCoreTests",
@@ -72,7 +72,7 @@ let package = Package(
             // them by `#filePath` — so they must NOT be bundled as resources.
             // Declaring them keeps SwiftPM from warning about unhandled files.
             exclude: ["Fixtures"],
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ]
 )

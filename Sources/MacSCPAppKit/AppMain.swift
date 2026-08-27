@@ -11,7 +11,12 @@ import Foundation
 /// `App.main()` is the standard programmatic entry point; the executable
 /// calls it instead of carrying `@main` on the app struct, because that
 /// attribute has to sit in the executable target.
+///
+/// Main-actor isolated because `App.main()` is: the wrapper has to carry the
+/// same isolation it forwards to, and the process entry point is the main
+/// thread by definition.
 public enum AppMain {
+    @MainActor
     public static func main() {
         MacSCPApp.main()
     }

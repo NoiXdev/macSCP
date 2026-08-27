@@ -4,6 +4,7 @@ import MacSCPAppKit
 /// lives in `MacSCPAppKit`, where tests can reach it.
 @main
 struct Main {
+    @MainActor
     static func main() {
         AppMain.main()
     }

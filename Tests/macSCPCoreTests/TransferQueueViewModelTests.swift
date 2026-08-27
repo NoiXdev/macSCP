@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import macSCPCore
 
@@ -52,6 +53,14 @@ struct TransferQueueViewModelTests {
     /// Unregistered paths make `stat` throw `RemoteFSError.notFound`.
     /// Writes are logged in order.
     actor QueueTestFS: RemoteFileSystem {
+        /// Where `readStream`'s unfolding closure has got to: which chunk is
+        /// next, and whether the first pull (which fires `started` and waits
+        /// on `gate`) has already happened.
+        struct ReadCursor {
+            var index = 0
+            var opened = false
+        }
+
         struct Read {
             var content: Data
             var started: TestSignal?
@@ -175,23 +184,32 @@ struct TransferQueueViewModelTests {
             let gate = read.gate
             let spinAt = read.spinUntilCancelledAt
             let failWith = read.failWith
-            var index = 0
-            var opened = false
+            // The `unfolding` closure is `@Sendable` and the consumer that
+            // pulls from the stream is not the task that built it, so the
+            // read cursor cannot live in captured `var`s. `Mutex` makes the
+            // hand-off checked; the stream pulls strictly one chunk at a
+            // time, so no critical section here ever spans an `await`.
+            let cursor = Mutex(ReadCursor())
             return AsyncThrowingStream<Data, Error>(unfolding: {
-                if !opened {
-                    opened = true
+                let isFirstPull = cursor.withLock { state -> Bool in
+                    guard !state.opened else { return false }
+                    state.opened = true
+                    return true
+                }
+                if isFirstPull {
                     await started?.fire()
                     if let gate { try await gate.wait() }
                     if let failWith { throw failWith }
                 }
-                if let spinAt, index == spinAt {
+                if let spinAt, cursor.withLock({ $0.index }) == spinAt {
                     // Park cancellation-UNAWARE: only the cancellation wakes the
                     // loop; the chunk is still delivered afterwards, the next
                     // pull is covered by the engine's `checkCancellation`.
                     while !Task.isCancelled { await Task.yield() }
                 }
+                let index = cursor.withLock { $0.index }
                 guard index < chunks.count else { return nil }
-                defer { index += 1 }
+                cursor.withLock { $0.index += 1 }
                 return chunks[index]
             })
         }

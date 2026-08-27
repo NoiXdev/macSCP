@@ -358,6 +358,15 @@ struct BrowserPane: View {
 
 fileprivate extension NSItemProvider {
     /// Extracts a file URL from the provider (drop payload).
+    ///
+    /// Main-actor isolated so the drop handler — which already runs there —
+    /// does not have to hand the provider to another executor: `NSItemProvider`
+    /// is not `Sendable`, and passing it out of the main actor is the data
+    /// race the compiler objects to. `loadItem` starts its work asynchronously
+    /// and calls back on a queue of its own choosing either way, so the await
+    /// and the completion behave exactly as before; only the thread that
+    /// *starts* the load changes.
+    @MainActor
     func macscpFileURL() async -> URL? {
         await withCheckedContinuation { continuation in
             loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in

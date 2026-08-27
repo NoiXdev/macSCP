@@ -1036,11 +1036,10 @@ struct ContentView: View {
     // handed in as `startPath`. Marking `startSession` itself `async` was
     // tried first and had to be reverted: it made the compiler apply
     // stricter concurrency checking to the WHOLE function body, which then
-    // flagged the pre-existing (harmless, `RemoteShellProvider` isn't
-    // `Sendable`) `shellProvider` capture in the `openShell` closure below as
-    // a new warning. Keeping this function sync avoids that regression
-    // entirely while still resolving the home directory exactly once per
-    // connect.
+    // flagged the `shellProvider` capture in the `openShell` closure below.
+    // That particular objection is gone — `RemoteShellProvider` is `Sendable`
+    // now — but the function stays sync anyway, because resolving the home
+    // directory exactly once per connect is what the two call sites want.
     func startSession(
         in tab: SessionTab, with fs: any RemoteFileSystem, storedName: String? = nil,
         startPath: String = "/"

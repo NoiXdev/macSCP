@@ -4,7 +4,10 @@ import Testing
 
 /// Delivers the first of two outcomes and ignores the rest, so a deadline and
 /// a piece of work can race without either resuming a continuation twice.
-private final class FirstResult<T>: @unchecked Sendable {
+/// `T: Sendable` because the value is handed to a `CheckedContinuation`,
+/// which resumes it into whatever task is waiting — a crossing the compiler
+/// checks. The one caller, `withDeadline`, already required it.
+private final class FirstResult<T: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<T, Never>?
     private var buffered: T?

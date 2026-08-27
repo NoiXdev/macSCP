@@ -189,12 +189,19 @@ struct SSHTerminalView: NSViewRepresentable {
             self.viewModel = viewModel
         }
 
+        // Both handlers copy `viewModel` into a local before entering
+        // `assumeIsolated`. The closure is a `sending` parameter, so reading
+        // the property inside it would hand the whole (nonisolated,
+        // non-`Sendable`) coordinator across; the view model alone is
+        // `@MainActor` and therefore `Sendable`. Same call, same thread.
         func send(source: TerminalView, data: ArraySlice<UInt8>) {
             let bytes = Array(data)
+            let viewModel = self.viewModel
             MainActor.assumeIsolated { viewModel.send(bytes) }
         }
 
         func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
+            let viewModel = self.viewModel
             MainActor.assumeIsolated { viewModel.resize(cols: newCols, rows: newRows) }
         }
 

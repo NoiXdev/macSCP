@@ -2,7 +2,15 @@ import Citadel
 import Foundation
 import NIOCore
 import NIOPosix
-import NIOSSH
+// The SSH transport reaches this suite through a fork of swift-nio-ssh that
+// branched before Apple adopted `Sendable`, so `NIOSSHUserAuthenticationOffer`
+// carries no conformance to state — the same reason
+// `AgentBackedPrivateKey` carries this import. What stops being checked here
+// is every `Sendable`-related crossing of a NIOSSH type in this file: the
+// offer that `nextOffer` awaits off an `EventLoopPromise`, and the promise
+// itself. Both are built in this file, handed straight to NIOSSH, and never
+// retained on this side.
+@preconcurrency import NIOSSH
 import Testing
 @testable import macSCPCore
 
