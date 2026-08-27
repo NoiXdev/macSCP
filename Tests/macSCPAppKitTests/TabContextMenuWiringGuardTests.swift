@@ -691,4 +691,545 @@ struct TabContextMenuWiringGuardTests {
         guard blockCommentDepth == 0 else { throw StripError.unterminatedLiteral }
         return result
     }
+
+    // MARK: - The drag half of the same feature
+
+    /// Guards ONE property of reordering by dragging: **the drag reaches
+    /// `TabsViewModel.move(tabID:to:)` and reorders nothing itself.** The
+    /// context menu's move entries and a dropped tab are two ways to one
+    /// rule, which is the whole point of building them together — built
+    /// apart, the reordering exists twice, and that is precisely what the
+    /// backlog entry behind this feature warns about.
+    ///
+    /// Nested inside the menu guard rather than started as its own file: it
+    /// watches the same view file and reads the same source with the same
+    /// stripper, and a second copy of that stripper has drifted from its
+    /// sibling before. The suite above keeps its own claim, unchanged and
+    /// unwidened — this one makes a different claim about different lines,
+    /// and states its own limits below.
+    ///
+    /// **Where the property could be violated FROM.** Enumerated before any
+    /// check below was written, from the ways a reordering can appear in a
+    /// view layer at all — not from the lines that ended up in the diff:
+    ///
+    /// - **D1** The drop rearranges a collection in the view itself
+    ///   (`remove`/`insert`/`swapAt`/`sort`/`reverse` on the tabs), a
+    ///   second reordering with the real one nowhere in sight.
+    /// - **D2** SwiftUI's own reordering is adopted instead — `.onMove` on
+    ///   a `ForEach`, which mutates a collection through a binding and
+    ///   never passes through Core.
+    /// - **D3** The drop routes out through something other than the one
+    ///   reorder route: a second closure on the strip, or the existing
+    ///   `onMenuEntry` fired with `.moveLeft`/`.moveRight` repeatedly, which
+    ///   is a step-by-step reordering written in a gesture handler.
+    /// - **D4** The view computes the destination itself — arithmetic on
+    ///   the index, or drop-point geometry — so the position rule lives
+    ///   where nothing can call it.
+    /// - **D5** The handler stops calling `TabsViewModel.move`: it reaches
+    ///   into `tabsModel.tabs`, or a second move-like helper appears beside
+    ///   `moveTab(_:by:)` and `reorderTab(_:toDropPosition:)`.
+    /// - **D6** The clamp disappears and a raw drop position is forwarded.
+    ///   `move(tabID:to:)` answers an out-of-range destination with silence
+    ///   by design, so this one does not look like a bug from inside the
+    ///   model — it looks like a drag that did nothing.
+    /// - **D7** A SECOND drag source or drop target in the strip file, so
+    ///   the file carries a reorder path nothing above checked.
+    /// - **D8** The drag payload stops naming the tab it is attached to
+    ///   (the active tab's id, an index, a title), which moves the wrong
+    ///   tab without a single line of reordering logic changing.
+    ///
+    /// **What this guard does NOT catch**, stated so a green run is not
+    /// read as more than it is:
+    ///
+    /// - **That the gesture works at all.** No test in this project can see
+    ///   SwiftUI begin a drag, accept a drop, or place the tab where the
+    ///   pointer was. That is a maintainer check in the running app.
+    /// - **The rearrangement vocabulary is a blocklist, not a rule** — the
+    ///   same limit the suite above documents for its own token list.
+    ///   `applying(_:)`, a swap written as two subscript assignments, or a
+    ///   helper in another file with an innocent name all walk past it.
+    /// - **It reads three named files** (the strip, the handler, the
+    ///   wiring). A reordering introduced in a fourth is invisible here,
+    ///   and so is anything `TabDropPlan` is made to answer — that type's
+    ///   behaviour is `TabDropPlanTests`' subject, not this scanner's.
+    /// - **It checks that the clamp is ASKED FOR, never that it is right.**
+    ///   A `TabDropPlan.destination` rewritten to return the raw index
+    ///   passes every check here.
+    ///
+    /// Fail-closed throughout: an unreadable file, a missing anchor,
+    /// unbalanced braces, and a string form the stripper does not parse all
+    /// count as failures. Renaming `onReorder` or
+    /// `reorderTab(_:toDropPosition:)` leaves an anchor missing, which is
+    /// reported as "re-anchor this guard" rather than passing quietly.
+    /// Self-tested against synthetic source, one probe per violation site.
+    @Suite("Tab drag wiring guard")
+    struct TabDragWiringGuardTests {
+        private static let stripFile = TabContextMenuWiringGuardTests.sourceFile
+        private static let handlerFile = TabContextMenuWiringGuardTests.repoRoot
+            .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Lifecycle.swift")
+        private static let wiringFile = TabContextMenuWiringGuardTests.repoRoot
+            .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Detail.swift")
+
+        private static let dragSource = ".draggable("
+        private static let dropAnchor = ".dropDestination(for: String.self) {"
+        private static let handlerAnchor = "func reorderTab("
+        private static let reorderingRule = "tabsModel.move("
+
+        /// The drag as the strip is allowed to spell it: the tab this view
+        /// was handed, and nothing else (D8).
+        private static let sanctionedDrag = ".draggable(tab.id.uuidString)"
+
+        /// The drop's only outward call: the tab the payload named, and
+        /// THIS item's own position — no arithmetic, no geometry, no second
+        /// route (D3, D4).
+        private static let sanctionedRoute = "onReorder(draggedID,index)"
+
+        /// The payload question asked rather than answered inline (D4).
+        private static let sanctionedPayloadRead = "TabDropPlan.draggedTabID(from:payload)"
+
+        /// The clamp, against the tabs that exist at the moment of the drop
+        /// rather than the count the strip was rendered with (D6).
+        private static let sanctionedClamp =
+            "TabDropPlan.destination(forDropOnIndex:position,tabCount:tabsModel.tabs.count)"
+
+        /// The one reordering rule, called with what the clamp answered
+        /// (D5).
+        private static let sanctionedMove = "tabsModel.move(tabID:tabID,to:destination)"
+
+        /// The strip's reorder route wired to the drop handler (D5, one
+        /// level up).
+        private static let sanctionedWiring = "reorderTab(tabID,toDropPosition:position)"
+
+        /// Identifier-boundary tokens that rearrange a collection, plus
+        /// SwiftUI's own reordering (D1, D2). Matched as whole tokens, so
+        /// `autoreverses` and `moveLeft` are untouched.
+        ///
+        /// A BLOCKLIST, and therefore not a rule — see this suite's doc
+        /// comment. It names the spellings a reordering is normally written
+        /// with; it cannot name every way a collection can be rearranged,
+        /// and growing it would only make the claim sound larger.
+        private static let rearrangementTokens: Set<String> = [
+            "remove", "removeAll", "removeFirst", "removeLast", "insert", "append",
+            "swapAt", "sort", "sorted", "reverse", "reversed", "shuffle", "shuffled",
+            "partition", "onMove", "moveDisabled", "move",
+        ]
+
+        /// Routes out of the tab item that are not the reorder route. A
+        /// drop that fires one of these is doing something the strip's
+        /// reorder closure was not asked for (D3).
+        private static let foreignRoutes = ["onMenuEntry(", "onActivate(", "onClose(", "onAdd("]
+
+        /// Operators that would mean the view computed the destination
+        /// rather than passing its own position (D4).
+        private static let arithmeticOperators = ["+", "-", "*", "/", "%"]
+
+        // MARK: - Extraction
+
+        /// The body of the closure or function that `anchor` opens —
+        /// everything between the first `{` at or after the anchor and its
+        /// matching `}`. `nil` on a missing anchor or unbalanced braces
+        /// rather than a guess, so every caller fails closed.
+        ///
+        /// Separate from the menu suite's own extractor because that one is
+        /// bound to its single anchor; the brace walk is the same walk.
+        static func body(after anchor: String, in source: String) -> String? {
+            guard let anchorRange = source.range(of: anchor) else { return nil }
+            var index = anchorRange.lowerBound
+            var depth = 0
+            var bodyStart: String.Index?
+            while index < source.endIndex {
+                let char = source[index]
+                if char == "{" {
+                    depth += 1
+                    if depth == 1 { bodyStart = source.index(after: index) }
+                }
+                if char == "}" {
+                    depth -= 1
+                    if depth == 0, let start = bodyStart { return String(source[start..<index]) }
+                    if depth < 0 { return nil }
+                }
+                index = source.index(after: index)
+            }
+            return nil
+        }
+
+        /// Everything a check needs about one extracted body, in one call,
+        /// so the synthetic probes below exercise the same steps the
+        /// real-file checks do. `#require` on the extraction: a missing
+        /// anchor and unbalanced braces both leave nothing to scan, and
+        /// reporting that as a failed content assertion would name the
+        /// wrong cause.
+        static func scan(
+            _ anchor: String, in source: String,
+            sourceLocation: SourceLocation = #_sourceLocation
+        ) throws -> (canonical: String, tokens: Set<String>) {
+            let body = try #require(
+                Self.body(after: anchor, in: source),
+                """
+                no `\(anchor)` body could be extracted from this source — the anchor is \
+                missing or its braces are unbalanced, so the scanner has nothing to \
+                check. Re-anchor this guard.
+                """,
+                sourceLocation: sourceLocation)
+            return (
+                try TabContextMenuWiringGuardTests.canonicalize(body),
+                TabContextMenuWiringGuardTests.identifierTokens(
+                    in: try TabContextMenuWiringGuardTests.stripped(body))
+            )
+        }
+
+        private static func stripped(_ file: URL) throws -> String {
+            try TabContextMenuWiringGuardTests.stripped(String(contentsOf: file, encoding: .utf8))
+        }
+
+        private static func canonical(_ file: URL) throws -> String {
+            try TabContextMenuWiringGuardTests.canonicalize(
+                String(contentsOf: file, encoding: .utf8))
+        }
+
+        private static func occurrences(of needle: String, in haystack: String) -> Int {
+            TabContextMenuWiringGuardTests.occurrences(of: needle, in: haystack)
+        }
+
+        // MARK: - The guarded claims, run against the real files
+
+        /// D1, D2: the strip file rearranges nothing. Not the drop closure
+        /// alone — the whole file, because a reordering hidden in a private
+        /// helper further down would be just as much a second rule.
+        @Test func theStripFileRearrangesNoCollectionOfItsOwn() throws {
+            let source = try Self.stripped(Self.stripFile)
+            let tokens = TabContextMenuWiringGuardTests.identifierTokens(in: source)
+            let found = Self.rearrangementTokens.intersection(tokens).sorted()
+            #expect(found.isEmpty, """
+                TabStripView.swift contains \(found) — the strip is rearranging tabs \
+                itself. Reordering is `TabsViewModel.move(tabID:to:)`'s job, the same \
+                one the context menu's move entries reach, and it exists once.
+                """)
+        }
+
+        /// D7: one drag source, one drop target. A second of either would
+        /// mean a reorder path this suite never looked at, and would also
+        /// make "the drop closure" ambiguous for every check below.
+        @Test func theDragAndTheDropAreAttachedExactlyOnceEach() throws {
+            let source = try Self.stripped(Self.stripFile)
+            let drags = Self.occurrences(of: Self.dragSource, in: source)
+            let drops = Self.occurrences(of: ".dropDestination(", in: source)
+            #expect(drags == 1, """
+                expected exactly 1 `\(Self.dragSource)` in TabStripView.swift, found \(drags) — \
+                either a second drag source was added, or this guard needs re-anchoring.
+                """)
+            #expect(drops == 1, """
+                expected exactly 1 `.dropDestination(` in TabStripView.swift, found \(drops) — \
+                either a second drop target was added, or this guard needs re-anchoring.
+                """)
+        }
+
+        /// D8: the drag carries the tab it is attached to. Nothing about
+        /// the reordering has to change for this to move the wrong tab.
+        @Test func theDragCarriesTheTabItIsAttachedTo() throws {
+            let source = try Self.canonical(Self.stripFile)
+            #expect(source.contains(Self.sanctionedDrag), """
+                the strip's drag payload is not `\(Self.sanctionedDrag)` — a drag that \
+                carries anything else names a different tab than the one under the \
+                pointer, and every reordering check below would still pass.
+                """)
+        }
+
+        /// D3, D4: the drop reads the payload, hands over the tab and this
+        /// item's own position, and decides nothing else.
+        @Test func theDropRoutesOutThroughTheReorderClosureOnly() throws {
+            let source = try String(contentsOf: Self.stripFile, encoding: .utf8)
+            let drop = try Self.scan(Self.dropAnchor, in: source)
+            #expect(drop.canonical.contains(Self.sanctionedPayloadRead), """
+                the drop closure does not ask `\(Self.sanctionedPayloadRead)` — the payload \
+                is being read some other way, in a closure no test can call.
+                """)
+            let routes = Self.occurrences(of: Self.sanctionedRoute, in: drop.canonical)
+            #expect(routes == 1, """
+                expected exactly 1 `\(Self.sanctionedRoute)` in the drop closure, found \
+                \(routes) — the drop either reorders through something other than the \
+                strip's one reorder route, or hands over a position it computed itself.
+                """)
+            for route in Self.foreignRoutes {
+                #expect(!drop.canonical.contains(route), """
+                    the drop closure fires `\(route)` — a drop is not that gesture, and a \
+                    reordering assembled out of menu entries is a second reordering.
+                    """)
+            }
+            for op in Self.arithmeticOperators {
+                #expect(!drop.canonical.contains(op), """
+                    the drop closure contains `\(op)` — the position it hands over is \
+                    computed rather than its own, which puts a placement rule where \
+                    nothing can call it.
+                    """)
+            }
+        }
+
+        /// D1, D2 inside the drop specifically: the closure that receives
+        /// the gesture is the likeliest place for a hand-rolled reordering,
+        /// so it is checked on its own as well as inside the file scan.
+        @Test func theDropClosureRearrangesNothing() throws {
+            let source = try String(contentsOf: Self.stripFile, encoding: .utf8)
+            let drop = try Self.scan(Self.dropAnchor, in: source)
+            let found = Self.rearrangementTokens.intersection(drop.tokens).sorted()
+            #expect(found.isEmpty, """
+                the drop closure contains \(found) — it is reordering rather than routing.
+                """)
+        }
+
+        /// D5, D6: the handler clamps, then calls the one rule. Both halves
+        /// in one test, because either without the other is a broken drop:
+        /// no clamp means a stale position silently does nothing, and no
+        /// `move` means the reordering happened somewhere else.
+        @Test func theDropHandlerClampsAndThenCallsTheOneReorderingRule() throws {
+            let source = try String(contentsOf: Self.handlerFile, encoding: .utf8)
+            let handler = try Self.scan(Self.handlerAnchor, in: source)
+            #expect(handler.canonical.contains(Self.sanctionedClamp), """
+                the drop handler does not clamp through `\(Self.sanctionedClamp)` — \
+                `move(tabID:to:)` refuses an out-of-range destination as a no-op, so a \
+                raw drop position produces a drag that silently does nothing.
+                """)
+            #expect(handler.canonical.contains(Self.sanctionedMove), """
+                the drop handler does not call `\(Self.sanctionedMove)` — the drag is \
+                reordering through something other than the one rule the context menu \
+                also uses.
+                """)
+            let moves = Self.occurrences(of: "move(", in: handler.canonical)
+            #expect(moves == 1, """
+                expected exactly 1 `move(` in the drop handler, found \(moves) — a second \
+                move call in the same handler is a second answer to where the tab goes.
+                """)
+        }
+
+        /// D5 at file scale. Counted while writing this check, in
+        /// `Sources/`: the context menu's `moveTab(_:by:)` and the drop's
+        /// `reorderTab(_:toDropPosition:)`, both in
+        /// `ContentView+Lifecycle.swift`. A third call site is a third way
+        /// to reorder, and this guard wants to be told about it.
+        @Test func theAppLayerReachesTheReorderingRuleFromTwoPlaces() throws {
+            let source = try Self.stripped(Self.handlerFile)
+            let calls = Self.occurrences(of: Self.reorderingRule, in: source)
+            #expect(calls == 2, """
+                expected exactly 2 `\(Self.reorderingRule)` calls in \
+                ContentView+Lifecycle.swift (the menu's move entries and the drop), \
+                found \(calls).
+                """)
+        }
+
+        /// D5, one level up: the strip's reorder route reaches the handler
+        /// that clamps and calls the rule, and there is one such route.
+        @Test func theStripsReorderRouteIsWiredToTheDropHandler() throws {
+            let source = try Self.canonical(Self.wiringFile)
+            let routes = Self.occurrences(of: "onReorder:", in: source)
+            #expect(routes == 1, """
+                expected exactly 1 `onReorder:` argument in ContentView+Detail.swift, \
+                found \(routes).
+                """)
+            #expect(source.contains(Self.sanctionedWiring), """
+                the strip's `onReorder` is not wired to `\(Self.sanctionedWiring)` — the \
+                drop is being answered by something other than the clamping handler.
+                """)
+        }
+
+        // MARK: - Scanner self-tests: one probe per violation site
+
+        /// The shape the real files have — the scanner must accept it, or
+        /// every negative probe below proves nothing.
+        static let sanctionedDropSource = """
+            .draggable(tab.id.uuidString)
+            .dropDestination(for: String.self) { payload, _ in
+                guard let draggedID = TabDropPlan.draggedTabID(from: payload) else { return false }
+                onReorder(draggedID, index)
+                return true
+            }
+            """
+
+        static let sanctionedHandlerSource = """
+            func reorderTab(_ tabID: UUID, toDropPosition position: Int) {
+                guard let destination = TabDropPlan.destination(
+                    forDropOnIndex: position, tabCount: tabsModel.tabs.count)
+                else { return }
+                tabsModel.move(tabID: tabID, to: destination)
+            }
+            """
+
+        @Test func scannerAcceptsTheSanctionedShapes() throws {
+            let drop = try Self.scan(Self.dropAnchor, in: Self.sanctionedDropSource)
+            #expect(drop.canonical.contains(Self.sanctionedPayloadRead))
+            #expect(Self.occurrences(of: Self.sanctionedRoute, in: drop.canonical) == 1)
+            #expect(Self.rearrangementTokens.intersection(drop.tokens).isEmpty)
+            for op in Self.arithmeticOperators { #expect(!drop.canonical.contains(op)) }
+            for route in Self.foreignRoutes { #expect(!drop.canonical.contains(route)) }
+
+            let handler = try Self.scan(Self.handlerAnchor, in: Self.sanctionedHandlerSource)
+            #expect(handler.canonical.contains(Self.sanctionedClamp))
+            #expect(handler.canonical.contains(Self.sanctionedMove))
+            #expect(Self.occurrences(of: "move(", in: handler.canonical) == 1)
+
+            let canonicalDrop = try TabContextMenuWiringGuardTests
+                .canonicalize(Self.sanctionedDropSource)
+            #expect(canonicalDrop.contains(Self.sanctionedDrag))
+        }
+
+        /// D1: the drop rearranges the tabs itself, with the real rule named
+        /// only in a comment — the evasion that has defeated guards on
+        /// earlier branches.
+        @Test func scannerFlagsAReorderingWrittenIntoTheDrop() throws {
+            let source = """
+                .dropDestination(for: String.self) { payload, _ in
+                    // same order TabsViewModel.move would produce
+                    guard let draggedID = TabDropPlan.draggedTabID(from: payload) else { return false }
+                    var reordered = tabs
+                    let from = reordered.firstIndex { $0.id == draggedID }
+                    reordered.insert(reordered.remove(at: from!), at: index)
+                    onReorder(draggedID, index)
+                    return true
+                }
+                """
+            let drop = try Self.scan(Self.dropAnchor, in: source)
+            #expect(Self.rearrangementTokens.intersection(drop.tokens) == ["insert", "remove"])
+        }
+
+        /// D2: SwiftUI's own reordering adopted in the strip file, which
+        /// mutates a binding and never reaches Core.
+        @Test func scannerFlagsSwiftUIsOwnMoveHandler() throws {
+            let source = try TabContextMenuWiringGuardTests.stripped("""
+                ForEach(tabs) { tab in TabItemView(tab: tab) }
+                    .onMove { offsets, destination in orderedTabs.move(fromOffsets: offsets, toOffset: destination) }
+                """)
+            let tokens = TabContextMenuWiringGuardTests.identifierTokens(in: source)
+            #expect(Self.rearrangementTokens.intersection(tokens) == ["move", "onMove"])
+        }
+
+        /// D3: the drop reorders by firing menu entries — a step-by-step
+        /// reordering written into a gesture handler, with no rearrangement
+        /// vocabulary anywhere for the token scan to see.
+        @Test func scannerFlagsADropRoutedThroughTheMenu() throws {
+            let source = """
+                .dropDestination(for: String.self) { payload, _ in
+                    guard let draggedID = TabDropPlan.draggedTabID(from: payload) else { return false }
+                    onMenuEntry(.moveLeft)
+                    return true
+                }
+                """
+            let drop = try Self.scan(Self.dropAnchor, in: source)
+            #expect(Self.occurrences(of: Self.sanctionedRoute, in: drop.canonical) == 0)
+            #expect(drop.canonical.contains("onMenuEntry("))
+        }
+
+        /// D4: the position is the view's own arithmetic, not the position
+        /// it was rendered at.
+        @Test func scannerFlagsADestinationComputedInTheView() throws {
+            let source = """
+                .dropDestination(for: String.self) { payload, _ in
+                    guard let draggedID = TabDropPlan.draggedTabID(from: payload) else { return false }
+                    onReorder(draggedID, index + 1)
+                    return true
+                }
+                """
+            let drop = try Self.scan(Self.dropAnchor, in: source)
+            #expect(Self.occurrences(of: Self.sanctionedRoute, in: drop.canonical) == 0)
+            #expect(drop.canonical.contains("+"))
+        }
+
+        /// D5: the handler reorders the model's array directly, so the one
+        /// rule is bypassed while the call site still looks like a handler.
+        @Test func scannerFlagsAHandlerThatBypassesTheRule() throws {
+            let source = """
+                func reorderTab(_ tabID: UUID, toDropPosition position: Int) {
+                    guard let from = tabsModel.tabs.firstIndex(where: { $0.id == tabID }) else { return }
+                    tabsModel.tabs.insert(tabsModel.tabs.remove(at: from), at: position)
+                }
+                """
+            let handler = try Self.scan(Self.handlerAnchor, in: source)
+            #expect(!handler.canonical.contains(Self.sanctionedMove))
+            #expect(Self.rearrangementTokens.intersection(handler.tokens) == ["insert", "remove"])
+        }
+
+        /// D6: the clamp is gone and the raw drop position goes straight to
+        /// a rule that answers out-of-range with silence. Nothing here
+        /// looks wrong; the drag simply stops working at the edges.
+        @Test func scannerFlagsAnUnclampedDestination() throws {
+            let source = """
+                func reorderTab(_ tabID: UUID, toDropPosition position: Int) {
+                    tabsModel.move(tabID: tabID, to: position)
+                }
+                """
+            let handler = try Self.scan(Self.handlerAnchor, in: source)
+            #expect(!handler.canonical.contains(Self.sanctionedClamp))
+            #expect(handler.canonical.contains(Self.reorderingRule))
+        }
+
+        /// D7: a second drag source in the file, carrying who knows what.
+        @Test func scannerCountsASecondDragSource() throws {
+            let source = try TabContextMenuWiringGuardTests.stripped("""
+                .draggable(tab.id.uuidString)
+                .draggable(activeTabID.uuidString)
+                """)
+            #expect(Self.occurrences(of: Self.dragSource, in: source) == 2)
+        }
+
+        /// D8: the drag carries something other than this tab — the whole
+        /// reordering path stays exactly as it is and moves the wrong tab.
+        @Test func scannerFlagsADragThatNamesAnotherTab() throws {
+            let source = try TabContextMenuWiringGuardTests
+                .canonicalize(".draggable(activeTabID.uuidString)")
+            #expect(!source.contains(Self.sanctionedDrag))
+            #expect(Self.occurrences(of: Self.dragSource, in: source) == 1)
+        }
+
+        // MARK: - Fail-closed self-tests
+
+        @Test func scannerFailsClosedOnAMissingAnchor() {
+            #expect(Self.body(after: Self.dropAnchor, in: "nothing to see here") == nil)
+            #expect(Self.body(after: Self.handlerAnchor, in: "nothing to see here") == nil)
+        }
+
+        @Test func scannerFailsClosedOnUnbalancedBraces() {
+            #expect(Self.body(after: Self.dropAnchor, in: """
+                .dropDestination(for: String.self) { payload, _ in
+                    onReorder(draggedID, index)
+                """) == nil)
+        }
+
+        /// The extraction must stop at the anchor's OWN closing brace, not
+        /// run on into whatever follows — otherwise a later, unrelated
+        /// closure's contents would be judged as if they were the drop's.
+        @Test func extractionStopsAtItsOwnClosingBrace() throws {
+            let source = """
+                .dropDestination(for: String.self) { payload, _ in
+                    onReorder(draggedID, index)
+                }
+                .contextMenu { if entry == .close { Button("x") {} } }
+                """
+            let drop = try Self.scan(Self.dropAnchor, in: source)
+            #expect(!drop.tokens.contains("if"))
+            #expect(drop.canonical.contains(Self.sanctionedRoute))
+        }
+
+        /// The token scan must match whole words, or `autoreverses` in the
+        /// strip's pulse animation would read as a reordering and this
+        /// guard would be permanently red for the wrong reason.
+        @Test func theTokenScanMatchesWholeWordsOnly() {
+            let tokens = TabContextMenuWiringGuardTests.identifierTokens(
+                in: "autoreverses: true, moveLeft, removal, inserted")
+            #expect(Self.rearrangementTokens.intersection(tokens).isEmpty)
+            #expect(tokens.contains("autoreverses"))
+            #expect(tokens.contains("moveLeft"))
+        }
+
+        /// The stripper the checks above run everything through is the menu
+        /// suite's, so prose naming a rearrangement — and this file is full
+        /// of it — cannot make a scan go red.
+        @Test func commentsAndStringsCannotTriggerTheTokenScan() throws {
+            let source = try TabContextMenuWiringGuardTests.stripped("""
+                // remove the tab and insert it at the drop position
+                let hint = "swapAt"
+                let realCode = 1
+                """)
+            let tokens = TabContextMenuWiringGuardTests.identifierTokens(in: source)
+            #expect(Self.rearrangementTokens.intersection(tokens).isEmpty)
+            #expect(tokens.contains("realCode"))
+        }
+    }
 }

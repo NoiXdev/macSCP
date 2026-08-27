@@ -134,7 +134,8 @@ extension ContentView {
                     onActivate: { activate($0) },
                     onClose: { requestClose($0) },
                     onAdd: { tabsModel.addTab(makeTab()) },
-                    onMenuEntry: { tab, entry in handleTabMenuEntry(entry, for: tab) }
+                    onMenuEntry: { tab, entry in handleTabMenuEntry(entry, for: tab) },
+                    onReorder: { tabID, position in reorderTab(tabID, toDropPosition: position) }
                 )
             }
             detail

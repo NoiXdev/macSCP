@@ -14,6 +14,12 @@ struct TabStripView: View {
     /// tab and the chosen `TabMenuEntry` back to `ContentView`, which owns
     /// the tab lifecycle those actions run through.
     let onMenuEntry: (SessionTab, TabMenuEntry) -> Void
+    /// The one route out of a tab drop: the dragged tab's id and the
+    /// position it was dropped on. The strip does not reorder anything —
+    /// `TabsViewModel.move(tabID:to:)` is the only reordering rule there
+    /// is, the same one the menu's move entries reach, and `ContentView`
+    /// owns the model it lives on.
+    let onReorder: (UUID, Int) -> Void
 
     var body: some View {
         HStack(spacing: 0) {
@@ -30,7 +36,8 @@ struct TabStripView: View {
                             isActive: tab.id == activeTabID,
                             onActivate: { onActivate(tab.id) },
                             onClose: { onClose(tab) },
-                            onMenuEntry: { entry in onMenuEntry(tab, entry) })
+                            onMenuEntry: { entry in onMenuEntry(tab, entry) },
+                            onReorder: onReorder)
                     }
                 }
             }
@@ -154,6 +161,60 @@ enum TabIndicatorPlan {
     }
 }
 
+/// What a drop on the tab strip means, as the two value questions the
+/// strip must not answer inside a gesture closure: which tab was dragged,
+/// and which position it should land on.
+///
+/// Pulled out for the same reason as `LivenessDotPlan` and
+/// `TabIndicatorPlan` above — this project has no SwiftUI rendering
+/// harness, so a rule written into a drop closure is a rule nothing can
+/// call. What lands here is decidable from values alone; what cannot be
+/// decided here (does SwiftUI fire the drag, does the tab appear where the
+/// pointer was) is not decidable anywhere in this project's tests.
+///
+/// **Reordering itself is deliberately not here.** The one reordering rule
+/// is `TabsViewModel.move(tabID:to:)`, which the context menu's move
+/// entries already call; this type only decides what to hand it. A second
+/// reordering — an array rearranged in the view, or a rule that computes a
+/// new order rather than a destination — is exactly the shape the design
+/// rejects, and `TabContextMenuWiringGuardTests` watches for it.
+enum TabDropPlan {
+    /// The tab a drop payload names, or `nil` when there is nothing in the
+    /// payload this strip could act on.
+    ///
+    /// The payload is a plain uuid string, the same spelling the session
+    /// sidebar's rows are dragged with, so a session row dropped onto a tab
+    /// arrives here as a well-formed uuid that names no tab. That is not
+    /// this function's problem to catch: `move(tabID:to:)` leaves the order
+    /// alone for an id it does not know, which is the outcome a foreign
+    /// drop should have anyway. Answering `nil` here would only trade one
+    /// no-op for another, at the price of a second rule about which ids are
+    /// real — and the tabs the strip renders are not this type's to know.
+    ///
+    /// A drag carries one tab, so anything past the first item is a payload
+    /// this gesture did not produce; the first item is what is read.
+    static func draggedTabID(from payload: [String]) -> UUID? {
+        guard let first = payload.first else { return nil }
+        return UUID(uuidString: first)
+    }
+
+    /// The position a tab dropped ON the tab at `dropIndex` should move to,
+    /// clamped into the tabs that exist right now — or `nil` when there are
+    /// no tabs at all, which leaves the caller nothing to move onto.
+    ///
+    /// The clamp is this side's job by design. `move(tabID:to:)` refuses an
+    /// out-of-range destination as a no-op rather than clamping it (its own
+    /// doc comment says why: a gesture that ends outside the strip must
+    /// leave the order alone), so a caller that forwards a raw position
+    /// gets silence instead of a move. And the position a drop carries was
+    /// read off the strip as it was RENDERED: a tab that closed while the
+    /// drag was in flight makes it describe a strip that no longer exists.
+    static func destination(forDropOnIndex dropIndex: Int, tabCount: Int) -> Int? {
+        guard tabCount > 0 else { return nil }
+        return min(max(dropIndex, 0), tabCount - 1)
+    }
+}
+
 /// The localized title for one `TabMenuEntry`. A TOTAL mapping: every case
 /// answers a string, and there is no way to answer "nothing". Which entries
 /// exist at all is `TabContextMenu.entries`' decision, made in Core and
@@ -188,6 +249,9 @@ private struct TabItemView: View {
     let onActivate: () -> Void
     let onClose: () -> Void
     let onMenuEntry: (TabMenuEntry) -> Void
+    /// Handed straight through from the strip — see `TabStripView`'s own
+    /// property for what the two values mean and who acts on them.
+    let onReorder: (UUID, Int) -> Void
 
     @State private var isHovering = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -269,6 +333,25 @@ private struct TabItemView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(perform: onActivate)
+        // Reordering by dragging, in two halves: the tab carries its own
+        // id, and a tab dropped on this one takes this one's position.
+        // Both halves are plain uuid strings, the spelling the session
+        // sidebar's rows already use.
+        //
+        // Only tabs are drop targets, which is what makes a drop into the
+        // empty space beside the strip leave the order as it was — there is
+        // nothing there to drop onto, so no destination is ever computed
+        // for it. Dragging a tab OUT of the window is not offered at all:
+        // multi-window is v2 and a session's state belongs to its window.
+        .draggable(tab.id.uuidString)
+        .dropDestination(for: String.self) { payload, _ in
+            // Reads the payload and routes; decides nothing else. Which
+            // position this is, and whether it still exists, are
+            // `TabDropPlan`'s and `TabsViewModel.move`'s answers.
+            guard let draggedID = TabDropPlan.draggedTabID(from: payload) else { return false }
+            onReorder(draggedID, index)
+            return true
+        }
         // The tab context menu. Everything about WHICH entries appear is
         // `TabContextMenu.entries`' answer, drawn here without a single
         // condition of this view's own: no `if` around an item, no filter

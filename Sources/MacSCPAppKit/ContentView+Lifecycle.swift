@@ -835,6 +835,24 @@ extension ContentView {
         tabsModel.move(tabID: tab.id, to: from + offset)
     }
 
+    /// A tab dropped onto another tab takes that tab's position — through
+    /// the SAME `TabsViewModel.move` the menu's move entries reach via
+    /// `moveTab(_:by:)` above. Dragging is a second way to the rule, never
+    /// a second rule.
+    ///
+    /// Unlike `moveTab(_:by:)`, this one clamps, and the difference is not
+    /// a preference: the menu's offset is computed against the model in the
+    /// same instant it is used, while a drop carries a position that was
+    /// read off the strip as it was rendered — before the drag, and before
+    /// anything that closed a tab meanwhile. `TabDropPlan.destination` is
+    /// where that clamp is decided, so it can be tested without a gesture.
+    func reorderTab(_ tabID: UUID, toDropPosition position: Int) {
+        guard let destination = TabDropPlan.destination(
+            forDropOnIndex: position, tabCount: tabsModel.tabs.count)
+        else { return }
+        tabsModel.move(tabID: tabID, to: destination)
+    }
+
     /// "Close Other Tabs": everything except `tab` goes, whether or not
     /// `tab` is the active one — the menu hangs off a particular row and
     /// the user means that row.
