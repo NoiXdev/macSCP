@@ -122,9 +122,12 @@ struct PaneVisibilityWiringGuardTests {
     /// These are the counts the scanner finds in each file, recounted
     /// whenever this sentence changes. In `ContentView+Lifecycle.swift`: the
     /// Files toolbar button, the Terminal toolbar button in `.builtIn`
-    /// mode, the `tabCommands.toggleTerminal` menu bridge, and the tab
-    /// context menu's "Open Terminal" (`openTerminalPane`), which reveals
-    /// the panel on a tab that is already connected. In `ContentView.swift`:
+    /// mode, the `tabCommands.toggleTerminal` menu bridge, and
+    /// `openTerminalPane`, which reveals the panel on a tab that is already
+    /// connected and which the tab context menu's pane entry will call once
+    /// it is rendered — it is scanned whether or not a caller reaches it
+    /// today, because what this guard checks is the toggle site, not its
+    /// callers. In `ContentView.swift`:
     /// `triggerSnippet` alone — `restorePaneVisibility`'s own toggle is the
     /// read direction and is exempted by name, which
     /// `scannerIgnoresTheRestorePathsOwnToggle` pins.

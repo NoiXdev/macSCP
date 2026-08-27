@@ -402,7 +402,11 @@
 "tabs.menu.closeOthers" = "Zamknij pozostałe karty";
 "tabs.menu.moveLeft" = "Przesuń w lewo";
 "tabs.menu.moveRight" = "Przesuń w prawo";
-"tabs.menu.openTerminal" = "Otwórz terminal";
+"tabs.menu.showFiles" = "Pokaż pliki";
+"tabs.menu.hideFiles" = "Ukryj pliki";
+"tabs.menu.showTerminal" = "Pokaż terminal";
+"tabs.menu.hideTerminal" = "Ukryj terminal";
+"tabs.menu.openExternalTerminal" = "Otwórz w zewnętrznym terminalu";
 "tabs.menu.saveAsSession" = "Zapisz jako sesję…";
 "tabs.closeOthers.title" = "Zamknąć pozostałe karty?";
 

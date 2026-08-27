@@ -399,7 +399,11 @@
 "tabs.menu.closeOthers" = "Close Other Tabs";
 "tabs.menu.moveLeft" = "Move Left";
 "tabs.menu.moveRight" = "Move Right";
-"tabs.menu.openTerminal" = "Open Terminal";
+"tabs.menu.showFiles" = "Show Files";
+"tabs.menu.hideFiles" = "Hide Files";
+"tabs.menu.showTerminal" = "Show Terminal";
+"tabs.menu.hideTerminal" = "Hide Terminal";
+"tabs.menu.openExternalTerminal" = "Open in External Terminal";
 "tabs.menu.saveAsSession" = "Save as Session…";
 "tabs.closeOthers.title" = "Close other tabs?";
 

@@ -400,7 +400,11 @@
 "tabs.menu.closeOthers" = "Andere Tabs schließen";
 "tabs.menu.moveLeft" = "Nach links";
 "tabs.menu.moveRight" = "Nach rechts";
-"tabs.menu.openTerminal" = "Terminal öffnen";
+"tabs.menu.showFiles" = "Dateien einblenden";
+"tabs.menu.hideFiles" = "Dateien ausblenden";
+"tabs.menu.showTerminal" = "Terminal einblenden";
+"tabs.menu.hideTerminal" = "Terminal ausblenden";
+"tabs.menu.openExternalTerminal" = "In externem Terminal öffnen";
 "tabs.menu.saveAsSession" = "Als Sitzung speichern…";
 "tabs.closeOthers.title" = "Andere Tabs schließen?";
 

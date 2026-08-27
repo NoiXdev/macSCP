@@ -15,9 +15,14 @@ import Foundation
 /// "nothing visible" past the rule the way a second, unchecked write path
 /// would let it.
 ///
-/// This type only decides WHICH halves are visible. It says nothing about
-/// `TerminalPanelViewModel.isVisible`, the existing terminal-only toggle —
-/// reconciling the two is a later task's decision.
+/// This type only decides WHICH halves are visible; it never reads
+/// `TerminalPanelViewModel.isVisible`, the terminal-only toggle that owns
+/// the shell's lifecycle. The two are already reconciled, and in exactly
+/// one place: `SessionTab.effectivePaneVisibility(terminalIsVisible:
+/// hasShell:)` is where that toggle's value becomes a `PaneVisibility`, and
+/// its own doc comment is what says there must be only one such place —
+/// the toolbar's `paneToggleState`, the render conditions, the restore and
+/// the persist all read it rather than pairing the two booleans again.
 public struct PaneVisibility: Equatable, Sendable, Codable {
     public let showsFiles: Bool
     public let showsTerminal: Bool

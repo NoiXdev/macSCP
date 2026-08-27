@@ -324,8 +324,16 @@ enum TabMenuEntryTitle {
             return L10n.string("tabs.menu.moveLeft", "Move Left")
         case .move(.right):
             return L10n.string("tabs.menu.moveRight", "Move Right")
-        case .openTerminal:
-            return L10n.string("tabs.menu.openTerminal", "Open Terminal")
+        case .pane(.files, .show):
+            return L10n.string("tabs.menu.showFiles", "Show Files")
+        case .pane(.files, .hide):
+            return L10n.string("tabs.menu.hideFiles", "Hide Files")
+        case .pane(.terminal, .show):
+            return L10n.string("tabs.menu.showTerminal", "Show Terminal")
+        case .pane(.terminal, .hide):
+            return L10n.string("tabs.menu.hideTerminal", "Hide Terminal")
+        case .openExternalTerminal:
+            return L10n.string("tabs.menu.openExternalTerminal", "Open in External Terminal")
         case .saveAsSession:
             return L10n.string("tabs.menu.saveAsSession", "Save as Session…")
         }

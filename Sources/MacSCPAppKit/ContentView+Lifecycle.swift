@@ -802,8 +802,10 @@ extension ContentView {
     // MARK: - Tab context menu
 
     /// The one route out of the tab strip's context menu: every entry
-    /// `TabContextMenu.entries` can produce lands here, and every case does
-    /// something. Nothing in this switch re-asks whether the entry should
+    /// `TabContextMenu.entries` can produce lands here, and every case it
+    /// can currently produce does something — `.pane` is the one arm that
+    /// does not, because nothing produces it yet (see its own comment).
+    /// Nothing in this switch re-asks whether the entry should
     /// have been offered — its precondition was already decided (and
     /// tested) in Core, and asking again here is how two answers to one
     /// question start to disagree.
@@ -822,8 +824,14 @@ extension ContentView {
             requestCloseOthers(of: tab)
         case .move(let step):
             tabsModel.move(tabID: tab.id, oneStep: step)
-        case .openTerminal:
-            openTerminalPane(in: tab)
+        case .pane:
+            // Not wired yet, and not reachable yet either: `tabMenuEntries(
+            // for:)` below asks the decision with two toggle states that
+            // offer nothing, so no `.pane` entry is produced. The task that
+            // supplies the real states supplies this arm with them.
+            break
+        case .openExternalTerminal:
+            requestExternalTerminal(for: tab)
         case .saveAsSession:
             saveAsSession(from: tab)
         }
@@ -831,13 +839,24 @@ extension ContentView {
 
     /// Which entries one tab's context menu offers.
     ///
-    /// Asked here rather than in the strip because two of the five facts
+    /// Asked here rather than in the strip because two of the seven facts
     /// are positional — where this tab sits, and how many there are — and a
     /// position that reaches a view is a position that can be shifted
     /// inside it. Both are read off the model in the same expression that
-    /// uses them; `TabContextMenu.entries` is unchanged and still decides
-    /// everything about WHICH entries exist, in Core, where its own tests
-    /// reach it.
+    /// uses them; `TabContextMenu.entries` decides everything about WHICH
+    /// entries exist, in Core, where its own tests reach it.
+    ///
+    /// **The two pane facts are asserted here, not read, and only until the
+    /// task that renders the pane entries wires them.** `PaneToggleState(
+    /// isOn: false, isEnabled: false)` is what `PaneVisibility.toggleState`
+    /// answers for a half that cannot be switched at all, so the decision
+    /// produces no `.pane` entry and this menu offers exactly what it
+    /// offered before the entries existed. The real answer is
+    /// `tab.paneToggleState(for:terminalIsVisible:hasShell:)`, which is
+    /// also what `TabContextMenuWiringGuardTests` will have to be re-anchored
+    /// on — an asserted fact is precisely what that guard's V7 exists to
+    /// catch, and it is sanctioned here only for as long as this placeholder
+    /// stands.
     ///
     /// A tab that is no longer in the model has no menu rather than a menu
     /// decided from a made-up position — the same reading `move` takes of
@@ -846,12 +865,15 @@ extension ContentView {
         guard let index = tabsModel.tabs.firstIndex(where: { $0.id == tab.id }) else { return [] }
         let capabilities = BackendDescriptor
             .descriptor(for: tab.connectionViewModel.kind).capabilities
+        let noPaneEntryYet = PaneToggleState(isOn: false, isEnabled: false)
         return TabContextMenu.entries(
             atIndex: index,
             ofTabCount: tabsModel.tabs.count,
             supportsShell: capabilities.supportsShell,
             isAdHoc: tab.activeStoredSessionID == nil,
-            isConnected: tab.isConnected)
+            isConnected: tab.isConnected,
+            filesToggle: noPaneEntryYet,
+            terminalToggle: noPaneEntryYet)
     }
 
     /// "Close Other Tabs": everything except `tab` goes, whether or not
@@ -911,8 +933,15 @@ extension ContentView {
         shrinkIfPristine()
     }
 
-    /// "Open Terminal" on a tab that is ALREADY connected: this reveals the
-    /// terminal half of a running session, and dials nothing.
+    /// Reveals the terminal half of a tab that is ALREADY connected, and
+    /// dials nothing.
+    ///
+    /// **No caller reaches this right now.** It used to be the tab context
+    /// menu's "Open Terminal"; that entry became `.openExternalTerminal`,
+    /// which is a different thing and goes to `requestExternalTerminal(for:)`.
+    /// What will call this is the menu's `.pane(.terminal, .show)` entry,
+    /// once the task that renders the pane entries wires it — which is why
+    /// it stands rather than being deleted and rewritten.
     ///
     /// Deliberately not `openTerminalFromSidebar`, which looks similar and
     /// is not: that one goes through `connect(in:stored:paneVisibility:)`
@@ -926,11 +955,10 @@ extension ContentView {
     /// screen, exactly as a click on that button would.
     ///
     /// Toggling is guarded on the terminal not already being visible, which
-    /// is what separates "open" from "toggle": the entry is offered for a
-    /// connected shell backend whether or not the panel happens to be up,
-    /// and an entry named "Open Terminal" that closes one would be a lie.
-    /// The pane lock needs no check here for the same reason — it forbids
-    /// hiding the last visible half, never showing a hidden one.
+    /// is what separates "open" from "toggle": this reveals, and an entry
+    /// that says it shows the terminal must never hide one. The pane lock
+    /// needs no check here for the same reason — it forbids hiding the last
+    /// visible half, never showing a hidden one.
     ///
     /// The tab is activated first: it is the tab whose terminal is being
     /// opened, and revealing a panel in a tab the user cannot see would be

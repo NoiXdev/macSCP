@@ -6,11 +6,12 @@ import Testing
 /// which entries appear.** The list it draws is whatever it was handed —
 /// no more, no fewer, in that order — and every rule about when an entry
 /// is offered lives in Core, in
-/// `TabContextMenu.entries(atIndex:ofTabCount:supportsShell:isAdHoc:isConnected:)`,
+/// `TabContextMenu.entries(atIndex:ofTabCount:supportsShell:isAdHoc:
+/// isConnected:filesToggle:terminalToggle:)`,
 /// where `TabContextMenuTests` can reach it.
 ///
 /// The view no longer asks that function itself (drag task, fix round 3).
-/// Two of its five facts are positional, and a position that reaches a
+/// Two of its facts are positional, and a position that reaches a
 /// view is a position that can be shifted inside it — so the question is
 /// asked where the model is, and the strip is handed the answer.
 ///
@@ -113,8 +114,8 @@ import Testing
 /// Fail-closed throughout: an unreadable file, a missing anchor, unbalanced
 /// braces, and an unterminated string or comment all count as failures.
 /// Self-tested against synthetic source — a probe for every violation site
-/// named here, and two each for V2, V4 and V7, the sites that can be
-/// written in two places or two shapes — so the scanner cannot pass merely
+/// named here, two each for V2 and V4, and three for V7, the site that can
+/// be written in the most shapes — so the scanner cannot pass merely
 /// because the real file moved or was reformatted past recognition.
 @Suite("Tab context menu wiring guard")
 struct TabContextMenuWiringGuardTests {
@@ -158,16 +159,28 @@ struct TabContextMenuWiringGuardTests {
     /// nothing folded into any of them. Compared as a whole body rather
     /// than fact by fact, because a fact can also be substituted before the
     /// call as easily as inside it.
+    ///
+    /// The two pane facts are the one asserted value this shape sanctions,
+    /// and it is sanctioned as a placeholder: nothing renders a `.pane`
+    /// entry yet, so the App layer asks with a state that offers none
+    /// rather than reading one it could not act on. The moment those
+    /// entries are rendered, this literal has to become
+    /// `tab.paneToggleState(for:terminalIsVisible:hasShell:)` — leaving the
+    /// constant here once the entries are live would be V7 with this
+    /// guard's own blessing.
     private static let sanctionedDecisionBody = """
         guard let index = tabsModel.tabs.firstIndex(where: { $0.id == tab.id }) else { return [] }
         let capabilities = BackendDescriptor
             .descriptor(for: tab.connectionViewModel.kind).capabilities
+        let noPaneEntryYet = PaneToggleState(isOn: false, isEnabled: false)
         return TabContextMenu.entries(
             atIndex: index,
             ofTabCount: tabsModel.tabs.count,
             supportsShell: capabilities.supportsShell,
             isAdHoc: tab.activeStoredSessionID == nil,
-            isConnected: tab.isConnected)
+            isConnected: tab.isConnected,
+            filesToggle: noPaneEntryYet,
+            terminalToggle: noPaneEntryYet)
         """
 
     /// The one sanctioned shape of the iteration: the loop's collection IS
@@ -639,8 +652,8 @@ struct TabContextMenuWiringGuardTests {
                 \(Self.decisionAnchor)
                 \(Self.sanctionedDecisionBody
                     .replacingOccurrences(
-                        of: "isConnected: tab.isConnected)",
-                        with: "isConnected: tab.isConnected && !tab.transferQueue.isActive)"))
+                        of: "isConnected: tab.isConnected,",
+                        with: "isConnected: tab.isConnected && !tab.transferQueue.isActive,"))
                 }
                 """,
             describing: "a probe")
@@ -663,6 +676,36 @@ struct TabContextMenuWiringGuardTests {
                 """,
             describing: "a probe")
         #expect(substituted != sanctioned)
+    }
+
+    /// The pane facts, which are the placeholder half of the sanctioned
+    /// shape: the guard has to notice both directions of a change to them —
+    /// a different asserted state, and the real reading that is meant to
+    /// replace the assertion. Neither may slip through as "the shape we
+    /// already sanctioned".
+    @Test func scannerFlagsAChangedPaneFact() throws {
+        let sanctioned = try Self.canonicalize(Self.sanctionedDecisionBody)
+        func body(_ replacement: String) throws -> String {
+            try Self.canonicalBody(
+                after: Self.decisionAnchor,
+                in: """
+                    \(Self.decisionAnchor)
+                    \(Self.sanctionedDecisionBody
+                        .replacingOccurrences(
+                            of: "let noPaneEntryYet = PaneToggleState(isOn: false, isEnabled: false)",
+                            with: replacement))
+                    }
+                    """,
+                describing: "a probe")
+        }
+        let otherAssertion = try body(
+            "let noPaneEntryYet = PaneToggleState(isOn: true, isEnabled: true)")
+        #expect(otherAssertion != sanctioned)
+        let realReading = try body("""
+            let noPaneEntryYet = tab.paneToggleState(
+                for: .files, terminalIsVisible: false, hasShell: capabilities.supportsShell)
+            """)
+        #expect(realReading != sanctioned)
     }
 
     /// V5, at the file level: two attachments, so "the menu" is no longer a

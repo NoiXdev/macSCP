@@ -403,7 +403,11 @@
 "tabs.menu.closeOthers" = "Fermer les autres onglets";
 "tabs.menu.moveLeft" = "Déplacer vers la gauche";
 "tabs.menu.moveRight" = "Déplacer vers la droite";
-"tabs.menu.openTerminal" = "Ouvrir le terminal";
+"tabs.menu.showFiles" = "Afficher les fichiers";
+"tabs.menu.hideFiles" = "Masquer les fichiers";
+"tabs.menu.showTerminal" = "Afficher le terminal";
+"tabs.menu.hideTerminal" = "Masquer le terminal";
+"tabs.menu.openExternalTerminal" = "Ouvrir dans un terminal externe";
 "tabs.menu.saveAsSession" = "Enregistrer comme session…";
 "tabs.closeOthers.title" = "Fermer les autres onglets ?";
 
