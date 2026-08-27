@@ -96,4 +96,51 @@ struct TabsViewModelTests {
         #expect(vm.tabs.map(\.id) == [a.id, fresh.id])
         #expect(vm.activeTabID == fresh.id)
     }
+
+    @Test func movingATabPutsItAtTheRequestedPosition() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID()), c = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b); vm.addTab(c)
+        vm.move(tabID: a.id, to: 2)
+        #expect(vm.tabs.map(\.id) == [b.id, c.id, a.id])
+    }
+
+    @Test func movingSomeOtherTabLeavesTheActiveOneActive() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID()), c = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b); vm.addTab(c)
+        vm.activate(b.id)
+        vm.move(tabID: c.id, to: 0)
+        // b moved from the middle to the end without being touched.
+        #expect(vm.tabs.map(\.id) == [c.id, a.id, b.id])
+        #expect(vm.activeTabID == b.id)
+        #expect(vm.activeTab.id == b.id)
+    }
+
+    @Test func movingTheActiveTabKeepsItActive() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b)
+        vm.activate(a.id)
+        vm.move(tabID: a.id, to: 1)
+        #expect(vm.tabs.map(\.id) == [b.id, a.id])
+        #expect(vm.activeTabID == a.id)
+    }
+
+    @Test func aDestinationBeyondTheEndsDoesNothingRatherThanTrapping() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b)
+        vm.move(tabID: a.id, to: -5)
+        #expect(vm.tabs.map(\.id) == [a.id, b.id])
+        vm.move(tabID: b.id, to: 99)
+        #expect(vm.tabs.map(\.id) == [a.id, b.id])
+    }
+
+    @Test func movingAnUnknownTabIsANoOp() {
+        let a = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.move(tabID: UUID(), to: 0)
+        #expect(vm.tabs.map(\.id) == [a.id])
+    }
 }

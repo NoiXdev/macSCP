@@ -33,6 +33,23 @@ public final class TabsViewModel<Tab: Identifiable> where Tab.ID == UUID {
         activeTabID = tab.id
     }
 
+    /// Moves a tab to another position. The only reordering there is —
+    /// the context menu calls it with the neighbouring index, dragging
+    /// calls it with the drop position, so the rule exists once.
+    ///
+    /// `activeTabID` is deliberately untouched: it names a tab, not a
+    /// position, so the active tab stays active however the order changes.
+    /// Out-of-range destinations and unknown ids leave the order alone
+    /// rather than trapping — a gesture that ends outside the strip is an
+    /// ordinary outcome, not a programmer error.
+    public func move(tabID: UUID, to destination: Int) {
+        guard let from = tabs.firstIndex(where: { $0.id == tabID }) else { return }
+        let clamped = max(0, min(destination, tabs.count - 1))
+        guard clamped != from else { return }
+        let tab = tabs.remove(at: from)
+        tabs.insert(tab, at: clamped)
+    }
+
     /// No-op for unknown ids (defensive: a stale click on a closing tab).
     public func activate(_ id: UUID) {
         guard tabs.contains(where: { $0.id == id }) else { return }
