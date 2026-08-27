@@ -1020,23 +1020,33 @@ struct TabContextMenuWiringGuardTests {
     /// - **Whether the gesture works at all.** No test here can see SwiftUI
     ///   begin a drag, accept a drop, or place a tab under the pointer.
     ///   That is a maintainer check in the running app.
+    /// - **Whether the drop feedback ever appears.** Nothing here sees a
+    ///   tab reported as targeted, sees the highlight drawn, or sees the
+    ///   targeting cleared again when the drop ends — nor whether SwiftUI
+    ///   reports the dragged tab itself as targeted, which is the case the
+    ///   drag origin exists to exclude. What the feedback MEANS once
+    ///   reported is `TabBackgroundPlan`'s, called directly in
+    ///   `TabBackgroundPlanTests`; that it is reported at all is the same
+    ///   maintainer check in the running app.
     /// - **What `TabsViewModel.move(tabID:onto:)` does** is
     ///   `TabsViewModelTests`' subject, called directly, not scanned —
     ///   including what it owes for a target on either side at any
     ///   distance, which is checked there over every ordered pair of a
     ///   strip rather than at a couple of chosen distances.
     ///
-    /// What remains here are five claims about the gesture's own wiring,
+    /// What remains here are six claims about the gesture's own wiring,
     /// which no type can carry: that the drag and the drop each exist
     /// exactly once, that the drag carries this tab's id rather than some
-    /// other string, that the drop hands both identities on rather than
-    /// doing something else with them, that the route reaching the item is
-    /// the strip's own and not a closure in front of it, and that the
-    /// wiring closure hands both identities to the one reordering rule.
-    /// Two files are read for that: the strip, and the place the route is
-    /// wired. Fail-closed: a missing anchor, unbalanced braces, an
-    /// unterminated literal or an unreadable file all fail, and every
-    /// message names the file, the construct and what to do about it.
+    /// other string AND writes that same tab down as the drag's origin,
+    /// that the drop hands both identities on rather than doing something
+    /// else with them, that the targeting closure records the targeting and
+    /// decides nothing about it, that the route reaching the item is the
+    /// strip's own and not a closure in front of it, and that the wiring
+    /// closure hands both identities to the one reordering rule. Two files
+    /// are read for that: the strip, and the place the route is wired.
+    /// Fail-closed: a missing anchor, unbalanced braces, an unterminated
+    /// literal or an unreadable file all fail, and every message names the
+    /// file, the construct and what to do about it.
     @Suite("Tab drag wiring guard")
     struct TabDragWiringGuardTests {
         private static let stripFile = TabContextMenuWiringGuardTests.sourceFile
@@ -1045,10 +1055,34 @@ struct TabContextMenuWiringGuardTests {
         private static let dropTarget = ".dropDestination("
         private static let dropAnchor = ".dropDestination(for: String.self) {"
 
-        /// The drag as the strip is allowed to spell it: the tab this view
-        /// was handed, and nothing else. A complete call, so nothing can be
-        /// appended to it and still match.
-        private static let sanctionedDrag = ".draggable(tab.id.uuidString)"
+        /// The drag as the strip is allowed to spell it: the payload
+        /// function below, and nothing else. A complete call, so nothing
+        /// can be appended to it and still match.
+        private static let sanctionedDrag = ".draggable(dragPayload())"
+
+        /// Where the payload is produced, and where the drag writes down
+        /// which tab it is carrying.
+        private static let dragPayloadAnchor = "private func dragPayload() -> String {"
+
+        /// The one sanctioned shape of that function: this tab recorded as
+        /// the origin, this tab's id carried. Compared as a whole body,
+        /// because recording one tab and carrying another is a defect no
+        /// single anchor sees, and either half alone can be substituted.
+        private static let sanctionedDragPayloadSource = """
+            private func dragPayload() -> String {
+                dragOrigin.draggedTabID = tab.id
+                return tab.id.uuidString
+            }
+            """
+
+        /// Where the drop reports that something is over this tab.
+        private static let targetingAnchor = "isTargeted: {"
+
+        /// The one sanctioned shape of that report: recorded raw. A
+        /// condition written here is a rule about what a targeting MEANS,
+        /// and that rule is `TabBackgroundPlan.build`'s, where
+        /// `TabBackgroundPlanTests` reaches it.
+        private static let sanctionedTargeting = "isDropTargeted=$0"
 
         /// The payload question, asked rather than answered inline.
         private static let sanctionedPayloadRead = "TabDropPlan.draggedTabID(from:payload)"
@@ -1152,11 +1186,19 @@ struct TabContextMenuWiringGuardTests {
                 """)
         }
 
-        /// The drag carries the tab it is attached to. Nothing about the
-        /// reordering has to change for a different payload to move the
-        /// wrong tab, and the payload is the one value on this path the
-        /// type system does not carry: it is a string.
-        @Test func theDragCarriesTheTabItIsAttachedTo() throws {
+        /// The drag carries the tab it is attached to, and writes that same
+        /// tab down as the drag's origin. Nothing about the reordering has
+        /// to change for a different payload to move the wrong tab, and the
+        /// payload is the one value on this path the type system does not
+        /// carry: it is a string.
+        ///
+        /// The origin travels with it because it is written in the same
+        /// two lines, and it decides one thing on its own: which tab is
+        /// excluded from the drop highlight. Recording a tab other than the
+        /// one being carried excludes the wrong tab — the dragged tab
+        /// offers itself as somewhere to let go, promising a move that
+        /// `TabsViewModel.move(tabID:onto:)` will not make.
+        @Test func theDragCarriesTheTabItIsAttachedToAndRecordsItAsTheOrigin() throws {
             let source = try Self.canonicalStrip()
             #expect(source.contains(Self.sanctionedDrag), """
                 the drag payload in \(Self.stripFile.path) is not \
@@ -1165,6 +1207,25 @@ struct TabContextMenuWiringGuardTests {
                 changed deliberately, update `sanctionedDrag` in this guard to the new \
                 spelling.
                 """)
+            let payload = try TabContextMenuWiringGuardTests.canonicalBody(
+                after: Self.dragPayloadAnchor, inFileAt: Self.stripFile)
+            let sanctioned = try Self.sanctionedDragPayloadBody()
+            #expect(payload == sanctioned, """
+                the `\(Self.dragPayloadAnchor)` body in \(Self.stripFile.path) is \
+                `\(payload)`, not `\(sanctioned)` — the drag is carrying one tab and \
+                recording another, or recording nothing. The recorded tab is the one \
+                excluded from the drop highlight, so a wrong one there makes the \
+                dragged tab offer itself as a destination it will not honour. If this \
+                function legitimately changed shape, update \
+                `sanctionedDragPayloadSource` in this guard and add a probe for the \
+                shape it now has.
+                """)
+        }
+
+        static func sanctionedDragPayloadBody() throws -> String {
+            try TabContextMenuWiringGuardTests.canonicalBody(
+                after: Self.dragPayloadAnchor, in: Self.sanctionedDragPayloadSource,
+                describing: "this guard's own sanctioned drag payload")
         }
 
         /// The drop reads the payload and hands both identities on. It can
@@ -1193,6 +1254,32 @@ struct TabContextMenuWiringGuardTests {
                     the lifecycle lives, not inside the gesture.
                     """)
             }
+        }
+
+        /// The targeting closure records that something is over this tab
+        /// and does nothing else with it. Everything the report MEANS —
+        /// that the dragged tab itself is not a destination, that a drop
+        /// target outranks the active tab — is `TabBackgroundPlan.build`'s,
+        /// where `TabBackgroundPlanTests` calls it directly; a condition
+        /// written into this closure would be that same rule spelled a
+        /// second time, in a place no test can reach.
+        ///
+        /// Compared as a whole body: an inverted report
+        /// (`isDropTargeted = !$0`), a narrowed one and an empty closure
+        /// are the same defect at this site, and only equality sees all
+        /// three.
+        @Test func theTargetingClosureOnlyRecordsTheTargeting() throws {
+            let body = try TabContextMenuWiringGuardTests.canonicalBody(
+                after: Self.targetingAnchor, inFileAt: Self.stripFile)
+            #expect(body == Self.sanctionedTargeting, """
+                the `\(Self.targetingAnchor)` closure in \(Self.stripFile.path) is \
+                `\(body)`, not `\(Self.sanctionedTargeting)` — the drop's report is \
+                being judged where it is received instead of recorded, and what a \
+                targeting means for a tab's background is `TabBackgroundPlan.build`'s \
+                decision, tested in `TabBackgroundPlanTests`. If this closure \
+                legitimately changed shape, update `sanctionedTargeting` in this guard \
+                and add a probe for the shape it now has.
+                """)
         }
 
         /// The route the drop hands its two identities to must be the one
@@ -1278,12 +1365,12 @@ struct TabContextMenuWiringGuardTests {
         // MARK: - Scanner self-tests
 
         static let sanctionedDropSource = """
-            .draggable(tab.id.uuidString)
+            .draggable(dragPayload())
             .dropDestination(for: String.self) { payload, _ in
                 guard let draggedID = TabDropPlan.draggedTabID(from: payload) else { return false }
                 onReorder(draggedID, tab)
                 return true
-            }
+            } isTargeted: { isDropTargeted = $0 }
             """
 
         @Test func scannerAcceptsTheSanctionedShape() throws {
@@ -1294,6 +1381,63 @@ struct TabContextMenuWiringGuardTests {
             let canonical = try TabContextMenuWiringGuardTests
                 .canonicalize(Self.sanctionedDropSource)
             #expect(canonical.contains(Self.sanctionedDrag))
+            let targeting = try TabContextMenuWiringGuardTests.canonicalBody(
+                after: Self.targetingAnchor, in: Self.sanctionedDropSource,
+                describing: "a probe")
+            #expect(targeting == Self.sanctionedTargeting)
+        }
+
+        /// The drop's own body must not swallow the targeting closure that
+        /// follows it, or the two would be judged as one.
+        @Test func theDropExtractionStopsBeforeTheTargetingClosure() throws {
+            let body = try Self.dropBody(in: Self.sanctionedDropSource)
+            #expect(!body.contains("isDropTargeted"))
+        }
+
+        /// The payload function carrying one tab while recording another —
+        /// the shape that excludes the wrong tab from the highlight, with
+        /// the drag itself working exactly as before.
+        @Test func scannerFlagsAPayloadThatRecordsAnotherTab() throws {
+            let sanctioned = try Self.sanctionedDragPayloadBody()
+            let accepted = try TabContextMenuWiringGuardTests.canonicalBody(
+                after: Self.dragPayloadAnchor, in: Self.sanctionedDragPayloadSource,
+                describing: "a probe")
+            #expect(accepted == sanctioned)
+            let misrecorded = try TabContextMenuWiringGuardTests.canonicalBody(
+                after: Self.dragPayloadAnchor,
+                in: Self.sanctionedDragPayloadSource.replacingOccurrences(
+                    of: "dragOrigin.draggedTabID = tab.id",
+                    with: "dragOrigin.draggedTabID = tabs[0].id"),
+                describing: "a probe")
+            #expect(misrecorded != sanctioned)
+        }
+
+        /// The mirror image: the origin is recorded correctly and the drag
+        /// carries something else.
+        @Test func scannerFlagsAPayloadThatCarriesAnotherValue() throws {
+            let sanctioned = try Self.sanctionedDragPayloadBody()
+            let miscarried = try TabContextMenuWiringGuardTests.canonicalBody(
+                after: Self.dragPayloadAnchor,
+                in: Self.sanctionedDragPayloadSource.replacingOccurrences(
+                    of: "return tab.id.uuidString", with: "return tab.displayTitle"),
+                describing: "a probe")
+            #expect(miscarried != sanctioned)
+        }
+
+        /// The targeting closure judging the report instead of recording
+        /// it: inverted, and narrowed by a rule of its own.
+        @Test func scannerFlagsATargetingClosureThatDecidesSomething() throws {
+            let inverted = try TabContextMenuWiringGuardTests.canonicalBody(
+                after: Self.targetingAnchor, in: "isTargeted: { isDropTargeted = !$0 }",
+                describing: "a probe")
+            #expect(inverted != Self.sanctionedTargeting)
+            let narrowed = try TabContextMenuWiringGuardTests.canonicalBody(
+                after: Self.targetingAnchor,
+                in: "isTargeted: { isDropTargeted = $0 && !isActive }", describing: "a probe")
+            #expect(narrowed != Self.sanctionedTargeting)
+            let inert = try TabContextMenuWiringGuardTests.canonicalBody(
+                after: Self.targetingAnchor, in: "isTargeted: { _ in }", describing: "a probe")
+            #expect(inert != Self.sanctionedTargeting)
         }
 
         /// A payload naming something other than this tab — the shape the

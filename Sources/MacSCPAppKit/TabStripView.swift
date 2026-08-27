@@ -27,6 +27,11 @@ struct TabStripView: View {
     /// way round does not compile.
     let onReorder: (UUID, SessionTab) -> Void
 
+    /// Which tab the drag in flight is carrying — written where the drag
+    /// starts, read where a drop is targeted. See `TabDragOrigin` for why
+    /// it is a box rather than state, and for what it is worth.
+    @State private var dragOrigin = TabDragOrigin()
+
     var body: some View {
         HStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
@@ -40,6 +45,7 @@ struct TabStripView: View {
                         TabItemView(
                             tab: tab,
                             isActive: tab.id == activeTabID,
+                            dragOrigin: dragOrigin,
                             onActivate: { onActivate(tab.id) },
                             onClose: { onClose(tab) },
                             menuEntries: { menuEntries(tab) },
@@ -203,6 +209,106 @@ enum TabDropPlan {
 
 }
 
+/// Which tab the drag currently in flight started from.
+///
+/// **Why this exists at all.** A drop destination is told only THAT
+/// something is over it, never what: `isTargeted:` hands over a `Bool`, and
+/// the payload is readable only once the drop happens. The one place the
+/// strip can see which tab is being carried is the drag's own payload, so
+/// that is where it is written down — `TabItemView.dragPayload()`.
+///
+/// **Why a box and not `@State`.** `draggable(_:)` takes its payload as an
+/// `@autoclosure @escaping` closure and calls it when the drag begins, not
+/// when the body is built. If that ever stopped holding, a `@State` write
+/// there would invalidate the body that just made it, and two tabs writing
+/// two different ids would keep invalidating each other. Writing to a plain
+/// reference invalidates nothing, which turns that whole class of failure
+/// into at worst a wrong answer for one tab's highlight.
+///
+/// **What it is worth.** The value is never cleared: a drag that is
+/// cancelled leaves the last dragged tab named here. That is harmless for
+/// the question it is asked — every drag of a tab overwrites it before the
+/// first target is reported — and it is why the id is compared rather than
+/// tested for presence: a stale name is not evidence that a drag is in
+/// flight. See `TabBackgroundPlan.build` for what is and is not promised
+/// because of that.
+final class TabDragOrigin {
+    var draggedTabID: UUID?
+}
+
+/// Which background one tab draws, and which of the reasons to draw one
+/// wins when more than one holds at once — the same split as
+/// `SessionRowHighlight`, and for the same reason: precedence is a
+/// decision, and one written as a ternary chain inside a view body is one
+/// no test can reach.
+///
+/// **The precedence: a drop target outranks the active tab.** The drop
+/// highlight answers a question that exists only while a drag is in flight
+/// — "does letting go here do something, and where does it land" — and it
+/// has to be answerable on any tab, the active one included. Nothing is
+/// lost by letting it take the background: the active tab keeps two
+/// channels of its own that no background touches, its blue underline and
+/// its semibold ink title, exactly as `SessionRowHighlight` lets the
+/// selection outrank the connected session.
+///
+/// **A tab is never a drop target for its own drag.**
+/// `TabsViewModel.move(tabID:onto:)` leaves the order alone when the two
+/// ids are the same, so highlighting there would promise a move that will
+/// not happen.
+///
+/// Colour is not the only carrier: the drop target also draws a border,
+/// which is a change in shape rather than in hue.
+enum TabBackgroundPlan: Equatable {
+    case dropTarget
+    case active
+    case plain
+
+    /// `draggedTabID` is what `TabDragOrigin` last recorded, and `tabID`
+    /// the tab being drawn.
+    ///
+    /// The comparison is between two identities, never a presence test: an
+    /// origin is left behind by a finished drag, so "some id is recorded"
+    /// says nothing about whether a drag is in flight, while "the recorded
+    /// id is this tab" is exactly the case that must not be highlighted.
+    ///
+    /// **What that leaves unpromised.** A payload from outside this strip
+    /// — a session row dragged out of the sidebar carries a plain uuid
+    /// string too — targets a tab like any other drag and is highlighted
+    /// like one, while its drop moves nothing, because `move(tabID:onto:)`
+    /// does not know the id. Telling the two apart needs the payload, and
+    /// the payload is not readable until the drop.
+    static func build(
+        isActive: Bool, isDropTargeted: Bool, draggedTabID: UUID?, tabID: UUID
+    ) -> TabBackgroundPlan {
+        if isDropTargeted && draggedTabID != tabID { return .dropTarget }
+        return isActive ? .active : .plain
+    }
+
+    /// The surface each case draws. Here rather than in the item so that
+    /// the one claim a test CAN make about a background it cannot see —
+    /// that the three cases are three different colours, so the drop
+    /// target is a distinction and not a repainted default — is reachable
+    /// (`TabBackgroundPlanTests`).
+    var fill: Color {
+        switch self {
+        case .dropTarget: return DesignTokens.remoteSoft
+        case .active: return DesignTokens.card
+        case .plain: return Color.clear
+        }
+    }
+
+    /// The second channel, so the drop target is not carried by hue alone.
+    /// Drawn unconditionally by the item, which is what keeps the "only the
+    /// drop target has a border" rule here rather than in an `if` in a view
+    /// body.
+    var borderColor: Color {
+        switch self {
+        case .dropTarget: return DesignTokens.remoteBlue
+        case .active, .plain: return Color.clear
+        }
+    }
+}
+
 /// The localized title for one `TabMenuEntry`. A TOTAL mapping: every case
 /// answers a string, and there is no way to answer "nothing". Which entries
 /// exist at all is `TabContextMenu.entries`' decision, made in Core and
@@ -229,6 +335,9 @@ enum TabMenuEntryTitle {
 private struct TabItemView: View {
     let tab: SessionTab
     let isActive: Bool
+    /// The strip's shared note of which tab a drag is carrying — written by
+    /// this item's own `dragPayload()`, read when a drop is targeted here.
+    let dragOrigin: TabDragOrigin
     let onActivate: () -> Void
     let onClose: () -> Void
     /// This tab's menu entries, asked for when the menu opens rather than
@@ -242,6 +351,10 @@ private struct TabItemView: View {
     @State private var isHovering = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulsing = false
+    /// Whether a drag is over this tab right now — the raw answer of the
+    /// drop's `isTargeted:` closure, kept raw so that what it MEANS is
+    /// `TabBackgroundPlan`'s to say.
+    @State private var isDropTargeted = false
 
     /// The activity/attention dot, decided by `TabIndicatorPlan` — see that
     /// type's own doc comment for the rules, including the `.lost`
@@ -308,7 +421,11 @@ private struct TabItemView: View {
         }
         .padding(.horizontal, 12)
         .frame(minWidth: 120, maxWidth: 200, maxHeight: .infinity)
-        .background(isActive ? DesignTokens.card : .clear)
+        // The surface and the border are both `TabBackgroundPlan`'s answer,
+        // drawn without a condition of this view's own — including which
+        // case has a border at all, which is why the stroke is attached
+        // unconditionally and reads `.clear` for the other two.
+        .background(background.fill)
         .overlay(alignment: .bottom) {
             if isActive {
                 Rectangle().fill(DesignTokens.remoteBlue).frame(height: 2)
@@ -317,12 +434,18 @@ private struct TabItemView: View {
         .overlay(alignment: .trailing) {
             if !isActive { Rectangle().fill(DesignTokens.hairline).frame(width: 1) }
         }
+        .overlay { Rectangle().strokeBorder(background.borderColor, lineWidth: 2) }
         .contentShape(Rectangle())
         .onTapGesture(perform: onActivate)
         // Reordering by dragging, in two halves: the tab carries its own
         // id, and a tab dropped on this one takes this one's position.
         // Both halves are plain uuid strings, the spelling the session
         // sidebar's rows already use.
+        //
+        // The drop also reports whether a drag is over this tab, which is
+        // the whole of the feedback a drop destination gets: a `Bool`, with
+        // nothing in it about what is being carried. What that `Bool` means
+        // for the tab's background is `TabBackgroundPlan`'s to say.
         //
         // Only tabs are drop targets, which is what makes a drop into the
         // empty space of the strip leave the order as it was — there is
@@ -339,7 +462,7 @@ private struct TabItemView: View {
         // is refused for the mirror-image reason: the session sidebar's
         // drop looks the dropped uuid up among its stored sessions and
         // finds nothing.
-        .draggable(tab.id.uuidString)
+        .draggable(dragPayload())
         .dropDestination(for: String.self) { payload, _ in
             // Reads the payload and routes; decides nothing else. Where
             // this tab sits, and whether the drop changes anything, are
@@ -347,7 +470,7 @@ private struct TabItemView: View {
             guard let draggedID = TabDropPlan.draggedTabID(from: payload) else { return false }
             onReorder(draggedID, tab)
             return true
-        }
+        } isTargeted: { isDropTargeted = $0 }
         // The tab context menu. Everything about WHICH entries appear was
         // answered before this view saw it, and is drawn here without a
         // single condition of this view's own: no `if` around an item, no
@@ -368,6 +491,31 @@ private struct TabItemView: View {
         .onHover { isHovering = $0 }
         .accessibilityElement(children: .combine)
         .accessibilityValue(accessibilityState)
+    }
+
+    /// This tab's surface, decided by `TabBackgroundPlan` — see that type's
+    /// own doc comment for the precedence, and for what a highlight does
+    /// and does not promise.
+    private var background: TabBackgroundPlan {
+        TabBackgroundPlan.build(
+            isActive: isActive,
+            isDropTargeted: isDropTargeted,
+            draggedTabID: dragOrigin.draggedTabID,
+            tabID: tab.id)
+    }
+
+    /// The payload a drag of this tab carries — and the one moment the
+    /// strip can learn WHICH tab is being carried, because a drop
+    /// destination is told only that something is over it.
+    ///
+    /// `draggable(_:)` takes its payload as an `@autoclosure @escaping`
+    /// closure, so this runs when a drag begins rather than when the body
+    /// is built. What happens if that ever stops holding is
+    /// `TabDragOrigin`'s doc comment, and it was the reason for the shape
+    /// that type has.
+    private func dragPayload() -> String {
+        dragOrigin.draggedTabID = tab.id
+        return tab.id.uuidString
     }
 
     /// "SSH"/"S3" (M12/T7b) — reads `tab.connectionViewModel.kind`, the
