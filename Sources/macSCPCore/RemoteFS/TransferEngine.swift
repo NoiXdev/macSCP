@@ -129,7 +129,26 @@ public enum TransferEngine {
 
         // Counting intermediary, pull-based: the destination pulls chunk by
         // chunk, nothing is buffered beyond a single chunk.
-        var iterator = input.makeAsyncIterator()
+        //
+        // `nonisolated(unsafe)`: an `AsyncThrowingStream.Iterator` is stateful
+        // and not `Sendable`, and the `unfolding:` closure that advances it is
+        // `@Sendable`, so the compiler has to assume several tasks might call
+        // `next()` at once. Why that cannot happen here: this iterator is
+        // created by this call, is never stored or handed to anyone, and the
+        // `unfolding:` closure is the only code that touches it. That closure
+        // is the producer of `counted`, and `counted` goes to exactly one
+        // place — `destination.write` — where every backend in this package
+        // drains it with a single sequential loop over a single iterator. The
+        // WebDAV backend moves that loop into a detached pump task, which is a
+        // different task than this one but still only ever one at a time. So
+        // the iterator is confined to one reader for its whole life, and each
+        // `copyFile` call has its own.
+        //
+        // What would break it: a `write` implementation that split `contents`
+        // across concurrent readers. That would already violate the
+        // `AsyncSequence` single-consumer contract, and would corrupt the byte
+        // stream long before the annotation became the problem.
+        nonisolated(unsafe) var iterator = input.makeAsyncIterator()
         // Progress starts at the resume offset (0 when not resuming) and
         // `totalBytes` always stays the FULL source size, not the remaining
         // amount — the caller sees genuine "bytes of the whole file" progress

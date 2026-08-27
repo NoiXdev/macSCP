@@ -1,4 +1,17 @@
-import Citadel
+// `@preconcurrency` because Citadel's SFTP handles are plain classes with no
+// `Sendable` conformance, and the stack underneath is no better: the SSH
+// transport reaches this app through a third-party fork of Apple's
+// swift-nio-ssh that never took Apple's `Sendable` adoption (measured in
+// docs/superpowers/specs/2026-08-20-backlog-abhaengigkeiten.md). Those
+// annotations belong to packages this project does not own, so there is
+// nothing to conform here — but be clear about what the suppression costs:
+// the compiler stops diagnosing `Sendable` violations involving Citadel's
+// types in this file. Moving an `SFTPFile`, an `SFTPClient` or any other
+// Citadel value across an isolation boundary now compiles in silence,
+// whether or not it is actually safe. Every such crossing in this file
+// therefore has to carry its own argument for why it holds; the file handle
+// captured in `readStream` is written up where it happens.
+@preconcurrency import Citadel
 import Foundation
 import NIOCore
 import NIOPosix
@@ -697,6 +710,19 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         // Pull-based (unfolding): the consumer sets the pace. Starting at
         // `offset` beyond EOF: the first read returns 0 readable bytes, so
         // the stream ends immediately (empty), no error.
+        //
+        // `file` is a non-`Sendable` Citadel handle captured by a `@Sendable`
+        // closure — the kind of crossing this file's `@preconcurrency import`
+        // no longer flags. Why there is no race: `openFile` hands back a fresh
+        // handle per call, this method neither stores it nor returns it, so
+        // the `unfolding:` closure is the only code that can reach this one.
+        // Two concurrent `readStream` calls get two separate handles and two
+        // separate streams; they never share state. Within one stream the
+        // closure runs only when a consumer pulls, and an `AsyncSequence` has
+        // a single consumer pulling sequentially — the same confinement that
+        // lets `currentOffset` be a plain captured `var`: one reader advances
+        // it, and the read offset it carries is what makes the chunks
+        // contiguous in the first place.
         var currentOffset = offset
         return AsyncThrowingStream(unfolding: {
             do {
