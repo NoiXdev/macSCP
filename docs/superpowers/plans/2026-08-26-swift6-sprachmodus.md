@@ -32,27 +32,23 @@ mehrere Kompilierdurchgänge im Schnitt siebzehnmal gedruckt.
 **34 der 37 stehen in Tests, 3 in `Sources`.**
 
 Getrennt davon gemessen, durch versuchsweises Umstellen und Zurücknehmen:
-`macSCPCore` allein wirft unter `.v6` **sechs Fehler**, und der Build bricht
-dort ab, bevor er `MacSCPAppKit`, `MacSCPCLI` oder eine einzige Testdatei
-angefasst hat. Warnungen und Fehler sind fast disjunkt — der v5-Modus
-diagnostiziert vier dieser sechs Fälle gar nicht erst.
+`macSCPCore` allein wirft unter `.v6` **sieben Fehler**. Warnungen und Fehler
+sind fast disjunkt — der v5-Modus diagnostiziert die meisten dieser Fälle gar
+nicht erst.
 
-| Fehler | gehört |
-|---|---|
-| `FileListFormatter.byteFormatter` nicht `Sendable` | uns |
-| `S3ListParser.dateFormatterWithFractionalSeconds` nicht `Sendable` | uns |
-| `S3ListParser.dateFormatter` nicht `Sendable` | uns |
-| `WebDAVSessionDelegate`: Closure als `sending`-Parameter | uns |
-| `NIOSSHUserAuthenticationOffer` nicht `Sendable` | **dem swift-nio-ssh-Fork** |
-| `SSHAuthenticationMethod` nicht `Sendable` | **Citadel** |
+**Zur Zählung, weil sie beim ersten Versuch danebenlag:** ein `.v6`-Build zeigt
+nur fünf. Der Compiler bricht nicht nur beim ersten fehlschlagenden *Target*
+ab, sondern auch **innerhalb einer Datei beim ersten Fehler**. Die erste
+Messung dieses Plans nannte deshalb sechs und war selbst eine Untergrenze. Die
+vollständige Liste liefert `.v5` mit `-Xswiftc -strict-concurrency=complete`,
+wo dieselben Prüfungen als Warnungen laufen und jede Datei zu Ende geprüft
+wird. Die Fehlerliste steht bei Task 4+5.
 
-Zu den letzten beiden siehe
-`docs/superpowers/specs/2026-08-20-backlog-abhaengigkeiten.md`: Apple markiert
-`NIOSSHUserAuthenticationOffer` seit 2023 als `Sendable`; der Fork, den Citadel
-festschreibt, hat den Merge nie bekommen. Wir bauen dort also eine Umgehung
-für etwas, das stromaufwärts längst behoben ist und uns nicht erreichen kann.
-**Das gehört an die Umgehung geschrieben, damit der nächste Leser nicht nach
-einem Fehler bei uns sucht.**
+Was der Build **nicht** erreicht, solange `macSCPCore` nicht baut:
+`MacSCPAppKit`, `MacSCPCLI` und beide Testziele. Was dort auf uns wartet, ist
+**unbekannt, nicht null** — ein Zwischenbefund aus Task 1 nennt 31 Fehlerorte
+in anderen Testdateien, sobald nur `macSCPCoreTests` umgestellt wird. Das ist
+Task 6, und deshalb hat Task 6 einen Anhaltepunkt statt eines Auftrags.
 
 ## Global Constraints
 
@@ -173,47 +169,78 @@ verwendet für denselben Zweck einen `actor` — die Aufrufstellen lesen dort
 
 ---
 
-### Task 4: `macSCPCore` auf `.v6` — die vier eigenen Fehler
+### Task 4+5: `macSCPCore` auf `.v6` — alle sieben Fehler
+
+> **Zusammengelegt am 2026-08-26**, nachdem die Erkundung beide Anhaltepunkte
+> gezogen hat. Alle Fehler liegen in `macSCPCore`; das Target kompiliert erst,
+> wenn alle weg sind. Getrennte Aufgaben könnten weder grün werden noch einen
+> Commit tragen, dessen Nachricht stimmt.
 
 **Files:**
 - Modify: `Package.swift` (nur die Zeile für `macSCPCore`),
   `Sources/macSCPCore/Presentation/FileListFormatter.swift`,
   `Sources/macSCPCore/S3/S3ListParser.swift`,
-  `Sources/macSCPCore/WebDAV/WebDAVSessionDelegate.swift`
+  `Sources/macSCPCore/WebDAV/WebDAVSessionDelegate.swift`,
+  `Sources/macSCPCore/SSH/AgentBackedPrivateKey.swift`,
+  `Sources/macSCPCore/SSH/CitadelShell.swift`
 
-- [ ] **Step 1:** `.swiftLanguageMode(.v5)` → `.v6` **nur für `macSCPCore`**.
-  Bauen und die Fehler zählen. Sind es mehr als die sechs gemessenen, ist die
-  Messung veraltet — dann die neue Liste in den Bericht und **anhalten**,
-  bevor repariert wird.
-- [ ] **Step 2: Die drei statischen Formatierer.** `ByteCountFormatter` und
-  `ISO8601DateFormatter` sind nicht `Sendable`. Der Grund ist echt: sie haben
-  veränderlichen Zustand. Entscheiden zwischen „pro Verwendung erzeugen" und
-  „hinter einer Sperre halten" — und die Entscheidung an der Frage aufhängen,
-  **wie oft sie tatsächlich aufgerufen werden**. `FileListFormatter` läuft pro
-  Dateizeile; das zählen, bevor „einfach jedes Mal neu" gewählt wird.
-- [ ] **Step 3: `WebDAVSessionDelegate` — Closure als `sending`-Parameter.**
-  Die einzige echte Nebenläufigkeitsfrage der vier. Verstehen, wer die Closure
-  wann aufruft, bevor eine Annotation gewählt wird.
-- [ ] **Step 4:** Volle Suite grün, **und der CI-Lauf grün** (siehe Global
-  Constraints — die Toolchains urteilen unterschiedlich).
-- [ ] **Step 5: Commit** — `build(core): move macSCPCore to the Swift 6 language mode`
+**Korrigierte Messung.** Der Plan war gegen sechs Fehler geschrieben; es sind
+**sieben**, und die Zusammensetzung ist eine andere. Der Grund für den
+Zählfehler gehört zur Aufgabe, weil er jede weitere Zählung betrifft: **der
+Compiler bricht auch innerhalb einer Datei beim ersten Fehler ab.** Ein
+`.v6`-Build zeigt deshalb nur fünf. Die vollständige Liste liefert
+`.v5` mit `-Xswiftc -strict-concurrency=complete`, wo dieselben Prüfungen als
+Warnungen laufen und jede Datei zu Ende geprüft wird.
 
----
+| Fehler | gehört |
+|---|---|
+| `FileListFormatter.byteFormatter` nicht `Sendable` | uns |
+| `S3ListParser.dateFormatterWithFractionalSeconds` | uns |
+| `S3ListParser.dateFormatter` | uns |
+| `WebDAVSessionDelegate`: `Task {` im Server-Trust-Arm | uns |
+| `AgentBackedPrivateKey`: `NIOSSHUserAuthenticationOffer` | **Fork** |
+| `CitadelShell`: `let pump = Task {` fängt `SSHClient` | **Citadel** |
+| `CitadelShell`: `pending?.resume(with:)` mit `TTYStdinWriter` | **Citadel** |
 
-### Task 5: Die zwei fremden Typen
+`SSHAuthenticationMethod` stand im ursprünglichen Plan und **existiert nicht
+mehr** — Task 3s `@preconcurrency import Citadel` hat es miterledigt.
 
-**Files:**
-- Modify: `Sources/macSCPCore/SSH/AgentBackedPrivateKey.swift`,
-  `Sources/macSCPCore/SSH/CitadelFileSystem.swift`
+**Reihenfolge: fremd → eigen → Flip.** Die fremden zuerst, weil sie die
+Fläche bestimmen; der Flip zuletzt in demselben Commit, damit es keinen
+Zwischenstand gibt, in dem das Target nicht baut.
 
-- [ ] **Step 1:** `NIOSSHUserAuthenticationOffer` und `SSHAuthenticationMethod`
-  sind fremde Typen ohne `Sendable`. Wir können sie nicht ändern. Die Umgehung
-  wählen — und im Kommentar **beides** festhalten: warum an dieser Stelle kein
-  Rennen entsteht, und dass Apple den ersten Typ seit 2023 als `Sendable`
-  führt, der Fork den Merge aber nie bekommen hat. Zeiger auf
+- [ ] **Step 1: Die drei fremden Typen.** `NIOSSHUserAuthenticationOffer`
+  (Fork), `SSHClient` und `TTYStdinWriter` (Citadel). Umgehung wählen und im
+  Kommentar **beides** festhalten: warum an dieser Stelle kein Rennen
+  entsteht, und dass Apple den ersten Typ seit 2023 als `Sendable` führt, der
+  Fork den Merge aber nie bekommen hat. Zeiger auf
   `docs/superpowers/specs/2026-08-20-backlog-abhaengigkeiten.md`.
-- [ ] **Step 2:** Volle Suite grün **und CI grün**.
-- [ ] **Step 3: Commit** — `build(core): work around two Sendable gaps we do not own`
+- [ ] **Step 2: Die drei Formatierer.** „Pro Verwendung erzeugen" scheidet
+  aus, gezählt statt angenommen: `sizeString` hängt am view-basierten
+  Datenquellen-Callback einer `NSTableView` — pro sichtbarer Zeile **und**
+  Spalte, bei jedem `reloadData` und beim Scrollen, also nicht durch die
+  Dateizahl begrenzt. `parseDate` läuft im XMLParser-Delegaten pro
+  `<LastModified>`, bis zu 1000 Objekte je `ListObjectsV2`-Seite. `Mutex`
+  nach dem Muster von Task 1.
+- [ ] **Step 3: `WebDAVSessionDelegate`.** Geklärt: `URLSession` ruft die
+  Delegatenmethoden auf einer eigenen seriellen Queue (`delegateQueue: nil`),
+  und den `completionHandler` ruft im Server-Trust-Arm genau eine Stelle genau
+  einmal — die `Task` nach `decideCertificate`. **Weiterreichen an eine eigene
+  Methode mit `sending`-Parameter, nicht die `Task` entfernen**: das würde den
+  Zeitpunkt der Zertifikatsentscheidung verschieben, und das wäre eine
+  Verhaltensänderung an sicherheitsrelevantem Code.
+- [ ] **Step 4: Flip.** `.v5` → `.v6`, **nur** für `macSCPCore`.
+- [ ] **Step 5: Die neuen Warnungen zählen.** Der Flip bringt gemessen **sechs
+  neue Warn-Fundorte** mit (`HTTPTransport`, `TransferEngine` ×2,
+  `CitadelFileSystem` ×2, `AgentBackedPrivateKey`), die es unter `.v5` nicht
+  gibt. Sie im Bericht auflisten. Ob sie in dieser Aufgabe beseitigt werden
+  oder in eine eigene gehören, entscheidet ihre Art — aber sie **still stehen
+  zu lassen wäre der Rückfall in genau den Zustand**, den dieser Plan beendet.
+- [ ] **Step 6:** Volle Suite grün **und CI grün**. Erwartet wird hier ein
+  achter Fehler, der lokal nicht auftritt: dieses SDK führt `DateFormatter`
+  als `Sendable`, `ByteCountFormatter` und `ISO8601DateFormatter` nicht — ob
+  die ältere CI-Toolchain dieselben Annotationen hat, ist **nicht gemessen**.
+- [ ] **Step 7: Commit** — `build(core): move macSCPCore to the Swift 6 language mode`
 
 ---
 
