@@ -435,11 +435,44 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
                 completionHandler(.performDefaultHandling, nil)
                 return
             }
+            // The `Task` STAYS. It is what lets the TOFU decision be
+            // awaited before the challenge is answered — the file header
+            // gives the reason this path may do that where the SSH one may
+            // not. Answering first and deciding later would move the moment
+            // a certificate becomes trusted, which is a behaviour change in
+            // the code that decides what to trust, not a concurrency fix.
+            //
+            // So the two values the task needs travel in a box instead.
+            // Both are `Sendable` gaps in APIs this project does not own:
+            // Foundation has not annotated `URLSession`'s challenge handler
+            // `@Sendable`, even though it documents calling it later as the
+            // supported way to answer asynchronously, and `SecTrust` carries
+            // no conformance either. There is nothing to conform here, so
+            // the box is `@unchecked` — and the argument it stands in for is
+            // this:
+            //
+            // The session is built with `delegateQueue: nil` (see
+            // `WebDAVFileSystem`), so `URLSession` runs every delegate
+            // method on a serial queue of its own and never two at once.
+            // This arm is the only one that outlives its delegate method:
+            // every path above answers and returns, so once the task is
+            // started the delegate method is finished with the handler and
+            // touches it no more. Inside the task exactly one of the two
+            // branches runs, and calls the handler exactly once. One writer,
+            // one call, no reader on the other side — the handler is not
+            // shared, it is handed over.
+            //
+            // What would break it: a second call to the handler on this arm,
+            // or a `delegateQueue` that is not serial. The first is a real
+            // race and `URLSession` traps on a twice-answered challenge
+            // anyway; the second would have to be introduced where the
+            // session is built.
+            let answer = ServerTrustAnswer(trust: trust, respond: completionHandler)
             Task {
                 if await self.decideCertificate(candidate) {
-                    completionHandler(.useCredential, URLCredential(trust: trust))
+                    answer.respond(.useCredential, URLCredential(trust: answer.trust))
                 } else {
-                    completionHandler(.cancelAuthenticationChallenge, nil)
+                    answer.respond(.cancelAuthenticationChallenge, nil)
                 }
             }
 
@@ -484,4 +517,15 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
             host: host, port: port, derBase64: der.base64EncodedString(),
             subject: subject, issuer: subject, notAfter: nil)
     }
+}
+
+/// The two values the server-trust arm hands to the task that awaits the
+/// certificate decision: `URLSession`'s challenge completion handler and the
+/// `SecTrust` the accepted credential is built from. Neither type carries a
+/// `Sendable` conformance and neither belongs to this project, so there is
+/// nothing to conform — the crossing is argued at the one place that uses
+/// this type, which is also the only place it may be used.
+private struct ServerTrustAnswer: @unchecked Sendable {
+    let trust: SecTrust
+    let respond: (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
 }

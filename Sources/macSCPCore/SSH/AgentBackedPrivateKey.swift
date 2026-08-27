@@ -2,7 +2,21 @@ import Citadel
 import Dispatch
 import Foundation
 import NIOCore
-import NIOSSH
+// `@preconcurrency` for one type: `NIOSSHUserAuthenticationOffer`, which the
+// auth delegate at the bottom of this file hands to an `EventLoopPromise`.
+// Apple has declared that type `Sendable` since 2023 — but the SSH transport
+// reaches this app through a third-party fork of swift-nio-ssh that branched
+// in 2022 and never took the adoption (measured in
+// docs/superpowers/specs/2026-08-20-backlog-abhaengigkeiten.md). So this is
+// not a gap in our code or in Apple's; it is a merge the fork never
+// received, and there is nothing to conform on our side.
+//
+// What the suppression costs: the compiler stops diagnosing
+// `Sendable`-related crossings involving NIOSSH types in this file. Besides
+// the offer, that is the `NIOSSHPrivateKey` the offer wraps and the
+// `EventLoopPromise` it travels on — all three built here and handed
+// straight to NIOSSH, never retained on this side.
+@preconcurrency import NIOSSH
 
 /// Identifies the SSH wire algorithm name an agent-backed key signs as.
 ///
@@ -268,12 +282,18 @@ final class AgentBackedPrivateKey<Algorithm: AgentSigningAlgorithm>: NIOSSHPriva
     /// deadlock: the two event loops are unrelated.
     func signature<D: DataProtocol>(for data: D) throws -> NIOSSHSignatureProtocol {
         let payload = Data(data)
+        // Read here rather than inside the task: naming `Algorithm.signFlags`
+        // in there would capture the METATYPE `Algorithm.Type`, and a
+        // metatype of an unconstrained generic parameter is not `Sendable`.
+        // The value is a `UInt32` constant per marker type, so reading it on
+        // this side is the same number and captures nothing.
+        let signFlags = Algorithm.signFlags
         let semaphore = DispatchSemaphore(value: 0)
         let box = SignatureResultBox()
         Task { [client, identity] in
             do {
                 let raw = try await client.sign(
-                    publicKeyBlob: identity.publicKeyBlob, data: payload, flags: Algorithm.signFlags)
+                    publicKeyBlob: identity.publicKeyBlob, data: payload, flags: signFlags)
                 box.result = .success(raw)
             } catch {
                 box.result = .failure(error)
@@ -320,10 +340,28 @@ final class AgentBackedPrivateKey<Algorithm: AgentSigningAlgorithm>: NIOSSHPriva
         }
         return AgentSignature<Algorithm>(rawAgentResponse: raw)
     }
+}
 
-    private final class SignatureResultBox: @unchecked Sendable {
-        var result: Result<Data, Error>?
-    }
+/// Carries the agent's answer out of the round-trip task and back to the
+/// thread waiting on the semaphore in `signature(for:)`.
+///
+/// Deliberately NOT nested inside `AgentBackedPrivateKey`: a nested type is
+/// generic over `Algorithm` too, so merely naming it inside the task would
+/// capture the metatype `Algorithm.Type` — which is not `Sendable` for an
+/// unconstrained generic parameter. At file scope the type is plain, and the
+/// task captures nothing generic.
+///
+/// `@unchecked Sendable` because the box is written by the task and read by
+/// the waiting thread. Why there is no race: the semaphore orders the two.
+/// One box is made per `signature(for:)` call and never leaves it; the task
+/// writes `result` and only then signals, and the waiter reads it only after
+/// a successful wait — so the write happens-before the read, and no other
+/// code holds a reference.
+///
+/// What would break it: reading `result` on the timeout path, where the
+/// signal never came. `signature(for:)` throws there instead of reading.
+private final class SignatureResultBox: @unchecked Sendable {
+    var result: Result<Data, Error>?
 }
 
 /// Maps an `AgentIdentity`'s reported key type to the matching
@@ -402,6 +440,13 @@ final class AgentAuthDelegate: NIOSSHClientUserAuthenticationDelegate, @unchecke
             guard let privateKey = AgentPrivateKeyFactory.privateKey(for: identity, client: client) else {
                 continue
             }
+            // The crossing this file's `@preconcurrency import NIOSSH`
+            // covers: the offer is a non-`Sendable` fork type going onto a
+            // promise. Why there is no race: the offer is built inside this
+            // call, is not stored anywhere and is not referenced after the
+            // `succeed`, so from the handover on NIOSSH is its only holder —
+            // and NIOSSH resolves the promise on the event loop that asked
+            // for it, which is also the loop this method runs on.
             let offer = NIOSSHUserAuthenticationOffer(
                 username: username, serviceName: "",
                 offer: .privateKey(.init(privateKey: privateKey)))

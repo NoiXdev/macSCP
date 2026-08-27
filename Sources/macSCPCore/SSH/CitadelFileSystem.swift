@@ -720,10 +720,18 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         // separate streams; they never share state. Within one stream the
         // closure runs only when a consumer pulls, and an `AsyncSequence` has
         // a single consumer pulling sequentially — the same confinement that
-        // lets `currentOffset` be a plain captured `var`: one reader advances
-        // it, and the read offset it carries is what makes the chunks
-        // contiguous in the first place.
-        var currentOffset = offset
+        // carries `currentOffset` below: one reader advances it, and the read
+        // offset it carries is what makes the chunks contiguous in the first
+        // place.
+        //
+        // `nonisolated(unsafe)` states exactly that and nothing more. The
+        // counter is read and written only by the `unfolding:` closure, in
+        // lockstep with that single sequential loop, and never leaves this
+        // method. What would break it: a consumer that split the returned
+        // stream across concurrent readers — which already violates the
+        // `AsyncSequence` single-consumer contract and would hand back
+        // overlapping chunks long before the annotation mattered.
+        nonisolated(unsafe) var currentOffset = offset
         return AsyncThrowingStream(unfolding: {
             do {
                 let buffer = try await file.read(

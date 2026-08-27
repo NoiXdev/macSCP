@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Parses an S3 `ListObjectsV2` (`ListBucketResult`) XML response into
 /// `RemoteFileItem`s (M12/T5). Uses Foundation's `XMLParser` — no new
@@ -35,20 +36,37 @@ public enum S3ListParser {
     /// ISO8601 with fractional seconds (`2024-01-02T03:04:05.000Z`, the
     /// usual `LastModified` shape) — falls back to the plain form without
     /// fractional seconds for servers that omit them.
-    private static let dateFormatterWithFractionalSeconds: ISO8601DateFormatter = {
+    ///
+    /// Shared instances behind a `Mutex`, not one formatter per call:
+    /// `parseDate` runs in the `XMLParser` delegate once per `<LastModified>`,
+    /// and a single `ListObjectsV2` page carries up to 1000 objects — each of
+    /// which may consult both formatters when the fallback is taken.
+    /// An `ISO8601DateFormatter` is expensive to construct and cheap to
+    /// reuse, so building one per date — thousands per listing page — would
+    /// be a change in timing behaviour, not a refactor.
+    ///
+    /// `Mutex` rather than a suppression: `ISO8601DateFormatter` is not
+    /// thread-safe for concurrent use, and `withLock` is the only route to
+    /// the instance — so this is a guarantee the compiler checks.
+    private static let dateFormatterWithFractionalSeconds = Mutex<ISO8601DateFormatter>({
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
-    }()
+    }())
 
-    private static let dateFormatter: ISO8601DateFormatter = {
+    private static let dateFormatter = Mutex<ISO8601DateFormatter>({
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         return formatter
-    }()
+    }())
 
+    /// The fallback order is preserved exactly: the fractional-seconds
+    /// formatter is asked first, and the plain one only when it returned
+    /// `nil`. Two separate `withLock` calls, never nested — the second is
+    /// only entered after the first has released.
     fileprivate static func parseDate(_ string: String) -> Date? {
-        dateFormatterWithFractionalSeconds.date(from: string) ?? dateFormatter.date(from: string)
+        dateFormatterWithFractionalSeconds.withLock { $0.date(from: string) }
+            ?? dateFormatter.withLock { $0.date(from: string) }
     }
 
     /// Strips the query `prefix` off a `Key`/`Prefix` value to produce a

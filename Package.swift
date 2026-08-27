@@ -32,7 +32,7 @@ let package = Package(
                 .process("Resources/fr.lproj"),
                 .process("Resources/pl.lproj"),
             ],
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .executableTarget(
             name: "MacSCPCLI",

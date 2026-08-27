@@ -75,7 +75,13 @@ public final class ConnectionViewModel {
         .schema("\(SSHField.namespace).\(field.rawValue)")
     }
 
-    public enum State: Equatable {
+    /// `Sendable` spelled out, like every other nested type here that is
+    /// handed around: both payloads are value types that already are, and
+    /// under the Swift 6 language mode the enclosing `@MainActor` no longer
+    /// carries down to a nested type to supply the conformance implicitly.
+    /// Without it the App's tests could no longer pass a `State` to a test
+    /// case, which is how the omission surfaced.
+    public enum State: Equatable, Sendable {
         case idle
         case connecting
         case failed(message: String, field: Field?)

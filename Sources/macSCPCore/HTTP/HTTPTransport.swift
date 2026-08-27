@@ -48,7 +48,23 @@ public struct URLSessionHTTPTransport: HTTPTransport {
         // try await` iteration), so the network is read exactly as fast as
         // the sink (e.g. a disk write) drains it — no read-ahead buffer for
         // a slow sink to fall behind on.
-        var iterator = bytes.makeAsyncIterator()
+        //
+        // `nonisolated(unsafe)`: the iterator is stateful and not
+        // `Sendable`, and the `unfolding:` closure that advances it is
+        // `@Sendable`, so the compiler must assume several tasks could call
+        // `next()` at once. Why that cannot happen here: the iterator is
+        // made by this call, is never stored or handed out, and the
+        // `unfolding:` closure is the only code that touches it. That
+        // closure produces `stream`, which this method returns to a single
+        // caller, and an `AsyncSequence` has one consumer pulling
+        // sequentially — so the iterator is confined to one reader for its
+        // whole life, and each call has its own.
+        //
+        // What would break it: a consumer that split the returned stream
+        // across concurrent readers. That already violates the
+        // `AsyncSequence` single-consumer contract and would scramble the
+        // byte order long before the annotation became the problem.
+        nonisolated(unsafe) var iterator = bytes.makeAsyncIterator()
         let stream = AsyncThrowingStream<Data, Error>(unfolding: {
             var buffer = Data(); buffer.reserveCapacity(TransferChunk.size)
             while buffer.count < TransferChunk.size {

@@ -153,7 +153,14 @@ public enum TransferEngine {
         // `totalBytes` always stays the FULL source size, not the remaining
         // amount — the caller sees genuine "bytes of the whole file" progress
         // across a resume, not a restart from 0.
-        var transferred: UInt64 = resumeOffset
+        //
+        // `nonisolated(unsafe)` for the same reason, and on the strength of
+        // the same argument, as the iterator above: this counter is read and
+        // written only by the `unfolding:` closure, which is the single
+        // sequential reader of that iterator. It advances in lockstep with
+        // it — one chunk pulled, one addition — so if the iterator is
+        // confined to one reader then so is the counter.
+        nonisolated(unsafe) var transferred: UInt64 = resumeOffset
         let counted = AsyncThrowingStream<Data, Error>(unfolding: {
             // Cooperative cancellation BEFORE every chunk: applies chunk-precisely.
             try Task.checkCancellation()
