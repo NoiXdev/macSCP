@@ -553,7 +553,7 @@ struct LoginSetExportImportTests {
     /// open it), the set's secret is still the only place it can live, and
     /// must not be dropped.
     @Test func aSecretIsStillStoredWhenTheKeyDidNotTakeIt() throws {
-        let (vmA, secretsA, dirA) = makeVM()
+        let (_, secretsA, dirA) = makeVM()
         defer { try? FileManager.default.removeItem(at: dirA) }
         let keysA = keyStore(in: dirA)
         // No passphrase on the key at all.
@@ -583,7 +583,7 @@ struct LoginSetExportImportTests {
     /// It is not reported as a removal: nothing was lost, the passphrase just
     /// lives with the key now.
     @Test func aReplaceWhoseKeyTookThePassphraseClearsTheSetSlotQuietly() throws {
-        let (vmA, secretsA, dirA) = makeVM()
+        let (_, secretsA, dirA) = makeVM()
         defer { try? FileManager.default.removeItem(at: dirA) }
         let keysA = keyStore(in: dirA)
         let keyA = try addManagedKey(to: keysA, secrets: secretsA, name: "prod", passphrase: "new-pp")

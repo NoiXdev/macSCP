@@ -41,8 +41,8 @@ struct TagSuggestionRankingEquivalenceTests {
         Dictionary(uniqueKeysWithValues: results)
     }
 
-    @Test func snippetTagSuggestionsAgreesWithTheSharedRankingEngine() throws {
-        let snippets = try Self.sampleTagLists.enumerated().map { index, tags in
+    @Test func snippetTagSuggestionsAgreesWithTheSharedRankingEngine() {
+        let snippets = Self.sampleTagLists.enumerated().map { index, tags in
             Snippet(name: "s\(index)", command: "c", tags: tags)
         }
 
@@ -68,8 +68,8 @@ struct TagSuggestionRankingEquivalenceTests {
     /// Cross-vocabulary: feeding IDENTICAL tag data through both public
     /// entry points must produce identical output, since both are now the
     /// same engine underneath a different element type.
-    @Test func snippetAndHostSuggestionsAgreeOnIdenticalTagData() throws {
-        let snippets = try Self.sampleTagLists.enumerated().map { index, tags in
+    @Test func snippetAndHostSuggestionsAgreeOnIdenticalTagData() {
+        let snippets = Self.sampleTagLists.enumerated().map { index, tags in
             Snippet(name: "s\(index)", command: "c", tags: tags)
         }
         let sessions = Self.sampleTagLists.enumerated().map { index, tags -> StoredSession in

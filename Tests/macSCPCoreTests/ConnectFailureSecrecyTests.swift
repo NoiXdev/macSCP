@@ -478,10 +478,10 @@ struct ConnectFailureSecrecyTests {
     /// nothing about secrecy, and reads as though it did. The socket case
     /// says at its own site why it is the exception.
     @Test("every ssh-agent refusal reports the condition, not the key material")
-    func agentFailuresCarryNoSecret() async throws {
+    func agentFailuresCarryNoSecret() async {
         let material = Array(Secret.agentKeyMaterial.utf8)
 
-        try await withTemporaryAuthSock("/tmp/macscp-secrecy-\(UUID().uuidString).sock") {
+        await withTemporaryAuthSock("/tmp/macscp-secrecy-\(UUID().uuidString).sock") {
             // An agent that is reachable and holds nothing. The sentinel
             // rides along AFTER the zero count, where the codec stops
             // reading, so the case keeps its shape while still putting the
@@ -548,7 +548,7 @@ struct ConnectFailureSecrecyTests {
         // A path carrying a sentinel would be a non-empty path, which is a
         // different case entirely. This one is a shape check and nothing
         // more.
-        try await withTemporaryAuthSock("") {
+        await withTemporaryAuthSock("") {
             await expectAgentDialFails(
                 answering: nil,
                 as: { if case AgentError.socketUnavailable = $0 { return true }; return false },

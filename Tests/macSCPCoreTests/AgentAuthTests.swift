@@ -80,6 +80,28 @@ struct AgentAuthTests {
         return offer
     }
 
+    /// Runs `body` with its own event-loop group and shuts that group down
+    /// afterwards, whether the body returns or throws.
+    ///
+    /// The shutdown has to happen here rather than in a `defer` at the call
+    /// site: `syncShutdownGracefully` parks the calling thread until the
+    /// loops are down, which an `async` function must not do, and its
+    /// awaitable counterpart cannot be awaited from a `defer`. The errors
+    /// are swallowed exactly as the `defer` swallowed them — a group that
+    /// refuses to shut down is not what the test is about.
+    private func withEventLoopGroup(
+        _ body: (MultiThreadedEventLoopGroup) async throws -> Void
+    ) async throws {
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        do {
+            try await body(group)
+        } catch {
+            try? await group.shutdownGracefully()
+            throw error
+        }
+        try? await group.shutdownGracefully()
+    }
+
     // MARK: - Step 1 tests
 
     /// Two identities are offered in list order (round-tripped VERBATIM —
@@ -95,33 +117,32 @@ struct AgentAuthTests {
         let delegate = AgentAuthDelegate(
             username: "tester", identities: [identity1, identity2], client: client)
 
-        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        defer { try? group.syncShutdownGracefully() }
-
-        let offer1 = try await nextOffer(delegate, group: group)
-        guard case .privateKey(let pk1) = offer1.offer else {
-            Issue.record("expected a privateKey offer for the first identity")
-            return
-        }
-        #expect(offer1.username == "tester")
-        #expect(String(openSSHPublicKey: pk1.publicKey)
-            == "\(identity1.keyType) \(identity1.publicKeyBlob.base64EncodedString())")
-
-        let offer2 = try await nextOffer(delegate, group: group)
-        guard case .privateKey(let pk2) = offer2.offer else {
-            Issue.record("expected a privateKey offer for the second identity")
-            return
-        }
-        #expect(String(openSSHPublicKey: pk2.publicKey)
-            == "\(identity2.keyType) \(identity2.publicKeyBlob.base64EncodedString())")
-
-        do {
-            _ = try await nextOffer(delegate, group: group)
-            Issue.record("expected the third call (no identities left) to fail")
-        } catch let error as SSHClientError {
-            guard case .allAuthenticationOptionsFailed = error else {
-                Issue.record("expected allAuthenticationOptionsFailed, got \(error)")
+        try await withEventLoopGroup { group in
+            let offer1 = try await nextOffer(delegate, group: group)
+            guard case .privateKey(let pk1) = offer1.offer else {
+                Issue.record("expected a privateKey offer for the first identity")
                 return
+            }
+            #expect(offer1.username == "tester")
+            #expect(String(openSSHPublicKey: pk1.publicKey)
+                == "\(identity1.keyType) \(identity1.publicKeyBlob.base64EncodedString())")
+
+            let offer2 = try await nextOffer(delegate, group: group)
+            guard case .privateKey(let pk2) = offer2.offer else {
+                Issue.record("expected a privateKey offer for the second identity")
+                return
+            }
+            #expect(String(openSSHPublicKey: pk2.publicKey)
+                == "\(identity2.keyType) \(identity2.publicKeyBlob.base64EncodedString())")
+
+            do {
+                _ = try await nextOffer(delegate, group: group)
+                Issue.record("expected the third call (no identities left) to fail")
+            } catch let error as SSHClientError {
+                guard case .allAuthenticationOptionsFailed = error else {
+                    Issue.record("expected allAuthenticationOptionsFailed, got \(error)")
+                    return
+                }
             }
         }
     }

@@ -1,6 +1,26 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import macSCPCore
+
+/// Carries the `URLRequest` the stub's handler saw back to the test that
+/// installed the handler. The handler runs on the thread `URLProtocol`
+/// drives `startLoading` on, while the assertions read the request on the
+/// test's own thread, so a captured `var` would be an unsynchronized write
+/// on one thread paired with a read on another. The `Mutex`
+/// (`Synchronization`, available at the macOS 15 floor) makes the hand-off
+/// a checked one and this type a plain `Sendable`.
+final class RequestCapture: Sendable {
+    private let storage = Mutex<URLRequest?>(nil)
+
+    func record(_ request: URLRequest) {
+        storage.withLock { $0 = request }
+    }
+
+    var recorded: URLRequest? {
+        storage.withLock { $0 }
+    }
+}
 
 /// `URLProtocol` stub registered on an ephemeral `URLSessionConfiguration` —
 /// intercepts every request made through a session configured with it, so
@@ -66,9 +86,9 @@ struct GitHubReleaseFetcherTests {
 
     @Test func buildsCorrectRequest() async throws {
         StubURLProtocol.reset(expecting: Self.expectedURL)
-        var capturedRequest: URLRequest?
+        let capturedRequest = RequestCapture()
         StubURLProtocol.handler = { request in
-            capturedRequest = request
+            capturedRequest.record(request)
             let json = #"{"tag_name":"v1.0.0","html_url":"https://github.com/NoiXdev/macSCP/releases/tag/v1.0.0"}"#
             return (200, [:], Data(json.utf8))
         }
@@ -77,7 +97,7 @@ struct GitHubReleaseFetcherTests {
         _ = try await fetcher.latestRelease()
 
         #expect(!StubURLProtocol.unexpectedRequestSeen)
-        let request = try #require(capturedRequest)
+        let request = try #require(capturedRequest.recorded)
         #expect(request.url == Self.expectedURL)
         #expect(request.httpMethod == "GET")
         #expect(request.value(forHTTPHeaderField: "Accept") == "application/vnd.github+json")
@@ -92,9 +112,9 @@ struct GitHubReleaseFetcherTests {
     /// `"en"` instead, regardless of the test runner's own locale.
     @Test func acceptLanguageIsFixedToEnglish() async throws {
         StubURLProtocol.reset(expecting: Self.expectedURL)
-        var capturedRequest: URLRequest?
+        let capturedRequest = RequestCapture()
         StubURLProtocol.handler = { request in
-            capturedRequest = request
+            capturedRequest.record(request)
             let json = #"{"tag_name":"v1.0.0","html_url":"https://github.com/NoiXdev/macSCP/releases/tag/v1.0.0"}"#
             return (200, [:], Data(json.utf8))
         }
@@ -103,7 +123,7 @@ struct GitHubReleaseFetcherTests {
         _ = try await fetcher.latestRelease()
 
         #expect(!StubURLProtocol.unexpectedRequestSeen)
-        let request = try #require(capturedRequest)
+        let request = try #require(capturedRequest.recorded)
         #expect(request.value(forHTTPHeaderField: "Accept-Language") == "en")
     }
 
@@ -113,9 +133,9 @@ struct GitHubReleaseFetcherTests {
     /// placeholder (T1 hand-off requirement).
     @Test func userAgentIncludesProvidedVersion() async throws {
         StubURLProtocol.reset(expecting: Self.expectedURL)
-        var capturedRequest: URLRequest?
+        let capturedRequest = RequestCapture()
         StubURLProtocol.handler = { request in
-            capturedRequest = request
+            capturedRequest.record(request)
             let json = #"{"tag_name":"v1.0.0","html_url":"https://github.com/NoiXdev/macSCP/releases/tag/v1.0.0"}"#
             return (200, [:], Data(json.utf8))
         }
@@ -125,7 +145,7 @@ struct GitHubReleaseFetcherTests {
         _ = try await fetcher.latestRelease()
 
         #expect(!StubURLProtocol.unexpectedRequestSeen)
-        let request = try #require(capturedRequest)
+        let request = try #require(capturedRequest.recorded)
         #expect(request.value(forHTTPHeaderField: "User-Agent") == "macSCP/9.9.9")
     }
 
