@@ -76,7 +76,7 @@ struct TabDropPlanTests {
     /// edge case being claimed as reachable; it is the other half of the
     /// function's totality, checked because the function is written to
     /// answer over every `Int` and a caller elsewhere would be entitled to
-    /// rely on that. The reachable half is the one above the top end, where
+    /// rely on that. The reachable half is the one beyond the top end, where
     /// the tab count really can have shrunk under a drag in flight.
     @Test func aNegativePositionCannotArriveButIsStillAnsweredTotally() {
         #expect(TabDropPlan.destination(forDropOnIndex: -1, tabCount: 3) == 0)

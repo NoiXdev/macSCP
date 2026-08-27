@@ -91,9 +91,9 @@ import Testing
 /// quietly.
 ///
 /// Fail-closed throughout: an unreadable file, a missing anchor, unbalanced
-/// braces, and a string form the stripper does not parse all count as
-/// failures. Self-tested against synthetic source — one probe per violation
-/// site above — so the scanner cannot pass merely because the real file
+/// braces, and an unterminated string or comment all count as failures.
+/// Self-tested against synthetic source — one probe per violation site
+/// named here — so the scanner cannot pass merely because the real file
 /// moved or was reformatted past recognition.
 @Suite("Tab context menu wiring guard")
 struct TabContextMenuWiringGuardTests {
@@ -215,6 +215,72 @@ struct TabContextMenuWiringGuardTests {
         haystack.components(separatedBy: needle).count - 1
     }
 
+    // MARK: - Reading a call's arguments
+    //
+    // Added in fix round 2, and the reason is the defect it removes rather
+    // than the convenience it adds. Counting `index:position` as a
+    // substring says "this text appears here"; it does not say the argument
+    // IS that, and `index: position + 1` satisfies it while sending every
+    // dragged tab one place too far. Two violations got past this suite in
+    // exactly that way. What follows reads the whole value of an argument,
+    // so a check can compare it instead of finding it.
+
+    /// The argument text of every call to `anchor` (which ends in `(`) —
+    /// what stands between that parenthesis and its matching one.
+    /// Parenthesis counting, on canonical text.
+    private static func callArgumentLists(of anchor: String, in canonical: String) -> [String] {
+        var lists: [String] = []
+        var search = canonical.startIndex
+        while let range = canonical.range(of: anchor, range: search..<canonical.endIndex) {
+            search = range.upperBound
+            var index = range.upperBound
+            var depth = 1
+            while index < canonical.endIndex {
+                let char = canonical[index]
+                if char == "(" || char == "[" || char == "{" { depth += 1 }
+                if char == ")" || char == "]" || char == "}" {
+                    depth -= 1
+                    if depth == 0 {
+                        lists.append(String(canonical[range.upperBound..<index]))
+                        break
+                    }
+                }
+                index = canonical.index(after: index)
+            }
+        }
+        return lists
+    }
+
+    /// One argument list split on its TOP-LEVEL commas, so a closure or a
+    /// nested call carrying commas of its own stays one argument.
+    private static func topLevelArguments(in list: String) -> [String] {
+        var arguments: [String] = []
+        var current = ""
+        var depth = 0
+        for char in list {
+            if char == "(" || char == "[" || char == "{" { depth += 1 }
+            if char == ")" || char == "]" || char == "}" { depth -= 1 }
+            if char == ",", depth == 0 {
+                arguments.append(current)
+                current = ""
+                continue
+            }
+            current.append(char)
+        }
+        if !current.isEmpty { arguments.append(current) }
+        return arguments
+    }
+
+    /// The complete value of every argument carrying `label` — everything
+    /// after the colon, to the end of that argument. An empty result means
+    /// the label is not there at all, which every caller treats as a
+    /// failure rather than as "nothing to check".
+    private static func values(ofLabel label: String, in list: String) -> [String] {
+        topLevelArguments(in: list)
+            .filter { $0.hasPrefix(label + ":") }
+            .map { String($0.dropFirst(label.count + 1)) }
+    }
+
     /// Everything a violation check needs about one menu body, in one call,
     /// so the synthetic self-tests exercise the same steps the real-file
     /// checks do rather than a hand-assembled variant of them.
@@ -333,17 +399,35 @@ struct TabContextMenuWiringGuardTests {
     /// V7's other half, one level up: the strip must hand each item its
     /// REAL position and the REAL total, or the move and bulk-close entries
     /// are decided from fiction.
+    ///
+    /// Compared as whole argument VALUES since fix round 2. It counted
+    /// `index:position` as a substring before, which `index: position + 1`
+    /// also contains — every entry then decided for the wrong tab, with
+    /// this test green. An argument that is not exactly the fact is not the
+    /// fact.
     @Test func theStripPassesTheRealPositionAndCount() throws {
         let source = try Self.canonicalize(String(contentsOf: Self.sourceFile, encoding: .utf8))
-        let position = Self.occurrences(of: "index:position", in: source)
-        let count = Self.occurrences(of: "tabCount:tabs.count", in: source)
-        #expect(position == 1, """
-            expected exactly 1 `index: position` (the enumerated offset) in \
-            TabStripView.swift, found \(position).
+        let lists = Self.callArgumentLists(of: "TabItemView(", in: source)
+        #expect(lists.count == 1, """
+            expected exactly 1 `TabItemView(` construction in TabStripView.swift, found \
+            \(lists.count) — either the strip builds its items somewhere else too, or \
+            this guard needs re-anchoring on the new construction site.
             """)
-        #expect(count == 1, """
-            expected exactly 1 `tabCount: tabs.count` in TabStripView.swift, found \(count).
-            """)
+        for list in lists {
+            #expect(Self.values(ofLabel: "index", in: list) == ["position"], """
+                the item's `index:` is \(Self.values(ofLabel: "index", in: list)), not \
+                exactly `position` (the offset out of `Array(tabs.enumerated())`). \
+                Anything added to it decides the menu's move and bulk-close entries for \
+                a different tab. If the strip legitimately renames that value, update \
+                this expectation in TabContextMenuWiringGuardTests.
+                """)
+            #expect(Self.values(ofLabel: "tabCount", in: list) == ["tabs.count"], """
+                the item's `tabCount:` is \(Self.values(ofLabel: "tabCount", in: list)), \
+                not exactly `tabs.count` — the entries would be decided from a total the \
+                strip does not have. If this is an intended rename, update this \
+                expectation in TabContextMenuWiringGuardTests.
+                """)
+        }
     }
 
     // MARK: - Scanner self-tests: one probe per violation site
@@ -541,13 +625,30 @@ struct TabContextMenuWiringGuardTests {
         #expect(Self.contextMenuBody(in: ".contextMenu { Button(\"a\") {}") == nil)
     }
 
-    /// A raw-string delimiter is a form this stripper does not parse; left
-    /// unhandled it desynchronizes the plain-quote counting and can hide
-    /// everything past that point. It must throw instead.
-    @Test func stripperFailsClosedOnARawStringDelimiter() {
-        #expect(throws: (any Error).self) {
-            try Self.stripCommentsAndStrings("static let quote = #\"\"\"#\nif entry == .close {}")
-        }
+    /// Raw strings are parsed (fix round 2). The three things that must
+    /// hold: the body disappears like any other literal, the code after it
+    /// survives to be judged, and a quote inside the body does not end it
+    /// early — which is precisely what a plain-quote scanner gets wrong,
+    /// and why this used to throw instead.
+    @Test func stripperParsesRawStrings() throws {
+        let singleLine = try Self.stripCommentsAndStrings(
+            "let quote = #\"a \" quote and TabContextMenu.entries(\"#\nlet after = 1")
+        #expect(Self.occurrences(of: Self.decisionCall, in: singleLine) == 0)
+        #expect(singleLine.contains("let after = 1"))
+
+        let extraHashes = try Self.stripCommentsAndStrings(
+            "let quote = ##\"ends only here \"# TabContextMenu.entries(\"##\nlet after = 2")
+        #expect(Self.occurrences(of: Self.decisionCall, in: extraHashes) == 0)
+        #expect(extraHashes.contains("let after = 2"))
+
+        let multiline = try Self.stripCommentsAndStrings(
+            "let quote = #\"\"\"\nTabContextMenu.entries(\n\"\"\"#\nlet after = 3")
+        #expect(Self.occurrences(of: Self.decisionCall, in: multiline) == 0)
+        #expect(multiline.contains("let after = 3"))
+
+        // A `#` that opens no string must not swallow what follows it.
+        let hashKeyword = try Self.stripCommentsAndStrings("#expect(entries.isEmpty)")
+        #expect(hashKeyword.contains("#expect(entries.isEmpty)"))
     }
 
     @Test func stripperFailsClosedOnAnUnterminatedLiteral() {
@@ -556,6 +657,9 @@ struct TabContextMenuWiringGuardTests {
         }
         #expect(throws: (any Error).self) {
             try Self.stripCommentsAndStrings("/* never closes")
+        }
+        #expect(throws: (any Error).self) {
+            try Self.stripCommentsAndStrings("let x = #\"unterminated raw")
         }
     }
 
@@ -599,25 +703,45 @@ struct TabContextMenuWiringGuardTests {
     /// only make a check find LESS text, never invent a match that was not
     /// code.
     ///
-    /// Fails closed: a raw-string delimiter (`#"…"#`) is a form this
-    /// stripper does not parse, and an unterminated string or comment means
-    /// it ran off the end without finding what it was looking for. Both
-    /// throw rather than return whatever was collected so far.
+    /// Raw strings (`#"…"#`, `##"…"##`, `#"""…"""#`) are parsed rather than
+    /// refused — changed in fix round 2, and the reasoning is worth keeping
+    /// because it reverses an earlier decision. Refusing them was right
+    /// while this stripper read one file that has none: "I do not
+    /// understand this" beat guessing. It stopped being right when the scan
+    /// grew to a whole module, where an ordinary raw string in any
+    /// unrelated file turned these guards red with a message that named
+    /// neither the file nor a remedy. A guard that fires on innocent code
+    /// is switched off by the next person who trips over it. Parsing a raw
+    /// string is also not a guess: the delimiter states its own hash count,
+    /// and the terminator is that count spelled backwards.
+    ///
+    /// Still fails closed on an unterminated string or comment — raw ones
+    /// included — because that means it ran off the end without finding
+    /// what it was looking for, and everything after that point would be
+    /// judged as something it is not.
     private enum StripError: Error, CustomStringConvertible {
-        case unrecognizedDelimiter
         case unterminatedLiteral
 
         var description: String {
             switch self {
-            case .unrecognizedDelimiter:
-                return """
-                    unrecognized string delimiter (a raw string's `#"`, `##"`, …) — this \
-                    stripper does not parse raw strings and refuses to guess where one ends
-                    """
             case .unterminatedLiteral:
-                return "unterminated string or comment literal"
+                return """
+                    unterminated string or comment literal — the scanner ran to the end of \
+                    the file still inside one, so nothing after it can be judged
+                    """
             }
         }
+    }
+
+    /// Whether a raw string opened with `hashes` hashes and `quotes` quotes
+    /// ends exactly at `index`.
+    private static func closesRawString(
+        _ chars: [Character], at index: Int, quotes: Int, hashes: Int
+    ) -> Bool {
+        guard index + quotes + hashes <= chars.count else { return false }
+        for offset in 0..<quotes where chars[index + offset] != "\"" { return false }
+        for offset in 0..<hashes where chars[index + quotes + offset] != "#" { return false }
+        return true
     }
 
     private static func stripCommentsAndStrings(_ source: String) throws -> String {
@@ -658,9 +782,32 @@ struct TabContextMenuWiringGuardTests {
             if c == "#" {
                 var j = i
                 while j < chars.count, chars[j] == "#" { j += 1 }
+                let hashes = j - i
                 if j < chars.count, chars[j] == "\"" {
-                    throw StripError.unrecognizedDelimiter
+                    // A raw string states its own terminator: the same
+                    // number of hashes, after the same number of quotes.
+                    // Escapes inside need `\` plus those hashes, so nothing
+                    // in the body can fake an end.
+                    let isMultiline =
+                        j + 2 < chars.count && chars[j + 1] == "\"" && chars[j + 2] == "\""
+                    let quotes = isMultiline ? 3 : 1
+                    var k = j + quotes
+                    var closed = false
+                    while k < chars.count {
+                        if closesRawString(chars, at: k, quotes: quotes, hashes: hashes) {
+                            k += quotes + hashes
+                            closed = true
+                            break
+                        }
+                        result.append(chars[k] == "\n" ? "\n" : " ")
+                        k += 1
+                    }
+                    guard closed else { throw StripError.unterminatedLiteral }
+                    result.append(" ")
+                    i = k
+                    continue
                 }
+                // Not a string delimiter: `#expect`, `#filePath`, `#if`.
             }
             if c == "\"", i + 2 < chars.count, chars[i + 1] == "\"", chars[i + 2] == "\"" {
                 i += 3
@@ -770,10 +917,38 @@ struct TabContextMenuWiringGuardTests {
     /// - **W6** A SECOND `TabStripView(…)`, fed something else entirely, so
     ///   the checked construction site is no longer the one on screen.
     ///
+    /// **And where a value can be changed while every anchor stays
+    /// intact.** Re-derived in fix round 2, after two violations got past
+    /// this suite for one shared reason: a check that COUNTS a string finds
+    /// it inside a longer one, and a check that asks what a body CONTAINS
+    /// cannot see what was added to it. Rather than patching the two
+    /// spellings the re-review sent, the question asked was: what else does
+    /// this suite recognize by prefix or by presence?
+    ///
+    /// - **X1** An argument value carries a suffix, or merely begins with
+    ///   the right name: `tabs: tabsModel.tabs.inDisplayOrder()`,
+    ///   `index: position + 1`, `onReorder: onReorderWrapped`. Every literal
+    ///   the old checks looked for is present, correctly spelled.
+    /// - **X2** A name is REBOUND before the pinned call reads it:
+    ///   `let index = 0` in the drop closure, `let position = max(0,
+    ///   position - 1)` in the handler. The calls still say `index` and
+    ///   `position`; those words mean something else by then.
+    /// - **X3** A statement is INSERTED into a pinned body — nothing
+    ///   missing, nothing renamed, one effect more than the body describes.
+    /// - **X4** The reorder route reaches the handler through a wrapper
+    ///   where the strip is constructed, which is X1 one level up and the
+    ///   reason that argument is now compared as a whole closure.
+    ///
+    /// The answer to all four is the same and is not another token: compare
+    /// the whole value, and pin the two three-line bodies by equality. Both
+    /// bodies have exactly one right form; when that form is meant to
+    /// change, the failure message names the constant to update.
+    ///
     /// **What this guard does NOT catch**, stated so a green run is not
-    /// read as more than it is — and re-measured in fix round 1, because a
+    /// read as more than it is — re-measured in fix round 2, because a
     /// widened guard with an unchanged limits section is the same defect as
-    /// a narrow one with a boast:
+    /// a narrow one with a boast, and because one sentence here was
+    /// measured wrong the round before:
     ///
     /// - **That the gesture works at all.** No test in this project can see
     ///   SwiftUI begin a drag, accept a drop, or place the tab where the
@@ -781,30 +956,44 @@ struct TabContextMenuWiringGuardTests {
     /// - **The rearrangement vocabulary is a blocklist, not a rule** — the
     ///   same limit the menu guard documents for its own token list.
     ///   `applying(_:)`, a swap written as two subscript assignments, or a
-    ///   helper with an innocent name all walk past it. W1, W2 and W6 do
-    ///   not depend on it (they pin the hand-off verbatim, so ANY other
-    ///   spelling fails); W3 does.
+    ///   helper with an innocent name all walk past it. **Corrected from
+    ///   the round before**, where this said W1, W2 and W6 depend on no
+    ///   blocklist: W1 then combined a prefix count with the blocklist, and
+    ///   `tabs: tabsModel.tabs.inDisplayOrder()` walked through both. It is
+    ///   true now, and true for a different reason: W1, W2, W4 and W6
+    ///   compare whole values and whole bodies, so any other spelling
+    ///   fails whatever it is called. **W3 is the check that depends on the
+    ///   blocklist**, and is the weakest thing here.
     /// - **W3 recognizes a rearranging call applied DIRECTLY to
     ///   `tabsModel.tabs`.** Copy the array into a local first, or reach it
     ///   through another name for the model, and the scan sees nothing.
     /// - **The token scan of a whole file is run on the strip only.** The
     ///   handler and wiring files legitimately rearrange other collections,
     ///   so they are checked by shape and by W3, not by vocabulary.
-    /// - **`TabsViewModel` itself is not scanned.** A second ordering
-    ///   written inside Core — an `orderedTabs` beside `tabs` — is
-    ///   invisible here. It is also the one place where a test can call it
-    ///   directly, which is `TabsViewModelTests`' subject.
+    /// - **The radius is the app-layer module.** Core is outside it, by
+    ///   decision (N4): a second ordering written inside `TabsViewModel` —
+    ///   a second ordering property in that type — is invisible here, and is the
+    ///   one place where a test can call it directly, which is
+    ///   `TabsViewModelTests`' subject. Anything else outside that module
+    ///   is outside this claim.
+    /// - **Equality-pinned bodies are brittle on purpose.** A legitimate
+    ///   edit to either body turns this red; the message says which
+    ///   constant to update and asks for a probe for whatever the new form
+    ///   makes possible. That is the intended cost of not being fooled by
+    ///   an inserted line.
     /// - **It checks that the clamp is ASKED FOR, never that it is right.**
     ///   A `TabDropPlan.destination` rewritten to return the raw index
     ///   passes every check here and fails in `TabDropPlanTests`.
     ///
-    /// Fail-closed throughout: an unreadable file, a missing anchor,
-    /// unbalanced braces, a string form the stripper does not parse, and a
-    /// source tree the scan finds no Swift files in all count as failures.
+    /// Fail-closed throughout: a missing anchor, unbalanced braces, an
+    /// unterminated string or comment, a file that cannot be read, and a
+    /// module directory with no Swift files in it all count as failures.
     /// Renaming `onReorder` or `reorderTab(_:toDropPosition:)` leaves an
-    /// anchor missing, which is reported as "re-anchor this guard" rather
-    /// than passing quietly. Self-tested against synthetic source, one
-    /// probe per violation site.
+    /// anchor missing, and every such message names the file, the construct
+    /// and what to do about it — a red guard nobody knows how to answer is
+    /// a guard that gets switched off. Self-tested against synthetic
+    /// source: at least one probe per violation site named here, and two
+    /// where one site has two spellings that fail differently.
     @Suite("Tab drag wiring guard")
     struct TabDragWiringGuardTests {
         private static let stripFile = TabContextMenuWiringGuardTests.sourceFile
@@ -813,10 +1002,19 @@ struct TabContextMenuWiringGuardTests {
         private static let wiringFile = TabContextMenuWiringGuardTests.repoRoot
             .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Detail.swift")
 
-        /// Every Swift file of the app layer, for the checks that are about
-        /// the app layer rather than about one file (W3, W5, W6).
-        private static let appSources = TabContextMenuWiringGuardTests.repoRoot
-            .appendingPathComponent("Sources")
+        /// The app layer, for the checks that are about the layer rather
+        /// than about one file (W3, W5, W6): the module the window is built
+        /// in, whole, by its module directory rather than by a list of
+        /// files somebody has to remember to extend.
+        ///
+        /// Core is deliberately outside it (fix round 2, N4). `tabsModel`
+        /// is an app-layer name and does not occur there; the tab order
+        /// inside `TabsViewModel` is Core's own subject, reachable directly
+        /// by `TabsViewModelTests`, and calling that file "app layer" in a
+        /// failure message — which is what the wider radius did — points
+        /// the reader at the wrong place.
+        private static let appLayer = TabContextMenuWiringGuardTests.repoRoot
+            .appendingPathComponent("Sources/MacSCPAppKit")
 
         private static let dragSource = ".draggable("
         private static let dropAnchor = ".dropDestination(for: String.self) {"
@@ -849,26 +1047,53 @@ struct TabContextMenuWiringGuardTests {
         /// (D5).
         private static let sanctionedMove = "tabsModel.move(tabID:tabID,to:destination)"
 
-        /// The strip's reorder route wired to the drop handler (D5, one
-        /// level up).
-        private static let sanctionedWiring = "reorderTab(tabID,toDropPosition:position)"
+        /// The strip's reorder route wired to the drop handler, as the
+        /// COMPLETE value of that argument (X1): the position the drop
+        /// reported goes into the handler, with nothing done to it on the
+        /// way (D5 one level up, W4).
+        private static let sanctionedWiringValue =
+            "{tabID,positioninreorderTab(tabID,toDropPosition:position)}"
 
-        /// The model's own array handed to the strip as itself (W1).
-        private static let sanctionedFeed = "tabs:tabsModel.tabs"
+        /// The model's own array handed to the strip, as the COMPLETE value
+        /// of that argument (W1, X1). A suffix — `.sorted { … }`,
+        /// `.inDisplayOrder()` — is a different value, whether or not its
+        /// name happens to be one this suite would recognize.
+        private static let sanctionedFeedValue = "tabsModel.tabs"
 
         /// The strip rendering the tabs it was handed, in the order it was
         /// handed them (W2).
         private static let sanctionedRender = #"ForEach(Array(tabs.enumerated()),id:\.element.id)"#
 
-        /// The reorder closure handed to the item as itself, with no
-        /// position rewritten on the way (W4).
-        private static let sanctionedHandOff = "onReorder:onReorder"
+        /// The reorder closure handed to the item as the COMPLETE value of
+        /// that argument (W4, X1) — `onReorder: onReorderWrapped` is a
+        /// prefix of nothing here.
+        private static let sanctionedHandOffValue = "onReorder"
 
         /// Both ends of that hand-off as STORED properties — a computed one
         /// could wrap the closure without changing the hand-off (W4).
         /// Counted while writing this check: the strip declares one and the
         /// item declares one.
         private static let reorderProperty = "letonReorder:(UUID,Int)->Void"
+
+        /// The item's construction site, where every value the drop later
+        /// uses is handed over (X1).
+        private static let itemConstruction = "TabItemView("
+
+        /// The drop closure's body, whole (X2, X3). Pinned as an equality
+        /// rather than as a set of things that must appear in it: a `let
+        /// index = 0` inserted ahead of the hand-over leaves every
+        /// appearing thing appearing, and sends every tab to the same
+        /// place.
+        private static let sanctionedDropBody =
+            "payload,_inguardletdraggedID=TabDropPlan.draggedTabID(from:payload)"
+            + "else{returnfalse}onReorder(draggedID,index)returntrue"
+
+        /// The drop handler's body, whole, for the same reason (X2, X3):
+        /// `let position = max(0, position - 1)` ahead of the clamp is
+        /// invisible to every check that asks what the body contains.
+        private static let sanctionedHandlerBody =
+            "guardletdestination=TabDropPlan.destination(forDropOnIndex:position,"
+            + "tabCount:tabsModel.tabs.count)else{return}tabsModel.move(tabID:tabID,to:destination)"
 
         /// The construction site of the strip itself (W6).
         private static let stripConstruction = "TabStripView("
@@ -930,7 +1155,7 @@ struct TabContextMenuWiringGuardTests {
         }
 
         /// Everything a check needs about one extracted body, in one call,
-        /// so the synthetic probes below exercise the same steps the
+        /// so the synthetic probes exercise the same steps the
         /// real-file checks do. `#require` on the extraction: a missing
         /// anchor and unbalanced braces both leave nothing to scan, and
         /// reporting that as a failed content assertion would name the
@@ -967,14 +1192,60 @@ struct TabContextMenuWiringGuardTests {
             TabContextMenuWiringGuardTests.occurrences(of: needle, in: haystack)
         }
 
-        /// Every `.swift` file of the app layer. Fail-closed at the call
-        /// site: a scan that found nothing to read would report every
-        /// app-layer claim as satisfied.
-        static func appSourceFiles() -> [URL] {
+        /// One app-layer file, read once.
+        struct AppLayerFile: Sendable {
+            let name: String
+            let path: String
+            /// Comments and string literals removed, whitespace collapsed.
+            let canonical: String
+        }
+
+        /// The whole app layer, read and canonicalized ONCE for every check
+        /// that scans it (fix round 2). Three checks used to walk the tree
+        /// separately, which is three reads and three character passes for
+        /// one answer.
+        ///
+        /// A `Result` rather than a throwing call, because a stored
+        /// property cannot throw: every consumer unwraps it with `get()`
+        /// and therefore fails on a tree it could not read, instead of
+        /// scanning an empty list and reporting everything as fine.
+        static let appLayerFiles: Result<[AppLayerFile], ScanFailure> = {
             let enumerator = FileManager.default.enumerator(
-                at: appSources, includingPropertiesForKeys: nil)
-            let all = enumerator?.allObjects as? [URL] ?? []
-            return all.filter { $0.pathExtension == "swift" }
+                at: appLayer, includingPropertiesForKeys: nil)
+            let urls = ((enumerator?.allObjects as? [URL]) ?? [])
+                .filter { $0.pathExtension == "swift" }
+                .sorted { $0.path < $1.path }
+            guard !urls.isEmpty else {
+                return .failure(ScanFailure(description: """
+                    no Swift files were found under \(appLayer.path) — every app-layer \
+                    app-layer check would pass by reading nothing. Point this guard at the \
+                    app-layer module directory again.
+                    """))
+            }
+            var files: [AppLayerFile] = []
+            for url in urls {
+                do {
+                    let text = try String(contentsOf: url, encoding: .utf8)
+                    files.append(AppLayerFile(
+                        name: url.lastPathComponent, path: url.path,
+                        canonical: try TabContextMenuWiringGuardTests.canonicalize(text)))
+                } catch {
+                    return .failure(ScanFailure(description: """
+                        \(url.path) could not be read or stripped: \(error). The scanner \
+                        judges what it can parse, so it refuses to judge the app layer at \
+                        all until this file is readable — check the file for an \
+                        unterminated string or comment.
+                        """))
+                }
+            }
+            return .success(files)
+        }()
+
+        /// A scan that could not be performed. Carries its own remedy: a
+        /// red guard nobody knows what to do about is a guard that gets
+        /// deleted.
+        struct ScanFailure: Error, CustomStringConvertible, Sendable {
+            let description: String
         }
 
         /// The member call applied DIRECTLY to each occurrence of
@@ -1027,7 +1298,7 @@ struct TabContextMenuWiringGuardTests {
 
         /// D7: one drag source, one drop target. A second of either would
         /// mean a reorder path this suite never looked at, and would also
-        /// make "the drop closure" ambiguous for every check below.
+        /// make "the drop closure" ambiguous for every check that reads it.
         @Test func theDragAndTheDropAreAttachedExactlyOnceEach() throws {
             let source = try Self.stripped(Self.stripFile)
             let drags = Self.occurrences(of: Self.dragSource, in: source)
@@ -1049,7 +1320,7 @@ struct TabContextMenuWiringGuardTests {
             #expect(source.contains(Self.sanctionedDrag), """
                 the strip's drag payload is not `\(Self.sanctionedDrag)` — a drag that \
                 carries anything else names a different tab than the one under the \
-                pointer, and every reordering check below would still pass.
+                pointer, and every reordering check in this suite would still pass.
                 """)
         }
 
@@ -1128,30 +1399,18 @@ struct TabContextMenuWiringGuardTests {
         /// anywhere is a third way to reorder, and this guard wants to be
         /// told about it.
         @Test func theAppLayerReachesTheReorderingRuleFromTwoPlaces() throws {
-            let files = Self.appSourceFiles()
-            try #require(!files.isEmpty, """
-                no Swift files were found under Sources/ — the app-layer scans would \
-                pass by reading nothing. Re-anchor this guard.
-                """)
+            let files = try Self.appLayerFiles.get()
             var perFile: [String: Int] = [:]
             for file in files {
-                let calls = Self.occurrences(
-                    of: Self.reorderingRule,
-                    in: try TabContextMenuWiringGuardTests.stripped(
-                        String(contentsOf: file, encoding: .utf8)))
-                if calls > 0 { perFile[file.lastPathComponent] = calls }
+                let calls = Self.occurrences(of: Self.reorderingRule, in: file.canonical)
+                if calls > 0 { perFile[file.name] = calls }
             }
-            let total = perFile.values.reduce(0, +)
-            #expect(total == 2, """
-                expected exactly 2 `\(Self.reorderingRule)` calls in the app layer (the \
-                menu's move entries and the drop), found \(total) — \
-                \(perFile.sorted { $0.key < $1.key }).
-                """)
             #expect(perFile == ["ContentView+Lifecycle.swift": 2], """
-                the app layer's reordering calls are not both in \
-                ContentView+Lifecycle.swift — found \(perFile.sorted { $0.key < $1.key }). \
-                A reordering reached from another file is a path this guard does not \
-                describe.
+                the app layer's calls to `\(Self.reorderingRule)` are not exactly two in \
+                ContentView+Lifecycle.swift (the menu's move entries and the drop) — \
+                found \(perFile.sorted { $0.key < $1.key }). A third way to reorder is \
+                a path nothing here describes: either route it through one of the two \
+                that exist, or extend this guard and its probes to cover the new one.
                 """)
         }
 
@@ -1165,36 +1424,46 @@ struct TabContextMenuWiringGuardTests {
         /// checked over the whole app layer as well.
         @Test func theStripIsFedTheModelsOwnOrder() throws {
             let source = try Self.canonical(Self.wiringFile)
-            let feeds = Self.occurrences(of: Self.sanctionedFeed, in: source)
-            #expect(feeds == 1, """
-                expected exactly 1 `\(Self.sanctionedFeed)` in ContentView+Detail.swift, \
-                found \(feeds) — the strip is being fed something other than the model's \
-                tabs, which is a second ordering wherever it was produced.
+            let lists = TabContextMenuWiringGuardTests.callArgumentLists(
+                of: Self.stripConstruction, in: source)
+            try #require(lists.count == 1, """
+                expected exactly 1 `\(Self.stripConstruction)` construction in \
+                ContentView+Detail.swift, found \(lists.count) — re-anchor this guard on \
+                the construction site that is on screen.
                 """)
-            let members = Self.membersApplied(to: Self.sanctionedFeed, in: source)
-            let rearranged = Self.rearrangementTokens.intersection(members).sorted()
-            #expect(rearranged.isEmpty, """
-                the tabs handed to the strip have \(rearranged) applied to them — the \
-                order on screen is then not the order `TabsViewModel.move` produced.
+            let fed = TabContextMenuWiringGuardTests.values(ofLabel: "tabs", in: lists[0])
+            #expect(fed == [Self.sanctionedFeedValue], """
+                the strip is fed \(fed), not exactly `\(Self.sanctionedFeedValue)` — \
+                whatever produced that value is a second ordering of the tabs, and the \
+                order on screen is no longer the one `TabsViewModel.move` produced. \
+                Feed the model's array and let `move(tabID:to:)` decide the order; if \
+                the model's property is legitimately renamed, update this expectation \
+                in TabContextMenuWiringGuardTests.
+                """)
+            let route = TabContextMenuWiringGuardTests.values(ofLabel: "onReorder", in: lists[0])
+            #expect(route == [Self.sanctionedWiringValue], """
+                the strip's `onReorder:` is \(route), not exactly \
+                `\(Self.sanctionedWiringValue)` — the position the drop reported is being \
+                changed on its way to the handler, which is a placement rule in a place \
+                no test can call.
                 """)
         }
 
-        /// W6: exactly one strip, so the construction site checked above is
+        /// W6: exactly one strip, so the construction site
+        /// `theStripIsFedTheModelsOwnOrder` checks is
         /// the one on screen.
         @Test func theStripIsConstructedExactlyOnceInTheAppLayer() throws {
-            let files = Self.appSourceFiles()
-            try #require(!files.isEmpty)
-            var total = 0
+            let files = try Self.appLayerFiles.get()
+            var perFile: [String: Int] = [:]
             for file in files {
-                total += Self.occurrences(
-                    of: Self.stripConstruction,
-                    in: try TabContextMenuWiringGuardTests.stripped(
-                        String(contentsOf: file, encoding: .utf8)))
+                let count = Self.occurrences(of: Self.stripConstruction, in: file.canonical)
+                if count > 0 { perFile[file.name] = count }
             }
-            #expect(total == 1, """
-                expected exactly 1 `\(Self.stripConstruction)` construction in the app \
-                layer, found \(total) — a second strip is fed by something this guard \
-                never looked at.
+            #expect(perFile == ["ContentView+Detail.swift": 1], """
+                the strip is not constructed exactly once, in ContentView+Detail.swift — \
+                found \(perFile.sorted { $0.key < $1.key }). A second strip is fed by \
+                something `theStripIsFedTheModelsOwnOrder` never looked at; either \
+                remove it or extend this guard to check its feed too.
                 """)
         }
 
@@ -1216,25 +1485,21 @@ struct TabContextMenuWiringGuardTests {
         /// got past, and the one that makes "the reordering exists once" a
         /// claim about the app layer rather than about one file.
         @Test func nothingInTheAppLayerRearrangesTheModelsTabs() throws {
-            let files = Self.appSourceFiles()
-            try #require(!files.isEmpty, """
-                no Swift files were found under Sources/ — this scan would pass by \
-                reading nothing. Re-anchor this guard.
-                """)
-            try #require(files.contains { $0.lastPathComponent == "TabStripView.swift" }, """
+            let files = try Self.appLayerFiles.get()
+            try #require(files.contains { $0.name == "TabStripView.swift" }, """
                 the strip file is not among the scanned app-layer sources — the scan is \
-                looking somewhere else than it thinks. Re-anchor this guard.
+                looking somewhere other than it thinks. Point `appLayer` at the \
+                app-layer module directory again.
                 """)
             for file in files {
-                let canonical = try TabContextMenuWiringGuardTests.canonicalize(
-                    String(contentsOf: file, encoding: .utf8))
-                let members = Self.membersApplied(to: Self.tabsExpression, in: canonical)
+                let members = Self.membersApplied(to: Self.tabsExpression, in: file.canonical)
                 let rearranged = Self.rearrangementTokens.intersection(members).sorted()
                 #expect(rearranged.isEmpty, """
-                    \(file.lastPathComponent) applies \(rearranged) to \
-                    `\(Self.tabsExpression)` — a second ordering of the tabs, which is \
-                    exactly what building the menu and the drag together was meant to \
-                    prevent.
+                    \(file.path) applies \(rearranged) to `\(Self.tabsExpression)` — a \
+                    second ordering of the tabs, which is exactly what building the menu \
+                    and the drag together was meant to prevent. Reorder through \
+                    `TabsViewModel.move(tabID:to:)` and let the model's own array be the \
+                    order everything else reads.
                     """)
             }
         }
@@ -1246,39 +1511,68 @@ struct TabContextMenuWiringGuardTests {
         /// F1).
         @Test func theReorderRouteReachesTheItemUnwrapped() throws {
             let source = try Self.canonical(Self.stripFile)
-            let handOffs = Self.occurrences(of: Self.sanctionedHandOff, in: source)
-            #expect(handOffs == 1, """
-                expected exactly 1 `\(Self.sanctionedHandOff)` in TabStripView.swift, \
-                found \(handOffs) — the strip is wrapping the reorder route instead of \
-                handing it on, which can rewrite the position outside the drop closure.
+            let lists = TabContextMenuWiringGuardTests.callArgumentLists(
+                of: Self.itemConstruction, in: source)
+            try #require(lists.count == 1, """
+                expected exactly 1 `\(Self.itemConstruction)` construction in \
+                TabStripView.swift, found \(lists.count) — re-anchor this guard on the \
+                construction site the strip actually renders.
+                """)
+            let route = TabContextMenuWiringGuardTests.values(
+                ofLabel: "onReorder", in: lists[0])
+            #expect(route == [Self.sanctionedHandOffValue], """
+                the item's `onReorder:` is \(route), not exactly \
+                `\(Self.sanctionedHandOffValue)` — the strip is wrapping the reorder \
+                route instead of handing it on, and a wrapper here rewrites the position \
+                outside everything the drop-closure checks can see. Hand the closure on \
+                unchanged.
                 """)
             let properties = Self.occurrences(of: Self.reorderProperty, in: source)
             #expect(properties == 2, """
                 expected exactly 2 stored `\(Self.reorderProperty)` properties in \
                 TabStripView.swift (the strip's and the item's), found \(properties) — a \
-                computed one could wrap the closure with the hand-off left intact.
+                computed one could wrap the closure with the hand-off left intact. Keep \
+                both stored, or extend this guard to describe what the new shape is.
                 """)
         }
 
-        /// D5, one level up: the strip's reorder route reaches the handler
-        /// that clamps and calls the rule, and there is one such route.
-        @Test func theStripsReorderRouteIsWiredToTheDropHandler() throws {
-            let source = try Self.canonical(Self.wiringFile)
-            let routes = Self.occurrences(of: "onReorder:", in: source)
-            #expect(routes == 1, """
-                expected exactly 1 `onReorder:` argument in ContentView+Detail.swift, \
-                found \(routes).
+        /// X2, X3: the two small bodies on the drop's path are pinned
+        /// whole, not by what they contain.
+        ///
+        /// Everything else here asks whether something is present. That
+        /// question cannot see an insertion: `let index = 0` ahead of the
+        /// hand-over, or `let position = max(0, position - 1)` ahead of the
+        /// clamp, leaves every checked call present, correctly spelled, and
+        /// reading a name that now means something else. Both bodies are
+        /// three lines that have exactly one right form, so the honest
+        /// check is equality — and when the form is meant to change, the
+        /// message says what to update.
+        @Test func theBodiesOnTheDropsPathAreExactlyWhatTheyShouldBe() throws {
+            let drop = try Self.scan(
+                Self.dropAnchor, in: String(contentsOf: Self.stripFile, encoding: .utf8))
+            #expect(drop.canonical == Self.sanctionedDropBody, """
+                the drop closure's body is not exactly the sanctioned three steps \
+                (read the payload, hand over the tab and this item's position, accept). \
+                Found: \(drop.canonical). Anything inserted here can rebind a name the \
+                remaining steps read. If the change is intended, update \
+                `sanctionedDropBody` in TabContextMenuWiringGuardTests and add a probe \
+                for whatever the new form makes possible.
                 """)
-            #expect(source.contains(Self.sanctionedWiring), """
-                the strip's `onReorder` is not wired to `\(Self.sanctionedWiring)` — the \
-                drop is being answered by something other than the clamping handler.
+            let handler = try Self.scan(
+                Self.handlerAnchor, in: String(contentsOf: Self.handlerFile, encoding: .utf8))
+            #expect(handler.canonical == Self.sanctionedHandlerBody, """
+                the drop handler's body is not exactly the sanctioned two steps (clamp \
+                against the tabs that exist now, then call the one reordering rule). \
+                Found: \(handler.canonical). If the change is intended, update \
+                `sanctionedHandlerBody` in TabContextMenuWiringGuardTests and add a \
+                probe for whatever the new form makes possible.
                 """)
         }
 
         // MARK: - Scanner self-tests: one probe per violation site
 
         /// The shape the real files have — the scanner must accept it, or
-        /// every negative probe below proves nothing.
+        /// every negative probe here proves nothing.
         static let sanctionedDropSource = """
             .draggable(tab.id.uuidString)
             .dropDestination(for: String.self) { payload, _ in
@@ -1422,25 +1716,130 @@ struct TabContextMenuWiringGuardTests {
             #expect(Self.occurrences(of: Self.dragSource, in: source) == 1)
         }
 
-        // MARK: - Self-tests for the second half, one probe per W site
+        // MARK: - Self-tests for the second half
+        //
+        // At least one synthetic probe per W and X site, and two where a
+        // site has two spellings that fail differently (W1: a suffix on the
+        // model's array, and a value produced somewhere else entirely).
+        // Counted while writing this comment: eight probes over the six W
+        // sites and four X sites, plus the helper self-tests that keep them
+        // meaningful.
 
-        /// W1 in the spelling the review used: the hand-off is still there,
-        /// character for character, and the order is not the model's any
-        /// more. The occurrence count cannot see this; the member scan can.
+        /// W1 and X1 in the spelling the re-review used: every literal the
+        /// old check looked for is still there, character for character,
+        /// and the order is not the model's any more. A count of the prefix
+        /// says "present"; the value says what it actually is.
         @Test func scannerFlagsAFeedThatRearrangesTheTabs() throws {
-            let source = try TabContextMenuWiringGuardTests.canonicalize(
-                "tabs: tabsModel.tabs.sorted { $0.displayTitle < $1.displayTitle },")
-            #expect(Self.occurrences(of: Self.sanctionedFeed, in: source) == 1)
-            let members = Self.membersApplied(to: Self.sanctionedFeed, in: source)
-            #expect(Self.rearrangementTokens.intersection(members) == ["sorted"])
+            let list = try TabContextMenuWiringGuardTests.callArgumentLists(
+                of: Self.stripConstruction,
+                in: TabContextMenuWiringGuardTests.canonicalize(
+                    "TabStripView(tabs: tabsModel.tabs.sorted { $0.a < $1.a }, activeTabID: id)")
+            )[0]
+            let fed = TabContextMenuWiringGuardTests.values(ofLabel: "tabs", in: list)
+            #expect(fed == ["tabsModel.tabs.sorted{$0.a<$1.a}"])
+            #expect(fed != [Self.sanctionedFeedValue])
         }
 
-        /// W1 in its other spelling: the order is produced elsewhere and
-        /// the hand-off simply names something else. No vocabulary is
-        /// involved at all, which is why this half is pinned verbatim.
+        /// X1 in the spelling that refuted the old limits section: a helper
+        /// with a name no blocklist knows, in a file this suite has never
+        /// heard of, and every literal intact. Nothing about the words used
+        /// makes this fail — the value simply is not the model's array.
+        @Test func scannerFlagsAFeedThroughAnInnocentHelper() throws {
+            let list = try TabContextMenuWiringGuardTests.callArgumentLists(
+                of: Self.stripConstruction,
+                in: TabContextMenuWiringGuardTests.canonicalize(
+                    "TabStripView(tabs: tabsModel.tabs.inDisplayOrder(), activeTabID: id)")
+            )[0]
+            let fed = TabContextMenuWiringGuardTests.values(ofLabel: "tabs", in: list)
+            #expect(fed == ["tabsModel.tabs.inDisplayOrder()"])
+            #expect(fed != [Self.sanctionedFeedValue])
+            // And the blocklist really does not know it — which is the point.
+            #expect(Self.rearrangementTokens.intersection(["inDisplayOrder"]).isEmpty)
+        }
+
+        /// W1's other half: the order is produced elsewhere and the
+        /// argument simply names it.
         @Test func scannerFlagsAFeedFromSomewhereElse() throws {
-            let source = try TabContextMenuWiringGuardTests.canonicalize("tabs: orderedTabs,")
-            #expect(Self.occurrences(of: Self.sanctionedFeed, in: source) == 0)
+            let list = try TabContextMenuWiringGuardTests.callArgumentLists(
+                of: Self.stripConstruction,
+                in: TabContextMenuWiringGuardTests.canonicalize(
+                    "TabStripView(tabs: orderedTabs, activeTabID: id)")
+            )[0]
+            #expect(TabContextMenuWiringGuardTests.values(ofLabel: "tabs", in: list)
+                != [Self.sanctionedFeedValue])
+        }
+
+        /// X1 at the item: the destination the drop will report, made one
+        /// too large where the item is constructed. Every token stays
+        /// correctly spelled.
+        @Test func scannerFlagsAnIndexWithSomethingAddedToIt() throws {
+            let list = try TabContextMenuWiringGuardTests.callArgumentLists(
+                of: Self.itemConstruction,
+                in: TabContextMenuWiringGuardTests.canonicalize(
+                    "TabItemView(tab: tab, index: position + 1, tabCount: tabs.count)")
+            )[0]
+            let index = TabContextMenuWiringGuardTests.values(ofLabel: "index", in: list)
+            #expect(index == ["position+1"])
+            #expect(index != ["position"])
+        }
+
+        /// X1 at the hand-off: a wrapper whose name merely begins with the
+        /// sanctioned one, which a prefix check reads as unchanged.
+        @Test func scannerFlagsAReorderRouteThatOnlyLooksLikeTheRealOne() throws {
+            let list = try TabContextMenuWiringGuardTests.callArgumentLists(
+                of: Self.itemConstruction,
+                in: TabContextMenuWiringGuardTests.canonicalize(
+                    "TabItemView(tab: tab, onReorder: onReorderWrapped)")
+            )[0]
+            let route = TabContextMenuWiringGuardTests.values(ofLabel: "onReorder", in: list)
+            #expect(route == ["onReorderWrapped"])
+            #expect(route != [Self.sanctionedHandOffValue])
+        }
+
+        /// X2: a name rebound inside the drop closure, so the hand-over
+        /// reads a different value while every checked call is present and
+        /// correctly spelled. Only the body equality sees it.
+        @Test func scannerFlagsAValueReboundInsideTheDrop() throws {
+            let body = try TabContextMenuWiringGuardTests.canonicalize("""
+                payload, _ in
+                guard let draggedID = TabDropPlan.draggedTabID(from: payload) else { return false }
+                let index = 0
+                onReorder(draggedID, index)
+                return true
+                """)
+            #expect(body.contains(Self.sanctionedRoute))
+            #expect(body.contains(Self.sanctionedPayloadRead))
+            #expect(body != Self.sanctionedDropBody)
+        }
+
+        /// X2 in the handler: the clamp is still called, with a `position`
+        /// that no longer means the position the drop reported.
+        @Test func scannerFlagsAValueReboundInsideTheHandler() throws {
+            let body = try TabContextMenuWiringGuardTests.canonicalize("""
+                let position = max(0, position - 1)
+                guard let destination = TabDropPlan.destination(
+                    forDropOnIndex: position, tabCount: tabsModel.tabs.count)
+                else { return }
+                tabsModel.move(tabID: tabID, to: destination)
+                """)
+            #expect(body.contains(Self.sanctionedClamp))
+            #expect(body.contains(Self.sanctionedMove))
+            #expect(body != Self.sanctionedHandlerBody)
+        }
+
+        /// X3: nothing is rebound and nothing is missing — a statement is
+        /// simply added, which is how a second effect joins a
+        /// correct one.
+        @Test func scannerFlagsAStatementInsertedIntoAPinnedBody() throws {
+            let body = try TabContextMenuWiringGuardTests.canonicalize("""
+                guard let destination = TabDropPlan.destination(
+                    forDropOnIndex: position, tabCount: tabsModel.tabs.count)
+                else { return }
+                tabsModel.move(tabID: tabID, to: destination)
+                tabsModel.activate(tabID)
+                """)
+            #expect(body.contains(Self.sanctionedMove))
+            #expect(body != Self.sanctionedHandlerBody)
         }
 
         /// W2: the loop walks a re-ordered copy of the tabs the strip was
@@ -1466,9 +1865,36 @@ struct TabContextMenuWiringGuardTests {
         /// W4: the position is rewritten where the item is constructed, one
         /// closure outside everything the drop-body checks can see.
         @Test func scannerFlagsAWrappedReorderRoute() throws {
-            let source = try TabContextMenuWiringGuardTests.canonicalize(
-                "onReorder: { id, _ in onReorder(id, 0) })")
-            #expect(Self.occurrences(of: Self.sanctionedHandOff, in: source) == 0)
+            let list = try TabContextMenuWiringGuardTests.callArgumentLists(
+                of: Self.itemConstruction,
+                in: TabContextMenuWiringGuardTests.canonicalize(
+                    "TabItemView(tab: tab, onReorder: { id, _ in onReorder(id, 0) })")
+            )[0]
+            #expect(TabContextMenuWiringGuardTests.values(ofLabel: "onReorder", in: list)
+                == ["{id,_inonReorder(id,0)}"])
+            #expect(TabContextMenuWiringGuardTests.values(ofLabel: "onReorder", in: list)
+                != [Self.sanctionedHandOffValue])
+        }
+
+        /// The argument reader must answer about the argument it was asked
+        /// for and no other, or every equality in this suite is meaningless: a
+        /// label that merely ends in the one being looked for
+        /// (`ofTabCount:` against `tabCount:`), a parameter declaration that
+        /// looks like a call, and a value carrying commas of its own inside
+        /// a closure are the three ways it could go wrong.
+        @Test func theArgumentReaderReadsWholeValuesOfTheRightLabel() throws {
+            let canonical = try TabContextMenuWiringGuardTests.canonicalize(
+                "Entries(atIndex: index, ofTabCount: tabCount, onDone: { a, b in use(a, b) })")
+            let list = TabContextMenuWiringGuardTests.callArgumentLists(
+                of: "Entries(", in: canonical)[0]
+            #expect(TabContextMenuWiringGuardTests.values(ofLabel: "index", in: list).isEmpty)
+            #expect(TabContextMenuWiringGuardTests.values(ofLabel: "tabCount", in: list).isEmpty)
+            #expect(TabContextMenuWiringGuardTests.values(ofLabel: "atIndex", in: list)
+                == ["index"])
+            #expect(TabContextMenuWiringGuardTests.values(ofLabel: "ofTabCount", in: list)
+                == ["tabCount"])
+            #expect(TabContextMenuWiringGuardTests.values(ofLabel: "onDone", in: list)
+                == ["{a,binuse(a,b)}"])
         }
 
         /// W5: a third way to the one rule, under a different name for the
