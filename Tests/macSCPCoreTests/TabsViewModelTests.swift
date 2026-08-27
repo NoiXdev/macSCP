@@ -146,4 +146,76 @@ struct TabsViewModelTests {
         vm.move(tabID: UUID(), to: 0)
         #expect(vm.tabs.map(\.id) == [a.id])
     }
+
+    // MARK: - Bulk close ("others" means all but the CLICKED tab)
+
+    /// The rule the design emphasises hardest, and the one a reading of
+    /// `activeTabID` gets subtly wrong: the active tab is closed too when
+    /// the bulk close was asked about a different tab.
+    @Test func othersMeansAllButTheAskedAboutTabNotAllButTheActiveOne() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID()), c = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b); vm.addTab(c)
+        vm.activate(b.id)
+        // Asked about `c` while `b` is active: `b` is in the closing set.
+        #expect(vm.tabsToClose(besides: c.id).map(\.id) == [a.id, b.id])
+        // And the active tab is NOT the yardstick — asking about the active
+        // tab itself is only one case of the same rule, not the rule.
+        #expect(vm.tabsToClose(besides: b.id).map(\.id) == [a.id, c.id])
+    }
+
+    @Test func theClosingSetKeepsStripOrder() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID()), c = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b); vm.addTab(c)
+        #expect(vm.tabsToClose(besides: b.id).map(\.id) == [a.id, c.id])
+    }
+
+    @Test func aLoneTabHasNoOthersToClose() {
+        let a = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        #expect(vm.tabsToClose(besides: a.id).isEmpty)
+    }
+
+    /// A tab that has already gone leaves nothing to keep, so every tab
+    /// comes back — and `closeOthers(besides:)` refuses to act on it rather
+    /// than emptying the strip.
+    @Test func anUnknownTabYieldsEveryTabAndClosesNone() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b)
+        let stale = UUID()
+        #expect(vm.tabsToClose(besides: stale).map(\.id) == [a.id, b.id])
+        vm.closeOthers(besides: stale)
+        #expect(vm.tabs.map(\.id) == [a.id, b.id])
+        #expect(vm.activeTabID == b.id)
+    }
+
+    /// The second half of the same rule: the tab the close was asked about
+    /// is the one left, and it is active afterwards even when it was not
+    /// before.
+    @Test func closingOthersLeavesTheAskedAboutTabActive() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID()), c = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b); vm.addTab(c)
+        vm.activate(b.id)
+        vm.closeOthers(besides: c.id)
+        #expect(vm.tabs.map(\.id) == [c.id])
+        #expect(vm.activeTabID == c.id)
+        #expect(vm.activeTab.id == c.id)
+        #expect(vm.isLastTab)
+    }
+
+    /// Closing others around the ALREADY active tab keeps it active — the
+    /// same code path, stated so the case cannot regress into a needless
+    /// re-activation of something else.
+    @Test func closingOthersAroundTheActiveTabKeepsItActive() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b)
+        vm.activate(a.id)
+        vm.closeOthers(besides: a.id)
+        #expect(vm.tabs.map(\.id) == [a.id])
+        #expect(vm.activeTabID == a.id)
+    }
 }

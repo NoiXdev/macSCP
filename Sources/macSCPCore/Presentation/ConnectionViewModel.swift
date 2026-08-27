@@ -1323,6 +1323,47 @@ public final class ConnectionViewModel {
         jumpSessionID = nil
     }
 
+    /// Validates the form for saving a NEW session **without dialing**, and
+    /// publishes a `.failed` state when it cannot be saved.
+    ///
+    /// Why this exists: saving a new session used to be reachable only
+    /// through `connect()`. The rules live here (the save name) and in
+    /// `resolveConfigWithoutDialing()` (the schema and the jump), but the
+    /// only caller that ran them was the dial, so "save this connection"
+    /// and "open this connection" were one act. A user with a connection
+    /// already running who wants it remembered had no way to say so without
+    /// opening a second one.
+    ///
+    /// The rules are exactly `connect()`'s, split the same way: the save
+    /// name is a rule of THIS submission (see
+    /// `resolveConfigWithoutDialing()`'s own doc comment for why it
+    /// deliberately does not check it), everything else comes from the
+    /// shared resolution — so a form that saves without dialing cannot
+    /// accept something the dial would have refused, and vice versa.
+    ///
+    /// The resolved config is DISCARDED. This function answers "may this be
+    /// written", not "what would be dialed": returning the config would put
+    /// a plaintext secret in a caller's hands for no purpose, and
+    /// `SessionSecretPolicy` reads the form directly at write time anyway.
+    ///
+    /// Edit mode has its own validator (`validateForEditSave()` below) with
+    /// a different secret rule — empty means "leave the stored one alone" —
+    /// so this refuses outright rather than quietly doing the wrong one.
+    public func validateForNewSave() -> Bool {
+        guard case .new = mode else { return false }
+        guard !saveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            fail(.failed(
+                message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName))
+            return false
+        }
+        if case .failed(let failure) = resolveConfigWithoutDialing() {
+            fail(failure)
+            return false
+        }
+        state = .idle
+        return true
+    }
+
     /// Validates the form for saving an edited session and returns the updated
     /// `StoredSession`, or nil after publishing a `.failed` state.
     ///

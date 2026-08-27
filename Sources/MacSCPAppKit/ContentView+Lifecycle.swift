@@ -845,7 +845,7 @@ extension ContentView {
     /// `requestClose` freezes its own: a dialog that recomputes its counts
     /// per render can go blank while it is on screen.
     func requestCloseOthers(of tab: SessionTab) {
-        let closing = tabsModel.tabs.filter { $0.id != tab.id }
+        let closing = tabsModel.tabsToClose(besides: tab.id)
         guard !closing.isEmpty else { return }
         let message = TabCloseWarning.bulkMessage(
             tabsClosing: closing.count,
@@ -860,25 +860,32 @@ extension ContentView {
     }
 
     /// Tears every other tab down through `teardown(_:reason:)`, one at a
-    /// time, and leaves `tab` active.
+    /// time, then removes them and leaves `tab` active.
+    ///
+    /// WHICH tabs go, and who is active afterwards, are both
+    /// `TabsViewModel`'s answers (`tabsToClose(besides:)` /
+    /// `closeOthers(besides:)`) and are tested there — the design's most
+    /// emphatic rule about this feature is "all but the CLICKED tab, not all
+    /// but the active one", and a view is the wrong place to keep a rule
+    /// nothing can check. What is left here is the part that is not a
+    /// decision: running each tab's teardown, in the invariant order, before
+    /// the model forgets it exists.
     ///
     /// The list is captured before the loop so a tab cannot be missed while
-    /// the model shrinks underneath it. `TabsViewModel.closeTab` refuses to
-    /// remove the last tab, which cannot bite here: `tab` itself is never in
-    /// `closing`, so every removal happens while at least two tabs remain.
+    /// the model shrinks underneath it — and the model is only touched once,
+    /// after every teardown has finished.
     ///
     /// The attention indicator is reset only when the tab that was active is
     /// among the ones closing — the same rule `performClose` follows: a tab
     /// the user did not actually visit must not have its failures
     /// acknowledged for it.
     func performCloseOthers(of tab: SessionTab) async {
-        let closing = tabsModel.tabs.filter { $0.id != tab.id }
+        let closing = tabsModel.tabsToClose(besides: tab.id)
         let survivorTakesOver = tabsModel.activeTabID != tab.id
         for other in closing {
             await teardown(other, reason: .userRequested)
-            tabsModel.closeTab(other.id)
         }
-        tabsModel.activate(tab.id)
+        tabsModel.closeOthers(besides: tab.id)
         if survivorTakesOver {
             tab.seenFailureCount = tab.transferQueue.totalFailureCount
         }
@@ -940,25 +947,107 @@ extension ContentView {
     /// single source of truth, and not from `lastConnectedConfig`: that is
     /// an `SSHConnectionConfig?` and carries neither S3 nor WebDAV.
     ///
+    /// **`values` is not the whole form, and copying it alone silently drops
+    /// a bastion.** Several things the form reads — and that a saved session
+    /// is built from — are stored properties beside `values`, not inside it.
+    /// `jumpEnabled` is the dangerous one: the jump's host, port, user name,
+    /// secret and key path all live in `values`, but the flag that says the
+    /// block is IN USE does not, and `buildJumpSpec()` returns `nil` without
+    /// it. A session only reachable through its bastion would have been
+    /// saved as a direct one, with nothing on screen to show it. The rest of
+    /// what is carried below is the same class of fact: the login-set
+    /// binding, the jump's own source/login mode, the group and the tags.
+    ///
+    /// Deliberately NOT carried: `saveAsNewLoginSet`/`newLoginSetName`.
+    /// Those are an instruction to a SUBMISSION ("while saving this, also
+    /// make a login set out of it"), not a property of the connection —
+    /// carrying them would act on an intention the user expressed about a
+    /// different act. They are reset instead, so a stale tick left on the
+    /// TARGET tab's own form cannot ride along either.
+    ///
     /// `kind` is assigned BEFORE `values`, because changing it resets
     /// `values` to that backend's defaults (see its `didSet`) — the other
-    /// order would wipe what was just copied in.
+    /// order would wipe what was just copied in. `exitEditMode()` runs
+    /// before both and clears the jump block wholesale, which is why every
+    /// jump field is restored after it and not before.
     ///
     /// Same target rule as "Edit…" and the ssh-config import
     /// (`formTarget()`): the active tab when it is free to show a form,
     /// otherwise a fresh tab, so the running session this is saving is
     /// never displaced by the form that saves it.
     func saveAsSession(from tab: SessionTab) {
-        let kind = tab.connectionViewModel.kind
-        let values = tab.connectionViewModel.values
+        let source = tab.connectionViewModel
+        let carried = CarriedFormState(source)
         let name = tab.displayTitle
         guard let target = formTarget() else { return }
         let form = target.connectionViewModel
         form.exitEditMode()
-        form.kind = kind
-        form.values = values
+        carried.apply(to: form)
         form.saveName = name
         form.shouldSaveSession = true
+    }
+
+    /// Everything `saveAsSession(from:)` moves from a running tab's form to
+    /// the form that will save it: `values` plus every stored property the
+    /// form reads that is NOT inside `values`.
+    ///
+    /// A named type rather than a dozen assignments in a row, so the list
+    /// can be read as a list — this is the thing that was wrong once, and a
+    /// missing line in a run of assignments is invisible.
+    ///
+    /// `@MainActor` on the TYPE, not `nonisolated(unsafe)` on anything:
+    /// every property it reads and writes belongs to a `@MainActor`
+    /// `ConnectionViewModel`, and a statement about the type is one both
+    /// this toolchain and CI's older one read the same way.
+    @MainActor
+    struct CarriedFormState {
+        let kind: ConnectionKind
+        let values: FieldValues
+        let selectedGroupID: UUID?
+        let tags: [String]
+        let loginMode: ConnectionViewModel.LoginMode
+        let selectedLoginSetID: UUID?
+        /// The flag that turns the jump fields in `values` from inert data
+        /// into a hop. See `saveAsSession(from:)`'s doc comment.
+        let jumpEnabled: Bool
+        let jumpLoginMode: ConnectionViewModel.LoginMode
+        let jumpSelectedLoginSetID: UUID?
+        let jumpSourceMode: ConnectionViewModel.JumpSourceMode
+        let jumpSessionID: UUID?
+
+        init(_ form: ConnectionViewModel) {
+            kind = form.kind
+            values = form.values
+            selectedGroupID = form.selectedGroupID
+            tags = form.tags
+            loginMode = form.loginMode
+            selectedLoginSetID = form.selectedLoginSetID
+            jumpEnabled = form.jumpEnabled
+            jumpLoginMode = form.jumpLoginMode
+            jumpSelectedLoginSetID = form.jumpSelectedLoginSetID
+            jumpSourceMode = form.jumpSourceMode
+            jumpSessionID = form.jumpSessionID
+        }
+
+        /// `kind` first: its `didSet` resets `values` to the backend's
+        /// defaults whenever it actually changes.
+        func apply(to form: ConnectionViewModel) {
+            form.kind = kind
+            form.values = values
+            form.selectedGroupID = selectedGroupID
+            form.tags = tags
+            form.loginMode = loginMode
+            form.selectedLoginSetID = selectedLoginSetID
+            form.jumpEnabled = jumpEnabled
+            form.jumpLoginMode = jumpLoginMode
+            form.jumpSelectedLoginSetID = jumpSelectedLoginSetID
+            form.jumpSourceMode = jumpSourceMode
+            form.jumpSessionID = jumpSessionID
+            // An intent about a different submission — see
+            // `saveAsSession(from:)`'s doc comment.
+            form.saveAsNewLoginSet = false
+            form.newLoginSetName = ""
+        }
     }
 
     // MARK: - Window geometry

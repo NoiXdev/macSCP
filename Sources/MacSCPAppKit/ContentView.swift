@@ -1029,6 +1029,103 @@ struct ContentView: View {
         return newSet.id
     }
 
+    /// Writes what a form holds as a NEW stored session, and nothing else —
+    /// no tab bookkeeping, no window title, no connection.
+    ///
+    /// Lifted out of `startSession` in the tab-context-menu fix round: this
+    /// code used to live inside that function's `shouldSaveSession` branch,
+    /// which made "remember this connection" reachable only through the
+    /// success path of a dial. A user whose ad-hoc connection was already
+    /// running could not have it saved without opening a second one to the
+    /// same server. Separating the two is what lets the form's own Save
+    /// button (`saveFormAsSession(in:)`) write a session with no connection
+    /// attempt at all, WITHOUT a second persistence path beside this one —
+    /// both callers run exactly these lines.
+    ///
+    /// What the caller still owns is what differs between them: binding the
+    /// tab to the result, the window title, and clearing
+    /// `shouldSaveSession`.
+    ///
+    /// Set mode references the picked login set directly. Manual mode +
+    /// "Save as new login set" creates the set FIRST, then references it —
+    /// either way `password:` is safely ignored by `save` once `loginSetID`
+    /// is non-nil (see its doc comment).
+    ///
+    /// ONE save for every protocol (M23/T7), and the place the last two
+    /// `"unused"` placeholders died: the backend's own adapter writes its
+    /// own fields out of `form.values`, so this call site does not know that
+    /// S3 has a bucket and SSH has a port -- nor parks a literal in
+    /// `host`/`username` for a backend that has neither.
+    ///
+    /// What the three branches it replaced did, and where it went:
+    /// * S3/WebDAV built a `StoredS3Config`/`StoredWebDAVConfig` from the
+    ///   form -> `descriptor.apply` inside `save`.
+    /// * Each named its own secret field -> `SessionSecretPolicy.
+    ///   valueToPersist`, which now asks the schema which row is the visible
+    ///   secret.
+    /// * The SSH branch alone passed `authKind`/`keyPath` -> both live in
+    ///   `form.values` and are written by SSH's own `apply`.
+    /// * S3/WebDAV passed NO jump and NO jump secret; the SSH branch passed
+    ///   `form.buildJumpSpec()` (no `existingSecretID`: this is a brand-new
+    ///   session, unlike `validateForEditSave`'s own call) and suppressed the
+    ///   jump secret in session mode (spec §1: the `secretID` slot stays
+    ///   unused while `sessionID` is set). Both survive verbatim --
+    ///   `buildJumpSpec()` returns nil unless `jumpEnabled`, which the S3 and
+    ///   WebDAV forms never offer, so the hardcoded `nil` those two branches
+    ///   carried needs no `kind` check here.
+    func persistFormAsSession(_ form: ConnectionViewModel) -> StoredSession? {
+        let newSetID = maybeCreateNewLoginSet(from: form)
+        return sessionListViewModel.save(
+            name: form.saveName.trimmingCharacters(in: .whitespacesAndNewlines),
+            values: form.values,
+            password: SessionSecretPolicy.valueToPersist(
+                resolvedSecret: form.resolvedSecret, kind: form.kind, authChoice: form.authChoice,
+                keyPath: form.keyPath,
+                keys: managedKeyStore,
+                secrets: secretStore),
+            kind: form.kind,
+            groupID: form.selectedGroupID,
+            loginSetID: form.loginMode == .set ? form.selectedLoginSetID : newSetID,
+            jump: form.buildJumpSpec(),
+            jumpSecret: form.jumpSourceMode == .session ? nil : form.jumpPassword,
+            tags: form.tags)
+    }
+
+    /// The connection form's own "Save" button, outside edit mode: write
+    /// what is on screen as a stored session **without dialing**.
+    ///
+    /// This is what makes the tab menu's "Save as Session…" honest. That
+    /// entry prefills this form from a connection that is already up; before
+    /// this button existed the only way to get the form's contents into
+    /// `sessions.json` was to press Connect, so remembering a running
+    /// connection meant opening a second one to the same server and saving
+    /// THAT.
+    ///
+    /// The rules come from `ConnectionViewModel.validateForNewSave()` (run
+    /// by the button itself, so a refusal highlights the offending field the
+    /// way Connect's does) and the write from `persistFormAsSession`, the
+    /// same lines a saved connect runs. A `nil` result means
+    /// `SessionListViewModel.save` refused — it has already published its
+    /// own `errorMessage`, which the sidebar shows, exactly as for a saved
+    /// connect.
+    ///
+    /// Afterwards the form goes into EDIT mode on the session it just wrote,
+    /// rather than staying a "new connection" form holding the same values a
+    /// second time. Three things follow from that, all of them wanted:
+    /// pressing Save again updates that session instead of writing a
+    /// near-duplicate under a new id; "Save & connect" is right there for a
+    /// user who did want to open it as well; and `beginEditing` rebuilds
+    /// `values` from the stored session, which means the plaintext secret
+    /// copied in from the running connection is gone from this form the
+    /// moment it has been written to the keychain — the form's own
+    /// empty-means-unchanged rule takes over from there.
+    func saveFormAsSession(in tab: SessionTab) {
+        let form = tab.connectionViewModel
+        guard let stored = persistFormAsSession(form) else { return }
+        form.shouldSaveSession = false
+        form.beginEditing(stored)
+    }
+
     /// After a successful connect: build the panes of THIS tab and save the
     /// session if requested. `storedName` is the display name for the tab/
     /// window title when connecting to an already-stored session
@@ -1142,47 +1239,7 @@ struct ContentView: View {
         // attached for BOTH cases -- see the comment at the attach itself.
         var storedSession: StoredSession?
         if form.shouldSaveSession {
-            // Set mode: reference the picked set directly. Manual mode +
-            // "Save as new login set": create the set FIRST, then reference
-            // it — either way `password:` below is safely ignored by `save`
-            // once `loginSetID` is non-nil (see its doc comment).
-            let newSetID = maybeCreateNewLoginSet(from: form)
-            // ONE save for every protocol (M23/T7), and the place the last two
-            // `"unused"` placeholders died: the backend's own adapter writes
-            // its own fields out of `form.values`, so this call site no longer
-            // knows that S3 has a bucket and SSH has a port -- nor parks a
-            // literal in `host`/`username` for a backend that has neither.
-            //
-            // What the three branches it replaces did, and where it went:
-            // * S3/WebDAV built a `StoredS3Config`/`StoredWebDAVConfig` from
-            //   the form -> `descriptor.apply` inside `save`.
-            // * Each named its own secret field -> `SessionSecretPolicy.
-            //   valueToPersist`, which now asks the schema which row is the
-            //   visible secret.
-            // * The SSH branch alone passed `authKind`/`keyPath` -> both live
-            //   in `form.values` and are written by SSH's own `apply`.
-            // * S3/WebDAV passed NO jump and NO jump secret; the SSH branch
-            //   passed `form.buildJumpSpec()` (no `existingSecretID`: this is a
-            //   brand-new session, unlike `validateForEditSave`'s own call) and
-            //   suppressed the jump secret in session mode (spec §1: the
-            //   `secretID` slot stays unused while `sessionID` is set). Both
-            //   survive verbatim below -- `buildJumpSpec()` returns nil unless
-            //   `jumpEnabled`, which the S3 and WebDAV forms never offer, so
-            //   the two branches' hardcoded `nil` needs no `kind` check here.
-            let stored = sessionListViewModel.save(
-                name: form.saveName.trimmingCharacters(in: .whitespacesAndNewlines),
-                values: form.values,
-                password: SessionSecretPolicy.valueToPersist(
-                    resolvedSecret: form.resolvedSecret, kind: form.kind, authChoice: form.authChoice,
-                    keyPath: form.keyPath,
-                    keys: managedKeyStore,
-                    secrets: secretStore),
-                kind: form.kind,
-                groupID: form.selectedGroupID,
-                loginSetID: form.loginMode == .set ? form.selectedLoginSetID : newSetID,
-                jump: form.buildJumpSpec(),
-                jumpSecret: form.jumpSourceMode == .session ? nil : form.jumpPassword,
-                tags: form.tags)
+            let stored = persistFormAsSession(form)
             storedSession = stored
             tab.activeStoredSessionID = stored?.id
             form.shouldSaveSession = false

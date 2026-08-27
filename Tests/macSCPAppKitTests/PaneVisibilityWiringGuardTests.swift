@@ -109,10 +109,10 @@ struct PaneVisibilityWiringGuardTests {
     /// immediately followed by `persistActivePaneVisibility()` — see
     /// `ContentView.persistActivePaneVisibility`'s own doc comment for why
     /// this has to run at every site rather than once centrally (there is
-    /// no single chokepoint all four funnel through).
+    /// no single chokepoint they funnel through).
     ///
-    /// The fourth site was invisible to this scanner until Fix 3, and the
-    /// scanner was NOT taught a new shape to see it: `triggerSnippet` wrote
+    /// `triggerSnippet` was invisible to this scanner until Fix 3, and the
+    /// scanner was NOT taught a new shape to see it: it wrote
     /// `terminal.isVisible = true` directly, and the fix routed it through
     /// the same `toggle()` every other reveal path uses — after which the
     /// existing shape list found it, and the persist it was missing became a

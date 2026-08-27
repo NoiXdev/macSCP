@@ -72,6 +72,43 @@ public final class TabsViewModel<Tab: Identifiable> where Tab.ID == UUID {
         return true
     }
 
+    /// The tabs a bulk close covers: **everything except the one it was
+    /// asked about** — not everything except the ACTIVE one. The context
+    /// menu hangs off a particular row and the user means that row, so a
+    /// bulk close opened on a background tab closes the active one along
+    /// with the rest.
+    ///
+    /// That distinction is the design's most emphatic rule about this
+    /// feature and it is easy to get wrong by reading `activeTabID`, which
+    /// is right there and almost always the same tab. It is a value
+    /// question — a list and an id in, a list out — so it is answered here
+    /// rather than inside a view where nothing can check it.
+    ///
+    /// Order is preserved, and an unknown id yields every tab: the caller
+    /// then has nothing to keep, which `closeOthers(besides:)` below
+    /// refuses to act on.
+    public func tabsToClose(besides id: UUID) -> [Tab] {
+        tabs.filter { $0.id != id }
+    }
+
+    /// Removes every tab but one and makes that one active — the second
+    /// half of the same rule. The caller runs its own per-tab teardown over
+    /// `tabsToClose(besides:)` first; this is the model change that follows
+    /// it, in one step rather than a loop of `closeTab`, because "keep
+    /// exactly this one" is the intent and `closeTab`'s last-tab refusal
+    /// describes a different one.
+    ///
+    /// A no-op for an unknown id, rather than emptying the strip: `tabs` is
+    /// never allowed to be empty (`activeTab` treats a missing active tab
+    /// as a programmer error), and a stale click on a tab that has already
+    /// gone is an ordinary outcome, the same reading `activate(_:)` and
+    /// `move(tabID:to:)` take.
+    public func closeOthers(besides id: UUID) {
+        guard tabs.contains(where: { $0.id == id }) else { return }
+        tabs.removeAll { $0.id != id }
+        activeTabID = id
+    }
+
     /// Sidebar-connect rule (spec 1.2): an unconnected active tab is reused
     /// in place; a connected one spawns a fresh tab so the running session
     /// is never torn down by a sidebar connect.

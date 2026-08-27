@@ -21,11 +21,21 @@ import Testing
 ///    checked by a source scan, which is exactly the "exists but is not
 ///    wired" gap these guards close.
 /// 2. `SessionListViewModel.save(tags:)` defaults to `[]`, so the ONE call
-///    site in the app (`ContentView.startSession`, the "Save as session" /
-///    "Save & connect" path for a brand-new connection) silently drops every
-///    typed tag if the `tags: form.tags` argument is ever deleted — the
-///    build stays green (the parameter has a default) and every other test
-///    stays green too (they call `save` directly with an explicit `tags:`).
+///    site in the app (`ContentView.persistFormAsSession` — the write every
+///    new-session path runs, whether it was reached by "Save as session" /
+///    "Save & connect" during a dial or by the form's own Save button)
+///    silently drops every typed tag if the `tags: form.tags` argument is
+///    ever deleted — the build stays green (the parameter has a default) and
+///    every other test stays green too (they call `save` directly with an
+///    explicit `tags:`).
+///
+///    Re-anchored in the tab-context-menu fix round: this write used to sit
+///    inline in `ContentView.startSession`, spelled `let stored =
+///    sessionListViewModel.save(`. Moving it into its own function so it
+///    could run without a connection attempt changed the spelling to a
+///    `return`, and this guard failed CLOSED on the missing anchor — which
+///    is what it is supposed to do, and why the anchor is a `guard`/
+///    `Issue.record` rather than a silently empty scan.
 ///
 /// Both are SOURCE-TEXT scans, not behavioral tests, and share the known
 /// blind spots the two precedents above already document: line-based and
@@ -72,22 +82,37 @@ struct HostTagsWiringGuardTests {
 
     // MARK: - Guard 2: the new-session save call actually forwards the form's tags
 
-    @Test func startSessionForwardsFormTagsToSave() throws {
+    private static let saveCallAnchor = "return sessionListViewModel.save("
+
+    @Test func theNewSessionSaveForwardsFormTagsToSave() throws {
         let source = try String(contentsOf: Self.contentViewFile, encoding: .utf8)
         let lines = source.components(separatedBy: "\n")
-        guard let call = Self.range(
-            ofCallStartingWith: "let stored = sessionListViewModel.save(", in: lines)
-        else {
-            Issue.record("`let stored = sessionListViewModel.save(` not found — re-anchor this guard")
+        guard let call = Self.range(ofCallStartingWith: Self.saveCallAnchor, in: lines) else {
+            Issue.record("`\(Self.saveCallAnchor)` not found — re-anchor this guard")
             return
         }
         let forwardsTags = call.contains { lines[$0].trimmingCharacters(in: .whitespaces) == "tags: form.tags)" }
         #expect(forwardsTags, """
-            `sessionListViewModel.save(...)` in `startSession` no longer passes \
+            `sessionListViewModel.save(...)` in `persistFormAsSession` no longer passes \
             `tags: form.tags` — `tags:` defaults to `[]`, so this compiles and every \
             OTHER test (which all call `save` with an explicit `tags:` of their own) \
             stays green while every tag typed into a NEW connection's form is silently \
             dropped on save.
+            """)
+    }
+
+    /// Fail-closed companion: the anchor names ONE write, and the claim
+    /// above is that it is the app's only one. A second
+    /// `sessionListViewModel.save(` appearing in this file would mean a
+    /// second new-session write path exists that this guard never looks at
+    /// — which is exactly what splitting the save out of the dial was
+    /// supposed to avoid.
+    @Test func theAppHasExactlyOneNewSessionWrite() throws {
+        let source = try String(contentsOf: Self.contentViewFile, encoding: .utf8)
+        let count = source.components(separatedBy: "sessionListViewModel.save(").count - 1
+        #expect(count == 1, """
+            expected exactly 1 `sessionListViewModel.save(` in ContentView.swift, \
+            found \(count) — a second new-session write path would be unguarded here.
             """)
     }
 

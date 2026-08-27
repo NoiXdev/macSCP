@@ -651,6 +651,11 @@ extension ContentView {
                                         ? nil : tab.connectionViewModel.jumpPassword)
                                 tab.connectionViewModel.endEditing()
                             },
+                            // Save without dialing — the form's own route
+                            // into `SessionListViewModel.save`, and what the
+                            // tab menu's "Save as Session…" ultimately lands
+                            // on. Validation already ran inside the button.
+                            onSaveNew: { saveFormAsSession(in: tab) },
                             onCancelEdit: { tab.connectionViewModel.endEditing() },
                             onConnectEdited: { stored in
                                 // onSaveEdited may have rewired loginSetID (e.g. "save as new

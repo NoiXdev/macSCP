@@ -31,6 +31,13 @@ struct ConnectionFormView: View {
     /// Edit mode "Save": persists the edited session (see `newSecret`'s
     /// empty-means-unchanged rule below), then leaves edit mode.
     var onSaveEdited: (StoredSession, String?) -> Void = { _, _ in }
+    /// NEW-mode "Save": writes the form as a stored session without dialing.
+    /// Offered only while "Save as session" is on — that toggle is what says
+    /// the form is meant to become a session, and it is what reveals the
+    /// name field this save needs. Called after
+    /// `ConnectionViewModel.validateForNewSave()` has already passed, so the
+    /// handler only has to write.
+    var onSaveNew: () -> Void = {}
     /// Edit mode "Back": discards the edit and returns to the browser/idle
     /// state without touching the stored session.
     var onCancelEdit: () -> Void = {}
@@ -509,6 +516,27 @@ struct ConnectionFormView: View {
                     .buttonStyle(.polishedProminent)
                     .disabled(loginSetModeIncomplete || jumpLoginSetModeIncomplete || jumpSessionModeIncomplete)
                 } else {
+                    // Save without dialing (tab-context-menu fix round).
+                    // Shown only while "Save as session" is on: with the
+                    // toggle off there is no session being described and no
+                    // name field on screen, so a Save button would be an
+                    // offer the form cannot keep. Same submit sequence as
+                    // edit mode's own Save above — resolve the login set,
+                    // validate, then hand out — so a refusal highlights the
+                    // offending field instead of failing silently.
+                    if viewModel.shouldSaveSession {
+                        Button(L10n.string("common.save", "Save")) {
+                            guard resolveLoginSetForSubmit() else { return }
+                            if viewModel.validateForNewSave() {
+                                onSaveNew()
+                            } else if case .failed(let message, _) = viewModel.state {
+                                alertMessage = message
+                            }
+                        }
+                        .buttonStyle(.polished)
+                        .disabled(isConnecting || isHandingOff || loginSetModeIncomplete
+                            || jumpLoginSetModeIncomplete || jumpSessionModeIncomplete)
+                    }
                     Button(L10n.string("connection.connect", "Connect")) {
                         guard resolveLoginSetForSubmit() else { return }
                         // M17: if this key is a managed key with a stored

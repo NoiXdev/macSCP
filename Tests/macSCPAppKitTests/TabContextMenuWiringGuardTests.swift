@@ -51,10 +51,40 @@ import Testing
 ///   is still clickable; and `TabMenuEntryTitle.title(for:)` is a total
 ///   `switch`, so the compiler already refuses to let a case be dropped.
 ///
-/// **Known blind spots**, same honesty the other wiring guards hold
-/// themselves to: this is a source-text scan, aimed at the accidental
-/// regression (a "simplification" that reintroduces a condition, a
-/// reformat) rather than a hostile rewrite. Renaming
+/// **What this guard does NOT catch.** Corrected in fix round 1 after a
+/// reviewer got four mutations past it; the technique was kept and the
+/// claim narrowed, because chasing each hole with another anchor buys a
+/// longer blocklist and no property.
+///
+/// The list above says where the property can be violated FROM. What the
+/// checks actually recognize is narrower, in three specific ways, and a
+/// green run means only this much:
+///
+/// - **V2 and V3 are a name blocklist, not a rule.** `forbiddenTokens`
+///   names the spellings that were in front of us. A narrowing or
+///   suppressing call by any other name passes: `.map { _ in .close }`
+///   rewrites every entry into the same one, `.allowsHitTesting(false)`
+///   makes an item unclickable, `.opacity(0)` makes it invisible. None is
+///   on the list, and none can be, without the list becoming an
+///   ever-growing catalogue of SwiftUI's surface.
+/// - **V7 is a literal comparison of ONE call site.** `sanctionedCall`
+///   pins how the five facts are spelled where `entries(…)` is called. It
+///   says nothing about what those spellings MEAN: folding a rule into the
+///   computed property `isAdHoc` or `supportsShell` — where the argument
+///   name at the call site never changes — passes untouched.
+/// - **It reads one file.** The facts come from `SessionTab`, and
+///   `SessionTab.swift` is not scanned. A doctored `isConnected` there
+///   changes which entries appear with nothing in this suite to notice,
+///   and the same holds for anything else the five facts are built from.
+///
+/// So: this catches a condition, a filter, a `.disabled`, an extra item, a
+/// second menu, and a swapped iteration source, all under the names they
+/// are usually written with. It does not prove the menu shows what Core
+/// decided — only that the view asks Core and does not visibly argue.
+///
+/// Same boundary as the other wiring guards: a source-text scan aimed at
+/// the accidental regression (a "simplification" that reintroduces a
+/// condition, a reformat) rather than a hostile rewrite. Renaming
 /// `TabContextMenu.entries` wholesale, or moving the menu into a helper
 /// view in another file, would leave the anchor missing — which fails
 /// closed here, reported as "re-anchor this guard", rather than passing
@@ -105,6 +135,14 @@ struct TabContextMenuWiringGuardTests {
     /// the list-narrowing / item-suppressing method names (V2, V3). Matched
     /// as whole tokens, not substrings, so `title(for:)`'s `for` and
     /// `\.offset`'s `offset` are untouched.
+    ///
+    /// A BLOCKLIST, and therefore not a rule — see this suite's doc comment.
+    /// The keyword half is closed (Swift has only so many ways to branch);
+    /// the method half names the spellings that were in front of us, and
+    /// `.map`, `.allowsHitTesting`, `.opacity` and their kin walk straight
+    /// past it. Do not grow this list in the hope of closing that: it
+    /// cannot be closed by enumeration, and a longer list reads like a
+    /// stronger claim than it is.
     private static let forbiddenTokens: Set<String> = [
         "if", "guard", "else", "switch", "case", "where",
         "filter", "contains", "prefix", "suffix", "dropFirst", "dropLast",
