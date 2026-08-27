@@ -802,13 +802,25 @@ extension ContentView {
     // MARK: - Tab context menu
 
     /// The one route out of the tab strip's context menu: every entry
-    /// `TabContextMenu.entries` can produce lands here, and every case it
-    /// can currently produce does something — `.pane` is the one arm that
-    /// does not, because nothing produces it yet (see its own comment).
-    /// Nothing in this switch re-asks whether the entry should
+    /// `TabContextMenu.entries` can produce lands here, and every case does
+    /// something. Nothing in this switch re-asks whether the entry should
     /// have been offered — its precondition was already decided (and
     /// tested) in Core, and asking again here is how two answers to one
     /// question start to disagree.
+    ///
+    /// That rule is why the pane arm carries no capability re-check of its
+    /// own, unlike the toolbar button and the "Terminal" menu bridge: those
+    /// two are reachable while `PaneToggleState` says nothing about them
+    /// (the menu lives in a Scene that cannot see `tabsModel`), whereas a
+    /// `.pane` entry only exists because `toggleState(for:hasShell:)`
+    /// reported it enabled, which already folds in the missing shell and
+    /// the lock on the last visible half.
+    ///
+    /// The pane arm ignores the `PaneAction` it was handed: that value is
+    /// the entry's LABEL — which of "Show"/"Hide" the user read — and the
+    /// half it names is what gets flipped either way. Acting on the label
+    /// instead would be a second answer to "is this half visible", asked at
+    /// the moment of the click rather than at the moment the menu was built.
     ///
     /// The move case forwards the step it was handed instead of turning it
     /// into a number: a direction translated here is a translation nothing
@@ -824,12 +836,8 @@ extension ContentView {
             requestCloseOthers(of: tab)
         case .move(let step):
             tabsModel.move(tabID: tab.id, oneStep: step)
-        case .pane:
-            // Not wired yet, and not reachable yet either: `tabMenuEntries(
-            // for:)` below asks the decision with two toggle states that
-            // offer nothing, so no `.pane` entry is produced. The task that
-            // supplies the real states supplies this arm with them.
-            break
+        case .pane(let toggle, _):
+            togglePane(toggle, in: tab)
         case .openExternalTerminal:
             requestExternalTerminal(for: tab)
         case .saveAsSession:
@@ -846,17 +854,21 @@ extension ContentView {
     /// uses them; `TabContextMenu.entries` decides everything about WHICH
     /// entries exist, in Core, where its own tests reach it.
     ///
-    /// **The two pane facts are asserted here, not read, and only until the
-    /// task that renders the pane entries wires them.** `PaneToggleState(
-    /// isOn: false, isEnabled: false)` is what `PaneVisibility.toggleState`
-    /// answers for a half that cannot be switched at all, so the decision
-    /// produces no `.pane` entry and this menu offers exactly what it
-    /// offered before the entries existed. The real answer is
-    /// `tab.paneToggleState(for:terminalIsVisible:hasShell:)`, which is
-    /// also what `TabContextMenuWiringGuardTests` will have to be re-anchored
-    /// on — an asserted fact is precisely what that guard's V7 exists to
-    /// catch, and it is sanctioned here only for as long as this placeholder
-    /// stands.
+    /// The two pane facts come from `SessionTab.paneToggleState(for:
+    /// terminalIsVisible:hasShell:)` — the same method the toolbar's two
+    /// buttons read for their own `.disabled`, and the same one
+    /// `activeTabTerminalToggleIsUnlocked` mirrors into the "Terminal"
+    /// menu. No `PaneVisibility` is assembled here: `SessionTab.
+    /// effectivePaneVisibility` is the single assembly point outside Core
+    /// (see its doc comment), and a second one would let this menu and the
+    /// window it hangs off disagree about which halves are on screen —
+    /// which is the defect that method exists to have removed.
+    ///
+    /// A tab with no session reads as "no terminal visible" rather than
+    /// guarding out: there is no `TerminalPanelViewModel` to ask before one
+    /// is connected, and `isConnected` already withholds both pane entries
+    /// in that state. Guarding out instead would take the CLOSE entry away
+    /// from every disconnected tab.
     ///
     /// A tab that is no longer in the model has no menu rather than a menu
     /// decided from a made-up position — the same reading `move` takes of
@@ -865,15 +877,19 @@ extension ContentView {
         guard let index = tabsModel.tabs.firstIndex(where: { $0.id == tab.id }) else { return [] }
         let capabilities = BackendDescriptor
             .descriptor(for: tab.connectionViewModel.kind).capabilities
-        let noPaneEntryYet = PaneToggleState(isOn: false, isEnabled: false)
+        let terminalIsVisible = tab.session?.terminal.isVisible ?? false
         return TabContextMenu.entries(
             atIndex: index,
             ofTabCount: tabsModel.tabs.count,
             supportsShell: capabilities.supportsShell,
             isAdHoc: tab.activeStoredSessionID == nil,
             isConnected: tab.isConnected,
-            filesToggle: noPaneEntryYet,
-            terminalToggle: noPaneEntryYet)
+            filesToggle: tab.paneToggleState(
+                for: .files, terminalIsVisible: terminalIsVisible,
+                hasShell: capabilities.supportsShell),
+            terminalToggle: tab.paneToggleState(
+                for: .terminal, terminalIsVisible: terminalIsVisible,
+                hasShell: capabilities.supportsShell))
     }
 
     /// "Close Other Tabs": everything except `tab` goes, whether or not
@@ -933,15 +949,15 @@ extension ContentView {
         shrinkIfPristine()
     }
 
-    /// Reveals the terminal half of a tab that is ALREADY connected, and
-    /// dials nothing.
+    /// Flips one half of a tab that is ALREADY connected, and dials
+    /// nothing. The tab context menu's `.pane` entry is the only caller.
     ///
-    /// **No caller reaches this right now.** It used to be the tab context
-    /// menu's "Open Terminal"; that entry became `.openExternalTerminal`,
-    /// which is a different thing and goes to `requestExternalTerminal(for:)`.
-    /// What will call this is the menu's `.pane(.terminal, .show)` entry,
-    /// once the task that renders the pane entries wires it — which is why
-    /// it stands rather than being deleted and rewritten.
+    /// It replaced `openTerminalPane`, which revealed the terminal and
+    /// refused to hide one. That refusal was not caution but the shape of
+    /// the entry it served: "Open Terminal" could only mean one direction.
+    /// The menu now offers whichever direction applies, decided in Core
+    /// from the same `PaneToggleState` the toolbar reads, so a one-way call
+    /// would leave "Hide Terminal" doing nothing.
     ///
     /// Deliberately not `openTerminalFromSidebar`, which looks similar and
     /// is not: that one goes through `connect(in:stored:paneVisibility:)`
@@ -952,34 +968,43 @@ extension ContentView {
     /// Terminal button and the "Terminal" menu's Show/Hide entry make, and
     /// the only call that owns the shell's lifecycle — followed by
     /// `persistActivePaneVisibility()` so the session remembers what is on
-    /// screen, exactly as a click on that button would.
+    /// screen, exactly as a click on that button would. The files half goes
+    /// through `SessionTab.applyFilesToggleClick`, which the toolbar's
+    /// Files button also calls; neither half writes a bare bool.
     ///
-    /// Toggling is guarded on the terminal not already being visible, which
-    /// is what separates "open" from "toggle": this reveals, and an entry
-    /// that says it shows the terminal must never hide one. The pane lock
-    /// needs no check here for the same reason — it forbids hiding the last
-    /// visible half, never showing a hidden one.
+    /// The pane lock is not re-checked here, and the difference from the
+    /// toolbar button and the `tabCommands.toggleTerminal` bridge — both of
+    /// which DO check it right before their own `toggle()` — is worth being
+    /// precise about. `TerminalPanelViewModel.toggle()` carries no lock of
+    /// its own, so somebody has to hold it. Those two are reached from a
+    /// button and a keystroke whose enabled state is decided elsewhere and
+    /// may be stale by the time the closure runs; this arm is reached only
+    /// from an entry `TabContextMenu.entries` produced, and it produces the
+    /// terminal entry only while `PaneToggleState.isEnabled` — which is
+    /// false exactly when the terminal is the last visible half. The files
+    /// half needs no such argument at all: `applyingClick` repairs "neither
+    /// visible" back to files-only by itself. See `handleTabMenuEntry` for
+    /// why this arm re-asks nothing.
     ///
-    /// The tab is activated first: it is the tab whose terminal is being
-    /// opened, and revealing a panel in a tab the user cannot see would be
+    /// The tab is activated first: it is the tab whose half is being
+    /// switched, and changing a pane in a tab the user cannot see would be
     /// an invisible result. Activating also makes
     /// `persistActivePaneVisibility()` describe this tab rather than
-    /// whichever one happened to be in front.
-    func openTerminalPane(in tab: SessionTab) {
-        guard let session = tab.session else { return }
-        // Capability re-check, the same belt-and-suspenders every other
-        // terminal entry point carries: the menu entry is not offered
-        // without a shell, and a silent no-op is never the fallback.
-        guard BackendDescriptor.descriptor(for: tab.connectionViewModel.kind)
-            .capabilities.supportsShell
-        else {
-            presentTerminalUnavailable()
-            return
-        }
+    /// whichever one happened to be in front — which is why the activation
+    /// is checked rather than assumed before either branch runs.
+    func togglePane(_ toggle: PaneToggle, in tab: SessionTab) {
         activate(tab.id)
-        guard !session.terminal.isVisible else { return }
-        session.terminal.toggle()
-        persistActivePaneVisibility()
+        guard tabsModel.activeTabID == tab.id, let session = tab.session else { return }
+        switch toggle {
+        case .files:
+            activeTab.applyFilesToggleClick(
+                terminalIsVisible: session.terminal.isVisible,
+                hasShell: activeTabSupportsShell)
+            persistActivePaneVisibility()
+        case .terminal:
+            session.terminal.toggle()
+            persistActivePaneVisibility()
+        }
     }
 
     /// "Save as Session…" on a connected ad-hoc tab: fills the connection

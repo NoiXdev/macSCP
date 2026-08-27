@@ -160,27 +160,36 @@ struct TabContextMenuWiringGuardTests {
     /// than fact by fact, because a fact can also be substituted before the
     /// call as easily as inside it.
     ///
-    /// The two pane facts are the one asserted value this shape sanctions,
-    /// and it is sanctioned as a placeholder: nothing renders a `.pane`
-    /// entry yet, so the App layer asks with a state that offers none
-    /// rather than reading one it could not act on. The moment those
-    /// entries are rendered, this literal has to become
-    /// `tab.paneToggleState(for:terminalIsVisible:hasShell:)` — leaving the
-    /// constant here once the entries are live would be V7 with this
-    /// guard's own blessing.
+    /// This shape sanctions no asserted value at all. It used to sanction
+    /// one: while nothing rendered a `.pane` entry, both pane facts were
+    /// the literal `PaneToggleState(isOn: false, isEnabled: false)`, and
+    /// that placeholder was allowed here on the condition that it went the
+    /// moment the entries went live. It has — both facts are now read from
+    /// `SessionTab.paneToggleState`, the method the toolbar's own
+    /// `.disabled` reads, so the menu and the window cannot disagree about
+    /// which halves are on screen. Re-introducing a constant for either of
+    /// them is V7 again, with nothing left to excuse it.
+    ///
+    /// `terminalIsVisible` is bound once and handed to both readings on
+    /// purpose: two readings of `tab.session?.terminal.isVisible` would be
+    /// two chances for the halves to be asked about different states.
     private static let sanctionedDecisionBody = """
         guard let index = tabsModel.tabs.firstIndex(where: { $0.id == tab.id }) else { return [] }
         let capabilities = BackendDescriptor
             .descriptor(for: tab.connectionViewModel.kind).capabilities
-        let noPaneEntryYet = PaneToggleState(isOn: false, isEnabled: false)
+        let terminalIsVisible = tab.session?.terminal.isVisible ?? false
         return TabContextMenu.entries(
             atIndex: index,
             ofTabCount: tabsModel.tabs.count,
             supportsShell: capabilities.supportsShell,
             isAdHoc: tab.activeStoredSessionID == nil,
             isConnected: tab.isConnected,
-            filesToggle: noPaneEntryYet,
-            terminalToggle: noPaneEntryYet)
+            filesToggle: tab.paneToggleState(
+                for: .files, terminalIsVisible: terminalIsVisible,
+                hasShell: capabilities.supportsShell),
+            terminalToggle: tab.paneToggleState(
+                for: .terminal, terminalIsVisible: terminalIsVisible,
+                hasShell: capabilities.supportsShell))
         """
 
     /// The one sanctioned shape of the iteration: the loop's collection IS
@@ -678,34 +687,48 @@ struct TabContextMenuWiringGuardTests {
         #expect(substituted != sanctioned)
     }
 
-    /// The pane facts, which are the placeholder half of the sanctioned
-    /// shape: the guard has to notice both directions of a change to them —
-    /// a different asserted state, and the real reading that is meant to
-    /// replace the assertion. Neither may slip through as "the shape we
-    /// already sanctioned".
+    /// The pane facts, the two that decide whether the window's halves can
+    /// be switched from this menu at all. Three ways they can go wrong, and
+    /// the guard has to see each: the reading replaced by a constant (the
+    /// placeholder this shape used to sanction, coming back), the reading
+    /// kept but pointed at the other half, and the visibility it is read
+    /// against asserted while both readings stay in place.
+    ///
+    /// Every substitution is checked to actually occur first. A probe whose
+    /// target has quietly stopped appearing in `sanctionedDecisionBody`
+    /// mutates nothing and passes while checking nothing — which is what
+    /// happened to `scannerFlagsARuleFoldedIntoAnArgument` when the
+    /// argument list gained two entries and its target lost its closing
+    /// parenthesis.
     @Test func scannerFlagsAChangedPaneFact() throws {
         let sanctioned = try Self.canonicalize(Self.sanctionedDecisionBody)
-        func body(_ replacement: String) throws -> String {
-            try Self.canonicalBody(
+        func mutated(_ target: String, into replacement: String) throws -> String {
+            #expect(Self.sanctionedDecisionBody.contains(target), """
+                the probe's target `\(target)` no longer occurs in \
+                `sanctionedDecisionBody`, so this substitution changes nothing and \
+                proves nothing — re-point it at the shape the pane facts have now.
+                """)
+            return try Self.canonicalBody(
                 after: Self.decisionAnchor,
                 in: """
                     \(Self.decisionAnchor)
                     \(Self.sanctionedDecisionBody
-                        .replacingOccurrences(
-                            of: "let noPaneEntryYet = PaneToggleState(isOn: false, isEnabled: false)",
-                            with: replacement))
+                        .replacingOccurrences(of: target, with: replacement))
                     }
                     """,
                 describing: "a probe")
         }
-        let otherAssertion = try body(
-            "let noPaneEntryYet = PaneToggleState(isOn: true, isEnabled: true)")
-        #expect(otherAssertion != sanctioned)
-        let realReading = try body("""
-            let noPaneEntryYet = tab.paneToggleState(
-                for: .files, terminalIsVisible: false, hasShell: capabilities.supportsShell)
-            """)
-        #expect(realReading != sanctioned)
+        let asserted = try mutated(
+            "filesToggle: tab.paneToggleState(", into: "filesToggle: PaneToggleState(")
+        #expect(asserted != sanctioned)
+        let otherHalf = try mutated(
+            "for: .files, terminalIsVisible: terminalIsVisible,",
+            into: "for: .terminal, terminalIsVisible: terminalIsVisible,")
+        #expect(otherHalf != sanctioned)
+        let assertedVisibility = try mutated(
+            "let terminalIsVisible = tab.session?.terminal.isVisible ?? false",
+            into: "let terminalIsVisible = false")
+        #expect(assertedVisibility != sanctioned)
     }
 
     /// V5, at the file level: two attachments, so "the menu" is no longer a
