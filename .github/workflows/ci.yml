@@ -15,9 +15,78 @@ jobs:
     # into a red build. This is the net, not the fix -- the cause is still
     # open.
     timeout-minutes: 20
+    env:
+      # ---------------------------------------------------------------------
+      # Compiler-warning budget. Raising it accepts a warning forever; read
+      # the "Warning gate" step's printed list before you touch this number.
+      #
+      # Today's budget is 1, and this is the warning it pays for: the call to
+      # `asyncParseAsRoot()` in Sources/MacSCPCLI/MacSCPCLI.swift reports
+      #   non-sendable result type 'any ParsableCommand' cannot be sent from
+      #   nonisolated context
+      # ArgumentParser does not declare `ParsableCommand` Sendable, so this
+      # runner's toolchain diagnoses the call; `@preconcurrency import
+      # ArgumentParser` is what keeps it a warning instead of an error. The
+      # maintainer's newer local toolchain does not diagnose it at all, which
+      # is precisely why this gate counts warnings instead of passing
+      # `-warnings-as-errors`: under that flag CI would go red on a tree that
+      # is otherwise clean, and the flag would also apply to dependency
+      # targets nobody here can fix.
+      #
+      # Lower this to 0 once the runner image ships a toolchain that agrees
+      # with the local one, or once ArgumentParser gains the conformance.
+      # ---------------------------------------------------------------------
+      MAX_WARNINGS: 1
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Build
-        run: swift build
+        run: |
+          set -o pipefail
+          swift build 2>&1 | tee "$RUNNER_TEMP/build.log"
       - name: Unit-Tests
-        run: swift test
+        run: |
+          set -o pipefail
+          swift test 2>&1 | tee "$RUNNER_TEMP/test.log"
+      - name: Warning gate
+        # Why this step exists: the warning stack regrew unnoticed once
+        # already. Dozens of sites had accumulated by 2026-08-26, six of them
+        # appeared in a single morning, and they were caught by accident
+        # rather than by the build. A gate that cannot fail is worse than no
+        # gate, so this one has been deliberately turned red once before being
+        # committed.
+        #
+        # It counts unique `file:line:column` locations, not matching lines.
+        # The compiler prints the same warning once per compilation pass, so
+        # the raw line count overstates the real figure -- measured on the
+        # last green run before this gate landed, three printed lines came
+        # from one single location.
+        #
+        # Both build logs are scanned so that warnings in test targets count
+        # too: `swift build` does not compile them, `swift test` does.
+        run: |
+          set -euo pipefail
+          cat "$RUNNER_TEMP/build.log" "$RUNNER_TEMP/test.log" \
+            > "$RUNNER_TEMP/compile.log"
+          warnings=$(grep -E '^[^[:space:]]+:[0-9]+:[0-9]+: warning:' \
+            "$RUNNER_TEMP/compile.log" | sort -u || true)
+          locations=$(printf '%s' "$warnings" \
+            | grep -oE '^[^[:space:]]+:[0-9]+:[0-9]+:' \
+            | sort -u || true)
+          if [ -n "$locations" ]; then
+            count=$(printf '%s\n' "$locations" | wc -l | tr -d ' ')
+          else
+            count=0
+          fi
+          echo "Unique warning locations: $count (budget: $MAX_WARNINGS)"
+          if [ -n "$warnings" ]; then
+            echo "----- warnings -----"
+            printf '%s\n' "$warnings"
+            echo "--------------------"
+          fi
+          if [ "$count" -gt "$MAX_WARNINGS" ]; then
+            echo "::error::$count compiler warning locations exceed the budget of $MAX_WARNINGS. Fix the new warning, or raise MAX_WARNINGS in .github/workflows/ci.yml and say in the commit message which warning it now pays for."
+            exit 1
+          fi
+          if [ "$count" -lt "$MAX_WARNINGS" ]; then
+            echo "::notice::Only $count warning locations left, below the budget of $MAX_WARNINGS. Lower MAX_WARNINGS in .github/workflows/ci.yml to keep the gate tight."
+          fi
