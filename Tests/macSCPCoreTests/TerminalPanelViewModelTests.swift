@@ -1,26 +1,30 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import macSCPCore
 
 /// Controllable mock shell: output is fed in from outside; send/resize/close
 /// are recorded.
-final class MockShell: RemoteShell, @unchecked Sendable {
+final class MockShell: RemoteShell, Sendable {
+    private struct State {
+        var sent: [[UInt8]] = []
+        var resizes: [(cols: Int, rows: Int)] = []
+        var closed = false
+    }
+
     let output: AsyncThrowingStream<[UInt8], Error>
     let continuation: AsyncThrowingStream<[UInt8], Error>.Continuation
-    private let lock = NSLock()
-    private var _sent: [[UInt8]] = []
-    private var _resizes: [(cols: Int, rows: Int)] = []
-    private var _closed = false
-    var sent: [[UInt8]] { lock.lock(); defer { lock.unlock() }; return _sent }
-    var resizes: [(cols: Int, rows: Int)] { lock.lock(); defer { lock.unlock() }; return _resizes }
-    var closed: Bool { lock.lock(); defer { lock.unlock() }; return _closed }
+    private let state = Mutex(State())
+    var sent: [[UInt8]] { state.withLock { $0.sent } }
+    var resizes: [(cols: Int, rows: Int)] { state.withLock { $0.resizes } }
+    var closed: Bool { state.withLock { $0.closed } }
 
     init() {
         (output, continuation) = AsyncThrowingStream<[UInt8], Error>.makeStream()
     }
-    func send(_ bytes: [UInt8]) async throws { lock.lock(); _sent.append(bytes); lock.unlock() }
-    func resize(cols: Int, rows: Int) async throws { lock.lock(); _resizes.append((cols, rows)); lock.unlock() }
-    func close() async { lock.lock(); _closed = true; lock.unlock(); continuation.finish() }
+    func send(_ bytes: [UInt8]) async throws { state.withLock { $0.sent.append(bytes) } }
+    func resize(cols: Int, rows: Int) async throws { state.withLock { $0.resizes.append((cols, rows)) } }
+    func close() async { state.withLock { $0.closed = true }; continuation.finish() }
 }
 
 /// Polls until `condition` is true (max ~2 s) — same pattern as in the other VM tests.
@@ -377,20 +381,20 @@ actor Flag {
 /// read loop ends only via the explicit, delayed `finish()`, to test that a
 /// late-ending read loop does not overwrite a state that has already been
 /// set.
-final class LateFinishShell: RemoteShell, @unchecked Sendable {
-    private let lock = NSLock()
-    private var _closed = false
-    private var _finished = false
-    var closed: Bool { lock.lock(); defer { lock.unlock() }; return _closed }
+final class LateFinishShell: RemoteShell, Sendable {
+    private struct State {
+        var closed = false
+        var finished = false
+    }
+
+    private let state = Mutex(State())
+    var closed: Bool { state.withLock { $0.closed } }
 
     var output: AsyncThrowingStream<[UInt8], Error> {
         AsyncThrowingStream<[UInt8], Error> { [weak self] in
             while true {
                 guard let self else { return nil }
-                self.lock.lock()
-                let finished = self._finished
-                self.lock.unlock()
-                if finished { return nil }
+                if self.state.withLock({ $0.finished }) { return nil }
                 // Deliberately swallows CancellationError — simulates a
                 // data stream that does not observe task cancellation
                 // itself (e.g. a real network connection).
@@ -402,10 +406,10 @@ final class LateFinishShell: RemoteShell, @unchecked Sendable {
     func send(_ bytes: [UInt8]) async throws {}
     func resize(cols: Int, rows: Int) async throws {}
     func close() async {
-        lock.lock(); _closed = true; lock.unlock()
+        state.withLock { $0.closed = true }
     }
     func finish() {
-        lock.lock(); _finished = true; lock.unlock()
+        state.withLock { $0.finished = true }
     }
 }
 
@@ -413,19 +417,18 @@ final class LateFinishShell: RemoteShell, @unchecked Sendable {
 /// surrounding task is cancelled. Stands in for a send that is still in
 /// flight when the shell ends (a stalled connection); `finish()` ends the
 /// output stream the way a closing shell does.
-final class HangingSendShell: RemoteShell, @unchecked Sendable {
+final class HangingSendShell: RemoteShell, Sendable {
     let output: AsyncThrowingStream<[UInt8], Error>
     private let continuation: AsyncThrowingStream<[UInt8], Error>.Continuation
-    private let lock = NSLock()
-    private var _sendCalls = 0
-    var sendCalls: Int { lock.lock(); defer { lock.unlock() }; return _sendCalls }
+    private let sendCallCount = Mutex(0)
+    var sendCalls: Int { sendCallCount.withLock { $0 } }
 
     init() {
         (output, continuation) = AsyncThrowingStream<[UInt8], Error>.makeStream()
     }
 
     func send(_ bytes: [UInt8]) async throws {
-        lock.lock(); _sendCalls += 1; lock.unlock()
+        sendCallCount.withLock { $0 += 1 }
         // Long enough to outlast the whole test; cancellation ends it.
         try await Task.sleep(for: .seconds(600))
     }
@@ -441,13 +444,12 @@ final class HangingSendShell: RemoteShell, @unchecked Sendable {
 /// recording gets scrambled; a FIFO chain, by contrast, records in exactly
 /// the send order, because each call only starts after the previous one
 /// (including its delay) has finished.
-final class InvertedDelayShell: RemoteShell, @unchecked Sendable {
+final class InvertedDelayShell: RemoteShell, Sendable {
     let output: AsyncThrowingStream<[UInt8], Error>
     let continuation: AsyncThrowingStream<[UInt8], Error>.Continuation
     private let totalChunks: Int
-    private let lock = NSLock()
-    private var _recorded: [Int] = []
-    var recorded: [Int] { lock.lock(); defer { lock.unlock() }; return _recorded }
+    private let recordedIndices = Mutex<[Int]>([])
+    var recorded: [Int] { recordedIndices.withLock { $0 } }
 
     init(totalChunks: Int) {
         self.totalChunks = totalChunks
@@ -458,7 +460,7 @@ final class InvertedDelayShell: RemoteShell, @unchecked Sendable {
         let i = Int(bytes[0])
         let delayMs = (totalChunks - i) * 2
         try await Task.sleep(for: .milliseconds(delayMs))
-        lock.lock(); _recorded.append(i); lock.unlock()
+        recordedIndices.withLock { $0.append(i) }
     }
     func resize(cols: Int, rows: Int) async throws {}
     func close() async { continuation.finish() }

@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import macSCPCore
 
@@ -12,17 +13,20 @@ import Testing
 /// finishes if somebody reads the other end. A transport that ignored the
 /// body stream would make every multi-buffer upload test hang, and would let
 /// a pump that wrote nothing at all pass unnoticed.
-final class FakeHTTPTransport: HTTPTransport, @unchecked Sendable {
+final class FakeHTTPTransport: HTTPTransport, Sendable {
     struct Reply { let status: Int; let body: Data; let headers: [String: String] }
 
     /// Carries a reference type Swift cannot prove `Sendable` across to the
     /// draining thread. Safe here: exactly one thread ever touches it.
     private struct Unchecked<T>: @unchecked Sendable { let value: T }
 
-    private let lock = NSLock()
-    private var replies: [Reply]
-    private var recordedRequests: [URLRequest] = []
-    private var recordedBodies: [Data] = []
+    private struct State {
+        var replies: [Reply]
+        var recordedRequests: [URLRequest] = []
+        var recordedBodies: [Data] = []
+    }
+
+    private let state: Mutex<State>
 
     /// A server that rejects a PUT early — 401 on a stale nonce, 403, 507 —
     /// answers *without* reading the rest of the body. Pass `false` to
@@ -46,27 +50,23 @@ final class FakeHTTPTransport: HTTPTransport, @unchecked Sendable {
 
     init(replies: [Reply], drainsRequestBody: Bool = true,
          transportError: Error? = nil, closesBodyStreamOnFailure: Bool = false) {
-        self.replies = replies
+        state = Mutex(State(replies: replies))
         self.drainsRequestBody = drainsRequestBody
         self.transportError = transportError
         self.closesBodyStreamOnFailure = closesBodyStreamOnFailure
     }
 
     var requests: [URLRequest] {
-        lock.lock(); defer { lock.unlock() }
-        return recordedRequests
+        state.withLock { $0.recordedRequests }
     }
 
     /// The bytes each streamed request body actually carried, in request order.
     var bodies: [Data] {
-        lock.lock(); defer { lock.unlock() }
-        return recordedBodies
+        state.withLock { $0.recordedBodies }
     }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        lock.lock()
-        recordedRequests.append(request)
-        lock.unlock()
+        state.withLock { $0.recordedRequests.append(request) }
 
         if let transportError {
             if closesBodyStreamOnFailure, let stream = request.httpBodyStream {
@@ -87,18 +87,15 @@ final class FakeHTTPTransport: HTTPTransport, @unchecked Sendable {
 
         if drainsRequestBody, let stream = request.httpBodyStream {
             let body = try await Self.drain(stream)
-            lock.lock()
-            recordedBodies.append(body)
-            lock.unlock()
+            state.withLock { $0.recordedBodies.append(body) }
         }
 
-        lock.lock()
-        guard !replies.isEmpty else {
-            lock.unlock()
-            throw RemoteFSError.protocolError(reason: "fake transport ran out of replies")
+        let reply = try state.withLock {
+            guard !$0.replies.isEmpty else {
+                throw RemoteFSError.protocolError(reason: "fake transport ran out of replies")
+            }
+            return $0.replies.removeFirst()
         }
-        let reply = replies.removeFirst()
-        lock.unlock()
 
         let response = HTTPURLResponse(
             url: request.url!, statusCode: reply.status,

@@ -1,43 +1,44 @@
 import Crypto
 import Foundation
+import Synchronization
 import Testing
 @testable import macSCPCore
 
 /// Records every `signedRequest`/`perform` call and returns canned `perform`
 /// responses in order — the `S3Uploader` analogue of `FakeS3Transport`
 /// (`S3FileSystemTests.swift`). `S3RequestBuilder.signedRequest` is a
-/// synchronous (non-`async`) requirement, so this is a lock-guarded
-/// `@unchecked Sendable` class rather than an actor (an actor's stored
-/// properties can only be touched from `async`-isolated context, which a
-/// synchronous protocol requirement can't satisfy) — same pattern as
-/// `ProgressRecorder` in `PermissionsTreeApplierTests.swift`.
-final class FakeRequestBuilder: S3RequestBuilder, @unchecked Sendable {
-    private let lock = NSLock()
-    private var responses: [(Data, HTTPURLResponse)]
-    private var _performed: [URLRequest] = []
-    private var _lastPayloadHash: String?
+/// synchronous (non-`async`) requirement, so this cannot be an actor: an
+/// actor's stored properties are only reachable from isolated context, and a
+/// synchronous requirement has none. The recorded state therefore lives in a
+/// `Mutex`, which makes the `Sendable` conformance a checked one — every
+/// access goes through `withLock`, and the type has no mutable stored
+/// property outside it.
+final class FakeRequestBuilder: S3RequestBuilder, Sendable {
+    private struct State {
+        var responses: [(Data, HTTPURLResponse)]
+        var performed: [URLRequest] = []
+        var lastPayloadHash: String?
+    }
+
+    private let state: Mutex<State>
 
     init(responses: [(Data, HTTPURLResponse)]) {
-        self.responses = responses
+        state = Mutex(State(responses: responses))
     }
 
     var performed: [URLRequest] {
-        lock.lock(); defer { lock.unlock() }
-        return _performed
+        state.withLock { $0.performed }
     }
 
     var lastPayloadHash: String? {
-        lock.lock(); defer { lock.unlock() }
-        return _lastPayloadHash
+        state.withLock { $0.lastPayloadHash }
     }
 
     func signedRequest(
         method: String, key: String, query: [(name: String, value: String)],
         extraHeaders: [String: String], body: Data?, payloadHash: String
     ) throws -> URLRequest {
-        lock.lock()
-        _lastPayloadHash = payloadHash
-        lock.unlock()
+        state.withLock { $0.lastPayloadHash = payloadHash }
         var components = URLComponents(string: "http://127.0.0.1:9000/bucket/\(key)")!
         if !query.isEmpty {
             components.queryItems = query.map { URLQueryItem(name: $0.name, value: $0.value) }
@@ -49,15 +50,13 @@ final class FakeRequestBuilder: S3RequestBuilder, @unchecked Sendable {
     }
 
     func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        lock.lock()
-        _performed.append(request)
-        guard !responses.isEmpty else {
-            lock.unlock()
-            throw RemoteFSError.protocolError(reason: "FakeRequestBuilder ran out of canned responses")
+        try state.withLock {
+            $0.performed.append(request)
+            guard !$0.responses.isEmpty else {
+                throw RemoteFSError.protocolError(reason: "FakeRequestBuilder ran out of canned responses")
+            }
+            return $0.responses.removeFirst()
         }
-        let next = responses.removeFirst()
-        lock.unlock()
-        return next
     }
 }
 
