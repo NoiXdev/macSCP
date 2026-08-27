@@ -40,6 +40,32 @@ eines Verzeichnisses jede Datei darin herunterladen. Ein Ordner mit 200 Dateien
 zu je 50 MB wären 10 GB Verkehr für eine Spalte, die jemand versehentlich
 eingeschaltet hat.
 
+## Entscheidung des Maintainers (2026-08-27)
+
+**Nur auf Anforderung. Und nicht durch Herunterladen** — die Datei zu holen,
+um sie zu hashen, ist den Preis nicht wert.
+
+Das beantwortet die Fragen 2 und 3 unten und schneidet zugleich die Reichweite
+der Funktion zu. Die Gegenseite muss rechnen, und damit gilt:
+
+| Backend | Was daraus folgt |
+|---|---|
+| **SFTP** | Nur über einen Befehl auf der Gegenseite (`sha256sum` und Verwandte). Setzt das Programm dort voraus und braucht in Core einen Weg, einen Befehl mit Rückgabewert auszuführen — **den es heute nicht gibt**. Das ist der eigentliche Bauanteil. |
+| **S3** | Der ETag, mit der Mehrteil-Einschränkung oben. Kein Rechnen nötig, aber auch keine freie Wahl des Verfahrens: es ist, was es ist. |
+| **WebDAV** | **Gar nicht**, außer der Server liefert `OC-Checksum` oder Ähnliches. Für einen Standard-WebDAV-Server gibt es die Funktion damit nicht. |
+| **Lokal** | Unproblematisch, lokal gerechnet ist kein Herunterladen. |
+
+**Die Konsequenz, die dabei benannt gehört:** die Funktion ist nicht überall
+verfügbar. Ein Menüeintrag, der bei WebDAV fehlt oder ins Leere greift, muss
+das *sagen* — „dieser Server liefert keine Prüfsummen" ist eine brauchbare
+Antwort, ein ausgegrauter Eintrag ohne Begründung nicht.
+
+Falls „nicht herunterladen" enger gemeint war, als es hier gelesen wird —
+etwa „nicht von allein, auf ausdrückliche Anforderung aber schon" —, kehrt
+SFTP ohne Fremdprogramm zurück und WebDAV wird überhaupt erst möglich. Diese
+Lesart ist bewusst **nicht** gewählt; sie steht hier, damit die Wahl beim
+Angehen sichtbar ist statt vergessen.
+
 ## Was vor dem Angehen zu entscheiden ist
 
 1. **Wird gerechnet oder abgefragt?** Ein Hash, der bei S3 aus dem ETag kommt
