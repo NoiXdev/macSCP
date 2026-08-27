@@ -51,4 +51,29 @@ struct TabCloseWarningTests {
         #expect(lines.first.map(String.init) == activeLine)
         #expect(lines.last.map(String.init) == incomingLine)
     }
+
+    @Test func theBulkMessageNamesHowManyTabsAreTransferring() {
+        let text = TabCloseWarning.bulkMessage(
+            tabsClosing: 4, transferring: 2, incoming: 0)
+        #expect(text.contains("4"))
+        #expect(text.contains("2"))
+    }
+
+    @Test func theBulkMessageIsEmptyWhenNothingIsTransferring() {
+        #expect(TabCloseWarning.bulkMessage(
+            tabsClosing: 3, transferring: 0, incoming: 0).isEmpty)
+    }
+
+    @Test func theBulkMessageCarriesBothReasonsWhenBothHold() {
+        let text = TabCloseWarning.bulkMessage(
+            tabsClosing: 5, transferring: 2, incoming: 1)
+        #expect(text.split(separator: "\n").count == 2)
+    }
+
+    @Test func theBulkMessageMentionsIncomingAloneWhenThatIsTheOnlyReason() {
+        let text = TabCloseWarning.bulkMessage(
+            tabsClosing: 3, transferring: 0, incoming: 2)
+        #expect(!text.isEmpty)
+        #expect(text.split(separator: "\n").count == 1)
+    }
 }

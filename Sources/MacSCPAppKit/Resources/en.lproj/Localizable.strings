@@ -390,6 +390,10 @@
 /* Tab close warning: incoming cross-session transfers (M8b/T4) */
 "tabs.close.incomingTransfers" = "Other tabs are streaming to this session; closing cancels those transfers.";
 
+/* Tab close warning: bulk close of several tabs at once */
+"tabs.closeOthers.activeTransfers" = "Closing %1$d tabs cancels active transfers in %2$d of them.";
+"tabs.closeOthers.incomingTransfers" = "%d of them are receiving transfers from other tabs; closing cancels those.";
+
 /* Session export/import — sidebar menus (M9a/T3) */
 "export.menu.single" = "Export…";
 "export.menu.group" = "Export Group…";
