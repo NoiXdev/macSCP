@@ -10,7 +10,8 @@
 // Citadel value across an isolation boundary now compiles in silence,
 // whether or not it is actually safe. Every such crossing in this file
 // therefore has to carry its own argument for why it holds; the file handle
-// captured in `readStream` is written up where it happens.
+// a read stream carries is written up at `SFTPReadHandle`, alongside the
+// argument `readStream` makes for the box itself.
 @preconcurrency import Citadel
 import Foundation
 import NIOCore
@@ -701,9 +702,9 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     public func readStream(
         path: String, fromOffset offset: UInt64
     ) async throws -> AsyncThrowingStream<Data, Error> {
-        let file: SFTPFile
+        let handle: SFTPReadHandle
         do {
-            file = try await sftp.openFile(filePath: path, flags: .read)
+            handle = SFTPReadHandle(try await sftp.openFile(filePath: path, flags: .read))
         } catch {
             throw Self.mapSFTPError(error, path: path)
         }
@@ -711,18 +712,22 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         // `offset` beyond EOF: the first read returns 0 readable bytes, so
         // the stream ends immediately (empty), no error.
         //
-        // `file` is a non-`Sendable` Citadel handle captured by a `@Sendable`
-        // closure — the kind of crossing this file's `@preconcurrency import`
-        // no longer flags. Why there is no race: `openFile` hands back a fresh
-        // handle per call, this method neither stores it nor returns it, so
-        // the `unfolding:` closure is the only code that can reach this one.
-        // Two concurrent `readStream` calls get two separate handles and two
-        // separate streams; they never share state. Within one stream the
-        // closure runs only when a consumer pulls, and an `AsyncSequence` has
-        // a single consumer pulling sequentially — the same confinement that
-        // carries `currentOffset` below: one reader advances it, and the read
-        // offset it carries is what makes the chunks contiguous in the first
-        // place.
+        // The closure below is the ONLY owner of `handle`, and that is what
+        // closes the SFTP file on the paths the closure never sees — see
+        // `SFTPReadHandle`. Nothing here may capture the underlying Citadel
+        // handle directly: a second owner would keep the box alive past the
+        // stream, or release it while the stream still reads.
+        //
+        // `handle` is a non-`Sendable` box captured by a `@Sendable` closure.
+        // Why there is no race: `openFile` hands back a fresh handle per call,
+        // this method neither stores it nor returns it, so the `unfolding:`
+        // closure is the only code that can reach this one. Two concurrent
+        // `readStream` calls get two separate handles and two separate
+        // streams; they never share state. Within one stream the closure runs
+        // only when a consumer pulls, and an `AsyncSequence` has a single
+        // consumer pulling sequentially — the same confinement that carries
+        // `currentOffset` below: one reader advances it, and the read offset
+        // it carries is what makes the chunks contiguous in the first place.
         //
         // `nonisolated(unsafe)` states exactly that and nothing more. The
         // counter is read and written only by the `unfolding:` closure, in
@@ -734,10 +739,10 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         nonisolated(unsafe) var currentOffset = offset
         return AsyncThrowingStream(unfolding: {
             do {
-                let buffer = try await file.read(
+                let buffer = try await handle.read(
                     from: currentOffset, length: UInt32(TransferChunk.size))
                 guard buffer.readableBytes > 0 else {
-                    try await file.close()
+                    try await handle.close()
                     return nil
                 }
                 currentOffset += UInt64(buffer.readableBytes)
@@ -747,11 +752,11 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 // throws `CancellationError` on task cancellation — pass it
                 // through unchanged, do NOT map it to protocolError, otherwise
                 // the item would end `.failed` instead of `.cancelled`. The
-                // channel stays usable (file.close).
-                try? await file.close()
+                // channel stays usable (handle.close).
+                try? await handle.close()
                 throw CancellationError()
             } catch {
-                try? await file.close()
+                try? await handle.close()
                 throw Self.mapSFTPError(error, path: path)
             }
         })
@@ -1034,6 +1039,61 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 try? await dedicatedGroup.shutdownGracefully()
             }
         }
+    }
+}
+
+/// Sole owner of one `SFTPFile` opened for reading, so that the handle is
+/// closed on the server whenever the read stream built around it goes away.
+///
+/// `AsyncThrowingStream(unfolding:)` has no termination hook, and the paths
+/// that abandon a read stream never run its closure again. A destination
+/// write that throws drops the stream where it stands. Task cancellation is
+/// worse than it looks: the stream releases its closure the moment the task
+/// is cancelled and answers `nil` on the next pull WITHOUT calling it, so the
+/// cancellation arm inside the closure only ever runs for a read that was
+/// already suspended when the cancel landed — and Citadel's read is not
+/// cancellation-aware, so in practice it does not run at all. Either way the
+/// closure is simply released, and with it the last reference to an open
+/// handle that the server keeps until the connection falls.
+///
+/// Binding the close to that release is what covers those paths without
+/// giving up the pull-based shape the stream is chosen for. The close is
+/// fire-and-forget by necessity — `deinit` cannot await — and unconditional,
+/// because `SFTPFile.close()` invalidates the handle before it sends
+/// anything: a second close is a silent no-op, so the eager close on the
+/// paths the closure DOES see (EOF, a read error, a cancelled in-flight read)
+/// stays exactly as it was and this only catches the rest.
+///
+/// `@unchecked Sendable` because it carries a non-`Sendable` Citadel handle
+/// into a `@Sendable` closure. The argument is the one `readStream` makes for
+/// the stream's own state: `openFile` returns a fresh handle per call, the box
+/// is created and captured there and nowhere else, and an `AsyncSequence` has
+/// a single consumer pulling sequentially — so one task at a time reaches the
+/// handle, and `deinit` runs only once that task has released the closure.
+/// A read in flight holds the closure alive for its own duration, so the
+/// deinit close can never overlap a read.
+private final class SFTPReadHandle: @unchecked Sendable {
+    private let file: SFTPFile
+
+    init(_ file: SFTPFile) {
+        self.file = file
+    }
+
+    func read(from offset: UInt64, length: UInt32) async throws -> ByteBuffer {
+        try await file.read(from: offset, length: length)
+    }
+
+    func close() async throws {
+        try await file.close()
+    }
+
+    deinit {
+        // Only the handle escapes into the task, never `self` — resurrecting
+        // the box in its own deinit would be undefined, and the handle is a
+        // separate object whose life the task legitimately extends until the
+        // close has been sent.
+        let file = self.file
+        Task { try? await file.close() }
     }
 }
 

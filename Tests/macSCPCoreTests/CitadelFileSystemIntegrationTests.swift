@@ -1957,6 +1957,172 @@ struct CitadelFileSystemIntegrationTests {
         #expect(result.completedInput == "/data/seed/sub/")
         #expect(result.candidates == ["sub"])
     }
+
+    // MARK: - B-2: a read stream must not outlive its server-side handle
+
+    /// Seeds a file of `bytes` random bytes at `path` inside the container and
+    /// hands it to the SFTP user. `docker exec` runs as root, so the chown is
+    /// what makes the file readable over SFTP as testuser.
+    private func seedRemoteFile(atPath path: String, bytes: Int) {
+        let seed = Process()
+        seed.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
+        seed.arguments = [
+            "exec", "macscp-test-sshd", "sh", "-c",
+            "head -c \(bytes) /dev/urandom > '\(path)' && chown 1000:1000 '\(path)'",
+        ]
+        seed.standardError = FileHandle.nullDevice
+        try? seed.run()
+        seed.waitUntilExit()
+        #expect(seed.terminationStatus == 0)
+    }
+
+    /// How many descriptors the SERVER still holds on a file of that name,
+    /// read out of `/proc` inside the container. This observes the sftp-server
+    /// process, not any macSCP state, so it cannot be satisfied by a fix that
+    /// merely looks like one: the count only drops when an SFTP CLOSE for that
+    /// handle has actually reached the server.
+    ///
+    /// The same descriptor shows up under several `/proc` entries, so the
+    /// number itself carries no meaning — only "some" versus "none" does.
+    /// Callers compare against 0, never against an expected count.
+    private func serverDescriptorCount(forFileNamed name: String) -> Int {
+        let list = Process()
+        list.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
+        list.arguments = [
+            // `--privileged`: resolving another process's `/proc/<pid>/fd`
+            // symlinks needs CAP_SYS_PTRACE, which a plain `docker exec` does
+            // not carry — without it every link reads back "Permission
+            // denied" and the count is silently always zero. The sftp-server
+            // runs as testuser under the sshd session, so this is exactly the
+            // case that needs it.
+            "exec", "--privileged", "macscp-test-sshd", "sh", "-c",
+            // `grep -c` exits non-zero when it counts nothing, so the exit
+            // status carries no information here — stdout is the answer.
+            "ls -l /proc/[0-9]*/fd 2>/dev/null | grep -c '\(name)'",
+        ]
+        let pipe = Pipe()
+        list.standardOutput = pipe
+        list.standardError = FileHandle.nullDevice
+        guard (try? list.run()) != nil else { return -1 }
+        let out = String(
+            data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        list.waitUntilExit()
+        return Int(out) ?? -1
+    }
+
+    /// Polls `serverDescriptorCount` until it reaches zero, bounded at roughly
+    /// two seconds. The close travels to the server asynchronously once the
+    /// stream is gone, so the assertion has to be "closes promptly", not
+    /// "is closed by the time this line runs".
+    private func waitForServerToCloseDescriptors(forFileNamed name: String) async -> Int {
+        var remaining = serverDescriptorCount(forFileNamed: name)
+        var polls = 0
+        while remaining != 0 && polls < 40 {
+            try? await Task.sleep(for: .milliseconds(50))
+            remaining = serverDescriptorCount(forFileNamed: name)
+            polls += 1
+        }
+        return remaining
+    }
+
+    /// The bare mechanism: a consumer that pulls one chunk and then simply
+    /// stops. No cancellation, no EOF, no error — the closure of
+    /// `AsyncThrowingStream(unfolding:)` is just released, and with it the
+    /// only reference to the open `SFTPFile`.
+    @Test func abandonedReadStreamClosesTheServerSideHandle() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        let name = "macscp-abandoned-read-\(UUID().uuidString).bin"
+        let path = "/config/\(name)"
+        seedRemoteFile(atPath: path, bytes: 4 * TransferChunk.size)
+        defer { cleanupConfigPath(path) }
+
+        // A nested frame so the stream and its iterator are released on
+        // return rather than at the end of the test.
+        func pullOneChunkThenAbandon() async throws {
+            let stream = try await fs.readStream(path: path, fromOffset: 0)
+            var iterator = stream.makeAsyncIterator()
+            let first = try await iterator.next()
+            #expect(first?.count == TransferChunk.size)
+            // Measured while the stream is still alive: proves the probe
+            // above really sees this handle, so a later zero means "closed"
+            // and not "never looked in the right place".
+            #expect(serverDescriptorCount(forFileNamed: name) > 0)
+        }
+        try await pullOneChunkThenAbandon()
+
+        #expect(await waitForServerToCloseDescriptors(forFileNamed: name) == 0)
+    }
+
+    /// The path a user reaches by failing on the destination side:
+    /// `TransferEngine.copyFile` opens the source stream, the destination
+    /// write throws, and the source stream is dropped without anyone
+    /// cancelling it.
+    @Test func aFailingDestinationWriteClosesTheSourceHandle() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        let name = "macscp-failed-destination-\(UUID().uuidString).bin"
+        let path = "/config/\(name)"
+        seedRemoteFile(atPath: path, bytes: 4 * TransferChunk.size)
+        defer { cleanupConfigPath(path) }
+
+        // A directory that was never created: `LocalFileSystem.write` cannot
+        // create the file there and throws before draining a single chunk.
+        let missingDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-missing-\(UUID().uuidString)")
+            .path(percentEncoded: false)
+
+        await #expect(throws: (any Error).self) {
+            try await TransferEngine.copyFile(
+                from: fs, sourcePath: path,
+                to: LocalFileSystem(), destinationDirectory: missingDirectory,
+                fileName: name, onProgress: { _ in })
+        }
+
+        #expect(await waitForServerToCloseDescriptors(forFileNamed: name) == 0)
+    }
+
+    /// The path the bug report names: a download cancelled mid-flight. The
+    /// counting stream in `copyFile` and the read stream underneath it both
+    /// stop being pulled, so neither closure runs again.
+    @Test func aCancelledDownloadClosesTheSourceHandle() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        let name = "macscp-cancelled-download-\(UUID().uuidString).bin"
+        let path = "/config/\(name)"
+        seedRemoteFile(atPath: path, bytes: 32 * 1024 * 1024)
+        defer { cleanupConfigPath(path) }
+
+        let destinationDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-cancelled-download-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: destinationDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: destinationDirectory) }
+
+        let progressSeen = CallCounterBox()
+        let task = Task {
+            try await TransferEngine.copyFile(
+                from: fs, sourcePath: path,
+                to: LocalFileSystem(),
+                destinationDirectory: destinationDirectory.path(percentEncoded: false),
+                fileName: name, onProgress: { _ in progressSeen.increment() })
+        }
+
+        var polls = 0
+        while progressSeen.value == 0 && polls < 500 {
+            try await Task.sleep(for: .milliseconds(10))
+            polls += 1
+        }
+        #expect(progressSeen.value > 0)
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+
+        #expect(await waitForServerToCloseDescriptors(forFileNamed: name) == 0)
+    }
 }
 
 /// M11a/T4 continued: the chain guard on a session-referenced jump must
