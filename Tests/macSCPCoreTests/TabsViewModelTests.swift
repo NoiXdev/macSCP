@@ -157,6 +157,74 @@ struct TabsViewModelTests {
         #expect(vm.activeTabID == c.id)
     }
 
+    // MARK: - Moving onto another tab (what a drop reports)
+
+    /// The drag's way in: two identities, no index. The destination is the
+    /// position the TARGET holds at the moment of the drop, derived here
+    /// from the model's own array — so a caller cannot compute a position,
+    /// carry a stale one, or shift one by a step.
+    @Test func movingATabOntoAnotherTakesThatTabsPosition() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID()), c = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b); vm.addTab(c)
+        vm.move(tabID: a.id, onto: c.id)
+        #expect(vm.tabs.map(\.id) == [b.id, c.id, a.id])
+    }
+
+    /// The same answer `move(tabID:to:)` gives for that target's index —
+    /// this is one rule reached two ways, not a second one.
+    @Test func movingOntoATabMatchesMovingToItsIndex() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID()), c = StubTab(id: UUID())
+        let byTarget = TabsViewModel(initial: a)
+        byTarget.addTab(b); byTarget.addTab(c)
+        byTarget.move(tabID: c.id, onto: a.id)
+        let byIndex = TabsViewModel(initial: a)
+        byIndex.addTab(b); byIndex.addTab(c)
+        byIndex.move(tabID: c.id, to: 0)
+        #expect(byTarget.tabs.map(\.id) == byIndex.tabs.map(\.id))
+    }
+
+    /// Picked up and put back down on itself — the commonest drag there is.
+    @Test func movingATabOntoItselfChangesNothing() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID()), c = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b); vm.addTab(c)
+        vm.activate(c.id)
+        vm.move(tabID: b.id, onto: b.id)
+        #expect(vm.tabs.map(\.id) == [a.id, b.id, c.id])
+        #expect(vm.activeTabID == c.id)
+    }
+
+    /// A tab that closed while the drag was in flight names no position any
+    /// more. That is the whole of what used to need clamping: there is no
+    /// stale index to clamp, only a target that is or is not there.
+    @Test func movingOntoATabThatIsGoneDoesNothing() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b)
+        vm.move(tabID: b.id, onto: UUID())
+        #expect(vm.tabs.map(\.id) == [a.id, b.id])
+    }
+
+    @Test func movingAnUnknownTabOntoATabDoesNothing() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b)
+        vm.move(tabID: UUID(), onto: a.id)
+        #expect(vm.tabs.map(\.id) == [a.id, b.id])
+    }
+
+    @Test func movingOntoATabLeavesTheActiveTabActive() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID()), c = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b); vm.addTab(c)
+        vm.activate(b.id)
+        vm.move(tabID: c.id, onto: a.id)
+        #expect(vm.tabs.map(\.id) == [c.id, a.id, b.id])
+        #expect(vm.activeTabID == b.id)
+        #expect(vm.activeTab.id == b.id)
+    }
+
     @Test func movingAnUnknownTabIsANoOp() {
         let a = StubTab(id: UUID())
         let vm = TabsViewModel(initial: a)

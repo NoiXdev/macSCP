@@ -9,33 +9,40 @@ struct TabStripView: View {
     let onActivate: (UUID) -> Void
     let onClose: (SessionTab) -> Void
     let onAdd: () -> Void
+    /// Which entries one tab's context menu offers. Asked, not decided:
+    /// the strip has no idea what an entry means or when it applies, and
+    /// it cannot supply the facts wrongly either, because it supplies
+    /// none — the answer is computed where the model is.
+    let menuEntries: (SessionTab) -> [TabMenuEntry]
     /// One route out of the tab context menu for every entry the menu can
     /// draw. The strip does not know what any entry means — it hands the
     /// tab and the chosen `TabMenuEntry` back to `ContentView`, which owns
     /// the tab lifecycle those actions run through.
     let onMenuEntry: (SessionTab, TabMenuEntry) -> Void
-    /// The one route out of a tab drop: the dragged tab's id and the
-    /// position it was dropped on. The strip does not reorder anything —
-    /// `TabsViewModel.move(tabID:to:)` is the only reordering rule there
-    /// is, the same one the menu's move entries reach, and `ContentView`
-    /// owns the model it lives on.
-    let onReorder: (UUID, Int) -> Void
+    /// The one route out of a tab drop, in the only two things a drop
+    /// knows: the id the payload carried, and the tab it was let go on.
+    /// **No position travels this way**, which is what makes shifting one
+    /// impossible rather than detectable — see `TabsViewModel.move(tabID:onto:)`.
+    /// The two are of different types so that handing them over the wrong
+    /// way round does not compile.
+    let onReorder: (UUID, SessionTab) -> Void
 
     var body: some View {
         HStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 0) {
-                    // Enumerated, because the context menu's move/close-others
-                    // entries are decided from the tab's POSITION and the
-                    // total count — see `TabContextMenu.entries`.
-                    ForEach(Array(tabs.enumerated()), id: \.element.id) { position, tab in
+                    // Not enumerated. The menu's move and bulk-close entries
+                    // are still decided from a tab's position and the total
+                    // count, but both are read off the model where the answer
+                    // is computed; a position that never enters this view
+                    // cannot be shifted inside it.
+                    ForEach(tabs) { tab in
                         TabItemView(
                             tab: tab,
-                            index: position,
-                            tabCount: tabs.count,
                             isActive: tab.id == activeTabID,
                             onActivate: { onActivate(tab.id) },
                             onClose: { onClose(tab) },
+                            menuEntries: { menuEntries(tab) },
                             onMenuEntry: { entry in onMenuEntry(tab, entry) },
                             onReorder: onReorder)
                     }
@@ -161,23 +168,18 @@ enum TabIndicatorPlan {
     }
 }
 
-/// What a drop on the tab strip means, as the two value questions the
-/// strip must not answer inside a gesture closure: which tab was dragged,
-/// and which position it should land on.
+/// The one question a tab drop asks that is not an identity: which tab a
+/// dropped payload names.
 ///
 /// Pulled out for the same reason as `LivenessDotPlan` and
-/// `TabIndicatorPlan` — this project has no SwiftUI rendering
-/// harness, so a rule written into a drop closure is a rule nothing can
-/// call. What lands here is decidable from values alone; what cannot be
-/// decided here (does SwiftUI fire the drag, does the tab appear where the
-/// pointer was) is not decidable anywhere in this project's tests.
+/// `TabIndicatorPlan` — this project has no SwiftUI rendering harness, so
+/// a rule written into a gesture closure is a rule nothing can call.
 ///
-/// **Reordering itself is deliberately not here.** The one reordering rule
-/// is `TabsViewModel.move(tabID:to:)`, which the context menu's move
-/// entries already call; this type only decides what to hand it. A second
-/// reordering — an array rearranged in the view, or a rule that computes a
-/// new order rather than a destination — is exactly the shape the design
-/// rejects, and `TabContextMenuWiringGuardTests` watches for it.
+/// **Where the tab lands is deliberately not here, and no longer anywhere
+/// in this layer.** The drop reports the tab it was let go on;
+/// `TabsViewModel.move(tabID:onto:)` derives the position from the array
+/// that defines it. Nothing between the gesture and the model holds an
+/// index, so nothing between them can shift one.
 enum TabDropPlan {
     /// The tab a drop payload names, or `nil` when there is nothing in the
     /// payload this strip could act on.
@@ -185,11 +187,12 @@ enum TabDropPlan {
     /// The payload is a plain uuid string, the same spelling the session
     /// sidebar's rows are dragged with, so a session row dropped onto a tab
     /// arrives here as a well-formed uuid that names no tab. That is not
-    /// this function's problem to catch: `move(tabID:to:)` leaves the order
-    /// alone for an id it does not know, which is the outcome a foreign
-    /// drop should have anyway. Answering `nil` here would only trade one
-    /// no-op for another, at the price of a second rule about which ids are
-    /// real — and the tabs the strip renders are not this type's to know.
+    /// this function's problem to catch: `move(tabID:onto:)` leaves the
+    /// order alone for an id it does not know, which is the outcome a
+    /// foreign drop should have anyway. Answering `nil` here would only
+    /// trade one no-op for another, at the price of a second rule about
+    /// which ids are real — and the tabs the strip renders are not this
+    /// type's to know.
     ///
     /// A drag carries one tab, so anything past the first item is a payload
     /// this gesture did not produce; the first item is what is read.
@@ -198,31 +201,6 @@ enum TabDropPlan {
         return UUID(uuidString: first)
     }
 
-    /// The position a tab dropped ON the tab at `dropIndex` should move to,
-    /// clamped into the tabs that exist right now — or `nil` when there are
-    /// no tabs at all, which leaves the caller nothing to move onto.
-    ///
-    /// **The two halves of the clamp are not equally reachable, and the
-    /// asymmetry is deliberate.** Only the upper half can be reached from
-    /// the strip: a drop position is an offset out of `Array.enumerated()`,
-    /// so it is never negative, while the tab count it is compared against
-    /// can have shrunk since the strip was drawn. `max(dropIndex, 0)` is
-    /// therefore a totality guard, not a described UI state — this function
-    /// answers over every `Int` because its contract is "an index this
-    /// strip has", and a contract with a hole in it is the kind that gets
-    /// relied on anyway. The tests say the same thing in the same words.
-    ///
-    /// The clamp is this side's job by design. `move(tabID:to:)` refuses an
-    /// out-of-range destination as a no-op rather than clamping it (its own
-    /// doc comment says why: a gesture that ends outside the strip must
-    /// leave the order alone), so a caller that forwards a raw position
-    /// gets silence instead of a move. And the position a drop carries was
-    /// read off the strip as it was RENDERED: a tab that closed while the
-    /// drag was in flight makes it describe a strip that no longer exists.
-    static func destination(forDropOnIndex dropIndex: Int, tabCount: Int) -> Int? {
-        guard tabCount > 0 else { return nil }
-        return min(max(dropIndex, 0), tabCount - 1)
-    }
 }
 
 /// The localized title for one `TabMenuEntry`. A TOTAL mapping: every case
@@ -250,18 +228,16 @@ enum TabMenuEntryTitle {
 
 private struct TabItemView: View {
     let tab: SessionTab
-    /// This tab's position in the strip and the strip's total, the two
-    /// facts `TabContextMenu.entries` turns into the move and bulk-close
-    /// entries.
-    let index: Int
-    let tabCount: Int
     let isActive: Bool
     let onActivate: () -> Void
     let onClose: () -> Void
+    /// This tab's menu entries, asked for when the menu opens rather than
+    /// computed for every tab on every repaint.
+    let menuEntries: () -> [TabMenuEntry]
     let onMenuEntry: (TabMenuEntry) -> Void
     /// Handed straight through from the strip — see `TabStripView`'s own
     /// property for what the two values mean and who acts on them.
-    let onReorder: (UUID, Int) -> Void
+    let onReorder: (UUID, SessionTab) -> Void
 
     @State private var isHovering = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -365,26 +341,27 @@ private struct TabItemView: View {
         // finds nothing.
         .draggable(tab.id.uuidString)
         .dropDestination(for: String.self) { payload, _ in
-            // Reads the payload and routes; decides nothing else. Which
-            // position this is, and whether it still exists, are
-            // `TabDropPlan`'s and `TabsViewModel.move`'s answers.
+            // Reads the payload and routes; decides nothing else. Where
+            // this tab sits, and whether the drop changes anything, are
+            // `TabsViewModel.move(tabID:onto:)`'s answers.
             guard let draggedID = TabDropPlan.draggedTabID(from: payload) else { return false }
-            onReorder(draggedID, index)
+            onReorder(draggedID, tab)
             return true
         }
-        // The tab context menu. Everything about WHICH entries appear is
-        // `TabContextMenu.entries`' answer, drawn here without a single
-        // condition of this view's own: no `if` around an item, no filter
-        // over the list, no `.disabled` standing in for a missing entry
-        // (the design rejects greyed-out entries outright). A rule spelled
-        // a second time here is a rule that can disagree with the one Core
-        // tests — which is exactly what `TabContextMenuWiringGuardTests`
+        // The tab context menu. Everything about WHICH entries appear was
+        // answered before this view saw it, and is drawn here without a
+        // single condition of this view's own: no `if` around an item, no
+        // filter over the list, no `.disabled` standing in for a missing
+        // entry (the design rejects greyed-out entries outright). A rule
+        // spelled a second time here is a rule that can disagree with the
+        // one Core tests — which is what `TabContextMenuWiringGuardTests`
         // watches this closure for.
+        //
+        // The facts the answer is made of are not this view's to hand over
+        // any more either: it has neither a position nor a count to get
+        // wrong.
         .contextMenu {
-            ForEach(Array(TabContextMenu.entries(
-                atIndex: index, ofTabCount: tabCount,
-                supportsShell: supportsShell, isAdHoc: isAdHoc, isConnected: tab.isConnected
-            ).enumerated()), id: \.offset) { _, entry in
+            ForEach(Array(menuEntries().enumerated()), id: \.offset) { _, entry in
                 Button(TabMenuEntryTitle.title(for: entry)) { onMenuEntry(entry) }
             }
         }
@@ -402,19 +379,6 @@ private struct TabItemView: View {
         let descriptor = BackendDescriptor.descriptor(for: tab.connectionViewModel.kind)
         return L10n.string(descriptor.badgeLabelKey, descriptor.badgeLabelDefault)
     }
-
-    /// The backend capability half of the "Open Terminal" precondition,
-    /// read the same way `ContentView.activeTabSupportsShell` reads it —
-    /// from the descriptor, never from a `ConnectionKind` comparison.
-    private var supportsShell: Bool {
-        BackendDescriptor.descriptor(for: tab.connectionViewModel.kind).capabilities.supportsShell
-    }
-
-    /// Ad hoc means "dialed without a stored session behind it".
-    /// `SessionTab.activeStoredSessionID` is set only once a connect
-    /// actually landed on a stored session, and is cleared again by
-    /// `ContentView.teardown(_:reason:)`, so it is the fact, not a guess.
-    private var isAdHoc: Bool { tab.activeStoredSessionID == nil }
 
     private var accessibilityState: String {
         switch indicator {

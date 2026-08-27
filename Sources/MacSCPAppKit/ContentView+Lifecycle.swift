@@ -823,7 +823,8 @@ extension ContentView {
     }
 
     /// Moves a tab one position, through the SAME `TabsViewModel.move`
-    /// dragging will call — the reordering rule exists once.
+    /// dragging reaches through `move(tabID:onto:)` — the reordering rule
+    /// exists once.
     ///
     /// The destination is the tab's current index plus the offset, with no
     /// clamping: `move(tabID:to:)` refuses an out-of-range destination as a
@@ -835,22 +836,29 @@ extension ContentView {
         tabsModel.move(tabID: tab.id, to: from + offset)
     }
 
-    /// A tab dropped onto another tab takes that tab's position — through
-    /// the SAME `TabsViewModel.move` the menu's move entries reach via
-    /// `moveTab(_:by:)`. Dragging is a second way to the rule, never a
-    /// second rule.
+    /// Which entries one tab's context menu offers.
     ///
-    /// Unlike `moveTab(_:by:)`, this one clamps, and the difference is not
-    /// a preference: the menu's offset is computed against the model in the
-    /// same instant it is used, while a drop carries a position that was
-    /// read off the strip as it was rendered — before the drag, and before
-    /// anything that closed a tab meanwhile. `TabDropPlan.destination` is
-    /// where that clamp is decided, so it can be tested without a gesture.
-    func reorderTab(_ tabID: UUID, toDropPosition position: Int) {
-        guard let destination = TabDropPlan.destination(
-            forDropOnIndex: position, tabCount: tabsModel.tabs.count)
-        else { return }
-        tabsModel.move(tabID: tabID, to: destination)
+    /// Asked here rather than in the strip because two of the five facts
+    /// are positional — where this tab sits, and how many there are — and a
+    /// position that reaches a view is a position that can be shifted
+    /// inside it. Both are read off the model in the same expression that
+    /// uses them; `TabContextMenu.entries` is unchanged and still decides
+    /// everything about WHICH entries exist, in Core, where its own tests
+    /// reach it.
+    ///
+    /// A tab that is no longer in the model has no menu rather than a menu
+    /// decided from a made-up position — the same reading `move` takes of
+    /// an id it does not know.
+    func tabMenuEntries(for tab: SessionTab) -> [TabMenuEntry] {
+        guard let index = tabsModel.tabs.firstIndex(where: { $0.id == tab.id }) else { return [] }
+        let capabilities = BackendDescriptor
+            .descriptor(for: tab.connectionViewModel.kind).capabilities
+        return TabContextMenu.entries(
+            atIndex: index,
+            ofTabCount: tabsModel.tabs.count,
+            supportsShell: capabilities.supportsShell,
+            isAdHoc: tab.activeStoredSessionID == nil,
+            isConnected: tab.isConnected)
     }
 
     /// "Close Other Tabs": everything except `tab` goes, whether or not

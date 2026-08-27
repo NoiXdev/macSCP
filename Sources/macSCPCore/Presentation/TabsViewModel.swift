@@ -35,7 +35,7 @@ public final class TabsViewModel<Tab: Identifiable> where Tab.ID == UUID {
 
     /// Moves a tab to another position. The only reordering there is —
     /// the context menu calls it with the neighbouring index, dragging
-    /// calls it with the drop position, so the rule exists once.
+    /// reaches it through `move(tabID:onto:)`, so the rule exists once.
     ///
     /// `activeTabID` is deliberately untouched: it names a tab, not a
     /// position, so the active tab stays active however the order changes.
@@ -47,6 +47,30 @@ public final class TabsViewModel<Tab: Identifiable> where Tab.ID == UUID {
         guard tabs.indices.contains(destination), destination != from else { return }
         let tab = tabs.remove(at: from)
         tabs.insert(tab, at: destination)
+    }
+
+    /// Moves a tab onto the position another tab holds right now — the
+    /// drag's way in, phrased in the only two things a drop actually
+    /// knows: which tab was picked up, and which tab it was let go on.
+    ///
+    /// **Why a position is not a parameter here.** A view that carries an
+    /// index carries something that can be shifted: by a step, by a
+    /// shadowed name, inside an initializer — each of which changes where a
+    /// tab lands while the surrounding code stays character for character
+    /// what it was. Three rounds of scanning for those spellings found a
+    /// new one each time. An identity has no arithmetic, so the shapes stop
+    /// existing rather than being watched for; the position is derived
+    /// here, from the array that defines it, in the same instant it is
+    /// used.
+    ///
+    /// A no-op when either id names no tab: the dragged one may have been
+    /// closed by a menu on another tab, and the target may be gone by the
+    /// time the drop lands. That also disposes of the clamping the drag
+    /// used to need — there is no stale index to clamp into range, only a
+    /// target that is or is not there.
+    public func move(tabID: UUID, onto targetID: UUID) {
+        guard let destination = tabs.firstIndex(where: { $0.id == targetID }) else { return }
+        move(tabID: tabID, to: destination)
     }
 
     /// No-op for unknown ids (defensive: a stale click on a closing tab).
