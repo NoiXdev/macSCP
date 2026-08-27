@@ -102,10 +102,21 @@ Sitzungszustand: kein Speicher, keine Migration, keine `SettingsStore`-Frage.
 Tab auf. Einen zweiten Abbauweg zu bauen würde die Reihenfolge-Invariante der
 Architektur unterlaufen (Warteschlange → Terminal → Verbindung).
 
+**„Andere" heißt: alle außer dem angeklickten Tab** — nicht alle außer dem
+aktiven. Das Menü hängt an einer bestimmten Zeile, und der Nutzer meint die,
+auf die er geklickt hat. Ist der angeklickte Tab nicht der aktive, wird er
+durch das Schließen zum aktiven, weil sonst kein Tab mehr da ist, der es sein
+könnte.
+
 **Eine Sammelwarnung, nicht N.** `TabCloseWarning` prüft heute einen Tab; für
 das Sammelschließen kommt eine Fassung dazu, die über mehrere Tabs
 zusammenfasst und benennt, wie viele der betroffenen gerade übertragen.
 Einmal fragen, einmal entscheiden.
+
+**Ablehnen bricht alles ab**, nicht nur die übertragenden Tabs. Eine Frage,
+eine Antwort: wer „Abbrechen" wählt, will nicht, dass die Hälfte trotzdem
+zugeht. Die ruhigen Tabs teilweise zu schließen wäre ein drittes Verhalten,
+das niemand angefordert hat.
 
 ## 5. Als Sitzung speichern
 
