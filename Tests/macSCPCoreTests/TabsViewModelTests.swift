@@ -128,13 +128,16 @@ struct TabsViewModelTests {
     }
 
     @Test func aDestinationBeyondTheEndsDoesNothingRatherThanTrapping() {
-        let a = StubTab(id: UUID()), b = StubTab(id: UUID())
+        // b sits in the middle — neither edge it would clamp to is where it
+        // already is, so a clamp-and-move (instead of a true no-op) moves
+        // it and this test catches that.
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID()), c = StubTab(id: UUID())
         let vm = TabsViewModel(initial: a)
-        vm.addTab(b)
-        vm.move(tabID: a.id, to: -5)
-        #expect(vm.tabs.map(\.id) == [a.id, b.id])
+        vm.addTab(b); vm.addTab(c)
+        vm.move(tabID: b.id, to: -5)
+        #expect(vm.tabs.map(\.id) == [a.id, b.id, c.id])
         vm.move(tabID: b.id, to: 99)
-        #expect(vm.tabs.map(\.id) == [a.id, b.id])
+        #expect(vm.tabs.map(\.id) == [a.id, b.id, c.id])
     }
 
     @Test func movingAnUnknownTabIsANoOp() {

@@ -44,10 +44,9 @@ public final class TabsViewModel<Tab: Identifiable> where Tab.ID == UUID {
     /// ordinary outcome, not a programmer error.
     public func move(tabID: UUID, to destination: Int) {
         guard let from = tabs.firstIndex(where: { $0.id == tabID }) else { return }
-        let clamped = max(0, min(destination, tabs.count - 1))
-        guard clamped != from else { return }
+        guard tabs.indices.contains(destination), destination != from else { return }
         let tab = tabs.remove(at: from)
-        tabs.insert(tab, at: clamped)
+        tabs.insert(tab, at: destination)
     }
 
     /// No-op for unknown ids (defensive: a stale click on a closing tab).
