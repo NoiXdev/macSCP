@@ -40,8 +40,24 @@ struct PluralCatalogTests {
         [
             ("snippets.export.confirm.message %lld", "%lld snippets will be written to the file."),
             ("logins.export.summary %lld", "%lld logins will be written to the file."),
+            (
+                "tabs.closeOthers.incomingTransfers %lld",
+                "%lld of them are receiving transfers from other tabs; closing cancels those."
+            ),
         ]
     }
+
+    /// `tabs.closeOthers.activeTransfers %1$lld %2$lld` (Task 3's bulk-close
+    /// warning) carries a SECOND, non-pluralized `%2$lld` argument
+    /// (`transferring`) alongside the pluralized `%1$lld` (`tabsClosing`),
+    /// so it doesn't fit `catalogKeys()`'s single-`count` shape and gets its
+    /// own helpers/tests below rather than folding into the generic ones.
+    /// The `.stringsdict` ties plural selection to argument 1 only
+    /// (`NSStringLocalizedFormatKey` = `%1$#@tabs@`, variable name `tabs`
+    /// not `count`) — `transferring` never changes the noun's category.
+    private static let activeTransfersKey = "tabs.closeOthers.activeTransfers %1$lld %2$lld"
+    private static let activeTransfersDefault =
+        "Closing %1$lld tabs cancels active transfers in %2$lld of them."
 
     /// Loads the `.lproj` bundle for one language directly (rather than
     /// letting `NSLocalizedString` negotiate a language from the process's
@@ -65,6 +81,18 @@ struct PluralCatalogTests {
         guard let languageBundle = bundle(forLanguage: language) else { return nil }
         let format = NSLocalizedString(key, bundle: languageBundle, value: defaultValue, comment: "")
         return String(format: format, locale: Locale(identifier: language), count)
+    }
+
+    /// Same resolution path as `resolvedForm`, for `activeTransfersKey`'s
+    /// two arguments. `transferring` is passed through untouched — only
+    /// `tabsClosing` (argument 1) selects the plural category.
+    private static func resolvedActiveTransfersForm(
+        language: String, tabsClosing: Int, transferring: Int
+    ) -> String? {
+        guard let languageBundle = bundle(forLanguage: language) else { return nil }
+        let format = NSLocalizedString(
+            Self.activeTransfersKey, bundle: languageBundle, value: Self.activeTransfersDefault, comment: "")
+        return String(format: format, locale: Locale(identifier: language), tabsClosing, transferring)
     }
 
     /// Every resolved form embeds the count itself (`"1 snippet…"` vs.
@@ -165,6 +193,79 @@ struct PluralCatalogTests {
             } else {
                 #expect(countRule["one"] != nil && countRule["other"] != nil)
             }
+        }
+    }
+
+    // MARK: - `tabs.closeOthers.activeTransfers %1$lld %2$lld` (two-argument key)
+    //
+    // Same five properties as above, adapted for a plural variable driven by
+    // argument 1 (`tabsClosing`) while argument 2 (`transferring`) rides
+    // along unpluralized — `catalogKeys()`'s single-`count` helpers can't
+    // exercise that, so these are separate rather than folded in.
+
+    @Test(arguments: PluralCatalogTests.languages)
+    func everyLanguageDistinguishesOneFromTwoForActiveTransfers(language: String) {
+        let one = Self.resolvedActiveTransfersForm(language: language, tabsClosing: 1, transferring: 1)
+        let two = Self.resolvedActiveTransfersForm(language: language, tabsClosing: 2, transferring: 1)
+        #expect(one != nil, "\(language) is missing its .lproj bundle")
+        #expect(
+            Self.wordingIgnoringDigits(one) != Self.wordingIgnoringDigits(two),
+            "\(language) resolved the same wording for 1 and 2 tabs closing: \(one ?? "nil")")
+    }
+
+    @Test
+    func polishSelectsTheThirdCategoryForFiveTabsClosing() {
+        let one = Self.wordingIgnoringDigits(
+            Self.resolvedActiveTransfersForm(language: "pl", tabsClosing: 1, transferring: 1))
+        let few = Self.wordingIgnoringDigits(
+            Self.resolvedActiveTransfersForm(language: "pl", tabsClosing: 2, transferring: 1))
+        let many = Self.wordingIgnoringDigits(
+            Self.resolvedActiveTransfersForm(language: "pl", tabsClosing: 5, transferring: 1))
+        #expect(one != few && few != many && one != many, "1=\(one ?? "nil") 2=\(few ?? "nil") 5=\(many ?? "nil")")
+    }
+
+    @Test
+    func frenchTreatsZeroTabsClosingLikeOne() {
+        let zero = Self.wordingIgnoringDigits(
+            Self.resolvedActiveTransfersForm(language: "fr", tabsClosing: 0, transferring: 0))
+        let one = Self.wordingIgnoringDigits(
+            Self.resolvedActiveTransfersForm(language: "fr", tabsClosing: 1, transferring: 0))
+        let two = Self.wordingIgnoringDigits(
+            Self.resolvedActiveTransfersForm(language: "fr", tabsClosing: 2, transferring: 0))
+        #expect(zero == one, "0 should read like 1 in French, got 0=\(zero ?? "nil") 1=\(one ?? "nil")")
+        #expect(one != two, "1 and 2 should differ in French")
+    }
+
+    @Test
+    func activeTransfersResolvesThroughTheProductionLookupPath() {
+        let format = L10n.string(Self.activeTransfersKey, Self.activeTransfersDefault)
+        let one = String(format: format, 1, 3)
+        let two = String(format: format, 2, 3)
+        #expect(
+            Self.wordingIgnoringDigits(one) != Self.wordingIgnoringDigits(two),
+            "did not distinguish 1 from 2 tabs closing through L10n.string + String(format:): \(one)")
+    }
+
+    /// Same structural backstop as `stringsdictDeclaresThePluralRuleType`,
+    /// but for the `tabs` variable (not `count`) that
+    /// `tabs.closeOthers.activeTransfers %1$lld %2$lld` uses.
+    @Test(arguments: PluralCatalogTests.languages)
+    func stringsdictDeclaresThePluralRuleTypeForActiveTransfers(language: String) {
+        guard let languageBundle = Self.bundle(forLanguage: language),
+            let url = languageBundle.url(forResource: "Localizable", withExtension: "stringsdict"),
+            let data = try? Data(contentsOf: url),
+            let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+            let rule = plist[Self.activeTransfersKey] as? [String: Any],
+            let tabsRule = rule["tabs"] as? [String: Any]
+        else {
+            Issue.record("\(language) stringsdict is missing a tabs rule for \(Self.activeTransfersKey)")
+            return
+        }
+        #expect(tabsRule["NSStringFormatSpecTypeKey"] as? String == "NSStringPluralRuleType")
+        if language == "pl" {
+            #expect(tabsRule["one"] != nil && tabsRule["few"] != nil && tabsRule["many"] != nil)
+        } else {
+            #expect(tabsRule["one"] != nil && tabsRule["other"] != nil)
         }
     }
 }

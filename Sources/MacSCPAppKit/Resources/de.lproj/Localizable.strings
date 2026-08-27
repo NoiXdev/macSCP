@@ -392,8 +392,8 @@
 "tabs.close.incomingTransfers" = "Andere Tabs übertragen gerade zu dieser Session; Schließen bricht diese Übertragungen ab.";
 
 /* Schließen-Warnung: mehrere Tabs auf einmal schließen */
-"tabs.closeOthers.activeTransfers" = "Beim Schließen von %1$d Tabs werden laufende Übertragungen in %2$d von ihnen abgebrochen.";
-"tabs.closeOthers.incomingTransfers" = "%d davon empfangen Übertragungen aus anderen Tabs; das Schließen bricht diese ab.";
+"tabs.closeOthers.activeTransfers %1$lld %2$lld" = "Beim Schließen von %1$lld Tabs werden laufende Übertragungen in %2$lld von ihnen abgebrochen.";
+"tabs.closeOthers.incomingTransfers %lld" = "%lld davon empfangen Übertragungen aus anderen Tabs; das Schließen bricht diese ab.";
 
 /* Sitzungs-Export/Import — Sidebar-Menüs (M9a/T3) */
 "export.menu.single" = "Exportieren…";

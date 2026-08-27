@@ -395,8 +395,8 @@
 "tabs.close.incomingTransfers" = "D'autres onglets transfèrent des données vers cette session ; la fermeture annule ces transferts.";
 
 /* Avertissement de fermeture : fermeture groupée de plusieurs onglets */
-"tabs.closeOthers.activeTransfers" = "La fermeture de %1$d onglets annule les transferts actifs dans %2$d d'entre eux.";
-"tabs.closeOthers.incomingTransfers" = "%d d'entre eux reçoivent des transferts d'autres onglets ; la fermeture annule ces transferts.";
+"tabs.closeOthers.activeTransfers %1$lld %2$lld" = "La fermeture de %1$lld onglets annule les transferts actifs dans %2$lld d'entre eux.";
+"tabs.closeOthers.incomingTransfers %lld" = "%lld d'entre eux reçoivent des transferts d'autres onglets ; la fermeture annule ces transferts.";
 
 /* Export/import de sessions — menus de la barre latérale (M9a/T3) */
 "export.menu.single" = "Exporter…";

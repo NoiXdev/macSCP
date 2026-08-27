@@ -394,8 +394,8 @@
 "tabs.close.incomingTransfers" = "Inne karty przesyłają dane do tej sesji; zamknięcie anuluje te transfery.";
 
 /* Ostrzeżenie przy zamykaniu: zbiorcze zamykanie kilku kart naraz */
-"tabs.closeOthers.activeTransfers" = "Zamknięcie %1$d kart anuluje aktywne transfery w %2$d z nich.";
-"tabs.closeOthers.incomingTransfers" = "%d z nich odbiera transfery z innych kart; zamknięcie anuluje te transfery.";
+"tabs.closeOthers.activeTransfers %1$lld %2$lld" = "%1$lld karty zostaną zamknięte, co anuluje aktywne transfery w %2$lld z nich.";
+"tabs.closeOthers.incomingTransfers %lld" = "%lld karty odbierają transfery z innych kart; zamknięcie anuluje te transfery.";
 
 /* Eksport/import sesji — menu paska bocznego (M9a/T3) */
 "export.menu.single" = "Eksportuj…";

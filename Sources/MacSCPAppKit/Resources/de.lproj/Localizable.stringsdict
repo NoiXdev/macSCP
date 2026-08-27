@@ -34,5 +34,37 @@
             <string>%lld Logins werden in die Datei geschrieben.</string>
         </dict>
     </dict>
+    <key>tabs.closeOthers.activeTransfers %1$lld %2$lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%1$#@tabs@</string>
+        <key>tabs</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>Beim Schließen von %1$lld Tab wird die laufende Übertragung in %2$lld von ihnen abgebrochen.</string>
+            <key>other</key>
+            <string>Beim Schließen von %1$lld Tabs werden laufende Übertragungen in %2$lld von ihnen abgebrochen.</string>
+        </dict>
+    </dict>
+    <key>tabs.closeOthers.incomingTransfers %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld davon empfängt eine Übertragung von einem anderen Tab; das Schließen bricht sie ab.</string>
+            <key>other</key>
+            <string>%lld davon empfangen Übertragungen von anderen Tabs; das Schließen bricht diese ab.</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

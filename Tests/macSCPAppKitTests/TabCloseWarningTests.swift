@@ -52,11 +52,18 @@ struct TabCloseWarningTests {
         #expect(lines.last.map(String.init) == incomingLine)
     }
 
+    /// Checks the two counts land in the roles they belong to, not merely
+    /// that both digits appear somewhere: `tabsClosing` names how many tabs
+    /// are closing, `transferring` names how many of those are the ones
+    /// with active transfers. A digit-presence-only check (`contains("4")`,
+    /// `contains("2")`) stays green even if the two `String(format:)`
+    /// arguments were swapped, since both digits would still appear — just
+    /// attached to the wrong noun.
     @Test func theBulkMessageNamesHowManyTabsAreTransferring() {
         let text = TabCloseWarning.bulkMessage(
             tabsClosing: 4, transferring: 2, incoming: 0)
-        #expect(text.contains("4"))
-        #expect(text.contains("2"))
+        #expect(text.contains("4 tabs"))
+        #expect(text.contains("2 of them"))
     }
 
     @Test func theBulkMessageIsEmptyWhenNothingIsTransferring() {

@@ -52,20 +52,28 @@ enum TabCloseWarning {
     /// One question and one answer: declining cancels the whole operation
     /// rather than sparing the transferring tabs, because closing the quiet
     /// half would be a third behaviour nobody asked for.
+    ///
+    /// Both lines carry real plural forms via `Localizable.stringsdict`
+    /// (the mechanism `snippets.export.confirm.message %lld` and
+    /// `logins.export.summary %lld` already use — see `PluralCatalogTests`),
+    /// not a hand-rolled one/other split: Polish needs a third `few`
+    /// category these two counts don't get for free from plain `%d`. The
+    /// `%lld` specifiers (rather than `%d`) match the `NSStringFormatValueTypeKey`
+    /// the precedent's `.stringsdict` entries declare.
     static func bulkMessage(tabsClosing: Int, transferring: Int, incoming: Int) -> String {
         var lines: [String] = []
         if transferring > 0 {
             lines.append(String(
                 format: L10n.string(
-                    "tabs.closeOthers.activeTransfers",
-                    "Closing %1$d tabs cancels active transfers in %2$d of them."),
+                    "tabs.closeOthers.activeTransfers %1$lld %2$lld",
+                    "Closing %1$lld tabs cancels active transfers in %2$lld of them."),
                 tabsClosing, transferring))
         }
         if incoming > 0 {
             lines.append(String(
                 format: L10n.string(
-                    "tabs.closeOthers.incomingTransfers",
-                    "%d of them are receiving transfers from other tabs; closing cancels those."),
+                    "tabs.closeOthers.incomingTransfers %lld",
+                    "%lld of them are receiving transfers from other tabs; closing cancels those."),
                 incoming))
         }
         return lines.joined(separator: "\n")
