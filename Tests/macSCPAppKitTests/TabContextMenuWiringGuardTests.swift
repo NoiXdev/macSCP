@@ -12,9 +12,14 @@ import Testing
 /// The view no longer asks that function itself (drag task, fix round 3).
 /// Two of its five facts are positional, and a position that reaches a
 /// view is a position that can be shifted inside it — so the question is
-/// asked where the model is, and the strip is handed the answer. That
-/// removed a violation site rather than a check: **V7 below no longer
-/// exists**, because the view supplies no facts to fold a rule into.
+/// asked where the model is, and the strip is handed the answer.
+///
+/// That moved two violation sites rather than removing them, which round 3
+/// recorded as a removal and round 4 put right: **V7 travelled with the
+/// call** into `ContentView.tabMenuEntries(for:)`, and **V2 gained a second
+/// home** at the closure that hands the answer over. Both are guarded
+/// where they now live, so this suite reads three files — the strip, the
+/// place the decision is asked, and the place its answer is handed on.
 ///
 /// Why a guard at all: `TabContextMenuTests` proves what the decision
 /// FUNCTION answers, and it stays green whether or not anything calls it.
@@ -31,7 +36,8 @@ import Testing
 ///   `guard`, `else`, a ternary), so an entry Core returned is not drawn.
 /// - **V2** A transformation of the returned list before it is iterated
 ///   (`filter`, `prefix`, `dropFirst`, `contains`), so the value is
-///   consulted and then overruled.
+///   consulted and then overruled. Writable in two places now: inside the
+///   menu closure, and in the closure that hands the answer to the strip.
 /// - **V3** `.disabled(…)`/`.hidden(…)` on a drawn item — a greyed-out
 ///   entry is a visibility decision under another name, and the design
 ///   rejects greyed-out entries outright ("no greyed entry, no error — the
@@ -43,13 +49,13 @@ import Testing
 /// - **V6** The iteration source swapped out — the loop walks a
 ///   hand-written array while a `TabContextMenu.entries` call sits nearby
 ///   looking like it is still in charge.
-/// - **V7** *(no longer possible in this file)* An extra rule folded into
-///   the ARGUMENTS of the decision — `isConnected: tab.isConnected && …`,
-///   or a count that is not the strip's real count. The view has no
-///   arguments to fold anything into any more. The three non-positional
-///   facts moved with the call, into `ContentView.tabMenuEntries(for:)`,
-///   and are not guarded there: same boundary as this suite's last limit
-///   below, one file further along.
+/// - **V7** An extra rule folded into the ARGUMENTS of the decision —
+///   `isConnected: tab.isConnected && …` — or a fact asserted instead of
+///   read. Not possible in the view any more, which supplies no facts; it
+///   travelled with the call into `ContentView.tabMenuEntries(for:)` and is
+///   guarded there, on that function's whole body, because a positional
+///   fact can be rewritten in the `guard` that produces it as easily as in
+///   the call that uses it.
 ///
 /// **Deliberately NOT guarded here**, so a green run is not read as more
 /// than it is:
@@ -66,9 +72,9 @@ import Testing
 /// claim narrowed, because chasing each hole with another anchor buys a
 /// longer blocklist and no property.
 ///
-/// The list above says where the property can be violated FROM. What the
-/// checks actually recognize is narrower, in three specific ways, and a
-/// green run means only this much:
+/// The list of violation sites says where the property can be violated
+/// FROM. What the checks actually recognize is narrower, in the two
+/// specific ways set out here, and a green run means only this much:
 ///
 /// - **V2 and V3 are a name blocklist, not a rule.** `forbiddenTokens`
 ///   names the spellings that were in front of us. A narrowing or
@@ -77,17 +83,24 @@ import Testing
 ///   makes an item unclickable, `.opacity(0)` makes it invisible. None is
 ///   on the list, and none can be, without the list becoming an
 ///   ever-growing catalogue of SwiftUI's surface.
-/// - **It reads one file.** The facts come from `SessionTab` and are
-///   assembled in `ContentView.tabMenuEntries(for:)`; neither is scanned.
-///   A doctored `isConnected`, or a rule folded in where the facts are
-///   read, changes which entries appear with nothing in this suite to
-///   notice. That is where V7 went: not closed, moved and declared.
+/// - **It reads three files**, and reads them as text: the strip,
+///   `ContentView+Lifecycle.swift` where the decision is asked, and
+///   `ContentView+Detail.swift` where its answer is handed over. (Round 3
+///   claimed one file here and had already written a check against the
+///   second; the undercount is what argued the V7 checks away, so it is
+///   corrected rather than trimmed.) What it does not read is where the
+///   facts come FROM — `SessionTab.isConnected`, `activeStoredSessionID`,
+///   the capabilities `BackendDescriptor` answers. A fact that lies at its
+///   source is handed on faithfully by everything scanned here and changes
+///   which entries appear with nothing in this suite to notice.
 ///
 /// So: this catches a condition, a filter, a `.disabled`, an extra item, a
-/// second menu, and a swapped iteration source, all under the names they
-/// are usually written with. It does not prove the menu shows what Core
-/// decided — only that the view draws what it was handed and does not
-/// visibly argue.
+/// second menu, a swapped iteration source, an answer narrowed on its way
+/// to the strip, and a rule folded into the facts the decision is asked
+/// with — all under the names they are usually written with. It does not
+/// prove the menu shows what Core decided — only that the view draws what
+/// it was handed, that what it was handed is what Core answered, and that
+/// Core was asked with the facts as they stand.
 ///
 /// Same boundary as the other wiring guards: a source-text scan aimed at
 /// the accidental regression (a "simplification" that reintroduces a
@@ -99,9 +112,9 @@ import Testing
 ///
 /// Fail-closed throughout: an unreadable file, a missing anchor, unbalanced
 /// braces, and an unterminated string or comment all count as failures.
-/// Self-tested against synthetic source — a probe for every violation
-/// site named here, and two for V4, whose extra item can be drawn either
-/// ahead of the loop or after it — so the scanner cannot pass merely
+/// Self-tested against synthetic source — a probe for every violation site
+/// named here, and two each for V2, V4 and V7, the sites that can be
+/// written in two places or two shapes — so the scanner cannot pass merely
 /// because the real file moved or was reformatted past recognition.
 @Suite("Tab context menu wiring guard")
 struct TabContextMenuWiringGuardTests {
@@ -121,8 +134,41 @@ struct TabContextMenuWiringGuardTests {
     private static let handlerFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Lifecycle.swift")
 
+    /// Where the answer is handed to the strip, and where the drag's own
+    /// route out is wired to the model.
+    private static let wiringFile = repoRoot
+        .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Detail.swift")
+
     private static let anchor = ".contextMenu {"
     private static let decisionCall = "TabContextMenu.entries("
+
+    /// The closure that hands the strip its answer.
+    private static let handOverAnchor = "menuEntries: {"
+
+    /// The one sanctioned shape of that hand-over: the question is asked
+    /// and the answer travels on untouched.
+    private static let sanctionedHandOver = "tabMenuEntries(for:$0)"
+
+    /// Where the decision is asked, with the facts it is asked with.
+    private static let decisionAnchor =
+        "func tabMenuEntries(for tab: SessionTab) -> [TabMenuEntry] {"
+
+    /// The one sanctioned shape of asking it: every fact read off the model
+    /// or off the tab in the same expression that hands it over, and
+    /// nothing folded into any of them. Compared as a whole body rather
+    /// than fact by fact, because a fact can also be substituted before the
+    /// call as easily as inside it.
+    private static let sanctionedDecisionBody = """
+        guard let index = tabsModel.tabs.firstIndex(where: { $0.id == tab.id }) else { return [] }
+        let capabilities = BackendDescriptor
+            .descriptor(for: tab.connectionViewModel.kind).capabilities
+        return TabContextMenu.entries(
+            atIndex: index,
+            ofTabCount: tabsModel.tabs.count,
+            supportsShell: capabilities.supportsShell,
+            isAdHoc: tab.activeStoredSessionID == nil,
+            isConnected: tab.isConnected)
+        """
 
     /// The one sanctioned shape of the iteration: the loop's collection IS
     /// the answer the strip was handed, with nothing between them but the
@@ -187,6 +233,65 @@ struct TabContextMenuWiringGuardTests {
     /// token scan reads, so `if` and `iffy` stay distinguishable.
     private static func stripped(_ source: String) throws -> String {
         try stripCommentsAndStrings(source)
+    }
+
+    /// The body of the closure or function `anchor` opens — everything
+    /// between its first `{` and the matching `}`, by plain brace counting.
+    /// `nil` on a missing anchor or unbalanced braces rather than a guess,
+    /// so every caller fails closed. Shared with the drag suite, which
+    /// needs the same extraction for the gesture's own closures.
+    private static func body(after anchor: String, in source: String) -> String? {
+        guard let anchorRange = source.range(of: anchor) else { return nil }
+        var index = anchorRange.lowerBound
+        var depth = 0
+        var bodyStart: String.Index?
+        while index < source.endIndex {
+            let char = source[index]
+            if char == "{" {
+                depth += 1
+                if depth == 1 { bodyStart = source.index(after: index) }
+            }
+            if char == "}" {
+                depth -= 1
+                if depth == 0, let start = bodyStart { return String(source[start..<index]) }
+                if depth < 0 { return nil }
+            }
+            index = source.index(after: index)
+        }
+        return nil
+    }
+
+    /// One brace-balanced body, canonicalized, from source that has already
+    /// had its comments and strings removed — so an anchor spelled inside a
+    /// comment cannot misdirect the extraction.
+    ///
+    /// Unwrapped with `#require`: a missing anchor and unbalanced braces
+    /// both leave nothing to compare, and letting that surface as a failed
+    /// equality would name the wrong cause. `what` is what the message
+    /// calls the source, so a probe and a real file read the same way.
+    private static func canonicalBody(
+        after anchor: String, in source: String, describing what: String,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) throws -> String {
+        let body = try #require(
+            Self.body(after: anchor, in: try Self.stripped(source)),
+            """
+            no `\(anchor)` body could be extracted from \(what) — the anchor is \
+            missing or its braces are unbalanced, so the scanner has nothing to \
+            check. If the code was legitimately rewritten, re-anchor this guard on \
+            its new form; if it was removed, say what took its place.
+            """,
+            sourceLocation: sourceLocation)
+        return body.filter { !$0.isWhitespace }
+    }
+
+    private static func canonicalBody(
+        after anchor: String, inFileAt url: URL,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) throws -> String {
+        try canonicalBody(
+            after: anchor, in: String(contentsOf: url, encoding: .utf8),
+            describing: url.path, sourceLocation: sourceLocation)
     }
 
     /// Comments and string literals removed AND all whitespace collapsed
@@ -320,6 +425,52 @@ struct TabContextMenuWiringGuardTests {
                 instead, where its rule can be tested.
                 """)
         }
+    }
+
+    /// V2, one file along from the loop it used to have to be written in.
+    /// The strip iterates what it was handed, so the place a narrowing now
+    /// fits is the hand-over: `menuEntries: { tabMenuEntries(for: $0).filter { … } }`
+    /// consults the decision and then overrules it, with every character
+    /// this suite reads in the strip unchanged. The closure asks the
+    /// question and passes the answer on; that is its whole content.
+    @Test func theStripIsHandedTheAnswerUnnarrowed() throws {
+        let body = try Self.canonicalBody(
+            after: Self.handOverAnchor, inFileAt: Self.wiringFile)
+        #expect(body == Self.sanctionedHandOver, """
+            the `\(Self.handOverAnchor)` closure in \(Self.wiringFile.path) is \
+            `\(body)`, not `\(Self.sanctionedHandOver)` — the answer is being changed \
+            on its way to the strip, and which entries appear is \
+            `TabContextMenu.entries(…)`'s decision, tested in Core. If the hand-over \
+            legitimately changed shape, update `sanctionedHandOver` in this guard and \
+            add a probe for the shape it now has.
+            """)
+    }
+
+    /// V7, where it now lives. The view has no facts to supply any more,
+    /// but the function that supplies them instead can fold a rule into an
+    /// argument (`isConnected: tab.isConnected && …`) or hand over a
+    /// substituted fact, and either changes which entries appear with
+    /// nothing in the strip to notice.
+    ///
+    /// This suite already reads that file for
+    /// `theViewNeverAsksTheCoreDecisionItself`, so re-anchoring V7 there
+    /// costs one comparison. The whole body is
+    /// compared rather than the argument list alone: a positional fact can
+    /// be rewritten in the `guard` that produces it just as easily as in
+    /// the call that uses it.
+    @Test func theDecisionIsAskedWithTheRealFactsOnly() throws {
+        let body = try Self.canonicalBody(
+            after: Self.decisionAnchor, inFileAt: Self.handlerFile)
+        let sanctioned = try Self.canonicalize(Self.sanctionedDecisionBody)
+        #expect(body == sanctioned, """
+            the body of `\(Self.decisionAnchor)` in \(Self.handlerFile.path) is \
+            `\(body)`, not `\(sanctioned)` — a fact the decision is asked with has \
+            been rewritten, or a rule has been folded into one of them. Every rule \
+            about which entries exist belongs in `TabContextMenu.entries`, where \
+            `TabContextMenuTests` reaches it. If this function legitimately changed \
+            shape, update `sanctionedDecisionBody` in this guard and add a probe for \
+            the shape it now has.
+            """)
     }
 
     /// V1, V2, V3: no branch, no narrowing of the list, no item suppressed
@@ -457,6 +608,61 @@ struct TabContextMenuWiringGuardTests {
         let menu = try Self.menu(in: source)
         #expect(!menu.canonical.hasPrefix(Self.sanctionedIteration))
         #expect(Self.occurrences(of: "menuEntries(", in: menu.canonical) == 0)
+    }
+
+    /// V2 at the hand-over: the answer narrowed on its way to the strip.
+    /// The accepting half comes first, or the flagging half proves nothing.
+    @Test func scannerFlagsANarrowedAnswer() throws {
+        let sanctioned = try Self.canonicalBody(
+            after: Self.handOverAnchor,
+            in: "menuEntries: { tabMenuEntries(for: $0) },", describing: "a probe")
+        #expect(sanctioned == Self.sanctionedHandOver)
+        let narrowed = try Self.canonicalBody(
+            after: Self.handOverAnchor,
+            in: "menuEntries: { tabMenuEntries(for: $0).filter { $0 != .close } },",
+            describing: "a probe")
+        #expect(narrowed != Self.sanctionedHandOver)
+    }
+
+    /// V7: a rule folded into one of the decision's arguments. The fact is
+    /// still read off the tab, and then something is `&&`-ed onto it.
+    @Test func scannerFlagsARuleFoldedIntoAnArgument() throws {
+        let sanctioned = try Self.canonicalize(Self.sanctionedDecisionBody)
+        let accepted = try Self.canonicalBody(
+            after: Self.decisionAnchor,
+            in: "\(Self.decisionAnchor)\n\(Self.sanctionedDecisionBody)\n}",
+            describing: "a probe")
+        #expect(accepted == sanctioned)
+        let folded = try Self.canonicalBody(
+            after: Self.decisionAnchor,
+            in: """
+                \(Self.decisionAnchor)
+                \(Self.sanctionedDecisionBody
+                    .replacingOccurrences(
+                        of: "isConnected: tab.isConnected)",
+                        with: "isConnected: tab.isConnected && !tab.transferQueue.isActive)"))
+                }
+                """,
+            describing: "a probe")
+        #expect(folded != sanctioned)
+    }
+
+    /// V7's other half: the fact is not read at all, it is asserted. Same
+    /// effect on which entries appear, no operator to notice.
+    @Test func scannerFlagsASubstitutedFact() throws {
+        let sanctioned = try Self.canonicalize(Self.sanctionedDecisionBody)
+        let substituted = try Self.canonicalBody(
+            after: Self.decisionAnchor,
+            in: """
+                \(Self.decisionAnchor)
+                \(Self.sanctionedDecisionBody
+                    .replacingOccurrences(
+                        of: "supportsShell: capabilities.supportsShell,",
+                        with: "supportsShell: true,"))
+                }
+                """,
+            describing: "a probe")
+        #expect(substituted != sanctioned)
     }
 
     /// V5, at the file level: two attachments, so "the menu" is no longer a
@@ -745,13 +951,14 @@ struct TabContextMenuWiringGuardTests {
     /// deliberately little: **the tab carries its own id, and the drop
     /// hands that id and the tab it landed on to the one reordering rule.**
     ///
-    /// **Why this suite is a third of its previous size.** Three rounds of
-    /// review each got a violation past it, and each violation was the same
-    /// animal: a source scan compares text at one place, while the meaning
-    /// of that text is set by its surroundings — a shadowed name before it,
-    /// an initializer behind it, a helper beside it. Answering each spelling
-    /// bought one more anchor and revealed the next. The property was never
-    /// expressible as a scan.
+    /// **Why this suite is under half its previous size.** Three rounds of
+    /// review each got a violation past the scanning suite that preceded
+    /// this one, and each violation was the same animal: a source scan
+    /// compares text at one place, while the meaning of that text is set by
+    /// its surroundings — a shadowed name before it, an initializer behind
+    /// it, a helper beside it. Answering each spelling bought one more
+    /// anchor and revealed the next. The property was never expressible as
+    /// a scan.
     ///
     /// So the code changed instead. The drop used to report a POSITION,
     /// computed in the view out of `Array.enumerated()`, and a position is
@@ -764,6 +971,19 @@ struct TabContextMenuWiringGuardTests {
     /// checks that watched for it were deleted rather than kept "just in
     /// case" — a guard standing beside a structural guarantee makes the
     /// next reader trust this suite for more than it does.
+    ///
+    /// **Where that reasoning was stretched too far, and had to be taken
+    /// back.** "What the type carries needs no guard" holds for the
+    /// position. It does not hold for the two closures the identities
+    /// travel through, and round 3 deleted the checks on both. A closure of
+    /// the right type can call the real route with a tab of its own
+    /// choosing (`onReorder: { id, _ in onReorder(id, tabs[0]) }` sends
+    /// every drop to the same tab) or do nothing at all (`onReorder: { _, _ in }`
+    /// makes dragging inert), and neither shows up as a compiler error, in
+    /// the drop's own body, or in either value's type. Both checks are
+    /// back, on the hand-over and on the wiring — an identity can be
+    /// substituted as quietly as a number, it just needs a different
+    /// expression to do it in.
     ///
     /// **What is impossible now, and therefore not checked**, with the
     /// shape each one used to be watched by:
@@ -794,21 +1014,27 @@ struct TabContextMenuWiringGuardTests {
     ///   derived from the model by identity. It is a rendering defect, and
     ///   no test in this project can see what is rendered. Three attempts
     ///   to catch this by scanning produced three passing evasions.
-    /// - **The wiring closure could call the rule with the ids inverted.**
-    ///   `move(tabID: target.id, onto: draggedID)` compiles. It is one
-    ///   visible call site with two labels, not a silent change behind an
-    ///   intact anchor.
+    /// - **A second `TabStripView(…)` in the app layer.** Nothing here
+    ///   counts the constructions, and no type forbids a second one, which
+    ///   would be a second strip wired by whatever its own call site says.
     /// - **Whether the gesture works at all.** No test here can see SwiftUI
     ///   begin a drag, accept a drop, or place a tab under the pointer.
     ///   That is a maintainer check in the running app.
     /// - **What `TabsViewModel.move(tabID:onto:)` does** is
-    ///   `TabsViewModelTests`' subject, called directly, not scanned.
+    ///   `TabsViewModelTests`' subject, called directly, not scanned —
+    ///   including what it owes for a target on either side at any
+    ///   distance, which is checked there over every ordered pair of a
+    ///   strip rather than at a couple of chosen distances.
     ///
-    /// What remains here are three claims about the gesture's own wiring,
-    /// which no type can carry: that the drag exists exactly once, that it
-    /// carries this tab's id rather than some other string, and that the
-    /// drop hands both identities on rather than doing something else with
-    /// them. Fail-closed: a missing anchor, unbalanced braces, an
+    /// What remains here are five claims about the gesture's own wiring,
+    /// which no type can carry: that the drag and the drop each exist
+    /// exactly once, that the drag carries this tab's id rather than some
+    /// other string, that the drop hands both identities on rather than
+    /// doing something else with them, that the route reaching the item is
+    /// the strip's own and not a closure in front of it, and that the
+    /// wiring closure hands both identities to the one reordering rule.
+    /// Two files are read for that: the strip, and the place the route is
+    /// wired. Fail-closed: a missing anchor, unbalanced braces, an
     /// unterminated literal or an unreadable file all fail, and every
     /// message names the file, the construct and what to do about it.
     @Suite("Tab drag wiring guard")
@@ -832,6 +1058,34 @@ struct TabContextMenuWiringGuardTests {
         /// does not contain it.
         private static let sanctionedRoute = "onReorder(draggedID,tab)"
 
+        /// The strip handing the route to the item, up to and including the
+        /// closing parenthesis of the construction — so a route wrapped in
+        /// a closure, or merely renamed, does not contain it.
+        private static let sanctionedRouteHandOver = "onReorder:onReorder)"
+
+        /// The route as a stored property, with its type: one on the strip,
+        /// one on the item. A computed property, or a local of another
+        /// shape, does not match this.
+        private static let sanctionedRouteProperty = "letonReorder:(UUID,SessionTab)->Void"
+
+        /// Any binding of the name at all, whatever its shape — the count
+        /// that notices a third one the two text anchors would not.
+        private static let anyRouteBinding = "letonReorder"
+
+        /// Where the route is wired to the model.
+        private static let wiringFile = TabContextMenuWiringGuardTests.wiringFile
+
+        private static let wiringAnchor = "onReorder: {"
+
+        /// The one sanctioned shape of that wiring: both identities handed
+        /// to the one reordering rule, in the order its labels name, and
+        /// nothing else done with them.
+        private static let sanctionedWiringSource = """
+            onReorder: { draggedID, target in
+                tabsModel.move(tabID: draggedID, onto: target.id)
+            }
+            """
+
         /// Routes out of the tab item that are not the reorder route. A
         /// drop that fires one of these is doing something it was not asked
         /// for.
@@ -842,26 +1096,10 @@ struct TabContextMenuWiringGuardTests {
         /// The body of the closure `anchor` opens — everything between its
         /// first `{` and the matching `}`. `nil` on a missing anchor or
         /// unbalanced braces rather than a guess, so every caller fails
-        /// closed.
+        /// closed. One implementation, shared with the menu half, which
+        /// needs the same extraction for the hand-over and the decision.
         static func body(after anchor: String, in source: String) -> String? {
-            guard let anchorRange = source.range(of: anchor) else { return nil }
-            var index = anchorRange.lowerBound
-            var depth = 0
-            var bodyStart: String.Index?
-            while index < source.endIndex {
-                let char = source[index]
-                if char == "{" {
-                    depth += 1
-                    if depth == 1 { bodyStart = source.index(after: index) }
-                }
-                if char == "}" {
-                    depth -= 1
-                    if depth == 0, let start = bodyStart { return String(source[start..<index]) }
-                    if depth < 0 { return nil }
-                }
-                index = source.index(after: index)
-            }
-            return nil
+            TabContextMenuWiringGuardTests.body(after: anchor, in: source)
         }
 
         /// The drop closure's body in canonical form. `#require` on the
@@ -893,7 +1131,7 @@ struct TabContextMenuWiringGuardTests {
             TabContextMenuWiringGuardTests.occurrences(of: needle, in: haystack)
         }
 
-        // MARK: - The three remaining claims
+        // MARK: - The five remaining claims
 
         /// One drag source, one drop target. A second of either is a second
         /// gesture path, and would also make "the drop closure" ambiguous
@@ -955,6 +1193,86 @@ struct TabContextMenuWiringGuardTests {
                     the lifecycle lives, not inside the gesture.
                     """)
             }
+        }
+
+        /// The route the drop hands its two identities to must be the one
+        /// the strip was given, not a closure standing in front of it.
+        ///
+        /// This is the half a type cannot carry, and the reason it is back:
+        /// the identities are safe from arithmetic, but the route that
+        /// carries them is a closure, and a closure can be replaced by one
+        /// that calls the real route with a tab of its own choosing.
+        /// `onReorder: { id, _ in onReorder(id, tabs[0]) }` sends every drop
+        /// to the same tab; the drop's own body, the drag's payload and
+        /// both value types are untouched, so nothing else here notices.
+        ///
+        /// Two anchors and a count, because each covers what the others
+        /// miss: the hand-over must be the bare name (a wrapper is not it),
+        /// the name must be a stored property of the route's type on both
+        /// views (a computed one could wrap without changing the
+        /// hand-over), and no third binding of the name may exist (a local
+        /// of any shape could shadow it before the hand-over reads it).
+        ///
+        /// Counted while writing this check: the strip file binds
+        /// `onReorder` twice — once as `TabStripView`'s property, once as
+        /// the item's — and hands it over once.
+        @Test func theReorderRouteReachesTheItemUnwrapped() throws {
+            let canonical = try Self.canonicalStrip()
+            let handOvers = Self.occurrences(of: Self.sanctionedRouteHandOver, in: canonical)
+            #expect(handOvers == 1, """
+                expected exactly 1 `\(Self.sanctionedRouteHandOver)` in \
+                \(Self.stripFile.path), found \(handOvers) — the item is not being \
+                handed the strip's own route. A closure in between can call it with a \
+                different tab, which moves every drop to the same place without \
+                changing the drop, the payload or either type. If the construction \
+                legitimately gained an argument after this one, update \
+                `sanctionedRouteHandOver` in this guard.
+                """)
+            let properties = Self.occurrences(of: Self.sanctionedRouteProperty, in: canonical)
+            #expect(properties == 2, """
+                expected exactly 2 `\(Self.sanctionedRouteProperty)` in \
+                \(Self.stripFile.path), found \(properties) — the route is a stored \
+                property on the strip and on the item, and a computed one could wrap \
+                it while the hand-over above still reads correctly. If the route's \
+                type legitimately changed, update `sanctionedRouteProperty` in this \
+                guard.
+                """)
+            let bindings = Self.occurrences(of: Self.anyRouteBinding, in: canonical)
+            #expect(bindings == 2, """
+                expected exactly 2 `\(Self.anyRouteBinding)` in \(Self.stripFile.path), \
+                found \(bindings) — a third binding of that name can shadow the route \
+                before the hand-over reads it. If another `onReorder` is intended, say \
+                what it carries and extend this guard to it.
+                """)
+        }
+
+        /// What the route is wired to at the other end. The strip hands two
+        /// identities out; this is the one place that decides what happens
+        /// to them, and `onReorder: { _, _ in }` makes dragging do nothing
+        /// at all without a compiler error, a red test, or a character
+        /// changing in the strip.
+        ///
+        /// Compared as a whole body: an inverted pair of labels, an extra
+        /// statement and an empty closure are all the same defect at this
+        /// site, and only equality sees all three.
+        @Test func theWiringClosureCallsTheOneRuleAndNothingElse() throws {
+            let wired = try TabContextMenuWiringGuardTests.canonicalBody(
+                after: Self.wiringAnchor, inFileAt: Self.wiringFile)
+            let sanctioned = try Self.sanctionedWiringBody()
+            #expect(wired == sanctioned, """
+                the `\(Self.wiringAnchor)` closure in \(Self.wiringFile.path) is \
+                `\(wired)`, not `\(sanctioned)` — a drop reaches the model only \
+                through this closure, so anything else written here silently changes \
+                or cancels every drag. If the wiring legitimately changed shape, \
+                update `sanctionedWiringSource` in this guard and add a probe for the \
+                shape it now has.
+                """)
+        }
+
+        static func sanctionedWiringBody() throws -> String {
+            try TabContextMenuWiringGuardTests.canonicalBody(
+                after: Self.wiringAnchor, in: Self.sanctionedWiringSource,
+                describing: "this guard's own sanctioned wiring")
         }
 
         // MARK: - Scanner self-tests
@@ -1023,6 +1341,50 @@ struct TabContextMenuWiringGuardTests {
                 """)
             #expect(!body.contains(Self.sanctionedPayloadRead))
             #expect(Self.occurrences(of: Self.sanctionedRoute, in: body) == 1)
+        }
+
+        /// The route wrapped in a closure that supplies a tab of its own —
+        /// the shape the hand-over anchor exists for.
+        @Test func scannerFlagsAWrappedReorderRoute() throws {
+            let sanctioned = try TabContextMenuWiringGuardTests
+                .canonicalize("TabItemView(tab: tab, onReorder: onReorder)")
+            #expect(Self.occurrences(of: Self.sanctionedRouteHandOver, in: sanctioned) == 1)
+            let wrapped = try TabContextMenuWiringGuardTests
+                .canonicalize("TabItemView(tab: tab, onReorder: { id, _ in onReorder(id, tabs[0]) })")
+            #expect(Self.occurrences(of: Self.sanctionedRouteHandOver, in: wrapped) == 0)
+        }
+
+        /// The route rebound behind a local of another shape before the
+        /// hand-over reads it: the hand-over still spells the bare name and
+        /// the typed properties are still both there, so the count of
+        /// bindings is the half that notices.
+        @Test func scannerCountsARouteReboundBeforeTheHandOver() throws {
+            let canonical = try TabContextMenuWiringGuardTests.canonicalize("""
+                let onReorder = { (id: UUID, _: SessionTab) in onReorder(id, tabs[0]) }
+                TabItemView(tab: tab, onReorder: onReorder)
+                """)
+            #expect(Self.occurrences(of: Self.sanctionedRouteHandOver, in: canonical) == 1)
+            #expect(Self.occurrences(of: Self.sanctionedRouteProperty, in: canonical) == 0)
+            #expect(Self.occurrences(of: Self.anyRouteBinding, in: canonical) == 1)
+        }
+
+        /// The wiring closure accepted in its sanctioned shape, and flagged
+        /// in the two shapes that cost nothing to write: doing nothing at
+        /// all, and calling the rule with the two identities inverted.
+        @Test func scannerFlagsAWiringClosureThatDoesNotDoTheOneThing() throws {
+            let sanctioned = try Self.sanctionedWiringBody()
+            let inert = try TabContextMenuWiringGuardTests.canonicalBody(
+                after: Self.wiringAnchor, in: "onReorder: { _, _ in }", describing: "a probe")
+            #expect(inert != sanctioned)
+            let inverted = try TabContextMenuWiringGuardTests.canonicalBody(
+                after: Self.wiringAnchor,
+                in: """
+                    onReorder: { draggedID, target in
+                        tabsModel.move(tabID: target.id, onto: draggedID)
+                    }
+                    """,
+                describing: "a probe")
+            #expect(inverted != sanctioned)
         }
 
         /// The route anchor is a complete call, so a neighbouring value

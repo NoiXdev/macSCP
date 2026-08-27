@@ -232,6 +232,84 @@ struct TabsViewModelTests {
         #expect(vm.tabs.map(\.id) == [a.id])
     }
 
+    // MARK: - Every relative position a drop can have
+    //
+    // Every other `onto:` test that moves anything at all picks its
+    // target two places away; the rest drop a tab on itself or name an id
+    // the model does not have. That left the commonest drag there is — nudge a
+    // tab one place — with no case of its own, and a derivation that
+    // treated a neighbouring target as nothing to do would have passed all
+    // of them. The four checks here say what the derivation owes for a
+    // target on either side at any distance, so that "the position is
+    // derived from the model" is a claim with values behind it.
+
+    /// The nudge to the right: the dragged tab takes the neighbour's place
+    /// and the neighbour takes the dragged tab's.
+    @Test func movingATabOntoItsRightNeighbourSwapsTheTwo() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID()), c = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b); vm.addTab(c)
+        vm.move(tabID: a.id, onto: b.id)
+        #expect(vm.tabs.map(\.id) == [b.id, a.id, c.id])
+    }
+
+    /// The nudge to the left, which is the same rule read the other way:
+    /// the dragged tab lands on the index its target held, whichever side
+    /// it came from.
+    @Test func movingATabOntoItsLeftNeighbourSwapsTheTwo() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID()), c = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b); vm.addTab(c)
+        vm.move(tabID: c.id, onto: b.id)
+        #expect(vm.tabs.map(\.id) == [a.id, c.id, b.id])
+    }
+
+    /// The longest drag a strip allows, in both directions: onto the tab at
+    /// the far end. The dragged tab becomes the new end and everything it
+    /// passed keeps its order.
+    @Test func movingATabOntoTheOppositeEndTakesThatEndsPosition() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID())
+        let c = StubTab(id: UUID()), d = StubTab(id: UUID())
+        let rightwards = TabsViewModel(initial: a)
+        rightwards.addTab(b); rightwards.addTab(c); rightwards.addTab(d)
+        rightwards.move(tabID: a.id, onto: d.id)
+        #expect(rightwards.tabs.map(\.id) == [b.id, c.id, d.id, a.id])
+        let leftwards = TabsViewModel(initial: a)
+        leftwards.addTab(b); leftwards.addTab(c); leftwards.addTab(d)
+        leftwards.move(tabID: d.id, onto: a.id)
+        #expect(leftwards.tabs.map(\.id) == [d.id, a.id, b.id, c.id])
+    }
+
+    /// Every ordered pair of a five-tab strip — each tab dropped on each
+    /// tab, itself included — against the two things a drop promises,
+    /// stated as values rather than as a rewrite of the implementation:
+    /// the dragged tab ends up at the index its target held, and every
+    /// other tab keeps the order it had.
+    ///
+    /// Together those two say the whole rule for every relative position
+    /// there is: neighbour and distant, either side, and the drop onto
+    /// itself, where the target's index is the dragged tab's own and the
+    /// order therefore cannot change.
+    @Test func everyRelativePositionPutsTheTabWhereItsTargetWas() {
+        let ids = (0..<5).map { _ in UUID() }
+        for draggedIndex in ids.indices {
+            for targetIndex in ids.indices {
+                let vm = TabsViewModel(initial: StubTab(id: ids[0]))
+                for id in ids.dropFirst() { vm.addTab(StubTab(id: id)) }
+                let before = vm.tabs.map(\.id)
+                vm.move(tabID: ids[draggedIndex], onto: ids[targetIndex])
+                let after = vm.tabs.map(\.id)
+                #expect(
+                    after.firstIndex(of: ids[draggedIndex]) == targetIndex,
+                    "dropping tab \(draggedIndex) on tab \(targetIndex) did not land it there")
+                #expect(
+                    after.filter { $0 != ids[draggedIndex] }
+                        == before.filter { $0 != ids[draggedIndex] },
+                    "dropping tab \(draggedIndex) on tab \(targetIndex) disturbed the others")
+            }
+        }
+    }
+
     // MARK: - Bulk close ("others" means all but the CLICKED tab)
 
     /// The rule the design emphasises hardest, and the one a reading of
