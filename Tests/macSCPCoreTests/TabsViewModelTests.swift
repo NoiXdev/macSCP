@@ -140,6 +140,23 @@ struct TabsViewModelTests {
         #expect(vm.tabs.map(\.id) == [a.id, b.id, c.id])
     }
 
+    /// The commonest drag of all: picked up and put back down on itself.
+    /// It arrives here as a move to the tab's own index, and must leave
+    /// both the order and the active tab exactly as they were — including
+    /// when the tab dropped on itself is not the active one.
+    @Test func movingATabOntoItsOwnPositionChangesNothing() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID()), c = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b); vm.addTab(c)
+        vm.activate(c.id)
+        vm.move(tabID: b.id, to: 1)
+        #expect(vm.tabs.map(\.id) == [a.id, b.id, c.id])
+        #expect(vm.activeTabID == c.id)
+        vm.move(tabID: c.id, to: 2)
+        #expect(vm.tabs.map(\.id) == [a.id, b.id, c.id])
+        #expect(vm.activeTabID == c.id)
+    }
+
     @Test func movingAnUnknownTabIsANoOp() {
         let a = StubTab(id: UUID())
         let vm = TabsViewModel(initial: a)

@@ -837,8 +837,8 @@ extension ContentView {
 
     /// A tab dropped onto another tab takes that tab's position — through
     /// the SAME `TabsViewModel.move` the menu's move entries reach via
-    /// `moveTab(_:by:)` above. Dragging is a second way to the rule, never
-    /// a second rule.
+    /// `moveTab(_:by:)`. Dragging is a second way to the rule, never a
+    /// second rule.
     ///
     /// Unlike `moveTab(_:by:)`, this one clamps, and the difference is not
     /// a preference: the menu's offset is computed against the model in the

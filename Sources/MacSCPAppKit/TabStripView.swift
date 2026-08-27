@@ -166,7 +166,7 @@ enum TabIndicatorPlan {
 /// and which position it should land on.
 ///
 /// Pulled out for the same reason as `LivenessDotPlan` and
-/// `TabIndicatorPlan` above — this project has no SwiftUI rendering
+/// `TabIndicatorPlan` — this project has no SwiftUI rendering
 /// harness, so a rule written into a drop closure is a rule nothing can
 /// call. What lands here is decidable from values alone; what cannot be
 /// decided here (does SwiftUI fire the drag, does the tab appear where the
@@ -201,6 +201,16 @@ enum TabDropPlan {
     /// The position a tab dropped ON the tab at `dropIndex` should move to,
     /// clamped into the tabs that exist right now — or `nil` when there are
     /// no tabs at all, which leaves the caller nothing to move onto.
+    ///
+    /// **The two halves of the clamp are not equally reachable, and the
+    /// asymmetry is deliberate.** Only the upper half can be reached from
+    /// the strip: a drop position is an offset out of `Array.enumerated()`,
+    /// so it is never negative, while the tab count it is compared against
+    /// can have shrunk since the strip was drawn. `max(dropIndex, 0)` is
+    /// therefore a totality guard, not a described UI state — this function
+    /// answers over every `Int` because its contract is "an index this
+    /// strip has", and a contract with a hole in it is the kind that gets
+    /// relied on anyway. The tests say the same thing in the same words.
     ///
     /// The clamp is this side's job by design. `move(tabID:to:)` refuses an
     /// out-of-range destination as a no-op rather than clamping it (its own
@@ -339,10 +349,20 @@ private struct TabItemView: View {
         // sidebar's rows already use.
         //
         // Only tabs are drop targets, which is what makes a drop into the
-        // empty space beside the strip leave the order as it was — there is
+        // empty space of the strip leave the order as it was — there is
         // nothing there to drop onto, so no destination is ever computed
-        // for it. Dragging a tab OUT of the window is not offered at all:
-        // multi-window is v2 and a session's state belongs to its window.
+        // for it.
+        //
+        // What a tab dragged OUT of the window can do is bounded rather
+        // than blocked, and the distinction is worth stating: the payload
+        // is a plain string, so the system lets it land wherever text is
+        // accepted, and the Finder will make a clipping carrying the uuid.
+        // No path there opens a window, moves a session, or touches this
+        // strip — which is what "multi-window is v2, and connection state
+        // belongs to its window" actually requires. The reverse direction
+        // is refused for the mirror-image reason: the session sidebar's
+        // drop looks the dropped uuid up among its stored sessions and
+        // finds nothing.
         .draggable(tab.id.uuidString)
         .dropDestination(for: String.self) { payload, _ in
             // Reads the payload and routes; decides nothing else. Which

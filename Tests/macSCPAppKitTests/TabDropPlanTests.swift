@@ -71,7 +71,14 @@ struct TabDropPlanTests {
         #expect(TabDropPlan.destination(forDropOnIndex: 99, tabCount: 3) == 2)
     }
 
-    @Test func aPositionBeforeTheFirstTabLandsOnTheFirstTab() {
+    /// **A negative position cannot arrive from the strip** — a drop
+    /// position is an offset out of `Array.enumerated()`. This is not an
+    /// edge case being claimed as reachable; it is the other half of the
+    /// function's totality, checked because the function is written to
+    /// answer over every `Int` and a caller elsewhere would be entitled to
+    /// rely on that. The reachable half is the one above the top end, where
+    /// the tab count really can have shrunk under a drag in flight.
+    @Test func aNegativePositionCannotArriveButIsStillAnsweredTotally() {
         #expect(TabDropPlan.destination(forDropOnIndex: -1, tabCount: 3) == 0)
         #expect(TabDropPlan.destination(forDropOnIndex: -99, tabCount: 3) == 0)
     }
@@ -97,7 +104,9 @@ struct TabDropPlanTests {
 
     /// Every clamped answer is a real index of the strip it was asked
     /// about — the property the caller relies on, checked over a range
-    /// rather than at the two ends only.
+    /// rather than at the two ends only. The negative half of that range is
+    /// unreachable from today's only caller, for the reason spelled out on
+    /// `aNegativePositionCannotArriveButIsStillAnsweredTotally`.
     @Test func everyAnswerIsAnIndexTheStripActuallyHas() {
         for tabCount in 1...6 {
             for dropIndex in -8...12 {
