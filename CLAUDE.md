@@ -135,6 +135,29 @@ own:
    property wants a structural boundary (a type that will not compile the
    violation) rather than another anchor.
 
+## Tests that watch a defect heal
+
+Measured on 2026-08-28, in the teardown-bound sequence: one run that was
+green while the defect was present, and one fixture that turned out to be a
+race rather than a guard.
+
+1. **A check that reads after the healing is not a check.** The frozen-peer
+   test froze the peer, ran teardown, thawed the peer, and then read
+   `enteredAt` and `liveness`. By that point the abandoned teardown had
+   caught up and written exactly the values the test wanted. It passed while
+   the defect it existed for was present; only the elapsed time was red.
+   Snapshot every postcondition BEFORE the thaw, the restart, the retry —
+   before whatever makes the system well again. A test that cleans up after
+   itself must read first and heal second.
+
+2. **A guard's sensitivity is a number, and the number is measured by
+   repetition.** When a fixture pinned a property only incidentally,
+   re-planting the violation turned it red in **4 of 6** runs — which reads
+   exactly like a guard on the run that happens to be red. Its replacement
+   was measured at 10 of 10 against the same violation, and 5 of 5 against a
+   second one the old fixture had let through. One red run is not evidence
+   that a check catches something; it is evidence that it can.
+
 ## Git
 
 - Conventional Commits (enforced by CI); commit messages in English.
