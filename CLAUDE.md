@@ -22,7 +22,7 @@
 ## Build & test
 
 - Swift Package Manager, swift-tools 6.0, **all targets
-  `.swiftLanguageMode(.v5)`**, minimum macOS 15.
+  `.swiftLanguageMode(.v6)`**, minimum macOS 15.
 - Tests: Swift Testing (`@Test`/`#expect`), TDD red→green. New logic ships
   with tests; prove regressions red first.
 - Unit suite: `swift test`. Gated suites: `MACSCP_ITEST=1` (Docker SSH rig)

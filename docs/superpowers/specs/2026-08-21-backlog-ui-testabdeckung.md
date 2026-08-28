@@ -1,8 +1,9 @@
 # Backlog: Wie weit lässt sich die Oberfläche prüfen?
 
 **Angelegt:** 2026-08-21, aus einer Maintainer-Frage nach dem
-Popover-Fehler. Abwägung, **keine Entscheidung** — festgehalten, damit sie
-nicht bei jeder Gelegenheit neu diskutiert wird.
+Popover-Fehler. War eine Abwägung ohne Entscheidung; **seit dem 2026-08-28
+entschieden** — siehe den letzten Abschnitt. Der Rest steht unverändert da,
+damit die Abwägung nachlesbar bleibt statt neu geführt zu werden.
 
 ## Ausgangslage, gemessen
 
@@ -102,3 +103,42 @@ bezeugte (die Aufbaufrist, die Sonden-Abdeckung).
 Vier ist keine Zahl mehr, die für A allein spricht. Sie spricht dafür, C
 ernsthaft zu terminieren — aber als eigenes Vorhaben mit eigenem Entwurf,
 nicht als Anhängsel an den nächsten Zweig.
+
+## Entscheidung des Maintainers (2026-08-28): C vorerst gestrichen
+
+**XCUITest wird nicht terminiert.** Nicht verworfen — gestrichen, bis ein
+Anlass es zurückholt. Die Empfehlung oben bleibt stehen, damit die Abwägung
+nachlesbar ist; sie ist ab hier keine offene Aufgabe mehr.
+
+Der Grund ist nicht, dass die Fehlerklasse verschwunden wäre. Sie ist
+gewachsen. C kostet ein Xcode-Projekt neben dem reinen SwiftPM-Aufbau, einen
+CI-Runner mit GUI-Sitzung und fasst `scripts/package-app` samt Release-Kette
+an — und der Release-Stau ist selbst ein offener Posten. Ein zweites
+Bausystem in eine Lage einzuziehen, in der das erste noch nicht ausgeliefert
+hat, verschiebt das Problem, statt es zu lösen.
+
+**Die Zahl oben ist überholt, und zwar in die Richtung, die für C spricht.**
+„Vier" ist vom 2026-08-21. Nachweisbar dazugekommen, ohne dass hier neu
+durchgezählt wurde:
+
+- der Reiter-Menü-Wächter, der fünf Korrekturrunden überstand, und der
+  Prefill-Wächter, der still verstummte — beide gemessen am 2026-08-27 und
+  in `CLAUDE.md` unter „Guards that name what they watch" festgehalten;
+- die Umbenennung `replacedSession` → `nameConflict`, die einen Filter auf
+  ein Symbol zeigen ließ, das es nicht mehr gab (2026-08-28);
+- sechs Runden, sechs Schreibweisen am Verbindungspfad, siehe
+  `2026-08-22-backlog-verbindungs-fähigkeit.md`.
+
+**A ist damit nicht automatisch beauftragt.** Der Wächter, den A meint,
+existiert inzwischen als `SnippetVariablePromptWiringGuardTests` — was er
+über die Präsentationsreihenfolge festhält und was noch fehlt, ist beim
+Angehen zu messen, nicht von hier aus zu behaupten. Wer A angeht, zählt
+zuerst nach.
+
+**Was C zurückholt:** ein Fehler dieser Klasse, der einen Nutzer erreicht —
+nicht einer, den eine Prüfrunde vorher findet. Bis dahin gilt der Weg, den
+dieses Projekt seit dem Eintrag tatsächlich gegangen ist und der in den
+letzten Vorgängen mehrfach getragen hat: **nicht ein klügerer Scan, sondern
+eine Fähigkeitsgrenze** — ein Typ, der den Verstoß nicht übersetzen lässt.
+Das ist weder A noch C, und es war beim Anlegen dieses Eintrags noch nicht
+sichtbar.

@@ -37,3 +37,61 @@ mit `LivenessProbeRace` bereits im Baum.
 Zu beachten: der Test muss den Container in jedem Fall wieder auftauen und
 entfernen, auch wenn er in eine Frist läuft. Task 10 löst das über `defer`
 und ein `docker rm -f`, das auch einen pausierten Container entfernt.
+
+---
+
+## Gemessen und behoben (2026-08-28, `7ac7f7e`)
+
+**Die offene Frage ist beantwortet, und zwar mit „nein".** `disconnect()`
+terminiert gegen eine eingefrorene Gegenseite nicht.
+
+Gemessen am realen Aufgabe-Pfad: betreten, nie verlassen — innerhalb zweier
+unabhängiger Schranken von 120 s und 30 s. Nach `docker unpause` kam derselbe
+aufgegebene Aufruf in 0,000491834 s zurück. Er war also nie langsam; er
+wartete auf eine Antwort.
+
+Die Zuordnung, an einem Wegwerf-Gerüst direkt an den Citadel-Objekten:
+
+| Aufruf | kommt zurück, während der Peer eingefroren ist? | gemessen |
+|---|---|---|
+| `SFTPClient.close()` | **nein** | 20,01678975 s gegen 20 s Schranke |
+| `SSHClient.close()` | **ja** | 0,051039125 s |
+
+Damit hängt genau eine Zeile, und der Weg daran vorbei war offen. `try?`
+verschluckt einen Fehler; es begrenzt keine Wartezeit.
+
+**Die Behebung:** `BoundedClose` gibt diesem einen Aufruf eine Frist in der
+Form von `LivenessProbeRace`, außerhalb des Hauptakteurs, und gibt ihn auf,
+wenn die Frist gewinnt — wodurch `client.close()` und `jumpClient?.close()`
+überhaupt erst laufen. Die Abbau-Reihenfolge bleibt unberührt.
+
+**Fünf Sekunden**, von beiden Seiten belegt: der langsamste von zehn gesunden
+`disconnect()`-Läufen gegen das Rig lag bei 0,001507583 s, und die Frist wird
+zusätzlich zu einer Erkennung ausgegeben, die bereits 14,1–14,9 s kostet.
+
+| | vorher | nachher |
+|---|---|---|
+| eingefrorener Peer | 127,946259083 s, **kein** Rückkehren, Tab bleibt `.degraded` | **5,050603459 s**, Tab wird `.lost`, Sitzung `nil` |
+| getöteter Container | 0,006492291 s | 0,006294584 s |
+
+Der gegatete Test leitet seine eigene Schranke aus der Produktionskonstante
+ab, statt eine zweite Kopie der Zahl zu führen.
+
+## Was offen bleibt — und eine Maintainer-Frage
+
+**Ungegatet hält nichts die Verdrahtung.** Dass `BoundedClose` das Richtige
+tut, ist ungegatet geprüft. Dass `disconnect()` es *benutzt*, hält allein der
+gegatete Integrationstest. Ein Rückbau auf `try? await sftp.close()` bliebe
+in einer CI ohne Docker grün.
+
+Ein Quelltext-Wächter wurde **bewusst nicht** gebaut: er müsste zwei Namen
+buchstabieren, die er nicht ableiten kann — genau die Sorte, vor der
+`CLAUDE.md` unter „Guards that name what they watch" warnt. Die Frage ist
+damit nicht „welcher Wächter", sondern ob sich der ungebundene Aufruf
+**strukturell** ausschließen lässt, wie beim Verbinden geschehen. Offen,
+und eine Entscheidung, keine Aufgabe.
+
+Weitere benannte Grenzen: die fünf Sekunden sind gegen Loopback bemessen;
+`client.close()` ist nur in *dieser* Reihenfolge schnell gemessen, mit einem
+aufgegebenen `sftp.close()` in der Luft; und `docker pause` ist ein Modell
+eines verschwundenen Netzes, nicht das Netz selbst.
