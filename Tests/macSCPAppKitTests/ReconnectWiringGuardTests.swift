@@ -55,7 +55,9 @@ import Testing
 ///    source scan can close this.** It needs a capability boundary in the
 ///    design — the App layer being unable to obtain a connection except
 ///    through one type it must hold — which is an architectural change,
-///    not a guard. Recorded as backlog by the coordinator, 2026-08-22.
+///    not a guard. See "Where the capability boundary actually got to"
+///    below for how far that change has come and what it does not yet
+///    cover.
 /// 2. **A key-path write**: `tab[keyPath: \SessionTab.session] = nil`
 ///    names neither `.session =` nor anything else these patterns look
 ///    for.
@@ -89,21 +91,49 @@ import Testing
 /// evidence that the enumeration is now complete — the previous five
 /// rounds each looked equally complete from the inside.
 ///
-/// So this suite's green is a floor, not a ceiling, and the thing that
-/// would make it a ceiling is not a seventh pattern: it is the capability
-/// boundary named in gap 1 — the App layer being unable to OBTAIN a
-/// connection except through one type it must hold, which no spelling can
-/// work around because there is nothing to spell. Recorded as backlog by
-/// the coordinator, 2026-08-22; round 6 is the argument for raising its
-/// priority rather than for extending this list again.
+/// ## Where the capability boundary actually got to
 ///
-/// Half of that boundary now exists: `BackendDescriptor.connect` is
-/// module-internal, so the backends' own dial is not something this target
-/// can spell at all, and `BackendDescriptor.openConnection` is the only
-/// way in. Gap 1 itself is narrowed rather than closed — an arbitrarily
-/// named Core function that dials INSIDE Core and is called from here
-/// still reads like any other Core call, and that is what would need a
-/// held capability rather than an access level.
+/// What would end that race is not a seventh pattern but a boundary the
+/// App layer cannot spell around. Part of one now exists, and the useful
+/// thing to record is which part. Each claim below was compiled in the
+/// pass that wrote it, from a throwaway file under `Sources/MacSCPAppKit`
+/// that was deleted again:
+///
+/// - **A decider is a type, not a closure.** `HostKeyDecider` and
+///   `WebDAVSessionDelegate.CertificateDecider` have private initializers,
+///   so a bare accept-anything closure where one is expected does not
+///   compile: `closure passed to parameter of type 'HostKeyDecider' that
+///   does not accept a closure`. A yes-man has to be spelled out as
+///   `.asking { _ in true }` now.
+/// - **The descriptor's own dial is out of reach.**
+///   `BackendDescriptor.connect` is module-internal: `'connect' is
+///   inaccessible due to 'internal' protection level`. Nothing in these
+///   targets can route around `openConnection` by asking
+///   `descriptor(for:)` for the closure.
+/// - **The backends themselves are not.** `CitadelFileSystem.connect` and
+///   `WebDAVFileSystem.connect` are `public`, and a call to either — with
+///   an accept-anything decider, going around `openConnection` and around
+///   everything `ContentView.connect(in:stored:)` applies — COMPILES from
+///   this target today. That is why the scan below is still load-bearing
+///   rather than decoration: what landed closed the descriptor, not the
+///   dial. Gap 1 is narrowed, not closed.
+///
+/// The descriptor claim is about the app and the command line only: the
+/// App TEST target imports Core `@testable`, which lifts `internal` and
+/// hands that target the descriptor's dial back. The decider claim is not
+/// relaxed that way — `@testable` does not reach a `private` initializer —
+/// so it holds everywhere in this package. Either way this suite walks
+/// `Sources/` and nothing else, which is the scope it has always had.
+///
+/// And one property neither the compiler nor any scan here holds:
+/// **whether a decider that IS a type asks anybody.** Replacing the App
+/// layer's certificate decider with `.asking { _ in true }` compiles, and
+/// the whole test run stays green. The host-key side is not in that
+/// position — `ConnectionViewModel` builds its own decider and
+/// `ConnectionViewModelTests` goes red for the same mutation — but the
+/// certificate one is held by nothing, here or anywhere. Measured
+/// 2026-08-28; not guarded by a scan, on purpose, because the six rounds
+/// above are the argument against adding a seventh.
 @Suite("Reconnect wiring guard")
 struct ReconnectWiringGuardTests {
     /// `#filePath` here is
@@ -277,10 +307,11 @@ struct ReconnectWiringGuardTests {
         // lowercase `connect` at all. Left alone, the detector above would
         // have matched nothing at the one App-layer dial and gone on
         // reporting an empty unsanctioned list — the silent-negative
-        // failure this project has a rule about. The boundary is what
-        // actually stops a second dial now (there is no reachable API to
-        // spell one with); this keeps the scan honest about the one that
-        // remains.
+        // failure this project has a rule about. The access level that
+        // moved it there closed the DESCRIPTOR, not the dial: the backends'
+        // own `connect` is still public and still reachable from here, so
+        // this pattern is what stops a second one, not a leftover beside a
+        // guarantee.
         ChokePoint(
             pattern: #"(?<![A-Za-z0-9_])(?:connect|openConnection)\b"#,
             describes: "obtaining a connection",
@@ -379,7 +410,7 @@ struct ReconnectWiringGuardTests {
             file: "Sources/MacSCPAppKit/ContentView+Lifecycle.swift",
             code: "return try await BackendDescriptor.openConnection(",
             occurrences: 1,
-            reason: "The connector closure `ContentView.makeTab` builds — the ONE place the App layer reaches a backend, with the host-key decider, the certificate decider and the plaintext gate already applied around it. Since the capability boundary landed it is also the only spelling that COMPILES here: the descriptor's `connect` closure is module-internal to Core, so `openConnection` is the whole surface this target can reach."),
+            reason: "The connector closure `ContentView.makeTab` builds — the ONE place the App layer reaches a backend, with the host-key decider, the certificate decider and the plaintext gate already applied around it. The descriptor's own `connect` closure is module-internal to Core, so this is the whole surface of `BackendDescriptor` that this target can reach; the backends' own `connect` is public and still compiles here, which is what the scan above is for."),
         SanctionedSite(
             file: "Sources/MacSCPAppKit/ConnectionFormView.swift",
             code: "if let fs = await viewModel.connect() {",
@@ -819,7 +850,7 @@ struct ReconnectWiringGuardTests {
             tab.session = BrowserSession.init(id: id)
             let viaImplicitSelf = await connect()
             let unqualifiedReference = connect
-            async let dialed = BackendDescriptor.descriptor(for: kind).connect(config, d, d, 30)
+            async let dialed = tab.connectionViewModel.connect()
             let viaTheEntryPoint = try await BackendDescriptor.openConnection(c, hostKey: d, certificate: d, timeoutSeconds: 30)
             """)
 
@@ -849,13 +880,15 @@ struct ReconnectWiringGuardTests {
             the same shape unapplied: no dot AND no paren.
             """)
         #expect(
-            flagged.contains(
-                "async let dialed = BackendDescriptor.descriptor(for: kind).connect(config, d, d, 30)"),
+            flagged.contains("async let dialed = tab.connectionViewModel.connect()"),
             """
-            an `async let` dial was excused as a synchronous call. This is round 6's measured \
-            escape: `async let` calls an `async` function without ever writing `await`, so a \
-            raw backend dial with accept-anything host-key deciders — in a brand-new App-layer \
-            file — compiled and left the whole suite green.
+            an `async let` dial was excused as a synchronous call. `async let` calls an `async` \
+            function without ever writing `await`, which is round 6's measured escape: a dial \
+            in a brand-new App-layer file compiled and left the whole suite green. Round 6 \
+            spelled it as the descriptor's own closure, which no longer compiles from this \
+            target; this line is a spelling that does, and it goes around `fillForm`, the \
+            plaintext confirmation, `startSession`, the audit recorder and both hand-off locks \
+            exactly as that one did.
             """)
         #expect(
             flagged.contains(
@@ -961,7 +994,7 @@ struct ReconnectWiringGuardTests {
     @Test func theScanFailsClosedOnARawStringDelimiterRatherThanHidingWhatFollowsIt() {
         let source =
             "static let quote = #\"\"\"#\n"
-            + "async let dialed = BackendDescriptor.descriptor(for: kind).connect(config, d, d, 30)"
+            + "async let dialed = tab.connectionViewModel.connect()"
         #expect(throws: (any Error).self) {
             _ = try Self.flaggedLines(in: source)
         }
@@ -973,9 +1006,8 @@ struct ReconnectWiringGuardTests {
     /// swallows source that never had a raw string in it.
     @Test func theControlDialIsStillCaughtOnceTheRawStringIsGone() throws {
         let flagged = try Self.flaggedLines(
-            in: "async let dialed = BackendDescriptor.descriptor(for: kind).connect(config, d, d, 30)")
-        #expect(flagged.contains(
-            "async let dialed = BackendDescriptor.descriptor(for: kind).connect(config, d, d, 30)"))
+            in: "async let dialed = tab.connectionViewModel.connect()")
+        #expect(flagged.contains("async let dialed = tab.connectionViewModel.connect()"))
     }
 
     /// Fail-closed self-test: a string or block comment that never closes
@@ -1652,6 +1684,14 @@ struct ReconnectWiringGuardTests {
     /// controls run in the same pass were red (the same line with `await`,
     /// and a `Task.detached` around it), so the walk did reach the file;
     /// only the spelling escaped.
+    ///
+    /// That exact line no longer compiles: the closures are not deciders
+    /// and the descriptor's `connect` is out of reach. `async let` is not
+    /// history, though — a dial through a public Core function, which is
+    /// what the App layer can still reach, suspends the same way and
+    /// writes `await` just as little. The probe in
+    /// `theScanSeesEveryWayADialCanBeSpelled` is spelled that way for
+    /// exactly that reason.
     ///
     /// `async let` is matched as two WHITESPACE-separated words, not as
     /// two tokens somewhere in the window: `func f() async {` followed by
