@@ -43,7 +43,16 @@ import Testing
 ///   as wired while the raw name goes into the field. The most plausible
 ///   edit of the lot, so it is followed rather than matched: the guard
 ///   reads what the call's result is bound to and requires THAT to be what
-///   reaches `saveName`.
+///   reaches `saveName`, written exactly once. The "once" is the second
+///   half, and review had to point it out: `var proposed = freeName(…)`
+///   followed by `proposed = host.alias` satisfies every other check here.
+/// - **V9** A check in this suite names a symbol in the code it guards,
+///   and a rename switches it off in silence. That is not hypothetical: V5
+///   filtered on a property name, the property was renamed in a later fix,
+///   and the check went on passing with `.disabled(…)` sitting on the Save
+///   button. Nothing below spells a symbol it could instead read — the
+///   conflict property's name comes off the source, the two catalogue keys
+///   come off `SessionNameConflict`.
 /// - **V8** The form spells a catalogue key itself, so the sentence it
 ///   shows stops following the case Core decided. Which text belongs to
 ///   which save path is the whole of N1, and it is not the view's to
@@ -52,15 +61,14 @@ import Testing
 /// **Scope.** The checks below read `ContentView.swift`,
 /// `ContentView+Lifecycle.swift` and `ConnectionFormView.swift` as source
 /// text, plus `en.lproj/Localizable.strings` for the two sentences a
-/// conflict can name. The fourth
-/// place a form's name is prefilled — `ConnectionViewModel.beginEditing`,
-/// in Core — is outside it, and deliberately so: a guard that scanned Core
-/// for an App-layer rule would be asserting that Core knows about one.
-/// That site is an identity fill like `fillForm`, and what holds it is
-/// `ConnectionViewModelTests`' existing expectation that beginning an edit
-/// puts the stored name in the field — which would fail if it ever started
-/// stepping aside. Weaker than the check below, and named here rather than
-/// left for someone to discover.
+/// conflict can name. The fourth place a form's name is prefilled —
+/// `ConnectionViewModel.beginEditing`, in Core — is outside that, and
+/// deliberately so: a guard that scanned Core for an App-layer rule would
+/// be asserting that Core knows about one. That site is an identity fill
+/// like `fillForm`, and what holds it is `ConnectionViewModelTests`'
+/// existing expectation that beginning an edit puts the stored name in the
+/// field, which would fail if it ever started stepping aside. Weaker than
+/// the checks here, and named rather than left to be discovered.
 ///
 /// Fail-closed: a reformat that renames one of the scanned functions, or
 /// that respells a checked call, reads as a missing wire rather than a
@@ -154,6 +162,24 @@ struct SessionNamePrefillWiringGuardTests {
             + "handed anything else finds every name free.")
     }
 
+    /// The name of the property whose body asks `SessionNameConflict.build`
+    /// — the form's own word for "there is a conflict", whatever it is
+    /// currently called. Walks back from the call to the nearest enclosing
+    /// computed-property declaration.
+    private static func conflictPropertyName(in source: String) -> String? {
+        let lines = source.components(separatedBy: "\n")
+        guard let call = lines.firstIndex(where: { $0.contains("SessionNameConflict.build(") })
+        else { return nil }
+        for line in lines[...call].reversed() {
+            guard let keyword = line.range(of: "var "), line.hasSuffix("{") else { continue }
+            let name = line[keyword.upperBound...]
+                .components(separatedBy: CharacterSet(charactersIn: ": "))
+                .first ?? ""
+            return name.isEmpty ? nil : String(name)
+        }
+        return nil
+    }
+
     /// Whether the answer `SessionNameCollision.freeName` gives inside
     /// `body` is what ends up in the name field.
     ///
@@ -171,8 +197,13 @@ struct SessionNamePrefillWiringGuardTests {
         let target = String(before.dropLast())
             .trimmingCharacters(in: .whitespaces)
             .components(separatedBy: " ").last ?? ""
-        if target.hasSuffix("saveName") { return true }
         guard !target.isEmpty else { return false }
+        // Written once, so a second assignment cannot overwrite the answer
+        // on its way to the field: `var proposed = freeName(…)` followed by
+        // `proposed = host.alias` reads as wired and saves the raw name.
+        // Spaces on both sides so `saveName` is not seen inside `form.saveName`.
+        guard occurrences(of: " \(target) = ", in: body) == 1 else { return false }
+        if target.hasSuffix("saveName") { return true }
         return body.contains("saveName = \(target)")
     }
 
@@ -304,18 +335,40 @@ struct SessionNamePrefillWiringGuardTests {
             The form no longer renders the conflict's own sentence — which text is true \
             depends on which save path runs, and that is the conflict's decision.
             """)
-        #expect(!source.contains("\"connection.saveName."), """
-            The form spells a `connection.saveName.` key itself. Saving replaces on the new \
-            path and duplicates on the edit path; a key chosen in the view is a sentence \
-            nothing holds to the path it describes.
-            """)
+        // Derived from `SessionNameConflict`, not spelled here: a check
+        // that names a key can be silenced by renaming the key, which is
+        // the failure this whole test learned the hard way one line down.
+        let session = StoredSession(id: UUID(), name: "web", kind: .ssh)
+        for conflict in [SessionNameConflict.replaces(session), .duplicates(session)] {
+            #expect(!source.contains("\"\(conflict.messageKey)\""),
+                    Comment(rawValue: "The form spells `\(conflict.messageKey)` itself. Saving "
+                        + "replaces on the new path and duplicates on the edit path; a key "
+                        + "chosen in the view is a sentence nothing holds to the path it "
+                        + "describes."))
+        }
+
+        // **V5** — and nothing is disabled on account of it.
+        //
+        // The property's NAME is read off the source rather than written
+        // here. Written here, it silently stopped matching the day the
+        // property was renamed — this check went on passing while
+        // `.disabled(nameConflict != nil)` sat on the Save button, which is
+        // exactly what it exists to catch. A guard that names a symbol is a
+        // guard a rename can switch off without touching its line.
+        guard let property = Self.conflictPropertyName(in: source) else {
+            Issue.record("""
+                No property in ConnectionFormView.swift asks `SessionNameConflict.build` — \
+                this check has nothing to look for and would pass for the wrong reason.
+                """)
+            return
+        }
         let blocking = source
             .components(separatedBy: "\n")
-            .filter { $0.contains(".disabled(") && $0.contains("replacedSession") }
-        #expect(blocking.isEmpty, """
-            A collision disables a control: \(blocking). The warning makes the overwrite \
-            visible; it does not forbid it.
-            """)
+            .filter { $0.contains(".disabled(") && $0.contains(property) }
+        #expect(blocking.isEmpty,
+                Comment(rawValue: "A name collision disables a control via `\(property)`: "
+                    + "\(blocking). The warning makes the overwrite visible; it does not "
+                    + "forbid it."))
     }
 
     /// **V8**'s other half — every sentence a conflict can name is actually
