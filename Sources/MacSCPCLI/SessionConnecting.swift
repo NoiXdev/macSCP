@@ -54,9 +54,9 @@ func connect(
     // The CLI reads no user settings at all (no `settings.json` of its
     // own), so it uses the settings default rather than a live,
     // user-configured value.
-    return try await BackendDescriptor.descriptor(for: config.kind).connect(
-        config, makeDecider(policy: options.hostKeyPolicy), .refusing,
-        SettingsStore.defaultConnectTimeoutSeconds)
+    return try await BackendDescriptor.openConnection(
+        config, hostKey: makeDecider(policy: options.hostKeyPolicy), certificate: .refusing,
+        timeoutSeconds: SettingsStore.defaultConnectTimeoutSeconds)
 }
 
 /// Connects to `reference`, runs `body`, and awaits `fs.disconnect()` on

@@ -96,6 +96,14 @@ import Testing
 /// work around because there is nothing to spell. Recorded as backlog by
 /// the coordinator, 2026-08-22; round 6 is the argument for raising its
 /// priority rather than for extending this list again.
+///
+/// Half of that boundary now exists: `BackendDescriptor.connect` is
+/// module-internal, so the backends' own dial is not something this target
+/// can spell at all, and `BackendDescriptor.openConnection` is the only
+/// way in. Gap 1 itself is narrowed rather than closed — an arbitrarily
+/// named Core function that dials INSIDE Core and is called from here
+/// still reads like any other Core call, and that is what would need a
+/// held capability rather than an access level.
 @Suite("Reconnect wiring guard")
 struct ReconnectWiringGuardTests {
     /// `#filePath` here is
@@ -171,7 +179,9 @@ struct ReconnectWiringGuardTests {
     /// - `.connect(` → `\.connect\b`. A member named `connect`, applied or
     ///   merely referenced. `.connected`/`.connecting` do not match (the
     ///   word boundary), and catalog keys naming it are string literals the
-    ///   stripper has already blanked.
+    ///   stripper has already blanked. `openConnection` joined it as an
+    ///   alternative once Core's dial moved behind that name — see the
+    ///   comment on the choke point itself.
     /// - the five concrete backend/transport type names → two patterns for
     ///   the CATEGORY. Any `…FileSystem` that is not the protocol
     ///   (`RemoteFileSystem`) or the one legitimate local one
@@ -260,8 +270,19 @@ struct ReconnectWiringGuardTests {
         // project is `async`. That is the honest split — "is this a dial"
         // is answered by whether it suspends, not by whether someone
         // spelled a receiver.
+        //
+        // The alternation is round 7's addition, and it is bookkeeping
+        // rather than another spelling lost to: Core's dial moved behind
+        // `BackendDescriptor.openConnection`, whose name contains no
+        // lowercase `connect` at all. Left alone, the detector above would
+        // have matched nothing at the one App-layer dial and gone on
+        // reporting an empty unsanctioned list — the silent-negative
+        // failure this project has a rule about. The boundary is what
+        // actually stops a second dial now (there is no reachable API to
+        // spell one with); this keeps the scan honest about the one that
+        // remains.
         ChokePoint(
-            pattern: #"(?<![A-Za-z0-9_])connect\b"#,
+            pattern: #"(?<![A-Za-z0-9_])(?:connect|openConnection)\b"#,
             describes: "obtaining a connection",
             discrimination: .unlessSynchronousCall),
         // `[A-Z]` (round 4, review-measured): the lookaheads are
@@ -356,9 +377,9 @@ struct ReconnectWiringGuardTests {
     private static let sanctionedSites: [SanctionedSite] = [
         SanctionedSite(
             file: "Sources/MacSCPAppKit/ContentView+Lifecycle.swift",
-            code: "return try await BackendDescriptor.descriptor(for: config.kind).connect(",
+            code: "return try await BackendDescriptor.openConnection(",
             occurrences: 1,
-            reason: "The connector closure `ContentView.makeTab` builds — the ONE place the App layer reaches a backend, with the host-key decider, the certificate decider and the plaintext gate already applied around it."),
+            reason: "The connector closure `ContentView.makeTab` builds — the ONE place the App layer reaches a backend, with the host-key decider, the certificate decider and the plaintext gate already applied around it. Since the capability boundary landed it is also the only spelling that COMPILES here: the descriptor's `connect` closure is module-internal to Core, so `openConnection` is the whole surface this target can reach."),
         SanctionedSite(
             file: "Sources/MacSCPAppKit/ConnectionFormView.swift",
             code: "if let fs = await viewModel.connect() {",
@@ -799,6 +820,7 @@ struct ReconnectWiringGuardTests {
             let viaImplicitSelf = await connect()
             let unqualifiedReference = connect
             async let dialed = BackendDescriptor.descriptor(for: kind).connect(config, d, d, 30)
+            let viaTheEntryPoint = try await BackendDescriptor.openConnection(c, hostKey: d, certificate: d, timeoutSeconds: 30)
             """)
 
         #expect(!flagged.contains { $0.contains("harmless") }, """
@@ -835,7 +857,16 @@ struct ReconnectWiringGuardTests {
             raw backend dial with accept-anything host-key deciders — in a brand-new App-layer \
             file — compiled and left the whole suite green.
             """)
-        #expect(flagged.count == 9, "expected exactly the nine real hits, found \(flagged)")
+        #expect(
+            flagged.contains(
+                "let viaTheEntryPoint = try await BackendDescriptor.openConnection(c, hostKey: d, certificate: d, timeoutSeconds: 30)"),
+            """
+            the name Core's dial actually goes by now. `openConnection` contains no lowercase \
+            `connect`, so the pattern that had been catching every dial in this project \
+            stopped seeing the only one left — and an allow-list scan that matches nothing \
+            reports success.
+            """)
+        #expect(flagged.count == 10, "expected exactly the ten real hits, found \(flagged)")
     }
 
     /// The other direction, and the one round 3 got wrong: ordinary code

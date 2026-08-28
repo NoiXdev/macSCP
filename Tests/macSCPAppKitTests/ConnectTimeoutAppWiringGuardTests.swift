@@ -5,18 +5,18 @@ import Testing
 /// `ContentView+Lifecycle.swift`'s connector closure must forward the local
 /// `connectTimeoutSeconds` — read fresh from `settingsStore` at the moment
 /// the closure actually runs, not hoisted to a stale capture at tab-creation
-/// time — to `BackendDescriptor.descriptor(for:).connect(...)`'s fourth,
-/// unlabeled argument, rather than a hardcoded literal.
+/// time — as `BackendDescriptor.openConnection(...)`'s `timeoutSeconds:`
+/// argument, rather than a hardcoded literal.
 ///
-/// `BackendDescriptor.connect`'s closure type takes plain, unlabeled
-/// positional arguments (it is a stored property of closure type, not a
-/// function declaration), so a literal there compiles exactly as cleanly as
-/// the real local does and looks identical to `Int`-typed call-site code
-/// review. `CitadelFileSystemConnectTimeoutWiringGuardTests` already guards
-/// that `CitadelFileSystem.swift` forwards its OWN `connectTimeout`
-/// parameter honestly; this is the twin guard one layer up, over a
-/// differently-shaped (positional, not labeled) call, which is why it lives
-/// in its own file rather than as another case in that scanner.
+/// The argument carries a label since dialing moved behind
+/// `openConnection`, but the label is not what this guard is about: an
+/// `Int` literal or a stale capture passed under the right label compiles
+/// exactly as cleanly as the real local does and looks identical to
+/// call-site code review. `CitadelFileSystemConnectTimeoutWiringGuardTests`
+/// already guards that `CitadelFileSystem.swift` forwards its OWN
+/// `connectTimeout` parameter honestly; this is the twin guard one layer
+/// up, over a differently-shaped call, which is why it lives in its own
+/// file rather than as another case in that scanner.
 ///
 /// Same boundary as the project's other wiring guards (see
 /// `PaneVisibilityWiringGuardTests`'s doc comment): a SOURCE-TEXT scan, not
@@ -36,13 +36,14 @@ struct ConnectTimeoutAppWiringGuardTests {
     private static let lifecycleFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Lifecycle.swift")
 
-    /// The exact substring that anchors the one `.connect(` call this guard
-    /// is about — unique in the file (checked by
-    /// `theAnchorAppearsExactlyOnceInTheRealFile` below), and specific
-    /// enough (`.connect(`, not merely `connect`) that it does not also
-    /// match `ConnectionViewModel.connect()`'s zero-argument call elsewhere
-    /// in the same file.
-    private static let anchor = ".connect("
+    /// The exact substring that anchors the one dial this guard is about —
+    /// unique in the file (checked by
+    /// `theAnchorAppearsExactlyOnceInTheRealFile` below). Since dialing
+    /// moved behind Core's one public entry point, the anchor names that
+    /// entry point rather than the closure it reaches, which also stops it
+    /// matching `ConnectionViewModel.connect()`'s zero-argument call
+    /// elsewhere in the same file.
+    private static let anchor = ".openConnection("
 
     // MARK: - The guard
 
@@ -58,15 +59,16 @@ struct ConnectTimeoutAppWiringGuardTests {
         }
         #expect(arguments.count == 4, """
             expected 4 arguments at the `\(Self.anchor)` call site in \
-            ContentView+Lifecycle.swift (config, decider, certificate decider, \
-            connect-timeout seconds), found \(arguments.count): \(arguments) — \
-            re-anchor this guard.
+            ContentView+Lifecycle.swift (config, host-key decider, certificate \
+            decider, connect-timeout seconds), found \(arguments.count): \
+            \(arguments) — re-anchor this guard.
             """)
-        #expect(arguments.last == "connectTimeoutSeconds", """
+        #expect(arguments.last == "timeoutSeconds: connectTimeoutSeconds", """
             the `\(Self.anchor)` call's last argument is \
-            \(arguments.last.map { "`\($0)`" } ?? "missing"), not the identifier \
-            `connectTimeoutSeconds` — a literal or a stale capture there would \
-            silently stop honoring `settingsStore.connectTimeoutSeconds`.
+            \(arguments.last.map { "`\($0)`" } ?? "missing"), not \
+            `timeoutSeconds: connectTimeoutSeconds` — a literal or a stale \
+            capture there would silently stop honoring \
+            `settingsStore.connectTimeoutSeconds`.
             """)
     }
 
@@ -88,47 +90,50 @@ struct ConnectTimeoutAppWiringGuardTests {
 
     @Test func scannerFlagsAHardcodedLiteralTimeout() {
         let source = """
-            return try await BackendDescriptor.descriptor(for: config.kind).connect(
-                config, decider, .asking { candidate in await certificateBridge.ask(candidate) },
-                10)
+            return try await BackendDescriptor.openConnection(
+                config, hostKey: decider,
+                certificate: .asking { candidate in await certificateBridge.ask(candidate) },
+                timeoutSeconds: 10)
             """
         let lines = source.components(separatedBy: "\n")
         let arguments = Self.connectCallArguments(in: lines)
         #expect(arguments?.count == 4)
-        #expect(arguments?.last != "connectTimeoutSeconds")
+        #expect(arguments?.last != "timeoutSeconds: connectTimeoutSeconds")
     }
 
     @Test func scannerAcceptsTheLiveLocal() {
         let source = """
-            return try await BackendDescriptor.descriptor(for: config.kind).connect(
-                config, decider, .asking { candidate in await certificateBridge.ask(candidate) },
-                connectTimeoutSeconds)
+            return try await BackendDescriptor.openConnection(
+                config, hostKey: decider,
+                certificate: .asking { candidate in await certificateBridge.ask(candidate) },
+                timeoutSeconds: connectTimeoutSeconds)
             """
         let lines = source.components(separatedBy: "\n")
         let arguments = Self.connectCallArguments(in: lines)
         #expect(arguments?.count == 4)
-        #expect(arguments?.last == "connectTimeoutSeconds")
+        #expect(arguments?.last == "timeoutSeconds: connectTimeoutSeconds")
     }
 
     @Test func scannerFlagsAStaleDifferentlyNamedCapture() {
         let source = """
-            return try await BackendDescriptor.descriptor(for: config.kind).connect(
-                config, decider, .asking { candidate in await certificateBridge.ask(candidate) },
-                capturedTimeoutFromTabCreation)
+            return try await BackendDescriptor.openConnection(
+                config, hostKey: decider,
+                certificate: .asking { candidate in await certificateBridge.ask(candidate) },
+                timeoutSeconds: capturedTimeoutFromTabCreation)
             """
         let lines = source.components(separatedBy: "\n")
         let arguments = Self.connectCallArguments(in: lines)
-        #expect(arguments?.last != "connectTimeoutSeconds")
+        #expect(arguments?.count == 4)
+        #expect(arguments?.last != "timeoutSeconds: connectTimeoutSeconds")
     }
 
     // MARK: - Scanner
     //
-    // Anchors on the `.connect(` substring itself (not the whole line) so
+    // Anchors on the anchor substring itself (not the whole line) so
     // depth-counting starts at THAT call's own opening paren, unconfused by
-    // the `descriptor(for: config.kind)` sub-expression immediately before
-    // it on the real line.
+    // any sub-expression that may precede it on the same line.
 
-    /// The full call text from `.connect(`'s own opening paren through its
+    /// The full call text from the anchor's own opening paren through its
     /// matching close, however many lines it spans, or `nil` if the anchor
     /// is not found.
     private static func connectCallText(in lines: [String]) -> String? {
@@ -154,7 +159,7 @@ struct ConnectTimeoutAppWiringGuardTests {
         return nil
     }
 
-    /// The `.connect(...)` call's own top-level, comma-separated arguments,
+    /// The anchored call's own top-level, comma-separated arguments,
     /// trimmed. `nil` if the anchor is not found in `lines` at all.
     private static func connectCallArguments(in lines: [String]) -> [String]? {
         guard let text = connectCallText(in: lines) else { return nil }

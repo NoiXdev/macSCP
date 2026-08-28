@@ -217,9 +217,12 @@ extension ContentView {
                 // own honest, localized alert text (mirrors `HostKeyError`
                 // case for case): nothing to intercept here.
                 // Since M22/T10 each backend opens its own connection: the
-                // descriptor's `connect` closure is what carries SSH's
+                // descriptor's own connect closure is what carries SSH's
                 // known-hosts store and WebDAV's trust store, so there is no
-                // central dispatcher left to route through.
+                // central dispatcher left to route through. That closure is
+                // module-internal to Core; `openConnection` is the only way
+                // into it from here, which is why this call cannot be
+                // written any other way.
                 //
                 // Read HERE, at the moment this connect attempt actually
                 // runs, not once at `makeTab` time: capturing the `Int` up
@@ -240,9 +243,10 @@ extension ContentView {
                 let connectTimeoutSeconds = await MainActor.run {
                     settingsStore.connectTimeoutSeconds
                 }
-                return try await BackendDescriptor.descriptor(for: config.kind).connect(
-                    config, decider, .asking { candidate in await certificateBridge.ask(candidate) },
-                    connectTimeoutSeconds)
+                return try await BackendDescriptor.openConnection(
+                    config, hostKey: decider,
+                    certificate: .asking { candidate in await certificateBridge.ask(candidate) },
+                    timeoutSeconds: connectTimeoutSeconds)
             }),
             certificateBridge: certificateBridge,
             limiter: limiter,

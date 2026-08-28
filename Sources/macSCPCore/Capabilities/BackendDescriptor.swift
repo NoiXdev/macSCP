@@ -62,7 +62,11 @@ public struct BackendDescriptor: Sendable {
     /// tracked separately rather than fixed here — the parameter is
     /// declared on the shared closure type now so wiring it into S3/WebDAV
     /// later is a one-line change per backend, not a signature change.
-    public let connect: @Sendable (
+    ///
+    /// Module-internal, unlike the descriptor's other stored members: see
+    /// `openConnection(_:hostKey:certificate:timeoutSeconds:)` below for why
+    /// the closure itself is out of reach from outside Core.
+    let connect: @Sendable (
         ConnectionConfig,
         HostKeyDecider,
         WebDAVSessionDelegate.CertificateDecider,
@@ -417,4 +421,26 @@ public struct BackendDescriptor: Sendable {
         // SSH variable name rather than inventing a third one.
         secretEnvironmentVariable: "MACSCP_PASSWORD", requiresSecret: { _ in true },
         fileActions: [])
+}
+
+extension BackendDescriptor {
+    /// The one way to open a connection from outside this module.
+    ///
+    /// `connect` itself is module-internal so that "dialing past the shared
+    /// path" is not a violation a test has to find, but something that does
+    /// not compile. Core's own tests import `@testable` and keep their
+    /// access; the app and the command line do not have it.
+    ///
+    /// Routing stays where it was — `descriptor(for:)` picks the backend and
+    /// the backend's own closure carries its trust store — so a mismatch is
+    /// still a hard stop inside the backend and reaches no decider here.
+    public static func openConnection(
+        _ config: ConnectionConfig,
+        hostKey: HostKeyDecider,
+        certificate: WebDAVSessionDelegate.CertificateDecider,
+        timeoutSeconds: Int
+    ) async throws -> any RemoteFileSystem {
+        try await descriptor(for: config.kind)
+            .connect(config, hostKey, certificate, timeoutSeconds)
+    }
 }
