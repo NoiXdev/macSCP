@@ -71,6 +71,49 @@ been restructured. In a file untouched since a milestone: none.
 Applies to reviews too: a number in a comment is something to verify, not
 evidence.
 
+## Guards that name what they watch
+
+Measured on 2026-08-27, across a tab-menu wiring guard that survived five
+correction rounds and a prefill guard that went silent without anyone
+noticing.
+
+Source-scanning guards are subject to the rule above, and to one of their
+own:
+
+1. **Only a NEGATIVE check can go stale in silence.** A check that requires
+   something present (`contains`, a count that must match, a whole-body
+   equality) fails loudly the moment the thing it names moves. A check that
+   requires something ABSENT — `!contains`, or a filter expected to come
+   back empty — starts matching nothing and passes. It reads exactly like a
+   check that is satisfied.
+
+   `replacedSession` was renamed to `nameConflict` in the same commit that
+   left the guard's no-blocking filter naming the old symbol. The filter
+   matched nothing, the suite stayed green, and the violation it existed to
+   catch — a disabled Save button — could be planted freely. Every other
+   negative check in that suite was pinned by a positive check nearby; this
+   was the one that was not, which is precisely why it was the one that
+   went stale.
+
+   **So: a negative check needs a positive check beside it**, asserting that
+   the thing it scans is there at all. Without one it is not a guard, it is
+   a comment that runs.
+
+2. **A guard that spells a symbol it could read instead is waiting for a
+   rename.** Walk the name back from a call site, derive a catalogue key
+   from the type that owns it. A literal is a second copy of a name, and
+   this project's rule about second copies applies to tests as much as to
+   comments.
+
+3. **Mutation testing verifies a guard's sensitivity, never its scope.**
+   Probes derived from the author's own enumeration test the places the
+   author already thought of. Across five rounds on one guard, every hole
+   was found by a fresh reader planting a violation the enumeration did not
+   contain — and none by the author's own battery. When a scan keeps buying
+   one spelling and revealing another, that is the evidence that the
+   property wants a structural boundary (a type that will not compile the
+   violation) rather than another anchor.
+
 ## Git
 
 - Conventional Commits (enforced by CI); commit messages in English.
