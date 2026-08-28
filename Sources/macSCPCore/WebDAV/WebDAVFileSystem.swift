@@ -25,7 +25,12 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
 
     /// Builds the delegate-bearing session, verifies the credentials with a
     /// `Depth: 0` PROPFIND on the root, and returns a connected file system.
-    public static func connect(
+    ///
+    /// Module-internal, like every backend's dial: the only way in from
+    /// outside Core is `BackendDescriptor.openConnection`, which is where the
+    /// deciders and the configured connect timeout are supplied. Core's own
+    /// tests import `@testable` and keep this.
+    static func connect(
         _ config: WebDAVConnectionConfig,
         trustStore: TrustedCertificateStore,
         decider: WebDAVSessionDelegate.CertificateDecider

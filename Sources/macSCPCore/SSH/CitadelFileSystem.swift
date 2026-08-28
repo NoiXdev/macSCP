@@ -89,7 +89,12 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// once, and makes forgetting it impossible thereafter — see
     /// `CitadelFileSystemConnectTimeoutWiringGuardTests` for the guard that
     /// keeps it that way.
-    public static func connect(
+    ///
+    /// Module-internal, like every backend's dial: the only way in from
+    /// outside Core is `BackendDescriptor.openConnection`, which is where the
+    /// deciders and the configured connect timeout are supplied. Core's own
+    /// tests import `@testable` and keep this.
+    static func connect(
         config: SSHConnectionConfig,
         connectTimeout: TimeAmount,
         knownHosts: KnownHostsStore,

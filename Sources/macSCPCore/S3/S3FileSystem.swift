@@ -26,7 +26,12 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// Connects by performing one ListObjectsV2 probe against the bucket
     /// root (prefix `""`). Maps HTTP 403 → `.authenticationFailed`, 404 →
     /// `.notFound`, and any transport/network failure → `.connectionFailed`.
-    public static func connect(
+    ///
+    /// Module-internal, like every backend's dial: the only way in from
+    /// outside Core is `BackendDescriptor.openConnection`, which is where the
+    /// deciders and the configured connect timeout are supplied. Core's own
+    /// tests import `@testable` and keep this.
+    static func connect(
         _ config: S3ConnectionConfig, transport: any HTTPTransport = URLSessionHTTPTransport()
     ) async throws -> S3FileSystem {
         let fs = S3FileSystem(config: config, transport: transport)

@@ -110,20 +110,30 @@ import Testing
 ///   inaccessible due to 'internal' protection level`. Nothing in these
 ///   targets can route around `openConnection` by asking
 ///   `descriptor(for:)` for the closure.
-/// - **The backends themselves are not.** `CitadelFileSystem.connect` and
-///   `WebDAVFileSystem.connect` are `public`, and a call to either — with
-///   an accept-anything decider, going around `openConnection` and around
-///   everything `ContentView.connect(in:stored:)` applies — COMPILES from
-///   this target today. That is why the scan below is still load-bearing
-///   rather than decoration: what landed closed the descriptor, not the
-///   dial. Gap 1 is narrowed, not closed.
+/// - **Every backend's own dial is out of reach as well.**
+///   `CitadelFileSystem.connect`, `WebDAVFileSystem.connect` and
+///   `S3FileSystem.connect` are module-internal too, each refusing with the
+///   same `'connect' is inaccessible due to 'internal' protection level`.
+///   macSCP's own backends cannot be dialed from these targets at all, by
+///   any spelling.
+/// - **A transport library still can be, and that is the gap that is
+///   left.** `import Citadel` compiles here even though `Package.swift`
+///   gives `MacSCPAppKit` no Citadel dependency — SwiftPM leaves a
+///   transitive dependency's module on the search path — so a raw
+///   `SSHClient.connect(host:…, hostKeyValidator: .acceptAnything(), …)`
+///   compiles in the App layer, reaching no TOFU, no keychain rule, no
+///   login-set rule and no plaintext gate. Access levels closed macSCP's
+///   own dials; they did not close that one. `permittedImports` and the
+///   scan below are what stand in front of it, which is why neither is
+///   decoration.
 ///
-/// The descriptor claim is about the app and the command line only: the
+/// The access-level claims are about the app and the command line only: the
 /// App TEST target imports Core `@testable`, which lifts `internal` and
-/// hands that target the descriptor's dial back. The decider claim is not
-/// relaxed that way — `@testable` does not reach a `private` initializer —
-/// so it holds everywhere in this package. Either way this suite walks
-/// `Sources/` and nothing else, which is the scope it has always had.
+/// hands that target both the descriptor's dial and the backends' own back.
+/// The decider claim is not relaxed that way — `@testable` does not reach a
+/// `private` initializer — so it holds everywhere in this package. Either
+/// way this suite walks `Sources/` and nothing else, which is the scope it
+/// has always had.
 ///
 /// And one property neither the compiler nor any scan here holds:
 /// **whether a decider that IS a type asks anybody.** Replacing the App
@@ -307,11 +317,14 @@ struct ReconnectWiringGuardTests {
         // lowercase `connect` at all. Left alone, the detector above would
         // have matched nothing at the one App-layer dial and gone on
         // reporting an empty unsanctioned list — the silent-negative
-        // failure this project has a rule about. The access level that
-        // moved it there closed the DESCRIPTOR, not the dial: the backends'
-        // own `connect` is still public and still reachable from here, so
-        // this pattern is what stops a second one, not a leftover beside a
-        // guarantee.
+        // failure this project has a rule about. Access levels have since
+        // closed macSCP's OWN dials, descriptor and backends alike, so what
+        // this pattern still catches is a dial that is not macSCP's:
+        // `ConnectionViewModel.connect()`, which is public Core API and
+        // goes around everything `ContentView.connect(in:stored:)` applies,
+        // and a raw `SSHClient.connect(…)` through the transport library,
+        // which the App layer can still import. Both compile from here
+        // today, so this is not a leftover beside a guarantee.
         ChokePoint(
             pattern: #"(?<![A-Za-z0-9_])(?:connect|openConnection)\b"#,
             describes: "obtaining a connection",
@@ -383,6 +396,16 @@ struct ReconnectWiringGuardTests {
     /// is a deliberate edit, which is the point — `import Citadel`,
     /// `import NIOCore` or `import Network` appearing in the App layer is
     /// exactly the change that should stop a reader.
+    ///
+    /// Measured in the pass that made every backend's `connect`
+    /// module-internal, because it is why this list outlived that change:
+    /// `Package.swift` gives `MacSCPAppKit` no Citadel dependency, and
+    /// `import Citadel` compiles here anyway — SwiftPM leaves a transitive
+    /// dependency's module on the search path. A raw
+    /// `SSHClient.connect(host:…, hostKeyValidator: .acceptAnything(), …)`
+    /// therefore compiles in the App layer, reaching no TOFU. Access levels
+    /// closed macSCP's own dials; this list is what stands in front of that
+    /// one.
     private static let permittedImports: Set<String> = [
         "AppKit", "Combine", "Foundation", "MacSCPAppKit", "Observation",
         "SwiftTerm", "SwiftUI", "UniformTypeIdentifiers", "macSCPCore", "os",
@@ -410,7 +433,7 @@ struct ReconnectWiringGuardTests {
             file: "Sources/MacSCPAppKit/ContentView+Lifecycle.swift",
             code: "return try await BackendDescriptor.openConnection(",
             occurrences: 1,
-            reason: "The connector closure `ContentView.makeTab` builds — the ONE place the App layer reaches a backend, with the host-key decider, the certificate decider and the plaintext gate already applied around it. The descriptor's own `connect` closure is module-internal to Core, so this is the whole surface of `BackendDescriptor` that this target can reach; the backends' own `connect` is public and still compiles here, which is what the scan above is for."),
+            reason: "The connector closure `ContentView.makeTab` builds — the ONE place the App layer reaches a backend, with the host-key decider, the certificate decider and the plaintext gate already applied around it. The descriptor's own `connect` closure is module-internal to Core, so this is the whole surface of `BackendDescriptor` that this target can reach, and every backend's own `connect` is module-internal too. What the scan above still catches is a dial that is not macSCP's own — `ConnectionViewModel.connect()`, or the transport library reached directly."),
         SanctionedSite(
             file: "Sources/MacSCPAppKit/ConnectionFormView.swift",
             code: "if let fs = await viewModel.connect() {",
@@ -845,7 +868,7 @@ struct ReconnectWiringGuardTests {
             if let fs = await form.connect() {
             Task { _ = await tab.connectionViewModel.connect() }
             let dial = tab.connectionViewModel.connect
-            let fs = try await CitadelFileSystem.connect(config, decider)
+            let handRolled = try await SSHClient.connect(host: h, hostKeyValidator: .acceptAnything())
             let client = SSHClient.self
             tab.session = BrowserSession.init(id: id)
             let viaImplicitSelf = await connect()
@@ -864,7 +887,16 @@ struct ReconnectWiringGuardTests {
             """)
         #expect(flagged.contains("if let fs = await form.connect() {"))
         #expect(flagged.contains("Task { _ = await tab.connectionViewModel.connect() }"))
-        #expect(flagged.contains("let fs = try await CitadelFileSystem.connect(config, decider)"))
+        #expect(
+            flagged.contains(
+                "let handRolled = try await SSHClient.connect(host: h, hostKeyValidator: .acceptAnything())"),
+            """
+            the dial macSCP's own access levels do NOT stop. `CitadelFileSystem.connect(config, \
+            decider)` stood here until every backend's `connect` became module-internal, and it \
+            no longer compiles from this target; a raw transport dial does, and it reaches no \
+            TOFU at all. A probe that only proves sensitivity to a violation nobody can write \
+            makes this suite look stronger than it is.
+            """)
         #expect(flagged.contains("let client = SSHClient.self"))
         #expect(flagged.contains("tab.session = BrowserSession.init(id: id)"), """
             an `.init` spelling must be seen the same as a `(` one.
