@@ -77,6 +77,50 @@ zusätzlich zu einer Erkennung ausgegeben, die bereits 14,1–14,9 s kostet.
 Der gegatete Test leitet seine eigene Schranke aus der Produktionskonstante
 ab, statt eine zweite Kopie der Zahl zu führen.
 
+## Nachtrag vom selben Tag: die Behebung greift nur ohne Terminal
+
+**Die Zahlen oben sind richtig und beschreiben trotzdem den Ausnahmefall.**
+Der Test, der sie erzeugt hat, öffnet keine Shell — sein Platzhalter-Opener
+wirft, was eine bewusste Entscheidung aus einem anderen Test ist und keine
+Umgebungslücke.
+
+Mit **offener Shell** gemessen, drei unabhängige Läufe:
+
+| | mit offener Shell | Kontrolle ohne Shell |
+|---|---|---|
+| Abbau kommt zurück? | **nein**, ≥30 s (nicht abbrechende Frist) | ja, 5,340685209 s |
+| `disconnect()` betreten? | **nein** | ja |
+| Tab | `.degraded`, Sitzung bleibt gesetzt | `.lost`, Sitzung `nil` |
+
+Der einzige Unterschied ist das offene Terminal. Nach `docker unpause` kam
+der aufgegebene Abbau in 0,0022 / 0,0017 / 0,0019 s zurück.
+
+**Die Ursache ist die Reihenfolge.** `teardown` wartet auf vier Stufen:
+
+```
+cancelAll → editManager.stopAll() → terminal.shutdown() → disconnect()
+```
+
+Die Frist aus `7ac7f7e` sitzt in der **letzten**. `CitadelShell.close()` ist
+`pump.cancel(); await pump.value` — ein unbegrenztes Warten auf eine
+abgebrochene Aufgabe — und hängt in der dritten. Die Frist wird nie
+erreicht.
+
+Mindestens zwei weitere unbegrenzte Wartepunkte liegen davor: `cancelAll`
+Schritt 3 wartet auf laufende Transfers, und `editManager.stopAll()` ist
+nicht untersucht.
+
+**Entscheidung des Maintainers (2026-08-28): jede Stufe einzeln begrenzen.**
+Nicht der Abbau als Ganzes — seine Reihenfolge ist eine Invariante dieses
+Projekts, und eine Frist darum würde sie mittendrin abbrechen und nicht
+sagen, welche Stufe hing.
+
+**Eine Lektion aus dem Messen selbst, die nichts mit SSH zu tun hat:** der
+erste Lauf war **grün, während der Defekt vorlag**. Seine Nachbedingungen
+lasen `enteredAt` und `liveness` erst **nach** dem Auftau-Block — also
+nachdem der Peer wieder antwortete und der Abbau nachgeholt hatte. Eine
+Prüfung, die nach der Heilung liest, ist keine Prüfung.
+
 ## Was offen bleibt — und eine Maintainer-Frage
 
 **Ungegatet hält nichts die Verdrahtung.** Dass `BoundedClose` das Richtige
