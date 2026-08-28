@@ -69,7 +69,7 @@ struct ConnectionViewModelSourceGuardTests {
     private static let stateWritePattern = #"(?<![A-Za-z0-9_])_?state\s*=\s*(?!=)"#
 
     @Test func everyStateAssignmentIsOnTheAllowList() throws {
-        let stripped = try Self.stripCommentsAndStrings(
+        let stripped = try SwiftSource.stripCommentsAndStrings(
             try String(contentsOf: Self.viewModelFile, encoding: .utf8))
         let writes = try Self.stateWrites(in: stripped)
         var offenders: [String] = []
@@ -97,7 +97,7 @@ struct ConnectionViewModelSourceGuardTests {
     /// `fail(_:kind:)` has to actually be what the allow-list assumes it
     /// is: the writer that sets the verdict before the state.
     @Test func theOneFailureWriterSetsTheVerdictFirst() throws {
-        let stripped = try Self.stripCommentsAndStrings(
+        let stripped = try SwiftSource.stripCommentsAndStrings(
             try String(contentsOf: Self.viewModelFile, encoding: .utf8))
         let normalized = stripped.split(separator: "\n", omittingEmptySubsequences: false)
             .map { $0.split(whereSeparator: { $0 == " " || $0 == "\t" }).joined(separator: " ") }
@@ -125,7 +125,7 @@ struct ConnectionViewModelSourceGuardTests {
     /// evasions round 2 shipped — a receiver, a weak-self receiver, and a
     /// write buried in a `guard … else` clause.
     @Test func theScanRejectsADirectFailureWriteWhereverItSits() throws {
-        let stripped = try Self.stripCommentsAndStrings("""
+        let stripped = try SwiftSource.stripCommentsAndStrings("""
             // state = .failed(message: "commented out", field: nil)
             state = .idle
             state = .connecting
@@ -154,33 +154,6 @@ struct ConnectionViewModelSourceGuardTests {
         #expect(offenders.contains { $0.hasPrefix("jumpFailure") })
     }
 
-    /// Fail-closed self-test: a raw-string delimiter (`#"…"#`) is a form
-    /// this stripper does not parse. Left unhandled, it used to
-    /// desynchronize the plain-quote counting instead — `#"""#`, an
-    /// entirely ordinary literal for one quote character, is read as one
-    /// opening quote, one closing quote, and a fresh string that swallows
-    /// everything up to the next real `"` in the file, which could be far
-    /// below. A `.failed(...)` write hiding past that point would vanish
-    /// from the scan along with it. The fix must throw instead.
-    @Test func stripperFailsClosedOnARawStringDelimiter() throws {
-        let source = "static let quote = #\"\"\"#\nstate = .failed(message: m, field: f)"
-        #expect(throws: (any Error).self) {
-            try Self.stripCommentsAndStrings(source)
-        }
-    }
-
-    /// Fail-closed self-test: a string or block comment that never closes
-    /// must not be treated as "closed at end of file" — that is the same
-    /// truncation risk under a different cause.
-    @Test func stripperFailsClosedOnAnUnterminatedLiteral() throws {
-        #expect(throws: (any Error).self) {
-            try Self.stripCommentsAndStrings("let x = \"unterminated")
-        }
-        #expect(throws: (any Error).self) {
-            try Self.stripCommentsAndStrings("/* never closes")
-        }
-    }
-
     /// Every write to `state`, as the text assigned. Returns what follows
     /// the `=` up to the end of that line, whitespace-normalized — enough
     /// for the allow-list to judge, and enough for a failure message to
@@ -194,109 +167,5 @@ struct ConnectionViewModelSourceGuardTests {
             let line = rest.prefix { $0 != "\n" }
             return line.split(whereSeparator: { $0 == " " || $0 == "\t" }).joined(separator: " ")
         }
-    }
-
-    /// Raised when the source contains something this hand-rolled stripper
-    /// cannot parse: a raw-string delimiter it does not understand, or a
-    /// string/comment literal that never closes. Either one means the rest
-    /// of the read is not trustworthy, so the scan must stop rather than
-    /// silently hand back a truncated result.
-    private enum StripError: Error, CustomStringConvertible {
-        case unrecognizedDelimiter
-        case unterminatedLiteral
-
-        var description: String {
-            switch self {
-            case .unrecognizedDelimiter:
-                return """
-                    unrecognized string delimiter (a raw string's `#"`, `##"`, …) — this \
-                    stripper does not parse raw strings and refuses to guess where one ends
-                    """
-            case .unterminatedLiteral:
-                return "unterminated string or comment literal"
-            }
-        }
-    }
-
-    /// Strips `//` and `/* */` comments and string literals, preserving
-    /// line breaks so the scan above can work line by line — a commented-out
-    /// or quoted assignment must neither trip the guard nor satisfy it.
-    ///
-    /// Fails closed: a raw-string delimiter (`#"…"#`) is a form this
-    /// stripper does not parse, and an unterminated string or comment means
-    /// it ran off the end of the file without finding what it was looking
-    /// for. Both throw rather than return whatever was collected so far —
-    /// the alternative is a scan that silently reads less than the file it
-    /// claims to have checked.
-    private static func stripCommentsAndStrings(_ source: String) throws -> String {
-        var result = ""
-        result.reserveCapacity(source.count)
-        let chars = Array(source)
-        var i = 0
-        var blockCommentDepth = 0
-        while i < chars.count {
-            let c = chars[i]
-            if blockCommentDepth > 0 {
-                if c == "/", i + 1 < chars.count, chars[i + 1] == "*" {
-                    blockCommentDepth += 1
-                    i += 2
-                    continue
-                }
-                if c == "*", i + 1 < chars.count, chars[i + 1] == "/" {
-                    blockCommentDepth -= 1
-                    i += 2
-                    continue
-                }
-                result.append(c == "\n" ? "\n" : " ")
-                i += 1
-                continue
-            }
-            if c == "/", i + 1 < chars.count, chars[i + 1] == "/" {
-                while i < chars.count, chars[i] != "\n" {
-                    result.append(" ")
-                    i += 1
-                }
-                continue
-            }
-            if c == "/", i + 1 < chars.count, chars[i + 1] == "*" {
-                blockCommentDepth = 1
-                i += 2
-                continue
-            }
-            if c == "#" {
-                var j = i
-                while j < chars.count, chars[j] == "#" { j += 1 }
-                if j < chars.count, chars[j] == "\"" {
-                    throw StripError.unrecognizedDelimiter
-                }
-            }
-            if c == "\"", i + 2 < chars.count, chars[i + 1] == "\"", chars[i + 2] == "\"" {
-                i += 3
-                while i + 2 < chars.count,
-                    !(chars[i] == "\"" && chars[i + 1] == "\"" && chars[i + 2] == "\"")
-                {
-                    result.append(chars[i] == "\n" ? "\n" : " ")
-                    i += 1
-                }
-                guard i + 2 < chars.count else { throw StripError.unterminatedLiteral }
-                i += 3
-                result.append(" ")
-                continue
-            }
-            if c == "\"" {
-                i += 1
-                while i < chars.count, chars[i] != "\"" {
-                    if chars[i] == "\\", i + 1 < chars.count { i += 2 } else { i += 1 }
-                }
-                guard i < chars.count else { throw StripError.unterminatedLiteral }
-                i += 1
-                result.append(" ")
-                continue
-            }
-            result.append(c)
-            i += 1
-        }
-        guard blockCommentDepth == 0 else { throw StripError.unterminatedLiteral }
-        return result
     }
 }
