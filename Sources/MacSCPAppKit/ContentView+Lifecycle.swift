@@ -241,7 +241,7 @@ extension ContentView {
                     settingsStore.connectTimeoutSeconds
                 }
                 return try await BackendDescriptor.descriptor(for: config.kind).connect(
-                    config, decider, { candidate in await certificateBridge.ask(candidate) },
+                    config, decider, .asking { candidate in await certificateBridge.ask(candidate) },
                     connectTimeoutSeconds)
             }),
             certificateBridge: certificateBridge,

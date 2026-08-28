@@ -93,7 +93,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         config: SSHConnectionConfig,
         connectTimeout: TimeAmount,
         knownHosts: KnownHostsStore,
-        onUnknownHostKey: @escaping @Sendable (HostKeyCandidate) async -> Bool
+        onUnknownHostKey: HostKeyDecider
     ) async throws -> CitadelFileSystem {
         var jumpAgent: AgentAuthContext?
         if let jump = config.jump, isAgentAuth(jump.auth) {
@@ -186,7 +186,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         config: SSHConnectionConfig,
         connectTimeout: TimeAmount,
         knownHosts: KnownHostsStore,
-        onUnknownHostKey: @escaping @Sendable (HostKeyCandidate) async -> Bool,
+        onUnknownHostKey: HostKeyDecider,
         jumpAgent: AgentAuthContext?,
         targetAgent: AgentAuthContext?,
         group: MultiThreadedEventLoopGroup?,

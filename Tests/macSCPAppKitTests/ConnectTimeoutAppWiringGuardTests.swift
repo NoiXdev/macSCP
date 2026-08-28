@@ -89,7 +89,7 @@ struct ConnectTimeoutAppWiringGuardTests {
     @Test func scannerFlagsAHardcodedLiteralTimeout() {
         let source = """
             return try await BackendDescriptor.descriptor(for: config.kind).connect(
-                config, decider, { candidate in await certificateBridge.ask(candidate) },
+                config, decider, .asking { candidate in await certificateBridge.ask(candidate) },
                 10)
             """
         let lines = source.components(separatedBy: "\n")
@@ -101,7 +101,7 @@ struct ConnectTimeoutAppWiringGuardTests {
     @Test func scannerAcceptsTheLiveLocal() {
         let source = """
             return try await BackendDescriptor.descriptor(for: config.kind).connect(
-                config, decider, { candidate in await certificateBridge.ask(candidate) },
+                config, decider, .asking { candidate in await certificateBridge.ask(candidate) },
                 connectTimeoutSeconds)
             """
         let lines = source.components(separatedBy: "\n")
@@ -113,7 +113,7 @@ struct ConnectTimeoutAppWiringGuardTests {
     @Test func scannerFlagsAStaleDifferentlyNamedCapture() {
         let source = """
             return try await BackendDescriptor.descriptor(for: config.kind).connect(
-                config, decider, { candidate in await certificateBridge.ask(candidate) },
+                config, decider, .asking { candidate in await certificateBridge.ask(candidate) },
                 capturedTimeoutFromTabCreation)
             """
         let lines = source.components(separatedBy: "\n")

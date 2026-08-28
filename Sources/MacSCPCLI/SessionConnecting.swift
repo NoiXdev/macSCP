@@ -55,7 +55,7 @@ func connect(
     // own), so it uses the settings default rather than a live,
     // user-configured value.
     return try await BackendDescriptor.descriptor(for: config.kind).connect(
-        config, makeDecider(policy: options.hostKeyPolicy), { _ in false },
+        config, makeDecider(policy: options.hostKeyPolicy), .refusing,
         SettingsStore.defaultConnectTimeoutSeconds)
 }
 
@@ -84,10 +84,15 @@ func withConnection(
 
 /// Builds the decider for UNKNOWN host keys. A mismatch never reaches this:
 /// `HostKeyValidation` stops it first, and this function has no branch that
-/// could accept one. Moved here, unchanged, from the M1 driver being
-/// replaced in this task.
+/// could accept one.
+///
+/// The body below is what `HostKeyDecider.asking` means for a terminal: the
+/// policy and `CLIEnvironment.hasTTY` choose between announcing, refusing and
+/// actually asking, and the question itself goes to `stderr`. All three stay
+/// on this side of the boundary — Core has no terminal to write to and no
+/// policy flag to read.
 func makeDecider(policy: HostKeyPolicy) -> HostKeyDecider {
-    { candidate in
+    .asking { candidate in
         switch HostKeyPolicy.decision(for: policy, hasTTY: CLIEnvironment.hasTTY) {
         case .accept:
             FileHandle.standardError.write(Data(

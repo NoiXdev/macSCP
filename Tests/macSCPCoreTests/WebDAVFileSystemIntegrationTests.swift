@@ -46,7 +46,7 @@ struct WebDAVFileSystemIntegrationTests {
             baseURL: "\(scheme)://127.0.0.1:\(port)/dav", username: "testuser",
             useNextcloudPath: false, password: "testpass")
         let store = trustStore ?? TrustedCertificateStore(directory: trustDirectory())
-        return try await WebDAVFileSystem.connect(config, trustStore: store, decider: { _ in true })
+        return try await WebDAVFileSystem.connect(config, trustStore: store, decider: .asking { _ in true })
     }
 
     /// Cushions reconnect throttling of the test container, mirroring
@@ -72,7 +72,7 @@ struct WebDAVFileSystemIntegrationTests {
         let store = KnownHostsStore(directory: dir)
         return try await connectSSHWithRetry {
             try await CitadelFileSystem.connect(
-                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
+                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
         }
     }
 
@@ -394,7 +394,7 @@ struct WebDAVFileSystemIntegrationTests {
         let firstAsked = AskedFlag()
         let fs = try await WebDAVFileSystem.connect(
             config, trustStore: store,
-            decider: { _ in await firstAsked.markAsked(); return true })
+            decider: .asking { _ in await firstAsked.markAsked(); return true })
         await fs.disconnect()
         #expect(await firstAsked.wasAsked)
 
@@ -412,7 +412,7 @@ struct WebDAVFileSystemIntegrationTests {
         do {
             _ = try await WebDAVFileSystem.connect(
                 config, trustStore: store,
-                decider: { _ in await secondAsked.markAsked(); return true })
+                decider: .asking { _ in await secondAsked.markAsked(); return true })
             Issue.record("expected a certificate mismatch, connect unexpectedly succeeded")
         } catch let error as ServerCertificateError {
             guard case .mismatch = error else {

@@ -11,7 +11,48 @@ import os
 /// challenge completion handler to be called later. So the decider is simply
 /// awaited. Do not copy the SSH retry dance here.
 public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    public typealias CertificateDecider = @Sendable (ServerCertificateCandidate) async -> Bool
+    /// The answer to "this server certificate is UNKNOWN — trust it?".
+    ///
+    /// A type rather than a closure, for the same reason `HostKeyDecider`
+    /// is one: as a bare `@Sendable (ServerCertificateCandidate) async ->
+    /// Bool`, any call site could pass `{ _ in true }` and answer on the
+    /// user's behalf. Here that is worse than skipping a prompt, because
+    /// accepting also PINS: `decideCertificate` writes the accepted
+    /// certificate to the trust store, and once a host is pinned
+    /// `ServerCertificateValidation` can never report `.mismatch` for it
+    /// again. What a caller can write now is a factory with a name.
+    ///
+    /// Never asked on a MISMATCH, and never for an origin other than the
+    /// configured one: `decideCertificate` stops both before any decider is
+    /// consulted, and no factory here can change that.
+    public struct CertificateDecider: Sendable {
+        private let answer: @Sendable (ServerCertificateCandidate) async -> Bool
+
+        private init(
+            _ answer: @escaping @Sendable (ServerCertificateCandidate) async -> Bool
+        ) {
+            self.answer = answer
+        }
+
+        public func callAsFunction(_ candidate: ServerCertificateCandidate) async -> Bool {
+            await answer(candidate)
+        }
+
+        /// Puts the question to someone who answers it — the app's
+        /// certificate prompt, which shows the fingerprint a person
+        /// compares against the server's own admin page. The closure
+        /// PRESENTS; it is not meant to decide on its own.
+        public static func asking(
+            _ present: @escaping @Sendable (ServerCertificateCandidate) async -> Bool
+        ) -> CertificateDecider {
+            CertificateDecider(present)
+        }
+
+        /// Answers no without asking anyone. For callers with nobody to
+        /// ask — the command-line tool has no interactive prompt, so an
+        /// unknown certificate is refused rather than trusted in silence.
+        public static let refusing = CertificateDecider { _ in false }
+    }
 
     /// Scheme, host and port together — the unit a credential belongs to.
     /// The password the user stored is for ONE server, and this is the
@@ -111,7 +152,7 @@ public final class WebDAVSessionDelegate: NSObject, URLSessionTaskDelegate, @unc
 
     public init(baseURL: URL, username: String, password: String,
                 trustStore: TrustedCertificateStore,
-                decider: @escaping CertificateDecider) {
+                decider: CertificateDecider) {
         self.username = username
         self.password = password
         self.configuredOrigin = Self.origin(of: baseURL)

@@ -204,7 +204,7 @@ struct ConnectMainActorLivenessTests {
                 config: config,
                 connectTimeout: .milliseconds(1500),
                 knownHosts: store,
-                onUnknownHostKey: { _ in false })
+                onUnknownHostKey: .refusing)
             await fs.disconnect()
         } catch {
             thrown = error

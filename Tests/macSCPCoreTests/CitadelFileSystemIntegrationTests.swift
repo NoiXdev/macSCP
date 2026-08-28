@@ -43,7 +43,7 @@ struct CitadelFileSystemIntegrationTests {
         let store = KnownHostsStore(directory: dir)
         return try await connectWithRetry {
             try await CitadelFileSystem.connect(
-                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
+                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
         }
     }
 
@@ -124,7 +124,7 @@ struct CitadelFileSystemIntegrationTests {
         let store = KnownHostsStore(directory: dir)
         await #expect(throws: RemoteFSError.authenticationFailed) {
             _ = try await CitadelFileSystem.connect(
-                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
+                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
         }
     }
 
@@ -492,7 +492,7 @@ struct CitadelFileSystemIntegrationTests {
         let store = KnownHostsStore(directory: khDir)
         let fs = try await connectWithRetry {
             try await CitadelFileSystem.connect(
-                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
+                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
         }
         defer { Task { await fs.disconnect() } }
 
@@ -516,7 +516,7 @@ struct CitadelFileSystemIntegrationTests {
         let fs1 = try await connectWithRetry {
             try await CitadelFileSystem.connect(
                 config: config, connectTimeout: .seconds(30), knownHosts: store,
-                onUnknownHostKey: { _ in asked.increment(); return true })
+                onUnknownHostKey: .asking { _ in asked.increment(); return true })
         }
         await fs1.disconnect()
         #expect(asked.value == 1)
@@ -524,7 +524,7 @@ struct CitadelFileSystemIntegrationTests {
 
         let fs2 = try await CitadelFileSystem.connect(
             config: config, connectTimeout: .seconds(30), knownHosts: store,
-            onUnknownHostKey: { _ in asked.increment(); return true })
+            onUnknownHostKey: .asking { _ in asked.increment(); return true })
         await fs2.disconnect()
         #expect(asked.value == 1)   // no second prompt
     }
@@ -540,7 +540,8 @@ struct CitadelFileSystemIntegrationTests {
 
         await #expect(throws: HostKeyError.rejectedByUser) {
             _ = try await CitadelFileSystem.connect(
-                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in false })
+                config: config, connectTimeout: .seconds(30), knownHosts: store,
+                onUnknownHostKey: .asking { _ in false })
         }
         #expect(try store.find(host: "127.0.0.1", port: 2222) == nil)
     }
@@ -567,7 +568,7 @@ struct CitadelFileSystemIntegrationTests {
         do {
             _ = try await CitadelFileSystem.connect(
                 config: config, connectTimeout: .seconds(30), knownHosts: store,
-                onUnknownHostKey: { _ in asked.increment(); return true })
+                onUnknownHostKey: .asking { _ in asked.increment(); return true })
             Issue.record("expected the connect to fail")
         } catch let error as RemoteFSError {
             guard case .connectionFailed(let reason) = error else {
@@ -1321,7 +1322,7 @@ struct CitadelFileSystemIntegrationTests {
         do {
             _ = try await CitadelFileSystem.connect(
                 config: config, connectTimeout: .seconds(30), knownHosts: store,
-                onUnknownHostKey: { _ in
+                onUnknownHostKey: .asking { _ in
                     Issue.record("mismatch must NEVER ask the decider")
                     return true
                 })
@@ -1418,7 +1419,7 @@ struct CitadelFileSystemIntegrationTests {
         let fs1 = try await connectWithRetry {
             try await CitadelFileSystem.connect(
                 config: config, connectTimeout: .seconds(30), knownHosts: store,
-                onUnknownHostKey: { _ in asked.increment(); return true })
+                onUnknownHostKey: .asking { _ in asked.increment(); return true })
         }
         let items = try await fs1.list(path: "/")
         #expect(!items.isEmpty)
@@ -1431,7 +1432,7 @@ struct CitadelFileSystemIntegrationTests {
 
         let fs2 = try await CitadelFileSystem.connect(
             config: config, connectTimeout: .seconds(30), knownHosts: store,
-            onUnknownHostKey: { _ in asked.increment(); return true })
+            onUnknownHostKey: .asking { _ in asked.increment(); return true })
         await fs2.disconnect()
         #expect(asked.value == 2)   // both keys remembered — no second prompt
     }
@@ -1450,7 +1451,7 @@ struct CitadelFileSystemIntegrationTests {
 
         await #expect(throws: RemoteFSError.jumpAuthenticationFailed) {
             _ = try await CitadelFileSystem.connect(
-                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
+                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
         }
     }
 
@@ -1473,7 +1474,7 @@ struct CitadelFileSystemIntegrationTests {
         do {
             _ = try await CitadelFileSystem.connect(
                 config: config, connectTimeout: .seconds(30), knownHosts: store,
-                onUnknownHostKey: { _ in
+                onUnknownHostKey: .asking { _ in
                     Issue.record("decider must never be consulted on mismatch")
                     return true
                 })
@@ -1502,7 +1503,7 @@ struct CitadelFileSystemIntegrationTests {
 
         let fs = try await connectWithRetry {
             try await CitadelFileSystem.connect(
-                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
+                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
         }
         await fs.disconnect()
         #expect(try store.find(host: "sshd2", port: 2222) != nil)
@@ -1515,7 +1516,7 @@ struct CitadelFileSystemIntegrationTests {
         do {
             _ = try await CitadelFileSystem.connect(
                 config: config, connectTimeout: .seconds(30), knownHosts: store,
-                onUnknownHostKey: { _ in
+                onUnknownHostKey: .asking { _ in
                     Issue.record("decider must never be consulted on mismatch")
                     return true
                 })
@@ -1569,7 +1570,7 @@ struct CitadelFileSystemIntegrationTests {
 
         let fs = try await connectWithRetry {
             try await CitadelFileSystem.connect(
-                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
+                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
         }
         let items = try await fs.list(path: "/")
         #expect(!items.isEmpty)
@@ -1688,7 +1689,7 @@ struct CitadelFileSystemIntegrationTests {
         let fs = try await withAgentEnv(agent) {
             try await connectWithRetry {
                 try await CitadelFileSystem.connect(
-                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
+                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
             }
         }
         defer { Task { await fs.disconnect() } }
@@ -1717,7 +1718,7 @@ struct CitadelFileSystemIntegrationTests {
         let fs = try await withAgentEnv(agent) {
             try await connectWithRetry {
                 try await CitadelFileSystem.connect(
-                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
+                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
             }
         }
         defer { Task { await fs.disconnect() } }
@@ -1756,7 +1757,7 @@ struct CitadelFileSystemIntegrationTests {
         await withAgentEnv(agent) {
             await #expect(throws: RemoteFSError.authenticationFailed) {
                 _ = try await CitadelFileSystem.connect(
-                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
+                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
             }
         }
     }
@@ -1803,7 +1804,7 @@ struct CitadelFileSystemIntegrationTests {
         let fs = try await withAgentEnv(agent) {
             try await connectWithRetry {
                 try await CitadelFileSystem.connect(
-                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
+                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
             }
         }
         defer { Task { await fs.disconnect() } }
@@ -1836,7 +1837,7 @@ struct CitadelFileSystemIntegrationTests {
         let fs = try await withAgentEnv(agent) {
             try await connectWithRetry {
                 try await CitadelFileSystem.connect(
-                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
+                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
             }
         }
         defer { Task { await fs.disconnect() } }
@@ -1882,7 +1883,7 @@ struct CitadelFileSystemIntegrationTests {
         await withAgentEnv(agent) {
             await #expect(throws: RemoteFSError.jumpAuthenticationFailed) {
                 _ = try await CitadelFileSystem.connect(
-                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
+                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
             }
         }
     }
@@ -1907,7 +1908,7 @@ struct CitadelFileSystemIntegrationTests {
         let fs = try await withAgentEnv(agent) {
             try await connectWithRetry {
                 try await CitadelFileSystem.connect(
-                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
+                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
             }
         }
         defer { Task { await fs.disconnect() } }

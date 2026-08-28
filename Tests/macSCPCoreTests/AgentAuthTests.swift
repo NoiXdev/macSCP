@@ -346,7 +346,7 @@ struct AgentAuthTests {
                     SSHAgentClient(transport: MockAgentTransport(response: Self.emptyIdentitiesAnswerFrame()))
                 }) {
                     _ = try await CitadelFileSystem.connect(
-                        config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
+                        config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
                 }
             }
         }
@@ -371,7 +371,7 @@ struct AgentAuthTests {
                         response: Self.identitiesAnswerFrame(keyTypes: ["ssh-dss", "ssh-dss"])))
                 }) {
                     _ = try await CitadelFileSystem.connect(
-                        config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
+                        config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
                 }
             }
         }
@@ -389,7 +389,7 @@ struct AgentAuthTests {
             defer { try? FileManager.default.removeItem(at: knownHostsDirectory) }
             await #expect(throws: AgentError.socketUnavailable) {
                 _ = try await CitadelFileSystem.connect(
-                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
+                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
             }
         }
     }
@@ -417,7 +417,7 @@ struct AgentAuthTests {
             await #expect(throws: AgentError.protocolError(reason: "boom")) {
                 try await CitadelFileSystem.AgentClientFactory.$override.withValue(failingFactory) {
                     _ = try await CitadelFileSystem.connect(
-                        config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: { _ in true })
+                        config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
                 }
             }
         }

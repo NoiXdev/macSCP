@@ -64,8 +64,8 @@ public struct BackendDescriptor: Sendable {
     /// later is a one-line change per backend, not a signature change.
     public let connect: @Sendable (
         ConnectionConfig,
-        @escaping ConnectionViewModel.HostKeyDecider,
-        @escaping WebDAVSessionDelegate.CertificateDecider,
+        HostKeyDecider,
+        WebDAVSessionDelegate.CertificateDecider,
         Int
     ) async throws -> any RemoteFileSystem
 

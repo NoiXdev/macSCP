@@ -124,18 +124,20 @@ public final class ConnectionViewModel {
         case edit(sessionID: UUID)
     }
 
-    /// Moved to `Connection/HostKeyDecider.swift` in M20 so non-UI callers
-    /// (the CLI) need not reach into the presentation layer. Kept as an alias
-    /// so existing call sites and their doc references keep working.
-    public typealias HostKeyDecider = macSCPCore.HostKeyDecider
-
     /// Generalized over `ConnectionKind` (M12/T3): the connector now takes a
     /// typed `ConnectionConfig` instead of an SSH-only config, so the same
     /// seam can route to S3 (or future backends) alongside SSH. The decider
     /// is still passed through unconditionally — SSH uses it for TOFU; a
     /// non-SSH backend simply ignores it.
+    ///
+    /// `HostKeyDecider` is `macSCPCore`'s own type, spelled plainly. It used
+    /// to be aliased here as well, from back when it lived on this view
+    /// model; the alias let a Core connection type keep being spelled
+    /// through the presentation layer's namespace. Now that a decider is a
+    /// nominal type of its own, the alias bought a second name for it and
+    /// nothing else.
     public typealias Connector = @Sendable (
-        ConnectionConfig, @escaping HostKeyDecider
+        ConnectionConfig, HostKeyDecider
     ) async throws -> any RemoteFileSystem
 
     /// State while waiting for the user's decision on an unknown host key
@@ -741,9 +743,9 @@ public final class ConnectionViewModel {
             // decider they never ask -- WebDAV's own certificate decision
             // belongs to whoever builds the `connector` (the App passes
             // `certificateBridge.ask`, the CLI refuses every unknown one).
-            let fs = try await connector(dialed) { [weak self] candidate in
+            let fs = try await connector(dialed, .asking { [weak self] candidate in
                 await self?.presentHostKeyPrompt(for: candidate, attempt: myAttempt) ?? false
-            }
+            })
             // Attempt-scoped write (see `currentAttempt`'s own doc
             // comment): a superseded attempt's own successful dial must not
             // publish `.idle`/`lastConnectedConfig`, and must not hand its

@@ -28,7 +28,7 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
     public static func connect(
         _ config: WebDAVConnectionConfig,
         trustStore: TrustedCertificateStore,
-        decider: @escaping WebDAVSessionDelegate.CertificateDecider
+        decider: WebDAVSessionDelegate.CertificateDecider
     ) async throws -> WebDAVFileSystem {
         guard let url = URL(string: config.baseURL), url.scheme != nil, url.host() != nil else {
             throw RemoteFSError.connectionFailed(reason: "WebDAV base URL is not a valid URL")

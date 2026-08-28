@@ -43,7 +43,7 @@ private func connectToSSHServer(port: Int) async throws -> CitadelFileSystem {
     func attempt() async throws -> CitadelFileSystem {
         try await CitadelFileSystem.connect(
             config: config, connectTimeout: .seconds(30),
-            knownHosts: knownHosts, onUnknownHostKey: { _ in true })
+            knownHosts: knownHosts, onUnknownHostKey: .asking { _ in true })
     }
     do {
         return try await attempt()

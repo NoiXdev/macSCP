@@ -23,7 +23,7 @@ struct BackendConnectRoutingTests {
     @Test func theS3DescriptorReachesTheS3Backend() async {
         await #expect {
             _ = try await BackendDescriptor.descriptor(for: .s3)
-                .connect(s3Config, { _ in false }, { _ in false }, SettingsStore.defaultConnectTimeoutSeconds)
+                .connect(s3Config, .refusing, .refusing, SettingsStore.defaultConnectTimeoutSeconds)
         } throws: { error in
             guard case RemoteFSError.protocolError(let reason) = error else { return true }
             return !reason.hasPrefix("wrong config for the")
@@ -34,7 +34,7 @@ struct BackendConnectRoutingTests {
         for kind in [ConnectionKind.ssh, .webdav] {
             await #expect(throws: RemoteFSError.self) {
                 _ = try await BackendDescriptor.descriptor(for: kind)
-                    .connect(s3Config, { _ in false }, { _ in false }, SettingsStore.defaultConnectTimeoutSeconds)
+                    .connect(s3Config, .refusing, .refusing, SettingsStore.defaultConnectTimeoutSeconds)
             }
         }
     }

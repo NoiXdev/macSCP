@@ -184,7 +184,7 @@ struct ConnectFailureSecrecyTests {
             _ = try await CitadelFileSystem.connect(
                 config: config, connectTimeout: .seconds(5),
                 knownHosts: KnownHostsStore(directory: directory),
-                onUnknownHostKey: { _ in false })
+                onUnknownHostKey: .refusing)
             Issue.record("expected the SSH dial to fail")
         } catch {
             // Positive half: the dial really failed on the transport, which
@@ -213,7 +213,7 @@ struct ConnectFailureSecrecyTests {
             _ = try await CitadelFileSystem.connect(
                 config: config, connectTimeout: .seconds(5),
                 knownHosts: KnownHostsStore(directory: directory),
-                onUnknownHostKey: { _ in false })
+                onUnknownHostKey: .refusing)
             Issue.record("expected the jump-hop dial to fail")
         } catch {
             guard case RemoteFSError.connectionFailed = error else {
@@ -239,7 +239,7 @@ struct ConnectFailureSecrecyTests {
             _ = try await CitadelFileSystem.connect(
                 config: config, connectTimeout: .seconds(5),
                 knownHosts: KnownHostsStore(directory: directory),
-                onUnknownHostKey: { _ in false })
+                onUnknownHostKey: .refusing)
             Issue.record("expected the private-key dial to fail")
         } catch {
             guard case RemoteFSError.connectionFailed = error else {
@@ -314,7 +314,7 @@ struct ConnectFailureSecrecyTests {
         do {
             _ = try await WebDAVFileSystem.connect(
                 config, trustStore: TrustedCertificateStore(directory: directory),
-                decider: { _ in false })
+                decider: .refusing)
             Issue.record("expected the WebDAV dial to fail")
         } catch {
             // Positive half, and the shape half in one: a foreign `NSError`
@@ -581,7 +581,7 @@ struct ConnectFailureSecrecyTests {
         do {
             _ = try await WebDAVFileSystem.connect(
                 config, trustStore: TrustedCertificateStore(directory: directory),
-                decider: { _ in false })
+                decider: .refusing)
             Issue.record("expected the rejected credential to fail the connect")
         } catch {
             guard case RemoteFSError.authenticationFailed = error else {
@@ -624,7 +624,7 @@ struct ConnectFailureSecrecyTests {
         do {
             _ = try await WebDAVFileSystem.connect(
                 config, trustStore: TrustedCertificateStore(directory: directory),
-                decider: { _ in false })
+                decider: .refusing)
         } catch {
             thrown = error
         }
@@ -701,7 +701,7 @@ struct ConnectFailureSecrecyTests {
             // from the origin check, not from a decider that says no.
             _ = try await WebDAVFileSystem.connect(
                 config, trustStore: store,
-                decider: { _ in asked.value = true; return true })
+                decider: .asking { _ in asked.value = true; return true })
         } catch {
             thrown = error
         }
@@ -721,7 +721,7 @@ struct ConnectFailureSecrecyTests {
         let laterDelegate = WebDAVSessionDelegate(
             baseURL: URL(string: "https://127.0.0.1:\(tls.port)")!,
             username: "tester", password: Secret.webdavPassword,
-            trustStore: store, decider: { _ in askedAgain.value = true; return false })
+            trustStore: store, decider: .asking { _ in askedAgain.value = true; return false })
         _ = await laterDelegate.decideCertificate(ServerCertificateCandidate(
             host: "127.0.0.1", port: tls.port, derBase64: "QUJD",
             subject: "CN=127.0.0.1", issuer: "CN=127.0.0.1", notAfter: nil))
@@ -846,7 +846,7 @@ struct ConnectFailureSecrecyTests {
                 _ = try await CitadelFileSystem.connect(
                     config: config, connectTimeout: .seconds(5),
                     knownHosts: KnownHostsStore(directory: directory),
-                    onUnknownHostKey: { _ in false })
+                    onUnknownHostKey: .refusing)
             }
             if let answer {
                 try await CitadelFileSystem.AgentClientFactory.$override.withValue({ _ in
