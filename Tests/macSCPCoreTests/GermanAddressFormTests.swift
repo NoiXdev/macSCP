@@ -53,16 +53,21 @@ import Testing
 /// way a sentence can.
 @Suite("German address form")
 struct GermanAddressFormTests {
-    /// `#filePath` is
-    /// `<repoRoot>/Tests/macSCPCoreTests/GermanAddressFormTests.swift`.
-    private static let repoRoot: URL = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent().deletingLastPathComponent()
-        .deletingLastPathComponent()
+    private static let germanLocale = "de"
 
-    private static let catalogs = [
-        "Sources/MacSCPAppKit/Resources/de.lproj/Localizable.strings",
-        "Sources/macSCPCore/Resources/de.lproj/Localizable.strings",
-    ]
+    /// The German catalogs, found rather than listed — see
+    /// `LocalizationCatalogs`. Naming them here would have meant that a
+    /// third localized target went unread while this suite reported
+    /// success.
+    ///
+    /// `try?` is what a stored property costs, and it is the one hazard
+    /// this rewrite could have reintroduced: a derivation that threw would
+    /// leave the check below iterating an empty array, and a parameterized
+    /// test with no arguments passes. `theScanReachesEveryGermanCatalog`
+    /// recomputes the same list with the error left in and holds this one
+    /// against it, so the swallowed error cannot stay swallowed.
+    private static let catalogs: [String] =
+        (try? LocalizationCatalogs.catalogs(forLocale: germanLocale)) ?? []
 
     private static let politeForms =
         #"\b(?:Sie|Ihnen|Ihr(?:e|em|en|er|es)?)\b"#
@@ -168,9 +173,11 @@ struct GermanAddressFormTests {
         let entries = try #require(
             NSDictionary(contentsOfFile: path) as? [String: String],
             "\(relativePath) did not parse as a property list")
-        #expect(entries.count >= 40, """
-            only \(entries.count) strings read from \(relativePath) — this check is not \
-            reading the catalog it thinks it is.
+        #expect(!entries.isEmpty, """
+            no strings read from \(relativePath) — this check is not reading the catalog it \
+            thinks it is. How many strings the catalogs hold between them is a question for \
+            `theScanReachesEveryGermanCatalog`: a floor per catalog would be a claim about \
+            the size of a directory this suite has never seen.
             """)
 
         var offenders: [String] = []
@@ -192,7 +199,45 @@ struct GermanAddressFormTests {
             """)
     }
 
+    /// The derivation this suite rides on, and the German coverage it
+    /// implies. Floors rather than counts, so that a new localized target
+    /// is a catalog to translate and not a test to edit.
+    @Test func theScanReachesEveryGermanCatalog() throws {
+        let catalogs = try LocalizationCatalogs.catalogs(forLocale: Self.germanLocale)
+        #expect(catalogs == Self.catalogs, """
+            deriving the German catalogs threw where this suite's own list swallowed it — \
+            the check above is running \(Self.catalogs.count) case(s) where \(catalogs.count) \
+            catalog(s) exist.
+            """)
+        #expect(catalogs.count >= 2, """
+            only \(catalogs.count) German catalog(s) found — the derivation is not reaching \
+            the catalogs, and the check above is passing over nothing.
+            """)
+
+        let directories = try LocalizationCatalogs.directories()
+        let withoutGerman = directories.filter { directory in
+            !catalogs.contains { $0.hasPrefix(directory + "/") }
+        }
+        #expect(withoutGerman.isEmpty, """
+            catalog director(ies) with no \(Self.germanLocale).lproj/Localizable.strings: \
+            \(withoutGerman). macSCP ships German, so a localized target without it is a \
+            surface whose register nothing here reads — and the register is the whole point \
+            of this suite.
+            """)
+
+        let strings = try catalogs.reduce(into: 0) { total, relativePath in
+            let entries = try #require(
+                NSDictionary(contentsOfFile: repoRootPath(relativePath)) as? [String: String])
+            total += entries.count
+        }
+        #expect(strings >= 40, """
+            \(strings) German string(s) across \(catalogs.count) catalog(s) — far too few \
+            for the catalogs this project has, so the scan is reading something other than \
+            what it names.
+            """)
+    }
+
     private func repoRootPath(_ relativePath: String) -> String {
-        Self.repoRoot.appendingPathComponent(relativePath).path(percentEncoded: false)
+        LocalizationCatalogs.url(relativePath).path(percentEncoded: false)
     }
 }
