@@ -52,10 +52,12 @@
 
 **Der gemessene Ist-Zustand:** beide sind heute nackte Funktionstypen —
 `public typealias HostKeyDecider = @Sendable (HostKeyCandidate) async -> Bool`
-und dasselbe für `CertificateDecider`. Betroffen sind **vier** Dateien für den
-einen und **drei** für den anderen, plus die Testaufrufstellen, die einen
-Entscheider bauen — **zähle die, bevor du anfängst**, und schreib die Zahl in
-den Bericht.
+und dasselbe für `CertificateDecider`. Meine Dateizählung (**vier** und
+**drei**) war **unvollständig**: `CitadelFileSystem.connect(onUnknownHostKey:)`
+buchstabiert den rohen Funktionstyp statt des Alias und taucht in einer Suche
+nach dem Aliasnamen deshalb nicht auf — ausgerechnet die direkte Wählstelle,
+für die der Wächter existiert. **Zähl selbst, und such nach der Signatur, nicht
+nach dem Namen.**
 
 `callAsFunction` ist entscheidend für den Umfang: die Verbrauchsstellen rufen
 heute `await decider(candidate)`, und genau so rufen sie danach weiter. Nur die
@@ -241,11 +243,26 @@ Runde 6. Vieles davon prüft ab jetzt etwas, das nicht mehr kompiliert.
   eine Zeile: deckt der Compiler das jetzt ab, oder nicht? **Was er abdeckt,
   wird gelöscht** — nicht „für alle Fälle" behalten. Ein Wächter neben einer
   Garantie lässt den nächsten Leser der Suite mehr vertrauen, als sie verdient.
-- [ ] **Step 2: Den Rest belegen.** Übrig bleiben soll, was ein Typ nicht sagen
-  kann — insbesondere, dass die App ihre `.asking`-Fabrik an die **echte**
-  Abfrage hängt und nicht an einen Ja-sager. Pflanze `.asking { _ in true }` in
-  der App-Schicht und belege, dass der Rest-Wächter **rot** wird. Wird er es
-  nicht, ist er kein Wächter mehr, sondern Zierde — dann sag das.
+- [ ] **Step 2: Den Rest belegen.**
+
+  **Korrektur zu diesem Plan, gemessen nach Task 1:** die App-Schicht baut
+  **keinen** Host-Key-Entscheider. Sie reicht ihn durch; die Abfrage wird in
+  Core verdrahtet (`ConnectionViewModel.connect` → `presentHostKeyPrompt`).
+  Ein **Zertifikats**-Entscheider wird dort dagegen gebaut, mit
+  `.asking { candidate in await certificateBridge.ask(candidate) }`. Die
+  ursprüngliche Fassung dieses Schritts behauptete beides für Host-Keys und war
+  falsch.
+
+  Übrig bleiben soll also, was ein Typ nicht sagen kann, und das ist **genau
+  eine** Sache: dass die vier `.asking`-Aufrufstellen an das hängen, was
+  wirklich fragt, und nicht an einen Ja-sager. **Zähl sie selbst**, statt die
+  Vier zu übernehmen.
+
+  Pflanze `.asking { _ in true }` an jeder dieser Stellen und belege, ob ein
+  Wächter **rot** wird. Wird er es nicht, ist der Rest kein Wächter mehr,
+  sondern Zierde — **dann sag das, statt einen zu bauen.** Ein neuer Scan über
+  vier Aufrufstellen wäre der siebte Anlauf derselben Familie; ob er sich lohnt,
+  ist eine Entscheidung des Maintainers und keine dieser Aufgabe.
 - [ ] **Step 3: Die Grenzen-Aussage neu schreiben.** Sie ist über sechs Runden
   gewachsen und beschreibt größtenteils Löcher, die es nicht mehr gibt. Sie
   muss nach diesem Schritt **wahr** sein: was der Compiler hält, was der Rest
