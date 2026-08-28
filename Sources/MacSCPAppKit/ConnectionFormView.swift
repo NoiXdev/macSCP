@@ -1,6 +1,42 @@
 import SwiftUI
 import macSCPCore
 
+/// Which stored session the form's Save would replace, given the name in
+/// the field and the mode the form is in.
+///
+/// A value of its own rather than a condition inside the view, because the
+/// answer turns on three things at once and one of them fails quietly.
+/// `SessionNameCollision.collides` is told which session to leave out; the
+/// mapping from `FormMode` to that id is the part no Core test can see, and
+/// it is exactly the part that breaks without a symptom. Editing a stored
+/// session must exclude that very session — the field shows its own name,
+/// so a form that forgot to exclude it would warn every single time, and a
+/// warning that is always on stops being read. A new connection must
+/// exclude nothing: it is not a session yet, so every stored name it
+/// matches belongs to someone else. Swap the two arms and the form warns
+/// always or never, and it still compiles and still renders.
+///
+/// Trimmed, because both save paths trim: `ContentView.persistFormAsSession`
+/// and `ConnectionViewModel.validateForEditSave` each store
+/// `saveName.trimmingCharacters(in: .whitespacesAndNewlines)`. The name
+/// compared here has to be the name that will be written, or the warning
+/// would go silent for a trailing space that saving discards.
+enum SessionNameConflict {
+    static func replacedSession(
+        byName name: String, mode: ConnectionViewModel.FormMode,
+        in sessions: [StoredSession]
+    ) -> StoredSession? {
+        let excluded: UUID?
+        switch mode {
+        case .edit(let sessionID): excluded = sessionID
+        case .new: excluded = nil
+        }
+        return SessionNameCollision.collides(
+            name.trimmingCharacters(in: .whitespacesAndNewlines),
+            with: sessions, excluding: excluded)
+    }
+}
+
 struct ConnectionFormView: View {
     @Bindable var viewModel: ConnectionViewModel
     /// Groups offered by the group picker (edit mode, and new mode once
@@ -124,6 +160,15 @@ struct ConnectionFormView: View {
     private var isEditMode: Bool {
         if case .edit = viewModel.mode { return true }
         return false
+    }
+
+    /// The stored session saving would replace under the name currently in
+    /// the field, or `nil`. The view decides nothing about it — which
+    /// session that is, and whether the form's own session counts, are
+    /// `SessionNameConflict`'s, where a test can reach them.
+    private var replacedSession: StoredSession? {
+        SessionNameConflict.replacedSession(
+            byName: viewModel.saveName, mode: viewModel.mode, in: sessionList.sessions)
     }
 
     /// True while Set mode has nothing selected yet — the three connect/save
@@ -449,6 +494,26 @@ struct ConnectionFormView: View {
                         )
                     }
                     .errorHighlight(failedField == .saveName)
+
+                    // Names the session that saving would replace, and says
+                    // that it would. Drawn like this form's other inline
+                    // message under a field (the jump summary row): a
+                    // label-less `FormRow` so it sits under the field it is
+                    // about, same size, in amber rather than the red that
+                    // form reserves for a refusal — saving onto a stored
+                    // name stays allowed and stays one click away, which is
+                    // why nothing here disables the buttons below.
+                    if let replaced = replacedSession {
+                        FormRow(label: "") {
+                            Text(String(
+                                format: L10n.string(
+                                    "connection.saveName.replaces %@",
+                                    "Saving replaces the existing session \u{201C}%@\u{201D}."),
+                                replaced.name))
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(DesignTokens.statusAmber)
+                        }
+                    }
 
                     let tagsLabel = L10n.string("form.tags.label", "Tags")
                     FormRow(label: tagsLabel) {

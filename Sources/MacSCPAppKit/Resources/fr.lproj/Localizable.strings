@@ -108,6 +108,7 @@
 "connection.saveToggle" = "Enregistrer comme session";
 "connection.field.saveName" = "Nom de la session";
 "connection.field.saveName.placeholder" = "p. ex. hetzner-web";
+"connection.saveName.replaces %@" = "L’enregistrement remplacera la session existante « %@ ».";
 "form.tags.label" = "Étiquettes";
 "form.tags.help" = "Séparées par des virgules. Utilisé par le filtre de la barre latérale.";
 "form.tags.placeholder" = "Ajouter un tag…";

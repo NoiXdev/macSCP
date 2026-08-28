@@ -108,6 +108,7 @@
 "connection.saveToggle" = "Zapisz jako sesję";
 "connection.field.saveName" = "Nazwa sesji";
 "connection.field.saveName.placeholder" = "np. hetzner-web";
+"connection.saveName.replaces %@" = "Zapisanie zastąpi istniejącą sesję „%@”.";
 "form.tags.label" = "Tagi";
 "form.tags.help" = "Rozdzielone przecinkami. Używane przez filtr paska bocznego.";
 "form.tags.placeholder" = "Dodaj tag…";

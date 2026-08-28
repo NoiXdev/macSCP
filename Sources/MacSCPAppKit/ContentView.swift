@@ -1778,6 +1778,10 @@ struct ContentView: View {
         let descriptor = BackendDescriptor.descriptor(for: stored.kind)
         form.values = descriptor.defaultValues
         form.values.merge(descriptor.sessionValues(stored))
+        // NOT a name macSCP invents, so deliberately no
+        // `SessionNameCollision.freeName` here (unlike `fillFromImported`
+        // and `saveAsSession`): this form IS `stored`, and stepping aside
+        // would show the user a renamed copy of the session they opened.
         form.saveName = stored.name
         form.tags = stored.tags
         form.shouldSaveSession = false
@@ -2071,7 +2075,14 @@ struct ContentView: View {
         form.host = host.hostName ?? host.alias
         form.port = String(host.port ?? 22)
         form.username = host.user ?? ""
-        form.saveName = host.alias
+        // The other INVENTED name, same rule as "Save as Session": the alias
+        // comes out of `~/.ssh/config`, not out of the user's fingers, so it
+        // steps aside from a stored session of that name rather than
+        // replacing it on save. The form that EDITS a stored session is the
+        // one place a matching name is the normal case, and it fills this
+        // field straight from `stored.name`.
+        form.saveName = SessionNameCollision.freeName(
+            basedOn: host.alias, avoiding: sessionListViewModel.sessions)
         form.shouldSaveSession = false
         if let identityFile = host.identityFile {
             form.authChoice = .privateKey

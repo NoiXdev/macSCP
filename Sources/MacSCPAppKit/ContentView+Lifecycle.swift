@@ -1058,7 +1058,15 @@ extension ContentView {
     func saveAsSession(from tab: SessionTab) {
         let source = tab.connectionViewModel
         let carried = CarriedFormState(source)
-        let name = tab.displayTitle
+        // An INVENTED name — the user never typed this one, it is the tab's
+        // title. `SessionListViewModel.save` upserts by name, so a title
+        // that happens to match a stored session would replace it together
+        // with its group, tags, login set, jump spec and keychain secret.
+        // Stepping aside is right here and wrong for the form that edits a
+        // stored session: there the field shows that session's OWN name,
+        // and stepping aside would rename it instead of updating it.
+        let name = SessionNameCollision.freeName(
+            basedOn: tab.displayTitle, avoiding: sessionListViewModel.sessions)
         guard let target = formTarget() else { return }
         let form = target.connectionViewModel
         form.exitEditMode()
