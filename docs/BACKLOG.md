@@ -1,6 +1,6 @@
 # macSCP — Backlog
 
-**Stand:** 2026-08-26. Ein Index über die Einträge unter
+**Stand:** 2026-08-28. Ein Index über die Einträge unter
 `docs/superpowers/specs/`, damit sie nicht einzeln gesucht werden müssen.
 Jeder Eintrag dort ist eine **gesicherte Idee oder ein gemessener Befund**,
 kein Entwurf — die Entwürfe entstehen erst beim Angehen.
@@ -30,7 +30,7 @@ im Eintrag und zieht hier höchstens die Zeile nach.
 
 | Eintrag | Kern |
 |---|---|
-| [Sitzungen, Tabs, Seitenleiste](superpowers/specs/2026-08-20-backlog-sitzungen-tabs-seitenleiste.md) | Elf Punkte. Reihenfolge im Eintrag: Einfachklick soll nicht verbinden (billigster Eingriff, größte Wirkung) → Seitenleistenbreite merken → Tab-Kontextmenü und Umordnen → „schon offen"-Frage → verschachtelte Ordner **und** freie Sortierung als *ein* Vorgang → Suche im Baum → Tags abschaltbar und als Filter. |
+| [Sitzungen, Tabs, Seitenleiste](superpowers/specs/2026-08-20-backlog-sitzungen-tabs-seitenleiste.md) | **Sechs von elf Punkten erledigt** (A1, A2, B1, B2, B3, C1, D4). Offen: „Sitzung ist schon offen“ (C2), verschachtelte Ordner **und** freie Sortierung als *ein* Vorgang (D1+D2), Suche im Baum (D3), Tags abschaltbar und als Filter (E1, E2). |
 | [Verwaltungs-Sheets](superpowers/specs/2026-08-20-backlog-verwaltungs-sheets.md) | Spaltensortierung bei Known Hosts (fast geschenkt, ist schon eine `Table`), Schnellfilter, Drei-Punkte-Menü für Import/Export. Enthält zwei getroffene Entscheidungen: **keine** Tabellen-Umstellung für Logins und Keys, und die Regel „Auswahl-Aktionen bleiben sichtbar, Datei-Aktionen wandern ins Menü". |
 | [Feinschliff an den Reitern](superpowers/specs/2026-08-27-backlog-reiter-feinschliff.md) | Aus der Maintainer-Prüfung: **sichtbare Einfügemarke beim Ziehen** (billig, wenn sie den Zielreiter hervorhebt — ein Einfügestrich zwischen Reitern holt die gerade entfernte Positionsrechnung zurück) und **Umschalten Terminal ↔ Dateien** aus dem Reiter-Menü. Der zweite Punkt landet auf der Naht, die `PaneVisibility` ausdrücklich offengelassen hat: zwei Wahrheiten über „ist das Terminal sichtbar". |
 | [Snippet-Editor: Bedienung](superpowers/specs/2026-08-21-backlog-snippet-editor-bedienung.md) | Variablen ein- und ausklappbar samt Massenaktionen; Platzhalter beim Tippen vorschlagen. Der Baustein dafür (`NSTextView`) ist schon da. |
@@ -50,7 +50,6 @@ im Eintrag und zieht hier höchstens die Zeile nach.
 |---|---|
 | [CLI: Vervollständigung, Hilfe, Host-Liste](superpowers/specs/2026-08-20-backlog-cli-completion-hosts.md) | Die Host-Auflistung fehlt ganz und ist zugleich die Datenquelle für die Vervollständigung — deshalb zuerst. Auflage: die Liste fasst den Keychain nicht an. |
 | [Abhängigkeiten](superpowers/specs/2026-08-20-backlog-abhaengigkeiten.md) | swift-nio-ssh kommt als **Fremd-Fork** über Citadel herein — der eigentliche Befund. Dazu: SwiftTerm hängt an einer nackten Revision, swift-crypto ist zwei Hauptversionen zurück. |
-| [Swift-6-Warnungen](superpowers/specs/2026-08-19-backlog-swift6-warnungen.md) | ~1200 Warnungen tragen „this is an error in the Swift 6 language mode". Terminierte Schuld, fällig vor dem nächsten Toolchain-Sprung — und **vor** den Abhängigkeitssprüngen, sonst weiß bei rotem Build niemand, was es war. |
 | [Keep-alive als zwei Einstellungen](superpowers/specs/2026-08-25-backlog-keepalive-zwei-einstellungen.md) | Ein gespeicherter Wert trägt „aus" und „Intervall" zugleich; das Intervall überlebt keinen Neustart. Ursache war eine falsche Vorgabe im Auftrag, nicht die Umsetzung. |
 | [Import-Planer](superpowers/specs/2026-08-19-backlog-import-planer.md) | Halb gefüllte Feldtaschen beim Import. Vor dem Angehen prüfen, wie viel davon der Snippet-Zweig bereits erledigt hat. |
 
@@ -60,6 +59,7 @@ im Eintrag und zieht hier höchstens die Zeile nach.
 
 | Eintrag | |
 |---|---|
+| [Swift-6-Warnungen](superpowers/specs/2026-08-19-backlog-swift6-warnungen.md) | erledigt 2026-08-26: alle sechs Targets auf `.v6`, warnungsfrei, CI-Schranke bewiesen rot und grün |
 | [Snippet-Editor Teil 3: deklarierte Variablen](superpowers/specs/2026-08-19-backlog-snippet-teil-3.md) | umgesetzt, zehn Prüfrunden |
 | [M6a Polish-Backlog](superpowers/specs/2026-07-26-m6a-polish-backlog-design.md) | Meilenstein abgeschlossen |
 | [M11e Backlog-Sweep](superpowers/specs/2026-07-29-m11e-backlog-sweep-design.md) | Meilenstein abgeschlossen |
