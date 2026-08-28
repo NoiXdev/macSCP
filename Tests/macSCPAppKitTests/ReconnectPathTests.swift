@@ -465,17 +465,28 @@ struct ReconnectPathTests {
             recorded.
             """)
         #expect(tab.activeStoredSessionID == stored.id)
-        #expect(tab.dialingStoredSessionID == stored.id, """
-            `connect(in:stored:)` did not record which stored session it is dialing, so a \
+        #expect(tab.connectionViewModel.attemptOrigin == stored.id, """
+            `connect(in:stored:)` did not hand the dial's origin to the attempt, so a \
             second failure would offer no way to edit the session it failed on.
             """)
     }
 
     /// A `fillForm` refusal never dials, and must therefore leave no origin
-    /// behind either — the reason `dialingStoredSessionID` is written after
-    /// the fill rather than at the top of `connect(in:stored:)`. An origin
-    /// recorded here would outlive an attempt that never happened and be
-    /// read by whatever failed next.
+    /// behind either: an origin recorded here would outlive an attempt that
+    /// never happened and be read by whatever failed next.
+    ///
+    /// What this test pins CHANGED with M3, and the change is worth stating
+    /// rather than leaving to be inferred from a passing run. It used to
+    /// pin an ordering — `connect(in:stored:)` wrote the origin onto the
+    /// tab after the fill rather than before it, and writing it one line
+    /// earlier made this red. There is no such line any more: the origin
+    /// travels as an argument to `connect(origin:)`, which the refusal
+    /// returns above, and `ConnectionViewModel.attemptOrigin` is
+    /// `private(set)` so the App layer could not write it early even
+    /// deliberately. The origin half below is therefore now structural, and
+    /// the assertion that still has teeth is the one above it: the refusal
+    /// happens BEFORE the dial, which is what makes "no origin" mean
+    /// anything at all.
     @Test func afillRefusalRecordsNoDialOrigin() async {
         let workDir = makeTempDirectory("retry-refusal")
         defer { try? FileManager.default.removeItem(at: workDir) }
@@ -504,7 +515,177 @@ struct ReconnectPathTests {
             tab.connectionViewModel.lastFailureKind != nil
         }) else { return }
         #expect(await recorder.dialCount == 0, "a dangling login set must refuse before the dial")
-        #expect(tab.dialingStoredSessionID == nil)
+        #expect(tab.connectionViewModel.attemptOrigin == nil)
+    }
+
+    /// The defect this task closes (two-open-questions design, M3): a
+    /// stored-session dial that `ConnectionViewModel.connect()` REFUSES —
+    /// because the form is already dialing something else — must contribute
+    /// no origin to the attempt that is actually in flight.
+    ///
+    /// The refusal (`guard state != .connecting else { return nil }`)
+    /// returns without touching `state`, so nothing downstream observes an
+    /// attempt beginning or ending. An origin recorded outside the attempt
+    /// therefore survives the refusal and is read by whatever fails next —
+    /// here the ad-hoc dial, which offers "Edit session" for a session it
+    /// never chose.
+    ///
+    /// Reachable exactly as the design describes: the form's own Connect
+    /// button does not take `tab.isReconnecting`, and both paths are on the
+    /// main actor, so the sidebar click lands squarely inside the window.
+    ///
+    /// The origin is read BEFORE the connector is released: after that the
+    /// attempt ends, and a check that reads a transient condition after the
+    /// thing that resolves it is not a check.
+    @Test func aRefusedStoredDialLeavesNoOriginOnTheAttemptInFlight() async {
+        let workDir = makeTempDirectory("refused-dial-origin")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, cleanup) = makeContentView(
+            secrets: ReconnectSecretStore(), storeDirectory: workDir)
+        defer { cleanup() }
+
+        // `.agent` for the same reason as the tests above: it passes the
+        // form's pre-dial validation without a typed password or a keychain
+        // lookup, so `fillForm` cannot refuse before the dial is attempted.
+        let stored = StoredSession(
+            name: uniqueSaveName("never-dialed"), kind: .ssh,
+            ssh: StoredSSHConfig(
+                host: "never-dialed.example.com", username: "tim", authKind: .agent))
+        try? SessionStore(directory: workDir).upsert(stored)
+        view.sessionListViewModel.reload()
+
+        let recorder = DialRecorder()
+        let (stream, continuation) = AsyncStream<Void>.makeStream()
+        let tab = makeTab(connector: { config, _ in
+            await recorder.record(config)
+            for await _ in stream {}   // hangs until this test releases it
+            throw CancellationError()
+        })
+
+        // The form's own ad-hoc dial — typed in, never saved, and the one
+        // attempt that is genuinely in flight.
+        let form = tab.connectionViewModel
+        form.host = "ad-hoc.example.com"
+        form.username = "tim"
+        form.password = "geheim"
+        let adHoc = Task { await form.connect() }
+        guard await waitUntil("the ad-hoc dial must reach the connector", {
+            await recorder.dialCount == 1
+        }) else {
+            continuation.finish()
+            _ = await adHoc.value
+            return
+        }
+
+        // A sidebar click on a stored session, mid-dial. `connect(in:stored:)`
+        // fills the form and reaches `form.connect()`, which refuses.
+        view.connect(in: tab, stored: stored)
+        guard await waitUntil("the refused stored dial must run to completion", {
+            !tab.isReconnecting
+        }) else {
+            continuation.finish()
+            _ = await adHoc.value
+            return
+        }
+
+        let originAfterRefusal = tab.connectionViewModel.attemptOrigin
+
+        continuation.finish()
+        _ = await adHoc.value
+
+        // The positive half, without which the expectation at the end is a
+        // claim about an attempt that never happened: a refusal that never
+        // refused, or a dial that never failed, would both let it pass.
+        #expect(await recorder.dialCount == 1, """
+            the refused stored dial reached the connector — it was not refused at all, so \
+            this test is no longer about the window it was written for.
+            """)
+        guard case .failed = form.state else {
+            Issue.record("""
+                the ad-hoc attempt did not end in a failure, so there is no failed attempt for \
+                an origin to be attached to.
+                """)
+            return
+        }
+
+        #expect(originAfterRefusal == nil, """
+            a refused stored dial left its origin behind, and the ad-hoc attempt that failed \
+            carries it — the failed-connect surface would offer "Edit session" for a session \
+            this attempt never dialed.
+            """)
+    }
+
+    /// The neighbouring path, measured while M3 was being built and fixed
+    /// in the same pass: a failure that is not an attempt at all must not
+    /// wear the label of the attempt before it.
+    ///
+    /// `attemptOrigin` is assigned at the head of `connect()` and survives
+    /// that attempt — that is what makes it readable mid-dial. So a form
+    /// that has already dialed a stored session carries its id afterwards,
+    /// and the NEXT thing to publish `.failed` on that form inherits it
+    /// unless it says otherwise. `fillForm` refusing a dangling login set
+    /// is exactly that: `showFailure` publishes `.failed` without any dial
+    /// having happened.
+    ///
+    /// Before the fix this read the FIRST session's id, so the surface
+    /// offered "Edit session" for a session the user had moved on from —
+    /// the same mislabelling M3 removes from the refusal path, one door
+    /// down. `fail(_:kind:origin:)` is where both are now stated.
+    @Test func aFailureThatNeverDialedDoesNotInheritTheLastAttemptsOrigin() async {
+        let workDir = makeTempDirectory("origin-not-inherited")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, cleanup) = makeContentView(
+            secrets: ReconnectSecretStore(), storeDirectory: workDir)
+        defer { cleanup() }
+
+        let dialed = StoredSession(
+            name: uniqueSaveName("dialed-first"), kind: .ssh,
+            ssh: StoredSSHConfig(
+                host: "dialed-first.example.com", username: "tim", authKind: .agent))
+        let dangling = StoredSession(
+            name: uniqueSaveName("dangling-second"),
+            loginSetID: UUID(),  // no such set in the isolated store
+            kind: .ssh,
+            ssh: StoredSSHConfig(host: "dangling-second.example.com", username: "tim"))
+        try? SessionStore(directory: workDir).upsert(dialed)
+        try? SessionStore(directory: workDir).upsert(dangling)
+        view.sessionListViewModel.reload()
+
+        let recorder = DialRecorder()
+        let tab = makeTab(connector: { config, _ in
+            await recorder.record(config)
+            throw CancellationError()
+        })
+
+        view.connect(in: tab, stored: dialed)
+        guard await waitUntil("the first stored dial must fail and finish", {
+            await recorder.dialCount == 1 && !tab.isReconnecting
+        }) else { return }
+        // The precondition IS the setup: without an origin on record there
+        // is nothing for the second failure to inherit, and the assertion
+        // at the end would hold for a form that never dialed anything.
+        #expect(tab.connectionViewModel.attemptOrigin == dialed.id, """
+            the first attempt did not record its own origin, so this test is no longer about \
+            inheriting one.
+            """)
+
+        view.connect(in: tab, stored: dangling)
+        guard await waitUntil("the refused fill must run to completion", {
+            !tab.isReconnecting
+        }) else { return }
+
+        #expect(await recorder.dialCount == 1, """
+            the dangling login set must refuse BEFORE the dial — otherwise this is a second \
+            attempt, not a failure without one.
+            """)
+        guard case .failed = tab.connectionViewModel.state else {
+            Issue.record("the fill refusal must publish a failure for an origin to be read from")
+            return
+        }
+        #expect(tab.connectionViewModel.attemptOrigin == nil, """
+            a failure that never dialed carries the previous attempt's origin — the surface \
+            offers "Edit session" for the session the user has just moved on from.
+            """)
     }
 
     /// An ad-hoc attempt — typed into the form, never saved — has no stored

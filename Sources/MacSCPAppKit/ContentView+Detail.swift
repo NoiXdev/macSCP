@@ -1663,23 +1663,27 @@ struct ConnectAttemptLivenessMirror: View {
                     // which is why `ConnectionSurfacePlan` takes it as its
                     // own argument rather than deriving it from `liveness`.
                     tab.liveness = nil
+                    // The origin comes from the ATTEMPT that failed (M3),
+                    // not from a tab property written before the dial: a
+                    // dial the form refused never became an attempt and so
+                    // never wrote one. See `ConnectionViewModel
+                    // .attemptOrigin`.
                     tab.connectFailure = ConnectFailure(
-                        storedSessionID: tab.dialingStoredSessionID)
+                        storedSessionID: tab.connectionViewModel.attemptOrigin)
                 case .clear:
                     tab.liveness = nil
                     tab.connectFailure = nil
                 case .leaveAlone:
                     break
                 }
-                // The dial's origin is consumed here and nowhere else (see
-                // `SessionTab.dialingStoredSessionID`). Any state that is
-                // not `.connecting` means no dial of this tab's is in
-                // flight, so whatever origin was recorded belongs to an
-                // attempt that has already ended — keeping it would let the
-                // NEXT attempt, which may well be an ad-hoc one from the
-                // form, inherit a stored session it never dialed and offer
-                // to edit it.
-                if newState != .connecting { tab.dialingStoredSessionID = nil }
+                // No origin to consume here (M3). It used to be cleared on
+                // every state that was not `.connecting`, because it lived
+                // on the tab and could outlive the dial that wrote it — a
+                // refused dial changes no state, so that clear never ran
+                // for the one case it was needed. `ConnectionViewModel
+                // .attemptOrigin` is now assigned with the attempt itself
+                // and replaced by the next one, so there is nothing left
+                // here that could go stale.
             }
     }
 }

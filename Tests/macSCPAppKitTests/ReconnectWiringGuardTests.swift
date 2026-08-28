@@ -441,9 +441,9 @@ struct ReconnectWiringGuardTests {
             reason: "The connection form's own Connect button — the ad-hoc path, which hands its result to `ContentView.handleAdHocConnected`."),
         SanctionedSite(
             file: "Sources/MacSCPAppKit/ContentView.swift",
-            code: "if let fs = await form.connect() {",
+            code: "if let fs = await form.connect(origin: stored.id) {",
             occurrences: 1,
-            reason: "`ContentView.connect(in:stored:)` — the stored-session path, after `fillForm(_:from:)` has applied the keychain, login-set and managed-key rules. This is the dial `reconnect(_:)` reaches."),
+            reason: "`ContentView.connect(in:stored:)` — the stored-session path, after `fillForm(_:from:)` has applied the keychain, login-set and managed-key rules. This is the dial `reconnect(_:)` reaches. The `origin:` argument is the one place the App layer names which stored session an attempt belongs to (M3); spelled out here so dropping it, which would silently downgrade every stored failure to an ad-hoc one, has to be a deliberate edit in this list."),
         SanctionedSite(
             file: "Sources/MacSCPAppKit/ContentView.swift",
             code: "func startSession(",
@@ -1443,29 +1443,33 @@ struct ReconnectWiringGuardTests {
     /// functions the suites around it drive.
     /// `ConnectAttemptLivenessPlan.write` can answer `.failedConnect`
     /// forever without a surface ever appearing, if the mirror stops
-    /// recording it; and the consume of the dial's origin is what keeps a
+    /// recording it; and reading the origin off the attempt is what keeps a
     /// stored session dialed earlier from being offered for editing after
     /// a LATER ad-hoc attempt fails.
-    @Test func theLivenessMirrorRecordsTheFailedAttemptAndConsumesItsOrigin() throws {
+    ///
+    /// This test had a THIRD expectation until M3, pinning a line that
+    /// cleared the origin whenever the state left `.connecting`. That line
+    /// is gone, and so is the property it cleared: the origin now lives on
+    /// `ConnectionViewModel.attemptOrigin`, assigned with the attempt and
+    /// `private(set)`, so the App layer cannot write one early and there is
+    /// nothing left for a clear to catch. The expectation was not dropped
+    /// for a weaker one — it was replaced by a boundary that will not
+    /// compile, which is the trade this project's own rule about scans that
+    /// keep buying a spelling asks for.
+    @Test func theLivenessMirrorRecordsTheFailedAttemptWithTheOriginOfThatAttempt() throws {
         // The WHOLE mirror, not just its `switch` (round 1 of this test,
         // measured): `mirrorWriteAnchor`'s body is brace-matched from the
-        // switch's own `{`, so it ends at the switch — and the consume
-        // below deliberately sits after it, where it runs for every state
-        // rather than once per case.
+        // switch's own `{`, so it ends at the switch.
         let body = try Self.strippedBody(after: Self.mirrorAnchor, in: Self.detailFile)
         #expect(body.contains("tab.connectFailure = ConnectFailure("), """
             the mirror no longer records the failed attempt on the tab — `ConnectionSurfacePlan` \
             reads `tab.connectFailure` and nothing else to put that surface up, so the tab \
             would fall back to the form exactly as it did before this task.
             """)
-        #expect(body.contains("storedSessionID: tab.dialingStoredSessionID"), """
-            the recorded failure no longer carries the dial's origin, so "Edit session" would \
-            never be offered — or, worse, would be offered for whatever id replaced it.
-            """)
-        #expect(body.contains("if newState != .connecting { tab.dialingStoredSessionID = nil }"), """
-            the mirror no longer consumes the dial's origin when an attempt ends. It is written \
-            by `connect(in:stored:)` and read here; without the clear, an ad-hoc attempt that \
-            fails LATER inherits a stored session it never dialed and offers to edit it.
+        #expect(body.contains("storedSessionID: tab.connectionViewModel.attemptOrigin"), """
+            the recorded failure no longer carries the origin of the attempt that failed, so \
+            "Edit session" would never be offered — or, worse, would be offered for whatever \
+            the mirror reads instead.
             """)
     }
 

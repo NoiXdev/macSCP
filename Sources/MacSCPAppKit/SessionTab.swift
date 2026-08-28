@@ -314,23 +314,6 @@ final class SessionTab: Identifiable {
     /// fourth and fifth writer.
     var connectFailure: ConnectFailure?
 
-    /// The stored session `ContentView.connect(in:stored:)` is dialing
-    /// right now (failed-connect surface plan, Task 3), or `nil` when the
-    /// dial in flight is the form's own ad-hoc one.
-    ///
-    /// Written immediately before that dial and CONSUMED — read and
-    /// cleared — by `ConnectAttemptLivenessMirror` on the first state that
-    /// is not `.connecting`, which is to say the moment the attempt ends.
-    /// One writer, one consumer, and a lifetime no longer than the attempt
-    /// itself: that is what stops a stored session dialed earlier from
-    /// still being on record when a LATER ad-hoc attempt fails, which would
-    /// offer to edit a session the user never dialed.
-    ///
-    /// Not merged into `connectFailure`: this is what the attempt is
-    /// dialing, `connectFailure` is what a finished attempt left behind,
-    /// and only the second one decides what is on screen.
-    var dialingStoredSessionID: UUID?
-
     var displayTitle: String {
         titleName ?? L10n.string("tabs.newConnection", "New Connection")
     }

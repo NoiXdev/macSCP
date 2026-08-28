@@ -394,6 +394,103 @@ struct ConnectionViewModelTests {
         #expect(await counter.value == 1)
     }
 
+    // MARK: - attemptOrigin (two-open-questions design, M3)
+    //
+    // The origin belongs to the ATTEMPT. The three tests below are the
+    // whole decidable content of that sentence: a call that never becomes
+    // an attempt contributes nothing, an attempt that fails carries its
+    // own, and the next attempt replaces it rather than inheriting.
+
+    /// The refusal above (`secondConnectWhileConnectingIsRejected`) returns
+    /// before the attempt is claimed, so a refused call cannot put an
+    /// origin on the attempt that is genuinely in flight. This is the Core
+    /// half of the defect M3 closes; `ReconnectPathTests
+    /// .aRefusedStoredDialLeavesNoOriginOnTheAttemptInFlight` drives the
+    /// same window through the real `ContentView`.
+    ///
+    /// The origin is read WHILE the first attempt is still parked in the
+    /// connector. Reading it afterwards would be reading it past the thing
+    /// that ends the attempt, which is not a check.
+    @Test func aRefusedConnectContributesNoOriginToTheAttemptInFlight() async {
+        let counter = CallCounter()
+        let (stream, continuation) = AsyncStream<Void>.makeStream()
+        let vm = makeVM(connector: { _, _ in
+            await counter.increment()
+            for await _ in stream {}   // hangs until the test ends the stream
+            return MockRemoteFileSystem(tree: ["/": []])
+        })
+
+        // The ad-hoc attempt: no origin, and the only one that is real.
+        async let first = vm.connect()
+        guard await waitUntil("first connect() must reach the connector", {
+            await counter.value == 1
+        }) else {
+            continuation.finish()
+            _ = await first
+            return
+        }
+
+        let refusedOrigin = UUID()
+        let second = await vm.connect(origin: refusedOrigin)
+        let originWhileInFlight = vm.attemptOrigin
+
+        continuation.finish()
+        _ = await first
+
+        // The positive half: without it, "no origin" would also be true of
+        // a call that was never refused at all, or of a connector nothing
+        // ever reached.
+        #expect(second == nil, "the second call must be refused for this test to be about anything")
+        #expect(await counter.value == 1, "the refused call must not have reached the connector")
+        #expect(originWhileInFlight == nil, """
+            a refused call wrote its origin onto the attempt already in flight. That attempt is \
+            ad-hoc; a failure on it would offer to edit a stored session it never dialed.
+            """)
+    }
+
+    /// The other half, and the reason the argument exists at all: an
+    /// attempt that reaches the wire and fails carries the origin it was
+    /// started with, which is what the failed-connect surface reads to
+    /// offer "Edit session".
+    @Test func aFailedAttemptCarriesItsOwnOrigin() async {
+        let origin = UUID()
+        let vm = makeVM(connector: { _, _ in throw CancellationError() })
+
+        _ = await vm.connect(origin: origin)
+
+        guard case .failed = vm.state else {
+            Issue.record("the attempt must have failed for its origin to be read anywhere")
+            return
+        }
+        #expect(vm.attemptOrigin == origin, """
+            a failed attempt lost the stored session it was dialing, so the surface would treat \
+            a stored-session failure as an ad-hoc one and offer no way to edit it.
+            """)
+    }
+
+    /// Replacement, not accumulation. This is what makes the wrong pairing
+    /// unrepresentable rather than merely cleaned up: the ad-hoc attempt
+    /// does not have to clear anything, it simply states its own origin,
+    /// and `nil` is that statement.
+    @Test func anAdHocAttemptStatesItsOwnOriginOverTheOneBefore() async {
+        let origin = UUID()
+        let vm = makeVM(connector: { _, _ in throw CancellationError() })
+
+        _ = await vm.connect(origin: origin)
+        #expect(vm.attemptOrigin == origin, "precondition: the stored attempt recorded its origin")
+
+        _ = await vm.connect()
+
+        guard case .failed = vm.state else {
+            Issue.record("the second attempt must have failed too")
+            return
+        }
+        #expect(vm.attemptOrigin == nil, """
+            an ad-hoc attempt inherited the origin of the stored attempt before it, which is the \
+            exact mislabelling this design removes.
+            """)
+    }
+
     @Test func unknownHostPublishesPromptAndTrustConnects() async {
         let candidate = HostKeyCandidate(
             host: "example.com", port: 22, keyType: "ssh-ed25519",

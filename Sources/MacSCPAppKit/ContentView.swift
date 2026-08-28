@@ -1551,15 +1551,15 @@ struct ContentView: View {
             // on screen, so there is nothing more to show here.
             guard try fillForm(form, from: stored) else { return }
 
-            // The dial's origin (failed-connect surface plan, Task 3),
-            // recorded immediately before the dial and consumed by
-            // `ConnectAttemptLivenessMirror` the moment the attempt ends —
-            // see `SessionTab.dialingStoredSessionID`. Set HERE rather than
-            // at the top of this method so a `fillForm` refusal, which
-            // returns above without ever dialing, leaves no origin behind.
-            tab.dialingStoredSessionID = stored.id
-
-            if let fs = await form.connect() {
+            // The dial's origin (failed-connect surface plan, Task 3;
+            // rebound to the attempt by the two-open-questions design, M3).
+            // It travels as an argument rather than being parked on the tab
+            // first: `connect(origin:)` records it only for a call it
+            // actually turns into an attempt, so a dial refused because
+            // this form is already connecting leaves nothing behind for a
+            // later attempt to inherit. See `ConnectionViewModel
+            // .attemptOrigin`.
+            if let fs = await form.connect(origin: stored.id) {
                 // Accept only usable absolute paths (M9d final review): an
                 // empty/relative realpath result would land the pane in
                 // .failed where "/" always worked.

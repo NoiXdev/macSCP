@@ -540,6 +540,39 @@ public final class ConnectionViewModel {
     /// not a wider audience than `private` denied.
     var currentAttempt = UUID()
 
+    /// The stored session the current attempt is dialing, or `nil` when it
+    /// is ad-hoc — typed into the form and never saved, so there is nothing
+    /// stored a surface could offer to open an editor on.
+    ///
+    /// Bound to the ATTEMPT, not to whoever asked for one (two-open-
+    /// questions design, M3): it is assigned in the same breath as
+    /// `currentAttempt`, which is to say AFTER `connect()`'s refusal of a
+    /// second call. A refused call returns before that line, never becomes
+    /// an attempt, and therefore cannot hand its origin to the attempt that
+    /// actually is running.
+    ///
+    /// That ordering is the whole point. The App layer used to keep this
+    /// fact on the tab (`SessionTab.dialingStoredSessionID`, removed by the
+    /// same task), written before the dial and cleared when the state left
+    /// `.connecting`. A refused call changes no state, so it left a value
+    /// nothing cleared, and the next attempt to fail — an ad-hoc one from
+    /// the form — was labelled with a stored session it had never chosen.
+    /// Assigning here does not clean that up; it makes it unwritable.
+    ///
+    /// Two writers, counted here. `connect(origin:)` assigns it with the
+    /// attempt, which is what lets it be read WHILE a dial is in flight —
+    /// the reading that catches a refused call trying to contribute one.
+    /// `fail(_:kind:origin:)` assigns it again as part of publishing a
+    /// `.failed` state, so that every failure names its own origin instead
+    /// of inheriting whatever the last attempt left: the paths that reach
+    /// `.failed` without dialing at all (`showFailure`, the two save
+    /// validators) are not attempts, and say so by passing nothing.
+    ///
+    /// Read from the App layer, which is why this is `public` where
+    /// `currentAttempt` is not: the failed-connect surface asks what the
+    /// attempt that failed was dialing.
+    public private(set) var attemptOrigin: UUID?
+
     private let connector: Connector
     /// Holds the continuation that the host-key decider places on `connect()`,
     /// until `resolveHostKeyPrompt` fulfills it. Stays private — the UI only
@@ -705,13 +738,28 @@ public final class ConnectionViewModel {
     /// synchronous, so no OTHER call to this actor-isolated method can run
     /// between this attempt claiming `currentAttempt` and reaching that
     /// line.
-    public func connect() async -> (any RemoteFileSystem)? {
+    ///
+    /// `origin` is the stored session this dial came from, and it is
+    /// recorded on `attemptOrigin` together with the attempt (M3). The
+    /// default is `nil` because `nil` is not a stand-in for something real
+    /// here — it IS the answer for a dial the user typed into the form and
+    /// never saved, which is what every caller that omits it is doing. A
+    /// caller that forgets to pass a stored session's id gets an ad-hoc
+    /// attempt, which is a visibly poorer surface rather than a silently
+    /// wrong one: the failure would offer no way to edit the session, where
+    /// the bug this argument exists to fix offered a way to edit the wrong
+    /// one.
+    public func connect(origin: UUID? = nil) async -> (any RemoteFileSystem)? {
         guard state != .connecting else { return nil }
         // Every attempt starts without a verdict — see `lastFailureKind`'s
         // own doc comment for the two writers that keep it honest.
         lastFailureKind = nil
         let myAttempt = UUID()
         currentAttempt = myAttempt
+        // Assigned WITH the attempt, and after the refusal above — see
+        // `attemptOrigin`'s own doc comment for why the order is the fix
+        // rather than an incidental detail of it.
+        attemptOrigin = origin
         defer {
             // Only clear the prompt if IT belongs to this attempt — an
             // abandoned attempt reaching this `defer` after being
@@ -723,14 +771,15 @@ public final class ConnectionViewModel {
         if shouldSaveSession,
            saveName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             fail(.failed(
-                message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName))
+                message: CoreL10n.string("core.connect.saveNameEmpty"), field: .saveName),
+                 origin: origin)
             return nil
         }
 
         let dialed: ConnectionConfig
         switch resolveConfigWithoutDialing() {
         case .failed(let failure):
-            fail(failure)
+            fail(failure, origin: origin)
             return nil
         case .resolved(let config):
             dialed = config
@@ -766,7 +815,9 @@ public final class ConnectionViewModel {
             // The one call that passes a `kind`, and so the only one that
             // can reach `.other`: this is the only failure in this type
             // that got as far as the wire.
-            fail(jumpAwareFailedState(for: error), kind: Self.failureKind(for: error))
+            fail(
+                jumpAwareFailedState(for: error), kind: Self.failureKind(for: error),
+                origin: origin)
             return nil
         }
     }
@@ -783,8 +834,33 @@ public final class ConnectionViewModel {
     /// something first — see `ConnectFailureKind.needsPerson`. Only
     /// `connect()`'s `catch` passes a `kind` at all, and only it can pass
     /// `.other`.
-    private func fail(_ newState: State, kind: ConnectFailureKind = .needsPerson) {
+    ///
+    /// `origin` defaults to `nil` for the same reason `kind` defaults to
+    /// `.needsPerson`, and it is the same set of callers: everything that
+    /// reaches here without dialing — a save-name validation, a schema
+    /// violation, a login set the App layer could not resolve — is not an
+    /// attempt and has no stored session of its own to name. Only
+    /// `connect()` passes one, and it passes the origin of the attempt it
+    /// is failing.
+    ///
+    /// Stating the origin HERE, rather than letting the last attempt's
+    /// value stand, is what stops a failure that is not an attempt from
+    /// borrowing the label of the attempt before it: `attemptOrigin` is
+    /// assigned at the head of `connect()` and outlives that attempt, so a
+    /// later `showFailure` on the same form would otherwise publish a
+    /// `.failed` state pointing at a session the user is no longer trying
+    /// to reach. Measured on the `fillForm`-refusal path, which is exactly
+    /// that sequence.
+    ///
+    /// Kept on ONE line deliberately: `ConnectionViewModelSourceGuardTests
+    /// .theOneFailureWriterSetsTheVerdictFirst` anchors on this signature
+    /// and reads the few lines after it, and wrapping the parameters put
+    /// `state = newState` outside its window. It said so loudly rather than
+    /// passing — which is the behaviour that made keeping the line the
+    /// cheaper answer than widening the guard around it.
+    private func fail(_ newState: State, kind: ConnectFailureKind = .needsPerson, origin: UUID? = nil) {
         lastFailureKind = kind
+        attemptOrigin = origin
         state = newState
     }
 
