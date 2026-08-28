@@ -11,13 +11,20 @@ import Foundation
 /// lean on and `CitadelFileSystem.disconnect()` is not isolated to one.
 ///
 /// Being off the main actor is what lets the second caller work too:
-/// `TeardownStage.runBounded` (App layer) bounds three main-actor-isolated
+/// `TeardownStage.runBounded` (App layer) bounds two main-actor-isolated
 /// stages of `ContentView.teardown(_:reason:)` with this. Their bodies hop
 /// back onto the main actor from inside `operation`, and the bound task
 /// sleeps somewhere else entirely — so a stage that suspends can be
 /// abandoned while the caller is still awaiting on the main actor. What no
 /// bound here can do is interrupt an operation that BLOCKS the main actor
 /// without suspending; nothing this type does can help there.
+///
+/// The other thing to know before wrapping a call in this: `operation` runs
+/// in a task of its own, so the caller SUSPENDS before it starts, where a
+/// direct call would have run the operation's own synchronous head first.
+/// That is not free everywhere — `ContentView.teardown(_:reason:)` calls
+/// `transferQueue.cancelAll(reason:)` directly for exactly this reason, and
+/// its doc comment records what the extra main-actor turn changed.
 ///
 /// Why not `withTaskGroup`: it implicitly awaits every remaining child
 /// before its own scope returns, even one abandoned via `cancelAll()` — a

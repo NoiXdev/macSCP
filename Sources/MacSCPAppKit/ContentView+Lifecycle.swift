@@ -327,19 +327,53 @@ extension ContentView {
     /// changes what `cancelAll` writes onto the queue's own items, not when
     /// it runs.
     ///
-    /// Every one of those four stages is bounded, and this function is
-    /// therefore guaranteed to reach its end even against a peer that has
-    /// stopped answering. Three of them are bounded HERE, through
-    /// `TeardownStage.runBounded` — see that type for the measurements
-    /// behind the bound and for which stage was measured to need it. The
-    /// fourth, `remote.disconnect()`, carries its own bound INSIDE
-    /// `CitadelFileSystem.disconnect()` (`7ac7f7e`) and is deliberately not
-    /// wrapped again: measured against a frozen peer in the pass that added
-    /// the other three, it returned in 5.002063 s / 5.304208 s /
-    /// 5.333977 s. A bound around this whole function instead of one per
-    /// stage was considered and rejected by the maintainer: it would
-    /// abandon the invariant order wherever it stood and could not name the
-    /// stage that hung.
+    /// **What is bounded here, and what is not.** Three of the four stages
+    /// carry a wall-clock bound; the first one does not.
+    ///
+    /// - `editManager.stopAll()` and `terminal.shutdown()` are bounded HERE,
+    ///   through `TeardownStage.runBounded` — see that type for the
+    ///   measurements behind the five seconds and for which of the two was
+    ///   measured to need it (`terminal.shutdown()`; it did not return
+    ///   inside a 20-second watchdog against a frozen peer, in three runs
+    ///   out of three).
+    /// - `remote.disconnect()` carries its own bound INSIDE
+    ///   `CitadelFileSystem.disconnect()` (`7ac7f7e`) and is deliberately
+    ///   not wrapped again: measured against that same frozen peer it
+    ///   returned in 5.002063 s / 5.304208 s / 5.333977 s.
+    /// - `transferQueue.cancelAll(reason:)` is **not bounded** — neither
+    ///   here nor inside itself. It was wrapped for one commit (`eed1c8a`)
+    ///   and the maintainer removed the wrapper on 2026-08-28, because the
+    ///   bound was measured to catch nothing and to cost something. Against
+    ///   the frozen peer, with an open PTY shell AND an 8 MB download
+    ///   running at the moment of the freeze, `cancelAll` returned in
+    ///   0.004462916 s / 0.004904750 s / 0.005558917 s — three runs out of
+    ///   three, none of them near a bound. What the wrapper cost is
+    ///   visible right below: `BoundedClose` runs its operation in a
+    ///   separate task, so wrapping this call makes `teardown` suspend
+    ///   BEFORE the queue is swept, and a transfer that fails completely
+    ///   inside that one extra main-actor turn then keeps its own error
+    ///   text instead of reading "Connection lost." (one that merely starts
+    ///   is still marked correctly). Swift has no version with both: an
+    ///   async function cannot be run synchronously up to its first
+    ///   suspension point inside another task.
+    ///
+    /// **So the guarantee this function can make is narrower than "it always
+    /// reaches its end".** What holds is: whatever `cancelAll` does, the
+    /// three stages after it are bounded, so once `cancelAll` returns this
+    /// function reaches its end within roughly
+    /// `2 × TeardownStage.boundSeconds + CitadelFileSystem
+    /// .sftpCloseBoundSeconds`. `cancelAll` itself has no such ceiling: it
+    /// awaits every running transfer to unwind (step 3) and is documented as
+    /// able to block on an open decider prompt — which is why
+    /// `conflictBridge.cancelOpenPrompt()` runs first, and why the
+    /// measurement above, not an argument, is what says this is safe today.
+    /// If a teardown is ever seen to hang before the first stage bound can
+    /// fire, this is the stage to measure first.
+    ///
+    /// A bound around this whole function instead of one per stage was
+    /// considered and rejected by the maintainer: it would abandon the
+    /// invariant order wherever it stood and could not name the stage that
+    /// hung.
     func teardown(_ tab: SessionTab, reason: CancelReason) async {
         tab.editErrorMessage = nil
         if let session = tab.session {
@@ -347,9 +381,13 @@ extension ContentView {
             // otherwise keep the decider prompt open, which `cancelAll`
             // (documented) hangs on until it's answered — deadlock on disconnect.
             tab.conflictBridge.cancelOpenPrompt()
-            await TeardownStage.cancelTransfers.runBounded { [transferQueue = tab.transferQueue] in
-                await transferQueue.cancelAll(reason: reason)
-            }
+            // Called directly, NOT through `TeardownStage.runBounded` (see
+            // this function's doc comment): a bound would put a suspension
+            // point in front of the sweep, and the queue sweep running in
+            // teardown's own first main-actor turn is worth more than a
+            // bound that three frozen-peer runs measured at under six
+            // milliseconds.
+            await tab.transferQueue.cancelAll(reason: reason)
             // Binding order (M5e/T4 plan): AFTER `cancelAll` (any in-flight
             // edit download/upload has already been cancelled/settled by the
             // queue, so `stopAll` isn't racing a still-running transfer) and

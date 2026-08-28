@@ -142,24 +142,30 @@ struct LivenessGiveUpOrderingTests {
     /// give-up path with an item still in the queue and asserts the
     /// reason it reads afterward, so that flip cannot pass silently again.
     ///
-    /// **How the item is kept non-terminal, and why that changed.** This
-    /// test used to enqueue a job whose paths did not exist and rely on
-    /// there being NO suspension point between `enqueue` and `cancelAll`:
-    /// the worker `Task` could not run, so the item was still resolving
-    /// when the sweep reached it. That assumption stopped holding when
-    /// `teardown(_:reason:)` began running its stages through
-    /// `TeardownStage.runBounded`, which suspends before the sweep — the
-    /// worker then got a turn, opened the bogus path, and the item read
-    /// `.failed("File not found: …")` instead. The scheduling was the
-    /// fixture, not the property.
+    /// **How the item is kept non-terminal, and why it is kept that way
+    /// with no help from scheduling.** This test used to enqueue a job whose
+    /// paths did not exist and rely on there being NO suspension point
+    /// between `enqueue` and `cancelAll`: the worker `Task` could not run,
+    /// so the item was still resolving when the sweep reached it. That
+    /// assumption stopped holding for one commit (`eed1c8a`), while
+    /// `teardown(_:reason:)` ran its first stage through
+    /// `TeardownStage.runBounded` — which suspends before the sweep, so the
+    /// worker got a turn, opened the bogus path, and the item read
+    /// `.failed("File not found: …")` instead.
     ///
-    /// So the fixture no longer depends on scheduling at all: the source
-    /// below suspends instead of failing, which keeps the job non-terminal
-    /// however many turns the main actor takes before the sweep, and
-    /// unwinds promptly when `cancelAll` cancels it. Whether the sweep
-    /// finds the job in `resolvingJobIDs` or in `runningTransferTasks` no
-    /// longer matters — both paths mark it with the reason this test is
-    /// about. No real disk access happens, and no network is dialled.
+    /// That bound is gone again (maintainer's ruling, 2026-08-28), so the
+    /// old fixture would work today. This one is kept anyway, because the
+    /// two properties are separate and each deserves a test that fails for
+    /// one reason only: THIS test is about the reason literal
+    /// `handleLivenessGiveUp(_:)` passes, and the source below suspends
+    /// rather than failing, which keeps the job non-terminal however many
+    /// turns the main actor takes before the sweep. Whether the sweep finds
+    /// the job in `resolvingJobIDs` or in `runningTransferTasks` no longer
+    /// matters — both paths mark it with the reason this test is about. The
+    /// scheduling property the old fixture pinned by accident is pinned
+    /// deliberately, and named, by
+    /// `theQueueIsSweptInTeardownsOwnFirstMainActorTurn` below. No real disk
+    /// access happens, and no network is dialled.
     @Test func givingUpMarksQueuedTransfersConnectionLost() async {
         let (view, cleanup) = makeContentView()
         defer { cleanup() }
@@ -187,6 +193,79 @@ struct LivenessGiveUpOrderingTests {
             give-up, found \(String(describing: item?.status)) instead — \
             handleLivenessGiveUp(_:) must pass .connectionLost to teardown(_:reason:), not \
             .userRequested.
+            """)
+    }
+
+    /// The property the maintainer chose over a bound around teardown's
+    /// first stage, pinned on purpose rather than as a side effect of some
+    /// other test's fixture.
+    ///
+    /// `teardown(_:reason:)` reaches `transferQueue.cancelAll(reason:)`
+    /// without suspending: everything before it (`editErrorMessage`,
+    /// `conflictBridge.cancelOpenPrompt()`) is synchronous, and `cancelAll`
+    /// is called directly rather than through `TeardownStage.runBounded`.
+    /// So the queue is swept in teardown's OWN first main-actor turn, and a
+    /// worker `Task` created by `enqueue`'s `kickWorker()` cannot have run
+    /// yet — a freshly created task's body cannot start until the currently
+    /// executing main-actor code reaches its own suspension point.
+    ///
+    /// **What it watches, and why not the item's status.** The obvious
+    /// fixture — a job whose paths do not exist, asserting it does not read
+    /// `.failed("File not found: …")` — was tried and MEASURED in the pass
+    /// that removed the bound: with `cancelAll` wrapped in `BoundedClose`
+    /// again, that fixture went red in only four of six runs. It is a race
+    /// between the sweep and how far the worker gets, not a test. What is
+    /// NOT a race is whether the worker ran at all: `process(_:)` bails on
+    /// its `guard let job = jobs[jobID]` once the sweep has cleared the job,
+    /// so a destination that records being touched is touched if and only if
+    /// the worker got its turn first. Under the same re-wrapped bound, this
+    /// version was red in ten runs out of ten, and green in ten out of ten
+    /// without it. It is also sharper than the status fixture on the
+    /// smallest possible version of the defect: with a bare
+    /// `await Task.yield()` inserted in front of the sweep, this check was
+    /// red in five runs out of five, while the status fixture passed the one
+    /// run it was given.
+    ///
+    /// So the negative check below is the guard, and it does not stand
+    /// alone (`CLAUDE.md`): the status assertion beside it is the positive
+    /// half, failing loudly if this fixture ever stops enqueueing a real,
+    /// sweepable item — a "was never touched" that holds because nothing was
+    /// ever queued would otherwise read exactly like a pass.
+    @Test func theQueueIsSweptInTeardownsOwnFirstMainActorTurn() async {
+        let (view, cleanup) = makeContentView()
+        defer { cleanup() }
+        let tab = makeTab()
+        attachSession(to: tab)
+        let session = tab.session!
+        let touched = TouchFlag()
+
+        // Upload, so the recording double is the DESTINATION: the first
+        // thing `process` does after its guard is stat the destination
+        // (`resolveConflictIfNeeded`), which makes this the earliest touch
+        // a worker turn can produce.
+        let itemID = tab.transferQueue.enqueue(
+            fileName: "never-touched.txt", direction: .upload,
+            source: session.localFS, sourcePath: "/never-touched.txt",
+            destination: RecordsBeingTouchedFileSystem(touched: touched),
+            destinationDirectory: "/never-touched",
+            onCompleted: nil)
+
+        await view.handleLivenessGiveUp(tab)
+
+        #expect(touched.isRaised == false, """
+            the transfer worker reached its destination file system before teardown swept the \
+            queue. teardown(_:reason:) must reach transferQueue.cancelAll(reason:) without \
+            suspending — most likely cause: cancelAll was wrapped in a bound again \
+            (TeardownStage.runBounded/BoundedClose), which puts a main-actor turn in front of \
+            the sweep and lets a transfer that settles inside it keep its own error text \
+            instead of reading as a connection loss.
+            """)
+        let item = tab.transferQueue.items.first { $0.id == itemID }
+        let expectedReason = CoreL10n.string("core.transfer.connectionLost")
+        #expect(item?.status == .failed(expectedReason), """
+            the check above only means something if there was a real item for the sweep to \
+            find: expected .failed("\(expectedReason)"), found \
+            \(String(describing: item?.status)).
             """)
     }
 
@@ -236,7 +315,9 @@ private struct NoOpSecretStore: SecretStore {
 /// double models a peer that never answers even a cancelled call, which is
 /// the right model for a liveness probe and the wrong one here — a source
 /// that ignored cancellation would leave `cancelAll`'s step 3 waiting on it
-/// and put this stage's whole bound into the ungated suite's runtime.
+/// forever, and nothing bounds that step: teardown calls it directly (see
+/// `ContentView.teardown(_:reason:)`), so an uncooperative source here
+/// would hang the ungated suite rather than merely slow it down.
 /// `Task.sleep` throws `CancellationError` immediately when cancelled,
 /// which is exactly the cooperative source the queue's cancel path expects.
 /// The duration is long enough that it can only ever end by cancellation.
@@ -295,4 +376,60 @@ private struct SuspendsUntilCancelledFileSystem: RemoteFileSystem {
     }
 
     func disconnect() async {}
+}
+
+/// A destination that records being reached and then fails immediately —
+/// the whole fixture of `theQueueIsSweptInTeardownsOwnFirstMainActorTurn`.
+///
+/// Every method raises the flag and throws `RemoteFSError.notFound`; none
+/// of them suspends and none of them traps, and both of those are
+/// deliberate. A double that suspended here would be reached only when the
+/// property under test is BROKEN — and then it would park the queue's
+/// `cancelAll` step 3 on a job it does not cancel (a resolving job is swept
+/// but its process task is awaited), turning a broken invariant into a
+/// hung ungated suite instead of a red test. A `fatalError` would turn it
+/// into a crashed one. Throwing lets the worker finish immediately, so the
+/// regression shows up as the two assertions failing and nothing else.
+private struct RecordsBeingTouchedFileSystem: RemoteFileSystem {
+    let touched: TouchFlag
+
+    private func record(_ path: String = "/never-touched") throws -> Never {
+        touched.raise()
+        throw RemoteFSError.notFound(path: path)
+    }
+
+    func list(path: String) async throws -> [RemoteFileItem] { try record(path) }
+    func stat(path: String) async throws -> RemoteFileItem { try record(path) }
+
+    func readStream(
+        path: String, fromOffset offset: UInt64
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        try record()
+    }
+
+    func write(
+        path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>
+    ) async throws {
+        try record(path)
+    }
+
+    func delete(path: String) async throws { try record(path) }
+    func createDirectory(at path: String) async throws { try record(path) }
+    func rename(from: String, to: String) async throws { try record(from) }
+    func setPermissions(path: String, permissions: UInt32) async throws { try record(path) }
+    func deleteTree(at path: String) async throws { try record(path) }
+    func homeDirectoryPath() async throws -> String { try record() }
+    func disconnect() async {}
+}
+
+/// One-way flag, written by `RecordsBeingTouchedFileSystem` from whatever
+/// executor the queue's worker happens to be on and read back on the main
+/// actor. `@unchecked Sendable` because `lock` is what serializes
+/// the write and the read — the shape `TeardownStageTests.Flag` uses for
+/// the same job.
+private final class TouchFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var raised = false
+    var isRaised: Bool { lock.withLock { raised } }
+    func raise() { lock.withLock { raised = true } }
 }

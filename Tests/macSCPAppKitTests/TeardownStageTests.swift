@@ -10,6 +10,12 @@ import Testing
 /// not cost the next one its turn, and that every stage carries a bound and
 /// a name.
 ///
+/// Only the two stages this type still covers appear below. Teardown's
+/// first stage, `transferQueue.cancelAll(reason:)`, is not one of them any
+/// more — it is called directly and unbounded, for the reason
+/// `ContentView.teardown(_:reason:)` records; what pins THAT is
+/// `LivenessGiveUpOrderingTests`, behaviorally, not this file.
+///
 /// What these cannot show, and what only the gated
 /// `LivenessProbeDropIntegrationTests
 /// .teardownWithAnOpenShellAgainstAStillFrozenPeerTerminates` shows, is that
@@ -58,7 +64,7 @@ struct TeardownStageTests {
         let startedAt = ContinuousClock.now
         // The no-argument overload, so this also pins that the production
         // call sites reach a working bound rather than a zero.
-        let finished = await TeardownStage.cancelTransfers.runBounded {}
+        let finished = await TeardownStage.stopEditWatchers.runBounded {}
         #expect(finished == true)
         #expect(startedAt.duration(to: .now) < .seconds(4))
     }
@@ -69,7 +75,7 @@ struct TeardownStageTests {
     @Test(.timeLimit(.minutes(1)))
     func abandoningOneStageStillLetsTheNextOneRun() async {
         let ran = Flag()
-        let abandoned = await TeardownStage.cancelTransfers
+        let abandoned = await TeardownStage.stopEditWatchers
             .runBounded(boundSeconds: 0) { await self.neverReturns() }
         let followed = await TeardownStage.shutDownTerminal.runBounded { ran.raise() }
         #expect(abandoned == false)

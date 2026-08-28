@@ -31,21 +31,26 @@ private let shellDropServerPort = 2225
 /// Derived from the production bounds it is measuring rather than spelled
 /// out beside it (this project's rule about second copies of a name applies
 /// to numbers in tests too), and derived from ALL of them: a give-up lap
-/// runs `teardown`'s four stages, three of which are bounded by
-/// `TeardownStage.boundSeconds` and the fourth by
+/// runs `teardown`'s four stages, two of which are bounded by
+/// `TeardownStage.boundSeconds` and a third by
 /// `CitadelFileSystem.sftpCloseBoundSeconds` inside
 /// `CitadelFileSystem.disconnect()`. Summing them is what makes this a
 /// statement about the code rather than a guess: a lap that honours every
-/// bound cannot exceed the sum, so exhausting this constant means a wait
-/// with NO bound, not a slow one. The 10-second cushion is for the
-/// scheduling drift a `Task.sleep`-based bound carries (measured at 0.5–2.0
-/// seconds per bound in the pass that added the stage bounds) and for the
-/// cheap work between the stages. Moving any production bound moves this
-/// one with it; removing one stops this file compiling, which is the point.
+/// bound cannot spend more than the sum IN THE BOUNDED STAGES, so
+/// exhausting this constant means a wait with no bound behind it, not a
+/// slow one. The 10-second cushion is for the scheduling drift a
+/// `Task.sleep`-based bound carries (measured at 0.5–2.0 seconds per bound
+/// in the pass that added the stage bounds) and for the cheap work between
+/// the stages. Moving any production bound moves this one with it;
+/// removing one stops this file compiling, which is the point.
 ///
-/// Its value is unchanged from the round that only had one bound to derive
-/// from — the sum happens to land on the same number — so the frozen-peer
-/// tests below are measured against the same deadline as before.
+/// The fourth stage, `transferQueue.cancelAll(reason:)`, is deliberately
+/// unbounded (see `ContentView.teardown(_:reason:)`), so it contributes
+/// nothing to this sum and this constant is NOT an upper bound on a lap in
+/// principle — it is an upper bound on the part of the lap the code
+/// promises anything about. `cancelAll` is what the cushion is covering for
+/// there, on the strength of a measurement: three runs out of three against
+/// this very frozen-peer scenario returned inside 0.0056 s.
 private let teardownBoundSeconds =
     TeardownStage.allCases.reduce(0) { $0 + $1.boundSeconds }
     + CitadelFileSystem.sftpCloseBoundSeconds + 10
