@@ -519,12 +519,20 @@ struct ContentView: View {
         // because they share its risk.
         let resolvedSecretStore: any SecretStore = secretStore ?? KeychainSecretStore()
         self.secretStore = resolvedSecretStore
-        self.managedKeyStore = managedKeyStore
+        let resolvedKeyStore = managedKeyStore
             ?? ManagedKeyStore(directory: SessionStore.defaultDirectory)
+        self.managedKeyStore = resolvedKeyStore
+        // Named in full because `SessionListViewModel.init` no longer
+        // defaults any of its stores: this is the production window, so
+        // every one of them is the real, default-directory-backed instance,
+        // and `keys:` is the SAME resolved store the rest of the view uses
+        // rather than a second one built here.
         _sessionListViewModel = State(initialValue: sessionListViewModel ?? SessionListViewModel(
             store: SessionStore(directory: SessionStore.defaultDirectory),
             secrets: resolvedSecretStore,
-            auditStore: auditStore
+            auditStore: auditStore,
+            loginSetStore: LoginSetStore(directory: SessionStore.defaultDirectory),
+            keys: resolvedKeyStore
         ))
     }
 

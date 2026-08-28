@@ -72,7 +72,9 @@ struct SessionExportTagsTests {
             .appendingPathComponent("macscp-tags-import-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let vm = SessionListViewModel(
-            store: SessionStore(directory: dir), secrets: InMemorySecretStore())
+            store: SessionStore(directory: dir), secrets: InMemorySecretStore(),
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         let result = vm.applyImport(plan)
 
         #expect(result.imported == 1)
@@ -100,7 +102,8 @@ struct SessionExportTagsTests {
 
         let vm = SessionListViewModel(
             store: store, secrets: InMemorySecretStore(),
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         let (payload, _) = vm.exportPayload(
             for: .single(original), includeGroups: false, includePasswords: false)
         let exported = payload.sessions.first!
@@ -112,9 +115,12 @@ struct SessionExportTagsTests {
                 Issue.record("decider must not be asked for a fresh, non-colliding entry")
                 return nil
             })
+        let importTarget = dir.appendingPathComponent("import-target")
         let importedVM = SessionListViewModel(
-            store: SessionStore(directory: dir.appendingPathComponent("import-target")),
-            secrets: InMemorySecretStore())
+            store: SessionStore(directory: importTarget), secrets: InMemorySecretStore(),
+            auditStore: AuditLogStore(directory: importTarget),
+            loginSetStore: LoginSetStore(directory: importTarget),
+            keys: ManagedKeyStore(directory: importTarget))
         let result = importedVM.applyImport(plan)
 
         #expect(result.imported == 1)
@@ -154,7 +160,9 @@ struct SessionExportTagsTests {
             .appendingPathComponent("macscp-tags-normalize-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let vm = SessionListViewModel(
-            store: SessionStore(directory: dir), secrets: InMemorySecretStore())
+            store: SessionStore(directory: dir), secrets: InMemorySecretStore(),
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         let result = vm.applyImport(plan)
 
         #expect(result.imported == 1)

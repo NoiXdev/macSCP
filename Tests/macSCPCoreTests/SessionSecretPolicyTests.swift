@@ -165,7 +165,9 @@ struct UpdateSessionManagedPassphraseTests {
         let (dir, keys, secrets) = try fixture()
         let keyPath = try managedKey(in: keys)
         let store = SessionStore(directory: dir)
-        let vm = SessionListViewModel(store: store, secrets: secrets, keys: keys)
+        let vm = SessionListViewModel(
+            store: store, secrets: secrets, auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: keys)
 
         var session = privateKeySession(keyPath: keyPath)
         try store.upsert(session)
@@ -185,7 +187,9 @@ struct UpdateSessionManagedPassphraseTests {
         let (dir, keys, secrets) = try fixture()
         let keyPath = try managedKey(in: keys)
         let store = SessionStore(directory: dir)
-        let vm = SessionListViewModel(store: store, secrets: secrets, keys: keys)
+        let vm = SessionListViewModel(
+            store: store, secrets: secrets, auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: keys)
 
         var session = privateKeySession(keyPath: keyPath)
         try store.upsert(session)

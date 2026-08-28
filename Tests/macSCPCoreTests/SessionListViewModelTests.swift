@@ -11,7 +11,8 @@ struct SessionListViewModelTests {
         let secrets = InMemorySecretStore()
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: secrets,
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         return (vm, secrets, dir)
     }
 
@@ -23,7 +24,8 @@ struct SessionListViewModelTests {
         let secrets = LockableReadSecretStore()
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: secrets,
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         return (vm, secrets, dir)
     }
 
@@ -129,7 +131,8 @@ struct SessionListViewModelTests {
         let auditStore = AuditLogStore(directory: auditDir)
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: InMemorySecretStore(),
-            auditStore: auditStore)
+            auditStore: auditStore, loginSetStore: LoginSetStore(directory: dir),
+            keys: ManagedKeyStore(directory: dir))
 
         let stored = vm.save(
             name: "weg",
@@ -362,7 +365,9 @@ struct SessionListViewModelTests {
             .appendingPathComponent("macscp-slvm-fail-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let vm = SessionListViewModel(
-            store: SessionStore(directory: dir), secrets: FailingSecretStore())
+            store: SessionStore(directory: dir), secrets: FailingSecretStore(),
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
 
         let stored = vm.save(
             name: "web",
@@ -684,7 +689,8 @@ struct SessionListViewModelTests {
         let secrets = UnreliableSecretStore(failsReads: true)
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: secrets,
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         let existing = vm.save(
             name: "web",
             values: sshValues(host: "old.example.com", port: 22, username: "u"),
@@ -715,7 +721,8 @@ struct SessionListViewModelTests {
         let secrets = UnreliableSecretStore(failsDeletes: true)
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: secrets,
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         let existing = vm.save(
             name: "web",
             values: sshValues(host: "old.example.com", port: 22, username: "u"),
@@ -829,7 +836,9 @@ struct SessionListViewModelTests {
             .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let vm = SessionListViewModel(
-            store: SessionStore(directory: dir), secrets: FailingSecretStore())
+            store: SessionStore(directory: dir), secrets: FailingSecretStore(),
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
 
         let plan = SessionImportPlan(
             groupsToCreate: [],
@@ -851,7 +860,16 @@ struct SessionListViewModelTests {
     @Test func applyImportReportsOnlyActuallyWrittenSessionsAndSkipsOrphanedPassword() throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-slvm-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: dir) }
+        // The SESSION store is the only one meant to be broken here, so the
+        // other three get a directory of their own — pointing them at `dir`
+        // would break them too and make the assertions below ambiguous about
+        // which store refused.
+        let otherStores = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-aux-\(UUID().uuidString)")
+        defer {
+            try? FileManager.default.removeItem(at: dir)
+            try? FileManager.default.removeItem(at: otherStores)
+        }
         // `dir` is a plain file, not a directory: SessionStore.persist()'s
         // createDirectory(at:) throws, simulating an unwritable store while
         // load() (called first, and tolerant of a missing path) still
@@ -859,7 +877,11 @@ struct SessionListViewModelTests {
         try Data("blocked".utf8).write(to: dir)
 
         let secrets = InMemorySecretStore()
-        let vm = SessionListViewModel(store: SessionStore(directory: dir), secrets: secrets)
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: secrets,
+            auditStore: AuditLogStore(directory: otherStores),
+            loginSetStore: LoginSetStore(directory: otherStores),
+            keys: ManagedKeyStore(directory: otherStores))
 
         let planned = PlannedSession(
             session: sshSession(name: "one", host: "h1", username: "root"),
@@ -899,7 +921,8 @@ struct SessionListViewModelTests {
 
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: InMemorySecretStore(),
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
 
         // The sessions themselves are readable, so that half stays quiet.
         #expect(vm.sessions.isEmpty)
@@ -923,7 +946,8 @@ struct SessionListViewModelTests {
 
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: InMemorySecretStore(),
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
 
         let message = try #require(vm.errorMessage)
         #expect(message.contains("session"))
@@ -990,7 +1014,8 @@ struct SessionListViewModelTests {
         let secrets = SelectiveFailingSecretStore()
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: secrets,
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
 
         let set = LoginSet(name: "Root", username: "root")
         vm.saveLoginSet(set, secret: "s3cr3t")
@@ -1056,7 +1081,8 @@ struct SessionListViewModelTests {
         let secrets = NewIDFailingSecretStore()
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: secrets,
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
 
         let a = vm.save(
             name: "a",
@@ -1686,7 +1712,8 @@ struct SessionListViewModelTests {
         let secrets = UnreliableSecretStore(failsReads: true)
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: secrets,
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         let set = LoginSet(name: "Bastion", username: "jumper")
         vm.saveLoginSet(set, secret: "s")
         let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jumper")
@@ -2087,7 +2114,9 @@ struct SessionListViewModelTests {
         try store.upsert(original)
         try secrets.savePassword("shh-secret", for: original.id)
 
-        let vm = SessionListViewModel(store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+        let vm = SessionListViewModel(
+            store: store, secrets: secrets, auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         let (payload, missingPasswordCount) = vm.exportPayload(
             for: .single(original), includeGroups: false, includePasswords: true)
         #expect(missingPasswordCount == 0)
@@ -2113,9 +2142,12 @@ struct SessionListViewModelTests {
         let plan = await SessionImportPlanner.plan(
             existing: [], existingGroups: [], incoming: decoded,
             arbiter: ImportConflictArbiter { _ in Issue.record("decider must not be asked"); return nil })
+        let importTarget = dir.appendingPathComponent("import-target")
         let importedVM = SessionListViewModel(
-            store: SessionStore(directory: dir.appendingPathComponent("import-target")),
-            secrets: InMemorySecretStore())
+            store: SessionStore(directory: importTarget), secrets: InMemorySecretStore(),
+            auditStore: AuditLogStore(directory: importTarget),
+            loginSetStore: LoginSetStore(directory: importTarget),
+            keys: ManagedKeyStore(directory: importTarget))
         let result = importedVM.applyImport(plan)
         #expect(result.imported == 1)
         #expect(result.passwordsImported == 1)
@@ -2141,7 +2173,8 @@ struct SessionListViewModelTests {
         let secrets = InMemorySecretStore()
         let store = SessionStore(directory: dir)
         let vm = SessionListViewModel(
-            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+            store: store, secrets: secrets, auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
 
         let set = LoginSet(name: "S3 Deploy", username: "unused", kind: .s3, accessKeyID: "AKIASET")
         vm.saveLoginSet(set, secret: "set-secret")
@@ -2184,7 +2217,8 @@ struct SessionListViewModelTests {
         try secrets.savePassword("shh-secret", for: session.id)
 
         let vm = SessionListViewModel(
-            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+            store: store, secrets: secrets, auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         let (payload, missingPasswordCount) = vm.exportPayload(
             for: .single(session), includeGroups: false, includePasswords: true)
 
@@ -2218,7 +2252,8 @@ struct SessionListViewModelTests {
         try secrets.savePassword("dav-secret", for: original.id)
 
         let vm = SessionListViewModel(
-            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+            store: store, secrets: secrets, auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         let (payload, missingPasswordCount) = vm.exportPayload(
             for: .single(original), includeGroups: false, includePasswords: true)
         #expect(missingPasswordCount == 0)
@@ -2237,9 +2272,12 @@ struct SessionListViewModelTests {
         let plan = await SessionImportPlanner.plan(
             existing: [], existingGroups: [], incoming: decoded,
             arbiter: ImportConflictArbiter { _ in Issue.record("decider must not be asked"); return nil })
+        let importTarget = dir.appendingPathComponent("import-target")
         let importedVM = SessionListViewModel(
-            store: SessionStore(directory: dir.appendingPathComponent("import-target")),
-            secrets: InMemorySecretStore())
+            store: SessionStore(directory: importTarget), secrets: InMemorySecretStore(),
+            auditStore: AuditLogStore(directory: importTarget),
+            loginSetStore: LoginSetStore(directory: importTarget),
+            keys: ManagedKeyStore(directory: importTarget))
         let result = importedVM.applyImport(plan)
         #expect(result.imported == 1)
         #expect(result.passwordsImported == 1)
@@ -2276,7 +2314,8 @@ struct SessionListViewModelTests {
         try secrets.savePassword("shh-secret", for: session.id)
 
         let vm = SessionListViewModel(
-            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+            store: store, secrets: secrets, auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         let (payload, missingPasswordCount) = vm.exportPayload(
             for: .single(session), includeGroups: false, includePasswords: true)
 
@@ -2301,7 +2340,8 @@ struct SessionListViewModelTests {
 
         let vm = SessionListViewModel(
             store: store, secrets: InMemorySecretStore(),
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         let (payload, _) = vm.exportPayload(
             for: .single(original), includeGroups: false, includePasswords: false)
         let exported = payload.sessions.first!
@@ -2317,9 +2357,12 @@ struct SessionListViewModelTests {
         let plan = await SessionImportPlanner.plan(
             existing: [], existingGroups: [], incoming: decoded,
             arbiter: ImportConflictArbiter { _ in Issue.record("decider must not be asked"); return nil })
+        let importTarget = dir.appendingPathComponent("import-target")
         let importedVM = SessionListViewModel(
-            store: SessionStore(directory: dir.appendingPathComponent("import-target")),
-            secrets: InMemorySecretStore())
+            store: SessionStore(directory: importTarget), secrets: InMemorySecretStore(),
+            auditStore: AuditLogStore(directory: importTarget),
+            loginSetStore: LoginSetStore(directory: importTarget),
+            keys: ManagedKeyStore(directory: importTarget))
         #expect(importedVM.applyImport(plan).imported == 1)
         let imported = importedVM.sessions.first!
         #expect(imported.kind == .ssh)
@@ -2343,7 +2386,9 @@ struct SessionListViewModelTests {
             existing: [], existingGroups: [], incoming: decoded,
             arbiter: ImportConflictArbiter { _ in Issue.record("decider must not be asked"); return nil })
         let importedVM = SessionListViewModel(
-            store: SessionStore(directory: dir), secrets: InMemorySecretStore())
+            store: SessionStore(directory: dir), secrets: InMemorySecretStore(),
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         #expect(importedVM.applyImport(plan).imported == 1)
         let imported = importedVM.sessions.first!
         #expect(imported.kind == .webdav)
@@ -2372,7 +2417,10 @@ struct SessionListViewModelTests {
             arbiter: ImportConflictArbiter { _ in Issue.record("decider must not be asked"); return nil })
 
         let secrets = InMemorySecretStore()
-        let vm = SessionListViewModel(store: SessionStore(directory: dir), secrets: secrets)
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: secrets,
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         let result = vm.applyImport(plan)
 
         #expect(result.imported == 0)
@@ -2939,7 +2987,8 @@ struct SessionListViewModelTests {
         try store.upsert(bastion)
 
         let vm = SessionListViewModel(
-            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+            store: store, secrets: secrets, auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         let jump = StoredSession.JumpSpec(
             host: "ignored", username: "ignored", sessionID: bastion.id)
         let referencing = vm.save(
@@ -2990,7 +3039,8 @@ struct SessionListViewModelTests {
         let secrets = InMemorySecretStore()
         let store = SessionStore(directory: dir)
         let vm = SessionListViewModel(
-            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+            store: store, secrets: secrets, auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
 
         let brokenID = UUID()
         let jump = StoredSession.JumpSpec(
@@ -3054,7 +3104,8 @@ struct SessionListViewModelTests {
         let secrets = NoReadAllowedSecretStore()
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: secrets,
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         let s3 = StoredS3Config(
             accessKeyID: "AKIA", region: "eu-central-1",
             endpoint: "https://s3.example.com", bucket: "backups", usePathStyle: false)
@@ -3074,7 +3125,8 @@ struct SessionListViewModelTests {
         let secrets = NoReadAllowedSecretStore()
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: secrets,
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
 
         let bastion = vm.save(
             name: "bastion",
@@ -3104,7 +3156,8 @@ struct SessionListViewModelTests {
         let secrets = SelectiveFailingSecretStore()
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: secrets,
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
 
         let bastion = vm.save(
             name: "bastion",
@@ -3280,7 +3333,8 @@ struct SessionListViewModelTests {
         try secrets.savePassword("secret-b", for: b.id)
 
         let vm = SessionListViewModel(
-            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+            store: store, secrets: secrets, auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
 
         // Hand-built, not planner-produced: `kind` matches on both sides
         // (`.s3` == `.s3`), so the FIRST guard alone would let this through.
@@ -3320,7 +3374,8 @@ struct SessionListViewModelTests {
         try secrets.savePassword("pw", for: session.id)
 
         let vm = SessionListViewModel(
-            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+            store: store, secrets: secrets, auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         var updated = session
         updated.ssh?.authKind = .agent
         vm.updateSession(updated, newSecret: nil)
@@ -3344,7 +3399,8 @@ struct SessionListViewModelTests {
         try secrets.savePassword("s3-secret", for: session.id)
 
         let vm = SessionListViewModel(
-            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+            store: store, secrets: secrets, auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         var updated = session
         updated.name = "bucket renamed"
         vm.updateSession(updated, newSecret: nil)
@@ -3364,7 +3420,8 @@ struct SessionListViewModelTests {
         try secrets.savePassword("webdav-secret", for: session.id)
 
         let vm = SessionListViewModel(
-            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+            store: store, secrets: secrets, auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         var updated = session
         updated.name = "cloud renamed"
         vm.updateSession(updated, newSecret: nil)
@@ -3395,7 +3452,8 @@ struct SessionListViewModelTests {
         try secrets.savePassword("s3-secret", for: session.id)
 
         let vm = SessionListViewModel(
-            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+            store: store, secrets: secrets, auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         var updated = session
         updated.name = "s3-blockless renamed"
         vm.updateSession(updated, newSecret: nil)
@@ -3421,7 +3479,8 @@ struct SessionListViewModelTests {
         try secrets.savePassword("webdav-secret", for: session.id)
 
         let vm = SessionListViewModel(
-            store: store, secrets: secrets, loginSetStore: LoginSetStore(directory: dir))
+            store: store, secrets: secrets, auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         var updated = session
         updated.name = "webdav-blockless renamed"
         vm.updateSession(updated, newSecret: nil)
@@ -3498,7 +3557,8 @@ struct SessionListViewModelTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: NoReadAllowedSecretStore(),
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         let set = LoginSet(name: "agent", username: "deploy", authKind: .agent)
 
         #expect(try vm.setCoversItsLogin(set) == true)
@@ -3562,7 +3622,8 @@ struct SessionListViewModelTests {
         let secrets = UnreliableSecretStore(failsReads: true)
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: secrets,
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         let set = LoginSet(name: "deploy", username: "deploy", authKind: .password)
         try secrets.savePassword("pw", for: set.id)
 
@@ -3613,7 +3674,9 @@ struct SessionListViewModelTests {
         let secrets = InMemorySecretStore()
         let vm = SessionListViewModel(
             store: SessionStore(directory: sessionDir), secrets: secrets,
-            loginSetStore: LoginSetStore(directory: loginDir))
+            auditStore: AuditLogStore(directory: loginDir),
+            loginSetStore: LoginSetStore(directory: loginDir),
+            keys: ManagedKeyStore(directory: loginDir))
 
         let stored = vm.save(
             name: "web",

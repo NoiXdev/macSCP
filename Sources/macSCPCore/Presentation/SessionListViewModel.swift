@@ -28,23 +28,32 @@ public final class SessionListViewModel {
     private let store: SessionStore
     private let secrets: any SecretStore
     /// Per-session audit log persistence (M9b) — only consumed here to clean
-    /// up a session's log file on `delete(_:)`. Defaulted so existing call
-    /// sites (and most tests) don't need to know about it.
+    /// up a session's log file on `delete(_:)`.
     private let auditStore: AuditLogStore
-    /// Login-set persistence (M10b). Defaulted so existing call sites don't
-    /// need to know about it.
+    /// Login-set persistence (M10b). Read on the way in by `reload()`, so it
+    /// is touched by every construction, not only by the login-set paths.
     private let loginSetStore: LoginSetStore
     /// Managed SSH keys (M17), needed by `updateSession` alone: it is the one
     /// write path that must ask whether a private-key login's passphrase
     /// already lives under the KEY's own Keychain slot before writing it into
-    /// the session's. Defaulted like the two stores above.
+    /// the session's.
     private let keys: ManagedKeyStore
 
+    /// Every store is a required argument, deliberately.
+    ///
+    /// The three below used to carry defaults pointing at the real user
+    /// directories, and `init` calls `reload()` — so a caller that named
+    /// only `store:` and `secrets:` silently read (and, once it reached
+    /// `delete(_:)` or any login-set path, wrote) the running user's own
+    /// files. That is not a hazard a reviewer can be asked to watch for;
+    /// it is one an argument list can refuse. Omitting a store now fails to
+    /// compile, which is the same capability boundary the connection layer
+    /// draws around dialing: not observed, made impossible.
     public init(
         store: SessionStore, secrets: any SecretStore,
-        auditStore: AuditLogStore = AuditLogStore(directory: AuditLogStore.defaultDirectory),
-        loginSetStore: LoginSetStore = LoginSetStore(directory: SessionStore.defaultDirectory),
-        keys: ManagedKeyStore = ManagedKeyStore(directory: SessionStore.defaultDirectory)
+        auditStore: AuditLogStore,
+        loginSetStore: LoginSetStore,
+        keys: ManagedKeyStore
     ) {
         self.store = store
         self.secrets = secrets

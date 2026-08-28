@@ -13,7 +13,8 @@ struct SubmitPreparationTests {
         let secrets = InMemorySecretStore()
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: secrets,
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         return (vm, secrets, dir)
     }
 

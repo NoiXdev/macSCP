@@ -109,7 +109,8 @@ struct PaneVisibilityPersistenceTests {
 
         let vm = SessionListViewModel(
             store: store, secrets: InMemorySecretStore(),
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         let (payload, _) = vm.exportPayload(
             for: .single(original), includeGroups: false, includePasswords: false)
         let exported = payload.sessions.first!
@@ -122,9 +123,12 @@ struct PaneVisibilityPersistenceTests {
         let plan = await SessionImportPlanner.plan(
             existing: [], existingGroups: [], incoming: decoded,
             arbiter: ImportConflictArbiter { _ in Issue.record("decider must not be asked"); return nil })
+        let importTarget = dir.appendingPathComponent("import-target")
         let importedVM = SessionListViewModel(
-            store: SessionStore(directory: dir.appendingPathComponent("import-target")),
-            secrets: InMemorySecretStore())
+            store: SessionStore(directory: importTarget), secrets: InMemorySecretStore(),
+            auditStore: AuditLogStore(directory: importTarget),
+            loginSetStore: LoginSetStore(directory: importTarget),
+            keys: ManagedKeyStore(directory: importTarget))
         let result = importedVM.applyImport(plan)
 
         #expect(result.imported == 1)
@@ -147,16 +151,20 @@ struct PaneVisibilityPersistenceTests {
 
         let vm = SessionListViewModel(
             store: store, secrets: InMemorySecretStore(),
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         let (payload, _) = vm.exportPayload(
             for: .single(original), includeGroups: false, includePasswords: false)
 
         let plan = await SessionImportPlanner.plan(
             existing: [], existingGroups: [], incoming: payload,
             arbiter: ImportConflictArbiter { _ in Issue.record("decider must not be asked"); return nil })
+        let importTarget = dir.appendingPathComponent("import-target")
         let importedVM = SessionListViewModel(
-            store: SessionStore(directory: dir.appendingPathComponent("import-target")),
-            secrets: InMemorySecretStore())
+            store: SessionStore(directory: importTarget), secrets: InMemorySecretStore(),
+            auditStore: AuditLogStore(directory: importTarget),
+            loginSetStore: LoginSetStore(directory: importTarget),
+            keys: ManagedKeyStore(directory: importTarget))
         let result = importedVM.applyImport(plan)
 
         #expect(result.imported == 1)

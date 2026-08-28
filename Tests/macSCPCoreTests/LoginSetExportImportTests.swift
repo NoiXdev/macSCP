@@ -16,7 +16,8 @@ struct LoginSetExportImportTests {
         let secrets = InMemorySecretStore()
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: secrets,
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         return (vm, secrets, dir)
     }
 
@@ -296,7 +297,8 @@ struct LoginSetExportImportTests {
         let secrets = UnreliableSecretStore(failsReads: true)
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: secrets,
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         let existing = LoginSet(name: "prod", username: "old")
         vm.saveLoginSet(existing, secret: "old-pw")
         #expect(secrets.peek(existing.id) == "old-pw")
@@ -318,7 +320,8 @@ struct LoginSetExportImportTests {
         let secrets = UnreliableSecretStore(failsDeletes: true)
         let vm = SessionListViewModel(
             store: SessionStore(directory: dir), secrets: secrets,
-            loginSetStore: LoginSetStore(directory: dir))
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
         let existing = LoginSet(name: "prod", username: "old")
         vm.saveLoginSet(existing, secret: "old-pw")
 
