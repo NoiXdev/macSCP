@@ -130,10 +130,37 @@ in einer CI ohne Docker grün.
 
 Ein Quelltext-Wächter wurde **bewusst nicht** gebaut: er müsste zwei Namen
 buchstabieren, die er nicht ableiten kann — genau die Sorte, vor der
-`CLAUDE.md` unter „Guards that name what they watch" warnt. Die Frage ist
+`CLAUDE.md` unter „Guards that name what they watch" warnt. Die Frage war
 damit nicht „welcher Wächter", sondern ob sich der ungebundene Aufruf
-**strukturell** ausschließen lässt, wie beim Verbinden geschehen. Offen,
-und eine Entscheidung, keine Aufgabe.
+**strukturell** ausschließen lässt, wie beim Verbinden geschehen.
+
+**Beantwortet und gebaut (2026-08-28, `c71a7c3`): ja.** `BoundedSFTPSession`
+hält den rohen Client `private`, hat einen `private init` und eine
+`closeBounded()` **ohne Argumente**; die Frist ist eine Eigenschaft des
+Typs. Neun Weiterleitungen tragen die übrigen Operationen. **Null
+Teständerungen**, weil `init` ohnehin schon `private` war und kein Test
+`SFTPClient` nennt.
+
+Sechs Verstöße gepflanzt, alle rot — darunter der, den ein Leser wirklich
+schreiben würde, der „nur eben den rohen Client braucht":
+
+```swift
+extension BoundedSFTPSession { var unbounded: SFTPClient { raw } }
+// error: 'raw' is inaccessible due to 'private' protection level
+```
+
+Dass das scheitert, hängt an `private` statt `fileprivate` — der Grund,
+warum der Typ in seiner eigenen Datei liegen muss. Zur Kontrolle wurde die
+Lücke am Stand davor bestätigt: dort kompiliert `try? await sftp.close()`.
+
+**Was die Grenze nicht verhindert**, beides ausgeführt und im Typ
+dokumentiert: den Schluss ganz zu **löschen** kompiliert, und
+`try? await client.openSFTP().close()` kompiliert ebenfalls — frischer
+Kanal, gespeicherte Sitzung unberührt (und weil `openSFTP()` selbst ein
+Umlauf ist, brächte es denselben Hänger zurück). Sie erzwingt das **Wie**,
+nie das **Ob**. Ein Quelltext-Wächter steht bewusst *nicht* daneben: einer
+neben einer strukturellen Garantie lässt den nächsten Leser der Suite mehr
+vertrauen, als sie verdient.
 
 Weitere benannte Grenzen: die fünf Sekunden sind gegen Loopback bemessen;
 `client.close()` ist nur in *dieser* Reihenfolge schnell gemessen, mit einem
