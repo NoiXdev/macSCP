@@ -523,10 +523,31 @@ struct ContentView: View {
             ?? ManagedKeyStore(directory: SessionStore.defaultDirectory)
         self.managedKeyStore = resolvedKeyStore
         // Named in full because `SessionListViewModel.init` no longer
-        // defaults any of its stores: this is the production window, so
-        // every one of them is the real, default-directory-backed instance,
-        // and `keys:` is the SAME resolved store the rest of the view uses
-        // rather than a second one built here.
+        // defaults any of its stores. What each one is here, precisely —
+        // this branch is NOT production-only, and reading it as such is the
+        // mistake this comment exists to prevent:
+        //
+        // - `store:` and `loginSetStore:` are hardwired to
+        //   `SessionStore.defaultDirectory`. Nothing else can be passed in
+        //   at this level, and `SessionListViewModel.init` calls
+        //   `reload()` — so a test that constructs `ContentView` and leaves
+        //   `sessionListViewModel:` nil (still the parameter's default)
+        //   reads the running user's real `sessions-v2.json` and
+        //   `logins.json`. That is the residual the store-capability commit
+        //   did NOT close: it made omitting a store a compile error one
+        //   level down, in `SessionListViewModel`, not here.
+        // - `secrets:` and `keys:` are `resolvedSecretStore` /
+        //   `resolvedKeyStore`, i.e. whatever a test injected — the SAME
+        //   resolved stores the rest of the view uses, not second ones
+        //   built here.
+        // - `auditStore:` is a required `ContentView.init` parameter, so it
+        //   is whatever the caller passed; all 32 constructions under
+        //   `Tests/` (counted in the pass that writes this) pass one built
+        //   on a directory the test itself made.
+        //
+        // The way to close the residual is to make the two hardwired stores
+        // parameters as well, so that omitting them cannot compile. Until
+        // then this is a runtime hazard, not a type-level guarantee.
         _sessionListViewModel = State(initialValue: sessionListViewModel ?? SessionListViewModel(
             store: SessionStore(directory: SessionStore.defaultDirectory),
             secrets: resolvedSecretStore,

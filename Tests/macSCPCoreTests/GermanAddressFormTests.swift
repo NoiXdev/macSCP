@@ -5,7 +5,7 @@ import Testing
 /// it.
 ///
 /// Measured before it was written, because the rule was not obvious from
-/// the outside: **ten** strings in the App catalog carry a du-pronoun
+/// the outside: **eleven** strings in the App catalog carry a du-pronoun
 /// (`du`, `dich`, `dir`, `dein…`) — counted in the pass that writes this
 /// sentence, over the catalog as it stands — and more use the du-imperative
 /// without one ("Prüfe deine Internetverbindung und versuche es erneut.",
@@ -18,7 +18,16 @@ import Testing
 /// be checked against — an imperative is recognized by reading, and a
 /// number nobody can recompute is a number that drifts. This one said
 /// "eight" when it was written, in the same commit that moved two more
-/// strings into the du-register.
+/// strings into the du-register, and "ten" through the pass that
+/// restructured this file without recounting. Both times the sentence
+/// read as plausible; that is the whole hazard. The eleven, counted here:
+/// `connection.lost.body.needsPerson`,
+/// `connection.lost.hint.noSavedSession`, `connection.saveName.replaces %@`,
+/// `settings.cli.footer`, `settings.cli.status.translocated.detail`,
+/// `settings.cli.systemWide.footer`, `settings.connection.keepAlive.footer`,
+/// `settings.general.updateCheckHint`,
+/// `settings.terminal.target.builtInFallback.footer`,
+/// `snippets.variables.error.quotedPlaceholder %@`, `update.error.offline`.
 ///
 /// Two strings used the polite form until the failed-connect surface's own
 /// round 4, and both sat in `connection.lost.*`, which is how a user met
@@ -169,10 +178,8 @@ struct GermanAddressFormTests {
 
     @Test(arguments: GermanAddressFormTests.catalogs)
     func noGermanStringAddressesTheUserInThePoliteForm(relativePath: String) throws {
-        let path = repoRootPath(relativePath)
-        let entries = try #require(
-            NSDictionary(contentsOfFile: path) as? [String: String],
-            "\(relativePath) did not parse as a property list")
+        let entries = try LocalizationCatalogs.read(
+            relativePath, locale: Self.germanLocale).entries
         #expect(!entries.isEmpty, """
             no strings read from \(relativePath) — this check is not reading the catalog it \
             thinks it is. How many strings the catalogs hold between them is a question for \
@@ -189,7 +196,7 @@ struct GermanAddressFormTests {
             German string(s) addressing the user in the polite form:
             \(offenders.joined(separator: "\n"))
 
-            This app says du — ten strings in the App catalog carry a du-pronoun and more \
+            This app says du — eleven strings in the App catalog carry a du-pronoun and more \
             use the du-imperative ("Prüfe deine Internetverbindung und versuche es \
             erneut."). Two strings in \
             `connection.lost.*` used Sie until the failed-connect surface's own round 4, \
@@ -219,16 +226,15 @@ struct GermanAddressFormTests {
             !catalogs.contains { $0.hasPrefix(directory + "/") }
         }
         #expect(withoutGerman.isEmpty, """
-            catalog director(ies) with no \(Self.germanLocale).lproj/Localizable.strings: \
+            catalog director(ies) with no \(Self.germanLocale) catalog in any format: \
             \(withoutGerman). macSCP ships German, so a localized target without it is a \
             surface whose register nothing here reads — and the register is the whole point \
             of this suite.
             """)
 
         let strings = try catalogs.reduce(into: 0) { total, relativePath in
-            let entries = try #require(
-                NSDictionary(contentsOfFile: repoRootPath(relativePath)) as? [String: String])
-            total += entries.count
+            total += try LocalizationCatalogs.read(
+                relativePath, locale: Self.germanLocale).entries.count
         }
         #expect(strings >= 40, """
             \(strings) German string(s) across \(catalogs.count) catalog(s) — far too few \
@@ -237,7 +243,4 @@ struct GermanAddressFormTests {
             """)
     }
 
-    private func repoRootPath(_ relativePath: String) -> String {
-        LocalizationCatalogs.url(relativePath).path(percentEncoded: false)
-    }
 }

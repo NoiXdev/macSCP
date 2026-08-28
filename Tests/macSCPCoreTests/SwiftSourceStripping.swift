@@ -119,9 +119,18 @@ enum SwiftSource {
 }
 
 /// The stripper's own fail-closed cases, kept beside it rather than in the
-/// suite that first needed them: every guard in this target now reads what
-/// this returns, so what it does at the end of a file it cannot parse is a
-/// property of all of them.
+/// suite that first needed them, so that what it does at the end of a file
+/// it cannot parse is stated in one place.
+///
+/// Three suites in this target read what `stripCommentsAndStrings` returns,
+/// counted in the pass that writes this sentence:
+/// `ConnectionViewModelSourceGuardTests`,
+/// `PKCS12ImportIsolationGuardTests`, and the self-tests below. Two others
+/// scan Swift source with blankers of their own and are NOT covered by
+/// anything here — `IconTooltipLintTests` (its own `code(of:)`) and
+/// `SnippetCommandSurveyTests`. Whether those fail closed is their own
+/// question; this comment used to say "every guard in this target", which
+/// would have let an audit of fail-closed behaviour stop here and miss both.
 @Suite("Swift source stripping")
 struct SwiftSourceStrippingTests {
     /// Comments and string literals must be blanked, and line structure
