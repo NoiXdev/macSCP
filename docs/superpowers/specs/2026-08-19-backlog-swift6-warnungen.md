@@ -1,3 +1,14 @@
+> **Erledigt am 2026-08-26** über
+> `docs/superpowers/plans/2026-08-26-swift6-sprachmodus.md`. Alle sechs Targets
+> stehen auf `.swiftLanguageMode(.v6)`, das Projekt baut warnungsfrei, und CI
+> wird rot, sobald die Zahl eindeutiger Warnorte über 1 liegt (die eine erlaubte
+> ist namentlich in `ci.yml` benannt).
+>
+> **Die Zahl unten stimmt nicht.** „1472 Warnungen" war eine Zeilenzahl:
+> derselbe Fundort wird über mehrere Kompilierdurchgänge im Schnitt siebzehnmal
+> gedruckt. Gemessen waren es **37 eindeutige Fundorte**. Der Eintrag bleibt
+> stehen, weil dieser Zählfehler die eigentliche Lehre ist.
+
 # Backlog: die Swift-6-Warnungen im CI-Log
 
 **Angelegt:** 2026-08-19, nachdem im GitHub-Actions-Log Fehlermeldungen aufzufallen

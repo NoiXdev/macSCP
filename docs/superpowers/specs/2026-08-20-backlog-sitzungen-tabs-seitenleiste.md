@@ -7,7 +7,10 @@
 
 ## A. Verbindungszustand
 
-### A1. Zeitüberschreitung sichtbar machen
+### A1. Zeitüberschreitung sichtbar machen — **erledigt 2026-08-25**
+
+> Umgesetzt über `docs/superpowers/plans/2026-08-25-gescheiterter-aufbau.md`.
+
 
 Statt einer toten Ansicht: eine Fehlerdarstellung im Tab, verständlich
 formuliert, mit **„Erneut verbinden"**. Im Tab-Reiter ein Warnsymbol, und ein
@@ -20,7 +23,10 @@ merkt macSCP den Abriss überhaupt — am fehlgeschlagenen nächsten Aufruf, ode
 aktiv (siehe A2)? Ohne A2 erfährt die App den Abriss erst, wenn der Nutzer
 etwas tut, und das Warnsymbol käme immer zu spät.
 
-### A2. Keep-alive
+### A2. Keep-alive — **erledigt 2026-08-26**
+
+> Umgesetzt über `docs/superpowers/plans/2026-08-21-verbindungszustand.md`.
+
 
 **Es gibt heute keins** — kein Treffer auf `keepalive` oder
 `ServerAliveInterval` im ganzen Quellbaum. Regelmäßige Lebenszeichen, damit
@@ -39,12 +45,18 @@ aussieht.
 
 ## B. Tabs
 
-### B1. Kontextmenü am Reiter
+### B1. Kontextmenü am Reiter — **erledigt 2026-08-27**
+
+> Zusammen mit B2 über `docs/superpowers/plans/2026-08-27-tab-kontextmenue-und-umordnen.md`.
+
 
 Schließen, bei Ad-hoc-Verbindungen **als Sitzung speichern**, nach links /
 nach rechts schieben. `TabStripView.swift` hat heute **kein** `contextMenu`.
 
-### B2. Reihenfolge per Ziehen
+### B2. Reihenfolge per Ziehen — **erledigt 2026-08-27**
+
+> Zusammen mit B1, wie der Eintrag es verlangte. Die Wurf-Rückmeldung kam nach, siehe `2026-08-27-backlog-reiter-feinschliff.md` Abschnitt A.
+
 
 Ebenfalls nichts vorhanden — kein `onMove`, kein `draggable` in den
 Tab-Dateien. B1s „nach links / nach rechts" und B2 sind dieselbe zugrunde
@@ -81,7 +93,10 @@ ist nicht „welches Menü", sondern **wovon der Eintrag abhängt**.
 
 ## C. Sitzung starten
 
-### C1. Einfachklick soll nicht verbinden
+### C1. Einfachklick soll nicht verbinden — **erledigt 2026-08-26**
+
+> Umgesetzt über `docs/superpowers/plans/2026-08-25-kleine-bedienpunkte.md`. Beim Angehen zeigte sich: die Seitenleiste kannte gar keine Auswahl, die Geste war der kleinere Teil.
+
 
 Gemessen: `SessionSidebar.swift` hängt am Zeilentipp `onSelect()`, und
 `ContentView+Detail.swift` reicht das an `connectFromSidebar(stored)` weiter
@@ -125,7 +140,10 @@ in vier Verwaltungs-Sheets benutzt; hier wäre er wiederzuverwenden statt neu
 zu bauen. Offen: filtert die Suche den Baum, oder hebt sie Treffer hervor —
 bei verschachtelten Ordnern (D1) ist das ein Unterschied.
 
-### D4. Breite verändern und merken
+### D4. Breite verändern und merken — **erledigt 2026-08-26**
+
+> Umgesetzt über `docs/superpowers/plans/2026-08-25-kleine-bedienpunkte.md`, Grenzen 170…340.
+
 
 Gemessen: `ContentView+Detail.swift` klemmt die Seitenleiste auf
 `minWidth: 170, idealWidth: 190, maxWidth: 260`. Die **Obergrenze 260** ist
