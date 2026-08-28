@@ -5,19 +5,40 @@
 - **Code and comments: English only.** All identifiers, doc comments, inline
   comments, test names, and log/error `reason:` strings in Core are written in
   English. No German in source files.
-- **App UI: localized.** User-facing strings go through a String Catalog
-  (`Localizable.xcstrings`) with **English as the default language** and a
-  **German translation**. Never hardcode display strings; use
-  `String(localized:)` / `LocalizedStringKey`.
-- Core-layer user-facing messages (e.g. transfer error texts) are defined as
-  localizable strings with `Bundle.module` where they must live in Core;
-  prefer mapping raw errors to localized text at the App layer.
+- **App UI: localized.** User-facing strings live in
+  `Resources/<locale>.lproj/Localizable.strings` under both localized
+  targets, `MacSCPAppKit` and `macSCPCore`, in **four languages**: `en` —
+  the default, and the source text every other catalog is measured against —
+  plus `de`, `fr`, `pl`. Plural forms sit beside them in
+  `Localizable.stringsdict`. The German catalogs address the user as **du**;
+  `GermanAddressFormTests` holds them to it.
+- Never hardcode a display string. Look it up through `L10n.string(_:_:)` /
+  `L10n.text(_:_:)` in the App, `CoreL10n.string(_:)` in Core. Core-layer
+  user-facing messages (e.g. transfer error texts) live in Core's own
+  catalog where they must; prefer mapping raw errors to localized text at
+  the App layer.
+- **Not `String(localized:)`, not `LocalizedStringKey`, not a String Catalog
+  (`.xcstrings`), not `Bundle.module`** — this paragraph used to prescribe
+  all four, and the tree has never used any of them. Counted 2026-08-28:
+  zero occurrences of the first two, no `.xcstrings` anywhere, and
+  `Bundle.module` only inside the comments explaining why both helpers avoid
+  it — SwiftPM's generated accessor calls `fatalError` when it cannot find
+  the resource bundle, which a stripped launch really can. `L10n` and
+  `CoreL10n` search a wider candidate list and fall back to the key text
+  instead of trapping. Adding a String Catalog is a migration to design, not
+  a file to drop in: the plural categories differ per language (`pl` carries
+  `few`/`many` where `de`, `en` and `fr` carry only `one`/`other`). The
+  localization checks read `.xcstrings` since `cb624e5`, so one would at
+  least not go unexamined.
 - Internal docs (`docs/`, plans, specs, ledger) may remain German.
 - Public-facing texts (README intro, taglines, landing copy) contain **no
   tech-stack terms** (see global user CLAUDE.md) and exist in English first.
-- Migration status: completed 2026-07-10 (milestone M5i). The pre-existing
-  German comments and hardcoded UI strings were swept; all code follows this
-  policy.
+- Migration status: the German-comment and hardcoded-string sweep completed
+  2026-07-10 (milestone M5i). The format described above was corrected on
+  2026-08-28 to match the tree — it had prescribed a String Catalog and two
+  SwiftUI lookup APIs that no code here has ever used, which is how a rule
+  file quietly instructs the next contributor to build something the rest of
+  the project does not speak.
 
 ## Build & test
 
