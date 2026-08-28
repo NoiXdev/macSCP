@@ -107,6 +107,7 @@
 "connection.field.saveName" = "Session name";
 "connection.field.saveName.placeholder" = "e.g. hetzner-web";
 "connection.saveName.replaces %@" = "Saving replaces the existing session “%@”.";
+"connection.saveName.duplicates %@" = "Another session is already called “%@”.";
 "form.tags.label" = "Tags";
 "form.tags.help" = "Comma-separated. Used by the sidebar filter.";
 "form.tags.placeholder" = "Add a tag…";

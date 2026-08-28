@@ -126,16 +126,17 @@ struct ConnectionFormView: View {
         return false
     }
 
-    /// The stored session saving would replace under the name currently in
-    /// the field, or `nil`. The view decides nothing about it: which session
-    /// that is, whether the form's own session counts, and what the name
-    /// even is once saving has trimmed it are all `SessionNameConflict`'s
-    /// and `SessionNameCollision`'s, in Core, where tests reach them. The
-    /// raw field text is passed on deliberately — normalizing it here would
-    /// be a second place that decides what a name is.
-    private var replacedSession: StoredSession? {
-        SessionNameConflict.replacedSession(
-            byName: viewModel.saveName, mode: viewModel.mode, in: sessionList.sessions)
+    /// What saving would do to a stored session of the same name, or `nil`
+    /// when no stored session carries it. The view decides nothing about
+    /// it: which session that is, whether the form's own session counts,
+    /// what the name even is once saving has trimmed it, and **which of two
+    /// sentences is true on this path** are all `SessionNameConflict`'s and
+    /// `SessionNameCollision`'s, in Core, where tests reach them. The raw
+    /// field text is passed on deliberately — normalizing it here would be
+    /// a second place that decides what a name is.
+    private var nameConflict: SessionNameConflict? {
+        SessionNameConflict.build(
+            name: viewModel.saveName, mode: viewModel.mode, in: sessionList.sessions)
     }
 
     /// True while Set mode has nothing selected yet — the three connect/save
@@ -462,21 +463,22 @@ struct ConnectionFormView: View {
                     }
                     .errorHighlight(failedField == .saveName)
 
-                    // Names the session that saving would replace, and says
-                    // that it would. Drawn like this form's other inline
+                    // Names the stored session of this name and says what
+                    // saving would do to it — which is not the same on the
+                    // two paths, so the sentence is the conflict's own and
+                    // not spelled here. Drawn like this form's other inline
                     // message under a field (the jump summary row): a
                     // label-less `FormRow` so it sits under the field it is
-                    // about, same size, in amber rather than the red that
+                    // about, same size, in amber rather than the red this
                     // form reserves for a refusal — saving onto a stored
                     // name stays allowed and stays one click away, which is
                     // why nothing here disables the buttons below.
-                    if let replaced = replacedSession {
+                    if let conflict = nameConflict {
                         FormRow(label: "") {
                             Text(String(
                                 format: L10n.string(
-                                    "connection.saveName.replaces %@",
-                                    "Saving replaces the existing session \u{201C}%@\u{201D}."),
-                                replaced.name))
+                                    conflict.messageKey, conflict.messageDefault),
+                                conflict.session.name))
                                 .font(.system(size: 12.5))
                                 .foregroundStyle(DesignTokens.statusAmber)
                         }

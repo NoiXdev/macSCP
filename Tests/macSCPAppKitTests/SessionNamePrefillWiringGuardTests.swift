@@ -1,6 +1,8 @@
 import Foundation
 import Testing
 
+@testable import macSCPCore
+
 /// Guards the one property the value tests cannot reach: **a name macSCP
 /// invents steps aside, and a name that IS a session's own does not.**
 ///
@@ -31,10 +33,26 @@ import Testing
 ///   nothing: `freeName(basedOn: tab.displayTitle, avoiding: [])` avoids an
 ///   empty world, so every name is free. The call is right there in the
 ///   source and the property is gone. Found by review, which got it past
-///   the first version of this suite.
+///   the first version of this suite — and then got a second one past the
+///   fix, `avoiding: sessionListViewModel.sessions.filter { _ in false }`,
+///   which a substring check reads as compliant. The argument list is
+///   therefore compared WHOLE, which makes these two checks
+///   spelling-exact: a reformat of the call fails them, deliberately, and
+///   is fixed by updating the expected text once.
+/// - **V7** The rule is called and its answer thrown away — the call reads
+///   as wired while the raw name goes into the field. The most plausible
+///   edit of the lot, so it is followed rather than matched: the guard
+///   reads what the call's result is bound to and requires THAT to be what
+///   reaches `saveName`.
+/// - **V8** The form spells a catalogue key itself, so the sentence it
+///   shows stops following the case Core decided. Which text belongs to
+///   which save path is the whole of N1, and it is not the view's to
+///   choose.
 ///
-/// **Scope.** Everything below reads `ContentView.swift`,
-/// `ContentView+Lifecycle.swift` and `ConnectionFormView.swift`. The fourth
+/// **Scope.** The checks below read `ContentView.swift`,
+/// `ContentView+Lifecycle.swift` and `ConnectionFormView.swift` as source
+/// text, plus `en.lproj/Localizable.strings` for the two sentences a
+/// conflict can name. The fourth
 /// place a form's name is prefilled — `ConnectionViewModel.beginEditing`,
 /// in Core — is outside it, and deliberately so: a guard that scanned Core
 /// for an App-layer rule would be asserting that Core knows about one.
@@ -44,8 +62,9 @@ import Testing
 /// stepping aside. Weaker than the check below, and named here rather than
 /// left for someone to discover.
 ///
-/// Read as text, and fail-closed: a reformat that renames one of the three
-/// functions reads as a missing wire rather than a compliant one. Comment
+/// Fail-closed: a reformat that renames one of the scanned functions, or
+/// that respells a checked call, reads as a missing wire rather than a
+/// compliant one. Comment
 /// lines are stripped before every scan, so a comment that MENTIONS the
 /// rule cannot stand in for a call to it — which is exactly what the
 /// stored-session fill carries.
@@ -116,24 +135,45 @@ struct SessionNamePrefillWiringGuardTests {
             if character == "(" { depth += 1 }
             if character == ")" {
                 depth -= 1
-                if depth == 0 { return String(text[start.upperBound..<index]) }
+                if depth == 0 {
+                    return String(text[start.upperBound..<index])
+                        .trimmingCharacters(in: .whitespaces)
+                }
             }
             index = text.index(after: index)
         }
         return nil
     }
 
-    /// The two V6 failure messages, built rather than written inline: a
-    /// `Comment` takes a literal, and both call sites want the arguments the
-    /// scan actually read in the text.
-    private static func aboutTheWrongName(_ site: String, _ read: String) -> Comment {
-        Comment(rawValue: "\(site) asks `freeName` about \(read) — the name it steps aside "
-            + "from has to be the one it is about to put in the field.")
+    /// The V6 failure message, built rather than written inline: a
+    /// `Comment` takes a literal, and both call sites want the argument
+    /// list the scan actually read in the text.
+    private static func wrongArguments(_ site: String, _ read: String) -> Comment {
+        Comment(rawValue: "\(site) asks `freeName` with `\(read)` — the name has to be the one "
+            + "about to go in the field, and the sessions have to be the stored ones. A rule "
+            + "handed anything else finds every name free.")
     }
 
-    private static func avoidingTheWrongWorld(_ site: String, _ read: String) -> Comment {
-        Comment(rawValue: "\(site) asks `freeName` to avoid \(read) — a rule handed anything "
-            + "but the stored sessions finds every name free.")
+    /// Whether the answer `SessionNameCollision.freeName` gives inside
+    /// `body` is what ends up in the name field.
+    ///
+    /// Follows the binding rather than matching a spelling, because the two
+    /// call sites bind differently: the import assigns the call straight to
+    /// `form.saveName`, "Save as Session" binds it to a local first (it has
+    /// a `guard` between) and assigns that. Reading the left-hand side and
+    /// then requiring the SAME name to reach `saveName` covers both, and
+    /// covers V7 in either.
+    private static func freeNameReachesTheNameField(in body: String) -> Bool {
+        guard let call = body.range(of: "SessionNameCollision.freeName(") else { return false }
+        let before = body[body.startIndex..<call.lowerBound]
+            .trimmingCharacters(in: .whitespaces)
+        guard before.hasSuffix("=") else { return false }
+        let target = String(before.dropLast())
+            .trimmingCharacters(in: .whitespaces)
+            .components(separatedBy: " ").last ?? ""
+        if target.hasSuffix("saveName") { return true }
+        guard !target.isEmpty else { return false }
+        return body.contains("saveName = \(target)")
     }
 
     /// The arguments `SessionNameCollision.freeName` is called with inside
@@ -167,10 +207,14 @@ struct SessionNamePrefillWiringGuardTests {
         let arguments = try Self.freeNameArguments(
             inFunction: "saveAsSession", ofFile: Self.lifecyclePath)
         let read = arguments ?? "nothing this guard could read"
-        #expect(arguments?.contains("basedOn: tab.displayTitle") == true,
-                Self.aboutTheWrongName("\"Save as Session\"", read))
-        #expect(arguments?.contains("avoiding: sessionListViewModel.sessions") == true,
-                Self.avoidingTheWrongWorld("\"Save as Session\"", read))
+        #expect(arguments == "basedOn: tab.displayTitle, avoiding: sessionListViewModel.sessions",
+                Self.wrongArguments("\"Save as Session\"", read))
+
+        // **V7** — and the answer is what reaches the field.
+        #expect(Self.freeNameReachesTheNameField(in: body), """
+            "Save as Session" calls `freeName` and does not put its answer in the name field — \
+            the call reads as wired and the raw title is what gets saved.
+            """)
     }
 
     /// **V2** — same for the ssh-config alias.
@@ -193,10 +237,14 @@ struct SessionNamePrefillWiringGuardTests {
         let arguments = try Self.freeNameArguments(
             inFunction: "fillFromImported", ofFile: Self.contentViewPath)
         let read = arguments ?? "nothing this guard could read"
-        #expect(arguments?.contains("basedOn: host.alias") == true,
-                Self.aboutTheWrongName("The ssh-config import", read))
-        #expect(arguments?.contains("avoiding: sessionListViewModel.sessions") == true,
-                Self.avoidingTheWrongWorld("The ssh-config import", read))
+        #expect(arguments == "basedOn: host.alias, avoiding: sessionListViewModel.sessions",
+                Self.wrongArguments("The ssh-config import", read))
+
+        // **V7**, the import's half.
+        #expect(Self.freeNameReachesTheNameField(in: body), """
+            The ssh-config import calls `freeName` and does not put its answer in the name \
+            field — the call reads as wired and the raw alias is what gets saved.
+            """)
     }
 
     /// **V3** — and the stored-session fill does NOT, which is the arm that
@@ -244,15 +292,22 @@ struct SessionNamePrefillWiringGuardTests {
             """)
     }
 
-    /// **V5** — the warning names a session and does not block saving.
+    /// **V5** and **V8** — the warning is drawn, says what the conflict
+    /// says, and blocks nothing.
     @Test func theWarningIsShownAndBlocksNothing() throws {
         let source = try Self.withoutComments(Self.source(Self.formPath))
-        #expect(source.contains("\"connection.saveName.replaces %@\""), """
-            The connection form no longer draws the collision warning at all.
-            """)
-        #expect(source.contains("SessionNameConflict.replacedSession("), """
+        #expect(source.contains("SessionNameConflict.build("), """
             The form decides for itself whether a name collides instead of asking \
             `SessionNameConflict`, where a test can reach the answer.
+            """)
+        #expect(source.contains("conflict.messageKey") && source.contains("conflict.messageDefault"), """
+            The form no longer renders the conflict's own sentence — which text is true \
+            depends on which save path runs, and that is the conflict's decision.
+            """)
+        #expect(!source.contains("\"connection.saveName."), """
+            The form spells a `connection.saveName.` key itself. Saving replaces on the new \
+            path and duplicates on the edit path; a key chosen in the view is a sentence \
+            nothing holds to the path it describes.
             """)
         let blocking = source
             .components(separatedBy: "\n")
@@ -261,5 +316,24 @@ struct SessionNamePrefillWiringGuardTests {
             A collision disables a control: \(blocking). The warning makes the overwrite \
             visible; it does not forbid it.
             """)
+    }
+
+    /// **V8**'s other half — every sentence a conflict can name is actually
+    /// in the catalogue.
+    ///
+    /// The key lives in Core and the text lives in the App bundle, so
+    /// nothing but this connects them: a key Core returns that no catalogue
+    /// carries renders to the user as the raw key, in every language at
+    /// once. English is enough to check here — `LocalizationParityTests`
+    /// holds the other three to English's key set.
+    @Test func bothConflictSentencesExistInTheCatalogue() throws {
+        let session = StoredSession(id: UUID(), name: "web", kind: .ssh)
+        let catalogue = try Self.source(
+            "Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings")
+        for conflict in [SessionNameConflict.replaces(session), .duplicates(session)] {
+            #expect(catalogue.contains("\"\(conflict.messageKey)\" = "),
+                    Comment(rawValue: "`\(conflict.messageKey)` is what `SessionNameConflict` "
+                        + "returns for this case and the English catalogue does not declare it."))
+        }
     }
 }

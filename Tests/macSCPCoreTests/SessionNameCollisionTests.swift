@@ -93,10 +93,12 @@ struct SessionNameCollisionTests {
 
     @Test func onlyTheAskedNameIsTrimmed() {
         // `save` compares the trimmed candidate against the stored names as
-        // they stand — it does not trim THOSE. A stored name that carries a
-        // space (an import can produce one) is a different name, and the
-        // rule must agree, or it would step aside from a name saving would
-        // have left alone.
+        // they stand — it does not trim THOSE, and neither does this rule.
+        // No known writer stores such a name (the import path trims on
+        // purpose), so this pins a mirror of `save` rather than a case from
+        // the field: were one to exist, it is a different name, and folding
+        // the two together would step aside from a name saving would have
+        // left alone.
         #expect(SessionNameCollision.freeName(
             basedOn: "web", avoiding: [session("web ")]) == "web")
         #expect(SessionNameCollision.collides(

@@ -43,11 +43,11 @@ enum DesignTokens {
     ///
     /// Read by the connection-liveness "connecting"/"degraded" dot
     /// (connection-liveness plan, Task 5), which is what this token was
-    /// introduced for, and by the connection form's "saving would replace
-    /// this session" line. Not one meaning shared by two features: the
-    /// meaning is the register — neither `statusPhosphor`'s "all good" nor
-    /// `statusLost`'s red, which this form reserves for a refusal, and the
-    /// collision warning refuses nothing.
+    /// introduced for, and by the connection form's session-name collision
+    /// line. Not one meaning shared by two features: the meaning is the
+    /// register — not `statusPhosphor`'s "all good", and not the red that
+    /// form paints a refusal with (a literal `.red` there, not this file's
+    /// `statusLost`), because the collision warning refuses nothing.
     static let statusAmber = Color.orange
 
     /// Connection-liveness "lost" status (connection-liveness plan,

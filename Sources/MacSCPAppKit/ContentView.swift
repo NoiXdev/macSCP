@@ -2080,8 +2080,8 @@ struct ContentView: View {
         // steps aside from a stored session of that name rather than
         // replacing it on save. A form filled FROM a stored session is
         // where a matching name is the normal case instead — that is
-        // `fillForm` below and `ConnectionViewModel.beginEditing`, and both
-        // fill this field straight from `stored.name`.
+        // `fillForm` and `ConnectionViewModel.beginEditing`, and both fill
+        // this field straight from `stored.name`.
         form.saveName = SessionNameCollision.freeName(
             basedOn: host.alias, avoiding: sessionListViewModel.sessions)
         form.shouldSaveSession = false

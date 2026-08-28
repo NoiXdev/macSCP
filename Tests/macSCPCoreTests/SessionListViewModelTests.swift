@@ -481,6 +481,33 @@ struct SessionListViewModelTests {
         #expect(vm.sessions.first?.ssh?.host == "h2")
     }
 
+    /// The premise the connection form's collision warning rests on: the
+    /// two save paths do NOT do the same thing to a name that already
+    /// exists. `save` upserts by name, so it replaces. `updateSession`
+    /// upserts by id, so a rename onto a taken name replaces nothing and
+    /// leaves the store holding two sessions of that name — which is why
+    /// `SessionNameConflict` has a second case and a second sentence for
+    /// the edit path.
+    @Test func updateSessionUpsertsByIdSoARenameCanDuplicateAName() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let web = vm.save(
+            name: "web", values: sshValues(host: "h", port: 22, username: "u"),
+            password: "")!
+        let other = vm.save(
+            name: "other", values: sshValues(host: "h2", port: 22, username: "u"),
+            password: "")!
+        var renamed = other
+        renamed.name = "web"
+        vm.updateSession(renamed, newSecret: nil)
+
+        #expect(vm.sessions.count == 2)
+        #expect(vm.sessions.filter { $0.name == "web" }.count == 2)
+        // And the session that was already called "web" is untouched: not
+        // replaced, not merged, still its own id.
+        #expect(vm.sessions.contains { $0.id == web.id && $0.ssh?.host == "h" })
+    }
+
     @Test func exportPayloadScopesAndCountsMissingPasswords() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
