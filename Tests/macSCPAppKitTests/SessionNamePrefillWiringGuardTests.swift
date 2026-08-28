@@ -27,6 +27,22 @@ import Testing
 /// - **V5** The warning grows into a refusal — a `.disabled` on the save
 ///   buttons — which the design rejects outright: saving onto an existing
 ///   name stays possible, the warning only makes it visible.
+/// - **V6** The rule is called with the wrong arguments and answers
+///   nothing: `freeName(basedOn: tab.displayTitle, avoiding: [])` avoids an
+///   empty world, so every name is free. The call is right there in the
+///   source and the property is gone. Found by review, which got it past
+///   the first version of this suite.
+///
+/// **Scope.** Everything below reads `ContentView.swift`,
+/// `ContentView+Lifecycle.swift` and `ConnectionFormView.swift`. The fourth
+/// place a form's name is prefilled — `ConnectionViewModel.beginEditing`,
+/// in Core — is outside it, and deliberately so: a guard that scanned Core
+/// for an App-layer rule would be asserting that Core knows about one.
+/// That site is an identity fill like `fillForm`, and what holds it is
+/// `ConnectionViewModelTests`' existing expectation that beginning an edit
+/// puts the stored name in the field — which would fail if it ever started
+/// stepping aside. Weaker than the check below, and named here rather than
+/// left for someone to discover.
 ///
 /// Read as text, and fail-closed: a reformat that renames one of the three
 /// functions reads as a missing wire rather than a compliant one. Comment
@@ -83,6 +99,52 @@ struct SessionNamePrefillWiringGuardTests {
         haystack.components(separatedBy: needle).count - 1
     }
 
+    /// The argument list of the first `call` in `text`, brace-counted to its
+    /// matching `)`. `nil` when the call is absent or unbalanced — the
+    /// fail-closed direction, since an unreadable call is not a wired one.
+    ///
+    /// Bounded on purpose. Checking that the enclosing FUNCTION mentions
+    /// `avoiding: sessionListViewModel.sessions` somewhere would pass a
+    /// function that mentions it in an unrelated line and hands the rule an
+    /// empty array — which is the whole of V6.
+    private static func arguments(of call: String, in text: String) -> String? {
+        guard let start = text.range(of: call) else { return nil }
+        var depth = 1
+        var index = start.upperBound
+        while index < text.endIndex {
+            let character = text[index]
+            if character == "(" { depth += 1 }
+            if character == ")" {
+                depth -= 1
+                if depth == 0 { return String(text[start.upperBound..<index]) }
+            }
+            index = text.index(after: index)
+        }
+        return nil
+    }
+
+    /// The two V6 failure messages, built rather than written inline: a
+    /// `Comment` takes a literal, and both call sites want the arguments the
+    /// scan actually read in the text.
+    private static func aboutTheWrongName(_ site: String, _ read: String) -> Comment {
+        Comment(rawValue: "\(site) asks `freeName` about \(read) — the name it steps aside "
+            + "from has to be the one it is about to put in the field.")
+    }
+
+    private static func avoidingTheWrongWorld(_ site: String, _ read: String) -> Comment {
+        Comment(rawValue: "\(site) asks `freeName` to avoid \(read) — a rule handed anything "
+            + "but the stored sessions finds every name free.")
+    }
+
+    /// The arguments `SessionNameCollision.freeName` is called with inside
+    /// `function`, or `nil` if it is not called there at all.
+    private static func freeNameArguments(
+        inFunction function: String, ofFile path: String
+    ) throws -> String? {
+        guard let body = try functionBody(function, in: source(path)) else { return nil }
+        return arguments(of: "SessionNameCollision.freeName(", in: body)
+    }
+
     /// **V1** — the tab title reaches the form through the rule, never raw.
     @Test func saveAsSessionStepsAsideFromATakenTitle() throws {
         guard let body = try Self.functionBody(
@@ -98,6 +160,17 @@ struct SessionNamePrefillWiringGuardTests {
         #expect(!body.contains("= tab.displayTitle"), """
             "Save as Session" assigns `tab.displayTitle` raw again.
             """)
+
+        // **V6** — and asks it about the title, against the sessions that
+        // exist. A call with either argument replaced answers nothing and
+        // still reads as wired.
+        let arguments = try Self.freeNameArguments(
+            inFunction: "saveAsSession", ofFile: Self.lifecyclePath)
+        let read = arguments ?? "nothing this guard could read"
+        #expect(arguments?.contains("basedOn: tab.displayTitle") == true,
+                Self.aboutTheWrongName("\"Save as Session\"", read))
+        #expect(arguments?.contains("avoiding: sessionListViewModel.sessions") == true,
+                Self.avoidingTheWrongWorld("\"Save as Session\"", read))
     }
 
     /// **V2** — same for the ssh-config alias.
@@ -115,6 +188,15 @@ struct SessionNamePrefillWiringGuardTests {
         #expect(!body.contains("saveName = host.alias"), """
             The ssh-config import assigns `host.alias` raw again.
             """)
+
+        // **V6**, the import's half.
+        let arguments = try Self.freeNameArguments(
+            inFunction: "fillFromImported", ofFile: Self.contentViewPath)
+        let read = arguments ?? "nothing this guard could read"
+        #expect(arguments?.contains("basedOn: host.alias") == true,
+                Self.aboutTheWrongName("The ssh-config import", read))
+        #expect(arguments?.contains("avoiding: sessionListViewModel.sessions") == true,
+                Self.avoidingTheWrongWorld("The ssh-config import", read))
     }
 
     /// **V3** — and the stored-session fill does NOT, which is the arm that
@@ -153,10 +235,12 @@ struct SessionNamePrefillWiringGuardTests {
             ssh-config import, and they are two.
             """)
         #expect(assignments == 3, """
-            \(assignments) assignments to `saveName` across those two files — counted in the \
-            pass that wrote this number: the stored-session fill and the ssh-config import in \
+            \(assignments) assignments to `saveName` in these two files — counted in the pass \
+            that wrote this number: the stored-session fill and the ssh-config import in \
             ContentView.swift, and "Save as Session" in ContentView+Lifecycle.swift. A fourth \
-            is a prefilled name nobody has decided about.
+            IN THESE FILES is a prefilled name nobody has decided about; project-wide there is \
+            already a fourth, `ConnectionViewModel.beginEditing` in Core, which this suite does \
+            not read (see the note on this type).
             """)
     }
 

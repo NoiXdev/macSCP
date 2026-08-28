@@ -32,14 +32,22 @@ enum DesignTokens {
     static let statusPhosphor = Color(nsColor: NSColor(
         srgbRed: 123 / 255, green: 216 / 255, blue: 143 / 255, alpha: 1)) // #7BD88F
 
-    /// Connection-liveness "connecting"/"degraded" status (connection-
-    /// liveness plan, Task 5): system orange, deliberately NOT `localAmber`
-    /// — that token is reserved for local-pane/upload semantics
-    /// (docs/design/ci.md: "Bernstein und Ozeanblau nie dekorativ mischen —
-    /// sie sind semantisch [lokal/remote], nicht ornamental"), and a tab can
-    /// show an upload's `localAmber` pulse and this liveness dot at the same
-    /// time. A distinct status color keeps those two meanings from reading
-    /// as the same signal.
+    /// Status amber: attention without failure. System orange,
+    /// deliberately NOT `localAmber` — that token is reserved for
+    /// local-pane/upload semantics (docs/design/ci.md: "Bernstein und
+    /// Ozeanblau nie dekorativ mischen — sie sind semantisch
+    /// [lokal/remote], nicht ornamental"), and a tab can show an upload's
+    /// `localAmber` pulse and a status signal at the same time. A distinct
+    /// status color keeps those two meanings from reading as the same
+    /// signal.
+    ///
+    /// Read by the connection-liveness "connecting"/"degraded" dot
+    /// (connection-liveness plan, Task 5), which is what this token was
+    /// introduced for, and by the connection form's "saving would replace
+    /// this session" line. Not one meaning shared by two features: the
+    /// meaning is the register — neither `statusPhosphor`'s "all good" nor
+    /// `statusLost`'s red, which this form reserves for a refusal, and the
+    /// collision warning refuses nothing.
     static let statusAmber = Color.orange
 
     /// Connection-liveness "lost" status (connection-liveness plan,

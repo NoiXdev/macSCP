@@ -64,4 +64,42 @@ struct SessionNameCollisionTests {
             "web", with: [editing, other], excluding: editing.id)
         #expect(found?.id == other.id)
     }
+
+    @Test func aNameIsJudgedAsSaveWillReceiveIt() {
+        // The trap this whole rule exists for, one layer deeper than the
+        // comparison. `save` never sees what the field holds: both save
+        // paths hand it
+        // `saveName.trimmingCharacters(in: .whitespacesAndNewlines)`. So a
+        // rule that matches `==` but judges the UNTRIMMED text is comparing
+        // a different operand than saving will, which is the same bug with
+        // the same consequence — measured on a real path: an SSH host field
+        // with a trailing space makes `SSHFieldSchema.displaySummary`
+        // (which interpolates the host raw, unlike `apply`, which trims)
+        // produce the tab title "tim@example.com ", "Save as Session" calls
+        // it free, and saving then replaces the stored "tim@example.com".
+        #expect(SessionNameCollision.freeName(
+            basedOn: "web ", avoiding: [session("web")]) == "web 2")
+        #expect(SessionNameCollision.collides(
+            " web", with: [session("web")], excluding: nil)?.name == "web")
+    }
+
+    @Test func aFreeNameIsHandedBackInTheFormItWillBeSavedIn() {
+        // Not merely "does it collide": the answer is written into the name
+        // field, so returning the untrimmed text would put a name on screen
+        // that saving silently turns into a different one.
+        #expect(SessionNameCollision.freeName(
+            basedOn: " web ", avoiding: [session("other")]) == "web")
+    }
+
+    @Test func onlyTheAskedNameIsTrimmed() {
+        // `save` compares the trimmed candidate against the stored names as
+        // they stand — it does not trim THOSE. A stored name that carries a
+        // space (an import can produce one) is a different name, and the
+        // rule must agree, or it would step aside from a name saving would
+        // have left alone.
+        #expect(SessionNameCollision.freeName(
+            basedOn: "web", avoiding: [session("web ")]) == "web")
+        #expect(SessionNameCollision.collides(
+            "web", with: [session("web ")], excluding: nil) == nil)
+    }
 }
