@@ -1,3 +1,32 @@
+> **Umgesetzt am 2026-08-28** über
+> `docs/superpowers/plans/2026-08-28-faehigkeitsgrenze-verbinden.md`
+> (`04a6def`, `b62f8b5`, `637c82b`, `dba405a`).
+>
+> **Was der Compiler jetzt hält:** Entscheider sind Typen mit privatem
+> Initialisierer — `{ _ in true }` an einer Aufrufstelle kompiliert nicht mehr,
+> also ist Runde 6 nicht mehr formulierbar. `BackendDescriptor.connect` und die
+> drei Backend-`connect` sind modulintern; eine Direktwahl aus App oder CLI
+> scheitert mit `'connect' is inaccessible due to 'internal' protection level`.
+> Beides von außen gepflanzt und die Fehler wörtlich belegt.
+>
+> **Was er nicht hält, und warum kein siebter Scan das ändert:** `import Citadel`
+> kompiliert in `Sources/MacSCPAppKit`, obwohl `Package.swift` die Abhängigkeit
+> nur für Core deklariert — SwiftPM lässt transitive Module auf dem Suchpfad.
+> Ein rohes `SSHClient.connect(…, hostKeyValidator: .acceptAnything(), …)`
+> erreicht dort **kein TOFU**. Diese Lücke liegt *unterhalb* der Typen; der
+> Scan und die Import-Allow-List bleiben dafür tragend und wurden deshalb
+> **nicht** gelöscht.
+>
+> Ebenfalls offen und benannt: `ConnectionViewModel.connect()` ist öffentlich
+> und umgeht die Formular-Wege; das App-Testziel importiert `@testable` und
+> bekommt alles zurück; und `.asking { _ in true }` an der einen
+> Zertifikats-Aufrufstelle der App röten gepflanzt **nichts** — gemeldet statt
+> bewacht, weil ein siebter Scan über eine Aufrufstelle die Beweislast nicht
+> trägt.
+>
+> Die Lektion unten steht unverändert und hat sich beim Umsetzen dreimal
+> bestätigt: jede der vier Aufgaben hat eine Prämisse dieses Plans widerlegt.
+
 # Backlog: Die App sollte gar nicht wählen können
 
 **Angelegt:** 2026-08-22, nach vier Prüfrunden an einem Wächter. Ein

@@ -20,7 +20,7 @@ im Eintrag und zieht hier höchstens die Zeile nach.
 
 | Eintrag | Kern |
 |---|---|
-| [Fähigkeitsgrenze statt Wächter](superpowers/specs/2026-08-22-backlog-verbindungs-fähigkeit.md) | **Der wichtigste Eintrag der Liste.** Sechsmal hat eine Schreibweise einen Quelltext-Wächter geschlagen — zuletzt `async let`, das ohne das Wort `await` suspendiert. Vorschlag: der App-Schicht die Fähigkeit zu wählen entziehen, statt sie zu beobachten. |
+| [Fähigkeitsgrenze statt Wächter](superpowers/specs/2026-08-22-backlog-verbindungs-fähigkeit.md) | **Umgesetzt 2026-08-28.** Entscheider sind Typen, der Wählvorgang ist modulintern — beides von außen gepflanzt und die Compile-Fehler belegt. Offen und benannt: `import Citadel` kompiliert in der App-Schicht (SwiftPM-Suchpfad), diese Lücke liegt unterhalb der Typen und hält Scan plus Import-Allow-List am Leben. |
 | [Tests, die an echte Ablagen kommen](superpowers/specs/2026-08-22-backlog-testisolation.md) | `ContentView` verdrahtete Keychain und Sitzungs-Store fest. Ein Test hat dadurch in den echten Keychain geschrieben. Naht ist inzwischen da; der Eintrag hält die Regel und die Restfälle. |
 | [Wie weit lässt sich die Oberfläche prüfen?](superpowers/specs/2026-08-21-backlog-ui-testabdeckung.md) | Vier belegte Fälle, die kein Test dieses Projekts sehen kann. Abwägung zwischen Wächtern, ViewInspector und XCUITest — mit der Empfehlung, XCUITest als eigenes Vorhaben zu terminieren. |
 | [Abbau gegen eine eingefrorene Gegenseite](superpowers/specs/2026-08-25-backlog-abbau-bei-eingefrorenem-peer.md) | Ob `disconnect()` gegen einen nie antwortenden Peer zurückkommt, ist ungeprüft. Kommt es nicht zurück, wird der Zustand „verloren" nie geschrieben. |
