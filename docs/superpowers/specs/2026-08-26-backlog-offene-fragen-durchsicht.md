@@ -65,3 +65,26 @@ Nachlesen von Foundations dokumentiertem Verhalten für
 `Authorization`-Header über Redirects (das sich je nach macOS-Version
 und Statuscode unterscheiden kann). Bis dahin ist das eine offene Frage,
 kein bestätigter Fehler — und sollte auch so zitiert werden.
+
+
+---
+
+## Nachtrag 2026-08-28: die S3-Frage ist gemessen und entwarnt
+
+`Authorization` wird **nicht** über eine Weiterleitung mitgenommen — zehn
+Fälle, zwei Origin-Formen (nur Port; Host und Port), fünf Statuscodes
+(301/302/303/307/308), gemessen an der echten signierten Anfrage über
+`URLSession.shared` auf macOS 26.6.2 / Swift 6.3.3. Der Test liegt im Baum
+(`Tests/macSCPCoreTests/S3RedirectAuthorizationMeasurementTests.swift`) und
+stellt die Frage auf jeder Plattform neu, weil Foundations Verhalten hier
+undokumentiert und versionsabhängig ist.
+
+Was die Messung **nicht** entwarnt, steht in
+`2026-08-28-backlog-s3-weiterleitungen.md`: die Weiterleitung wird gefolgt
+statt verweigert, der handgesetzte `Host` reist mit und ist danach falsch,
+und Foundation streift den Header auch bei gleicher Origin ab — was eine
+legitime Anbieter-Weiterleitung unsigniert ankommen ließe. Maintainer-
+Entscheidung vom selben Tag: als eigener Vorgang angehen.
+
+**M3 bleibt offen** und ist in
+`2026-08-28-zwei-offene-fragen-design.md` entworfen.
