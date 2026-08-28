@@ -1014,12 +1014,70 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         }
     }
 
+    /// How long `disconnect()` waits for the SFTP child channel to close
+    /// before abandoning that wait and closing the parent connection(s)
+    /// anyway.
+    ///
+    /// There has to be a bound at all because `sftp.close()` does not return
+    /// against a peer that has stopped answering. Measured, not assumed
+    /// (`.superpowers/sdd/frozen-peer-measurement.md`): held directly against
+    /// a `docker pause`d container, that one call sat inside a 20-second
+    /// bound for 20.01678975 s, while `SSHClient.close()` on the same frozen
+    /// peer returned in 0.051039125 s; driven through the real give-up path,
+    /// `disconnect()` was entered and never left inside two independent
+    /// bounds, 120 s and 30 s. `try?` swallows an error; it never bounded a
+    /// wait. Thawing the peer released the abandoned call in 0.000568042 s,
+    /// so the call is not slow — it is waiting for a reply that is not
+    /// coming.
+    ///
+    /// Five seconds, argued from both directions:
+    ///
+    /// - Not less: a healthy `disconnect()` — all three closes, against the
+    ///   Docker rig over loopback, with this bound in place — was measured
+    ///   ten times in a row, slowest 0.001507583 s. Five seconds is more
+    ///   than three thousand times that, which is the room a real link with
+    ///   a real round-trip time needs and a loopback measurement cannot
+    ///   show.
+    /// - Not more: this bound is spent ON TOP of detection, which already
+    ///   costs two probe deadlines (measured at 14.1–14.9 s). Five seconds
+    ///   keeps a silently dropped connection under about twenty seconds from
+    ///   silence to `.lost`, and stays well inside the 16 seconds the
+    ///   detached event-loop-group shutdown below waits out.
+    ///
+    /// Not `private`: `LivenessProbeDropIntegrationTests` derives its own
+    /// bound from this one rather than spelling a second copy of the number
+    /// beside it.
+    static let sftpCloseBoundSeconds = 5
+
     public func disconnect() async {
         // Close the SFTP child channel explicitly (its own closeFuture),
         // rather than relying solely on the parent SSH channel's close to
         // cascade to it, before closing the parent connection(s) and (I-2)
         // releasing the dedicated event-loop group they ran on.
-        try? await sftp.close()
+        //
+        // Bounded, and abandoned when the bound wins (see
+        // `sftpCloseBoundSeconds` for the measurement behind both the need
+        // and the number): that close is a round trip, so against a peer
+        // that has stopped answering it does not return at all. Abandoning
+        // it is the whole reason this works — the two lines below then still
+        // run, and closing the parent connection is what actually ends the
+        // session. Measured through the real give-up path against a peer
+        // still frozen: the whole lap came back in 5.050603459 s, i.e. this
+        // bound plus 0.05 s for everything else teardown does, those two
+        // closes included.
+        //
+        // The Citadel value crossing an isolation boundary here — this
+        // file's opening comment asks every such crossing to argue for
+        // itself: `sftp` is captured by an unstructured task that may
+        // outlive this call. Nothing races it. `disconnect()` is the last
+        // thing a session does with this object (the App layer's teardown
+        // order runs `cancelAll` and the terminal `shutdown` ahead of it),
+        // so no other caller is inside `sftp` while this runs, and the
+        // abandoned task's only remaining act is the one `close()` it was
+        // handed.
+        _ = await BoundedClose.run(boundSeconds: Self.sftpCloseBoundSeconds) { [sftp] in
+            try? await sftp.close()
+        }
         try? await client.close()
         try? await jumpClient?.close()
         // I-2/R-1: release the dedicated event-loop group this connection
@@ -1036,8 +1094,17 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         // currently a logged error, but NIO documents this becoming a forced
         // crash on future versions. The timer lives entirely inside vendored
         // Citadel and cannot be cancelled from here, so outlive it instead of
-        // racing it: detached from this call (so `disconnect()` itself still
-        // returns immediately) and past the 15s mark.
+        // racing it: detached from this call, past the 15s mark, so nothing
+        // here adds those 16 seconds to the caller's own wait.
+        //
+        // This comment used to put that as "so `disconnect()` itself still
+        // returns immediately". It did not, and the claim was measured
+        // false: against a peer that stops answering, the `sftp.close()`
+        // above was entered and never left inside bounds of 120 s and 30 s
+        // (`.superpowers/sdd/frozen-peer-measurement.md`). The detachment
+        // was never what made `disconnect()` prompt — it only kept this
+        // 16-second sleep out of the caller's way. What bounds the call is
+        // `sftpCloseBoundSeconds`, above.
         if let dedicatedGroup {
             Task.detached {  // outlive Citadel's uncancelled 15s openSFTP timer (SFTPClient.swift:535)
                 try? await Task.sleep(for: .seconds(16))

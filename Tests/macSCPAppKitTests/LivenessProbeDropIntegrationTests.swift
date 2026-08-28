@@ -16,6 +16,19 @@ import Testing
 /// 2222/2223 and of the WebDAV/MinIO mappings in `compose.yml`.
 private let sharedRigPort = 2222
 private let dropServerPort = 2224
+/// How long `teardownAgainstAStillFrozenPeerTerminates` waits for the
+/// give-up path before calling it hung.
+///
+/// Derived from the production bound it is measuring rather than spelled out
+/// beside it (this project's rule about second copies of a name applies to
+/// numbers in tests too): `CitadelFileSystem.disconnect()` abandons the SFTP
+/// close after `sftpCloseBoundSeconds`, so a give-up lap that honours that
+/// bound finishes just after it. The 25-second cushion covers everything on
+/// this path that is bounded but not free — the two probe deadlines ahead of
+/// it are 7 seconds each — so exhausting this bound means a wait with NO
+/// bound, not a slow one. Raising the production bound moves this one with
+/// it; removing it stops this file compiling, which is the point.
+private let teardownBoundSeconds = CitadelFileSystem.sftpCloseBoundSeconds + 25
 private let seedFilePath = "/data/seed/hello.txt"
 private let seedFileName = "hello.txt"
 
@@ -290,6 +303,25 @@ private struct DisposableSSHServer {
     /// this returns. A prune that cannot reach that state throws, because
     /// the alternative is letting the next `docker run` fail on an allocated
     /// port and having to work backwards from a bind error.
+    /// Cleanup that does not depend on the main actor.
+    ///
+    /// Every other cleanup path in this file — `defer { server.remove() }`
+    /// included — runs on the test's own task, which is `@MainActor`. A
+    /// measurement that BLOCKED the main actor rather than suspending on it
+    /// would take those defers down with it and leave a PAUSED container
+    /// behind, holding port 2224 against every later run. This one is
+    /// detached, so it runs on the cooperative pool whatever the main actor
+    /// is doing, and it force-removes by prefix — the same removal
+    /// `pruneLeftovers` performs, just from somewhere a deadlock cannot
+    /// reach. Cancelled by the test on a normal exit.
+    static func pruneAfter(seconds: Int) -> Task<Void, Never> {
+        Task.detached {
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            try? pruneLeftovers()
+        }
+    }
+
     static func pruneLeftovers() throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(15))
         while true {
@@ -430,6 +462,145 @@ private struct InertSecretStore: SecretStore {
     func savePassword(_ password: String, for sessionID: UUID) throws {}
     func password(for sessionID: UUID) throws -> String? { nil }
     func deletePassword(for sessionID: UUID) throws {}
+}
+
+/// Forwards every call to a real `RemoteFileSystem` and timestamps the ONE
+/// call this file's teardown measurement is about: `disconnect()`, entered
+/// and returned.
+///
+/// Two instants rather than a duration, because the interesting case is the
+/// one where there IS no duration yet — `enteredAt` set with `returnedAt`
+/// still `nil` is what distinguishes "the teardown is sitting inside
+/// `disconnect()`" from "the teardown never got that far", and no wrapper
+/// that only measured completed calls could tell those apart.
+private final class DisconnectTimingProbe: RemoteFileSystem, @unchecked Sendable {
+    private let wrapped: any RemoteFileSystem
+    private let lock = NSLock()
+    private var entered: ContinuousClock.Instant?
+    private var returned: ContinuousClock.Instant?
+
+    init(wrapping wrapped: any RemoteFileSystem) {
+        self.wrapped = wrapped
+    }
+
+    var enteredAt: ContinuousClock.Instant? { lock.withLock { entered } }
+    var returnedAt: ContinuousClock.Instant? { lock.withLock { returned } }
+
+    func disconnect() async {
+        lock.withLock { entered = .now }
+        await wrapped.disconnect()
+        lock.withLock { returned = .now }
+    }
+
+    var supportsAppendResume: Bool { wrapped.supportsAppendResume }
+
+    func stat(path: String) async throws -> RemoteFileItem {
+        try await wrapped.stat(path: path)
+    }
+
+    func list(path: String) async throws -> [RemoteFileItem] {
+        try await wrapped.list(path: path)
+    }
+
+    func readStream(
+        path: String, fromOffset offset: UInt64
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        try await wrapped.readStream(path: path, fromOffset: offset)
+    }
+
+    func write(
+        path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>
+    ) async throws {
+        try await wrapped.write(path: path, mode: mode, contents: contents)
+    }
+
+    func delete(path: String) async throws {
+        try await wrapped.delete(path: path)
+    }
+
+    func createDirectory(at path: String) async throws {
+        try await wrapped.createDirectory(at: path)
+    }
+
+    func rename(from: String, to: String) async throws {
+        try await wrapped.rename(from: from, to: to)
+    }
+
+    func setPermissions(path: String, permissions: UInt32) async throws {
+        try await wrapped.setPermissions(path: path, permissions: permissions)
+    }
+
+    func deleteTree(at path: String) async throws {
+        try await wrapped.deleteTree(at: path)
+    }
+
+    func homeDirectoryPath() async throws -> String {
+        try await wrapped.homeDirectoryPath()
+    }
+}
+
+/// Records the instant an operation finished, from outside the scope that
+/// awaited it — so a measurement whose bound expired can still find out
+/// whether the operation it abandoned ever came back, and when.
+private final class CompletionStamp: @unchecked Sendable {
+    private let lock = NSLock()
+    private var instant: ContinuousClock.Instant?
+
+    var finishedAt: ContinuousClock.Instant? { lock.withLock { instant } }
+
+    func stamp() { lock.withLock { instant = .now } }
+}
+
+/// Runs `operation` against a wall-clock bound and answers whether it
+/// returned inside it — `LivenessProbeRace`'s shape, for
+/// `LivenessProbeRace`'s reason: a structured child would be awaited by its
+/// own scope, so an operation that never returns would hang the measurement
+/// instead of being measured by it. Two unstructured tasks resolving one
+/// continuation is the only shape that can outlive its own operation.
+///
+/// One deliberate difference from `LivenessProbeRace`: the loser is NOT
+/// cancelled. This exists to observe an abandoned teardown, and cancelling
+/// it would both destroy that observation and risk making an underlying
+/// call fail early — which would read as "it returned" and be exactly the
+/// wrong answer.
+///
+/// The bound is a claim about the main actor as much as about `operation`:
+/// `timeoutTask` is `@MainActor`, so it can only fire if the main actor is
+/// free. A teardown that BLOCKED the main actor rather than suspending on
+/// it would take this bound down with it — which is what the out-of-process
+/// watchdog in `pruneAfter(seconds:)` is for.
+@MainActor
+private enum BoundedRun {
+    static func run(
+        boundSeconds: Int, operation: @escaping @MainActor () async -> Void
+    ) async -> Bool {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            let box = Box(continuation: continuation)
+            Task { @MainActor in
+                await operation()
+                box.resume(with: true)
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(boundSeconds))
+                box.resume(with: false)
+            }
+        }
+    }
+
+    @MainActor
+    private final class Box {
+        private var continuation: CheckedContinuation<Bool, Never>?
+
+        init(continuation: CheckedContinuation<Bool, Never>) {
+            self.continuation = continuation
+        }
+
+        func resume(with value: Bool) {
+            guard let continuation else { return }
+            self.continuation = nil
+            continuation.resume(returning: value)
+        }
+    }
 }
 
 // MARK: - The suite
@@ -730,6 +901,118 @@ struct LivenessProbeDropIntegrationTests {
         // from another.
         #expect(noticedAfter < .seconds(60))
         print("[liveness] a frozen peer was noticed after \(noticedAfter)")
+    }
+
+    /// The question `aSilentlyFrozenPeerIsNoticedByTheDeadline` deliberately
+    /// does not settle, and the one the backlog entry
+    /// `docs/superpowers/specs/2026-08-25-backlog-abbau-bei-eingefrorenem-peer.md`
+    /// was filed to close: the same give-up lap, run against a peer that is
+    /// STILL frozen.
+    ///
+    /// Why it is a different question. `handleLivenessGiveUp(_:)` reaches
+    /// `.lost` only by going THROUGH `teardown(_:reason:)`, whose last
+    /// session-facing step is `session.remote.disconnect()` — which for an
+    /// SSH session is `CitadelFileSystem.disconnect()`, whose first line is
+    /// `try? await sftp.close()`. `try?` swallows an error; it does not
+    /// bound a wait. If that call does not return against a peer that never
+    /// answers, detection is correct and the reaction never happens: the
+    /// tab stays `.degraded` forever, with no session on it that anything
+    /// can be done about.
+    ///
+    /// What is measured, and how the bound is honest. The give-up call runs
+    /// through `BoundedRun`, which does not cancel what it abandons, so a
+    /// hang is DEMONSTRATED — a stated bound that really elapsed — rather
+    /// than inferred from a test runner that eventually gave up.
+    /// `DisconnectTimingProbe` records when `disconnect()` was entered and
+    /// whether it was ever left, which is what makes the answer attributable
+    /// to that call rather than to teardown in general.
+    ///
+    /// Cleanup is three-deep on purpose, because a hang here is the expected
+    /// outcome rather than the surprising one: `thaw` and `remove` on the
+    /// test's own task, and `pruneAfter` detached from it (see that
+    /// function). `docker rm -f` removes a paused container, so the last one
+    /// suffices on its own.
+    @Test func teardownAgainstAStillFrozenPeerTerminates() async throws {
+        let fixture = makeFixture()
+        defer { fixture.cleanup() }
+        let server = try DisposableSSHServer.start(port: dropServerPort)
+        let watchdog = DisposableSSHServer.pruneAfter(seconds: teardownBoundSeconds + 180)
+        defer { watchdog.cancel() }
+        defer { server.remove() }
+        defer { try? server.thaw() }
+
+        let fs = try await server.connect()
+        let home = try await fs.homeDirectoryPath()
+        let tab = makeTab()
+        let timing = DisconnectTimingProbe(wrapping: fs)
+        attachSession(to: tab, remoteFS: timing, homePath: home)
+
+        var loop = fixture.probeLoop(for: tab)
+        #expect(await loop.lap() == .probe)
+        #expect(tab.liveness == .connected, """
+            the disposable server was not answering probes before it was \
+            frozen — the freeze this test performs would prove nothing.
+            """)
+
+        try server.freeze()
+
+        // The same two laps the sibling test makes, for the same reason: the
+        // give-up lap is only reachable after two consecutive failures, and
+        // reaching it any other way would be measuring teardown from a state
+        // the real loop never has.
+        #expect(await loop.lap() == .probe)
+        #expect(await loop.lap() == .probeAgainNow)
+        #expect(tab.liveness == .degraded)
+
+        let stamp = CompletionStamp()
+        let startedAt = ContinuousClock.now
+        let returned = await BoundedRun.run(boundSeconds: teardownBoundSeconds) {
+            await fixture.view.handleLivenessGiveUp(tab)
+            stamp.stamp()
+        }
+        let elapsed = startedAt.duration(to: .now)
+        let enteredDisconnect = timing.enteredAt != nil
+        let leftDisconnect = timing.returnedAt != nil
+
+        print("""
+            [teardown] give-up against a STILL-frozen peer: \
+            returned=\(returned) after \(elapsed) \
+            (bound \(teardownBoundSeconds)s); \
+            disconnect entered=\(enteredDisconnect) returned=\(leftDisconnect); \
+            liveness=\(String(describing: tab.liveness)) \
+            session=\(tab.session == nil ? "nil" : "present")
+            """)
+
+        if !returned {
+            // The abandoned teardown is still in flight. Thawing is the
+            // cheapest question that can be asked of it: does the peer
+            // answering again release it, or was the wait never going to end
+            // whatever the peer did? Both answers are worth having, and the
+            // container has to be thawed anyway.
+            try? server.thaw()
+            let thawedAt = ContinuousClock.now
+            let releaseDeadline = thawedAt.advanced(by: .seconds(60))
+            while stamp.finishedAt == nil, ContinuousClock.now < releaseDeadline {
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+            let releasedAfterThaw = stamp.finishedAt.map { thawedAt.duration(to: $0) }
+            print("""
+                [teardown] after thawing, the abandoned give-up \
+                \(releasedAfterThaw.map { "returned after \($0)" } ?? "was still in flight 60s later"); \
+                liveness=\(String(describing: tab.liveness))
+                """)
+        }
+
+        #expect(returned, """
+            `handleLivenessGiveUp` did not return within \
+            \(teardownBoundSeconds)s against a peer that is still frozen \
+            (`disconnect()` entered: \(enteredDisconnect), returned: \
+            \(leftDisconnect)). The probe's detection is bounded by \
+            `LivenessProbeRace`; the reaction it triggers is not, so the tab \
+            never reaches `.lost`.
+            """)
+        #expect(tab.liveness == .lost)
+        #expect(tab.session == nil)
     }
 
     /// Demonstrated, not assumed — the standard `ConnectAttemptHandoffTests`
