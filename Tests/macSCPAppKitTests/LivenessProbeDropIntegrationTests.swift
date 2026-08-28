@@ -16,19 +16,39 @@ import Testing
 /// 2222/2223 and of the WebDAV/MinIO mappings in `compose.yml`.
 private let sharedRigPort = 2222
 private let dropServerPort = 2224
+/// The shell-teardown measurement's OWN disposable server. A third port
+/// rather than a second use of 2224: `DisposableSSHServer.start` prunes
+/// every container this file has ever created before it starts a new one,
+/// so two tests sharing a port would still be two containers, and giving
+/// each its own port keeps a leftover from one measurement out of the
+/// other's bind. Clear of 2222/2223 and of every mapping in `compose.yml`
+/// (checked against that file in this pass: 2222, 2223, 19000, 19001,
+/// 18080, 18081, 18443, 18090).
+private let shellDropServerPort = 2225
 /// How long `teardownAgainstAStillFrozenPeerTerminates` waits for the
 /// give-up path before calling it hung.
 ///
-/// Derived from the production bound it is measuring rather than spelled out
-/// beside it (this project's rule about second copies of a name applies to
-/// numbers in tests too): `CitadelFileSystem.disconnect()` abandons the SFTP
-/// close after `sftpCloseBoundSeconds`, so a give-up lap that honours that
-/// bound finishes just after it. The 25-second cushion covers everything on
-/// this path that is bounded but not free — the two probe deadlines ahead of
-/// it are 7 seconds each — so exhausting this bound means a wait with NO
-/// bound, not a slow one. Raising the production bound moves this one with
-/// it; removing it stops this file compiling, which is the point.
-private let teardownBoundSeconds = CitadelFileSystem.sftpCloseBoundSeconds + 25
+/// Derived from the production bounds it is measuring rather than spelled
+/// out beside it (this project's rule about second copies of a name applies
+/// to numbers in tests too), and derived from ALL of them: a give-up lap
+/// runs `teardown`'s four stages, three of which are bounded by
+/// `TeardownStage.boundSeconds` and the fourth by
+/// `CitadelFileSystem.sftpCloseBoundSeconds` inside
+/// `CitadelFileSystem.disconnect()`. Summing them is what makes this a
+/// statement about the code rather than a guess: a lap that honours every
+/// bound cannot exceed the sum, so exhausting this constant means a wait
+/// with NO bound, not a slow one. The 10-second cushion is for the
+/// scheduling drift a `Task.sleep`-based bound carries (measured at 0.5–2.0
+/// seconds per bound in the pass that added the stage bounds) and for the
+/// cheap work between the stages. Moving any production bound moves this
+/// one with it; removing one stops this file compiling, which is the point.
+///
+/// Its value is unchanged from the round that only had one bound to derive
+/// from — the sum happens to land on the same number — so the frozen-peer
+/// tests below are measured against the same deadline as before.
+private let teardownBoundSeconds =
+    TeardownStage.allCases.reduce(0) { $0 + $1.boundSeconds }
+    + CitadelFileSystem.sftpCloseBoundSeconds + 10
 private let seedFilePath = "/data/seed/hello.txt"
 private let seedFileName = "hello.txt"
 
@@ -539,6 +559,57 @@ private final class DisconnectTimingProbe: RemoteFileSystem, @unchecked Sendable
     }
 }
 
+/// The two instants `ShellCloseTimingProbe` writes, held apart from the
+/// probe itself because the probe is created INSIDE the shell-opening
+/// closure — the test never gets a reference to it, only to this.
+///
+/// Two instants and not a duration, for `DisconnectTimingProbe`'s reason:
+/// the case this measurement exists for is the one where there is no
+/// duration yet.
+private final class ShellCloseRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entered: ContinuousClock.Instant?
+    private var returned: ContinuousClock.Instant?
+
+    var enteredAt: ContinuousClock.Instant? { lock.withLock { entered } }
+    var returnedAt: ContinuousClock.Instant? { lock.withLock { returned } }
+
+    func markEntered() { lock.withLock { entered = .now } }
+    func markReturned() { lock.withLock { returned = .now } }
+}
+
+/// Forwards every call to a real `RemoteShell` and timestamps the ONE call
+/// the shell-teardown measurement is about: `close()`, entered and returned.
+///
+/// `TerminalPanelViewModel` is a concrete class with no seam to wrap, so
+/// `shutdown()` itself cannot be instrumented from outside. This sits one
+/// level below it, at the only call in `shutdown()` that touches the wire —
+/// which is what makes an answer attributable to `CitadelShell.close()`
+/// rather than to the panel's teardown in general.
+private final class ShellCloseTimingProbe: RemoteShell, @unchecked Sendable {
+    private let wrapped: any RemoteShell
+    private let recorder: ShellCloseRecorder
+
+    init(wrapping wrapped: any RemoteShell, recording recorder: ShellCloseRecorder) {
+        self.wrapped = wrapped
+        self.recorder = recorder
+    }
+
+    var output: AsyncThrowingStream<[UInt8], Error> { wrapped.output }
+
+    func send(_ bytes: [UInt8]) async throws { try await wrapped.send(bytes) }
+
+    func resize(cols: Int, rows: Int) async throws {
+        try await wrapped.resize(cols: cols, rows: rows)
+    }
+
+    func close() async {
+        recorder.markEntered()
+        await wrapped.close()
+        recorder.markReturned()
+    }
+}
+
 /// Records the instant an operation finished, from outside the scope that
 /// awaited it — so a measurement whose bound expired can still find out
 /// whether the operation it abandoned ever came back, and when.
@@ -1015,6 +1086,157 @@ struct LivenessProbeDropIntegrationTests {
         #expect(tab.session == nil)
     }
 
+    /// The same give-up lap as the test above, with the one thing that test
+    /// deliberately does not have: an OPEN TERMINAL SHELL.
+    ///
+    /// Why that is a different question. `teardown(_:reason:)` runs
+    /// `cancelAll` → `editManager.stopAll()` → `session.terminal.shutdown()`
+    /// → `session.remote.disconnect()`. Only the LAST of those four is
+    /// bounded (by `CitadelFileSystem.sftpCloseBoundSeconds`). The third
+    /// ends in `CitadelShell.close()`, which is `pump.cancel()` followed by
+    /// an unbounded `await pump.value` — and the pump's last act, inside
+    /// Citadel's `withPTY`, is `try await channel.close()` on the shell's
+    /// own SSH child channel. That is the SAME kind of call the previous
+    /// measurement found not returning against a frozen peer
+    /// (`.superpowers/sdd/frozen-peer-measurement.md`, section B:
+    /// `SFTPClient.close()` is also a child-channel close). If it does not
+    /// return here either, the bound one after it is never reached and the
+    /// bound is ineffective for every session with a terminal open.
+    ///
+    /// Why the sibling test cannot see this. Its `attachSession` hands
+    /// `TerminalPanelViewModel` a stand-in opener that throws — so
+    /// `shutdown()` finds `shell == nil` and returns without touching the
+    /// wire. That is a deliberate choice (the shape `LivenessGiveUpOrdering
+    /// Tests` uses, where no connection exists at all), not an environment
+    /// gap: the rig can open a real shell, and this test does.
+    ///
+    /// Instrumentation. `ShellCloseTimingProbe` sits between the panel and
+    /// the real `CitadelShell`, so "entered `close()`, never returned" is
+    /// attributable to that call; `DisconnectTimingProbe.enteredAt` is the
+    /// proxy for "`terminal.shutdown()` returned", because `disconnect()` is
+    /// the statement immediately after it in `teardown(_:reason:)` and
+    /// nothing between them can suspend.
+    ///
+    /// Cleanup is the same three-deep discipline as the sibling, for the
+    /// same reason: a hang is the expected outcome here, not the surprise.
+    @Test func teardownWithAnOpenShellAgainstAStillFrozenPeerTerminates() async throws {
+        let fixture = makeFixture()
+        defer { fixture.cleanup() }
+        let server = try DisposableSSHServer.start(port: shellDropServerPort)
+        let watchdog = DisposableSSHServer.pruneAfter(seconds: teardownBoundSeconds + 180)
+        defer { watchdog.cancel() }
+        defer { server.remove() }
+        defer { try? server.thaw() }
+
+        let fs = try await server.connect()
+        let home = try await fs.homeDirectoryPath()
+        let tab = makeTab()
+        let timing = DisconnectTimingProbe(wrapping: fs)
+        let shellClose = ShellCloseRecorder()
+        // The shell is opened on `fs` itself, not on `timing`: the real app
+        // reaches the shell through `remoteFS as? RemoteShellProvider`, and
+        // the timing wrapper is not one — same connection either way.
+        attachSession(
+            to: tab, remoteFS: timing, homePath: home,
+            shellOpener: { terminal, cols, rows in
+                ShellCloseTimingProbe(
+                    wrapping: try await fs.openShell(
+                        terminal: terminal, cols: cols, rows: rows),
+                    recording: shellClose)
+            })
+
+        let terminal = try #require(tab.session?.terminal)
+        terminal.openIfNeeded()
+        let openDeadline = ContinuousClock.now.advanced(by: .seconds(30))
+        while terminal.state != .running, ContinuousClock.now < openDeadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(terminal.state == .running, """
+            no shell was running before the freeze (state \
+            \(String(describing: terminal.state))) — the measurement this \
+            test exists for would be the sibling test's measurement again.
+            """)
+
+        var loop = fixture.probeLoop(for: tab)
+        #expect(await loop.lap() == .probe)
+        #expect(tab.liveness == .connected)
+
+        try server.freeze()
+
+        #expect(await loop.lap() == .probe)
+        #expect(await loop.lap() == .probeAgainNow)
+        #expect(tab.liveness == .degraded)
+
+        let stamp = CompletionStamp()
+        let startedAt = ContinuousClock.now
+        let returned = await BoundedRun.run(boundSeconds: teardownBoundSeconds) {
+            await fixture.view.handleLivenessGiveUp(tab)
+            stamp.stamp()
+        }
+        let elapsed = startedAt.duration(to: .now)
+        // Every fact this test asserts on is snapshotted HERE, before the
+        // thaw below. Measured the first time this test ran: thawing
+        // released the abandoned teardown in 0.0022 s, and it then ran to
+        // completion — so an assertion reading `timing.enteredAt` or
+        // `tab.liveness` AFTER that block would be describing a peer that
+        // is answering again, and would pass while the defect it names is
+        // present. Only `returned` was red in that run for exactly this
+        // reason.
+        let shellCloseEntered = shellClose.enteredAt
+        let shellCloseReturned = shellClose.returnedAt
+        let disconnectEntered = timing.enteredAt != nil
+        let livenessAtBound = tab.liveness
+        let sessionAtBound = tab.session
+
+        print("""
+            [teardown+shell] give-up against a STILL-frozen peer WITH AN OPEN \
+            SHELL: returned=\(returned) after \(elapsed) \
+            (bound \(teardownBoundSeconds)s); \
+            shell.close entered=\(shellCloseEntered != nil) \
+            returned=\(shellCloseReturned != nil) \
+            \(shellCloseEntered.flatMap { entered in
+                shellCloseReturned.map { "after \(entered.duration(to: $0))" }
+            } ?? ""); \
+            disconnect entered=\(timing.enteredAt != nil) \
+            returned=\(timing.returnedAt != nil); \
+            liveness=\(String(describing: tab.liveness)) \
+            session=\(tab.session == nil ? "nil" : "present")
+            """)
+
+        if !returned {
+            try? server.thaw()
+            let thawedAt = ContinuousClock.now
+            let releaseDeadline = thawedAt.advanced(by: .seconds(60))
+            while stamp.finishedAt == nil, ContinuousClock.now < releaseDeadline {
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+            let releasedAfterThaw = stamp.finishedAt.map { thawedAt.duration(to: $0) }
+            print("""
+                [teardown+shell] after thawing, the abandoned give-up \
+                \(releasedAfterThaw.map { "returned after \($0)" } ?? "was still in flight 60s later"); \
+                shell.close returned=\(shellClose.returnedAt != nil); \
+                disconnect entered=\(timing.enteredAt != nil) \
+                returned=\(timing.returnedAt != nil); \
+                liveness=\(String(describing: tab.liveness))
+                """)
+        }
+
+        #expect(returned, """
+            `handleLivenessGiveUp` did not return within \
+            \(teardownBoundSeconds)s against a still-frozen peer WITH AN \
+            OPEN SHELL (shell.close entered: \(shellCloseEntered != nil), \
+            returned: \(shellCloseReturned != nil); disconnect entered: \
+            \(disconnectEntered)). The bound in `disconnect()` only \
+            helps a session that reaches it.
+            """)
+        #expect(disconnectEntered, """
+            `terminal.shutdown()` never returned, so the bounded \
+            `disconnect()` the previous fix installed was never reached.
+            """)
+        #expect(livenessAtBound == .lost)
+        #expect(sessionAtBound == nil)
+    }
+
     /// Demonstrated, not assumed — the standard `ConnectAttemptHandoffTests`
     /// set for any suite on this branch that builds a real `ContentView`.
     /// This suite drives `handleLivenessGiveUp(_:)` with a live connection
@@ -1211,9 +1433,17 @@ struct LivenessProbeDropIntegrationTests {
     /// to the session through `ProbeTargetStatCounter`, so every test in this
     /// suite probes through the same instrument whether it reads the count or
     /// not.
+    /// `shellOpener` defaults to the throwing stand-in every test in this
+    /// suite used before the shell measurement existed, so no existing call
+    /// site changes. See `teardownWithAnOpenShellAgainstAStillFrozenPeerTerminates`
+    /// for why the default is a deliberate choice rather than a gap, and
+    /// what passing a real opener buys.
     @discardableResult
     private func attachSession(
-        to tab: SessionTab, remoteFS: any RemoteFileSystem, homePath: String
+        to tab: SessionTab, remoteFS: any RemoteFileSystem, homePath: String,
+        shellOpener: @escaping TerminalPanelViewModel.ShellOpener = { _, _, _ in
+            throw CancellationError()
+        }
     ) -> ProbeTargetStatCounter {
         let sessionID = UUID()
         let counted = ProbeTargetStatCounter(
@@ -1225,9 +1455,7 @@ struct LivenessProbeDropIntegrationTests {
             local: RemoteBrowserViewModel(
                 fs: LocalFileSystem(), startPath: NSTemporaryDirectory()),
             remote: RemoteBrowserViewModel(fs: counted, startPath: homePath),
-            terminal: TerminalPanelViewModel(openShell: { _, _, _ in
-                throw CancellationError()
-            }),
+            terminal: TerminalPanelViewModel(openShell: shellOpener),
             editManager: EditSessionManager(sessionID: sessionID, queue: tab.transferQueue),
             homePath: homePath)
         tab.liveness = .connected

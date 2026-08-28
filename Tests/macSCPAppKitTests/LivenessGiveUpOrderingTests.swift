@@ -142,28 +142,40 @@ struct LivenessGiveUpOrderingTests {
     /// give-up path with an item still in the queue and asserts the
     /// reason it reads afterward, so that flip cannot pass silently again.
     ///
-    /// The item is enqueued synchronously, immediately before the
-    /// (suspending) call to `handleLivenessGiveUp`, with NO `await` in
-    /// between: `enqueue`'s own `kickWorker()` moves the job into
-    /// `resolvingJobIDs` synchronously (a freshly created `Task`'s body
-    /// cannot run until the CURRENTLY executing MainActor code reaches its
-    /// own first suspension point), so the item is still non-terminal —
-    /// and the bogus paths below are never actually read, since
-    /// `cancelAll`'s synchronous "resolving" sweep marks the item terminal
-    /// before `process` ever gets to open them — at the exact moment
-    /// `teardown(_:reason:)` sweeps the queue. No real disk access happens
-    /// either way, and no network is dialled.
+    /// **How the item is kept non-terminal, and why that changed.** This
+    /// test used to enqueue a job whose paths did not exist and rely on
+    /// there being NO suspension point between `enqueue` and `cancelAll`:
+    /// the worker `Task` could not run, so the item was still resolving
+    /// when the sweep reached it. That assumption stopped holding when
+    /// `teardown(_:reason:)` began running its stages through
+    /// `TeardownStage.runBounded`, which suspends before the sweep — the
+    /// worker then got a turn, opened the bogus path, and the item read
+    /// `.failed("File not found: …")` instead. The scheduling was the
+    /// fixture, not the property.
+    ///
+    /// So the fixture no longer depends on scheduling at all: the source
+    /// below suspends instead of failing, which keeps the job non-terminal
+    /// however many turns the main actor takes before the sweep, and
+    /// unwinds promptly when `cancelAll` cancels it. Whether the sweep
+    /// finds the job in `resolvingJobIDs` or in `runningTransferTasks` no
+    /// longer matters — both paths mark it with the reason this test is
+    /// about. No real disk access happens, and no network is dialled.
     @Test func givingUpMarksQueuedTransfersConnectionLost() async {
         let (view, cleanup) = makeContentView()
         defer { cleanup() }
         let tab = makeTab()
         attachSession(to: tab)
         let session = tab.session!
+        let destinationDirectory = makeTempDirectory("giveup-destination")
+        try? FileManager.default.createDirectory(
+            at: destinationDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: destinationDirectory) }
 
         let itemID = tab.transferQueue.enqueue(
-            fileName: "never-touched.txt", direction: .upload,
-            source: session.localFS, sourcePath: "/does/not/exist.txt",
-            destination: session.remoteFS, destinationDirectory: "/does/not/exist",
+            fileName: "never-touched.txt", direction: .download,
+            source: SuspendsUntilCancelledFileSystem(), sourcePath: "/never-touched.txt",
+            destination: session.localFS,
+            destinationDirectory: destinationDirectory.path(percentEncoded: false),
             onCompleted: nil)
 
         await view.handleLivenessGiveUp(tab)
@@ -211,4 +223,76 @@ private struct NoOpSecretStore: SecretStore {
     func savePassword(_ password: String, for sessionID: UUID) throws {}
     func password(for sessionID: UUID) throws -> String? { nil }
     func deletePassword(for sessionID: UUID) throws {}
+}
+
+/// A transfer source that never finishes on its own and unwinds the moment
+/// the queue cancels it — the fixture
+/// `givingUpMarksQueuedTransfersConnectionLost` needs so that its item is
+/// non-terminal whenever the sweep arrives, without any assumption about
+/// how many turns the main actor takes to get there.
+///
+/// `Task.sleep` rather than a never-resumed continuation (the shape
+/// `LivenessProbeCancellationTests.NeverRespondingFileSystem` uses): that
+/// double models a peer that never answers even a cancelled call, which is
+/// the right model for a liveness probe and the wrong one here — a source
+/// that ignored cancellation would leave `cancelAll`'s step 3 waiting on it
+/// and put this stage's whole bound into the ungated suite's runtime.
+/// `Task.sleep` throws `CancellationError` immediately when cancelled,
+/// which is exactly the cooperative source the queue's cancel path expects.
+/// The duration is long enough that it can only ever end by cancellation.
+///
+/// Read-side methods suspend; everything else traps, so a future change
+/// that routes a transfer through one of them fails loudly instead of
+/// passing quietly.
+private struct SuspendsUntilCancelledFileSystem: RemoteFileSystem {
+    private func suspendUntilCancelled() async throws -> Never {
+        try await Task.sleep(for: .seconds(600))
+        throw CancellationError()
+    }
+
+    func list(path: String) async throws -> [RemoteFileItem] {
+        try await suspendUntilCancelled()
+    }
+
+    func stat(path: String) async throws -> RemoteFileItem {
+        try await suspendUntilCancelled()
+    }
+
+    func readStream(
+        path: String, fromOffset offset: UInt64
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        try await suspendUntilCancelled()
+    }
+
+    func write(
+        path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>
+    ) async throws {
+        fatalError("not exercised by this test")
+    }
+
+    func delete(path: String) async throws {
+        fatalError("not exercised by this test")
+    }
+
+    func createDirectory(at path: String) async throws {
+        fatalError("not exercised by this test")
+    }
+
+    func rename(from: String, to: String) async throws {
+        fatalError("not exercised by this test")
+    }
+
+    func setPermissions(path: String, permissions: UInt32) async throws {
+        fatalError("not exercised by this test")
+    }
+
+    func deleteTree(at path: String) async throws {
+        fatalError("not exercised by this test")
+    }
+
+    func homeDirectoryPath() async throws -> String {
+        fatalError("not exercised by this test")
+    }
+
+    func disconnect() async {}
 }

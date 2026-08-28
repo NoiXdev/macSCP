@@ -326,6 +326,20 @@ extension ContentView {
     /// everything else after) is unchanged by this parameter — it only
     /// changes what `cancelAll` writes onto the queue's own items, not when
     /// it runs.
+    ///
+    /// Every one of those four stages is bounded, and this function is
+    /// therefore guaranteed to reach its end even against a peer that has
+    /// stopped answering. Three of them are bounded HERE, through
+    /// `TeardownStage.runBounded` — see that type for the measurements
+    /// behind the bound and for which stage was measured to need it. The
+    /// fourth, `remote.disconnect()`, carries its own bound INSIDE
+    /// `CitadelFileSystem.disconnect()` (`7ac7f7e`) and is deliberately not
+    /// wrapped again: measured against a frozen peer in the pass that added
+    /// the other three, it returned in 5.002063 s / 5.304208 s /
+    /// 5.333977 s. A bound around this whole function instead of one per
+    /// stage was considered and rejected by the maintainer: it would
+    /// abandon the invariant order wherever it stood and could not name the
+    /// stage that hung.
     func teardown(_ tab: SessionTab, reason: CancelReason) async {
         tab.editErrorMessage = nil
         if let session = tab.session {
@@ -333,14 +347,20 @@ extension ContentView {
             // otherwise keep the decider prompt open, which `cancelAll`
             // (documented) hangs on until it's answered — deadlock on disconnect.
             tab.conflictBridge.cancelOpenPrompt()
-            await tab.transferQueue.cancelAll(reason: reason)
+            await TeardownStage.cancelTransfers.runBounded { [transferQueue = tab.transferQueue] in
+                await transferQueue.cancelAll(reason: reason)
+            }
             // Binding order (M5e/T4 plan): AFTER `cancelAll` (any in-flight
             // edit download/upload has already been cancelled/settled by the
             // queue, so `stopAll` isn't racing a still-running transfer) and
             // BEFORE `terminal.shutdown`/`disconnect` (teardown proceeds
             // outward from the queue to the connection).
-            await session.editManager.stopAll()
-            await session.terminal.shutdown()
+            await TeardownStage.stopEditWatchers.runBounded { [editManager = session.editManager] in
+                await editManager.stopAll()
+            }
+            await TeardownStage.shutDownTerminal.runBounded { [terminal = session.terminal] in
+                await terminal.shutdown()
+            }
             await session.remote.disconnect()
             // Audit recorder teardown (M9b/T3): only present for a stored
             // session (`attachAuditRecorder` never runs for an ad-hoc

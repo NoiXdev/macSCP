@@ -10,6 +10,15 @@ import Foundation
 /// `LivenessProbeRace`'s reason, off the main actor because Core has none to
 /// lean on and `CitadelFileSystem.disconnect()` is not isolated to one.
 ///
+/// Being off the main actor is what lets the second caller work too:
+/// `TeardownStage.runBounded` (App layer) bounds three main-actor-isolated
+/// stages of `ContentView.teardown(_:reason:)` with this. Their bodies hop
+/// back onto the main actor from inside `operation`, and the bound task
+/// sleeps somewhere else entirely — so a stage that suspends can be
+/// abandoned while the caller is still awaiting on the main actor. What no
+/// bound here can do is interrupt an operation that BLOCKS the main actor
+/// without suspending; nothing this type does can help there.
+///
 /// Why not `withTaskGroup`: it implicitly awaits every remaining child
 /// before its own scope returns, even one abandoned via `cancelAll()` — a
 /// structured-concurrency guarantee, not a bug, but it defeats a bound
@@ -42,8 +51,8 @@ import Foundation
 /// under the same lock makes that impossible: either the box stores them
 /// (and `resume(with:)` cancels them), or the box is already settled (and
 /// `adopt` cancels them itself).
-enum BoundedClose {
-    static func run(
+public enum BoundedClose {
+    public static func run(
         boundSeconds: Int, operation: @escaping @Sendable () async -> Void
     ) async -> Bool {
         await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
