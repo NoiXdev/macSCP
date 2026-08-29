@@ -505,6 +505,24 @@ public final class SessionListViewModel {
         updateSession(updated, newSecret: nil)
     }
 
+    /// Stores a copy of `session` and returns it, or `nil` if the write
+    /// failed (`errorMessage` then says so, like every other write here).
+    ///
+    /// WHAT the copy is, this method does not decide: `SessionDuplication`
+    /// does, from the template and the names already in use. All that is
+    /// added here is the store — and the fact that no secret reaches it,
+    /// which is not a choice made at this line either but a consequence of
+    /// the copy's fresh identifiers: `newSecret: nil` writes nothing, and
+    /// the two slots a session can address (its own `id`, and a jump's
+    /// `secretID`) are both freshly generated, so there is nothing under
+    /// either of them to read.
+    @discardableResult
+    public func duplicateSession(_ session: StoredSession) -> StoredSession? {
+        let copy = SessionDuplication.copy(of: session, avoiding: sessions)
+        updateSession(copy, newSecret: nil)
+        return sessions.first { $0.id == copy.id }
+    }
+
     /// Persists an updated session. `newSecret` of `nil` or empty leaves the
     /// existing Keychain secret untouched; a non-empty value overwrites it.
     /// `jumpSecret` (M10c) is the same "unchanged when nil/empty" semantics

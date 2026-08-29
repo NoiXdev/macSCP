@@ -119,7 +119,7 @@ enum SessionRowTerminalMenuPlan: Equatable {
 
 /// Left column: stored connections and folders, drawn as a tree of arbitrary
 /// depth. A click selects a connection, a double click or Return connects it;
-/// context menus cover connect/edit/rename/move/delete on connections,
+/// context menus cover connect/edit/rename/duplicate/move/delete on connections,
 /// rename/export/sort/dissolve on folders, and new-connection/new-group on
 /// the background. The phosphor dot marks the active connection.
 ///
@@ -658,6 +658,7 @@ struct SessionSidebar: View {
             // behind, which reads as an arbitrary place in its new folder.
             onMove: { groupID in viewModel.move(.session(session.id), intoGroup: groupID) },
             onRequestNewGroupMove: { beginNewGroup(forMoving: session) },
+            onDuplicate: { duplicate(session) },
             onRequestDelete: { sessionPendingDelete = session },
             onExport: { onExport(.single(session)) },
             onShowAuditLog: { onShowAuditLog(session) },
@@ -788,6 +789,25 @@ struct SessionSidebar: View {
             onConnect: onConnect,
             onOpenTerminal: onOpenTerminal,
             onOpenExternalTerminal: onOpenExternalTerminal)
+    }
+
+    /// Stores a copy of one connection and points at it.
+    ///
+    /// Two lines, and neither of them decides anything: what the copy
+    /// carries — and, the half worth naming, that it reaches no Keychain
+    /// slot of the template's — is `SessionDuplication`'s answer, asked
+    /// through the view model. Nothing here derives a name, a group or an
+    /// identifier, for the reason this file already gives about places:
+    /// a rule spelled in a menu body is one no test reaches.
+    ///
+    /// The selection move is what makes the entry worth having: a copy
+    /// written without being pointed at is a row the user has to go find
+    /// among the others. It goes through `moveSelection(to:)` so the
+    /// keyboard follows the highlight, like every other selection write in
+    /// this file.
+    private func duplicate(_ session: StoredSession) {
+        guard let copy = viewModel.duplicateSession(session) else { return }
+        moveSelection(to: copy)
     }
 
     /// Puts the sidebar's selection, and the keyboard with it, on one row.
@@ -1025,6 +1045,14 @@ private struct SessionRow: View {
     let onCancelRename: () -> Void
     let onMove: (UUID?) -> Void
     let onRequestNewGroupMove: () -> Void
+    /// "Duplicate" — stores a copy of this connection and selects it.
+    ///
+    /// A plain callback rather than an input routed through `onInput`, and
+    /// the rule for that split is what the entry DOES: duplicating writes a
+    /// record and reaches no host, so a stray click costs an unused row
+    /// rather than a login attempt on someone's server. Same category as
+    /// `onEdit`, `onExport` and `onRequestDelete`.
+    let onDuplicate: () -> Void
     let onRequestDelete: () -> Void
     let onExport: () -> Void
     let onShowAuditLog: () -> Void
@@ -1214,6 +1242,13 @@ private struct SessionRow: View {
             Button(L10n.string("sidebar.edit", "Edit…")) { onEdit() }
             Button(L10n.string("export.menu.single", "Export…")) { onExport() }
             Button(L10n.string("sidebar.rename", "Rename")) { onStartRename() }
+            // Directly under Rename, in the menu that also holds Delete —
+            // where the design puts it, among the entries that act on the
+            // stored record rather than on what it connects to. No gate: a
+            // stored connection can always be copied, and this project hides
+            // what cannot act instead of greying it out, so there is nothing
+            // here to hide either.
+            Button(L10n.string("sidebar.duplicate", "Duplicate")) { onDuplicate() }
             Menu(L10n.string("sidebar.moveTo", "Move to")) {
                 if session.groupID != nil {
                     Button(L10n.string("sidebar.noGroup", "No group")) { onMove(nil) }

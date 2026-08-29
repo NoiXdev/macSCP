@@ -3850,6 +3850,94 @@ struct SessionListViewModelTests {
         #expect(slotIsGone)
         #expect(vm.sessions.first { $0.id == stored.id }?.loginSetID == set?.id)
     }
+
+    // MARK: - Duplicating a session
+    //
+    // What the copy IS is `SessionDuplication`'s answer and is pinned in
+    // `SessionDuplicationTests`. What is checked here is the half only a
+    // store can answer: that the copy reaches the store under its own name,
+    // and that no Keychain slot it can reach holds anything.
+    //
+    // Every assertion about a secret below is made on a `Bool` computed
+    // first, never on the read itself. `#expect` renders what it was given,
+    // and a `#expect(try secrets.password(for: copy.id) == nil)` that FAILS
+    // would render the secret it found into the test log — the one moment
+    // the check is worth having is the one moment it would leak.
+
+    @Test func duplicatingStoresACopyUnderAFreeName() {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let template = vm.save(
+            name: "web", values: sshValues(host: "h", port: 22, username: "u"),
+            password: "p")!
+
+        let copy = vm.duplicateSession(template)
+
+        #expect(copy?.name == "web 2")
+        #expect(vm.sessions.map(\.name) == ["web", "web 2"])
+        #expect(copy?.id != template.id)
+    }
+
+    /// The asymmetry the design calls the rule at work: a session that owns
+    /// its password hands none of it over, so the copy asks once on its
+    /// first connect.
+    @Test func theCopyOfAPasswordSessionCarriesNoSecretOfItsOwn() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let template = vm.save(
+            name: "web", values: sshValues(host: "h", port: 22, username: "u"),
+            password: "p")!
+
+        let copy = vm.duplicateSession(template)!
+
+        let copyHasASecret = try secrets.password(for: copy.id) != nil
+        #expect(!copyHasASecret, "the copy's own Keychain slot must be empty")
+        let templateKeptItsSecret = try secrets.password(for: template.id) != nil
+        #expect(templateKeptItsSecret, "duplicating must not disturb the template's slot")
+    }
+
+    /// The other half of the same rule: a session bound to a login set is
+    /// complete the moment it is copied, because its credential never hung
+    /// on the session at all.
+    @Test func theCopyOfALoginSetSessionResolvesImmediately() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "Root", username: "root")
+        vm.saveLoginSet(set, secret: "s3cr3t")
+        let template = vm.save(
+            name: "web", values: sshValues(host: "h", port: 22, username: "u"),
+            password: "", loginSetID: set.id)!
+
+        let copy = vm.duplicateSession(template)!
+
+        #expect(copy.loginSetID == set.id)
+        let copyHasItsOwnSlot = try secrets.password(for: copy.id) != nil
+        #expect(!copyHasItsOwnSlot)
+        let resolvedSecret = try vm.resolvedCredentials(for: copy)?[SSHField.password] ?? ""
+        #expect(!resolvedSecret.isEmpty, "a set-bound copy resolves its credential from the set")
+    }
+
+    /// The slot a fresh session id says nothing about. A manual jump's
+    /// secret lives under `JumpSpec.secretID`, and a copy that took that
+    /// field over raw would read the template's Keychain entry while every
+    /// other assertion in this suite stayed green.
+    @Test func theCopyOfAJumpSessionReachesNoJumpSecret() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let spec = StoredSession.JumpSpec(host: "bastion", username: "hop")
+        let template = vm.save(
+            name: "web", values: sshValues(host: "h", port: 22, username: "u"),
+            password: "p", jump: spec, jumpSecret: "hop-secret")!
+
+        let copy = vm.duplicateSession(template)!
+
+        let copySecretID = try #require(copy.jump?.secretID)
+        #expect(copySecretID != spec.secretID)
+        let copyReachesAJumpSecret = try secrets.password(for: copySecretID) != nil
+        #expect(!copyReachesAJumpSecret, "the copy's jump slot must be empty")
+        let templateKeptItsJumpSecret = try secrets.password(for: spec.secretID) != nil
+        #expect(templateKeptItsJumpSecret, "duplicating must not disturb the template's jump slot")
+    }
 }
 
 private final class FailingSecretStore: SecretStore, @unchecked Sendable {

@@ -269,6 +269,7 @@
 "sidebar.openExternalTerminal" = "Open in External Terminal";
 "sidebar.edit" = "Edit…";
 "sidebar.rename" = "Rename";
+"sidebar.duplicate" = "Duplicate";
 "sidebar.auditLog" = "Audit Log…";
 "sidebar.snippets" = "Snippet";
 "sidebar.snippets.onlyActiveTab" = "Only Available for the Active Tab";

@@ -272,6 +272,7 @@
 "sidebar.openExternalTerminal" = "Otwórz w zewnętrznym terminalu";
 "sidebar.edit" = "Edytuj…";
 "sidebar.rename" = "Zmień nazwę";
+"sidebar.duplicate" = "Duplikuj";
 "sidebar.auditLog" = "Dziennik audytu…";
 "sidebar.snippets" = "Fragment";
 "sidebar.snippets.onlyActiveTab" = "Dostępne tylko dla aktywnej karty";
