@@ -163,7 +163,7 @@
 "sidebar.header" = "SESSIONS";
 "sidebar.filter.all" = "Tous";
 "sidebar.empty.noSessions" = "Pas encore de connexions enregistrées.";
-"sidebar.empty.noMatches" = "Aucune connexion n'a ce tag.";
+"sidebar.empty.noMatches" = "Aucune connexion ne correspond au filtre.";
 "sidebar.empty.clearFilter" = "Tout afficher";
 "sidebar.newConnection" = "Nouvelle connexion";
 "sidebar.delete" = "Supprimer";

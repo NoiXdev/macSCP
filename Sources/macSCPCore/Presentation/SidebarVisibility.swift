@@ -1,8 +1,8 @@
 import Foundation
 
 /// What the session sidebar shows, for a given store snapshot, the current
-/// imported-host count, and an optional active tag filter — computed once,
-/// here, instead of decided piecemeal in the view body.
+/// imported-host count, an optional active tag filter and an optional search
+/// — computed once, here, instead of decided piecemeal in the view body.
 ///
 /// This is the type P2's terminal-chrome sidebar work did not have: that
 /// milestone's pane-visibility decision lived as two loose booleans in a
@@ -27,10 +27,11 @@ import Foundation
 /// which is also the only shape in which the filter rule below can be stated
 /// truthfully.
 ///
-/// `compute` filters purely on `StoredSession.tags`; it never receives or
-/// references `Snippet` in any form, and `SnippetMenuModel.build` never
-/// receives `activeTag` — the two computations share no parameter, so a host
-/// tag cannot reach a snippet through this type. That separation holds by
+/// `compute` filters on a session's own fields — its `tags`, its name, and
+/// the identity line its backend prints; it never receives or references
+/// `Snippet` in any form, and `SnippetMenuModel.build` never receives
+/// `activeTag` — the two computations share no parameter, so a host tag
+/// cannot reach a snippet through this type. That separation holds by
 /// construction, not by a test in this file: a test that calls both functions
 /// independently and checks their outputs would keep passing even if
 /// `compute` were deleted entirely, since nothing here connects them. The
@@ -41,10 +42,13 @@ import Foundation
 /// (`SidebarFilterWiringTests`), not here.
 public struct SidebarVisibility: Equatable, Sendable {
     /// Distinguishes "there is nothing to show because the store is empty"
-    /// from "there is nothing to show because the active tag matched
-    /// nothing" — the sidebar needs different copy for each (an empty store
-    /// invites creating a session; a filter matching nothing invites
-    /// clearing the filter).
+    /// from "there is nothing to show because the filter — the active tag,
+    /// the search, or the two together — matched nothing". The sidebar needs
+    /// different copy for each (an empty store invites creating a session; a
+    /// filter matching nothing invites clearing it), and deliberately not
+    /// copy per CAUSE: one message that names no specific filter is true
+    /// whichever of them emptied the list, and the sidebar offers one way
+    /// back from all of them.
     public enum Emptiness: Equatable, Sendable {
         case notEmpty
         case noSessionsAtAll
@@ -58,22 +62,41 @@ public struct SidebarVisibility: Equatable, Sendable {
     /// order of its own.
     public let visibleTree: SidebarOrdering.Tree
     /// Whether the sidebar's "IMPORTED" section (unsaved `SSHConfigHost`
-    /// entries) should render at all: `activeTag == nil` (imported hosts
-    /// carry no tags, so a tag filter can never match one, and rendering an
-    /// unfilterable section next to filtered ones would misrepresent the
-    /// filter as covering everything on screen) AND `importedHostsCount > 0`
-    /// (an empty section has nothing to draw either way).
+    /// entries) should render at all: nothing is narrowing the list —
+    /// `activeTag == nil` and no search — AND `importedHostsCount > 0` (an
+    /// empty section has nothing to draw either way).
+    ///
+    /// One reason covers both narrowings: an imported host is not a
+    /// `StoredSession`, so it carries neither a tag nor a name this filter
+    /// ever examines, and rendering an unfilterable section next to filtered
+    /// ones would misrepresent the filter as covering everything on screen.
     public let showsImportedSection: Bool
     public let emptiness: Emptiness
+    /// Whether every folder draws OPEN regardless of what the user collapsed
+    /// (D3): true exactly while a search is narrowing the tree.
+    ///
+    /// Nesting is what makes this necessary — a match inside a closed folder
+    /// passes the filter and is still invisible, so one filters on something
+    /// one cannot see. It is a fact about what the sidebar SHOWS, which is
+    /// why it is answered here; what it does to the remembered collapse state
+    /// (nothing — it overlays it, never writes it) is
+    /// `SidebarFolderDisclosure`'s half.
+    ///
+    /// A tag filter does not set it. The tag row is a deliberate choice that
+    /// stays on screen until it is cleared; a search is typed a character at
+    /// a time, and it is the one that would otherwise hide its own results.
+    public let expandsFolders: Bool
 
     public init(
         visibleTree: SidebarOrdering.Tree,
         showsImportedSection: Bool,
-        emptiness: Emptiness
+        emptiness: Emptiness,
+        expandsFolders: Bool
     ) {
         self.visibleTree = visibleTree
         self.showsImportedSection = showsImportedSection
         self.emptiness = emptiness
+        self.expandsFolders = expandsFolders
     }
 
     /// The rows to draw directly under one folder (`nil` = the top level), in
@@ -120,6 +143,34 @@ public struct SidebarVisibility: Equatable, Sendable {
     /// stay exact. A non-nil `activeTag` also always hides the imported
     /// section, regardless of `importedHostsCount`.
     ///
+    /// `search` is the SECOND criterion in this same rule (D3), not a second
+    /// filtering path: it narrows what is left, so a user who filters by tag
+    /// and then types searches WITHIN the filtered list. A session matches
+    /// when the predicate matches its NAME, any one of its TAGS, or the
+    /// backend's own `displaySummary` — which is where a session's host and
+    /// user name live since `StoredSession` stopped carrying flat SSH
+    /// columns, and which is the same one-line identity the sidebar row's
+    /// tooltip and the audit trail show. What that line contains is each
+    /// backend's answer, not this type's: SSH spells `user@host`, while S3
+    /// spells its bucket and endpoint host and names no user at all.
+    ///
+    /// A FOLDER NAME is never a match. A folder is on screen because
+    /// something in it matched; matching the folder itself would put its
+    /// whole contents on screen and claim hits that are not there.
+    ///
+    /// `nil` and a predicate that matches everything mean the same thing here
+    /// — no search — and the second spelling is load-bearing: the App layer
+    /// answers a matches-everything predicate for an INVALID regular
+    /// expression, so a half-typed pattern shows its error beside a sidebar
+    /// that goes on drawing what it drew. An empty sidebar from a stray `(`
+    /// would look like data loss. For the same reason an invalid pattern also
+    /// leaves `expandsFolders` false: nothing is being narrowed, so there is
+    /// nothing to unfold for.
+    ///
+    /// A search hides the imported section on the same grounds an active tag
+    /// does: an unfilterable section drawn beside filtered ones presents the
+    /// filter as covering everything on screen.
+    ///
     /// **A folder survives a filter when anything BELOW it matches**, not
     /// when its own sessions do. Nesting is what forces that: with the match
     /// two levels down, neither folder on the way to it carries a matching
@@ -140,16 +191,30 @@ public struct SidebarVisibility: Equatable, Sendable {
         sessions: [StoredSession],
         groups: [StoredGroup],
         importedHostsCount: Int,
-        activeTag: String?
+        activeTag: String?,
+        search: FileSearch.FileSearchPredicate?
     ) -> SidebarVisibility {
+        // A predicate that matches everything is not a search — see this
+        // method's doc comment for why that spelling has to keep meaning
+        // "nothing is being filtered".
+        let searching = search.map { !$0.isEmpty } ?? false
+
+        func matchesSearch(_ session: StoredSession) -> Bool {
+            guard searching, let search else { return true }
+            if search.matches(session.name) { return true }
+            if session.tags.contains(where: search.matches) { return true }
+            let descriptor = BackendDescriptor.descriptor(for: session.kind)
+            return search.matches(descriptor.displaySummary(descriptor.sessionValues(session)))
+        }
+
         func passes(_ session: StoredSession) -> Bool {
-            guard let activeTag else { return true }
-            return session.tags.contains(activeTag)
+            if let activeTag, !session.tags.contains(activeTag) { return false }
+            return matchesSearch(session)
         }
 
         let visibleSessions = sessions.filter(passes)
         let visibleGroups: [StoredGroup]
-        if activeTag == nil {
+        if activeTag == nil && !searching {
             visibleGroups = groups
         } else {
             var reachable: Set<UUID> = []
@@ -161,7 +226,7 @@ public struct SidebarVisibility: Equatable, Sendable {
         }
 
         let visibleTree = SidebarOrdering.Tree(groups: visibleGroups, sessions: visibleSessions)
-        let showsImportedSection = activeTag == nil && importedHostsCount > 0
+        let showsImportedSection = activeTag == nil && !searching && importedHostsCount > 0
 
         // Structural, not incidental: this is the actual "is there anything
         // to draw" question, asked of the level the sidebar starts drawing at
@@ -182,7 +247,8 @@ public struct SidebarVisibility: Equatable, Sendable {
         return SidebarVisibility(
             visibleTree: visibleTree,
             showsImportedSection: showsImportedSection,
-            emptiness: emptiness
+            emptiness: emptiness,
+            expandsFolders: searching
         )
     }
 

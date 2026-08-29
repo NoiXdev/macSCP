@@ -1,10 +1,18 @@
 import SwiftUI
 import macSCPCore
 
-/// A compact, reusable search bar for management sheets (M18). Wraps a text
-/// field, a regex toggle, and an inline error label. The host view compiles a
-/// `FileSearchPredicate` from `text`/`isRegex` (via `FileSearch.compile`) and
-/// filters its own list — this view is presentation only.
+/// A compact, reusable search bar (M18). Wraps a text field, a regex toggle,
+/// and an inline error label. The host view compiles a `FileSearchPredicate`
+/// from `text`/`isRegex` (via `FileSearch.compile`) and filters its own list —
+/// this view is presentation only.
+///
+/// Written for the management sheets and reused unchanged by the session
+/// sidebar (D3), which is what "reusable" was supposed to mean: the regex
+/// switch and the error label are more useful over a list of connections
+/// than over a sheet, and a sidebar-only search field would have been a
+/// second build of this one. The count of hosts that used to stand in this
+/// sentence is gone on purpose — it was written at M18 and was wrong by the
+/// time anyone read it.
 struct SheetSearchField: View {
     @Binding var text: String
     @Binding var isRegex: Bool

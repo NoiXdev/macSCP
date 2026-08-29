@@ -3,7 +3,8 @@ import Testing
 
 @testable import MacSCPAppKit
 
-/// Guards the sidebar host-tag filter's wiring (P3a/T6) — the same "the
+/// Guards the wiring of what the sidebar shows — the host-tag filter
+/// (P3a/T6) and, since D3, the search that narrows within it — the same "the
 /// method is right and is not wired in" shape `PaneRenderConditionGuardTests`,
 /// `PaneVisibilityWiringGuardTests`, and `HostTagsWiringGuardTests` already
 /// exist to catch. `SidebarVisibility.compute`/`availableTags`/`resolvedTag`
@@ -67,6 +68,16 @@ import Testing
 ///   other way — or a rename of the `snippets` property — would not be
 ///   recognized as either compliant or a violation; it would simply not be
 ///   seen.
+/// - Guards 8 and 9 name the spellings the sidebar uses today
+///   (`sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)`,
+///   `search: searchPredicate`, `SidebarFolderDisclosure.…`). Renaming a
+///   local fails them loudly rather than silently, which is the intended
+///   direction; neither can tell a call reached through a wrapper from one
+///   that never happens.
+/// - Guard 9's `collapsedGroups` scans are line-based like the rest: a write
+///   spelled through an alias, or one moved into another file, is not seen.
+///   The one-assignment count beside them is what fails when the binding is
+///   restructured at all.
 /// - `activeTagNeverRoutesThroughPersistenceOrSettingsStore` (Guard 5) reads
 ///   the declaration line and greps for `SettingsStore`/`@AppStorage`
 ///   co-occurring with `activeTag` on the same line. A persistence path
@@ -273,6 +284,110 @@ struct SidebarFilterWiringTests {
         }
     }
 
+    // MARK: - Guard 8: the search reaches the same one decision
+
+    /// The sidebar search (D3) is a second criterion inside
+    /// `SidebarVisibility.compute`, not a second filtering path.
+    /// `SidebarVisibilityTests` proves what the criterion decides without
+    /// ever touching this file; a sidebar that compiled a predicate and then
+    /// filtered its own rows with it — or never handed it over at all —
+    /// would leave every one of those tests green.
+    @Test func theSearchIsCompiledOnceAndHandedToTheOneDecision() throws {
+        let lines = try Self.sourceLines()
+        guard let compileStart = lines.firstIndex(where: { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            return !trimmed.hasPrefix("//") && trimmed.contains("sheetSearchPredicate(")
+        }), let compileCall = Self.range(ofCallStartingAt: compileStart, in: lines) else {
+            Issue.record("""
+                `SessionSidebar.swift` no longer compiles its search through \
+                `sheetSearchPredicate(...)` — that helper is where an INVALID regular \
+                expression becomes a matches-everything predicate plus an error text, which \
+                is what keeps a half-typed pattern from emptying the sidebar.
+                """)
+            return
+        }
+        for argument in ["text: searchText", "isRegex: searchIsRegex"] {
+            #expect(compileCall.contains { lines[$0].contains(argument) }, """
+                the sidebar compiles a search predicate that is not its own field's \
+                (`\(argument)` is not among the arguments) — re-anchor this guard, or the \
+                field on screen and the query being filtered with have come apart.
+                """)
+        }
+        // Anchored on the CALL, not the first line naming it: this file's
+        // own doc comments spell `SidebarVisibility.compute(activeTag:)` in
+        // prose, parentheses included, above the call itself.
+        guard let start = Self.computeCallSites(in: lines).first,
+            let call = Self.range(ofCallStartingAt: start, in: lines)
+        else {
+            Issue.record("`SidebarVisibility.compute(` call not found — re-anchor this guard")
+            return
+        }
+        let handsOverTheSearch = call.contains {
+            lines[$0].contains("search: searchPredicate")
+        }
+        #expect(handsOverTheSearch, """
+            `SidebarVisibility.compute(...)` is no longer handed `search: searchPredicate` — \
+            a search the one decision never receives is a second filtering path or no \
+            filtering at all.
+            """)
+    }
+
+    /// The design reuses `SheetSearchField` as it stands, regex toggle and
+    /// error display included — a second search field would be a second
+    /// build of the same thing, and the error display is the half that keeps
+    /// an invalid pattern honest on screen.
+    @Test func theSidebarDrawsTheSharedSearchFieldRatherThanOneOfItsOwn() throws {
+        let lines = try Self.sourceLines()
+        #expect(lines.contains { $0.contains("SheetSearchField(") }, """
+            `SessionSidebar.swift` no longer draws `SheetSearchField` — the sidebar must \
+            reuse the sheets' field rather than grow a second one.
+            """)
+        #expect(lines.contains { $0.contains("errorText: searchError") }, """
+            the sidebar's search field no longer shows `searchError` — an invalid regular \
+            expression would then filter nothing and say nothing.
+            """)
+    }
+
+    // MARK: - Guard 9: the remembered collapse state is not written while searching
+
+    /// The condition the maintainer's ruling rests on (D3): the search
+    /// OVERLAYS the collapse state, it does not overwrite it.
+    /// `SidebarFolderDisclosureTests` proves the decision; this is the check
+    /// that the view asks it instead of keeping its own `insert`/`remove`
+    /// beside it — the exact shape that would write during a search while
+    /// that suite stayed green.
+    ///
+    /// The negative half (no direct mutation) does not stand alone: the
+    /// count and the two named calls above it fail loudly the moment the
+    /// binding is rewritten or renamed, so a scan that stopped recognizing
+    /// anything cannot report an all-clear.
+    @Test func theCollapseStateIsWrittenOnlyThroughTheTestedDecision() throws {
+        let lines = try Self.sourceLines()
+        for call in ["SidebarFolderDisclosure.isOpen(", "SidebarFolderDisclosure.collapsed("] {
+            #expect(lines.contains { $0.contains(call) }, """
+                `SessionSidebar.swift` no longer calls `\(call)...)` — the folder's open state \
+                and what the triangle writes are both decisions with tests; a binding that \
+                decides either one itself has none.
+                """)
+        }
+        let writes = lines.filter {
+            $0.trimmingCharacters(in: .whitespaces).hasPrefix("collapsedGroups = ")
+        }
+        #expect(writes.count == 1, """
+            expected exactly one assignment to `collapsedGroups` in SessionSidebar.swift, found \
+            \(writes.count) — the remembered collapse state has one writer, and it is the one \
+            that can refuse to write while a search is on.
+            """)
+        let mutatesDirectly = lines.filter {
+            $0.contains("collapsedGroups.insert(") || $0.contains("collapsedGroups.remove(")
+        }
+        #expect(mutatesDirectly.isEmpty, """
+            `SessionSidebar.swift` mutates `collapsedGroups` directly — that write cannot be \
+            withheld during a search, which is what would leave the user's folders permanently \
+            unfolded after they typed.
+            """)
+    }
+
     // MARK: - Scanner reacts (self-tests over synthetic sources)
 
     /// The exact regression Guard 2 exists to catch: a section re-derives
@@ -283,7 +398,8 @@ struct SidebarFilterWiringTests {
             var body: some View {
                 let visibility = SidebarVisibility.compute(
                     sessions: viewModel.sessions, groups: viewModel.groups,
-                    importedHostsCount: importedHosts.count, activeTag: activeTag)
+                    importedHostsCount: importedHosts.count, activeTag: activeTag,
+                    search: searchPredicate)
                 List {
                     ForEach(viewModel.sessions.filter { activeTag == nil || $0.tags.contains(activeTag!) }) { session in
                         EmptyView()
@@ -303,7 +419,8 @@ struct SidebarFilterWiringTests {
             var body: some View {
                 let visibility = SidebarVisibility.compute(
                     sessions: viewModel.sessions, groups: viewModel.groups,
-                    importedHostsCount: importedHosts.count, activeTag: activeTag)
+                    importedHostsCount: importedHosts.count, activeTag: activeTag,
+                    search: searchPredicate)
                 ForEach(visibility.children(of: nil)) { item in
                     Section {
                         ForEach(sessionsOf(item).filter { s in
@@ -324,7 +441,8 @@ struct SidebarFilterWiringTests {
             var body: some View {
                 let visibility = SidebarVisibility.compute(
                     sessions: viewModel.sessions, groups: viewModel.groups,
-                    importedHostsCount: importedHosts.count, activeTag: activeTag)
+                    importedHostsCount: importedHosts.count, activeTag: activeTag,
+                    search: searchPredicate)
                 List {
                     rows(under: nil, visibility: visibility)
                 }
@@ -353,10 +471,11 @@ struct SidebarFilterWiringTests {
             var body: some View {
                 let visibility = SidebarVisibility.compute(
                     sessions: viewModel.sessions, groups: viewModel.groups,
-                    importedHostsCount: importedHosts.count, activeTag: activeTag)
+                    importedHostsCount: importedHosts.count, activeTag: activeTag,
+                    search: searchPredicate)
                 let second = SidebarVisibility.compute(
                     sessions: viewModel.sessions, groups: viewModel.groups,
-                    importedHostsCount: 0, activeTag: nil)
+                    importedHostsCount: 0, activeTag: nil, search: nil)
                 List {
                     rows(under: nil, visibility: visibility)
                 }
@@ -371,7 +490,8 @@ struct SidebarFilterWiringTests {
             var body: some View {
                 let visibility = SidebarVisibility.compute(
                     sessions: viewModel.sessions, groups: viewModel.groups,
-                    importedHostsCount: importedHosts.count, activeTag: activeTag)
+                    importedHostsCount: importedHosts.count, activeTag: activeTag,
+                    search: searchPredicate)
                 List {
                     rows(under: nil, visibility: visibility)
                 }
@@ -391,7 +511,8 @@ struct SidebarFilterWiringTests {
                 // See `SidebarVisibility.compute`'s own doc comment for the rules.
                 let visibility = SidebarVisibility.compute(
                     sessions: viewModel.sessions, groups: viewModel.groups,
-                    importedHostsCount: importedHosts.count, activeTag: activeTag)
+                    importedHostsCount: importedHosts.count, activeTag: activeTag,
+                    search: searchPredicate)
             }
             """
         let lines = source.components(separatedBy: "\n")
@@ -466,6 +587,13 @@ struct SidebarFilterWiringTests {
     /// .range(ofCallStartingWith:in:)`.
     private static func range(ofCallStartingWith marker: String, in lines: [String]) -> ClosedRange<Int>? {
         guard let start = lines.firstIndex(where: { $0.contains(marker) }) else { return nil }
+        return range(ofCallStartingAt: start, in: lines)
+    }
+
+    /// The same parenthesis walk from a line a caller has already chosen —
+    /// for the calls whose own name also appears in prose above them, where
+    /// "the first line containing the marker" is a doc comment.
+    private static func range(ofCallStartingAt start: Int, in lines: [String]) -> ClosedRange<Int>? {
         var depth = 0
         var sawOpenParen = false
         for index in start..<lines.count {

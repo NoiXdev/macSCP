@@ -218,7 +218,25 @@ struct SessionSidebar: View {
     let hiddenImportsErrorMessage: String?
 
     /// Not persisted — resets to "all expanded" on relaunch.
+    ///
+    /// Read and written through `SidebarFolderDisclosure` and nowhere else:
+    /// while a search narrows the tree it is neither consulted (every folder
+    /// draws open) nor changed, so the folders the user closed are closed
+    /// again the moment the field is empty. A search overlays this set; it
+    /// never rewrites it.
     @State private var collapsedGroups: Set<UUID> = []
+
+    /// The sidebar's search (D3), and the regex switch `SheetSearchField`
+    /// brings with it. View state for the same reason `activeTag` below is:
+    /// a query is not a setting, so it starts empty on every relaunch.
+    ///
+    /// Compiled into a predicate in `body` through the same
+    /// `sheetSearchPredicate` every other search surface in this app uses —
+    /// which is also where an invalid regular expression becomes a
+    /// matches-everything predicate plus an error text, so a half-typed
+    /// pattern says so instead of emptying the list.
+    @State private var searchText: String = ""
+    @State private var searchIsRegex = false
 
     /// The sidebar's host-tag filter (P3a/T6): `nil` means "show everything".
     /// A VIEW, not a setting — deliberately not persisted and not routed
@@ -284,11 +302,18 @@ struct SessionSidebar: View {
         // reads from `visibility`; nothing else in this file re-derives any
         // part of that decision from `session.tags` or `activeTag` directly.
         // See `SidebarVisibility.compute`'s own doc comment for the rules.
+        //
+        // The search is compiled once here, next to the one decision it feeds
+        // — never per row — and the tag filter and the query go into the SAME
+        // call, because typing searches within what the tag filter left.
+        let (searchPredicate, searchError) = sheetSearchPredicate(
+            text: searchText, isRegex: searchIsRegex)
         let visibility = SidebarVisibility.compute(
             sessions: viewModel.sessions,
             groups: viewModel.groups,
             importedHostsCount: importedHosts.count,
-            activeTag: activeTag)
+            activeTag: activeTag,
+            search: searchPredicate)
         // Not part of `visibility`: whether the filter-chip ROW itself draws
         // at all is a separate question from what the row's chips filter —
         // `SidebarVisibility.compute` has no opinion on the row's own
@@ -313,6 +338,17 @@ struct SessionSidebar: View {
                 .dropDestination(for: String.self) { payload, _ in
                     drop(payload, intoGroup: nil)
                 }
+
+            // An empty store has nothing to search, and this project shows
+            // only what is possible. The gate reads the STORE, not what
+            // survived the filter, so the field never disappears under the
+            // user mid-query.
+            if !viewModel.sessions.isEmpty {
+                SheetSearchField(
+                    text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 6)
+            }
 
             // Empty-store or filter-cleared: no session carries any tag, so
             // an empty chip row would be a frame drawn over nothing.
@@ -341,7 +377,7 @@ struct SessionSidebar: View {
                         showsClearFilter: false)
                 case .filterMatchesNothing:
                     emptyStateRow(
-                        message: L10n.string("sidebar.empty.noMatches", "No connection has this tag."),
+                        message: L10n.string("sidebar.empty.noMatches", "No connection matches the filter."),
                         showsClearFilter: true)
                 }
             }
@@ -506,7 +542,10 @@ struct SessionSidebar: View {
                     }
                 case .group(let id):
                     if let group = visibility.group(id) {
-                        DisclosureGroup(isExpanded: expansion(of: group.id)) {
+                        DisclosureGroup(
+                            isExpanded: expansion(
+                                of: group.id, expandsFolders: visibility.expandsFolders)
+                        ) {
                             rows(under: group.id, visibility: visibility)
                         } label: {
                             groupRow(group)
@@ -519,11 +558,26 @@ struct SessionSidebar: View {
 
     /// Whether one folder is open. Not persisted — every folder starts open
     /// again on relaunch, the same as before folders could nest.
-    private func expansion(of groupID: UUID) -> Binding<Bool> {
+    ///
+    /// Both halves are `SidebarFolderDisclosure`'s answer, not this view's:
+    /// what the folder draws as, and what the triangle writes — including
+    /// the case where it writes nothing at all, which is what keeps a search
+    /// from rearranging the user's folders behind their back. `nil` back
+    /// from `collapsed(_:setting:open:expandsFolders:)` is "do not write",
+    /// and this is the only writer of `collapsedGroups` there is.
+    private func expansion(of groupID: UUID, expandsFolders: Bool) -> Binding<Bool> {
         Binding(
-            get: { !collapsedGroups.contains(groupID) },
-            set: { expanded in
-                if expanded { collapsedGroups.remove(groupID) } else { collapsedGroups.insert(groupID) }
+            get: {
+                SidebarFolderDisclosure.isOpen(
+                    groupID, collapsed: collapsedGroups, expandsFolders: expandsFolders)
+            },
+            set: { open in
+                if let updated = SidebarFolderDisclosure.collapsed(
+                    collapsedGroups, setting: groupID, open: open,
+                    expandsFolders: expandsFolders)
+                {
+                    collapsedGroups = updated
+                }
             })
     }
 
@@ -632,6 +686,10 @@ struct SessionSidebar: View {
     /// only `visibility.emptiness`'s two empty cases; the copy differs
     /// because the invitation differs (create a session vs. clear the
     /// filter), and only the filter case offers the clear-filter button.
+    ///
+    /// One button clears BOTH narrowings, which is why its message names
+    /// neither: the tag and the query can be on at once, and an invitation
+    /// that cleared only one of them would leave the list just as empty.
     @ViewBuilder
     private func emptyStateRow(message: String, showsClearFilter: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -641,6 +699,7 @@ struct SessionSidebar: View {
             if showsClearFilter {
                 Button(L10n.string("sidebar.empty.clearFilter", "Show all")) {
                     activeTag = nil
+                    searchText = ""
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(DesignTokens.remoteBlue)

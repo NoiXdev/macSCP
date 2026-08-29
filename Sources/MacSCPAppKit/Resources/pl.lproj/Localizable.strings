@@ -163,7 +163,7 @@
 "sidebar.header" = "SESJE";
 "sidebar.filter.all" = "Wszystkie";
 "sidebar.empty.noSessions" = "Brak zapisanych połączeń.";
-"sidebar.empty.noMatches" = "Żadne połączenie nie ma tego tagu.";
+"sidebar.empty.noMatches" = "Żadne połączenie nie pasuje do filtra.";
 "sidebar.empty.clearFilter" = "Pokaż wszystkie";
 "sidebar.newConnection" = "Nowe połączenie";
 "sidebar.delete" = "Usuń";

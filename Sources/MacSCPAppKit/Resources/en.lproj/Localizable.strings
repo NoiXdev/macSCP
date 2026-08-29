@@ -161,7 +161,7 @@
 "sidebar.header" = "SESSIONS";
 "sidebar.filter.all" = "All";
 "sidebar.empty.noSessions" = "No saved connections yet.";
-"sidebar.empty.noMatches" = "No connection has this tag.";
+"sidebar.empty.noMatches" = "No connection matches the filter.";
 "sidebar.empty.clearFilter" = "Show all";
 "sidebar.newConnection" = "New connection";
 "sidebar.delete" = "Delete";

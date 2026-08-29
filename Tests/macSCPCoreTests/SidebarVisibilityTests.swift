@@ -8,6 +8,32 @@ private func session(
     StoredSession(name: name, groupID: group, tags: tags, position: position)
 }
 
+/// A session that actually carries an SSH block, so its host and user name
+/// exist to be searched. `session(_:)` above deliberately builds none: the
+/// tag tests never needed one, and a blockless record is what a store file
+/// written before M23 looks like.
+private func sshSession(
+    _ name: String, host: String, username: String,
+    group: UUID? = nil, tags: [String] = [], at position: Int = 0
+) -> StoredSession {
+    StoredSession(
+        name: name, groupID: group, kind: .ssh,
+        ssh: StoredSSHConfig(host: host, username: username),
+        tags: tags, position: position)
+}
+
+/// The compiled predicate for one query, the same way the sidebar compiles
+/// its own. Every query spelled below is a literal in this file and none of
+/// them is an invalid regex, so the failure arm is unreachable — what an
+/// INVALID one does is the App layer's decision (`sheetSearchPredicate`),
+/// not this type's.
+private func searchFor(_ text: String, regex: Bool = false) -> FileSearch.FileSearchPredicate {
+    switch FileSearch.compile(query: text, isRegex: regex) {
+    case .success(let predicate): return predicate
+    case .failure: preconditionFailure("the queries in this file all compile")
+    }
+}
+
 struct SidebarVisibilityTests {
     @Test func withoutAFilterEverythingShows() {
         let g = StoredGroup(name: "prod")
@@ -15,7 +41,7 @@ struct SidebarVisibilityTests {
         let outside = session("b")
         let v = SidebarVisibility.compute(
             sessions: [inside, outside],
-            groups: [g], importedHostsCount: 1, activeTag: nil)
+            groups: [g], importedHostsCount: 1, activeTag: nil, search: nil)
         #expect(v.children(of: nil) == [.group(g.id), .session(outside.id)])
         #expect(v.children(of: g.id) == [.session(inside.id)])
         #expect(v.showsImportedSection)
@@ -28,7 +54,7 @@ struct SidebarVisibilityTests {
         let kept = session("a", group: hit.id, tags: ["docker"])
         let v = SidebarVisibility.compute(
             sessions: [kept, session("b", group: miss.id)],
-            groups: [hit, miss], importedHostsCount: 3, activeTag: "docker")
+            groups: [hit, miss], importedHostsCount: 3, activeTag: "docker", search: nil)
         #expect(v.children(of: nil) == [.group(hit.id)])
         #expect(v.children(of: hit.id) == [.session(kept.id)])
         // Imported hosts are present (importedHostsCount: 3) — still hidden,
@@ -38,12 +64,12 @@ struct SidebarVisibilityTests {
 
     @Test func theTwoEmptyStatesAreDistinguishable() {
         let none = SidebarVisibility.compute(
-            sessions: [], groups: [], importedHostsCount: 0, activeTag: nil)
+            sessions: [], groups: [], importedHostsCount: 0, activeTag: nil, search: nil)
         #expect(none.emptiness == .noSessionsAtAll)
 
         let filtered = SidebarVisibility.compute(
             sessions: [session("a", tags: ["web"])], groups: [], importedHostsCount: 0,
-            activeTag: "docker")
+            activeTag: "docker", search: nil)
         #expect(filtered.emptiness == .filterMatchesNothing)
     }
 
@@ -57,7 +83,7 @@ struct SidebarVisibilityTests {
     /// something to draw.
     @Test func noSessionsButImportedHostsPresentIsNotTheEmptyState() {
         let v = SidebarVisibility.compute(
-            sessions: [], groups: [], importedHostsCount: 3, activeTag: nil)
+            sessions: [], groups: [], importedHostsCount: 3, activeTag: nil, search: nil)
         #expect(v.emptiness == .notEmpty)
         #expect(v.showsImportedSection)
     }
@@ -68,7 +94,7 @@ struct SidebarVisibilityTests {
     /// available to import.
     @Test func noSessionsAndImportedHostsHiddenByAnActiveTagIsTheEmptyState() {
         let v = SidebarVisibility.compute(
-            sessions: [], groups: [], importedHostsCount: 3, activeTag: "docker")
+            sessions: [], groups: [], importedHostsCount: 3, activeTag: "docker", search: nil)
         #expect(v.emptiness == .noSessionsAtAll)
         #expect(!v.showsImportedSection)
     }
@@ -76,7 +102,7 @@ struct SidebarVisibilityTests {
     @Test func tagComparisonIsExactSoTwoSpellingsStayTwoTags() {
         let v = SidebarVisibility.compute(
             sessions: [session("a", tags: ["Docker"])], groups: [], importedHostsCount: 0,
-            activeTag: "docker")
+            activeTag: "docker", search: nil)
         #expect(v.emptiness == .filterMatchesNothing)
     }
 
@@ -87,7 +113,7 @@ struct SidebarVisibilityTests {
     @Test func emptyStringActiveTagMatchesNothingBecauseNoStoredTagIsEverEmpty() {
         let v = SidebarVisibility.compute(
             sessions: [session("a", tags: ["docker"])], groups: [], importedHostsCount: 0,
-            activeTag: "")
+            activeTag: "", search: nil)
         #expect(v.emptiness == .filterMatchesNothing)
         #expect(v.children(of: nil).isEmpty)
     }
@@ -97,7 +123,7 @@ struct SidebarVisibilityTests {
     @Test func whitespaceOnlyActiveTagMatchesNothingBecauseStoredTagsAreAlwaysTrimmed() {
         let v = SidebarVisibility.compute(
             sessions: [session("a", tags: ["docker"])], groups: [], importedHostsCount: 0,
-            activeTag: "   ")
+            activeTag: "   ", search: nil)
         #expect(v.emptiness == .filterMatchesNothing)
     }
 
@@ -121,7 +147,7 @@ struct SidebarVisibilityTests {
         let second = StoredGroup(name: "staging")
         let v = SidebarVisibility.compute(
             sessions: [session("a", group: second.id), session("b", group: first.id)],
-            groups: [first, second], importedHostsCount: 0, activeTag: nil)
+            groups: [first, second], importedHostsCount: 0, activeTag: nil, search: nil)
         #expect(v.children(of: nil) == [.group(first.id), .group(second.id)])
     }
 
@@ -131,7 +157,7 @@ struct SidebarVisibilityTests {
         let z = session("z")
         let a = session("a")
         let v = SidebarVisibility.compute(
-            sessions: [z, a], groups: [], importedHostsCount: 0, activeTag: nil)
+            sessions: [z, a], groups: [], importedHostsCount: 0, activeTag: nil, search: nil)
         #expect(v.children(of: nil) == [.session(z.id), .session(a.id)])
     }
 
@@ -142,7 +168,7 @@ struct SidebarVisibilityTests {
         let first = session("first", at: 0)
         let last = session("last", at: 2)
         let v = SidebarVisibility.compute(
-            sessions: [last, first], groups: [folder], importedHostsCount: 0, activeTag: nil)
+            sessions: [last, first], groups: [folder], importedHostsCount: 0, activeTag: nil, search: nil)
         #expect(v.children(of: nil) == [.session(first.id), .group(folder.id), .session(last.id)])
     }
 
@@ -158,11 +184,11 @@ struct SidebarVisibilityTests {
         let sessions = [session("a", tags: ["docker"])]
 
         let unfiltered = SidebarVisibility.compute(
-            sessions: sessions, groups: [group], importedHostsCount: 0, activeTag: nil)
+            sessions: sessions, groups: [group], importedHostsCount: 0, activeTag: nil, search: nil)
         #expect(unfiltered.children(of: nil).contains(.group(group.id)))
 
         let filtered = SidebarVisibility.compute(
-            sessions: sessions, groups: [group], importedHostsCount: 0, activeTag: "docker")
+            sessions: sessions, groups: [group], importedHostsCount: 0, activeTag: "docker", search: nil)
         #expect(!filtered.children(of: nil).contains(.group(group.id)))
     }
 
@@ -175,7 +201,7 @@ struct SidebarVisibilityTests {
     @Test func aFreshlyCreatedGroupShowsBeforeItHasAnySession() {
         let group = StoredGroup(name: "lab")
         let v = SidebarVisibility.compute(
-            sessions: [], groups: [group], importedHostsCount: 0, activeTag: nil)
+            sessions: [], groups: [group], importedHostsCount: 0, activeTag: nil, search: nil)
         #expect(v.children(of: nil) == [.group(group.id)])
         #expect(v.emptiness == .notEmpty)
     }
@@ -188,7 +214,7 @@ struct SidebarVisibilityTests {
         let moved = session("moved-out")
         let v = SidebarVisibility.compute(
             sessions: [moved], groups: [group],
-            importedHostsCount: 0, activeTag: nil)
+            importedHostsCount: 0, activeTag: nil, search: nil)
         #expect(v.children(of: nil) == [.group(group.id), .session(moved.id)])
         #expect(v.children(of: group.id).isEmpty)
     }
@@ -200,7 +226,7 @@ struct SidebarVisibilityTests {
         let empty = StoredGroup(name: "lab")
         let v = SidebarVisibility.compute(
             sessions: [session("a", group: empty.id, tags: ["web"])],
-            groups: [empty], importedHostsCount: 0, activeTag: "docker")
+            groups: [empty], importedHostsCount: 0, activeTag: "docker", search: nil)
         #expect(v.children(of: nil).isEmpty)
     }
 
@@ -214,7 +240,7 @@ struct SidebarVisibilityTests {
         let inner = StoredGroup(name: "inner", parentID: outer.id)
         let deep = session("deep", group: inner.id)
         let v = SidebarVisibility.compute(
-            sessions: [deep], groups: [outer, inner], importedHostsCount: 0, activeTag: nil)
+            sessions: [deep], groups: [outer, inner], importedHostsCount: 0, activeTag: nil, search: nil)
         #expect(v.children(of: nil) == [.group(outer.id)])
         #expect(v.children(of: outer.id) == [.group(inner.id)])
         #expect(v.children(of: inner.id) == [.session(deep.id)])
@@ -232,7 +258,7 @@ struct SidebarVisibilityTests {
         let deep = session("deep", group: inner.id, tags: ["docker"])
         let v = SidebarVisibility.compute(
             sessions: [deep, session("other", tags: ["web"])],
-            groups: [outer, inner], importedHostsCount: 0, activeTag: "docker")
+            groups: [outer, inner], importedHostsCount: 0, activeTag: "docker", search: nil)
         #expect(v.children(of: nil) == [.group(outer.id)])
         #expect(v.children(of: outer.id) == [.group(inner.id)])
         #expect(v.children(of: inner.id) == [.session(deep.id)])
@@ -247,7 +273,7 @@ struct SidebarVisibilityTests {
         let inner = StoredGroup(name: "inner", parentID: outer.id)
         let v = SidebarVisibility.compute(
             sessions: [session("deep", group: inner.id, tags: ["web"])],
-            groups: [outer, inner], importedHostsCount: 0, activeTag: "docker")
+            groups: [outer, inner], importedHostsCount: 0, activeTag: "docker", search: nil)
         #expect(v.children(of: nil).isEmpty)
         #expect(v.children(of: outer.id).isEmpty)
         #expect(v.emptiness == .filterMatchesNothing)
@@ -262,7 +288,7 @@ struct SidebarVisibilityTests {
         let dropped = session("dropped", tags: ["web"])
         let v = SidebarVisibility.compute(
             sessions: [kept, dropped], groups: [folder],
-            importedHostsCount: 0, activeTag: "docker")
+            importedHostsCount: 0, activeTag: "docker", search: nil)
         #expect(v.session(kept.id)?.name == "kept")
         #expect(v.session(dropped.id) == nil)
         #expect(v.group(folder.id)?.name == "lab")
@@ -285,9 +311,135 @@ struct SidebarVisibilityTests {
         let danglingGroupID = UUID()
         let v = SidebarVisibility.compute(
             sessions: [session("a", group: danglingGroupID)],
-            groups: [], importedHostsCount: 0, activeTag: nil)
+            groups: [], importedHostsCount: 0, activeTag: nil, search: nil)
         #expect(v.children(of: nil).isEmpty)
         #expect(v.group(danglingGroupID) == nil)
         #expect(v.emptiness != .notEmpty)
+    }
+    // MARK: - Search
+
+    /// What a user types when looking for a connection, and the four places
+    /// it is looked for. Host and user name are read through the backend's
+    /// own `displaySummary`, which is where they live since `StoredSession`
+    /// stopped carrying flat SSH columns.
+    @Test func aSearchKeepsTheSessionsWhoseNameHostUsernameOrTagMatch() {
+        let byName = sshSession("web-01", host: "10.0.0.5", username: "deploy")
+        let byHost = sshSession("alpha", host: "web-gateway", username: "root")
+        let byUsername = sshSession("beta", host: "10.0.0.9", username: "webmaster")
+        let byTag = sshSession("gamma", host: "10.0.0.7", username: "root", tags: ["web"])
+        let miss = sshSession("delta", host: "10.0.0.8", username: "root", tags: ["db"])
+        let v = SidebarVisibility.compute(
+            sessions: [byName, byHost, byUsername, byTag, miss], groups: [],
+            importedHostsCount: 0, activeTag: nil, search: searchFor("web"))
+        #expect(v.children(of: nil) == [
+            .session(byName.id), .session(byHost.id), .session(byUsername.id), .session(byTag.id),
+        ])
+        #expect(v.session(miss.id) == nil)
+    }
+
+    /// A folder is on screen because something IN it matches, never because
+    /// it is called that: a folder name counting as a match would show its
+    /// whole contents and claim hits that are not there.
+    @Test func aFolderNameIsNotAMatch() {
+        let folder = StoredGroup(name: "production")
+        let inside = sshSession("web-01", host: "10.0.0.5", username: "deploy", group: folder.id)
+        let v = SidebarVisibility.compute(
+            sessions: [inside], groups: [folder],
+            importedHostsCount: 0, activeTag: nil, search: searchFor("production"))
+        #expect(v.children(of: nil).isEmpty)
+        #expect(v.emptiness == .filterMatchesNothing)
+    }
+
+    /// The ancestor rule the tag filter already answers to, applied to the
+    /// new criterion: the match is two levels down, so neither folder on the
+    /// way to it matches anything of its own.
+    @Test func aSearchKeepsTheAncestorsOfAMatchDeepInTheTree() {
+        let outer = StoredGroup(name: "outer")
+        let inner = StoredGroup(name: "inner", parentID: outer.id)
+        let deep = sshSession("deep", host: "10.0.0.5", username: "deploy", group: inner.id)
+        let v = SidebarVisibility.compute(
+            sessions: [deep, sshSession("other", host: "elsewhere", username: "root")],
+            groups: [outer, inner],
+            importedHostsCount: 0, activeTag: nil, search: searchFor("deploy"))
+        #expect(v.children(of: nil) == [.group(outer.id)])
+        #expect(v.children(of: outer.id) == [.group(inner.id)])
+        #expect(v.children(of: inner.id) == [.session(deep.id)])
+    }
+
+    /// Both criteria hold at once: typing searches WITHIN what the tag
+    /// filter left, rather than replacing it. A session matching the text
+    /// but not the tag is as gone as one matching neither.
+    @Test func theSearchAndTheTagFilterNarrowTogether() {
+        let both = sshSession("web-01", host: "10.0.0.5", username: "root", tags: ["docker"])
+        let tagOnly = sshSession("db-01", host: "10.0.0.6", username: "root", tags: ["docker"])
+        let textOnly = sshSession("web-02", host: "10.0.0.7", username: "root", tags: ["lab"])
+        let v = SidebarVisibility.compute(
+            sessions: [both, tagOnly, textOnly], groups: [],
+            importedHostsCount: 0, activeTag: "docker", search: searchFor("web"))
+        #expect(v.children(of: nil) == [.session(both.id)])
+    }
+
+    /// A predicate matching everything is not a search — which is exactly
+    /// the shape the App layer hands over for an INVALID regular expression,
+    /// so a half-typed pattern shows its error while the sidebar keeps
+    /// drawing what it drew.
+    @Test func aPredicateThatMatchesEverythingIsNotASearch() {
+        let sessions = [sshSession("web-01", host: "10.0.0.5", username: "deploy")]
+        let unsearched = SidebarVisibility.compute(
+            sessions: sessions, groups: [], importedHostsCount: 2,
+            activeTag: nil, search: nil)
+        let matchesAll = SidebarVisibility.compute(
+            sessions: sessions, groups: [], importedHostsCount: 2,
+            activeTag: nil, search: searchFor(""))
+        #expect(matchesAll == unsearched)
+        #expect(matchesAll.showsImportedSection)
+        #expect(!matchesAll.expandsFolders)
+    }
+
+    /// Imported hosts carry no name, host or tag this filter can see — the
+    /// same reason an active tag hides the section, and the same misreading
+    /// avoided: an unfilterable section beside filtered ones would present
+    /// the search as covering everything on screen.
+    @Test func aSearchHidesTheImportedSection() {
+        let v = SidebarVisibility.compute(
+            sessions: [sshSession("web-01", host: "10.0.0.5", username: "deploy")],
+            groups: [], importedHostsCount: 3, activeTag: nil, search: searchFor("web"))
+        #expect(!v.showsImportedSection)
+    }
+
+    /// The store is not empty; the search consumed everything. That is the
+    /// invitation to clear a filter, not the one to create a connection.
+    @Test func aSearchMatchingNothingIsTheFilterEmptyState() {
+        let v = SidebarVisibility.compute(
+            sessions: [sshSession("web-01", host: "10.0.0.5", username: "deploy")],
+            groups: [], importedHostsCount: 0, activeTag: nil, search: searchFor("zzz"))
+        #expect(v.children(of: nil).isEmpty)
+        #expect(v.emptiness == .filterMatchesNothing)
+    }
+
+    /// A match inside a folder the user closed is filtered and still
+    /// invisible — so while a search narrows the tree, the tree draws open.
+    /// An empty search leaves that decision to the user again.
+    @Test func foldersDrawOpenWhileASearchNarrowsTheTree() {
+        let folder = StoredGroup(name: "lab")
+        let inside = sshSession(
+            "web-01", host: "10.0.0.5", username: "deploy", group: folder.id, tags: ["docker"])
+        let searched = SidebarVisibility.compute(
+            sessions: [inside], groups: [folder],
+            importedHostsCount: 0, activeTag: nil, search: searchFor("web"))
+        #expect(searched.expandsFolders)
+
+        let untouched = SidebarVisibility.compute(
+            sessions: [inside], groups: [folder],
+            importedHostsCount: 0, activeTag: nil, search: nil)
+        #expect(!untouched.expandsFolders)
+
+        // A tag filter is not a search: it narrows the tree without
+        // claiming the user's collapse state.
+        let tagged = SidebarVisibility.compute(
+            sessions: [inside], groups: [folder],
+            importedHostsCount: 0, activeTag: "docker", search: nil)
+        #expect(tagged.children(of: folder.id) == [.session(inside.id)])
+        #expect(!tagged.expandsFolders)
     }
 }
