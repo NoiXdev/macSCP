@@ -135,6 +135,27 @@ own:
    property wants a structural boundary (a type that will not compile the
    violation) rather than another anchor.
 
+## Source-scanning guards read comments too
+
+Measured on 2026-08-29, twice in one task.
+
+1. **A comment that quotes the code it describes is indistinguishable from
+   that code to a scanner.** An explanatory comment quoting
+   `.disabled(!snippetsCanExport(…))` verbatim moved another guard's anchor
+   onto the wrong button — the guard was reading the comment. This project
+   writes long explanatory comments AND scans source; the two collide
+   exactly here. Describe the code in prose near a scanner, or expect the
+   scanner to find your description.
+
+2. **A negative check whose SPAN is wrong can never match, and reads like
+   one that is satisfied.** A check looked for `.disabled(` inside an
+   argument list, while a real greying attaches after the trailing closure —
+   so it could not have matched a violation anywhere. It was exposed only
+   because the planted probe **would not compile**: the violation could not
+   be written in the place the check was looking. When a probe cannot be
+   expressed where a check searches, that is not a difficult probe, it is a
+   check pointed at the wrong region.
+
 ## Tests that watch a defect heal
 
 Measured on 2026-08-28, in the teardown-bound sequence: one run that was
