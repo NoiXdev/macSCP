@@ -196,7 +196,24 @@ wird nichts. Zu tun: Klammer lösen und die Breite im `SettingsStore` ablegen.
 
 ---
 
-## E. Tags
+## E. Tags — **erledigt 2026-08-29** (`4e6ee36`)
+
+Entworfen in `2026-08-29-tags-filter-design.md`, zusammen wie hier verlangt.
+E1 blendet die **Filterleiste** aus, nie die Tags; ein aktiver Filter wird
+beim Abschalten geräumt. E2: Schwelle **6** als benannte Konstante in Core,
+Verknüpfung wählbar zwischen „alle" und „irgendeines".
+
+Die Antwort auf beide offenen Fragen kam aus einer Entscheidung, die keine
+der beiden stellte: **der Filter ist immer eine Menge plus eine
+Verknüpfung**, die Leiste nur eine kompakte Darstellung davon. Sonst wären
+„ein Tag aus der Leiste" und „mehrere aus dem Dialog" zwei Zustände, die beim
+Überschreiten der Schwelle ineinander übersetzt werden müssten — und jede
+solche Übersetzung verliert irgendwann still eine Auswahl.
+
+Die Verknüpfung erscheint erst ab zwei gewählten Tags und überlebt das
+Zurückfallen darunter.
+
+*Die ursprünglichen Notizen:*
 
 ### E1. Tag-Suche abschaltbar
 
