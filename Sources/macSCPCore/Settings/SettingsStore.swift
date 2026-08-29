@@ -80,6 +80,7 @@ public final class SettingsStore {
         static let keepAliveIntervalSeconds = "keepAliveIntervalSeconds"
         static let connectTimeoutSeconds = "connectTimeoutSeconds"
         static let sidebarWidth = "sidebarWidth"
+        static let sidebarTagFilterEnabled = "sidebarTagFilterEnabled"
     }
 
     private enum Defaults {
@@ -99,6 +100,7 @@ public final class SettingsStore {
         static let keepAliveIntervalSeconds = 60
         static let connectTimeoutSeconds = 10
         static let sidebarWidth = 190
+        static let sidebarTagFilterEnabled = true
     }
 
     /// Identical to `SessionStore.defaultDirectory` — both stores share the
@@ -279,6 +281,20 @@ public final class SettingsStore {
     public var menuBarEnabled: Bool {
         get { boolValue(for: Keys.menuBarEnabled, default: Defaults.menuBarEnabled) }
         set { setBool(newValue, for: Keys.menuBarEnabled) }
+    }
+
+    /// Whether the session sidebar draws its tag FILTER at all (E1). Default
+    /// on.
+    ///
+    /// It hides the filter, never the tags: tags stay assignable in the
+    /// connection form and visible while a session is edited, so switching
+    /// this off loses nothing and switching it back on holds no surprise.
+    /// `SessionSidebar` clears an active filter when this goes off — a list
+    /// that filters with its control gone cannot be told apart from a list
+    /// that lost entries.
+    public var sidebarTagFilterEnabled: Bool {
+        get { boolValue(for: Keys.sidebarTagFilterEnabled, default: Defaults.sidebarTagFilterEnabled) }
+        set { setBool(newValue, for: Keys.sidebarTagFilterEnabled) }
     }
 
     /// Timestamp of the last update-check ATTEMPT — successful or not — or

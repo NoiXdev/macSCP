@@ -145,9 +145,12 @@ struct SettingsView: View {
         // widest detail content (the Terminal section's Form + live
         // preview). Height raised from the old 460 to 620: the tallest
         // section is "View" (hidden files + 6 file-column toggles + the
-        // auto-refresh row), which measurably scrolled at 480 — 620 was
-        // reached by measuring that section's real rendered height in a
-        // dev build and adding headroom, per the idle-CPU-smoke task step.
+        // tag-filter row + the auto-refresh row), which measurably scrolled
+        // at 480 — 620 was reached by measuring that section's real rendered
+        // height in a dev build and adding headroom, per the idle-CPU-smoke
+        // task step. The tag-filter row (E1) was added to that section
+        // afterwards and has NOT been re-measured against the headroom; if
+        // "View" scrolls, this frame is where that is decided.
         .frame(width: 680, height: 620)
     }
 }
@@ -288,8 +291,9 @@ private struct GeneralSettingsSection: View {
 }
 
 /// "View" options (M18/T7; split out of the former `GeneralSettingsTab`):
-/// the hidden-files toggle, the file-list column checkboxes (M11m/T2), and
-/// the auto-refresh toggle/interval (M9c).
+/// the hidden-files toggle, the file-list column checkboxes (M11m/T2), the
+/// sidebar tag-filter toggle (E1), and the auto-refresh toggle/interval
+/// (M9c).
 private struct AppearanceSettingsSection: View {
     @Bindable var store: SettingsStore
 
@@ -336,6 +340,23 @@ private struct AppearanceSettingsSection: View {
                 Text(L10n.string(
                     "settings.general.columns.footer",
                     "Applies to both panes. Name is always shown."))
+                    .foregroundStyle(.secondary)
+            }
+
+            // The sidebar's tag filter (E1). It hides the FILTER, not the
+            // tags: they stay assignable and visible while a connection is
+            // edited, so switching this off gives up one way of narrowing the
+            // list and takes nothing else away — which is also why switching
+            // it back on can hold no surprise. `SessionSidebar` clears an
+            // active filter as this goes off.
+            Section {
+                Toggle(
+                    L10n.string("settings.general.tagFilter", "Show tag filter in the sidebar"),
+                    isOn: $store.sidebarTagFilterEnabled)
+            } footer: {
+                Text(L10n.string(
+                    "settings.general.tagFilter.footer",
+                    "Tags stay assignable while editing a connection."))
                     .foregroundStyle(.secondary)
             }
 

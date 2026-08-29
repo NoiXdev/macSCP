@@ -3,6 +3,8 @@
 /* Réglages — Onglet Général (M7a/T4) */
 "settings.tab.general" = "Général";
 "settings.general.showHidden" = "Afficher les fichiers cachés";
+"settings.general.tagFilter" = "Afficher le filtre par tag dans la barre latérale";
+"settings.general.tagFilter.footer" = "Les tags restent assignables lors de la modification d'une connexion.";
 "settings.general.showHiddenHint" = "S'applique aux deux volets. Raccourci : ⌘⇧.";
 "settings.general.autoRefresh" = "Actualisation automatique de la vue distante";
 "settings.general.autoRefreshInterval %lld" = "Toutes les %lld secondes";
@@ -162,6 +164,11 @@
 /* Barre latérale des sessions */
 "sidebar.header" = "SESSIONS";
 "sidebar.filter.all" = "Tous";
+"sidebar.filter.button" = "Filtrer par tag";
+"sidebar.filter.button.selected %lld" = "Tags (%lld)";
+"sidebar.filter.join.all" = "Tous les tags";
+"sidebar.filter.join.any" = "N'importe quel tag";
+"sidebar.filter.join.help" = "Si une connexion doit porter tous les tags sélectionnés ou un seul d'entre eux.";
 "sidebar.empty.noSessions" = "Pas encore de connexions enregistrées.";
 "sidebar.empty.noMatches" = "Aucune connexion ne correspond au filtre.";
 "sidebar.empty.clearFilter" = "Tout afficher";

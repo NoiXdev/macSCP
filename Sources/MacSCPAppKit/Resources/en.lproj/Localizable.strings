@@ -1,6 +1,8 @@
 /* Settings — General tab (M7a/T4) */
 "settings.tab.general" = "General";
 "settings.general.showHidden" = "Show hidden files";
+"settings.general.tagFilter" = "Show tag filter in the sidebar";
+"settings.general.tagFilter.footer" = "Tags stay assignable while editing a connection.";
 "settings.general.showHiddenHint" = "Applies to both panes. Shortcut: ⌘⇧.";
 "settings.general.autoRefresh" = "Auto-refresh remote view";
 "settings.general.autoRefreshInterval %lld" = "Every %lld seconds";
@@ -160,6 +162,11 @@
 /* Session sidebar */
 "sidebar.header" = "SESSIONS";
 "sidebar.filter.all" = "All";
+"sidebar.filter.button" = "Filter by tag";
+"sidebar.filter.button.selected %lld" = "Tags (%lld)";
+"sidebar.filter.join.all" = "All tags";
+"sidebar.filter.join.any" = "Any tag";
+"sidebar.filter.join.help" = "Whether a connection must carry all selected tags or just one of them.";
 "sidebar.empty.noSessions" = "No saved connections yet.";
 "sidebar.empty.noMatches" = "No connection matches the filter.";
 "sidebar.empty.clearFilter" = "Show all";

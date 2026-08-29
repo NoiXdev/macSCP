@@ -21,7 +21,7 @@ import Foundation
 /// behavioral one (no view-instantiation tool in this project — see
 /// `SessionSidebar`'s other guards for the same boundary): it pins that the
 /// row constructor is handed the unfiltered `snippets` array verbatim, not
-/// something derived from `activeTag`.
+/// something derived from the sidebar's tag filter.
 ///
 /// Independent VOCABULARIES, shared MACHINERY: two things now serve both
 /// sides — the normalization rule below, and `TagSuggestionRanking`, the

@@ -216,6 +216,16 @@ struct SessionSidebar: View {
     /// the "Hide" context-menu action and the startup/refresh read can set
     /// it, not just this view's own state.
     let hiddenImportsErrorMessage: String?
+    /// Whether the tag FILTER is offered at all (E1) —
+    /// `SettingsStore.sidebarTagFilterEnabled`, read by `ContentView` and
+    /// handed over as a plain fact so nothing in this file has to know a
+    /// settings layer exists.
+    ///
+    /// It hides the filter, never the tags: a session's tags stay assignable
+    /// and visible while it is edited, so switching this off gives up a way
+    /// of narrowing the list and nothing else. Switching it off also clears
+    /// whatever was selected — see the `onChange` in `body`.
+    let showsTagFilterBar: Bool
 
     /// Not persisted — resets to "all expanded" on relaunch.
     ///
@@ -227,7 +237,7 @@ struct SessionSidebar: View {
     @State private var collapsedGroups: Set<UUID> = []
 
     /// The sidebar's search (D3), and the regex switch `SheetSearchField`
-    /// brings with it. View state for the same reason `activeTag` below is:
+    /// brings with it. View state for the same reason `tagFilter` below is:
     /// a query is not a setting, so it starts empty on every relaunch.
     ///
     /// Compiled into a predicate in `body` through the same
@@ -238,19 +248,22 @@ struct SessionSidebar: View {
     @State private var searchText: String = ""
     @State private var searchIsRegex = false
 
-    /// The sidebar's host-tag filter (P3a/T6): `nil` means "show everything".
+    /// The sidebar's host-tag filter (P3a/T6, a set of tags plus a join
+    /// since E2): empty means "show everything".
     /// A VIEW, not a setting — deliberately not persisted and not routed
     /// through `SettingsStore`, so it always starts cleared on relaunch and
     /// never desyncs from whatever the store's sessions/tags currently are.
-    /// Fed to `SidebarVisibility.compute(activeTag:)` below, the ONE place
+    /// The SETTING beside it (`showsTagFilterBar`) says whether the filter is
+    /// offered at all; what is selected is never stored.
+    /// Fed to `SidebarVisibility.compute(tagFilter:)` below, the ONE place
     /// this value is interpreted; nothing else in this file re-derives what
     /// it means.
-    @State private var activeTag: String?
+    @State private var tagFilter: SidebarTagFilter = .none
 
     /// Which session row the sidebar's selection sits on — the row a double
     /// click or Return connects, and the only thing a single click changes.
     ///
-    /// View state, like `activeTag`, and for the same reason: a
+    /// View state, like `tagFilter`, and for the same reason: a
     /// pointer position is not a setting. It is deliberately unrelated to
     /// `activeSessionID`, which says which session the ACTIVE TAB has
     /// connected; a user can point at one session while another is on
@@ -300,7 +313,7 @@ struct SessionSidebar: View {
         // The ONE place this decides what the sidebar shows (P3a/T6) — every
         // section, row list, imported-section gate, and empty state below
         // reads from `visibility`; nothing else in this file re-derives any
-        // part of that decision from `session.tags` or `activeTag` directly.
+        // part of that decision from `session.tags` or `tagFilter` directly.
         // See `SidebarVisibility.compute`'s own doc comment for the rules.
         //
         // The search is compiled once here, next to the one decision it feeds
@@ -312,13 +325,14 @@ struct SessionSidebar: View {
             sessions: viewModel.sessions,
             groups: viewModel.groups,
             importedHostsCount: importedHosts.count,
-            activeTag: activeTag,
+            tagFilter: tagFilter,
             search: searchPredicate)
-        // Not part of `visibility`: whether the filter-chip ROW itself draws
-        // at all is a separate question from what the row's chips filter —
+        // Not part of `visibility`: whether the filter ROW itself draws at
+        // all is a separate question from what the row's chips filter —
         // `SidebarVisibility.compute` has no opinion on the row's own
-        // visibility, only on what an already-chosen `activeTag` does to the
-        // session list.
+        // visibility, only on what an already-chosen `tagFilter` does to the
+        // session list. Which of its two drawings the row uses is not decided
+        // here either; `SidebarTagFilterBar` asks Core.
         let availableTags = SidebarVisibility.availableTags(in: viewModel.sessions)
 
         VStack(alignment: .leading, spacing: 0) {
@@ -350,10 +364,15 @@ struct SessionSidebar: View {
                     .padding(.bottom, 6)
             }
 
-            // Empty-store or filter-cleared: no session carries any tag, so
-            // an empty chip row would be a frame drawn over nothing.
-            if !availableTags.isEmpty {
-                HostTagFilterRow(tags: availableTags, selection: $activeTag)
+            // Two gates, and they say different things. `showsTagFilterBar`
+            // is the user's own (E1): they do not want to filter by tag, so
+            // the control is gone — the tags themselves are untouched and
+            // stay assignable in the connection form. The second is the same
+            // "show only what is possible" rule the search field above obeys:
+            // no session carries any tag, so an empty chip row would be a
+            // frame drawn over nothing.
+            if showsTagFilterBar, !availableTags.isEmpty {
+                SidebarTagFilterBar(tags: availableTags, filter: $tagFilter)
                     .padding(.horizontal, 10)
                     .padding(.bottom, 6)
             }
@@ -410,10 +429,19 @@ struct SessionSidebar: View {
                 if let newValue { selectedSessionID = newValue }
             }
             .onChange(of: viewModel.sessions) { _, sessions in
-                // The active tag's last carrier was deleted, or retagged
-                // away from it: fall back to "no filter" rather than hold a
-                // selection nothing can ever match again.
-                activeTag = SidebarVisibility.resolvedTag(activeTag, in: sessions)
+                // A selected tag's last carrier was deleted, or retagged
+                // away from it: drop that tag rather than hold a selection
+                // nothing can ever match again. The join is kept — losing a
+                // tag is not a reason to forget how the rest are joined.
+                tagFilter = tagFilter.resolved(in: sessions)
+            }
+            .onChange(of: showsTagFilterBar) { _, isShown in
+                // The filter bar was switched off (E1): clear what it had
+                // selected. Otherwise the sidebar would go on filtering with
+                // its control gone, and a list narrowed by something
+                // invisible cannot be told apart from a list that lost
+                // entries.
+                if !isShown { tagFilter = tagFilter.cleared() }
             }
 
             if let errorMessage = viewModel.errorMessage {
@@ -698,7 +726,7 @@ struct SessionSidebar: View {
                 .font(.callout)
             if showsClearFilter {
                 Button(L10n.string("sidebar.empty.clearFilter", "Show all")) {
-                    activeTag = nil
+                    tagFilter = tagFilter.cleared()
                     searchText = ""
                 }
                 .buttonStyle(.plain)
@@ -959,40 +987,6 @@ private struct SidebarGroupRow: View {
     private func dragPayload() -> String {
         dragOrigin.draggedItem = .group(group.id)
         return SidebarDragPayload.text(for: .group(group.id))
-    }
-}
-
-/// The sidebar's host-tag filter row (P3a/T6): "All" plus one chip per tag
-/// carried by any saved session (`tags`, already deduplicated and sorted by
-/// `SidebarVisibility.availableTags` — this view does neither itself).
-/// `selection == nil` reads as "All"; tapping a tag chip sets `selection` to
-/// it, tapping it again does nothing special (tap "All" to clear).
-///
-/// Deliberately simpler than `SnippetTagFilterRow`: no per-tag counts (a
-/// host tag's purpose is to narrow a short list by eye, not to report how
-/// many sessions carry it) and no "No Tag" chip (`SidebarVisibility.compute`
-/// has no untagged-only mode — a host tag filter is either "match this tag"
-/// or "no filter", never "sessions with zero tags"). Both the pill
-/// (`TagFilterChip`) and the horizontal-scroll shell around it
-/// (`TagFilterScrollRow`) are shared with `SnippetTagFilterRow`; only the
-/// chip SEQUENCE inside differs between the two rows.
-private struct HostTagFilterRow: View {
-    let tags: [String]
-    @Binding var selection: String?
-
-    var body: some View {
-        TagFilterScrollRow {
-            TagFilterChip(
-                title: L10n.string("sidebar.filter.all", "All"),
-                isSelected: selection == nil,
-                onSelect: { selection = nil })
-            ForEach(tags, id: \.self) { tag in
-                TagFilterChip(
-                    title: tag,
-                    isSelected: selection == tag,
-                    onSelect: { selection = tag })
-            }
-        }
     }
 }
 

@@ -1,8 +1,8 @@
 import Foundation
 
 /// What the session sidebar shows, for a given store snapshot, the current
-/// imported-host count, an optional active tag filter and an optional search
-/// — computed once, here, instead of decided piecemeal in the view body.
+/// imported-host count, a tag filter and an optional search — computed once,
+/// here, instead of decided piecemeal in the view body.
 ///
 /// This is the type P2's terminal-chrome sidebar work did not have: that
 /// milestone's pane-visibility decision lived as two loose booleans in a
@@ -30,19 +30,19 @@ import Foundation
 /// `compute` filters on a session's own fields — its `tags`, its name, and
 /// the identity line its backend prints; it never receives or references
 /// `Snippet` in any form, and `SnippetMenuModel.build` never receives
-/// `activeTag` — the two computations share no parameter, so a host tag
+/// `tagFilter` — the two computations share no parameter, so a host tag
 /// cannot reach a snippet through this type. That separation holds by
 /// construction, not by a test in this file: a test that calls both functions
 /// independently and checks their outputs would keep passing even if
 /// `compute` were deleted entirely, since nothing here connects them. The
 /// meaningful regression test — whether a caller accidentally threads
-/// `activeTag` into the `snippets` list it hands to a trigger surface — needs
-/// `activeTag` and `snippets` in scope together, which only happens in
+/// the tag filter into the `snippets` list it hands to a trigger surface —
+/// needs that filter and `snippets` in scope together, which only happens in
 /// `SessionSidebar`/`ContentView`; that is where that pin lives
 /// (`SidebarFilterWiringTests`), not here.
 public struct SidebarVisibility: Equatable, Sendable {
     /// Distinguishes "there is nothing to show because the store is empty"
-    /// from "there is nothing to show because the filter — the active tag,
+    /// from "there is nothing to show because the filter — the tag filter,
     /// the search, or the two together — matched nothing". The sidebar needs
     /// different copy for each (an empty store invites creating a session; a
     /// filter matching nothing invites clearing it), and deliberately not
@@ -63,7 +63,7 @@ public struct SidebarVisibility: Equatable, Sendable {
     public let visibleTree: SidebarOrdering.Tree
     /// Whether the sidebar's "IMPORTED" section (unsaved `SSHConfigHost`
     /// entries) should render at all: nothing is narrowing the list —
-    /// `activeTag == nil` and no search — AND `importedHostsCount > 0` (an
+    /// an EMPTY `tagFilter` and no search — AND `importedHostsCount > 0` (an
     /// empty section has nothing to draw either way).
     ///
     /// One reason covers both narrowings: an imported host is not a
@@ -124,24 +124,22 @@ public struct SidebarVisibility: Equatable, Sendable {
     }
 
     /// Computes what the sidebar shows for `sessions`/`groups` under
-    /// `activeTag`, given `importedHostsCount` unsaved `SSHConfigHost`
+    /// `tagFilter`, given `importedHostsCount` unsaved `SSHConfigHost`
     /// entries currently available to import (the sidebar's "IMPORTED"
     /// section — `SSHConfigHost` lives outside `StoredSession`, so only its
     /// count crosses into this decision, not the hosts themselves).
     ///
-    /// `activeTag == nil` is "no filter": every session shows, every folder
+    /// An EMPTY `tagFilter` is "no filter": every session shows, every folder
     /// shows — including one with nothing in it, because a folder is a thing
     /// the user made, so a freshly created one is present before anything is
     /// in it, and one whose last session was just dragged out stays present —
     /// and the imported section shows whenever `importedHostsCount > 0`.
     ///
-    /// A non-nil `activeTag` keeps only sessions whose `tags` contain it,
-    /// compared exactly — against the case `TagList.normalized` deliberately
-    /// preserves instead of folding, so a differently-cased spelling is a
-    /// non-match here. Damping near-duplicates is the input control's job (a
-    /// case-insensitive suggestion list), which is what lets this comparison
-    /// stay exact. A non-nil `activeTag` also always hides the imported
-    /// section, regardless of `importedHostsCount`.
+    /// A non-empty `tagFilter` keeps only the sessions it matches — which
+    /// tags a session must carry, and whether all or any of them, is
+    /// `SidebarTagFilter.matches(tags:)`'s answer, including why the
+    /// comparison is exact. A non-empty `tagFilter` also always hides the
+    /// imported section, regardless of `importedHostsCount`.
     ///
     /// `search` is the SECOND criterion in this same rule (D3), not a second
     /// filtering path: it narrows what is left, so a user who filters by tag
@@ -191,7 +189,7 @@ public struct SidebarVisibility: Equatable, Sendable {
         sessions: [StoredSession],
         groups: [StoredGroup],
         importedHostsCount: Int,
-        activeTag: String?,
+        tagFilter: SidebarTagFilter,
         search: FileSearch.FileSearchPredicate?
     ) -> SidebarVisibility {
         // A predicate that matches everything is not a search — see this
@@ -208,13 +206,13 @@ public struct SidebarVisibility: Equatable, Sendable {
         }
 
         func passes(_ session: StoredSession) -> Bool {
-            if let activeTag, !session.tags.contains(activeTag) { return false }
+            guard tagFilter.matches(tags: session.tags) else { return false }
             return matchesSearch(session)
         }
 
         let visibleSessions = sessions.filter(passes)
         let visibleGroups: [StoredGroup]
-        if activeTag == nil && !searching {
+        if tagFilter.isEmpty && !searching {
             visibleGroups = groups
         } else {
             var reachable: Set<UUID> = []
@@ -226,7 +224,7 @@ public struct SidebarVisibility: Equatable, Sendable {
         }
 
         let visibleTree = SidebarOrdering.Tree(groups: visibleGroups, sessions: visibleSessions)
-        let showsImportedSection = activeTag == nil && !searching && importedHostsCount > 0
+        let showsImportedSection = tagFilter.isEmpty && !searching && importedHostsCount > 0
 
         // Structural, not incidental: this is the actual "is there anything
         // to draw" question, asked of the level the sidebar starts drawing at
@@ -268,14 +266,4 @@ public struct SidebarVisibility: Equatable, Sendable {
         Array(TagSuggestionRanking.counts(tagLists: sessions.map(\.tags)).keys).sorted()
     }
 
-    /// `activeTag` if some session still carries it, `nil` otherwise — so a
-    /// caller that restores a persisted filter selection (or reacts to the
-    /// last session with a tag being retagged or deleted) can fall back to
-    /// "no filter" instead of holding a selection nothing can ever match.
-    public static func resolvedTag(_ activeTag: String?, in sessions: [StoredSession]) -> String? {
-        guard let activeTag, sessions.contains(where: { $0.tags.contains(activeTag) }) else {
-            return nil
-        }
-        return activeTag
-    }
 }

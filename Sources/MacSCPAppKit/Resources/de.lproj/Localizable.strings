@@ -1,6 +1,8 @@
 /* Settings — Allgemein-Tab (M7a/T4) */
 "settings.tab.general" = "Allgemein";
 "settings.general.showHidden" = "Versteckte Dateien anzeigen";
+"settings.general.tagFilter" = "Tag-Filter in der Seitenleiste anzeigen";
+"settings.general.tagFilter.footer" = "Tags bleiben beim Bearbeiten einer Verbindung zuweisbar.";
 "settings.general.showHiddenHint" = "Gilt für beide Seiten. Kürzel: ⌘⇧.";
 "settings.general.autoRefresh" = "Remote-Ansicht automatisch aktualisieren";
 "settings.general.autoRefreshInterval %lld" = "Alle %lld Sekunden";
@@ -160,6 +162,11 @@
 /* Session-Seitenleiste */
 "sidebar.header" = "SESSIONS";
 "sidebar.filter.all" = "Alle";
+"sidebar.filter.button" = "Nach Tag filtern";
+"sidebar.filter.button.selected %lld" = "Tags (%lld)";
+"sidebar.filter.join.all" = "Alle Tags";
+"sidebar.filter.join.any" = "Beliebiger Tag";
+"sidebar.filter.join.help" = "Ob eine Verbindung alle gewählten Tags tragen muss oder nur eines davon.";
 "sidebar.empty.noSessions" = "Noch keine gespeicherten Verbindungen.";
 "sidebar.empty.noMatches" = "Keine Verbindung passt zum Filter.";
 "sidebar.empty.clearFilter" = "Alle anzeigen";

@@ -2,12 +2,18 @@ import SwiftUI
 
 /// A single selectable capsule chip for a tag-filter row. Shared between the
 /// snippet-tag filter row (`SnippetsSheet`, Terminal-Snippets Task 5) and the
-/// sidebar's host-tag filter row (P3a/T6): both rows show a small set of
-/// selectable pills that differ only in what feeds them (per-tag snippet
-/// counts vs. a plain sorted tag list) and how many special chips bracket the
-/// per-tag ones ("All" + "No Tag" vs. just "All") — the PILL ITSELF has
-/// nothing tag-specific in it, so it lives once here rather than as two
-/// files with the same literal body.
+/// sidebar's host-tag filter (`SidebarTagFilterBar`, P3a/T6): both rows show
+/// a small set of selectable pills that differ only in what feeds them
+/// (per-tag snippet counts vs. a plain sorted tag list) and how many special
+/// chips bracket the per-tag ones ("All" + "No Tag" vs. just "All") — the
+/// PILL ITSELF has nothing tag-specific in it, so it lives once here rather
+/// than as two files with the same literal body.
+///
+/// Since E2 the sidebar draws one more of them: the button its row collapses
+/// into once there are too many tags to show as chips. That one is a pill for
+/// the same reason the chips are — it sits in the same place, selected or
+/// not — and reusing this keeps the collapsed row from looking like a
+/// different control than the one it replaces.
 struct TagFilterChip: View {
     let title: String
     let isSelected: Bool

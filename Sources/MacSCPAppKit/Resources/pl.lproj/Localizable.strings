@@ -3,6 +3,8 @@
 /* Ustawienia — zakładka Ogólne (M7a/T4) */
 "settings.tab.general" = "Ogólne";
 "settings.general.showHidden" = "Pokaż ukryte pliki";
+"settings.general.tagFilter" = "Pokaż filtr tagów na pasku bocznym";
+"settings.general.tagFilter.footer" = "Tagi nadal można przypisywać podczas edycji połączenia.";
 "settings.general.showHiddenHint" = "Dotyczy obu paneli. Skrót: ⌘⇧.";
 "settings.general.autoRefresh" = "Automatyczne odświeżanie widoku zdalnego";
 "settings.general.autoRefreshInterval %lld" = "Co %lld sekund";
@@ -162,6 +164,11 @@
 /* Pasek boczny sesji */
 "sidebar.header" = "SESJE";
 "sidebar.filter.all" = "Wszystkie";
+"sidebar.filter.button" = "Filtruj po tagu";
+"sidebar.filter.button.selected %lld" = "Tagi (%lld)";
+"sidebar.filter.join.all" = "Wszystkie tagi";
+"sidebar.filter.join.any" = "Dowolny tag";
+"sidebar.filter.join.help" = "Czy połączenie musi mieć wszystkie wybrane tagi, czy tylko jeden z nich.";
 "sidebar.empty.noSessions" = "Brak zapisanych połączeń.";
 "sidebar.empty.noMatches" = "Żadne połączenie nie pasuje do filtra.";
 "sidebar.empty.clearFilter" = "Pokaż wszystkie";

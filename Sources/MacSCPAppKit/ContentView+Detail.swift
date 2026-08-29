@@ -105,7 +105,11 @@ extension ContentView {
             onHideImported: { host in hideImported(host) },
             onShowHiddenImports: { showHiddenImportsSheet = true },
             hiddenImportsCount: hiddenImportAliases.count,
-            hiddenImportsErrorMessage: hiddenImportsErrorMessage
+            hiddenImportsErrorMessage: hiddenImportsErrorMessage,
+            // E1, read here rather than in the sidebar: the setting is a
+            // fact about what the window offers, and the sidebar reacts to
+            // the value without knowing where it comes from.
+            showsTagFilterBar: settingsStore.sidebarTagFilterEnabled
         )
         // Opens at the width this window was last left at and can be
         // dragged anywhere inside `SettingsStore.sidebarWidthRange` — see

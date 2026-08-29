@@ -63,6 +63,25 @@ struct SettingsStoreTests {
         #expect(reloaded.menuBarEnabled == false)
     }
 
+    /// The sidebar's tag filter bar is on unless the user turns it off (E1):
+    /// a fresh install shows the filter it has, and switching it off is a
+    /// decision that has to be made once and then persists.
+    @Test func sidebarTagFilterEnabledDefaultsTrue() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.sidebarTagFilterEnabled == true)
+    }
+
+    @Test func sidebarTagFilterEnabledRoundtrips() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.sidebarTagFilterEnabled = false
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.sidebarTagFilterEnabled == false)
+    }
+
     @Test func maxConcurrentTransfersClampsBelowRange() {
         let dir = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
