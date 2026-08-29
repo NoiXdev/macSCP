@@ -58,8 +58,12 @@ enum SheetOverflowAction: String, CaseIterable, Identifiable {
 /// produces the hover tooltip, the latter is what VoiceOver announces
 /// instead of the SF Symbol's name.
 struct SheetOverflowMenu: View {
-    static let menuLabelKey = "sheets.moreActions"
-    static let menuLabelDefault = "More actions"
+    /// `nonisolated`, because a `View` is `@MainActor` and these two are
+    /// read by tests that are not. They are immutable strings with nothing
+    /// actor-relevant about them, so the isolation buys nothing and costs a
+    /// warning — and this project's CI fails above one warning location.
+    nonisolated static let menuLabelKey = "sheets.moreActions"
+    nonisolated static let menuLabelDefault = "More actions"
 
     let actions: [SheetOverflowAction]
     let perform: (SheetOverflowAction) -> Void
