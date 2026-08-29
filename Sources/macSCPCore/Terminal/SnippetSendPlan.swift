@@ -9,7 +9,11 @@ import Foundation
 /// what a Return keypress sends. The menu entry says "insert"; bytes that
 /// run things are not an insert. So the refusal is part of the result type
 /// and the caller has to look at it.
-public enum SnippetSendPlan: Equatable {
+///
+/// `Sendable` because `SnippetDryRun` carries one and is itself a value the
+/// App layer moves around. Both payloads are value types; the conformance
+/// adds no case and changes no verdict.
+public enum SnippetSendPlan: Equatable, Sendable {
     case send([UInt8])
     /// Inserting is impossible here without also executing — the caller
     /// explains and offers to execute instead.

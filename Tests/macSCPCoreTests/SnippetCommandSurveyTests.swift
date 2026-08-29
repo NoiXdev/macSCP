@@ -554,33 +554,90 @@ struct SnippetCommandSurveyTests {
 
     // MARK: - The gate is not the highlighter
 
+    /// The Core files allowed to name `SnippetHighlighter` in code, and why
+    /// each one is.
+    ///
+    /// Not a list of files to scan — every Core file is still scanned. This
+    /// is the set the scan's answer must EQUAL, which is what makes it fail
+    /// in both directions: a new file reaching for the highlighter fails
+    /// here and has to be argued for, and an entry whose file stopped
+    /// naming the highlighter fails here too instead of sitting on as a
+    /// permission nobody uses.
+    private static let coreFilesAllowedToColour: Set<String> = [
+        // The colouring tokenizer itself.
+        "SnippetHighlighter.swift",
+        // The dry run is display and only display: it carries the colouring
+        // for the surfaces that show a resolved command, and takes its
+        // verdict from `SnippetVariableSubstitution.firstDeclarationProblem`
+        // rather than from a token. `theDryRunTakesItsVerdictFromTheGate
+        // AndNotFromTheColouring` is what holds that second half.
+        "SnippetDryRun.swift",
+    ]
+
     /// Review rounds travelled the path "a change made for colouring moved a
     /// security verdict". They cannot any more, because the gate shares no
     /// code with the highlighter — and this test is what keeps that
     /// structural, rather than a thing somebody remembers.
     ///
     /// The scope is DERIVED, not listed: every Swift file under
-    /// `Sources/macSCPCore` except the highlighter's own is scanned, so a
-    /// third file introduced into the gate path is covered the moment it
-    /// exists. An earlier version named two files, and a helper the survey
-    /// delegated to would have slipped between them. The App layer is out of
-    /// scope on purpose — colouring a text field is the highlighter's job
-    /// and `SnippetCommandEditor` is supposed to call it.
+    /// `Sources/macSCPCore` is scanned, so a file introduced into the gate
+    /// path is covered the moment it exists. An earlier version named the
+    /// files to scan, and a helper the survey delegated to would have
+    /// slipped between them. The App layer is out of scope on purpose —
+    /// colouring a text field is the highlighter's job and
+    /// `SnippetCommandEditor` is supposed to call it.
+    ///
+    /// The comparison is a whole-set equality against
+    /// `coreFilesAllowedToColour` rather than a `!contains` per file. A
+    /// `!contains` is a negative check that would go on passing if the scan
+    /// stopped finding anything at all; an equality names what it expects
+    /// to find and fails the moment the answer moves in either direction.
     ///
     /// A source scan, in the idiom the App layer's wiring guards already
     /// use — see `swiftFiles(under:)` for how the repo root is recovered.
     @Test func noCoreFileButTheHighlighterItselfNamesTheHighlighter() throws {
         let files = try Self.coreSourceFiles()
         #expect(!files.isEmpty, "the Core source tree could not be walked")
-        for file in files where file.lastPathComponent != "SnippetHighlighter.swift" {
+        var colouring: Set<String> = []
+        for file in files {
             let code = try Self.codeLines(of: file)
-            #expect(!code.contains { $0.contains("SnippetHighlighter") }, """
-                \(file.lastPathComponent) reaches into SnippetHighlighter. The highlighter is a \
-                colouring tokenizer whose approximations are invisible when colouring and \
-                load-bearing when gating; sharing it is how review round after review round got \
-                a payload past this check.
-                """)
+            if code.contains(where: { $0.contains("SnippetHighlighter") }) {
+                colouring.insert(file.lastPathComponent)
+            }
         }
+        #expect(colouring == Self.coreFilesAllowedToColour, """
+            A Core file reaches into SnippetHighlighter that is not allowed to, or one that is \
+            allowed to no longer does. The highlighter is a colouring tokenizer whose \
+            approximations are invisible when colouring and load-bearing when gating; sharing it \
+            with the gate is how review round after review round got a payload past this check.
+            """)
+    }
+
+    /// `SnippetDryRun` sits on both sides of the line — it shows a resolved
+    /// command in colour AND reports whether the gate refused it — which is
+    /// why it is the one file the scan above lets through. What keeps that
+    /// from being an opening is the direction it faces: it asks
+    /// `SnippetVariableSubstitution` for a finished verdict and never the
+    /// recogniser that produced it, so no token of the highlighter's is
+    /// anywhere near a decision.
+    ///
+    /// The negative half is the last expectation, and it is anchored by the
+    /// two positive ones above it: without them, a rename of either symbol
+    /// — or the file being emptied — would leave a check that scans for an
+    /// absence, finds it, and reports success.
+    @Test func theDryRunTakesItsVerdictFromTheGateAndNotFromTheColouring() throws {
+        let files = try Self.coreSourceFiles()
+        let dryRun = try #require(
+            files.first { $0.lastPathComponent == "SnippetDryRun.swift" },
+            "SnippetDryRun.swift is not in the Core source tree")
+        let code = try Self.codeLines(of: dryRun)
+        #expect(code.contains { $0.contains("SnippetHighlighter") })
+        #expect(code.contains { $0.contains("firstDeclarationProblem") })
+        #expect(!code.contains { $0.contains("SnippetCommandSurvey") }, """
+            SnippetDryRun names SnippetCommandSurvey. It is allowed to colour precisely because \
+            it does not read the recogniser — it takes a finished verdict from \
+            SnippetVariableSubstitution instead.
+            """)
     }
 
     /// The comparison-unit decision, kept structural — and kept in the
