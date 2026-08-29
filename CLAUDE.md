@@ -135,6 +135,22 @@ own:
    property wants a structural boundary (a type that will not compile the
    violation) rather than another anchor.
 
+## A value a test must not leak has two exits, not one
+
+Measured on 2026-08-30, while proving that a substituted placeholder value
+reaches no audit line, export or error message.
+
+`#expect` reports **the source text of the expression it checks**, not only
+the values. So a secret written literally into an expectation leaks through
+a failure message — the very thing the test exists to forbid. Keep such a
+value in a named constant and compute the `Bool` before the expectation
+(`#expect(inAuditLine == false)`), so neither the value nor its spelling can
+reach the output.
+
+The second exit is the one everybody remembers: the code under test. The
+first is the test itself, and it opens only when the test fails, which is
+exactly when someone is looking.
+
 ## Source-scanning guards read comments too
 
 Measured on 2026-08-29, twice in one task.
