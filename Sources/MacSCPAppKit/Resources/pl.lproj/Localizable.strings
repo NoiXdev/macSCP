@@ -883,7 +883,6 @@
 "snippets.export.confirm.title" = "Wyeksportować fragmenty?";
 "snippets.export.confirm" = "Eksportuj";
 "snippets.export.confirm.message %lld" = "Fragmenty zapisane do pliku: %lld.";
-"snippets.import" = "Importuj…";
 "snippets.import.nameless %lld" = "Nie zaimportowano bez nazwy: %lld";
 "snippets.import.error" = "Nie udało się odczytać tego pliku jako fragmentów macSCP. Może to być inny rodzaj eksportu albo plik jest uszkodzony.";
 "snippets.import.result %lld" = "%lld zaimportowano";

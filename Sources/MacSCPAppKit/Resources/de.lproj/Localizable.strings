@@ -881,7 +881,6 @@
 "snippets.export.confirm.title" = "Snippets exportieren?";
 "snippets.export.confirm" = "Exportieren";
 "snippets.export.confirm.message %lld" = "%lld Snippets werden in die Datei geschrieben.";
-"snippets.import" = "Importieren…";
 "snippets.import.nameless %lld" = "Ohne Namen nicht importiert: %lld";
 "snippets.import.error" = "Diese Datei konnte nicht als macSCP-Snippets gelesen werden. Es könnte sich um einen anderen Exporttyp handeln, oder die Datei ist beschädigt.";
 "snippets.import.result %lld" = "%lld importiert";

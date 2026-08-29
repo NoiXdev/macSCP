@@ -124,6 +124,32 @@ Bei den Schlüsseln wird gar kein Export angeboten (die Schlüssel-Exporte
 sitzen in der Zeile), und bei den Logins fällt der Export-Eintrag weg, statt
 grau zu werden, wenn die Suche nichts übrig lässt.
 
+### Nachgezogen am 2026-08-29 — das dritte Sheet, und was die Zählung fand
+
+`SnippetsSheet` hatte dieselbe Form und zeichnete weiter eigene
+Exportieren…/Importieren…-Knöpfe. Nachgezählt vor dem Umbau: **6** Knöpfe
+(Neu, Bearbeiten, Löschen, Exportieren, Importieren, Schließen) — dieselbe
+Zahl wie Login-Sets, aus demselben Grund. Danach: **4** (Neu, Bearbeiten,
+Löschen, Schließen) plus das Menü. „Löschen…" blieb sichtbar. Der
+Einzel-Export in der Zeile blieb, wo er ist: er meint immer die
+rechtsgeklickte Zeile und fragt nicht nach.
+
+Die Wächter zählten die Sheets bis dahin **von Hand** auf — genau das Loch,
+das dieses Sheet drei Milestones lang offen gehalten hat. Die Liste ist
+ersetzt: `SheetOverflowMenuWiringGuardTests` findet die Sheets jetzt selbst,
+und ein zweiter Scan geht über *jede* Fußzeile im App-Layer, nicht nur über
+die mit Menü — sonst bleibt ein viertes abweichendes Sheet wieder unsichtbar,
+weil es in der geprüften Menge gar nicht vorkommt.
+
+Dieser Scan fand sofort einen Fall: **`AuditLogSheet` zeichnet „Als Text
+exportieren…" in der Fußzeile.** Nicht mit umgebaut, sondern als
+festgeschriebene Ausnahme eingetragen — die Aktion schreibt ein Protokoll zum
+Mitlesen, kein wieder einlesbares Dokument, hat kein Importieren neben sich
+und trägt nicht die Wortwahl des Menüs. Ob sie unter die Regel fällt, ist
+eine Entscheidung über *dieses* Sheet und keine mechanische Wiederholung.
+Der Eintrag ist angenagelt: verschwindet der Knopf, ohne dass die Ausnahme
+gelöscht wird, schlägt der Test fehl.
+
 ## Reihenfolge
 
 Mit der Absage an 4 sind alle verbliebenen Punkte voneinander unabhängig.

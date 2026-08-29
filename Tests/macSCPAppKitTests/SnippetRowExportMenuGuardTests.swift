@@ -7,10 +7,11 @@ import Testing
 /// the destructive entry stays last), the Export entry sets `selectedID`
 /// before calling `performExport([snippet])` (so it always acts on the
 /// right-clicked snippet, not whatever was selected before), and
-/// `"snippets.export"` occurs exactly twice across the whole file — once for
-/// the footer button, once for the row. That count is what actually catches
-/// the regression a plain `contains` cannot: a second, drifted key added
-/// just for the row would leave a `contains` check green.
+/// `"snippets.export"` occurs exactly once across the whole file — the row
+/// is now its only user, the footer's own Export… having moved under the
+/// three-dot menu, where `SheetOverflowAction` labels it. That count is what
+/// actually catches the regression a plain `contains` cannot: a second,
+/// drifted key added just for the row would leave a `contains` check green.
 ///
 /// Known blind spots, same shape as `SnippetActionSheetKeyboardShortcutGuardTests`
 /// and `SnippetMenuItemsKeyboardShortcutGuardTests`, whose block-isolation
@@ -56,14 +57,15 @@ struct SnippetRowExportMenuGuardTests {
             """)
     }
 
-    @Test func exportLabelKeyIsSharedByExactlyFooterAndRow() throws {
+    @Test func exportLabelKeyBelongsToTheRowAlone() throws {
         let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
         let count = Self.occurrenceCount(of: "\"snippets.export\"", in: source)
-        #expect(count == 2, """
-            "snippets.export" must appear exactly twice in SnippetsSheet.swift \
-            -- once for the footer button, once for the row -- found \(count). \
-            A new, drifted key for the row would leave the other assertions in \
-            this suite green.
+        #expect(count == 1, """
+            "snippets.export" must appear exactly once in SnippetsSheet.swift \
+            -- the row's entry, now its only user -- found \(count). A new, \
+            drifted key for the row would leave the other assertions in this \
+            suite green; a second one reappearing in the footer would mean the \
+            file action climbed back out of the three-dot menu.
             """)
     }
 
@@ -138,8 +140,8 @@ struct SnippetRowExportMenuGuardTests {
     // Deliberately line-based, like `SnippetMenuItemsKeyboardShortcutGuardTests`'s
     // scanner: find where the row's `.contextMenu { ... }` block starts and
     // count braces until it closes, then read within that isolated span --
-    // so a same-named key or call elsewhere in the file (the footer, for
-    // instance) never gets mistaken for the row's.
+    // so a same-named key or call elsewhere in the file never gets mistaken
+    // for the row's.
 
     private enum ScanError: Error { case contextMenuNotFound, keyNotFound }
 

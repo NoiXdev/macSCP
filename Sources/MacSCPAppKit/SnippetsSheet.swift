@@ -162,26 +162,47 @@ struct SnippetsSheet: View {
                 }
                 .buttonStyle(.polished)
                 .disabled(selectedSnippet == nil)
-                // Arms the export confirmation with the resolved scope — the
-                // selection when it is one of the rows on screen, otherwise
-                // every row on screen, per `ListExportScope`. Enablement is
-                // `snippetsCanExport` (`SnippetsPresentation.swift`), which
-                // also rules out an unreadable store explicitly rather than
-                // leaning on `visibleSnippets` happening to be empty in that
-                // case too.
-                Button(L10n.string("snippets.export", "Export…")) {
-                    // `snippetsCanExport` already rules out an empty visible
-                    // list, so the resolved scope always has at least one
-                    // snippet in it.
-                    pendingExport = ListExportScope.resolve(
-                        selectedID: selectedID, from: visibleSnippets)
+                // Export and Import act on a file on disk, so they sit under
+                // the three-dot menu, while New/Edit/Delete above act on the
+                // list selection and stay visible (backlog 2026-08-20,
+                // point 5) — the same move `LoginSetsSheet` and `SSHKeysSheet`
+                // already made. Delete… would fit under the menu just as well
+                // and deliberately does not go there: it is destructive.
+                //
+                // The single-snippet export in the row's `.contextMenu` stays
+                // where it is: it is not the footer's action, it always means
+                // the right-clicked row, and it exports unconfirmed.
+                //
+                // Enablement is `snippetsCanExport`
+                // (`SnippetsPresentation.swift`), which also rules out an
+                // unreadable store explicitly rather than leaning on
+                // `visibleSnippets` happening to be empty in that case too.
+                // It now decides whether the entry EXISTS rather than
+                // whether it is greyed out, which is what replaces the
+                // disabled state the footer button carried before. Spelled as
+                // prose deliberately: writing that modifier out here would
+                // hand the source-text guards in this target a second copy of
+                // an anchor they scan for.
+                SheetOverflowMenu(
+                    actions: SheetOverflowAction.offered(
+                        canExport: snippetsCanExport(
+                            load: load, visibleSnippets: visibleSnippets),
+                        canImport: true)
+                ) { action in
+                    switch action {
+                    case .export:
+                        // Arms the export confirmation with the resolved
+                        // scope — the selection when it is one of the rows on
+                        // screen, otherwise every row on screen, per
+                        // `ListExportScope`. `snippetsCanExport` already ruled
+                        // out an empty visible list, so the resolved scope
+                        // always has at least one snippet in it.
+                        pendingExport = ListExportScope.resolve(
+                            selectedID: selectedID, from: visibleSnippets)
+                    case .import:
+                        showImportFileImporter = true
+                    }
                 }
-                .buttonStyle(.polished)
-                .disabled(!snippetsCanExport(load: load, visibleSnippets: visibleSnippets))
-                Button(L10n.string("snippets.import", "Import…")) {
-                    showImportFileImporter = true
-                }
-                .buttonStyle(.polished)
                 Button(L10n.string("common.close", "Close")) { dismiss() }
                     .buttonStyle(.polishedProminent)
                     .keyboardShortcut(.defaultAction)
