@@ -163,9 +163,49 @@ public final class TabsViewModel<Tab: Identifiable> where Tab.ID == UUID {
         activeTabID = id
     }
 
+    /// The tab that already holds stored session `storedSessionID`, or
+    /// `nil` when none does. It answers WHICH tab, and deliberately not
+    /// what to do about one: jumping there and opening a second tab anyway
+    /// are both sensible, and choosing between them is the user's, through
+    /// the app's own query.
+    ///
+    /// **The FIRST in tab order wins.** More than one holder becomes
+    /// reachable the moment somebody answers "open anyway" once, and from
+    /// then on the order the tabs are in is the only rule that invents no
+    /// preference — not the most recently connected, not the one nearest
+    /// the active tab. `tabs` IS that order (`move(tabID:to:)` is what
+    /// changes it), so the answer is derived here from the array that
+    /// defines it, rather than from anything remembered alongside it.
+    ///
+    /// **Why the caller passes the projection.** This type is generic over
+    /// its payload and cannot read a stored-session id off one. The rule
+    /// still belongs here: the app target has no test target of its own, so
+    /// a version of this written at the call site would be the one part of
+    /// the feature nothing could check.
+    ///
+    /// **Why `storedSessionID` is not optional.** A tab connected ad hoc
+    /// projects `nil`, and asking this question with an optional would let
+    /// two `nil`s match — every ad-hoc tab would hold every session at
+    /// once. That is not a rounding error in the rule but its inverse: a
+    /// typed connection to the same host can carry other credentials,
+    /// another key, another jump host, so it looks like the stored session
+    /// and is not one. Taking a plain `UUID` makes the mistake unspellable
+    /// instead of guarded against.
+    public func tabHolding(
+        _ storedSessionID: UUID, storedSessionIDOf: (Tab) -> UUID?
+    ) -> Tab? {
+        tabs.first { storedSessionIDOf($0) == storedSessionID }
+    }
+
     /// Sidebar-connect rule (spec 1.2): an unconnected active tab is reused
     /// in place; a connected one spawns a fresh tab so the running session
     /// is never torn down by a sidebar connect.
+    ///
+    /// Unchanged by the "session is already open" query, and deliberately:
+    /// that query is asked BEFORE this rule is consulted (see the app's
+    /// sidebar start), and answering it with "open anyway" means arriving
+    /// here and getting exactly what a start has always got — including the
+    /// reuse of an unconnected active tab.
     public func sidebarConnectTarget(
         activeTabIsConnected: Bool, makeTab: () -> Tab
     ) -> Tab {

@@ -409,6 +409,10 @@
 "tabs.menu.openExternalTerminal" = "In externem Terminal öffnen";
 "tabs.menu.saveAsSession" = "Als Sitzung speichern…";
 "tabs.closeOthers.title" = "Andere Tabs schließen?";
+"tabs.alreadyOpen.title" = "Diese Sitzung ist schon offen";
+"tabs.alreadyOpen.message %@" = "„%@“ ist bereits in einem Tab geöffnet.";
+"tabs.alreadyOpen.jump" = "Zum vorhandenen Tab";
+"tabs.alreadyOpen.openAnyway" = "Trotzdem öffnen";
 
 /* Sitzungs-Export/Import — Sidebar-Menüs (M9a/T3) */
 "export.menu.single" = "Exportieren…";

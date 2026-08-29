@@ -243,6 +243,41 @@ struct ContentView: View {
     /// recomputing counts that can change while it is on screen.
     @State var closeOthersWarningText: String = ""
 
+    // MARK: - Session already open ("Sitzung ist schon offen", C2)
+
+    /// Everything the "already open" query needs, captured when the query
+    /// is raised: what was asked for, where the existing session is, and
+    /// how the row wanted it shown.
+    struct AlreadyOpenSessionRequest: Identifiable {
+        let id = UUID()
+        /// What the sidebar row asked to start.
+        let stored: StoredSession
+        /// The tab "Go to Existing Tab" activates. An id rather than the
+        /// tab itself: the tab can be closed while the query is up, and
+        /// `TabsViewModel.activate(_:)` answers an id naming no tab by
+        /// leaving the active tab alone.
+        let existingTabID: UUID
+        /// The row's pane override, carried through the query so "Open
+        /// Anyway" starts the SAME thing that was asked for —
+        /// `.terminalOnly` for the row's "Open Terminal" entry, `nil` for
+        /// an ordinary connect. Without it, answering the query would
+        /// quietly turn an "Open Terminal" into a plain connect.
+        let paneVisibility: PaneVisibility?
+    }
+
+    /// A sidebar start that stopped because some tab already holds the
+    /// stored session it named — drives the query in
+    /// `ContentView+Sheets.swift`, and is `nil` whenever none is showing.
+    ///
+    /// No frozen message text beside it, unlike `closeRequest` and its
+    /// `closeWarningText`: that pair exists because `TabCloseWarning
+    /// .message` is recomputed from transfers that keep finishing while the
+    /// dialog is up, so the text could go blank mid-dialog. What this query
+    /// says is the session's NAME, and the request already carries the
+    /// `StoredSession` itself — a value, taken when the query was raised
+    /// and unable to change afterwards.
+    @State var alreadyOpenRequest: AlreadyOpenSessionRequest?
+
     // MARK: - Audit log (M9b/T3)
 
     /// Session whose audit log sheet is open, or `nil` when none is —
@@ -1474,38 +1509,102 @@ struct ContentView: View {
 
     /// Sidebar connect — a double click on a row, Return on the selected
     /// row, or the row's own "Connect" entry, never a single click (see
-    /// `SessionRowActivation`): pick the target tab per the tab rule — the
-    /// active tab when it is unconnected, otherwise a FRESH tab. A running
-    /// session is therefore never torn down by a sidebar connect (M8a spec
-    /// 1.2).
+    /// `SessionRowActivation`). One line onto `sidebarStart`, which is
+    /// where the already-open query and the tab rule both live.
     func connectFromSidebar(_ stored: StoredSession) {
-        let target = tabsModel.sidebarConnectTarget(
-            activeTabIsConnected: activeTab.isConnected, makeTab: makeTab)
-        connect(in: target, stored: stored)
+        sidebarStart(stored, paneVisibility: nil)
     }
 
-    /// Sidebar row "Open Terminal" (P3c/T2): the SAME connect a sidebar
-    /// row performs, differing in one argument — the session comes up
-    /// showing the terminal instead of the file browser.
+    /// Sidebar row "Open Terminal" (P3c/T2): the SAME start a sidebar row
+    /// performs, differing in one argument — the session comes up showing
+    /// the terminal instead of the file browser.
     ///
-    /// The tab rule (`sidebarConnectTarget`), the in-flight guard, an
-    /// already-connected session, and every failure path are therefore not
-    /// "the same as Connect" by inspection but by construction: this method
-    /// is `connectFromSidebar` plus `paneVisibility:`. Two entries that
-    /// behaved differently for no reason would only confuse.
+    /// The already-open query, the tab rule (`sidebarConnectTarget`), the
+    /// in-flight guard, an already-connected session, and every failure
+    /// path are therefore not "the same as Connect" by inspection but by
+    /// construction: this method is `connectFromSidebar` with the pane
+    /// override filled in, and both are one line onto `sidebarStart`. Two
+    /// entries that behaved differently for no reason would only confuse.
     func openTerminalFromSidebar(_ stored: StoredSession) {
+        sidebarStart(stored, paneVisibility: .terminalOnly)
+    }
+
+    /// What a sidebar row's start actually does ("Sitzung ist schon offen",
+    /// C2): when a tab already holds this stored session, raise the query
+    /// and start nothing; otherwise go ahead exactly as before.
+    ///
+    /// Identity is `SessionTab.activeStoredSessionID` and nothing else —
+    /// an ad-hoc connection to the same host never counts, because a typed
+    /// connection can carry other credentials, another key, another jump
+    /// host. Comparing hosts would be guessing at an equality this program
+    /// does not know.
+    ///
+    /// The ACTIVE tab holding the session is not a special case: the query
+    /// is raised for it too, and jumping is then a no-op — the right effect
+    /// of that choice rather than a reason to withhold it, since "open
+    /// another one" means exactly what it means anywhere else.
+    ///
+    /// Reconnecting in place never reaches here (`reconnect(_:)` calls
+    /// `connect(in:stored:)` directly), which is correct: that is the same
+    /// tab, and nothing about it is doubled.
+    ///
+    /// **The return value is what the query would be raised with.** It is
+    /// discardable and every caller in this file discards it. Setting the
+    /// `@State` is the one line no test of this project can observe — a
+    /// `ContentView` built outside a SwiftUI hierarchy drops writes to
+    /// `@State` (measured in `ConnectAttemptHandoffTests`' "Isolation,
+    /// round 2") — so the value it would be set to is handed back instead
+    /// of only being parked, and `AlreadyOpenSessionTests` reads it there.
+    @discardableResult
+    func sidebarStart(
+        _ stored: StoredSession, paneVisibility: PaneVisibility?
+    ) -> AlreadyOpenSessionRequest? {
+        guard let existing = tabsModel.tabHolding(
+            stored.id, storedSessionIDOf: \.activeStoredSessionID)
+        else {
+            startWithoutAsking(stored, paneVisibility: paneVisibility)
+            return nil
+        }
+        let request = AlreadyOpenSessionRequest(
+            stored: stored, existingTabID: existing.id, paneVisibility: paneVisibility)
+        alreadyOpenRequest = request
+        return request
+    }
+
+    /// The start itself, with no question asked — the tab rule picks the
+    /// target (the active tab when it is unconnected, otherwise a FRESH
+    /// tab, so a running session is never torn down by a sidebar connect,
+    /// M8a spec 1.2) and the connect runs.
+    ///
+    /// This is what "Open Anyway" means, and it is the same function a
+    /// start reaches when no tab holds the session at all — not a second
+    /// copy of that path. A second copy is how the answer to the query
+    /// would start drifting from the behaviour it is offering.
+    func startWithoutAsking(_ stored: StoredSession, paneVisibility: PaneVisibility?) {
         let target = tabsModel.sidebarConnectTarget(
             activeTabIsConnected: activeTab.isConnected, makeTab: makeTab)
-        connect(in: target, stored: stored, paneVisibility: .terminalOnly)
+        connect(in: target, stored: stored, paneVisibility: paneVisibility)
+    }
+
+    /// "Go to Existing Tab" — the whole of that choice.
+    ///
+    /// It closes nothing and merges nothing: the other tab keeps its
+    /// session, and this window simply looks at it. When the tab named here
+    /// is already the active one, activating it changes nothing, which is
+    /// what that answer means in that situation.
+    func jumpToOpenSession(_ request: AlreadyOpenSessionRequest) {
+        tabsModel.activate(request.existingTabID)
     }
 
     /// Fills the tab's form from the store + keychain and connects right
     /// away. No teardown of any other tab.
     ///
-    /// `paneVisibility` overrides which halves the session comes up showing
-    /// (P3c/T2). `nil` — every caller but one — means "whatever this session
-    /// saved", the P2 behaviour; the sidebar's "Open Terminal" entry passes
-    /// `.terminalOnly`. That override is the ONLY thing that entry changes
+    /// `paneVisibility` overrides which halves the session comes up
+    /// showing (P3c/T2). `nil` means "whatever this session saved", the P2
+    /// behaviour, and it is what every caller passes except the sidebar
+    /// start (`startWithoutAsking`), which forwards whatever the row asked
+    /// for — `.terminalOnly` for the "Open Terminal" entry and `nil` for an
+    /// ordinary connect. That override is the ONLY thing that entry changes
     /// about a connect: it comes through this same method, so the tab rule,
     /// the reconnect guard, the fill, the failure handling and the audit
     /// record are not a second implementation that could drift from this

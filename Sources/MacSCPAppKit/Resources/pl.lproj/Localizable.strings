@@ -411,6 +411,10 @@
 "tabs.menu.openExternalTerminal" = "Otwórz w zewnętrznym terminalu";
 "tabs.menu.saveAsSession" = "Zapisz jako sesję…";
 "tabs.closeOthers.title" = "Zamknąć pozostałe karty?";
+"tabs.alreadyOpen.title" = "Ta sesja jest już otwarta";
+"tabs.alreadyOpen.message %@" = "„%@” jest już otwarta w karcie.";
+"tabs.alreadyOpen.jump" = "Przejdź do istniejącej karty";
+"tabs.alreadyOpen.openAnyway" = "Otwórz mimo to";
 
 /* Eksport/import sesji — menu paska bocznego (M9a/T3) */
 "export.menu.single" = "Eksportuj…";

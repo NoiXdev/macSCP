@@ -412,6 +412,10 @@
 "tabs.menu.openExternalTerminal" = "Ouvrir dans un terminal externe";
 "tabs.menu.saveAsSession" = "Enregistrer comme session…";
 "tabs.closeOthers.title" = "Fermer les autres onglets ?";
+"tabs.alreadyOpen.title" = "Cette session est déjà ouverte";
+"tabs.alreadyOpen.message %@" = "« %@ » est déjà ouvert dans un onglet.";
+"tabs.alreadyOpen.jump" = "Aller à l’onglet existant";
+"tabs.alreadyOpen.openAnyway" = "Ouvrir quand même";
 
 /* Export/import de sessions — menus de la barre latérale (M9a/T3) */
 "export.menu.single" = "Exporter…";

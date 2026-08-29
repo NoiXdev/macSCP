@@ -1028,8 +1028,10 @@ extension ContentView {
     /// would leave "Hide Terminal" doing nothing.
     ///
     /// Deliberately not `openTerminalFromSidebar`, which looks similar and
-    /// is not: that one goes through `connect(in:stored:paneVisibility:)`
-    /// and opens a NEW connection, which is the right thing for a stored
+    /// is not: that one goes through `sidebarStart` — which may first ask
+    /// whether to jump to a tab already holding the session — and from
+    /// there through `connect(in:stored:paneVisibility:)`, which opens a
+    /// NEW connection. That is the right thing for a stored
     /// session in the sidebar and the wrong thing entirely for a tab whose
     /// session is up. What changes pane visibility on a LIVE tab is
     /// `TerminalPanelViewModel.toggle()` — the same call the toolbar's

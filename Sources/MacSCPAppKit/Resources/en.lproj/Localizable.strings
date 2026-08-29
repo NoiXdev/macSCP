@@ -408,6 +408,10 @@
 "tabs.menu.openExternalTerminal" = "Open in External Terminal";
 "tabs.menu.saveAsSession" = "Save as Session…";
 "tabs.closeOthers.title" = "Close other tabs?";
+"tabs.alreadyOpen.title" = "This session is already open";
+"tabs.alreadyOpen.message %@" = "“%@” is already open in a tab.";
+"tabs.alreadyOpen.jump" = "Go to Existing Tab";
+"tabs.alreadyOpen.openAnyway" = "Open Anyway";
 
 /* Session export/import — sidebar menus (M9a/T3) */
 "export.menu.single" = "Export…";

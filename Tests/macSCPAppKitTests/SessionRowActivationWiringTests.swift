@@ -101,7 +101,8 @@ struct SessionRowActivationWiringTests {
     /// from `SessionSidebar`'s own properties and each one's far end, not
     /// from any earlier round's list: `onConnect` dials through
     /// `ContentView.connectFromSidebar`, `onOpenTerminal` through
-    /// `openTerminalFromSidebar` (the same dial plus a pane layout), and
+    /// `openTerminalFromSidebar` (the same start plus a pane layout — both
+    /// are one line onto `sidebarStart`), and
     /// `onOpenExternalTerminal` through `openExternalTerminalFromSidebar`,
     /// which resolves a configuration — keychain read included — and hands
     /// it to a program that dials. Every other callback the sidebar holds

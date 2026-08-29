@@ -78,8 +78,10 @@ extension ContentView {
             onSelectImported: { fillFromImported($0) },
             onEdit: { stored in editStored(stored) },
             // The two terminal entries (P3c/T2). "Open Terminal" is
-            // `connectFromSidebar` with one argument added, so it cannot
-            // drift from what the sidebar's own connect does; "Open in External
+            // `connectFromSidebar` with one argument filled in — both are a
+            // single line onto `sidebarStart`, so it cannot drift from what
+            // the sidebar's own connect does, including the already-open
+            // query that start raises (C2); "Open in External
             // Terminal" resolves the session and launches without macSCP
             // connecting at all — the program it launches is what dials.
             // Both are effect values for the same reason `onConnect` is: a

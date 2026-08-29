@@ -6,6 +6,9 @@ import Testing
 private struct StubTab: Identifiable, Equatable {
     let id: UUID
     var connected: Bool = false
+    /// Stands in for `SessionTab.activeStoredSessionID`: set only for a
+    /// STORED connection, `nil` for an ad-hoc one.
+    var storedSessionID: UUID?
 }
 
 @Suite("TabsViewModel")
@@ -75,6 +78,75 @@ struct TabsViewModelTests {
         #expect(!vm.closeTab(a.id))
         #expect(vm.tabs.count == 1)
         #expect(!vm.closeTab(UUID())) // unknown id -> false, no change
+    }
+
+    // MARK: - Which tab already holds a stored session
+
+    /// Nothing holds it, so nothing stands in the way of a start — the case
+    /// in which the sidebar's behaviour is unchanged.
+    @Test func noTabHoldingTheSessionAnswersNil() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID(), storedSessionID: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b)
+        #expect(vm.tabHolding(UUID(), storedSessionIDOf: \.storedSessionID) == nil)
+    }
+
+    /// Every tab is connected ad hoc, so every projection is `nil` — and an
+    /// answer of "nil holds nil" would make each of them hold every stored
+    /// session at once. A typed connection to the same host can carry other
+    /// credentials, another key, another jump host: it looks the same and
+    /// is not.
+    @Test func anAdHocTabHoldsNoStoredSession() {
+        let a = StubTab(id: UUID(), storedSessionID: nil)
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(StubTab(id: UUID(), storedSessionID: nil))
+        #expect(vm.tabHolding(UUID(), storedSessionIDOf: \.storedSessionID) == nil, """
+            an ad-hoc tab was reported as holding a stored session — every ad-hoc tab would \
+            then hold every session, and no stored session could ever be started again.
+            """)
+    }
+
+    /// Several holders exist as soon as somebody has answered "open anyway"
+    /// once. Tab order is then the only rule that invents no preference.
+    @Test func theFirstHolderInTabOrderWins() {
+        let session = UUID()
+        let a = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        let first = StubTab(id: UUID(), storedSessionID: session)
+        let second = StubTab(id: UUID(), storedSessionID: session)
+        vm.addTab(first)
+        vm.addTab(second)
+        #expect(vm.tabHolding(session, storedSessionIDOf: \.storedSessionID)?.id == first.id)
+    }
+
+    /// "First" means first where the strip shows it, not first opened —
+    /// which is what makes `tabs` the array the answer is derived from.
+    @Test func reorderingChangesWhichHolderIsFirst() {
+        let session = UUID()
+        let a = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        let opened = StubTab(id: UUID(), storedSessionID: session)
+        let later = StubTab(id: UUID(), storedSessionID: session)
+        vm.addTab(opened)
+        vm.addTab(later)
+        vm.move(tabID: later.id, to: 0)
+        #expect(vm.tabHolding(session, storedSessionIDOf: \.storedSessionID)?.id == later.id, """
+            the answer followed the order the tabs were opened in rather than the order they \
+            are now shown in — "the first tab" is a statement about the strip.
+            """)
+    }
+
+    /// The ACTIVE tab is not exempt. Jumping to it is then a no-op, and
+    /// that is the correct effect of that choice, not a reason to withhold
+    /// the question: "open another one" is as sensible here as anywhere.
+    @Test func theActiveTabCountsLikeAnyOtherHolder() {
+        let session = UUID()
+        let a = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        let active = StubTab(id: UUID(), storedSessionID: session)
+        vm.addTab(active)
+        #expect(vm.activeTabID == active.id)
+        #expect(vm.tabHolding(session, storedSessionIDOf: \.storedSessionID)?.id == active.id)
     }
 
     @Test func sidebarConnectTargetReusesUnconnectedActiveTab() {

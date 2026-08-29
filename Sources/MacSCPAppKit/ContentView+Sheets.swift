@@ -64,6 +64,40 @@ extension ContentView {
         } message: {
             Text(closeOthersWarningText)
         }
+        // "Session is already open" (C2) — the same shape as the two close
+        // dialogs above, and non-destructive: both answers do something, so
+        // neither carries a role. Only what is possible is offered, per this
+        // project's standing UI rule; there is nothing here to grey out.
+        // Cancel is the third way out and is simply closing the query.
+        .confirmationDialog(
+            L10n.string("tabs.alreadyOpen.title", "This session is already open"),
+            isPresented: Binding(
+                get: { alreadyOpenRequest != nil },
+                set: { isPresented in if !isPresented { alreadyOpenRequest = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(L10n.string("tabs.alreadyOpen.jump", "Go to Existing Tab")) {
+                if let request = alreadyOpenRequest {
+                    alreadyOpenRequest = nil
+                    jumpToOpenSession(request)
+                }
+            }
+            Button(L10n.string("tabs.alreadyOpen.openAnyway", "Open Anyway")) {
+                if let request = alreadyOpenRequest {
+                    alreadyOpenRequest = nil
+                    // The pane override travels with the request, so
+                    // answering an "Open Terminal" this way still opens the
+                    // terminal.
+                    startWithoutAsking(request.stored, paneVisibility: request.paneVisibility)
+                }
+            }
+            Button(L10n.string("common.cancel", "Cancel"), role: .cancel) {
+                alreadyOpenRequest = nil
+            }
+        } message: {
+            Text(alreadyOpenMessage)
+        }
         // Export sheet (M9a/T3): one view for all three scopes, opened by
         // the sidebar's context menus via `exportSheetItem`.
         .sheet(item: $exportSheetItem) { item in
@@ -275,6 +309,25 @@ extension ContentView {
         Binding(
             get: { pendingPasswordHintRequest != nil },
             set: { isPresented in if !isPresented { pendingPasswordHintRequest = nil } })
+    }
+
+    /// What the "already open" query says (C2): the session's name, read
+    /// from the request's own `StoredSession` snapshot.
+    ///
+    /// It says "in a tab", not "in another tab", because the tab holding
+    /// the session may well be the one in front — the query is raised then
+    /// too, and a message claiming otherwise would be plainly wrong on
+    /// screen.
+    ///
+    /// Empty while no query is up: `confirmationDialog`'s `message:`
+    /// builder is evaluated on every render, including renders in which
+    /// `alreadyOpenRequest` has just been cleared by an answer.
+    var alreadyOpenMessage: String {
+        guard let name = alreadyOpenRequest?.stored.name else { return "" }
+        return String(
+            format: L10n.string(
+                "tabs.alreadyOpen.message %@", "“%@” is already open in a tab."),
+            name)
     }
 
     /// Same fix as `passwordHintPresented` above, for the error alert.
