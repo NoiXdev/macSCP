@@ -14,10 +14,21 @@ import Testing
 ///
 /// The session under it changed on 2026-08-29 — the dial builds its own from
 /// `URLSessionConfiguration.ephemeral` instead of taking `URLSession.shared`
-/// — and the measurement was re-run against it unchanged. Whether a session
-/// carries a delegate is a separate choice from which session it is; this
-/// one still has none, which is the open item
-/// `2026-08-28-backlog-s3-weiterleitungen.md` holds.
+/// — and the measurement was re-run against it unchanged.
+///
+/// Later the same day the dial's own session gained
+/// `S3RedirectSessionDelegate`, which decides what happens to a redirect
+/// instead of leaving it to Foundation. **That is why this suite now injects
+/// a transport over a delegate-less session.** The question it asks is about
+/// FOUNDATION, not about this project's policy: what a hand-set header does
+/// on a redirect when nothing intervenes. Measuring it through the dial's
+/// own session would measure the policy instead, and the finding — the
+/// reason the policy exists — would quietly stop being checked. The policy
+/// has its own suite, `S3RedirectControlTests`.
+///
+/// The behaviour measured here is Foundation's, undocumented and
+/// version-dependent, so the question stays worth re-asking on every
+/// platform the suite runs on. What CHANGED is only who is asked.
 ///
 /// The header carries no secret key, but it carries the access key ID and the
 /// SigV4 signature. A signature delivered to a foreign origin is not a
@@ -109,10 +120,26 @@ struct S3RedirectAuthorizationMeasurementTests {
     /// cache of whoever is running the suite along with every other suite's.
     private static func freshBucket() -> String { "bucket-\(UUID().uuidString)" }
 
-    /// Drives the REAL signed request: `S3FileSystem.connect` with the
-    /// transport it builds for itself, i.e. `URLSessionHTTPTransport` over
-    /// an ephemeral `URLSession`. Not a hand-built `URLRequest` that merely
-    /// looks like one.
+    /// A `URLSessionHTTPTransport` over an ephemeral session with NO
+    /// delegate — the arrangement the dial had until the redirect policy
+    /// landed, and the only way left to ask what Foundation does on its own.
+    /// Ephemeral for the reason `S3SessionIsolationTests` gives: a
+    /// disk-backed cache replays a 301 or 308 to a later run, and clearing
+    /// `URLCache.shared` instead would empty the cache of whoever is running
+    /// the suite.
+    ///
+    /// The session is returned alongside so the caller can invalidate it. An
+    /// injected transport's session is not `S3FileSystem`'s to end — its
+    /// `disconnect` deliberately leaves it alone — and a `URLSession` keeps
+    /// itself alive until somebody invalidates it.
+    private static func delegatelessTransport() -> (URLSessionHTTPTransport, URLSession) {
+        let session = URLSession(configuration: .ephemeral)
+        return (URLSessionHTTPTransport(session: session), session)
+    }
+
+    /// Drives the REAL signed request: `S3FileSystem.connect` builds it
+    /// through its own signing path. Not a hand-built `URLRequest` that
+    /// merely looks like one.
     private func measure(
         status: Int, phrase: String, secondHost: String
     ) async throws -> Outcome {
@@ -130,10 +157,13 @@ struct S3RedirectAuthorizationMeasurementTests {
             region: "us-east-1", endpoint: "http://127.0.0.1:\(first.port)",
             bucket: Self.freshBucket(), usePathStyle: true, sessionToken: nil)
 
+        let (transport, session) = Self.delegatelessTransport()
+        defer { session.finishTasksAndInvalidate() }
+
         var succeeded = false
         var failure: String?
         do {
-            _ = try await S3FileSystem.connect(config)
+            _ = try await S3FileSystem.connect(config, transport: transport)
             succeeded = true
         } catch {
             failure = "\(error)"
@@ -254,8 +284,12 @@ struct S3RedirectAuthorizationMeasurementTests {
             accessKeyID: "AKIAMEASUREMENT", secretAccessKey: "measurement-secret-key",
             region: "us-east-1", endpoint: "http://127.0.0.1:\(stub.port)",
             bucket: Self.freshBucket(), usePathStyle: true, sessionToken: nil)
+        let (transport, session) = Self.delegatelessTransport()
+        defer { session.finishTasksAndInvalidate() }
         var failure: String?
-        do { _ = try await S3FileSystem.connect(config) } catch { failure = "\(error)" }
+        do { _ = try await S3FileSystem.connect(config, transport: transport) } catch {
+            failure = "\(error)"
+        }
         _ = await stub.waitForRequests(atLeast: 2)
 
         let heads = stub.requests

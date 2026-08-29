@@ -78,6 +78,9 @@
 "core.certificate.rejected" = "Connection refused — certificate not confirmed.";
 "core.certificate.trustStoreUnreadable" = "Connection refused — the trusted-certificate store could not be read.";
 
+/* S3 redirect control (2026-08-29) — a refusal names where the endpoint wanted to send the request; "connection failed" alone would hide that. */
+"core.s3.redirectRefused %@ %@" = "Connection refused — the S3 endpoint %1$@ redirected this request to %2$@, a different server. Nothing was sent there. If you trust that server, enter it as the endpoint.";
+
 /* TerminalPanelViewModel */
 "core.terminal.shellEnded %@" = "Shell ended: %@";
 "core.terminal.openFailed %@" = "Failed to open shell: %@";

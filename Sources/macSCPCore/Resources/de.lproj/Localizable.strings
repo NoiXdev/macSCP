@@ -78,6 +78,9 @@
 "core.certificate.rejected" = "Verbindung verweigert — Zertifikat nicht bestätigt.";
 "core.certificate.trustStoreUnreadable" = "Verbindung verweigert — der Speicher für vertrauenswürdige Zertifikate konnte nicht gelesen werden.";
 
+/* S3-Weiterleitungskontrolle (2026-08-29) — eine Ablehnung nennt, wohin der Endpunkt schicken wollte; „Verbindung fehlgeschlagen“ allein würde das verbergen. */
+"core.s3.redirectRefused %@ %@" = "Verbindung verweigert — der S3-Endpunkt %1$@ hat diese Anfrage nach %2$@ umgeleitet, also auf einen anderen Server. Dorthin wurde nichts gesendet. Wenn du diesem Server vertraust, trag ihn als Endpunkt ein.";
+
 /* TerminalPanelViewModel */
 "core.terminal.shellEnded %@" = "Shell beendet: %@";
 "core.terminal.openFailed %@" = "Shell konnte nicht geöffnet werden: %@";

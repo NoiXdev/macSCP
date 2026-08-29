@@ -13,11 +13,18 @@ import Foundation
 /// and is torn down with it.
 ///
 /// Deliberately not a general server. Nothing in a request influences what
-/// it answers — every one gets the same canned response, which is all a
-/// fixed-status test needs. It does keep the request heads it read, so a
-/// test can assert on what a server was and was not sent. Requests are
-/// served one after another; `Connection: close` in the canned responses
-/// below is what keeps that honest.
+/// it answers: a stub is handed a list of canned responses and serves them
+/// in order, repeating the last one for every further request. `init(response:)`
+/// is the one-element case, and it is what a fixed-status test needs. It
+/// does keep the request heads it read, so a test can assert on what a
+/// server was and was not sent. Requests are served one after another;
+/// `Connection: close` in the canned responses below is what keeps that
+/// honest.
+///
+/// The list exists for ONE origin answering a redirect and then the real
+/// answer — a same-origin redirect, where both hops necessarily land on
+/// this same socket. A cross-origin test uses two stubs instead, and each
+/// of those needs only one response.
 final class LoopbackHTTPStub: @unchecked Sendable {
     /// A 401 that asks for Basic credentials — so `URLSession` raises an
     /// authentication challenge, and raises it AGAIN when the credential it
@@ -45,10 +52,26 @@ final class LoopbackHTTPStub: @unchecked Sendable {
         """
     }
 
+    /// A 200 carrying a well-formed, empty `ListObjectsV2` body, so a
+    /// redirect that is followed all the way through makes
+    /// `S3FileSystem.connect` SUCCEED — evidence that the hop completed
+    /// rather than merely started.
+    static let emptyBucketListing: String = {
+        let body = #"<?xml version="1.0" encoding="UTF-8"?><ListBucketResult></ListBucketResult>"#
+        return """
+            HTTP/1.1 200 OK\r
+            Content-Type: application/xml\r
+            Content-Length: \(body.utf8.count)\r
+            Connection: close\r
+            \r
+            \(body)
+            """
+    }()
+
     let port: Int
 
     private let listener: Int32
-    private let response: [UInt8]
+    private let responses: [[UInt8]]
     private let running = NSLock()
     private var isStopped = false
     private var seenRequests: [String] = []
@@ -93,13 +116,34 @@ final class LoopbackHTTPStub: @unchecked Sendable {
         }
     }
 
+    /// The value of one header in a recorded request head, or `nil` if the
+    /// head carries no such header. Header names are case-insensitive on
+    /// the wire, so the comparison is too; the value is trimmed of the
+    /// single space that conventionally follows the colon.
+    static func headerValue(_ name: String, in head: String) -> String? {
+        let wanted = name.lowercased() + ":"
+        for line in head.split(separator: "\r\n") where line.lowercased().hasPrefix(wanted) {
+            return String(line.dropFirst(wanted.count)).trimmingCharacters(in: .whitespaces)
+        }
+        return nil
+    }
+
     private func record(_ request: String) {
         running.lock(); defer { running.unlock() }
         seenRequests.append(request)
     }
 
-    init(response: String) throws {
-        self.response = Array(response.utf8)
+    /// The one-response case: every request gets the same answer.
+    convenience init(response: String) throws {
+        try self.init(responses: [response])
+    }
+
+    /// Serves `responses` in order and repeats the last one from then on.
+    /// An empty list is a programming error in the test, not a runtime
+    /// condition to handle, so it traps.
+    init(responses: [String]) throws {
+        precondition(!responses.isEmpty, "a stub with no response can answer nothing")
+        self.responses = responses.map { Array($0.utf8) }
 
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         listener = fd
@@ -130,13 +174,17 @@ final class LoopbackHTTPStub: @unchecked Sendable {
         port = Int(UInt16(bigEndian: actual.sin_port))
 
         let listenerFD = fd
-        let canned = self.response
+        let canned = self.responses
         DispatchQueue.global().async { [weak self] in
+            // Served strictly one at a time, so the counter needs no lock:
+            // this loop is the only thing that reads or writes it.
+            var served = 0
             while true {
                 let client = accept(listenerFD, nil, nil)
                 guard client >= 0 else { return }  // the listener was closed
                 guard let self, !self.stopped else { close(client); return }
-                self.record(Self.serve(client, canned))
+                self.record(Self.serve(client, canned[min(served, canned.count - 1)]))
+                served += 1
             }
         }
     }

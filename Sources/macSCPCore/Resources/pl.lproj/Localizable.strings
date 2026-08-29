@@ -80,6 +80,9 @@
 "core.certificate.rejected" = "Połączenie odrzucone — certyfikat nie został potwierdzony.";
 "core.certificate.trustStoreUnreadable" = "Połączenie odrzucone — nie można było odczytać magazynu zaufanych certyfikatów.";
 
+/* Kontrola przekierowań S3 (2026-08-29) — odmowa wskazuje, dokąd punkt końcowy chciał wysłać żądanie. */
+"core.s3.redirectRefused %@ %@" = "Połączenie odrzucone — punkt końcowy S3 %1$@ przekierował to żądanie do %2$@, czyli na inny serwer. Nic tam nie zostało wysłane. Jeśli ufasz temu serwerowi, wpisz go jako punkt końcowy.";
+
 /* TerminalPanelViewModel */
 "core.terminal.shellEnded %@" = "Powłoka zakończona: %@";
 "core.terminal.openFailed %@" = "Nie udało się otworzyć powłoki: %@";

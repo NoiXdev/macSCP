@@ -13,7 +13,9 @@ import Foundation
 /// `Sendable` by construction rather than `@unchecked`: every stored
 /// property is immutable and itself `Sendable` (`S3ConnectionConfig` is a
 /// `Sendable` struct; `any HTTPTransport` requires `Sendable`; `URLSession`
-/// is `Sendable`), so there is no shared mutable state to race on.
+/// is `Sendable`; `S3RedirectSessionDelegate` is `@unchecked Sendable` and
+/// argues its own case — one recorded refusal behind a lock), so there is
+/// no shared mutable state here to race on.
 public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     private let config: S3ConnectionConfig
     private let transport: any HTTPTransport
@@ -21,13 +23,19 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// the transport was injected and the session belongs to someone else.
     /// Same arrangement as `WebDAVFileSystem`.
     private let session: URLSession?
+    /// The delegate that decided what to do with any redirect on that
+    /// session, or `nil` for an injected transport — whose session's
+    /// redirect policy, if it has one, is the caller's business.
+    private let redirectPolicy: S3RedirectSessionDelegate?
 
     private init(
-        config: S3ConnectionConfig, transport: any HTTPTransport, session: URLSession?
+        config: S3ConnectionConfig, transport: any HTTPTransport, session: URLSession?,
+        redirectPolicy: S3RedirectSessionDelegate?
     ) {
         self.config = config
         self.transport = transport
         self.session = session
+        self.redirectPolicy = redirectPolicy
     }
 
     /// Connects by performing one ListObjectsV2 probe against the bucket
@@ -48,17 +56,28 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// — measured on loopback, see `S3SessionIsolationTests`. An ephemeral
     /// configuration hands out a fresh, memory-only cache per session, so a
     /// dial shares nothing with another dial or another process.
+    ///
+    /// That own session is also what makes a redirect policy possible at
+    /// all — `URLSession.shared` cannot carry a delegate — so it is built
+    /// with `S3RedirectSessionDelegate`: a redirect inside the endpoint's
+    /// origin is re-signed and followed, one that leaves it is refused. An
+    /// INJECTED transport gets none of that; a test that wants to measure
+    /// what Foundation does when nothing decides injects one for exactly
+    /// that reason (`S3RedirectAuthorizationMeasurementTests`).
     static func connect(
         _ config: S3ConnectionConfig, transport: (any HTTPTransport)? = nil
     ) async throws -> S3FileSystem {
         let fs: S3FileSystem
         if let transport {
-            fs = S3FileSystem(config: config, transport: transport, session: nil)
+            fs = S3FileSystem(
+                config: config, transport: transport, session: nil, redirectPolicy: nil)
         } else {
-            let session = URLSession(configuration: .ephemeral)
+            let redirectPolicy = S3RedirectSessionDelegate(config: config)
+            let session = URLSession(
+                configuration: .ephemeral, delegate: redirectPolicy, delegateQueue: nil)
             fs = S3FileSystem(
                 config: config, transport: URLSessionHTTPTransport(session: session),
-                session: session)
+                session: session, redirectPolicy: redirectPolicy)
         }
         do {
             _ = try await fs.fetchPage(prefix: "", continuationToken: nil)
@@ -124,13 +143,19 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
             method: "GET", key: key, query: [], payloadHash: SigV4Signer.emptyPayloadHash)
         request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
 
+        // The streaming counterpart of `send`, kept here rather than folded
+        // into it because its return type differs; the two arms match it
+        // line for line, refused-redirect check included. A download runs on
+        // the same session and therefore under the same policy.
         let body: AsyncThrowingStream<Data, Error>
         let response: HTTPURLResponse
         do {
             (body, response) = try await transport.sendStreaming(request)
+            if let refused = refusedRedirect() { throw refused }
         } catch let error as RemoteFSError {
             throw error
         } catch {
+            if let refused = refusedRedirect() { throw refused }
             throw RemoteFSError.connectionFailed(reason: "S3 request failed: \(error.localizedDescription)")
         }
         switch response.statusCode {
@@ -288,7 +313,8 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
 
     /// Releases the session the dial built. There is no S3 connection to
     /// tear down — the protocol is stateless request-by-request — but a
-    /// `URLSession` holds its connection pool and its own cache until it is
+    /// `URLSession` holds its connection pool, its own cache and — since it
+    /// carries one — a strong reference to its delegate until it is
     /// invalidated, and this one exists for the length of this file system
     /// and nothing else. A no-op when the transport was injected: that
     /// session is the caller's to end.
@@ -313,16 +339,44 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
             body: body, payloadHash: payloadHash)
     }
 
-    /// `S3RequestBuilder.perform`: a thin pass-through to `transport.send`,
-    /// with the same transport-error mapping every other request path uses.
+    /// `S3RequestBuilder.perform`: a thin pass-through to `send`, so an
+    /// uploader's requests get the same transport-error mapping and the
+    /// same refused-redirect reporting every other request path gets.
     public func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        try await send(request)
+    }
+
+    // MARK: - The one way out to the network
+
+    /// Every buffered request goes through here, so the transport-error
+    /// mapping exists once instead of once per call site — and so a redirect
+    /// the session's delegate refused is reported as what it was.
+    ///
+    /// A refusal is not an error at the `URLSession` level: declining to
+    /// follow leaves the 3xx response to be delivered as if the endpoint had
+    /// answered it, so without this every caller would report "S3 request
+    /// failed with HTTP status 302" and no reader would learn that their
+    /// endpoint tried to send them elsewhere. Checked on both outcomes
+    /// because a refusal can also precede a genuine transport failure — a
+    /// declined redirect whose 3xx body then fails to arrive.
+    private func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         do {
-            return try await transport.send(request)
+            let result = try await transport.send(request)
+            if let refused = refusedRedirect() { throw refused }
+            return result
         } catch let error as RemoteFSError {
             throw error
         } catch {
+            if let refused = refusedRedirect() { throw refused }
             throw RemoteFSError.connectionFailed(reason: "S3 request failed: \(error.localizedDescription)")
         }
+    }
+
+    /// The redirect this file system's session refused, as the error to
+    /// report instead of whatever the refusal left behind. Always `nil` for
+    /// an injected transport, which carries no policy of ours.
+    private func refusedRedirect() -> RemoteFSError? {
+        redirectPolicy?.lastRefusedRedirect.map { RemoteFSError.connectionFailed(reason: $0) }
     }
 
     // MARK: - Request building + signed ListObjectsV2
@@ -335,16 +389,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         prefix: String, continuationToken: String?
     ) async throws -> (items: [RemoteFileItem], continuationToken: String?) {
         let request = try buildListRequest(prefix: prefix, continuationToken: continuationToken)
-
-        let data: Data
-        let response: HTTPURLResponse
-        do {
-            (data, response) = try await transport.send(request)
-        } catch let error as RemoteFSError {
-            throw error
-        } catch {
-            throw RemoteFSError.connectionFailed(reason: "S3 request failed: \(error.localizedDescription)")
-        }
+        let (data, response) = try await send(request)
 
         switch response.statusCode {
         case 200..<300:
@@ -388,15 +433,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
             extraHeaders: ["x-amz-copy-source": copySource], body: Data(),
             payloadHash: SigV4Signer.emptyPayloadHash)
 
-        let data: Data
-        let response: HTTPURLResponse
-        do {
-            (data, response) = try await transport.send(request)
-        } catch let error as RemoteFSError {
-            throw error
-        } catch {
-            throw RemoteFSError.connectionFailed(reason: "S3 request failed: \(error.localizedDescription)")
-        }
+        let (data, response) = try await send(request)
         guard (200..<300).contains(response.statusCode) else {
             throw Self.mapErrorStatus(response.statusCode, path: "/" + toKey)
         }
@@ -419,15 +456,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         var token: String?
         repeat {
             let request = try buildListRequest(prefix: prefix, continuationToken: token, delimiter: false)
-            let data: Data
-            let response: HTTPURLResponse
-            do {
-                (data, response) = try await transport.send(request)
-            } catch let error as RemoteFSError {
-                throw error
-            } catch {
-                throw RemoteFSError.connectionFailed(reason: "S3 request failed: \(error.localizedDescription)")
-            }
+            let (data, response) = try await send(request)
             guard (200..<300).contains(response.statusCode) else {
                 throw Self.mapErrorStatus(response.statusCode, path: "/" + prefix)
             }
@@ -505,18 +534,12 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// Sends a signed request whose only interesting outcome is
     /// success/failure — no response body to parse (`delete`,
     /// `createDirectory`, and later mutating operations). Shares the
-    /// transport-error and non-2xx status mapping with `fetchPage` via
-    /// `mapErrorStatus`, so the two never drift into duplicated (and
-    /// possibly inconsistent) HTTP-status handling.
+    /// transport-error handling with every other request path via `send`,
+    /// and the non-2xx status mapping with `fetchPage` via `mapErrorStatus`,
+    /// so the two never drift into duplicated (and possibly inconsistent)
+    /// HTTP-status handling.
     private func sendExpectingSuccess(_ request: URLRequest, path: String) async throws {
-        let response: HTTPURLResponse
-        do {
-            (_, response) = try await transport.send(request)
-        } catch let error as RemoteFSError {
-            throw error
-        } catch {
-            throw RemoteFSError.connectionFailed(reason: "S3 request failed: \(error.localizedDescription)")
-        }
+        let (_, response) = try await send(request)
         guard (200..<300).contains(response.statusCode) else {
             throw Self.mapErrorStatus(response.statusCode, path: path)
         }
@@ -542,34 +565,18 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     ) throws -> URLRequest {
         let queryPairs = Self.queryPairs(prefix: prefix, continuationToken: continuationToken, delimiter: delimiter)
         let url = try Self.requestURL(config: config, queryPairs: queryPairs)
-        guard let host = url.host else {
-            throw RemoteFSError.connectionFailed(reason: "S3 endpoint has no host: \(config.endpoint)")
-        }
-        let hostHeader = url.port.map { "\(host):\($0)" } ?? host
-        let canonicalPath = url.path.isEmpty ? "/" : url.path
-
-        let signer = SigV4Signer(
-            accessKeyID: config.accessKeyID, secretAccessKey: config.secretAccessKey,
-            region: config.region, service: "s3", sessionToken: config.sessionToken)
-        let (authorization, extraHeaders) = signer.authorizationHeader(
-            method: "GET", host: hostHeader, path: canonicalPath, query: queryPairs,
-            headers: ["host": hostHeader], payloadHash: SigV4Signer.emptyPayloadHash, date: Date())
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue(hostHeader, forHTTPHeaderField: "Host")
-        request.setValue(authorization, forHTTPHeaderField: "Authorization")
-        for (key, value) in extraHeaders {
-            request.setValue(value, forHTTPHeaderField: key)
-        }
-        return request
+        return try S3RequestSigning.signedRequest(
+            url: url, method: "GET", canonicalPath: url.path.isEmpty ? "/" : url.path,
+            query: queryPairs, extraHeaders: [:], body: nil,
+            payloadHash: SigV4Signer.emptyPayloadHash, config: config)
     }
 
     /// Generalized signed-request builder — any HTTP method against an
     /// OBJECT KEY, with optional signed extra headers/body (later tasks:
-    /// `x-amz-copy-source` for rename, `Content-MD5` for uploads). Shares
-    /// the same host/path/signer machinery `buildListRequest` uses, just
-    /// keyed on an object key instead of a bucket-root query.
+    /// `x-amz-copy-source` for rename, `Content-MD5` for uploads). Decides
+    /// the URL, the canonical path and the query, then hands the signing
+    /// itself to `S3RequestSigning` — the same machinery `buildListRequest`
+    /// hands its own bucket-root query to, just keyed on an object key.
     ///
     /// IMPORTANT: `extraHeaders` are SIGNED (merged into the SigV4 canonical
     /// header set). A caller that needs an unsigned header (e.g. `Range` —
@@ -581,29 +588,10 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         payloadHash: String
     ) throws -> URLRequest {
         let url = try Self.keyRequestURL(config: config, key: key, queryPairs: query)
-        guard let host = url.host else {
-            throw RemoteFSError.connectionFailed(reason: "S3 endpoint has no host: \(config.endpoint)")
-        }
-        let hostHeader = url.port.map { "\(host):\($0)" } ?? host
-        let canonicalPath = Self.canonicalKeyPath(config: config, key: key)
-
-        var headers = extraHeaders
-        headers["host"] = hostHeader
-        let signer = SigV4Signer(
-            accessKeyID: config.accessKeyID, secretAccessKey: config.secretAccessKey,
-            region: config.region, service: "s3", sessionToken: config.sessionToken)
-        let (authorization, signed) = signer.authorizationHeader(
-            method: method, host: hostHeader, path: canonicalPath, query: query,
-            headers: headers, payloadHash: payloadHash, date: Date())
-
-        var request = URLRequest(url: url)
-        request.httpMethod = method
-        request.setValue(hostHeader, forHTTPHeaderField: "Host")
-        request.setValue(authorization, forHTTPHeaderField: "Authorization")
-        for (k, v) in signed { request.setValue(v, forHTTPHeaderField: k) }
-        for (k, v) in extraHeaders { request.setValue(v, forHTTPHeaderField: k) }
-        if let body { request.httpBody = body }
-        return request
+        return try S3RequestSigning.signedRequest(
+            url: url, method: method,
+            canonicalPath: Self.canonicalKeyPath(config: config, key: key), query: query,
+            extraHeaders: extraHeaders, body: body, payloadHash: payloadHash, config: config)
     }
 
     /// Builds the request URL for an OBJECT KEY — path-style
