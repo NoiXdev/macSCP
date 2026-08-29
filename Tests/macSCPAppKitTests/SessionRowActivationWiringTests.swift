@@ -258,17 +258,34 @@ struct SessionRowActivationWiringTests {
     /// scan reads `SessionRow`'s body. A gesture in the imported-hosts row,
     /// or a call in `moveSelection`, is outside it entirely. Guard K is what
     /// covers those, by making the call itself impossible.
+    ///
+    /// The nesting task added the ONE exception, and it is an exception to
+    /// the shape rather than to the rule: `onDrop` is the row's answer to a
+    /// drop, and a `.dropDestination` closure has to RETURN whether the drop
+    /// was accepted, so it cannot be an unfireable effect value the way the
+    /// three connecting callbacks are. What it reaches is bounded on the
+    /// other side instead — `SessionListViewModel.move(_:before:)`, which
+    /// rewrites ranks and opens nothing — and the exception is scoped to the
+    /// `.dropDestination` block, so a hover or a tap calling `onDrop` is
+    /// still a violation.
     @Test func outsideItsContextMenuTheRowCallsNoCallbackButTheInputForward() throws {
         let body = try Self.sessionRowBody()
         guard let menu = Self.range(ofBlockStartingWith: ".contextMenu {", in: body.lines) else {
             Issue.record("`.contextMenu {` not found inside `SessionRow`'s body — re-anchor this guard")
             return
         }
+        guard let dropped = Self.range(ofBlockStartingWith: ".dropDestination(", in: body.lines)
+        else {
+            Issue.record(
+                "`.dropDestination(` not found inside `SessionRow`'s body — re-anchor this guard")
+            return
+        }
         var violations: [String] = []
         for index in body.lines.indices where !menu.contains(index) {
             let line = body.lines[index]
             guard Self.isCode(line) else { continue }
-            let foreign = Self.callbackCalls(in: line).filter { $0 != "onInput" }
+            let allowed = dropped.contains(index) ? ["onInput", "onDrop"] : ["onInput"]
+            let foreign = Self.callbackCalls(in: line).filter { !allowed.contains($0) }
             if !foreign.isEmpty {
                 violations.append(
                     "line \(body.offset + index + 1): \(foreign.joined(separator: ", "))")
@@ -278,7 +295,33 @@ struct SessionRowActivationWiringTests {
             `SessionRow`'s body calls a callback other than `onInput` outside its context \
             menu: \(violations.joined(separator: "; ")) — a hover, a drag or a gesture that \
             calls `onOpenTerminal`, or any other callback ending in a connection, walks around \
-            the plan entirely. Only entries the user picks by name may act directly.
+            the plan entirely. Only entries the user picks by name, and the drop answer inside \
+            `.dropDestination`, may act directly.
+            """)
+    }
+
+    /// The other half of that exception, and the reason it does not widen
+    /// the guard above: `onDrop` is called in exactly one place. Without
+    /// this, the allowance could be satisfied by a `.dropDestination` block
+    /// that no longer calls it while some other line does.
+    @Test func theDropAnswerIsCalledOnlyFromTheDropDestination() throws {
+        let body = try Self.sessionRowBody()
+        guard let dropped = Self.range(ofBlockStartingWith: ".dropDestination(", in: body.lines)
+        else {
+            Issue.record(
+                "`.dropDestination(` not found inside `SessionRow`'s body — re-anchor this guard")
+            return
+        }
+        let callSites = body.lines.indices.filter {
+            Self.isCode(body.lines[$0]) && Self.callbackCalls(in: body.lines[$0]).contains("onDrop")
+        }
+        #expect(callSites.count == 1, """
+            expected exactly one call to `onDrop` in `SessionRow`'s body, found \
+            \(callSites.count) at line(s) \(callSites.map { body.offset + $0 + 1 }).
+            """)
+        #expect(callSites.allSatisfy { dropped.contains($0) }, """
+            `onDrop` is called outside the `.dropDestination` block — the drop answer is \
+            allowed there and nowhere else.
             """)
     }
 
@@ -375,13 +418,30 @@ struct SessionRowActivationWiringTests {
                 — a second rename-ending path is a second place to forget the hand-back.
                 """)
         }
-        for wiring in ["onCancelRename: endRename,", ".onExitCommand(perform: endRename)"] {
+        for wiring in ["onCancelRename: endRename,", ".onExitCommand(perform: onCancelRename)"] {
             let wired = lines.contains { Self.isCode($0) && $0.contains(wiring) }
             #expect(wired, """
                 `\(wiring)` is gone — a cancelled rename would end somewhere that does not hand \
                 the keyboard back, and the selection would outlive the focus again.
                 """)
         }
+        // Both rename fields — a connection's and a folder's — now sit in
+        // views of their own and reach `endRename` through the callback
+        // above, so the escape key must name that callback and nothing else.
+        // Without this, the pair of literals could be satisfied by one field
+        // while a second escaped somewhere that never hands the keyboard
+        // back.
+        let strayExits = lines.indices.filter { index in
+            let line = lines[index]
+            guard Self.isCode(line), line.contains(".onExitCommand(perform:") else { return false }
+            return !line.contains(".onExitCommand(perform: onCancelRename)")
+                && !line.contains(".onExitCommand(perform: endRename)")
+        }
+        #expect(strayExits.isEmpty, """
+            `.onExitCommand(perform:)` names something other than the rename end at line(s) \
+            \(strayExits.map { $0 + 1 }) — an escape that ends a rename any other way is the \
+            second path this guard exists to prevent.
+            """)
     }
 
     // MARK: - Guard H: activating a row ends an open rename

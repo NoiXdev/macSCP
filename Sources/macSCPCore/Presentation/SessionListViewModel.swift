@@ -18,8 +18,8 @@ private struct LoginMergeSecretConflict: Error, CustomStringConvertible {
 @MainActor
 public final class SessionListViewModel {
     public private(set) var sessions: [StoredSession] = []
-    /// Groups shown as collapsible sidebar sections — since `parentID` a
-    /// tree rather than a flat list — in the order the store keeps them.
+    /// Groups shown as collapsible sidebar rows — since `parentID` a tree
+    /// rather than a flat list — in the order the store keeps them.
     /// `children(of:)` is what turns that into display order.
     public private(set) var groups: [StoredGroup] = []
     /// Reusable logins (M10b), loaded name-sorted by the store.
@@ -552,7 +552,14 @@ public final class SessionListViewModel {
         }
     }
 
-    /// Moves a session into a group, or ungroups it when `groupID` is `nil`.
+    /// Writes a session's group membership, or clears it when `groupID` is
+    /// `nil` — the field and nothing else.
+    ///
+    /// It does NOT rank the session among its new siblings: the old
+    /// `position` travels with it, which under the equal-rank rule puts it
+    /// wherever that number happens to fall. `move(_:intoGroup:)` is the one
+    /// that also renumbers, and it is what the sidebar's drag and its
+    /// "Move to" menu both call; this remains the plain field write.
     public func moveSession(_ session: StoredSession, toGroup groupID: UUID?) {
         var updated = session
         updated.groupID = groupID

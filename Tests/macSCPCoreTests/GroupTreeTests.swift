@@ -68,6 +68,35 @@ struct GroupTreeTests {
             .map(\.name)
         #expect(names == ["first", "second"])
     }
+
+    /// The chain a filtered sidebar has to keep alive: a folder carrying no
+    /// match of its own still has to be on screen when something below it
+    /// matches, and that is answered by walking `parentID` upward from the
+    /// match rather than by looking at the folder.
+    @Test func selfAndAncestorsWalkTheWholeChainUpward() {
+        let a = group("a")
+        let b = group("b", parent: a.id)
+        let c = group("c", parent: b.id)
+        #expect(GroupTree.selfAndAncestors(of: c.id, in: [a, b, c]) == [a.id, b.id, c.id])
+        #expect(GroupTree.selfAndAncestors(of: a.id, in: [a, b, c]) == [a.id])
+    }
+
+    /// Three ways the walk can run out of tree, none of them an error: a
+    /// parent that is not in the list (the walk ends where the chain ends),
+    /// a ring (every member is named once and the walk stops), and an id
+    /// naming no group at all (nothing to name).
+    @Test func selfAndAncestorsStopAtABrokenChainACycleAndAnUnknownID() {
+        let orphan = group("orphan", parent: UUID())
+        #expect(GroupTree.selfAndAncestors(of: orphan.id, in: [orphan]) == [orphan.id])
+
+        var a = group("a")
+        var b = group("b")
+        a.parentID = b.id
+        b.parentID = a.id
+        #expect(GroupTree.selfAndAncestors(of: a.id, in: [a, b]) == [a.id, b.id])
+
+        #expect(GroupTree.selfAndAncestors(of: UUID(), in: [a, b]).isEmpty)
+    }
 }
 
 /// The migration half of the same change: `parentID` and `position` are new

@@ -117,11 +117,19 @@ enum SessionRowTerminalMenuPlan: Equatable {
     }
 }
 
-/// Left column: stored sessions, grouped into collapsible sections. A click
-/// selects a session, a double click or Return connects it; context menus
-/// cover connect/edit/rename/move/delete on sessions, rename/dissolve on
-/// groups, and new-connection/new-group on the background. The phosphor dot
-/// marks the active connection.
+/// Left column: stored connections and folders, drawn as a tree of arbitrary
+/// depth. A click selects a connection, a double click or Return connects it;
+/// context menus cover connect/edit/rename/move/delete on connections,
+/// rename/export/sort/dissolve on folders, and new-connection/new-group on
+/// the background. The phosphor dot marks the active connection.
+///
+/// **This view derives no place for anything.** Which rows sit under which
+/// parent, and in which order, is `SidebarVisibility.children(of:)`'s answer;
+/// where a dropped row lands is `SessionListViewModel.move(_:before:)`'s or
+/// `move(_:intoGroup:)`'s, each given two identities. See
+/// `SidebarOrdering`'s doc comment for why an index carried through a view
+/// was the defect class this shape removed, and `SidebarTreeWiringTests` for
+/// the guard that keeps one from creeping back in here.
 struct SessionSidebar: View {
     let viewModel: SessionListViewModel
     let importedHosts: [SSHConfigHost]
@@ -258,6 +266,12 @@ struct SessionSidebar: View {
     /// background/toolbar "New group…" entry, which only creates the group.
     @State private var sessionPendingGroupMove: StoredSession?
 
+    /// The sidebar's shared note of which row a drag is carrying — written
+    /// by each row's own drag payload, read when a drop is targeted on
+    /// another. See `SidebarDragOrigin` for why it is a box rather than
+    /// state, and for what it is worth.
+    @State private var dragOrigin = SidebarDragOrigin()
+
     @State private var sessionPendingDelete: StoredSession?
     /// Red inline message after a delete whose jump-restoration pass
     /// (M11a/T3) hit a keychain failure — same pattern as
@@ -292,8 +306,12 @@ struct SessionSidebar: View {
                 .padding(.bottom, 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
-                .dropDestination(for: String.self) { items, _ in
-                    handleDrop(items, toGroup: nil)
+                // The one place a row can be sent back to the top level:
+                // dropping it on the sidebar's own title. A folder that fills
+                // the whole list would otherwise leave nothing outside itself
+                // to drop onto.
+                .dropDestination(for: String.self) { payload, _ in
+                    drop(payload, intoGroup: nil)
                 }
 
             // Empty-store or filter-cleared: no session carries any tag, so
@@ -312,21 +330,7 @@ struct SessionSidebar: View {
 
                 switch visibility.emptiness {
                 case .notEmpty:
-                    sessionRows(visibility.ungrouped)
-
-                    ForEach(visibility.groupSections, id: \.group.id) { section in
-                        Section(isExpanded: Binding(
-                            get: { !collapsedGroups.contains(section.group.id) },
-                            set: { expanded in
-                                if expanded { collapsedGroups.remove(section.group.id) }
-                                else { collapsedGroups.insert(section.group.id) }
-                            }
-                        )) {
-                            sessionRows(section.sessions)
-                        } header: {
-                            groupHeader(section.group)
-                        }
-                    }
+                    rows(under: nil, visibility: visibility)
 
                     if visibility.showsImportedSection {
                         importedSection
@@ -478,74 +482,108 @@ struct SessionSidebar: View {
 
     // MARK: - Row builders
 
-    @ViewBuilder
-    private func sessionRows(_ sessions: [StoredSession]) -> some View {
-        ForEach(sessions) { session in
-            SessionRow(
-                session: session,
-                isActive: session.id == activeSessionID,
-                isSelected: session.id == selectedSessionID,
-                isRenaming: renamingID == session.id,
-                renameDraft: $renameDraft,
-                focusedRenameID: $focusedRenameID,
-                focusedRowID: $focusedRowID,
-                groups: viewModel.groups,
-                // Handed over as the activation method itself, not wrapped
-                // in a closure: a closure here would be a second place
-                // where an input could be swapped for another on its way
-                // to the plan, and review round 2 planted exactly that.
-                onInput: activate(_:on:),
-                onEdit: { onEdit(session) },
-                onStartRename: { startRename(id: session.id, currentName: session.name) },
-                onCommitRename: { commitSessionRename(session) },
-                onCancelRename: endRename,
-                onMove: { groupID in viewModel.moveSession(session, toGroup: groupID) },
-                onRequestNewGroupMove: { beginNewGroup(forMoving: session) },
-                onRequestDelete: { sessionPendingDelete = session },
-                onExport: { onExport(.single(session)) },
-                onShowAuditLog: { onShowAuditLog(session) },
-                snippets: snippets,
-                onRunSnippet: onRunSnippet
-            )
-            .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 6))
-        }
+    /// The rows directly under one folder (`nil` = the top level), in the
+    /// order `visibility` hands them over — and, for a folder, its own rows
+    /// below it by asking again.
+    ///
+    /// The recursion is what makes the depth arbitrary; `AnyView` is what
+    /// makes the recursion compile, since a `View` whose body contains itself
+    /// has an infinite type and one link in the chain has to be erased. A
+    /// sidebar is a handful of rows, which is the size at which that cost is
+    /// cheaper than a second data structure built to avoid it.
+    ///
+    /// Both lookups (`session(_:)`, `group(_:)`) answer from the same
+    /// filtered snapshot `children(of:)` walks, so a row named here always
+    /// resolves; the `if let` is what happens to nothing rather than a case
+    /// with a meaning.
+    private func rows(under parentID: UUID?, visibility: SidebarVisibility) -> AnyView {
+        AnyView(
+            ForEach(visibility.children(of: parentID)) { item in
+                switch item {
+                case .session(let id):
+                    if let session = visibility.session(id) {
+                        sessionRow(session)
+                    }
+                case .group(let id):
+                    if let group = visibility.group(id) {
+                        DisclosureGroup(isExpanded: expansion(of: group.id)) {
+                            rows(under: group.id, visibility: visibility)
+                        } label: {
+                            groupRow(group)
+                        }
+                    }
+                }
+            }
+        )
+    }
+
+    /// Whether one folder is open. Not persisted — every folder starts open
+    /// again on relaunch, the same as before folders could nest.
+    private func expansion(of groupID: UUID) -> Binding<Bool> {
+        Binding(
+            get: { !collapsedGroups.contains(groupID) },
+            set: { expanded in
+                if expanded { collapsedGroups.remove(groupID) } else { collapsedGroups.insert(groupID) }
+            })
     }
 
     @ViewBuilder
-    private func groupHeader(_ group: StoredGroup) -> some View {
-        HStack {
-            if renamingID == group.id {
-                TextField("", text: $renameDraft)
-                    .textFieldStyle(.plain)
-                    .focused($focusedRenameID, equals: group.id)
-                    .onSubmit { commitGroupRename(group) }
-                    .onExitCommand(perform: endRename)
-            } else {
-                // Display-only uppercase (spec: section labels are versal);
-                // the stored group name keeps its original casing.
-                Text(group.name)
-                    .textCase(.uppercase)
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .tracking(1.0)
-                    .foregroundStyle(DesignTokens.inkTertiary)
-            }
-            Spacer(minLength: 0)
-        }
-        .contentShape(Rectangle())
-        .contextMenu {
-            Button(L10n.string("sidebar.rename", "Rename")) {
-                startRename(id: group.id, currentName: group.name)
-            }
-            Button(L10n.string("export.menu.group", "Export Group…")) {
-                onExport(.group(group))
-            }
-            Button(L10n.string("sidebar.group.dissolve", "Dissolve group")) {
-                viewModel.dissolveGroup(group)
-            }
-        }
-        .dropDestination(for: String.self) { items, _ in
-            handleDrop(items, toGroup: group.id)
-        }
+    private func groupRow(_ group: StoredGroup) -> some View {
+        SidebarGroupRow(
+            group: group,
+            isRenaming: renamingID == group.id,
+            renameDraft: $renameDraft,
+            focusedRenameID: $focusedRenameID,
+            dragOrigin: dragOrigin,
+            // The REAL children, not the ones a tag filter left on screen:
+            // the sort rewrites the whole folder, so a folder showing one row
+            // while holding three has something to sort. What the count means
+            // is `SidebarSortMenuPlan`'s answer, not this line's.
+            sortPlan: SidebarSortMenuPlan.build(childCount: viewModel.children(of: group.id).count),
+            onStartRename: { startRename(id: group.id, currentName: group.name) },
+            onCommitRename: { commitGroupRename(group) },
+            onCancelRename: endRename,
+            onExport: { onExport(.group(group)) },
+            onSortByName: { viewModel.sortChildrenByName(of: group.id) },
+            onDissolve: { viewModel.dissolveGroup(group) },
+            onDrop: { payload in drop(payload, intoGroup: group.id) })
+    }
+
+    @ViewBuilder
+    private func sessionRow(_ session: StoredSession) -> some View {
+        SessionRow(
+            session: session,
+            isActive: session.id == activeSessionID,
+            isSelected: session.id == selectedSessionID,
+            isRenaming: renamingID == session.id,
+            renameDraft: $renameDraft,
+            focusedRenameID: $focusedRenameID,
+            focusedRowID: $focusedRowID,
+            groups: viewModel.groups,
+            // Handed over as the activation method itself, not wrapped
+            // in a closure: a closure here would be a second place
+            // where an input could be swapped for another on its way
+            // to the plan, and review round 2 planted exactly that.
+            onInput: activate(_:on:),
+            onEdit: { onEdit(session) },
+            onStartRename: { startRename(id: session.id, currentName: session.name) },
+            onCommitRename: { commitSessionRename(session) },
+            onCancelRename: endRename,
+            // The same call a drop onto a folder makes, so the menu and
+            // the gesture put a connection in the same place — at the end
+            // of that folder, with the ranks rewritten. The plain field
+            // write (`moveSession`) leaves the connection's old rank
+            // behind, which reads as an arbitrary place in its new folder.
+            onMove: { groupID in viewModel.move(.session(session.id), intoGroup: groupID) },
+            onRequestNewGroupMove: { beginNewGroup(forMoving: session) },
+            onRequestDelete: { sessionPendingDelete = session },
+            onExport: { onExport(.single(session)) },
+            onShowAuditLog: { onShowAuditLog(session) },
+            dragOrigin: dragOrigin,
+            onDrop: { payload in drop(payload, before: .session(session.id)) },
+            snippets: snippets,
+            onRunSnippet: onRunSnippet
+        )
     }
 
     /// Gated at the call site by `visibility.showsImportedSection` (P3a/T6)
@@ -736,17 +774,132 @@ struct SessionSidebar: View {
         }
         guard let group = viewModel.createGroup(named: newGroupName) else { return }
         if let session = sessionPendingGroupMove {
-            viewModel.moveSession(session, toGroup: group.id)
+            viewModel.move(.session(session.id), intoGroup: group.id)
         }
     }
 
     // MARK: - Drag & drop
 
-    private func handleDrop(_ items: [String], toGroup groupID: UUID?) -> Bool {
-        guard let raw = items.first, let sessionID = UUID(uuidString: raw) else { return false }
-        guard let session = viewModel.sessions.first(where: { $0.id == sessionID }) else { return false }
-        viewModel.moveSession(session, toGroup: groupID)
-        return true
+    /// A row was let go on a folder, or on the sidebar's own title: it goes
+    /// inside, after whatever is already there.
+    ///
+    /// Both halves of the gesture are identities — which row was picked up,
+    /// which folder it was let go on — and the place it ends up in is derived
+    /// by `SidebarOrdering` in the same instant it is used. A payload naming
+    /// no row of this sidebar (a tab dragged out of the strip, a text
+    /// clipping) ends the gesture; so does a refusal, and a refusal the user
+    /// can provoke on purpose — a folder into its own sub-folder — already
+    /// says so on screen through `viewModel.errorMessage`, so nothing is
+    /// reported a second time here.
+    private func drop(_ payload: [String], intoGroup parentID: UUID?) -> Bool {
+        guard let item = SidebarDragPayload.item(from: payload) else { return false }
+        return viewModel.move(item, intoGroup: parentID) == nil
+    }
+
+    /// A row was let go on a connection: it takes that connection's place
+    /// among its siblings, adopting its folder. Same rules as the other
+    /// half of the gesture above.
+    private func drop(_ payload: [String], before target: SidebarItem) -> Bool {
+        guard let item = SidebarDragPayload.item(from: payload) else { return false }
+        return viewModel.move(item, before: target) == nil
+    }
+}
+
+/// One folder row: its name (or the inline rename field), its drag payload,
+/// its drop target, and its context menu.
+///
+/// A view of its own rather than a `@ViewBuilder` on the sidebar because it
+/// owns one piece of state per folder — whether a drag is over THIS row —
+/// which a shared builder has nowhere to put.
+///
+/// It renders what it is handed and decides nothing: the highlight is
+/// `SidebarDropTargetPlan`'s answer, whether the sort entry appears is
+/// `SidebarSortMenuPlan`'s, and where a dropped row lands is decided behind
+/// `onDrop`, in Core.
+private struct SidebarGroupRow: View {
+    let group: StoredGroup
+    let isRenaming: Bool
+    @Binding var renameDraft: String
+    var focusedRenameID: FocusState<UUID?>.Binding
+    /// The sidebar's shared note of which row a drag is carrying — written
+    /// by this row's own payload, read when a drop is targeted here.
+    let dragOrigin: SidebarDragOrigin
+    let sortPlan: SidebarSortMenuPlan
+    let onStartRename: () -> Void
+    let onCommitRename: () -> Void
+    let onCancelRename: () -> Void
+    let onExport: () -> Void
+    let onSortByName: () -> Void
+    let onDissolve: () -> Void
+    let onDrop: ([String]) -> Bool
+
+    /// Whether a drag is over this row right now — the raw answer of the
+    /// drop's `isTargeted:` closure, kept raw so that what it MEANS is
+    /// `SidebarDropTargetPlan`'s to say.
+    @State private var isDropTargeted = false
+
+    private var dropPlan: SidebarDropTargetPlan {
+        SidebarDropTargetPlan.build(
+            row: .group(group.id), isTargeted: isDropTargeted,
+            dragged: dragOrigin.draggedItem)
+    }
+
+    var body: some View {
+        HStack {
+            if isRenaming {
+                TextField("", text: $renameDraft)
+                    .textFieldStyle(.plain)
+                    .focused(focusedRenameID, equals: group.id)
+                    .onSubmit(onCommitRename)
+                    .onExitCommand(perform: onCancelRename)
+            } else {
+                // Display-only uppercase (spec: folder labels are versal);
+                // the stored group name keeps its original casing.
+                Text(group.name)
+                    .textCase(.uppercase)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .tracking(1.0)
+                    .foregroundStyle(DesignTokens.inkTertiary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 3)
+        .padding(.horizontal, 6)
+        // Both the surface and the border are `SidebarDropTargetPlan`'s
+        // answer, drawn without a condition of this view's own: the answer
+        // for "nothing is over this row" is a clear fill and a clear border,
+        // so there is nothing to switch on here.
+        .background(RoundedRectangle(cornerRadius: 6).fill(dropPlan.fill))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(dropPlan.borderColor, lineWidth: 2))
+        .contentShape(Rectangle())
+        .draggable(dragPayload())
+        .dropDestination(for: String.self) { payload, _ in
+            onDrop(payload)
+        } isTargeted: { isDropTargeted = $0 }
+        .contextMenu {
+            Button(L10n.string("sidebar.rename", "Rename")) { onStartRename() }
+            Button(L10n.string("export.menu.group", "Export Group…")) { onExport() }
+            // Offered only where it can do something — see
+            // `SidebarSortMenuPlan`; this project hides what cannot act
+            // rather than greying it out.
+            if sortPlan.isShown {
+                Button(L10n.string("sidebar.group.sortByName", "Sort by Name")) { onSortByName() }
+            }
+            Button(L10n.string("sidebar.group.dissolve", "Dissolve group")) { onDissolve() }
+        }
+    }
+
+    /// The payload a drag of this row carries — and the one moment the
+    /// sidebar can learn WHICH row is being carried, because a drop
+    /// destination is told only that something is over it.
+    ///
+    /// `draggable(_:)` takes its payload as an `@autoclosure @escaping`
+    /// closure, so this runs when a drag begins rather than when the body is
+    /// built. What happens if that ever stops holding is `SidebarDragOrigin`'s
+    /// doc comment, and it is the reason that type has the shape it has.
+    private func dragPayload() -> String {
+        dragOrigin.draggedItem = .group(group.id)
+        return SidebarDragPayload.text(for: .group(group.id))
     }
 }
 
@@ -822,10 +975,27 @@ private struct SessionRow: View {
     let onRequestDelete: () -> Void
     let onExport: () -> Void
     let onShowAuditLog: () -> Void
+    /// The sidebar's shared note of which row a drag is carrying — written
+    /// by this row's own payload, read when a drop is targeted here.
+    let dragOrigin: SidebarDragOrigin
+    /// A row was let go on this one. What that does — it takes this row's
+    /// place among its siblings — is decided in Core behind this closure;
+    /// this row supplies neither a place nor a rule.
+    let onDrop: ([String]) -> Bool
     let snippets: [Snippet]
     let onRunSnippet: (Snippet, Bool) -> Void
 
     @State private var isHovering = false
+    /// Whether a drag is over this row right now — the raw answer of the
+    /// drop's `isTargeted:` closure, kept raw so that what it MEANS is
+    /// `SidebarDropTargetPlan`'s to say.
+    @State private var isDropTargeted = false
+
+    private var dropPlan: SidebarDropTargetPlan {
+        SidebarDropTargetPlan.build(
+            row: .session(session.id), isTargeted: isDropTargeted,
+            dragged: dragOrigin.draggedItem)
+    }
 
     /// "SSH"/"S3" (M12/T7b), localized through the backend descriptor —
     /// never hand-picked here, so a future third `ConnectionKind` only needs
@@ -924,9 +1094,14 @@ private struct SessionRow: View {
         }
         .padding(.vertical, 5)
         .padding(.horizontal, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 6).fill(highlightFill)
-        )
+        // Two surfaces, stacked rather than chosen between: the drop
+        // target's is drawn in front and is `Color.clear` whenever nothing
+        // is over this row (`SidebarDropTargetPlan.none`), so no condition
+        // here decides which of the two wins. The border is the second
+        // channel, drawn unconditionally and clear for the same case.
+        .background(RoundedRectangle(cornerRadius: 6).fill(dropPlan.fill))
+        .background(RoundedRectangle(cornerRadius: 6).fill(highlightFill))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(dropPlan.borderColor, lineWidth: 2))
         .contentShape(Rectangle())
         // Two independent modifiers rather than `TapGesture(count: 2)
         // .exclusively(before:)`, which is what `snippetRow` — the closer
@@ -957,7 +1132,14 @@ private struct SessionRow: View {
         .focused(focusedRowID, equals: session.id)
         .onKeyPress(.return) { onInput(.returnKey, session) ? .handled : .ignored }
         .onHover { isHovering = $0 }
-        .draggable(session.id.uuidString)
+        // Reordering by dragging, in two halves: this row carries its own
+        // identity, and a row dropped on this one takes this one's place.
+        // No position travels either way — see `SidebarDragPayload` for what
+        // the payload says and `SidebarOrdering` for who derives the place.
+        .draggable(dragPayload())
+        .dropDestination(for: String.self) { payload, _ in
+            onDrop(payload)
+        } isTargeted: { isDropTargeted = $0 }
         .contextMenu {
             Button(L10n.string("sidebar.connect", "Connect")) { _ = onInput(.contextMenuEntry, session) }
             // The two terminal entries (P3c/T2), directly under "Connect"
@@ -1064,5 +1246,14 @@ private struct SessionRow: View {
         // bucket @ endpoint-host for S3, user @ host for WebDAV) — no
         // natural-language words to translate, identical in every locale.
         .help(connectionSummary)
+    }
+
+    /// The payload a drag of this row carries — and the one moment the
+    /// sidebar can learn WHICH row is being carried, because a drop
+    /// destination is told only that something is over it. Same shape, and
+    /// the same `@autoclosure` reasoning, as `SidebarGroupRow`'s.
+    private func dragPayload() -> String {
+        dragOrigin.draggedItem = .session(session.id)
+        return SidebarDragPayload.text(for: .session(session.id))
     }
 }

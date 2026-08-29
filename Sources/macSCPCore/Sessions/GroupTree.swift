@@ -123,6 +123,33 @@ public enum GroupTree {
             .map(\.element)
     }
 
+    /// `groupID` together with every group above it, up to the top level.
+    ///
+    /// The question a filtered sidebar asks: a folder holding no match of its
+    /// own is still on screen when something below it matches, and "still on
+    /// screen" means the whole chain up to the top level is, or the match is
+    /// in the store and reachable by no route.
+    ///
+    /// Answered by walking upward from the match rather than downward from
+    /// each folder, which is what keeps the cost linear in the matches and
+    /// makes the two damages this type already knows about ordinary endings
+    /// rather than special cases: a `parentID` naming nothing simply ends the
+    /// walk, and a ring is walked once and left. An id naming no group in
+    /// `groups` names nothing, and answers the empty set.
+    public static func selfAndAncestors(of groupID: UUID, in groups: [StoredGroup]) -> Set<UUID> {
+        let parents = parentByID(groups)
+        var chain: Set<UUID> = []
+        var cursor: UUID? = groupID
+        // Three conditions, each ending the walk for its own reason: the top
+        // level is reached, the id names no group in this list (which is what
+        // keeps a `parentID` pointing at nothing out of the answer), or the
+        // id has been seen before, which is a ring.
+        while let id = cursor, let parent = parents[id], chain.insert(id).inserted {
+            cursor = parent
+        }
+        return chain
+    }
+
     /// `parentID` by group id. The value is itself Optional — a group present
     /// with no parent maps to `.some(nil)` — which is how a lookup tells "top
     /// level" apart from "not in this list".

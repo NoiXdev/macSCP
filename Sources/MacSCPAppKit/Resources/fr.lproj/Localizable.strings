@@ -275,6 +275,7 @@
 "sidebar.newGroup.title" = "Nouveau groupe";
 "sidebar.newGroup.placeholder" = "Nom du groupe";
 "sidebar.newGroup.create" = "Créer";
+"sidebar.group.sortByName" = "Trier par nom";
 "sidebar.group.dissolve" = "Dissoudre le groupe";
 "sidebar.delete.confirmTitle %@" = "Supprimer « %@ » ?";
 "sidebar.delete.confirmMessage" = "Les identifiants enregistrés sont également supprimés.";

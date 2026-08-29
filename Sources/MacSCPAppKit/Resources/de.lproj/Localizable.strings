@@ -272,6 +272,7 @@
 "sidebar.newGroup.title" = "Neue Gruppe";
 "sidebar.newGroup.placeholder" = "Gruppenname";
 "sidebar.newGroup.create" = "Anlegen";
+"sidebar.group.sortByName" = "Nach Namen sortieren";
 "sidebar.group.dissolve" = "Gruppe auflösen";
 "sidebar.delete.confirmTitle %@" = "„%@“ löschen?";
 "sidebar.delete.confirmMessage" = "Die gespeicherten Zugangsdaten werden mit entfernt.";

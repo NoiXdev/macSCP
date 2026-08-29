@@ -1,6 +1,6 @@
 import Foundation
 
-/// A session group shown as a collapsible sidebar section, and — since
+/// A session group shown as a collapsible sidebar row, and — since
 /// `parentID` — a node in a tree of arbitrary depth.
 /// Deleting a group DISSOLVES it: its sessions and its sub-folders move to
 /// the group's own parent, they are never deleted with the group.

@@ -271,6 +271,7 @@
 "sidebar.newGroup.title" = "New group";
 "sidebar.newGroup.placeholder" = "Group name";
 "sidebar.newGroup.create" = "Create";
+"sidebar.group.sortByName" = "Sort by Name";
 "sidebar.group.dissolve" = "Dissolve group";
 "sidebar.delete.confirmTitle %@" = "Delete “%@”?";
 "sidebar.delete.confirmMessage" = "The saved credentials are removed as well.";

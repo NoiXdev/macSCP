@@ -129,8 +129,7 @@ struct SidebarFilterWiringTests {
             return
         }
         let expectedReads = [
-            "sessionRows(visibility.ungrouped)",
-            "ForEach(visibility.groupSections, id: \\.group.id) { section in",
+            "rows(under: nil, visibility: visibility)",
             "if visibility.showsImportedSection {",
             "switch visibility.emptiness {",
         ]
@@ -138,6 +137,16 @@ struct SidebarFilterWiringTests {
             let found = body.contains { lines[$0].contains(expected) }
             #expect(found, "expected `body` to contain `\(expected)`, but it does not — re-anchor this guard")
         }
+        // The tree itself is drawn one level at a time outside `body`, so
+        // the read that decides WHICH rows appear is checked file-wide —
+        // `SidebarTreeWiringTests` is where that read's own guard lives.
+        let asksTheDecisionForItsRows = lines.contains {
+            $0.contains("visibility.children(of: parentID)")
+        }
+        #expect(asksTheDecisionForItsRows, """
+            expected `SessionSidebar.swift` to draw `visibility.children(of: parentID)` — \
+            re-anchor this guard.
+            """)
     }
 
     // MARK: - Guard 4: the active-tag fallback (Step 3) is actually wired
@@ -268,7 +277,7 @@ struct SidebarFilterWiringTests {
 
     /// The exact regression Guard 2 exists to catch: a section re-derives
     /// the filter by checking `session.tags` directly instead of reading
-    /// `visibility.ungrouped`.
+    /// the assembled decision.
     @Test func scannerFlagsARawTagsContainsComparison() {
         let source = """
             var body: some View {
@@ -295,9 +304,9 @@ struct SidebarFilterWiringTests {
                 let visibility = SidebarVisibility.compute(
                     sessions: viewModel.sessions, groups: viewModel.groups,
                     importedHostsCount: importedHosts.count, activeTag: activeTag)
-                ForEach(visibility.groupSections, id: \\.group.id) { section in
+                ForEach(visibility.children(of: nil)) { item in
                     Section {
-                        ForEach(section.sessions.filter { s in
+                        ForEach(sessionsOf(item).filter { s in
                             activeTag == nil || Set(s.tags).contains(activeTag!)
                         }) { s in
                             EmptyView()
@@ -317,7 +326,7 @@ struct SidebarFilterWiringTests {
                     sessions: viewModel.sessions, groups: viewModel.groups,
                     importedHostsCount: importedHosts.count, activeTag: activeTag)
                 List {
-                    sessionRows(visibility.ungrouped)
+                    rows(under: nil, visibility: visibility)
                 }
             }
             """
@@ -349,7 +358,7 @@ struct SidebarFilterWiringTests {
                     sessions: viewModel.sessions, groups: viewModel.groups,
                     importedHostsCount: 0, activeTag: nil)
                 List {
-                    sessionRows(visibility.ungrouped)
+                    rows(under: nil, visibility: visibility)
                 }
             }
             """
@@ -364,7 +373,7 @@ struct SidebarFilterWiringTests {
                     sessions: viewModel.sessions, groups: viewModel.groups,
                     importedHostsCount: importedHosts.count, activeTag: activeTag)
                 List {
-                    sessionRows(visibility.ungrouped)
+                    rows(under: nil, visibility: visibility)
                 }
             }
             """

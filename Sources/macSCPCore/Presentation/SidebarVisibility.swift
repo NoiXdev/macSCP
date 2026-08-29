@@ -10,42 +10,36 @@ import Foundation
 /// rendered an empty window), the only test available to guard it read the
 /// view file's source text. `SidebarVisibility.compute` exists so the same
 /// mistake is not possible here — the decision is a value a test can
-/// construct and inspect, and the view that renders it (a later task) has
-/// nothing left to decide, including whether the imported section counts
-/// toward "nothing to show": `emptiness` already folds in
-/// `importedHostsCount`, so a caller does not need its own
-/// `emptiness == .noSessionsAtAll && importedHosts.isEmpty` check.
+/// construct and inspect, and the view that renders it has nothing left to
+/// decide, including whether the imported section counts toward "nothing to
+/// show": `emptiness` already folds in `importedHostsCount`, so a caller does
+/// not need its own `emptiness == .noSessionsAtAll && importedHosts.isEmpty`
+/// check.
+///
+/// ## Why this answers a tree and not two flat lists
+///
+/// It used to hand over `ungrouped` plus one section per group, which is
+/// exactly as much shape as a sidebar drawing one level could use. Folders
+/// nest now (`StoredGroup.parentID`), and a flat answer cannot express that:
+/// a sub-folder drawn beside its own parent is not a smaller mistake than a
+/// wrong one, it is a different tree. What the view reads instead is
+/// `children(of:)` — one parent at a time, in `SidebarOrdering`'s order —
+/// which is also the only shape in which the filter rule below can be stated
+/// truthfully.
 ///
 /// `compute` filters purely on `StoredSession.tags`; it never receives or
 /// references `Snippet` in any form, and `SnippetMenuModel.build` never
-/// receives `activeTag` — the two computations share no parameter, so a
-/// host tag cannot reach a snippet through this type. That separation holds
-/// by construction, not by a test in this file: a test that calls both
-/// functions independently and checks their outputs would keep passing even
-/// if `compute` were deleted entirely, since nothing here connects them.
-/// The meaningful regression test — whether a caller accidentally threads
-/// `activeTag` into the `snippets` list it hands to a trigger surface —
-/// needs `activeTag` and `snippets` in scope together, which only happens
-/// once the next task wires `SessionSidebar`/`ContentView`; that is where
-/// that pin belongs, not here.
+/// receives `activeTag` — the two computations share no parameter, so a host
+/// tag cannot reach a snippet through this type. That separation holds by
+/// construction, not by a test in this file: a test that calls both functions
+/// independently and checks their outputs would keep passing even if
+/// `compute` were deleted entirely, since nothing here connects them. The
+/// meaningful regression test — whether a caller accidentally threads
+/// `activeTag` into the `snippets` list it hands to a trigger surface — needs
+/// `activeTag` and `snippets` in scope together, which only happens in
+/// `SessionSidebar`/`ContentView`; that is where that pin lives
+/// (`SidebarFilterWiringTests`), not here.
 public struct SidebarVisibility: Equatable, Sendable {
-    /// A group section the sidebar can render directly: the group header,
-    /// plus the sessions to list under it. Paired rather than split into a
-    /// `[StoredGroup]` list and a side dictionary keyed by group id — two
-    /// values that would have to be kept in sync (every group in the list
-    /// has a non-empty entry in the dictionary, and vice versa) for no
-    /// benefit, since nothing here reorders groups relative to `sessions`
-    /// by id.
-    public struct GroupSection: Equatable, Sendable {
-        public let group: StoredGroup
-        public let sessions: [StoredSession]
-
-        public init(group: StoredGroup, sessions: [StoredSession]) {
-            self.group = group
-            self.sessions = sessions
-        }
-    }
-
     /// Distinguishes "there is nothing to show because the store is empty"
     /// from "there is nothing to show because the active tag matched
     /// nothing" — the sidebar needs different copy for each (an empty store
@@ -57,29 +51,12 @@ public struct SidebarVisibility: Equatable, Sendable {
         case filterMatchesNothing
     }
 
-    /// Ungrouped sessions that pass the active tag filter, in `sessions`'s
-    /// order.
-    public let ungrouped: [StoredSession]
-    /// One entry per group the sidebar should render, in `groups`'s order,
-    /// each paired with exactly the sessions to list under it.
-    ///
-    /// With NO active tag every group gets an entry, including one with no
-    /// sessions at all — a group is a thing the user made, so a freshly
-    /// created one is present here before anything is in it, and one whose
-    /// last session was just dragged out stays present.
-    ///
-    /// What this type decides is exactly that: presence of the section. What
-    /// a present section then affords the user — the header's context menu,
-    /// its drop target — is an App-layer property of whatever renders it,
-    /// invisible from Core and checked by a human, not by a test in this
-    /// repo. It is the REASON presence matters (an absent section offers
-    /// neither), not a promise this type can keep.
-    ///
-    /// Omitting an empty group is FILTER behaviour and nothing else:
-    /// only while `activeTag` is non-nil is a group with no matching
-    /// session dropped, so a narrowed sidebar does not show headers with
-    /// nothing under them.
-    public let groupSections: [GroupSection]
+    /// Everything that survived the filter, still carrying its nesting and
+    /// its positions. Read through `children(of:)`, `session(_:)` and
+    /// `group(_:)` rather than directly: those are the three questions a
+    /// sidebar has, and going around them is how a view starts deriving an
+    /// order of its own.
+    public let visibleTree: SidebarOrdering.Tree
     /// Whether the sidebar's "IMPORTED" section (unsaved `SSHConfigHost`
     /// entries) should render at all: `activeTag == nil` (imported hosts
     /// carry no tags, so a tag filter can never match one, and rendering an
@@ -90,15 +67,37 @@ public struct SidebarVisibility: Equatable, Sendable {
     public let emptiness: Emptiness
 
     public init(
-        ungrouped: [StoredSession],
-        groupSections: [GroupSection],
+        visibleTree: SidebarOrdering.Tree,
         showsImportedSection: Bool,
         emptiness: Emptiness
     ) {
-        self.ungrouped = ungrouped
-        self.groupSections = groupSections
+        self.visibleTree = visibleTree
         self.showsImportedSection = showsImportedSection
         self.emptiness = emptiness
+    }
+
+    /// The rows to draw directly under one folder (`nil` = the top level), in
+    /// display order.
+    ///
+    /// The order is `SidebarOrdering`'s and nothing else's: by position, and
+    /// — for the zeroes every file written before this milestone is full of —
+    /// folders first, then connections, each in the order `compute` was
+    /// handed them. A view that draws this list in the order it arrives has
+    /// derived no place for anything.
+    public func children(of parentID: UUID?) -> [SidebarItem] {
+        SidebarOrdering.children(of: parentID, in: visibleTree)
+    }
+
+    /// The connection one row names, or `nil` when the filter removed it.
+    /// Answers from the same snapshot `children(of:)` walks, so a row handed
+    /// out by one of these calls always resolves through the others.
+    public func session(_ id: UUID) -> StoredSession? {
+        visibleTree.sessions.first { $0.id == id }
+    }
+
+    /// The folder one row names, under the same rule as `session(_:)`.
+    public func group(_ id: UUID) -> StoredGroup? {
+        visibleTree.groups.first { $0.id == id }
     }
 
     /// Computes what the sidebar shows for `sessions`/`groups` under
@@ -107,9 +106,11 @@ public struct SidebarVisibility: Equatable, Sendable {
     /// section — `SSHConfigHost` lives outside `StoredSession`, so only its
     /// count crosses into this decision, not the hosts themselves).
     ///
-    /// `activeTag == nil` is "no filter": every session shows, every group
-    /// shows (empty ones included — see `groupSections`), and the imported
-    /// section shows whenever `importedHostsCount > 0`.
+    /// `activeTag == nil` is "no filter": every session shows, every folder
+    /// shows — including one with nothing in it, because a folder is a thing
+    /// the user made, so a freshly created one is present before anything is
+    /// in it, and one whose last session was just dragged out stays present —
+    /// and the imported section shows whenever `importedHostsCount > 0`.
     ///
     /// A non-nil `activeTag` keeps only sessions whose `tags` contain it,
     /// compared exactly — against the case `TagList.normalized` deliberately
@@ -119,14 +120,22 @@ public struct SidebarVisibility: Equatable, Sendable {
     /// stay exact. A non-nil `activeTag` also always hides the imported
     /// section, regardless of `importedHostsCount`.
     ///
-    /// `emptiness` is `.notEmpty` whenever there is at least one ungrouped
-    /// session, one group section (which without a filter includes an empty
-    /// group — its header is something to draw), or a visible imported
-    /// section.
-    /// Otherwise — nothing anywhere to draw — it is `.noSessionsAtAll` when
-    /// `sessions` itself was empty, or `.filterMatchesNothing` when it was
-    /// not (an active filter, or a dangling `groupID` naming no group in
-    /// `groups`, consumed everything that would otherwise have drawn).
+    /// **A folder survives a filter when anything BELOW it matches**, not
+    /// when its own sessions do. Nesting is what forces that: with the match
+    /// two levels down, neither folder on the way to it carries a matching
+    /// session, so dropping a folder for having none of its own takes the
+    /// match off screen with it — the connection is in the store, passes the
+    /// filter, and is reachable by no route at all. The chain is kept alive
+    /// by walking upward from each match (`GroupTree.selfAndAncestors`),
+    /// which is also why an ancestor can never be dropped while a descendant
+    /// stays: the walk keeps both or neither.
+    ///
+    /// `emptiness` is `.notEmpty` whenever the top level has a row to draw or
+    /// the imported section does. Otherwise — nothing anywhere — it is
+    /// `.noSessionsAtAll` when `sessions` itself was empty, or
+    /// `.filterMatchesNothing` when it was not (an active filter, or a
+    /// dangling `groupID` naming no group in `groups`, consumed everything
+    /// that would otherwise have drawn).
     public static func compute(
         sessions: [StoredSession],
         groups: [StoredGroup],
@@ -138,29 +147,30 @@ public struct SidebarVisibility: Equatable, Sendable {
             return session.tags.contains(activeTag)
         }
 
-        let filtered = sessions.filter(passes)
-
-        let ungrouped = filtered.filter { $0.groupID == nil }
-        let groupSections: [GroupSection] = groups.compactMap { group in
-            let inGroup = filtered.filter { $0.groupID == group.id }
-            // Gated on `activeTag`, not on `inGroup` alone: dropping an
-            // empty group is how a FILTER narrows the sidebar, not how the
-            // sidebar renders in general. Unconditionally, it deletes a
-            // just-created group from the screen and takes a drained
-            // group's header — menu and drop target with it — out of reach.
-            if activeTag != nil, inGroup.isEmpty { return nil }
-            return GroupSection(group: group, sessions: inGroup)
+        let visibleSessions = sessions.filter(passes)
+        let visibleGroups: [StoredGroup]
+        if activeTag == nil {
+            visibleGroups = groups
+        } else {
+            var reachable: Set<UUID> = []
+            for session in visibleSessions {
+                guard let groupID = session.groupID else { continue }
+                reachable.formUnion(GroupTree.selfAndAncestors(of: groupID, in: groups))
+            }
+            visibleGroups = groups.filter { reachable.contains($0.id) }
         }
 
+        let visibleTree = SidebarOrdering.Tree(groups: visibleGroups, sessions: visibleSessions)
         let showsImportedSection = activeTag == nil && importedHostsCount > 0
 
         // Structural, not incidental: this is the actual "is there anything
-        // to draw" question, asked directly of the three things the sidebar
-        // renders, rather than inferred from `filtered.isEmpty` — which
-        // would say `.notEmpty` for a session whose `groupID` names no
-        // group in `groups` even though such a session lands in neither
-        // `ungrouped` nor any `groupSections` entry and so draws nothing.
-        let hasAnythingToDraw = !ungrouped.isEmpty || !groupSections.isEmpty || showsImportedSection
+        // to draw" question, asked of the level the sidebar starts drawing at
+        // rather than inferred from `visibleSessions.isEmpty` — which would
+        // say `.notEmpty` for a session whose `groupID` names no group in
+        // `groups` even though such a session hangs off a parent that draws
+        // nowhere and is therefore never asked for.
+        let hasAnythingToDraw =
+            !SidebarOrdering.children(of: nil, in: visibleTree).isEmpty || showsImportedSection
 
         let emptiness: Emptiness
         if hasAnythingToDraw {
@@ -170,8 +180,7 @@ public struct SidebarVisibility: Equatable, Sendable {
         }
 
         return SidebarVisibility(
-            ungrouped: ungrouped,
-            groupSections: groupSections,
+            visibleTree: visibleTree,
             showsImportedSection: showsImportedSection,
             emptiness: emptiness
         )

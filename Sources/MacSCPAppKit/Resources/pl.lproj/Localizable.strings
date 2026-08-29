@@ -274,6 +274,7 @@
 "sidebar.newGroup.title" = "Nowa grupa";
 "sidebar.newGroup.placeholder" = "Nazwa grupy";
 "sidebar.newGroup.create" = "Utwórz";
+"sidebar.group.sortByName" = "Sortuj według nazwy";
 "sidebar.group.dissolve" = "Rozwiąż grupę";
 "sidebar.delete.confirmTitle %@" = "Usunąć „%@”?";
 "sidebar.delete.confirmMessage" = "Zapisane dane uwierzytelniające zostaną również usunięte.";

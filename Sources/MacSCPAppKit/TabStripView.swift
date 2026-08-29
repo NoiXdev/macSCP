@@ -272,11 +272,12 @@ enum TabBackgroundPlan: Equatable {
     /// id is this tab" is exactly the case that must not be highlighted.
     ///
     /// **What that leaves unpromised.** A payload from outside this strip
-    /// — a session row dragged out of the sidebar carries a plain uuid
-    /// string too — targets a tab like any other drag and is highlighted
-    /// like one, while its drop moves nothing, because `move(tabID:onto:)`
-    /// does not know the id. Telling the two apart needs the payload, and
-    /// the payload is not readable until the drop.
+    /// — a sidebar row dragged over the strip carries a string too, in
+    /// `SidebarDragPayload`'s own spelling — targets a tab like any other
+    /// drag and is highlighted like one, while its drop moves nothing,
+    /// because `TabDropPlan.draggedTabID` reads no tab id out of it.
+    /// Telling the two apart needs the payload, and the payload is not
+    /// readable until the drop.
     static func build(
         isActive: Bool, isDropTargeted: Bool, draggedTabID: UUID?, tabID: UUID
     ) -> TabBackgroundPlan {
@@ -447,8 +448,10 @@ private struct TabItemView: View {
         .onTapGesture(perform: onActivate)
         // Reordering by dragging, in two halves: the tab carries its own
         // id, and a tab dropped on this one takes this one's position.
-        // Both halves are plain uuid strings, the spelling the session
-        // sidebar's rows already use.
+        // Both halves are plain uuid strings. The session sidebar's rows
+        // carry a prefixed spelling of their own (`SidebarDragPayload`),
+        // because a row there is a folder or a connection and the drop has
+        // to know which; neither surface parses the other's payload.
         //
         // The drop also reports whether a drag is over this tab, which is
         // the whole of the feedback a drop destination gets: a `Bool`, with
@@ -467,9 +470,9 @@ private struct TabItemView: View {
         // No path there opens a window, moves a session, or touches this
         // strip — which is what "multi-window is v2, and connection state
         // belongs to its window" actually requires. The reverse direction
-        // is refused for the mirror-image reason: the session sidebar's
-        // drop looks the dropped uuid up among its stored sessions and
-        // finds nothing.
+        // is refused for the mirror-image reason: the session sidebar reads
+        // its drops through `SidebarDragPayload`, which a bare uuid is not,
+        // so a tab dropped there names no row.
         .draggable(dragPayload())
         .dropDestination(for: String.self) { payload, _ in
             // Reads the payload and routes; decides nothing else. Where
