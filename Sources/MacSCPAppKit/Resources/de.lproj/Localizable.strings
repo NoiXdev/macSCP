@@ -503,7 +503,6 @@
 "logins.export.externalKeys %lld" = "Schlüsseldateien nicht eingebettet (nicht von macSCP verwaltet): %lld";
 "logins.export.keysWithoutPassphrase %lld" = "Schlüsseldateien ohne ihre Passphrase exportiert: %lld";
 "logins.export.keyErrors %@" = "Schlüsseldateien, die nicht gelesen werden konnten: %@";
-"logins.import.action" = "Importieren…";
 "logins.import.result %lld %lld %lld" = "%lld importiert, %lld ersetzt, %lld übersprungen";
 "logins.import.renamed %lld" = "Unter neuem Namen importiert: %lld";
 "logins.import.keysImported %lld" = "Importierte Schlüsseldateien: %lld";
@@ -834,7 +833,6 @@
 "keys.picker.manage" = "Schlüssel verwalten…";
 "keys.sheet.title" = "SSH-Schlüssel";
 "keys.noMatches" = "Keine Treffer.";
-"keys.import" = "Importieren…";
 "keys.import.title" = "SSH-Schlüssel importieren";
 "keys.import.file" = "Datei";
 "keys.import.submit" = "Importieren";
@@ -982,3 +980,8 @@
 "connection.failed.close" = "Schließen";
 "connection.failed.details" = "Details…";
 "connection.failed.details.title" = "Verbindungsdetails";
+
+// Verwaltungs-Sheets: Überlaufmenü in der Fußzeile (Backlog 2026-08-20, Punkt 5)
+"sheets.moreActions" = "Weitere Aktionen";
+"sheets.export" = "Exportieren…";
+"sheets.import" = "Importieren…";

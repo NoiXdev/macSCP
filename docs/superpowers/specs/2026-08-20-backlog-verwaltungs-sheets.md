@@ -107,6 +107,23 @@ wieder zur Einzelfrage zu machen.
 
 Zu bauen ist es gegen `List`, nicht gegen `Table` — siehe Punkt 4.
 
+### Gebaut am 2026-08-29 — mit einer Korrektur an der Tabelle oben
+
+Nachgezählt vor dem Bau, Fußzeile für Fußzeile: Login-Sets **6** und
+SSH-Schlüssel **3** stimmen. **Known Hosts sind 3, nicht 2** — „Fingerabdruck
+kopieren", „Entfernen…", „Schließen"; die Zeile oben hat den Kopier-Knopf
+übersehen. Hidden Imports **1** stimmt (der „Wieder anzeigen"-Knopf sitzt in
+der Zeile, nicht in der Fußzeile).
+
+Danach: Login-Sets vier Knöpfe (Neu, Bearbeiten, Löschen, Schließen) plus das
+Menü, SSH-Schlüssel zwei (Erzeugen, Schließen) plus das Menü. „Löschen…"
+blieb sichtbar, wie festgelegt. Die Regel selbst trägt jetzt ein Typ:
+`SheetOverflowAction` kennt nur Export und Import, `SheetOverflowMenu`
+zeichnet nichts anderes — eine zerstörende Aktion hat dort keine Darstellung.
+Bei den Schlüsseln wird gar kein Export angeboten (die Schlüssel-Exporte
+sitzen in der Zeile), und bei den Logins fällt der Export-Eintrag weg, statt
+grau zu werden, wenn die Suche nichts übrig lässt.
+
 ## Reihenfolge
 
 Mit der Absage an 4 sind alle verbliebenen Punkte voneinander unabhängig.

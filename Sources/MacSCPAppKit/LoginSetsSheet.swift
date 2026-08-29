@@ -146,6 +146,17 @@ struct LoginSetsSheet: View {
                 }
                 .buttonStyle(.polished)
                 .disabled(selectedSet == nil)
+                // Export and Import act on a file on disk, so they sit under
+                // the three-dot menu, while New/Edit/Delete above act on the
+                // list selection and stay visible (backlog 2026-08-20,
+                // point 5). Delete… would fit under the menu just as well and
+                // deliberately does not go there: it is destructive.
+                //
+                // With nothing visible there is nothing to export, so the
+                // entry is left out rather than shown greyed — which also
+                // replaces the `.disabled(visibleSets.isEmpty)` this button
+                // carried before.
+                //
                 // Export scope (M19/T8, corrected in review; the rule itself
                 // now lives at `ListExportScope`): with an active search, M18's
                 // regression fix above clears the selection as soon as the
@@ -155,16 +166,18 @@ struct LoginSetsSheet: View {
                 // 3, hitting "Export…", and writing all 60 — with their
                 // passwords, if that switch was on. Edit and Delete were
                 // hardened against exactly this in M18; export was not.
-                Button(L10n.string("logins.export.action", "Export…")) {
-                    exportTarget = ExportTarget(sets: ListExportScope.resolve(
-                        selectedID: selectedID, from: visibleSets))
+                SheetOverflowMenu(
+                    actions: SheetOverflowAction.offered(
+                        canExport: !visibleSets.isEmpty, canImport: true)
+                ) { action in
+                    switch action {
+                    case .export:
+                        exportTarget = ExportTarget(sets: ListExportScope.resolve(
+                            selectedID: selectedID, from: visibleSets))
+                    case .import:
+                        showImportFileImporter = true
+                    }
                 }
-                .buttonStyle(.polished)
-                .disabled(visibleSets.isEmpty)
-                Button(L10n.string("logins.import.action", "Import…")) {
-                    showImportFileImporter = true
-                }
-                .buttonStyle(.polished)
                 Button(L10n.string("common.close", "Close")) { dismiss() }
                     .buttonStyle(.polishedProminent)
                     .keyboardShortcut(.defaultAction)
@@ -379,8 +392,9 @@ struct LoginSetsSheet: View {
                 selectedID = set.id
                 editorTarget = LoginSetEditorTarget(existing: set)
             }
-            // Single-set export (M19/T8) — the footer button covers "all" (or
-            // whatever is selected); this one always means THIS row.
+            // Single-set export (M19/T8) — the footer's Export… entry, now
+            // under the three-dot menu, covers "all" (or whatever is
+            // selected); this one always means THIS row.
             Button(L10n.string("logins.export.action", "Export…")) {
                 selectedID = set.id
                 exportTarget = ExportTarget(sets: [set])

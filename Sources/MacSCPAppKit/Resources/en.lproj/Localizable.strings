@@ -502,7 +502,6 @@
 "logins.export.externalKeys %lld" = "Key files not embedded (not managed by macSCP): %lld";
 "logins.export.keysWithoutPassphrase %lld" = "Key files exported without their passphrase: %lld";
 "logins.export.keyErrors %@" = "Key files that could not be read: %@";
-"logins.import.action" = "Import…";
 "logins.import.result %lld %lld %lld" = "%lld imported, %lld replaced, %lld skipped";
 "logins.import.renamed %lld" = "Imported under a new name: %lld";
 "logins.import.keysImported %lld" = "Key files imported: %lld";
@@ -833,7 +832,6 @@
 "keys.picker.manage" = "Manage keys…";
 "keys.sheet.title" = "SSH Keys";
 "keys.noMatches" = "No matches.";
-"keys.import" = "Import…";
 "keys.import.title" = "Import SSH Key";
 "keys.import.file" = "File";
 "keys.import.submit" = "Import";
@@ -981,3 +979,8 @@
 "connection.failed.close" = "Close";
 "connection.failed.details" = "Details…";
 "connection.failed.details.title" = "Connection details";
+
+// Management sheets: the footer overflow menu (backlog 2026-08-20, point 5)
+"sheets.moreActions" = "More actions";
+"sheets.export" = "Export…";
+"sheets.import" = "Import…";

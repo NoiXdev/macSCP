@@ -505,7 +505,6 @@
 "logins.export.externalKeys %lld" = "Pliki kluczy nieosadzone (niezarządzane przez macSCP): %lld";
 "logins.export.keysWithoutPassphrase %lld" = "Pliki kluczy wyeksportowane bez hasła klucza: %lld";
 "logins.export.keyErrors %@" = "Pliki kluczy, których nie udało się odczytać: %@";
-"logins.import.action" = "Importuj…";
 "logins.import.result %lld %lld %lld" = "%lld zaimportowano, %lld zastąpiono, %lld pominięto";
 "logins.import.renamed %lld" = "Zaimportowano pod nową nazwą: %lld";
 "logins.import.keysImported %lld" = "Zaimportowane pliki kluczy: %lld";
@@ -836,7 +835,6 @@
 "keys.picker.manage" = "Zarządzaj kluczami…";
 "keys.sheet.title" = "Klucze SSH";
 "keys.noMatches" = "Brak wyników.";
-"keys.import" = "Importuj…";
 "keys.import.title" = "Importuj klucz SSH";
 "keys.import.file" = "Plik";
 "keys.import.submit" = "Importuj";
@@ -984,3 +982,8 @@
 "connection.failed.close" = "Zamknij";
 "connection.failed.details" = "Szczegóły…";
 "connection.failed.details.title" = "Szczegóły połączenia";
+
+// Arkusze zarządzania: menu nadmiarowe w stopce (backlog 2026-08-20, punkt 5)
+"sheets.moreActions" = "Więcej akcji";
+"sheets.export" = "Eksportuj…";
+"sheets.import" = "Importuj…";

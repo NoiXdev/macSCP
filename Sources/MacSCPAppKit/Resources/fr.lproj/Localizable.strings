@@ -506,7 +506,6 @@
 "logins.export.externalKeys %lld" = "Fichiers de clé non intégrés (non gérés par macSCP) : %lld";
 "logins.export.keysWithoutPassphrase %lld" = "Fichiers de clé exportés sans leur phrase secrète : %lld";
 "logins.export.keyErrors %@" = "Fichiers de clé illisibles : %@";
-"logins.import.action" = "Importer…";
 "logins.import.result %lld %lld %lld" = "%lld importés, %lld remplacés, %lld ignorés";
 "logins.import.renamed %lld" = "Importés sous un nouveau nom : %lld";
 "logins.import.keysImported %lld" = "Fichiers de clé importés : %lld";
@@ -837,7 +836,6 @@
 "keys.picker.manage" = "Gérer les clés…";
 "keys.sheet.title" = "Clés SSH";
 "keys.noMatches" = "Aucun résultat.";
-"keys.import" = "Importer…";
 "keys.import.title" = "Importer une clé SSH";
 "keys.import.file" = "Fichier";
 "keys.import.submit" = "Importer";
@@ -985,3 +983,8 @@
 "connection.failed.close" = "Fermer";
 "connection.failed.details" = "Détails…";
 "connection.failed.details.title" = "Détails de la connexion";
+
+// Feuilles de gestion : menu de débordement du pied de page (backlog 2026-08-20, point 5)
+"sheets.moreActions" = "Autres actions";
+"sheets.export" = "Exporter…";
+"sheets.import" = "Importer…";

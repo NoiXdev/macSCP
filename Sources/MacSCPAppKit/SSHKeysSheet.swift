@@ -9,7 +9,8 @@ import macSCPCore
 /// the M17 `SSHKeysSettingsTab` (removed in M18/T6 — this sheet is now the
 /// only place keys are managed). Shape mirrors `LoginSetsSheet` (title,
 /// `SheetSearchField` + `sheetSearchPredicate`, filtered list with a
-/// `*.noMatches` vs. `*.empty` distinction, footer buttons, fixed
+/// `*.noMatches` vs. `*.empty` distinction, footer buttons and the shared
+/// `SheetOverflowMenu`, fixed
 /// `.frame(width: 720, height: 460)`, row `.contextMenu`).
 ///
 /// `GenerateKeySheet` and `SSHPublicKeyDocument` below are this file's own
@@ -96,10 +97,26 @@ struct SSHKeysSheet: View {
 
             HStack {
                 Spacer()
-                Button(L10n.string("keys.import", "Import…")) { showImportFileImporter = true }
-                    .buttonStyle(.polished)
                 Button(L10n.string("keys.generate", "Generate…")) { showGenerate = true }
                     .buttonStyle(.polished)
+                // Same rule as the logins sheet (backlog 2026-08-20, point 5):
+                // Import reads a file from disk, so it belongs under the menu.
+                // This sheet gets the menu not for want of footer space but so
+                // the rule holds in one place rather than one of two.
+                SheetOverflowMenu(
+                    actions: SheetOverflowAction.offered(canExport: false, canImport: true)
+                ) { action in
+                    switch action {
+                    case .import:
+                        showImportFileImporter = true
+                    case .export:
+                        // Not offered here, so never delivered: the per-key
+                        // exports live in the row, and an action that cannot
+                        // apply is absent rather than greyed. When the private
+                        // export moves into the footer, it lands here.
+                        break
+                    }
+                }
                 Button(L10n.string("common.close", "Close")) { dismiss() }
                     .buttonStyle(.polishedProminent)
                     .keyboardShortcut(.defaultAction)
