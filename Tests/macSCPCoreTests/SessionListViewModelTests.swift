@@ -424,6 +424,97 @@ struct SessionListViewModelTests {
         #expect(vm.sessions(inGroup: nil).isEmpty)
     }
 
+    // MARK: - Nesting and order (D1/D2, Task 2)
+
+    /// The drag path end to end: two identities in, a persisted order out.
+    @Test func draggingASessionOntoAFolderPersistsTheNewOrder() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let folder = vm.createGroup(named: "Folder")!
+        let loose = vm.save(
+            name: "loose", values: sshValues(host: "h", username: "u"), password: "")!
+        _ = vm.save(
+            name: "inside", values: sshValues(host: "h", username: "u"), password: "",
+            groupID: folder.id)
+
+        #expect(vm.move(.session(loose.id), intoGroup: folder.id) == nil)
+
+        #expect(vm.children(of: folder.id).map(\.id) == vm.sessions(inGroup: folder.id)
+            .sorted { $0.position < $1.position }.map(\.id))
+        #expect(vm.sessions.first { $0.id == loose.id }?.groupID == folder.id)
+        #expect(vm.sessions.first { $0.id == loose.id }?.position == 1)
+    }
+
+    /// Nesting a folder under another one, and the refusal that guards it:
+    /// the move that would make a folder its own ancestor changes nothing and
+    /// SAYS so — both by what it returns and by what the user is told.
+    @Test func aMoveThatWouldCloseACycleChangesNothingAndReportsIt() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let outer = vm.createGroup(named: "Outer")!
+        let inner = vm.createGroup(named: "Inner")!
+        #expect(vm.move(.group(inner.id), intoGroup: outer.id) == nil)
+
+        #expect(vm.move(.group(outer.id), intoGroup: inner.id) == .wouldCycle)
+
+        #expect(vm.groups.first { $0.id == outer.id }?.parentID == nil)
+        #expect(vm.groups.first { $0.id == inner.id }?.parentID == outer.id)
+        #expect(vm.errorMessage != nil)
+    }
+
+    /// The one-shot sort, through the view model that owns the write.
+    @Test func sortingAFoldersChildrenByNamePersists() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let folder = vm.createGroup(named: "Folder")!
+        for name in ["charlie", "alpha", "bravo"] {
+            _ = vm.save(
+                name: name, values: sshValues(host: "h", username: "u"), password: "",
+                groupID: folder.id)
+        }
+        // Reversed by hand first, so the assertion below cannot pass on the
+        // name order `reload()` already imposes on `sessions`.
+        for session in vm.sessions(inGroup: folder.id).reversed() {
+            _ = vm.move(.session(session.id), intoGroup: folder.id)
+        }
+        #expect(childNames(of: folder.id, in: vm) == ["charlie", "bravo", "alpha"])
+
+        vm.sortChildrenByName(of: folder.id)
+
+        #expect(childNames(of: folder.id, in: vm) == ["alpha", "bravo", "charlie"])
+    }
+
+    /// The names of a parent's children, in the order the sidebar reads them.
+    private func childNames(of parentID: UUID?, in vm: SessionListViewModel) -> [String] {
+        vm.children(of: parentID).map { item in
+            switch item {
+            case .group(let id): vm.groups.first { $0.id == id }?.name ?? "?"
+            case .session(let id): vm.sessions.first { $0.id == id }?.name ?? "?"
+            }
+        }
+    }
+
+    /// Dissolving a nested folder through the view model keeps every session
+    /// and every sub-folder, one level up.
+    @Test func dissolvingANestedFolderKeepsItsMembersUnderTheParent() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let outer = vm.createGroup(named: "Outer")!
+        let middle = vm.createGroup(named: "Middle")!
+        let inner = vm.createGroup(named: "Inner")!
+        #expect(vm.move(.group(middle.id), intoGroup: outer.id) == nil)
+        #expect(vm.move(.group(inner.id), intoGroup: middle.id) == nil)
+        let held = vm.save(
+            name: "held", values: sshValues(host: "h", username: "u"), password: "",
+            groupID: middle.id)!
+
+        vm.dissolveGroup(vm.groups.first { $0.id == middle.id }!)
+
+        #expect(vm.groups.count == 2)
+        #expect(vm.groups.first { $0.id == inner.id }?.parentID == outer.id)
+        #expect(vm.sessions.first { $0.id == held.id }?.groupID == outer.id)
+    }
+
     @Test func renameSessionTrimsAndRejectsEmpty() throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }

@@ -91,6 +91,7 @@
 
 /* Session groups (M5f/T2) */
 "core.session.groupSaveFailed %@" = "Impossible d'enregistrer le groupe : %@";
+"core.session.groupMoveCycle" = "Impossible de déplacer un dossier dans lui-même ou dans un de ses sous-dossiers.";
 
 /* Login sets (M10b/T2) */
 "core.login.loadFailed %@" = "Échec du chargement des logins : %@";

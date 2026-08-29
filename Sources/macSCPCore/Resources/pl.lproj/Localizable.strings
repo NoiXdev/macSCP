@@ -91,6 +91,7 @@
 
 /* Session groups (M5f/T2) */
 "core.session.groupSaveFailed %@" = "Nie udało się zapisać grupy: %@";
+"core.session.groupMoveCycle" = "Nie można przenieść folderu do niego samego ani do jednego z jego podfolderów.";
 
 /* Login sets (M10b/T2) */
 "core.login.loadFailed %@" = "Nie udało się wczytać loginów: %@";

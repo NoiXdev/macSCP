@@ -193,14 +193,17 @@ struct SidebarVisibilityTests {
         #expect(v.groupSections.isEmpty)
     }
 
-    /// The reviewer-confirmed unreachable edge case (`SessionStore.load` and
-    /// `dissolveGroup` both nil out a dangling `groupID` before this type
-    /// ever sees it): a session whose `groupID` names no group in `groups`
-    /// passes the tag filter (there is none active here) but still lands in
-    /// neither `ungrouped` nor any `groupSections` entry, so there is
-    /// nothing on screen for it. `emptiness` must reflect that structurally
-    /// — deriving it from `ungrouped`/`groupSections` themselves, not from
-    /// whether the tag filter matched anything, is what makes this hold
+    /// The reviewer-confirmed unreachable edge case (no dangling `groupID`
+    /// reaches this type: `SessionStore.load` nils one out, and
+    /// `dissolveGroup` re-points the dissolved group's sessions at its
+    /// PARENT, which is a group that is still there — `nil`, the top level,
+    /// when the dissolved group had no parent): a session whose `groupID`
+    /// names no group in `groups` passes the tag filter (there is none
+    /// active here) but still lands in neither `ungrouped` nor any
+    /// `groupSections` entry, so there is nothing on screen for it.
+    /// `emptiness` must reflect that structurally — deriving it from
+    /// `ungrouped`/`groupSections` themselves, not from whether the tag
+    /// filter matched anything, is what makes this hold
     /// even though nothing here is actually filtering by tag.
     @Test func aSessionInAnUnknownGroupDrawsNothingAndEmptinessSaysSo() {
         let danglingGroupID = UUID()

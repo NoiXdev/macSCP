@@ -89,6 +89,7 @@
 
 /* Session groups (M5f/T2) */
 "core.session.groupSaveFailed %@" = "Gruppe konnte nicht gespeichert werden: %@";
+"core.session.groupMoveCycle" = "Ein Ordner kann nicht in sich selbst oder in einen seiner Unterordner verschoben werden.";
 
 /* Login sets (M10b/T2) */
 "core.login.loadFailed %@" = "Logins konnten nicht geladen werden: %@";

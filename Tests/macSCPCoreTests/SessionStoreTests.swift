@@ -123,6 +123,138 @@ struct SessionStoreTests {
         #expect(try store.allGroups().count == 1)
     }
 
+    // MARK: - Nesting and order (D1/D2, Task 2)
+
+    /// Dissolving generalizes what the flat case already did. `groupID = nil`
+    /// was never "no group" as a rule — for a TOP-LEVEL group it is one level
+    /// up, and one level up from a nested group is its parent.
+    ///
+    /// Sub-folders travel with the sessions. Left behind they would name a
+    /// group that is gone, and `load()`'s repair lifts such a group to the
+    /// TOP level — a different place than the one the user dissolved, and a
+    /// silent one.
+    @Test func dissolveLiftsSessionsAndSubfoldersToTheParent() throws {
+        let (store, dir) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let outer = StoredGroup(name: "Outer")
+        let middle = StoredGroup(name: "Middle", parentID: outer.id)
+        let inner = StoredGroup(name: "Inner", parentID: middle.id)
+        for group in [outer, middle, inner] { try store.upsertGroup(group) }
+        try store.upsert(sshSession(name: "a", groupID: middle.id))
+
+        try store.dissolveGroup(id: middle.id)
+
+        let groups = try store.allGroups()
+        #expect(groups.map(\.name).sorted() == ["Inner", "Outer"])
+        #expect(groups.first { $0.name == "Inner" }?.parentID == outer.id)
+        #expect(try store.all().map(\.groupID) == [outer.id])
+    }
+
+    /// The receiving parent is renumbered in one go: the lifted members take
+    /// the dissolved group's slot, and every sibling keeps a position of its
+    /// own.
+    @Test func dissolveLeavesTheReceivingParentGaplessAndUnique() throws {
+        let (store, dir) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let outer = StoredGroup(name: "Outer")
+        let middle = StoredGroup(name: "Middle", parentID: outer.id)
+        for group in [outer, middle, StoredGroup(name: "Other", parentID: outer.id)] {
+            try store.upsertGroup(group)
+        }
+        try store.upsert(sshSession(name: "a", groupID: middle.id))
+        try store.upsert(sshSession(name: "b", groupID: outer.id))
+        try store.upsertGroup(StoredGroup(name: "Inner", parentID: middle.id))
+
+        try store.dissolveGroup(id: middle.id)
+
+        // The count is asserted first, and on purpose: `0..<count` is
+        // satisfied by an empty list too, so without it this would go on
+        // passing over a parent that had lost every child.
+        let positions = try positionsOfChildren(of: outer.id, in: store)
+        #expect(positions.count == 4)  // Inner + "a", lifted; "Other" + "b", already there
+        #expect(positions == Array(0..<positions.count))
+    }
+
+    /// A parent that names a group the file does not hold is lifted to the
+    /// top level on the way in — the `parentID` counterpart of the stray
+    /// `groupID` sweep next to it. Nothing is dropped.
+    @Test func aParentThatIsNotInTheFileIsLiftedOnLoad() throws {
+        let (store, dir) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try store.upsertGroup(StoredGroup(name: "Orphan", parentID: UUID()))
+        let groups = try store.allGroups()
+        #expect(groups.map(\.name) == ["Orphan"])
+        #expect(groups.first?.parentID == nil)
+    }
+
+    /// A cycle can only arrive through a file another installation wrote, so
+    /// it is written by hand here. Both groups survive it: the ring is cut,
+    /// never emptied.
+    @Test func aCyclicParentChainIsCutOnLoadAndKeepsBothGroups() throws {
+        let (store, dir) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let a = "AAAAAAAA-0000-0000-0000-000000000001"
+        let b = "BBBBBBBB-0000-0000-0000-000000000002"
+        let file = """
+        {"groups":[\
+        {"id":"\(a)","name":"A","parentID":"\(b)","position":0},\
+        {"id":"\(b)","name":"B","parentID":"\(a)","position":1}],\
+        "sessions":[]}
+        """
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(file.utf8).write(to: dir.appendingPathComponent("sessions-v2.json"))
+
+        let groups = try store.allGroups()
+        #expect(groups.map(\.name).sorted() == ["A", "B"])
+        #expect(!GroupTree.hasCycle(groups))
+    }
+
+    /// `applyOrdering` writes where a row sits and nothing else — and the
+    /// claim is worth a test because the caller hands over a WHOLE tree that
+    /// it read at some earlier moment. A write that took anything but the
+    /// ordering fields from it would roll back a rename made in between, and
+    /// one that took the tree's MEMBERSHIP would resurrect a deleted session
+    /// or drop a newly saved one.
+    @Test func applyOrderingWritesTheOrderingFieldsAndNothingElse() throws {
+        let (store, dir) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let folder = StoredGroup(name: "Folder")
+        try store.upsertGroup(folder)
+        let session = sshSession(name: "current", host: "h", username: "u")
+        try store.upsert(session)
+
+        var staleSession = session
+        staleSession.name = "stale"
+        staleSession.groupID = folder.id
+        staleSession.position = 3
+        var staleGroup = folder
+        staleGroup.name = "renamed"
+        staleGroup.position = 7
+        try store.applyOrdering(SidebarOrdering.Tree(
+            groups: [staleGroup, StoredGroup(name: "gone")],
+            sessions: [staleSession, sshSession(name: "gone", host: "h", username: "u")]))
+
+        #expect(try store.allGroups().map(\.name) == ["Folder"])
+        #expect(try store.allGroups().first?.position == 7)
+        #expect(try store.all().map(\.name) == ["current"])
+        #expect(try store.all().first?.groupID == folder.id)
+        #expect(try store.all().first?.position == 3)
+    }
+
+    /// The positions of a parent's children, in the order the sidebar reads
+    /// them — derived from the store rather than from the array the test
+    /// wrote, because that array is exactly what a renumbering write is
+    /// allowed to replace.
+    private func positionsOfChildren(of parentID: UUID?, in store: SessionStore) throws -> [Int] {
+        let tree = SidebarOrdering.Tree(groups: try store.allGroups(), sessions: try store.all())
+        return SidebarOrdering.children(of: parentID, in: tree).map { item in
+            switch item {
+            case .group(let id): tree.groups.first { $0.id == id }?.position ?? -1
+            case .session(let id): tree.sessions.first { $0.id == id }?.position ?? -1
+            }
+        }
+    }
+
     // MARK: - Blockless-record drop (M26/T1)
     //
     // These fixtures are written BY HAND as JSON, not produced through the

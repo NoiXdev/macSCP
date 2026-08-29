@@ -18,8 +18,9 @@ private struct LoginMergeSecretConflict: Error, CustomStringConvertible {
 @MainActor
 public final class SessionListViewModel {
     public private(set) var sessions: [StoredSession] = []
-    /// Flat groups shown as collapsible sidebar sections, in creation order
-    /// (not sorted).
+    /// Groups shown as collapsible sidebar sections — since `parentID` a
+    /// tree rather than a flat list — in the order the store keeps them.
+    /// `children(of:)` is what turns that into display order.
     public private(set) var groups: [StoredGroup] = []
     /// Reusable logins (M10b), loaded name-sorted by the store.
     public private(set) var loginSets: [LoginSet] = []
@@ -611,7 +612,8 @@ public final class SessionListViewModel {
         }
     }
 
-    /// Dissolves a group: member sessions become ungrouped, never deleted.
+    /// Dissolves a group: its sessions and sub-folders move up to the
+    /// group's own parent, never deleted with it.
     public func dissolveGroup(_ group: StoredGroup) {
         do {
             try store.dissolveGroup(id: group.id)
@@ -621,6 +623,77 @@ public final class SessionListViewModel {
             errorMessage = String(
                 format: CoreL10n.string("core.session.groupSaveFailed %@"),
                 String(describing: error))
+        }
+    }
+
+    // MARK: - Nesting and order (D1/D2)
+
+    /// The sidebar tree as this view model holds it.
+    ///
+    /// `sessions` arrives from `reload()` name-sorted and `groups` in the
+    /// order the store keeps them, which is what the sidebar shows — so a
+    /// file whose positions were never written (every file on disk before
+    /// this milestone) reads back through `SidebarOrdering` exactly as it
+    /// looks on screen, and the first drag renumbers what the user was
+    /// already seeing rather than some other order.
+    private var tree: SidebarOrdering.Tree {
+        SidebarOrdering.Tree(groups: groups, sessions: sessions)
+    }
+
+    /// The direct children of a folder (`nil` = the top level), in display
+    /// order. The view renders this list; it computes nothing.
+    public func children(of parentID: UUID?) -> [SidebarItem] {
+        SidebarOrdering.children(of: parentID, in: tree)
+    }
+
+    /// Drops `item` on `target`: it lands immediately before it and adopts
+    /// its parent. Returns `nil` when the move happened, and otherwise the
+    /// reason it did not.
+    @discardableResult
+    public func move(_ item: SidebarItem, before target: SidebarItem) -> SidebarOrdering.MoveRefusal? {
+        apply(SidebarOrdering.moved(item, before: target, in: tree))
+    }
+
+    /// Drops `item` into a folder (`nil` = the top level), at the end of what
+    /// is already there. Returns `nil` when the move happened, and otherwise
+    /// the reason it did not.
+    @discardableResult
+    public func move(_ item: SidebarItem, intoGroup parentID: UUID?) -> SidebarOrdering.MoveRefusal? {
+        apply(SidebarOrdering.moved(item, intoGroup: parentID, in: tree))
+    }
+
+    /// Sorts a folder's immediate children by name, once. No stored setting
+    /// and no mode: it overwrites the free order and is done.
+    public func sortChildrenByName(of parentID: UUID?) {
+        apply(.moved(SidebarOrdering.sortedByName(childrenOf: parentID, in: tree)))
+    }
+
+    /// Persists a computed order, or reports why there is none to persist.
+    ///
+    /// A cycle is the one refusal the user can provoke on purpose — dragging
+    /// a folder into itself or into one of its own descendants — so it also
+    /// says so on the surface. The two stale refusals do not: a row that was
+    /// deleted while the drag was in the air is an ordinary end to a gesture,
+    /// and the caller still learns which one it was from the return value.
+    @discardableResult
+    private func apply(_ outcome: SidebarOrdering.MoveOutcome) -> SidebarOrdering.MoveRefusal? {
+        switch outcome {
+        case .refused(let refusal):
+            if refusal == .wouldCycle {
+                errorMessage = CoreL10n.string("core.session.groupMoveCycle")
+            }
+            return refusal
+        case .moved(let ordered):
+            do {
+                try store.applyOrdering(ordered)
+                reload()
+            } catch {
+                reload()
+                errorMessage = String(
+                    format: CoreL10n.string("core.session.groupSaveFailed %@"),
+                    String(describing: error))
+            }
+            return nil
         }
     }
 

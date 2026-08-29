@@ -78,6 +78,14 @@ public struct SessionStore: Sendable {
         } else {
             return StoreFile()
         }
+        // Hygiene, on the way in and on the way in only. A file another
+        // installation wrote can carry a group whose parent is not in it, or
+        // a parent chain that closes a ring; `GroupTree.repaired` LIFTS such
+        // a group to the top level rather than dropping it. That is the right
+        // answer to damage and the wrong answer to a dissolve, which lifts to
+        // the group's PARENT (`SidebarOrdering.dissolving`) — two operations
+        // that look alike and put things in different places.
+        file.groups = GroupTree.repaired(file.groups)
         // Defensive: a groupID whose group no longer exists behaves like nil.
         let knownIDs = Set(file.groups.map(\.id))
         for index in file.sessions.indices {
@@ -227,11 +235,48 @@ public struct SessionStore: Sendable {
         try persist(file)
     }
 
+    /// Dissolves a group. Its sessions AND its sub-folders move to the
+    /// group's own parent — see `SidebarOrdering.dissolving` for why that is
+    /// the flat rule continued rather than a new one. Nothing is deleted but
+    /// the group itself.
     public func dissolveGroup(id: UUID) throws {
         var file = try load()
-        file.groups.removeAll { $0.id == id }
-        for index in file.sessions.indices where file.sessions[index].groupID == id {
-            file.sessions[index].groupID = nil
+        let tree = SidebarOrdering.dissolving(
+            id, in: SidebarOrdering.Tree(groups: file.groups, sessions: file.sessions))
+        file.groups = tree.groups
+        file.sessions = tree.sessions
+        try persist(file)
+    }
+
+    /// Writes an ordering back: for every group and session `tree` names,
+    /// where it sits (`parentID` / `groupID`) and where among its siblings
+    /// (`position`). Nothing else.
+    ///
+    /// Deliberately NOT a wholesale replacement of the file with `tree`,
+    /// although the caller holds the whole tree. The caller's copy was read
+    /// at some earlier point, and writing it back in full would undo every
+    /// change made since — a rename, a new session, a deletion. Restricting
+    /// the write to the ordering fields makes that impossible rather than
+    /// unlikely: a record the caller does not name is untouched, and a record
+    /// the caller names that is no longer here is ignored. No record is
+    /// created and none is removed.
+    public func applyOrdering(_ tree: SidebarOrdering.Tree) throws {
+        var file = try load()
+        var groupPlacement: [UUID: (parentID: UUID?, position: Int)] = [:]
+        for group in tree.groups { groupPlacement[group.id] = (group.parentID, group.position) }
+        var sessionPlacement: [UUID: (groupID: UUID?, position: Int)] = [:]
+        for session in tree.sessions {
+            sessionPlacement[session.id] = (session.groupID, session.position)
+        }
+        for index in file.groups.indices {
+            guard let placement = groupPlacement[file.groups[index].id] else { continue }
+            file.groups[index].parentID = placement.parentID
+            file.groups[index].position = placement.position
+        }
+        for index in file.sessions.indices {
+            guard let placement = sessionPlacement[file.sessions[index].id] else { continue }
+            file.sessions[index].groupID = placement.groupID
+            file.sessions[index].position = placement.position
         }
         try persist(file)
     }
