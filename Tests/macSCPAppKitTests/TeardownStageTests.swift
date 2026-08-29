@@ -60,13 +60,25 @@ struct TeardownStageTests {
     /// wait out its bound to say so. Without this, a `runBounded` that
     /// always slept through `boundSeconds` would satisfy the test above and
     /// would add five seconds to every ordinary disconnect.
-    @Test func aStageThatReturnsIsNotAbandonedAndDoesNotWaitOutItsBound() async {
-        let startedAt = ContinuousClock.now
-        // The no-argument overload, so this also pins that the production
-        // call sites reach a working bound rather than a zero.
-        let finished = await TeardownStage.stopEditWatchers.runBounded {}
+    ///
+    /// The bound is an hour and the limit a minute, and the gap between them
+    /// IS the assertion. This used to compare elapsed wall-clock time
+    /// against four seconds, which cannot tell "slept through the bound"
+    /// from "the machine was busy": on a loaded CI runner an empty operation
+    /// measured 6.58 s and 7.56 s and turned the suite red twice — while
+    /// `finished` was `true` both times, so the bound had demonstrably not
+    /// fired and the test failed anyway. An implementation that waits out
+    /// its bound now needs an hour and cannot reach the limit; one that
+    /// returns with its operation finishes at once. No contention closes a
+    /// gap that wide.
+    ///
+    /// A bound forwarded as zero is caught by `finished` itself rather than
+    /// by a clock: the bound would win the race and this would be `false`.
+    @Test(.timeLimit(.minutes(1)))
+    func aStageThatReturnsIsNotAbandonedAndDoesNotWaitOutItsBound() async {
+        let finished = await TeardownStage.stopEditWatchers
+            .runBounded(boundSeconds: 3600) {}
         #expect(finished == true)
-        #expect(startedAt.duration(to: .now) < .seconds(4))
     }
 
     /// The property the whole per-stage design exists for, and the one a
