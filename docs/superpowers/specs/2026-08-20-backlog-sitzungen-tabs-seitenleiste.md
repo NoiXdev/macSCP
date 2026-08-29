@@ -162,7 +162,21 @@ Dazu gehört D2s zweiter Teil: ein Kontextmenü **pro Ordner**, das seine
 Unterelemente einmalig sortiert (nach Name o. Ä.) — zum schnellen Aufräumen,
 nicht als Dauerzustand.
 
-### D3. Suche im Sitzungsbaum
+### D3. Suche im Sitzungsbaum — **erledigt 2026-08-29** (`7052e1b`)
+
+Entworfen in `2026-08-29-suche-im-sitzungsbaum-design.md`. Die offene Frage
+„filtern oder hervorheben" hat sich durch D1+D2 selbst beantwortet: die
+Filterregel für einen Baum war schon da, Hervorheben wäre neue Maschinerie
+gewesen. Verschachtelung stellte dafür eine neue: ein Treffer in einem
+zugeklappten Ordner ist gefiltert und trotzdem unsichtbar. Entschieden:
+während der Suche aufklappen, den gemerkten Zustand dabei **nie schreiben**.
+
+Gesucht wird über Name, Host, Benutzer und Tags; Ordnernamen zählen nicht.
+Suche und Tag-Filter gelten zusammen. `SheetSearchField` samt Regex kam
+unverändert dazu; ein ungültiges Muster zeigt seinen Fehler und filtert
+nichts.
+
+*Die ursprüngliche Notiz:*
 
 In der Seitenleiste gibt es **keine Suche** (kein `searchText`,
 kein `SheetSearchField`). Der Baustein existiert aber schon aus M18 und wird
