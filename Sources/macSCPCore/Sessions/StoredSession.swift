@@ -65,9 +65,14 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
 
     public let id: UUID
     public var name: String
-    /// The flat group this session belongs to, if any. Optional so legacy
+    /// The group this session belongs to, if any. Optional so legacy
     /// JSON without this field keeps decoding as `nil` (no custom decoder).
     public var groupID: UUID?
+    /// Rank among the siblings under the same group, renumbered on write.
+    /// The counterpart of `StoredGroup.position`, and decoded the same way
+    /// (`?? 0` below) and for the same reason: a missing key means a file
+    /// written before free ordering existed, and it must stay readable.
+    public var position: Int = 0
     /// The login set this session's credentials come from, if any (M10b).
     /// Optional so legacy JSON without this field keeps decoding as `nil`
     /// (nil = the session carries its own credentials, "manual" mode).
@@ -138,7 +143,8 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         s3: StoredS3Config? = nil,
         webdav: StoredWebDAVConfig? = nil,
         paneVisibility: PaneVisibility = .filesOnly,
-        tags: [String] = []
+        tags: [String] = [],
+        position: Int = 0
     ) {
         self.id = id
         self.name = name
@@ -150,10 +156,12 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         self.webdav = webdav
         self.paneVisibility = paneVisibility
         self.tags = TagList.normalized(tags)
+        self.position = position
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, groupID, loginSetID, kind, ssh, s3, webdav, paneVisibility, tags
+        case position
     }
 
     /// Explicit rather than synthesized because `kind` needs its `?? .ssh`
@@ -163,7 +171,9 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
     /// same treatment for the same reason. `tags` additionally routes
     /// through `TagList.normalized` here, not just in the initializer above,
     /// so a hand-edited store file cannot smuggle an untrimmed or duplicate
-    /// tag past the rule by skipping the initializer.
+    /// tag past the rule by skipping the initializer. `position` is the
+    /// newest member of that same set: `decodeIfPresent ?? 0` is what lets a
+    /// file written before free ordering existed keep its file name.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -176,6 +186,7 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         webdav = try c.decodeIfPresent(StoredWebDAVConfig.self, forKey: .webdav)
         paneVisibility = try c.decodeIfPresent(PaneVisibility.self, forKey: .paneVisibility) ?? .filesOnly
         tags = TagList.normalized(try c.decodeIfPresent([String].self, forKey: .tags) ?? [])
+        position = try c.decodeIfPresent(Int.self, forKey: .position) ?? 0
     }
 
     // DEPRECATION INTENT: these exist to keep M23 Phase 1 reviewable. Phase 3

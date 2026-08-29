@@ -47,6 +47,17 @@ public struct SessionStore: Sendable {
     }
 
     /// On-disk container (current format).
+    ///
+    /// It grows ADDITIVELY from here on, and `StoredGroup.parentID`/
+    /// `position` are the first fields to do so: a new field is optional on
+    /// read, so a file written before it existed stays fully readable and
+    /// loses nothing. That is why nesting and ordering did NOT take a third
+    /// file name the way M23 did — read the reasoning at `legacyFileURL`
+    /// above and note what is different: there the shipped version ABORTED on
+    /// the missing required `host`, whereas an older build reading this file
+    /// simply skips the keys it does not know. The price is stated where the
+    /// design doc states it: once such a build WRITES, the tree flattens and
+    /// the order is gone — but no session, and no credential, is lost.
     private struct StoreFile: Codable {
         var groups: [StoredGroup] = []
         var sessions: [StoredSession] = []
