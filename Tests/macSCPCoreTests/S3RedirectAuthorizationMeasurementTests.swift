@@ -8,10 +8,16 @@ import Testing
 /// "Die S3-Redirect-Frage".
 ///
 /// The question: `S3FileSystem` sets `Authorization` by hand and runs over
-/// `URLSessionHTTPTransport()`, whose default session is `URLSession.shared`
-/// — a session that cannot carry a delegate, so there is no redirect control
-/// in that path at all. Does Foundation carry that hand-set header across an
-/// automatic redirect to a DIFFERENT origin?
+/// `URLSessionHTTPTransport` on a session carrying no delegate, so there is
+/// no redirect control in that path at all. Does Foundation carry that
+/// hand-set header across an automatic redirect to a DIFFERENT origin?
+///
+/// The session under it changed on 2026-08-29 — the dial builds its own from
+/// `URLSessionConfiguration.ephemeral` instead of taking `URLSession.shared`
+/// — and the measurement was re-run against it unchanged. Whether a session
+/// carries a delegate is a separate choice from which session it is; this
+/// one still has none, which is the open item
+/// `2026-08-28-backlog-s3-weiterleitungen.md` holds.
 ///
 /// The header carries no secret key, but it carries the access key ID and the
 /// SigV4 signature. A signature delivered to a foreign origin is not a
@@ -83,27 +89,30 @@ struct S3RedirectAuthorizationMeasurementTests {
     /// A bucket name nothing has used before, and the reason it is not just
     /// `"bucket"`.
     ///
-    /// `S3FileSystem` runs over `URLSession.shared`, hence over
+    /// `S3FileSystem` used to run over `URLSession.shared`, hence over
     /// `URLCache.shared` — a persistent on-disk cache shared by every
     /// process on the machine. The stub's 301 and 308 answers are cacheable
-    /// and get keyed by `http://127.0.0.1:<ephemeral port>/<bucket>?…`, and
-    /// ephemeral ports come round again: a later run that draws a port some
-    /// EARLIER `swift test` process left an entry for is answered from disk,
-    /// and the stub never sees the request. Measured over 80 runs, that
+    /// and got keyed by `http://127.0.0.1:<ephemeral port>/<bucket>?…`, and
+    /// ephemeral ports come round again: a later run that drew a port some
+    /// EARLIER `swift test` process had left an entry for was answered from
+    /// disk, and the stub never saw the request. Measured over 80 runs, that
     /// turned this suite red 13 times — and never under load, which is what
-    /// made it look like a timing problem for two days. Round four, with the
-    /// cache cleared per case, was 20 green out of 20.
+    /// made it look like a timing problem for two days.
     ///
-    /// A fresh name per call makes the key unrepeatable. It is preferred
-    /// over `URLCache.shared.removeAllCachedResponses()`, which would empty
-    /// the cache of whoever is running the suite along with every other
-    /// suite's.
+    /// The cause is gone: the dial now builds its own session from
+    /// `URLSessionConfiguration.ephemeral`, whose cache is fresh per session
+    /// and has no disk at all (`S3SessionIsolationTests`). A fresh name per
+    /// call is kept anyway, because it costs nothing and this suite should
+    /// not be the thing that goes red if that ever regresses — the suite
+    /// that owns the question should be. It was always preferred over
+    /// `URLCache.shared.removeAllCachedResponses()`, which would empty the
+    /// cache of whoever is running the suite along with every other suite's.
     private static func freshBucket() -> String { "bucket-\(UUID().uuidString)" }
 
-    /// Drives the REAL signed request: `S3FileSystem.connect` with its
-    /// default transport, i.e. `URLSessionHTTPTransport()` over
-    /// `URLSession.shared`. Not a hand-built `URLRequest` that merely looks
-    /// like one.
+    /// Drives the REAL signed request: `S3FileSystem.connect` with the
+    /// transport it builds for itself, i.e. `URLSessionHTTPTransport` over
+    /// an ephemeral `URLSession`. Not a hand-built `URLRequest` that merely
+    /// looks like one.
     private func measure(
         status: Int, phrase: String, secondHost: String
     ) async throws -> Outcome {
@@ -195,9 +204,9 @@ struct S3RedirectAuthorizationMeasurementTests {
         //    path that appears nowhere in the original. Without this every
         //    check below is vacuously true, which is the failure mode this
         //    measurement was written to avoid. It also catches a cached
-        //    `URLSession.shared` reply standing in for either hop: a
-        //    response served from cache leaves the stub with nothing
-        //    recorded, and these two checks fail.
+        //    reply standing in for either hop: a response served from cache
+        //    leaves the stub with nothing recorded, and these two checks
+        //    fail.
         #expect(outcome.firstRequests.count >= 1, "\(label): the first origin was never reached")
         #expect(outcome.secondSawARequest, "\(label): the redirect never arrived")
         #expect(

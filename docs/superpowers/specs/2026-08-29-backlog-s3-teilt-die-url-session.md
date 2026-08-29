@@ -4,6 +4,10 @@
 flatternden Tests. **Gemessen**, nicht vermutet — aber die Folgen im
 laufenden Betrieb sind **nicht** gemessen, und der Unterschied steht unten.
 
+**Erledigt 2026-08-29** (siehe „Was daraus wurde" am Ende). Der Text
+darunter bleibt im Zustand der Anlage stehen; was davon inzwischen falsch
+ist, sagt der Abschlussteil.
+
 ## Der gezählte Befund
 
 `URLSessionHTTPTransport.init` trägt den Vorgabewert `session: URLSession =
@@ -84,3 +88,59 @@ Vor dem Umsetzen zu entscheiden:
 - **Keine Änderung an WebDAV**, das es bereits richtig macht.
 - Kein Umbau von `HTTPTransport` als Naht — sie genügt und wird benutzt, wie
   sie ist.
+
+---
+
+## Was daraus wurde (2026-08-29)
+
+Beide Entscheidungen wie vorgeschlagen umgesetzt:
+
+1. **S3 baut sich eine eigene Session** aus `URLSessionConfiguration.ephemeral`
+   und gibt sie in `disconnect()` frei — wie `WebDAVFileSystem`. Vorher war
+   `disconnect()` leer; ein Wählvorgang, der scheitert, macht die Session
+   jetzt ebenfalls zu, statt sie stehen zu lassen.
+2. **Der Vorgabewert von `URLSessionHTTPTransport.init` ist weg.** Vier
+   Konstruktionsstellen, jede nennt ihre Session. Die Regel ist damit vom
+   Compiler getragen und nicht von einem Wächter, der eine Schreibweise
+   kauft und eine andere durchlässt.
+
+### Die drei Fragen, die der Eintrag vor den Entwurf gestellt hat
+
+**„Wirkt eine gecachte dauerhafte Weiterleitung über Neustarts hinweg?"**
+Ja, prozessübergreifend nachgemessen. Prozess A holt über eine
+plattengestützte `URLCache` eine 308 auf einen zweiten Loopback-Port ab.
+Prozess B, mit **keinem einzigen Lauscher irgendwo**, fragt dieselbe URL:
+er scheitert mit `NSURLErrorCannotConnectToHost` am **Ziel**-Port. Er hat
+den Ursprung nie gefragt. Damit ist die Kette geschlossen:
+`URLSession.shared.configuration.urlCache` *ist* `URLCache.shared`
+(Objektidentität geprüft), 20 MB Platte unter `~/Library/Caches`.
+`URLSessionConfiguration.ephemeral` gibt dagegen pro Session eine **frische**
+Cache-Instanz mit `diskCapacity == 0` heraus — nicht bloß keine Platte,
+sondern auch nichts, was zwei Verbindungen desselben Prozesses teilen.
+
+**„Was heißt das für den Download-Pfad?" — die offene Messung.**
+`sendStreaming` über `URLSession.bytes(for:)` verhält sich **identisch**:
+dieselbe gecachte 308 wurde prozessübergreifend nachgefahren, und eine
+`Cache-Control: max-age=3600`-Antwort mit Körper landete auf Platte und
+wurde dem zweiten Prozess von dort **samt Körper** ausgeliefert. Die Frage
+war „ob dort dieselbe Cache-Frage gilt" — die Antwort ist ja, ohne
+Einschränkung. Objektinhalte, die ein Anbieter als cachebar markiert,
+lagen damit unverschlüsselt in `~/Library/Caches`.
+
+**„Kostet eine eigene Session etwas?"** Verbindungs-Wiederverwendung nicht:
+sie ist eine Eigenschaft *einer* Session über mehrere Anfragen, und die
+Session lebt jetzt genau so lange wie das `S3FileSystem`, das sie gebaut
+hat — also über alle `list`/`stat`/`readStream`/`write`-Aufrufe einer
+Verbindung hinweg. Verloren geht nur, was `URLSession.shared` **zwischen
+unabhängigen Verbindungen** geteilt hat: Verbindungspool, Cookie-Speicher
+und Kreditiv-Cache. Für S3 ist das nichts, was gebraucht wird — S3 signiert
+jede Anfrage einzeln und setzt keine Cookies —, und geteilter Zustand
+zwischen zwei Fenstern ist genau das, was die Fenster-Regel dieses Projekts
+ausschließt.
+
+### Was weiterhin offen ist
+
+Die Session trägt **keinen Delegate**. Sie *könnte* jetzt einen tragen, was
+unter `URLSession.shared` gar nicht ging — die Weiterleitungskontrolle aus
+`2026-08-28-backlog-s3-weiterleitungen.md` ist damit erreichbar geworden,
+aber nicht gebaut. Eigener Vorgang, wie dort entschieden.

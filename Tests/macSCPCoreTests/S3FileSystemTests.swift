@@ -322,9 +322,19 @@ struct S3FileSystemTests {
         #expect(try await fs.homeDirectoryPath() == "/")
     }
 
-    @Test func disconnectIsANoOp() async throws {
-        let (fs, _) = try await connect(responses: [])
+    /// `disconnect()` invalidates the session the dial built for itself, but
+    /// an injected transport's session belongs to whoever injected it — so
+    /// for this construction the call must still change nothing, and the
+    /// file system must keep working afterwards. The second listing is what
+    /// makes that a claim rather than a call that merely did not crash.
+    @Test func disconnectLeavesAnInjectedTransportAlone() async throws {
+        let (fs, _) = try await connect(
+            responses: [(Data(rootListingXML.utf8), httpResponse(status: 200))])
+
         await fs.disconnect()
+
+        let items = try await fs.list(path: "/")
+        #expect(items.count == 2)
     }
 
     /// S3 has no append; `TransferEngine` must never hand it a resumed

@@ -10,17 +10,24 @@ import Foundation
 /// M13/T8. The one remaining mutating operation, `setPermissions`, still
 /// throws `RemoteFSError.protocolError` — S3 has no POSIX permissions.
 ///
-/// `Sendable` by construction rather than `@unchecked`: both stored
-/// properties are immutable and themselves `Sendable` (`S3ConnectionConfig`
-/// is a `Sendable` struct; `any HTTPTransport` requires `Sendable`), so
-/// there is no shared mutable state to race on.
+/// `Sendable` by construction rather than `@unchecked`: every stored
+/// property is immutable and itself `Sendable` (`S3ConnectionConfig` is a
+/// `Sendable` struct; `any HTTPTransport` requires `Sendable`; `URLSession`
+/// is `Sendable`), so there is no shared mutable state to race on.
 public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     private let config: S3ConnectionConfig
     private let transport: any HTTPTransport
+    /// The session this file system owns and must invalidate, or `nil` when
+    /// the transport was injected and the session belongs to someone else.
+    /// Same arrangement as `WebDAVFileSystem`.
+    private let session: URLSession?
 
-    private init(config: S3ConnectionConfig, transport: any HTTPTransport) {
+    private init(
+        config: S3ConnectionConfig, transport: any HTTPTransport, session: URLSession?
+    ) {
         self.config = config
         self.transport = transport
+        self.session = session
     }
 
     /// Connects by performing one ListObjectsV2 probe against the bucket
@@ -31,11 +38,37 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// outside Core is `BackendDescriptor.openConnection`, which is where the
     /// deciders and the configured connect timeout are supplied. Core's own
     /// tests import `@testable` and keep this.
+    ///
+    /// With no transport supplied the dial builds its OWN session from
+    /// `URLSessionConfiguration.ephemeral`, the way `WebDAVFileSystem.connect`
+    /// does. It used to take `URLSessionHTTPTransport`'s old default and run
+    /// on `URLSession.shared`, which put every bucket listing into the
+    /// process-wide on-disk `URLCache.shared` and let a cached permanent
+    /// redirect be followed by a later run without the endpoint being asked
+    /// — measured on loopback, see `S3SessionIsolationTests`. An ephemeral
+    /// configuration hands out a fresh, memory-only cache per session, so a
+    /// dial shares nothing with another dial or another process.
     static func connect(
-        _ config: S3ConnectionConfig, transport: any HTTPTransport = URLSessionHTTPTransport()
+        _ config: S3ConnectionConfig, transport: (any HTTPTransport)? = nil
     ) async throws -> S3FileSystem {
-        let fs = S3FileSystem(config: config, transport: transport)
-        _ = try await fs.fetchPage(prefix: "", continuationToken: nil)
+        let fs: S3FileSystem
+        if let transport {
+            fs = S3FileSystem(config: config, transport: transport, session: nil)
+        } else {
+            let session = URLSession(configuration: .ephemeral)
+            fs = S3FileSystem(
+                config: config, transport: URLSessionHTTPTransport(session: session),
+                session: session)
+        }
+        do {
+            _ = try await fs.fetchPage(prefix: "", continuationToken: nil)
+        } catch {
+            // A dial that fails still built a session, and nothing else will
+            // ever hold this file system. Same reason `WebDAVFileSystem.connect`
+            // invalidates before it rethrows.
+            await fs.disconnect()
+            throw error
+        }
         return fs
     }
 
@@ -253,7 +286,15 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         "/"
     }
 
-    public func disconnect() async {}
+    /// Releases the session the dial built. There is no S3 connection to
+    /// tear down — the protocol is stateless request-by-request — but a
+    /// `URLSession` holds its connection pool and its own cache until it is
+    /// invalidated, and this one exists for the length of this file system
+    /// and nothing else. A no-op when the transport was injected: that
+    /// session is the caller's to end.
+    public func disconnect() async {
+        session?.invalidateAndCancel()
+    }
 
     /// S3 has no append; a re-PUT replaces the whole object (M13).
     public var supportsAppendResume: Bool { false }

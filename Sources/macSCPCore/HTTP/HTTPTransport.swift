@@ -20,12 +20,24 @@ public protocol HTTPTransport: Sendable {
         -> (body: AsyncThrowingStream<Data, Error>, response: HTTPURLResponse)
 }
 
-/// Default transport: wraps `URLSession`. Used by `S3FileSystem.connect`
-/// unless a test injects a fake one.
+/// Default transport: wraps `URLSession`. Used by `S3FileSystem.connect` and
+/// `WebDAVFileSystem.connect` unless a test injects a fake one.
 public struct URLSessionHTTPTransport: HTTPTransport {
     private let session: URLSession
 
-    public init(session: URLSession = .shared) {
+    /// The session is required, deliberately: there is no default.
+    ///
+    /// It used to default to `URLSession.shared`, and S3 was the one caller
+    /// that took the default. `URLSession.shared` reads and writes
+    /// `URLCache.shared` — 20 MB of disk under `~/Library/Caches`, shared by
+    /// every process on the machine — so a 301 or 308 an endpoint answered
+    /// once was replayed to a later run without the endpoint being asked
+    /// again (measured cross-process on loopback, 2026-08-29; see
+    /// `S3SessionIsolationTests`). A default naming process-wide shared
+    /// state is the kind where omitting it compiles and quietly reaches the
+    /// real thing, which is why `SessionListViewModel.init` lost its own.
+    /// Every caller now says which session it is on.
+    public init(session: URLSession) {
         self.session = session
     }
 
