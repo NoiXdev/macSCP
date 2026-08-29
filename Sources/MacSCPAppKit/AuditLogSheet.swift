@@ -108,8 +108,15 @@ struct AuditLogSheet: View {
             // Genuinely empty (`events.isEmpty`, ignoring filter/search) gets
             // the "no entries yet" text; a non-empty log with zero rows
             // surviving the segment filter and/or search gets "no matches"
-            // instead (M18/T2, same rule as `KnownHostsSheet`/
-            // `HiddenImportsSheet`).
+            // instead (M18/T2, same rule as `HiddenImportsSheet`).
+            //
+            // `KnownHostsSheet` followed this same two-way split until the
+            // facet design (2026-08-29) gave it a second narrowing: with a
+            // facet in play, "no matches" no longer says WHICH narrowing
+            // emptied the list, so the three faceted sheets ask
+            // `SheetNarrowing.emptiness` and draw `SheetListEmptyState`
+            // instead. This sheet's segment filter is its own, older
+            // mechanism and keeps the coarser sentence.
             if filteredEvents.isEmpty {
                 Spacer(minLength: 0)
                 Text(events.isEmpty

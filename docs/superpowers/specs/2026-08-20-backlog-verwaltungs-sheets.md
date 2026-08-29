@@ -35,6 +35,27 @@ gemeinsames Steuerelement mit übergebenen Facetten, oder drei eigene. Wenn
 gemeinsam, gehört es neben `SheetSearchField` und teilt dessen Prädikat-Form,
 damit Suche und Filter sich verketten statt zu konkurrieren.
 
+### Gebaut am 2026-08-29 — der letzte offene Punkt des Eintrags
+
+Entschieden und umgesetzt nach
+`docs/superpowers/specs/2026-08-29-sheet-facetten-filter-design.md`: **ein
+gemeinsames Steuerelement** (`SheetFacetPicker`), dem die Facetten übergeben
+werden, über einem gemeinsamen Wert (`SheetFacetFilter` /
+`SheetNarrowing` in Core). Die Verkettung von Suche und Facette ist eine
+Funktion, die einmal geschrieben und aus den drei Sheets gerufen wird;
+`SheetSearchField` selbst blieb unberührt.
+
+Die Facettenwerte kommen aus den Zeilen, nicht aus einer Aufzählung — hat ein
+Sheet nur einen Wert, erscheint gar keine Auswahl. Der Leerzustand
+(`SheetListEmptyState`) nennt, **welche** Verengung die Liste geleert hat, und
+räumt beide zusammen weg.
+
+Mit erledigt: `KnownHostsSheet.isUnfiltered` las `searchText.isEmpty` und wäre
+mit einer Facette falsch geworden. Dieselbe Form stand in `SSHKeysSheet`
+(im `emptyStateText`) und in `LoginSetsSheet` (direkt im `body`); alle drei
+fragen jetzt die Verkettung. `ServerCertificatesSheet` führt die Form
+weiterhin — dort richtig, weil dieses Sheet keine Facette hat.
+
 ## 3. Spaltensortierung in der Known-Hosts-Tabelle
 
 **Der billigste Punkt der Liste.** Das Sheet ist bereits eine `Table` mit

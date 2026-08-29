@@ -985,3 +985,12 @@
 "sheets.moreActions" = "Weitere Aktionen";
 "sheets.export" = "Exportieren…";
 "sheets.import" = "Importieren…";
+
+// Verwaltungs-Sheets: der Facetten-Schnellfilter (Facetten-Entwurf 2026-08-29)
+"sheet.facet.all" = "Alle";
+"sheet.empty.noFacetMatches" = "Keine Einträge dieser Art.";
+"sheet.empty.noMatchesInFacet" = "Kein Eintrag dieser Art passt zur Suche.";
+"sheet.empty.showAll" = "Alle anzeigen";
+"knownHosts.facet.algorithm" = "Algorithmus";
+"keys.facet.type" = "Schlüsseltyp";
+"loginSets.facet.kind" = "Backend";

@@ -984,3 +984,12 @@
 "sheets.moreActions" = "More actions";
 "sheets.export" = "Export…";
 "sheets.import" = "Import…";
+
+// Management sheets: the facet quick filter (facet design 2026-08-29)
+"sheet.facet.all" = "All";
+"sheet.empty.noFacetMatches" = "No entries of this kind.";
+"sheet.empty.noMatchesInFacet" = "No entry of this kind matches the search.";
+"sheet.empty.showAll" = "Show all";
+"knownHosts.facet.algorithm" = "Algorithm";
+"keys.facet.type" = "Key type";
+"loginSets.facet.kind" = "Backend";

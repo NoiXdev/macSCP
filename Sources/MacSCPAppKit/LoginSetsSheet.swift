@@ -21,6 +21,10 @@ struct LoginSetsSheet: View {
     @State private var selectedID: LoginSet.ID?
     @State private var searchText = ""
     @State private var searchIsRegex = false
+    /// The backend quick filter (facet design, 2026-08-29). A view, not a
+    /// setting: it starts cleared every time the sheet opens, so it can
+    /// never name a backend no stored login uses any more.
+    @State private var facet: SheetFacetFilter = .all
     /// The single merge suggestion currently shown, or `nil` when none are
     /// left. Recomputed explicitly (not a live computed property) so a
     /// banner action's own re-render doesn't recompute mid-transition —
@@ -85,15 +89,29 @@ struct LoginSetsSheet: View {
         sessionList.loginSets.first { $0.id == selectedID }
     }
 
+    /// Clears BOTH narrowings — what the empty state's "Show all" does. One
+    /// of them alone would leave the list just as empty.
+    private func clearNarrowings() {
+        searchText = ""
+        facet = .all
+    }
+
     var body: some View {
         // Hoisted out of the VStack's own scope (M19/T8 review, leftover 5)
         // so `.onChange(of: visibleSets)` below — attached to the VStack
         // itself rather than to the `List` inside it — can still name it.
         let (predicate, searchError) = sheetSearchPredicate(
             text: searchText, isRegex: searchIsRegex)
-        let visibleSets = sessionList.loginSets.filter {
-            predicate.matches("\($0.name) \($0.username) \($0.accessKeyID ?? "")")
-        }
+        // The search and the backend facet applied together, in one call to
+        // the shared chaining — so what the list draws, what the export scope
+        // resolves against and what the empty state blames are readings of
+        // the same pass rather than separate filters.
+        let narrowing = facet.narrowing(
+            sessionList.loginSets,
+            search: predicate,
+            searchText: { "\($0.name) \($0.username) \($0.accessKeyID ?? "")" },
+            facetValue: { Self.kindLabel($0.kind) })
+        let visibleSets = narrowing.visible
 
         VStack(alignment: .leading, spacing: 14) {
             Text(L10n.string("loginSets.title", "Logins")).font(.headline)
@@ -107,15 +125,22 @@ struct LoginSetsSheet: View {
             }
 
             SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
+
+            SheetFacetPicker(
+                values: SheetFacetFilter.values(of: sessionList.loginSets) {
+                    Self.kindLabel($0.kind)
+                },
+                label: L10n.string("loginSets.facet.kind", "Backend"),
+                filter: $facet)
                 .padding(.bottom, 4)
 
             if visibleSets.isEmpty {
                 Spacer(minLength: 0)
-                Text(searchText.isEmpty
-                    ? L10n.string("loginSets.empty", "No login sets yet.")
-                    : L10n.string("loginSets.noMatches", "No matches."))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
+                SheetListEmptyState(
+                    emptiness: narrowing.emptiness,
+                    noRowsMessage: L10n.string("loginSets.empty", "No login sets yet."),
+                    noSearchMatchesMessage: L10n.string("loginSets.noMatches", "No matches."),
+                    onShowAll: clearNarrowings)
                 Spacer(minLength: 0)
             } else {
                 List(visibleSets, selection: $selectedID) { set in

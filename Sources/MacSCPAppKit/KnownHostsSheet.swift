@@ -4,7 +4,8 @@ import macSCPCore
 
 /// Known-hosts management sheet (M10a/T2, mockup section 1): lists every
 /// remembered TOFU host key (`KnownHostsStore.allKeys()`), with search over
-/// host+fingerprint, multi-selection "Remove…" (forgets the host — the next
+/// host+fingerprint, an algorithm facet chained to that search (facet
+/// design, 2026-08-29), multi-selection "Remove…" (forgets the host — the next
 /// connect runs the normal TOFU prompt again, per `KnownHostsStore.remove`'s
 /// doc comment) and single-selection fingerprint copy. Shape mirrors
 /// `AuditLogSheet` (`Table` + caption footer + destructive
@@ -33,6 +34,10 @@ struct KnownHostsSheet: View {
     @State private var selection: Set<String> = []
     @State private var searchText = ""
     @State private var searchIsRegex = false
+    /// The algorithm quick filter (facet design, 2026-08-29). A view, not a
+    /// setting: it starts cleared every time the sheet opens, so it can
+    /// never name an algorithm no remembered host key carries any more.
+    @State private var facet: SheetFacetFilter = .all
     @State private var sortOrder: [KnownHostComparator] = KnownHostsSorting.defaultOrder
     @State private var errorMessage: String?
     @State private var isShowingRemoveConfirm = false
@@ -47,9 +52,26 @@ struct KnownHostsSheet: View {
         return formatter
     }()
 
-    private var filteredRows: [KnownHostRow] {
+    /// The search and the algorithm facet applied together — one call to the
+    /// shared chaining (`SheetFacetFilter.narrowing`), so what the table
+    /// draws, what the footer counts and what the empty state blames are
+    /// three readings of the same pass rather than three filters.
+    private var narrowing: SheetNarrowing<KnownHostRow> {
         let (predicate, _) = sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)
-        return rows.filter { predicate.matches("\($0.key.host) \($0.key.fingerprintSHA256)") }
+        return facet.narrowing(
+            rows,
+            search: predicate,
+            searchText: { "\($0.key.host) \($0.key.fingerprintSHA256)" },
+            facetValue: { Self.algorithmLabel($0.key.keyType) })
+    }
+
+    private var filteredRows: [KnownHostRow] { narrowing.visible }
+
+    /// The algorithms this sheet's own rows carry — never a fixed list, so
+    /// an algorithm nobody has remembered is not offered and a new one needs
+    /// no edit here.
+    private var facetValues: [String] {
+        SheetFacetFilter.values(of: rows) { Self.algorithmLabel($0.key.keyType) }
     }
 
     /// What the table draws: the search result in the user's chosen order.
@@ -57,7 +79,15 @@ struct KnownHostsSheet: View {
         KnownHostsSorting.sorted(filteredRows, using: sortOrder)
     }
 
-    private var isUnfiltered: Bool { searchText.isEmpty }
+    /// Both narrowings, not just the search. This read was `searchText
+    /// .isEmpty` before the facet existed, which would have made the footer
+    /// print a plain total while an algorithm filter was hiding rows.
+    private var isUnfiltered: Bool { narrowing.isUnfiltered }
+
+    private func clearNarrowings() {
+        searchText = ""
+        facet = .all
+    }
 
     private var selectedRows: [KnownHostRow] {
         filteredRows.filter { selection.contains($0.id) }
@@ -70,6 +100,11 @@ struct KnownHostsSheet: View {
             let (_, searchError) = sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)
             SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
 
+            SheetFacetPicker(
+                values: facetValues,
+                label: L10n.string("knownHosts.facet.algorithm", "Algorithm"),
+                filter: $facet)
+
             if let errorMessage {
                 Text(errorMessage).font(.caption).foregroundStyle(.red).lineLimit(2)
             }
@@ -77,15 +112,17 @@ struct KnownHostsSheet: View {
             // Only claim "no known hosts" when the list is GENUINELY empty
             // (final review): after a load error the empty table must not
             // suggest the store is empty — the red message above is the truth.
-            // A non-empty `rows` with an empty `filteredRows` means the
-            // search matched nothing, not that the store is empty (M18/T2).
+            // A non-empty `rows` with an empty `filteredRows` means a
+            // narrowing matched nothing, and WHICH one is
+            // `narrowing.emptiness`' answer rather than this view's (M18/T2,
+            // extended by the facet design).
             if filteredRows.isEmpty && errorMessage == nil {
                 Spacer(minLength: 0)
-                Text(rows.isEmpty
-                    ? L10n.string("knownHosts.empty", "No known hosts yet.")
-                    : L10n.string("knownHosts.noMatches", "No matches."))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
+                SheetListEmptyState(
+                    emptiness: narrowing.emptiness,
+                    noRowsMessage: L10n.string("knownHosts.empty", "No known hosts yet."),
+                    noSearchMatchesMessage: L10n.string("knownHosts.noMatches", "No matches."),
+                    onShowAll: clearNarrowings)
                 Spacer(minLength: 0)
             } else {
                 Table(sortedRows, selection: $selection, sortOrder: $sortOrder) {
@@ -166,9 +203,16 @@ struct KnownHostsSheet: View {
         }
     }
 
+    /// How a host key's algorithm is written wherever this sheet writes it —
+    /// the badge and the facet both go through here, so the value the picker
+    /// offers is character-for-character the value a row is matched on.
+    static func algorithmLabel(_ keyType: String) -> String {
+        keyType.uppercased()
+    }
+
     @ViewBuilder
     private func keyTypeBadge(_ keyType: String) -> some View {
-        Text(keyType.uppercased())
+        Text(Self.algorithmLabel(keyType))
             .font(.system(size: 10, weight: .semibold))
             .padding(.horizontal, 7)
             .padding(.vertical, 2)

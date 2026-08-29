@@ -8,10 +8,16 @@ import macSCPCore
 /// "Manage keys…" link, same as `LoginSetsSheet`/`KnownHostsSheet`. Replaces
 /// the M17 `SSHKeysSettingsTab` (removed in M18/T6 — this sheet is now the
 /// only place keys are managed). Shape mirrors `LoginSetsSheet` (title,
-/// `SheetSearchField` + `sheetSearchPredicate`, filtered list with a
-/// `*.noMatches` vs. `*.empty` distinction, footer buttons and the shared
+/// `SheetSearchField` + `sheetSearchPredicate`, the `SheetFacetPicker`
+/// under it and the `SheetListEmptyState` that names which of the two
+/// narrowings emptied the list, footer buttons and the shared
 /// `SheetOverflowMenu`, fixed
 /// `.frame(width: 720, height: 460)`, row `.contextMenu`).
+///
+/// The facet here is the KEY TYPE (facet design, 2026-08-29), derived from
+/// the keys on disk rather than from `KeyType`'s cases: a type nobody has
+/// is not offered, and with only one type present the picker does not
+/// appear at all.
 ///
 /// `GenerateKeySheet` and `SSHPublicKeyDocument` below are this file's own
 /// types (moved from the removed `SSHKeysSettingsTab.swift`).
@@ -24,6 +30,10 @@ struct SSHKeysSheet: View {
     @State private var load: ManagedKeysLoad = .loaded([])
     @State private var searchText = ""
     @State private var searchIsRegex = false
+    /// The key-type quick filter (facet design, 2026-08-29). A view, not a
+    /// setting: it starts cleared every time the sheet opens, so it can
+    /// never name a type no managed key carries any more.
+    @State private var facet: SheetFacetFilter = .all
 
     @State private var showGenerate = false
 
@@ -79,17 +89,41 @@ struct SSHKeysSheet: View {
             let (predicate, searchError) = sheetSearchPredicate(
                 text: searchText, isRegex: searchIsRegex)
             SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
+
+            SheetFacetPicker(
+                values: SheetFacetFilter.values(of: load.keys) { Self.keyTypeLabel($0.type) },
+                label: L10n.string("keys.facet.type", "Key type"),
+                filter: $facet)
                 .padding(.bottom, 4)
 
-            let visibleKeys = load.keys.filter {
-                predicate.matches("\($0.name) \($0.comment) \($0.fingerprint)")
-            }
+            // The search and the key-type facet applied together, in one call
+            // to the shared chaining — so what the list draws and what the
+            // empty state blames are two readings of the same pass.
+            let narrowing = facet.narrowing(
+                load.keys,
+                search: predicate,
+                searchText: { "\($0.name) \($0.comment) \($0.fingerprint)" },
+                facetValue: { Self.keyTypeLabel($0.type) })
+            let visibleKeys = narrowing.visible
 
             if visibleKeys.isEmpty {
                 Spacer(minLength: 0)
-                Text(emptyStateText)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
+                // The unreadable case comes FIRST and is not a variant of
+                // "empty": the file is there and still holds every key, so
+                // neither the store-is-empty sentence nor a narrowing would
+                // be the truth, and there is nothing for "Show all" to clear.
+                if load.isUnreadable {
+                    Text(Self.unreadableMessage)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                } else {
+                    SheetListEmptyState(
+                        emptiness: narrowing.emptiness,
+                        noRowsMessage: L10n.string(
+                            "keys.empty", "No keys yet. Generate one to get started."),
+                        noSearchMatchesMessage: L10n.string("keys.noMatches", "No matches."),
+                        onShowAll: clearNarrowings)
+                }
                 Spacer(minLength: 0)
             } else {
                 List(visibleKeys) { key in row(key) }
@@ -213,18 +247,20 @@ struct SSHKeysSheet: View {
 
     private func reload() { load = ManagedKeysLoad(reading: store) }
 
-    /// What stands in place of the list. The unreadable case comes FIRST and
-    /// is not a variant of "empty": the file is there and still holds every
-    /// key, so both other sentences would be false.
-    private var emptyStateText: String {
-        if load.isUnreadable {
-            return L10n.string(
-                "keys.load.error",
-                "The keys file couldn't be read. It exists but can't be decoded \u{2014} no key was lost, and nothing will be written over it.")
-        }
-        return searchText.isEmpty
-            ? L10n.string("keys.empty", "No keys yet. Generate one to get started.")
-            : L10n.string("keys.noMatches", "No matches.")
+    /// What stands in place of the list when the keys file is there but
+    /// cannot be decoded — see the branch in `body` that prefers it over
+    /// every emptiness the narrowing could report.
+    private static var unreadableMessage: String {
+        L10n.string(
+            "keys.load.error",
+            "The keys file couldn't be read. It exists but can't be decoded \u{2014} no key was lost, and nothing will be written over it.")
+    }
+
+    /// Clears BOTH narrowings — what the empty state's "Show all" does. One
+    /// of them alone would leave the list just as empty.
+    private func clearNarrowings() {
+        searchText = ""
+        facet = .all
     }
 
     @ViewBuilder
@@ -314,7 +350,7 @@ struct SSHKeysSheet: View {
 
     @ViewBuilder
     private func typeBadge(_ type: KeyType) -> some View {
-        let (label, soft, ink) = badgeStyle(for: type)
+        let (label, soft, ink) = Self.badgeStyle(for: type)
         Text(label)
             .font(.system(size: 10, weight: .semibold))
             .padding(.horizontal, 7)
@@ -323,7 +359,21 @@ struct SSHKeysSheet: View {
             .foregroundStyle(ink)
     }
 
-    private func badgeStyle(for type: KeyType) -> (label: String, soft: Color, ink: Color) {
+    /// How a key's type is written wherever this sheet writes it — the badge
+    /// and the facet both go through here, so the value the picker offers is
+    /// character-for-character the value a row is matched on.
+    ///
+    /// Note what this makes true of `rsa`: its bit count is not part of the
+    /// label, so every RSA key lands in one facet regardless of length. That
+    /// is the wanted reading (a facet is a small, closed dimension) and it
+    /// costs nothing, since key length is not offered as a facet at all —
+    /// it lives inside a composed subtitle string, which the design rules
+    /// out as a facet source.
+    static func keyTypeLabel(_ type: KeyType) -> String {
+        badgeStyle(for: type).label
+    }
+
+    private static func badgeStyle(for type: KeyType) -> (label: String, soft: Color, ink: Color) {
         switch type {
         case .ed25519:
             return (L10n.string("keys.type.ed25519", "ED25519"), DesignTokens.remoteSoft, DesignTokens.remoteBlue)

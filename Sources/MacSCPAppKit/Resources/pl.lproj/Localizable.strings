@@ -987,3 +987,12 @@
 "sheets.moreActions" = "Więcej akcji";
 "sheets.export" = "Eksportuj…";
 "sheets.import" = "Importuj…";
+
+// Arkusze zarządzania: szybki filtr aspektu (projekt aspektów 2026-08-29)
+"sheet.facet.all" = "Wszystkie";
+"sheet.empty.noFacetMatches" = "Brak wpisów tego rodzaju.";
+"sheet.empty.noMatchesInFacet" = "Żaden wpis tego rodzaju nie pasuje do wyszukiwania.";
+"sheet.empty.showAll" = "Pokaż wszystkie";
+"knownHosts.facet.algorithm" = "Algorytm";
+"keys.facet.type" = "Typ klucza";
+"loginSets.facet.kind" = "Usługa";

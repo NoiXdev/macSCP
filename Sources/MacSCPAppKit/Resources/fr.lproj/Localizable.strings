@@ -988,3 +988,12 @@
 "sheets.moreActions" = "Autres actions";
 "sheets.export" = "Exporter…";
 "sheets.import" = "Importer…";
+
+// Feuilles de gestion : le filtre rapide par facette (conception 2026-08-29)
+"sheet.facet.all" = "Toutes";
+"sheet.empty.noFacetMatches" = "Aucune entrée de ce type.";
+"sheet.empty.noMatchesInFacet" = "Aucune entrée de ce type ne correspond à la recherche.";
+"sheet.empty.showAll" = "Tout afficher";
+"knownHosts.facet.algorithm" = "Algorithme";
+"keys.facet.type" = "Type de clé";
+"loginSets.facet.kind" = "Service";
