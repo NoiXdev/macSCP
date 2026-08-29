@@ -15,14 +15,38 @@ public struct SessionExportPayload: Codable, Equatable, Sendable {
 }
 
 public struct ExportedGroup: Codable, Equatable, Sendable {
-    /// File-local reference target for `ExportedSession.groupID` — never
-    /// imported as-is (the planner assigns fresh ids).
+    /// File-local reference target for `ExportedSession.groupID` and for
+    /// `parentID` below — never imported as-is (the planner assigns fresh
+    /// ids and remaps both references onto them).
     public let id: UUID
     public var name: String
+    /// The folder this folder sits in (`StoredGroup.parentID`, D1). Another
+    /// `ExportedGroup.id` in this same file, so it is a REFERENCE and is
+    /// rekeyed on import exactly like `ExportedSession.groupID` — carried
+    /// over raw it would name an id that no longer exists.
+    ///
+    /// A file may still name a parent it does not carry, or close a ring;
+    /// `GroupTree.repaired` lifts such a folder to the top level rather than
+    /// dropping it, and the planner runs it before anything is taken over.
+    ///
+    /// `nil` on any payload written before this field existed — and, in a
+    /// file that has it, on every top-level folder.
+    public var parentID: UUID?
+    /// Rank among the siblings under the same parent (`StoredGroup.position`,
+    /// D2). A value, not a reference: no remapping, the same way
+    /// `ExportedSession.paneVisibility` needs none.
+    ///
+    /// Optional for the same reason `kind` is: `nil` means a payload written
+    /// before this field existed, and the import side applies
+    /// `StoredGroup.position`'s own default (`0`) — mapped at import rather
+    /// than at decode, so every reader sees what the file actually said.
+    public var position: Int?
 
-    public init(id: UUID, name: String) {
+    public init(id: UUID, name: String, parentID: UUID? = nil, position: Int? = nil) {
         self.id = id
         self.name = name
+        self.parentID = parentID
+        self.position = position
     }
 }
 
@@ -53,6 +77,14 @@ public struct ExportedSession: Codable, Equatable, Sendable {
     /// same way `paneVisibility == nil` maps to `.filesOnly` at import
     /// rather than at decode.
     public var tags: [String]?
+    /// Rank among the siblings under the same parent
+    /// (`StoredSession.position`, D2). Carried the way `tags` is and not the
+    /// way `groupID` is: a rank is a value, not a reference into the file's
+    /// own group catalog, so it needs no id remapping on import. `nil` on any
+    /// payload written before this field existed; the import side applies
+    /// `StoredSession.position`'s own default (`0`), the same way `kind ==
+    /// nil` maps to `.ssh` at import rather than at decode.
+    public var position: Int?
 
     /// Every backend field this session carries, keyed exactly as
     /// `FieldValues` keys them (`"<namespace>.<fieldID>"`).
@@ -141,6 +173,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         groupID: UUID? = nil,
         paneVisibility: PaneVisibility? = nil,
         tags: [String]? = nil,
+        position: Int? = nil,
         password: String? = nil,
         jumpHost: String? = nil, jumpPort: Int? = nil, jumpUsername: String? = nil,
         jumpAuthKind: StoredSession.AuthKind? = nil, jumpKeyPath: String? = nil,
@@ -154,6 +187,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         self.groupID = groupID
         self.paneVisibility = paneVisibility
         self.tags = tags
+        self.position = position
         self.password = password
         self.jumpHost = jumpHost
         self.jumpPort = jumpPort
@@ -167,7 +201,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
     /// The `legacy*` cases keep v1's original key names, so a v1 file decodes
     /// unchanged while the property names say what they are.
     private enum CodingKeys: String, CodingKey {
-        case id, name, groupID, kind, fields, paneVisibility, tags, password
+        case id, name, groupID, kind, fields, paneVisibility, tags, position, password
         case jumpHost, jumpPort, jumpUsername, jumpAuthKind, jumpKeyPath, jumpPassword
         case s3SecretAccessKey
         case legacyHost = "host"
@@ -196,6 +230,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         kind = try c.decodeIfPresent(ConnectionKind.self, forKey: .kind)
         paneVisibility = try c.decodeIfPresent(PaneVisibility.self, forKey: .paneVisibility)
         tags = try c.decodeIfPresent([String].self, forKey: .tags)
+        position = try c.decodeIfPresent(Int.self, forKey: .position)
         fields = try c.decodeIfPresent([String: String].self, forKey: .fields) ?? [:]
         password = try c.decodeIfPresent(String.self, forKey: .password)
         jumpHost = try c.decodeIfPresent(String.self, forKey: .jumpHost)
@@ -232,6 +267,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         try c.encodeIfPresent(kind, forKey: .kind)
         try c.encodeIfPresent(paneVisibility, forKey: .paneVisibility)
         try c.encodeIfPresent(tags, forKey: .tags)
+        try c.encodeIfPresent(position, forKey: .position)
         try c.encode(fields, forKey: .fields)
         try c.encodeIfPresent(password, forKey: .password)
         try c.encodeIfPresent(jumpHost, forKey: .jumpHost)

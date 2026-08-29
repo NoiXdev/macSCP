@@ -52,6 +52,15 @@ public struct SessionImportPlan: Equatable, Sendable {
     /// duplicates. Reported as a COUNT to the user — a rejected entry may
     /// carry a secret, and no part of it is logged.
     public var rejected: [String]
+    /// Names of imported folders the file put somewhere impossible — a
+    /// parent it did not carry, or one that closed a ring — and that
+    /// therefore arrive at the TOP LEVEL (D1). In file order.
+    ///
+    /// Nothing is lost when this is non-empty: the folder, its sub-folders
+    /// and its sessions all import, only the nesting the file described
+    /// could not be kept. Reported as a COUNT to the user, like `rejected`
+    /// above; unlike `rejected`, these entries ARE imported.
+    public var liftedGroups: [String]
     /// True when the user cancelled the run; every other array is then empty
     /// and the caller must apply nothing at all.
     public var cancelled: Bool
@@ -59,7 +68,7 @@ public struct SessionImportPlan: Equatable, Sendable {
     public init(
         groupsToCreate: [StoredGroup] = [], sessionsToImport: [PlannedSession] = [],
         skipped: [ExportedSession] = [], replaced: [String] = [], renamed: [String] = [],
-        rejected: [String] = [], cancelled: Bool = false
+        rejected: [String] = [], liftedGroups: [String] = [], cancelled: Bool = false
     ) {
         self.groupsToCreate = groupsToCreate
         self.sessionsToImport = sessionsToImport
@@ -67,6 +76,7 @@ public struct SessionImportPlan: Equatable, Sendable {
         self.replaced = replaced
         self.renamed = renamed
         self.rejected = rejected
+        self.liftedGroups = liftedGroups
         self.cancelled = cancelled
     }
 }
@@ -98,6 +108,31 @@ public enum SessionImportPlanner {
         existing: [StoredSession], existingGroups: [StoredGroup],
         incoming: SessionExportPayload, arbiter: ImportConflictArbiter
     ) async -> SessionImportPlan {
+        // The file's own tree is repaired BEFORE anything is taken over
+        // (D1). A foreign file can name a parent it does not carry, or close
+        // a ring, and `GroupTree.repaired` lifts such a folder to the top
+        // level rather than dropping it — nothing is discarded. Running it
+        // here, on the FILE-LOCAL ids and ahead of the rekeying below, is
+        // what keeps the damage out of the plan: `SessionStore.load()`
+        // repairs on read too, but a plan built from a damaged file would
+        // already carry a parent nothing resolves.
+        //
+        // The rule is stated over `StoredGroup`, so the file's groups are
+        // carried through it as tree nodes under their OWN file-local ids —
+        // nothing built here is ever stored, and those ids are exactly the
+        // ones the rekeying below replaces. Converting rather than restating
+        // keeps the import path and `SessionStore.load()` answering to one
+        // implementation of the repair instead of two spellings of it.
+        // `repaired` returns the same groups in the same order, differing
+        // only in `parentID`, which is what makes the index walk below sound.
+        let repairedNodes = GroupTree.repaired(incoming.groups.map {
+            StoredGroup(id: $0.id, name: $0.name, parentID: $0.parentID, position: $0.position ?? 0)
+        })
+        var incomingGroups = incoming.groups
+        for index in incomingGroups.indices {
+            incomingGroups[index].parentID = repairedNodes[index].parentID
+        }
+
         // Resolve groups first: exact name match against existing groups,
         // otherwise a fresh group is prepared. A local mapping tracks
         // file-local group id -> resolved (existing or freshly created) id.
@@ -105,18 +140,35 @@ public enum SessionImportPlanner {
         // than committed to `groupsToCreate` immediately — a file whose only
         // sessions referencing a group are all skipped as duplicates must
         // not leave a ghost group behind (M9a final review, Finding 2), so
-        // the final `groupsToCreate` is filtered to groups an actually
-        // imported session references, after the session loop below.
+        // the final `groupsToCreate` is filtered after the session loop
+        // below, to groups an actually imported session references and to
+        // the ancestors those hang from.
         var groupIDMap: [UUID: UUID] = [:]
         var freshGroupsByFileID: [UUID: StoredGroup] = [:]
-        for fileGroup in incoming.groups {
+        for fileGroup in incomingGroups {
             if let match = existingGroups.first(where: { $0.name == fileGroup.name }) {
                 groupIDMap[fileGroup.id] = match.id
             } else {
-                let created = StoredGroup(name: fileGroup.name)
+                // The rank travels as a value (`?? 0` for a file written
+                // before the field existed); the parent is a REFERENCE and
+                // waits for the second pass.
+                let created = StoredGroup(name: fileGroup.name, position: fileGroup.position ?? 0)
                 freshGroupsByFileID[fileGroup.id] = created
                 groupIDMap[fileGroup.id] = created.id
             }
+        }
+        // Parents in a SECOND pass, through the very same `groupIDMap` that
+        // resolves `ExportedSession.groupID` below — one mapping, not two.
+        // It has to be a second pass because a `parentID` may name a group
+        // the first pass had not reached yet, and the id it maps to is
+        // minted there. Every `parentID` still present resolves: `repaired`
+        // above cleared exactly the ones that did not. A parent that matched
+        // an EXISTING group resolves to that group's id, so an imported
+        // folder can nest under one the store already has — without the
+        // existing group itself being touched.
+        for fileGroup in incomingGroups {
+            guard let fileParentID = fileGroup.parentID else { continue }
+            freshGroupsByFileID[fileGroup.id]?.parentID = groupIDMap[fileParentID]
         }
 
         // Then sessions, in file order. The duplicate key is per BACKEND (see
@@ -259,18 +311,52 @@ public enum SessionImportPlanner {
         }
 
         // Only commit a freshly-created group if an actually-imported
-        // session ends up referencing it; file order is preserved.
-        let referencedGroupIDs = Set(sessionsToImport.compactMap(\.session.groupID))
-        let groupsToCreate = incoming.groups.compactMap { fileGroup -> StoredGroup? in
+        // session ends up referencing it — or if a committed group hangs from
+        // it. An ancestor carries no session of its own, so the M9a rule
+        // alone would drop it and leave its child naming a folder that never
+        // arrives; a folder nothing references at all is still the ghost that
+        // rule excludes. File order is preserved.
+        let createdByID = Dictionary(
+            freshGroupsByFileID.values.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var keptGroupIDs = Set(sessionsToImport.compactMap(\.session.groupID))
+        for group in createdByID.values where keptGroupIDs.contains(group.id) {
+            // Walks the whole chain up, stopping at the first ancestor
+            // already kept (everything above it was walked then). The chain
+            // terminates: `repaired` left no ring, and the mapping above is
+            // one fresh id per file group.
+            var cursor = group.parentID
+            while let id = cursor, keptGroupIDs.insert(id).inserted {
+                cursor = createdByID[id]?.parentID
+            }
+        }
+        let groupsToCreate = incomingGroups.compactMap { fileGroup -> StoredGroup? in
             guard let created = freshGroupsByFileID[fileGroup.id],
-                  referencedGroupIDs.contains(created.id) else { return nil }
+                  keptGroupIDs.contains(created.id) else { return nil }
             return created
         }
+
+        // What the repair straightened, in file order. `repaired` returns
+        // exactly the input groups in input order, differing only in
+        // `parentID`, so walking the two side by side names precisely the
+        // folders it lifted.
+        //
+        // Reported only for folders that actually arrive: a lifted folder
+        // nobody imports (a ghost, or one that matched an existing folder by
+        // name — those are never mutated) changed nothing the user could
+        // see, and a report of it would be a report of nothing.
+        let committedGroupIDs = Set(groupsToCreate.map(\.id))
+        let liftedGroups: [String] = zip(incoming.groups, incomingGroups)
+            .compactMap { original, repairedGroup in
+                guard original.parentID != repairedGroup.parentID,
+                      let created = freshGroupsByFileID[repairedGroup.id],
+                      committedGroupIDs.contains(created.id) else { return nil }
+                return repairedGroup.name
+            }
 
         return SessionImportPlan(
             groupsToCreate: groupsToCreate, sessionsToImport: sessionsToImport,
             skipped: skipped, replaced: replaced, renamed: renamed, rejected: rejected,
-            cancelled: false)
+            liftedGroups: liftedGroups, cancelled: false)
     }
 
     /// True when this file entry would build a record the store removes the
@@ -385,6 +471,12 @@ public enum SessionImportPlanner {
         // tag is cleaned by the property, not by this call site remembering
         // to clean it.
         session.tags = fileSession.tags ?? []
+        // `?? 0`, the same value-not-reference story as `tags` just above:
+        // a rank is the file's own, needs no remapping (unlike `groupID` and
+        // the group's `parentID`), and `nil` means a payload written before
+        // the field existed -- resolving to the default `StoredSession`
+        // itself carries.
+        session.position = fileSession.position ?? 0
         if !fileSession.fields.isEmpty {
             var values = FieldValues()
             for (key, value) in fileSession.fields { values.setRaw(key, to: value) }

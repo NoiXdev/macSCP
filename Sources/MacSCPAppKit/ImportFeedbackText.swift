@@ -43,8 +43,9 @@ enum ImportFeedbackText {
     /// what the user decided about duplicates (replaced/renamed) and for
     /// secrets a replace removed, plus optional lines for password-save
     /// failures, store-write failures, the M27 count of entries the planner
-    /// rejected outright as unusable, and an unencrypted-secrets notice when
-    /// the file wasn't itself encrypted.
+    /// rejected outright as unusable, the count of folders whose broken
+    /// nesting the import straightened (D1), and an unencrypted-secrets
+    /// notice when the file wasn't itself encrypted.
     static func importResultText(
         _ result: SessionListViewModel.SessionImportResult, plan: SessionImportPlan,
         includesSecrets: Bool, encrypted: Bool
@@ -96,6 +97,18 @@ enum ImportFeedbackText {
                 "import.result.rejected %lld",
                 "Not imported because the entry was incomplete: %lld"),
                 plan.rejected.count))
+        }
+        // Folders whose place in the file could not be kept: the parent was
+        // missing, or the chain closed a ring, so they arrived at the top
+        // level. Nothing was lost — the folders and their sessions all
+        // imported — which is why this reads as a note rather than a failure.
+        // A COUNT, like the rejected line above, for the same reason: a
+        // folder name is the user's own text and does not belong in an alert.
+        if !plan.liftedGroups.isEmpty {
+            lines.append(String(format: L10n.string(
+                "import.result.liftedGroups %lld",
+                "Folders moved to the top level because the file's nesting was broken: %lld"),
+                plan.liftedGroups.count))
         }
         if includesSecrets && !encrypted {
             lines.append(L10n.string(

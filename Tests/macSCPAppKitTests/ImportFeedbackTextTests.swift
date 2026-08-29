@@ -132,6 +132,26 @@ struct ImportFeedbackTextTests {
             "a password-failure count > 0 should add a line")
     }
 
+    /// Folders the import straightened get their own line, and only when it
+    /// straightened one — same line-count shape as the failure lines above,
+    /// so this does not depend on the localized wording.
+    @Test func importResultTextAddsALineOnlyWhenFoldersWereLifted() {
+        let result = SessionListViewModel.SessionImportResult(
+            imported: 1, skipped: 0, passwordsImported: 0, passwordFailures: 0, storeFailures: 0)
+        var lifted = SessionImportPlan()
+        lifted.liftedGroups = ["Orphan"]
+
+        let quietText = ImportFeedbackText.importResultText(
+            result, plan: SessionImportPlan(), includesSecrets: false, encrypted: true)
+        let liftedText = ImportFeedbackText.importResultText(
+            result, plan: lifted, includesSecrets: false, encrypted: true)
+
+        #expect(quietText.components(separatedBy: "\n").count == 1)
+        #expect(
+            liftedText.components(separatedBy: "\n").count == 2,
+            "a lifted folder should add a line")
+    }
+
     /// The unencrypted-secrets notice appears exactly when the file carried
     /// secrets and was not itself encrypted.
     @Test func importResultTextNoticesUnencryptedSecretsOnly() {

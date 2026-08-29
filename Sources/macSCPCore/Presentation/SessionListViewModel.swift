@@ -1176,8 +1176,10 @@ public final class SessionListViewModel {
     }
 
     /// Builds an export payload for the given scope (spec M9a §2.2). Groups
-    /// are only included when `includeGroups`, and only those referenced by
-    /// an exported session. Passwords are only looked up when
+    /// are only included when `includeGroups`, and only those an exported
+    /// session sits in — plus the folders those hang from, so a nested
+    /// folder's `parentID` names something the file carries. Passwords are
+    /// only looked up when
     /// `includePasswords`; a missing keychain entry is omitted from the
     /// payload and counted in `missingPasswordCount` rather than aborting
     /// the export.
@@ -1336,7 +1338,12 @@ public final class SessionListViewModel {
                 // Same story as `paneVisibility` just above, not `groupID`:
                 // a tag list is a fact about this session, not a reference
                 // `includeGroups` should be able to gate.
-                tags: session.tags, password: password,
+                tags: session.tags,
+                // And the same again for the rank (D2): a number on the
+                // session, gated by nothing. It only means anything next to
+                // the folder the session sits in -- which is why the export
+                // of that folder, above, now carries its ancestors.
+                position: session.position, password: password,
                 jumpHost: jumpHost, jumpPort: jumpPort, jumpUsername: jumpUsername,
                 jumpAuthKind: jumpAuthKind, jumpKeyPath: jumpKeyPath, jumpPassword: jumpPassword,
                 s3SecretAccessKey: s3SecretAccessKey)
@@ -1344,10 +1351,31 @@ public final class SessionListViewModel {
 
         var exportedGroups: [ExportedGroup] = []
         if includeGroups {
-            let referencedGroupIDs = Set(scopedSessions.compactMap(\.groupID))
+            // Every folder an exported session sits in, PLUS the folders
+            // those hang from (D1). An ancestor holds no session of its own,
+            // so the referenced-only rule alone would write a `parentID`
+            // naming a folder the file does not carry — which the import side
+            // then repairs by lifting the child to the top level, losing the
+            // nesting on every round trip. `groupsByID` is the file's own
+            // catalog, so the walk stops at a parent this store no longer has.
+            let groupsByID = Dictionary(
+                groups.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            var includedGroupIDs = Set(scopedSessions.compactMap(\.groupID))
+            for id in includedGroupIDs {
+                var cursor = groupsByID[id]?.parentID
+                while let parentID = cursor, includedGroupIDs.insert(parentID).inserted {
+                    cursor = groupsByID[parentID]?.parentID
+                }
+            }
             exportedGroups = groups
-                .filter { referencedGroupIDs.contains($0.id) }
-                .map { ExportedGroup(id: $0.id, name: $0.name) }
+                .filter { includedGroupIDs.contains($0.id) }
+                // `parentID` travels as the store's own id: it is a reference
+                // INTO this file (every ancestor is carried, see above), and
+                // the import planner rekeys it along with `groupID`.
+                .map {
+                    ExportedGroup(
+                        id: $0.id, name: $0.name, parentID: $0.parentID, position: $0.position)
+                }
         }
 
         let payload = SessionExportPayload(

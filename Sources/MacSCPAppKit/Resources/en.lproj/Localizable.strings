@@ -452,6 +452,7 @@
 "import.result.passwordFailures %lld" = "Passwords that could not be saved: %lld";
 "import.result.storeFailures %lld" = "Not saved due to an error: %lld";
 "import.result.rejected %lld" = "Not imported because the entry was incomplete: %lld";
+"import.result.liftedGroups %lld" = "Folders moved to the top level because the file's nesting was broken: %lld";
 "import.result.plaintextNotice" = "The file contained unencrypted passwords.";
 "import.error.notExport" = "Not a macSCP sessions file.";
 "import.error.newerVersion" = "This file was created by a newer version of macSCP.";

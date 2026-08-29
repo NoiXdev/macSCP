@@ -649,6 +649,43 @@ struct SessionListViewModelTests {
         #expect(noSecretsResult.missingPasswordCount == 0)
     }
 
+    /// The export carries the TREE, not just which folder a session sits in:
+    /// a nested folder's parent and everyone's rank travel with it. The
+    /// ancestor travels too, even though no session sits in it directly —
+    /// without it the child would arrive naming a folder the file never
+    /// carried, and the import would lift it to the top level.
+    @Test func exportPayloadCarriesNestingAndPositions() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let outer = vm.createGroup(named: "Outer")!
+        let inner = vm.createGroup(named: "Inner")!
+        #expect(vm.move(.group(inner.id), intoGroup: outer.id) == nil)
+        _ = vm.save(
+            name: "b", values: sshValues(host: "h1", port: 22, username: "u"),
+            password: "", groupID: inner.id)!
+        _ = vm.save(
+            name: "a", values: sshValues(host: "h2", port: 22, username: "u"),
+            password: "", groupID: inner.id)!
+        vm.sortChildrenByName(of: inner.id)
+
+        let (payload, _) = vm.exportPayload(
+            for: .all, includeGroups: true, includePasswords: false)
+
+        let exportedOuter = try #require(payload.groups.first { $0.name == "Outer" })
+        let exportedInner = try #require(payload.groups.first { $0.name == "Inner" })
+        let storedInner = try #require(vm.groups.first { $0.id == inner.id })
+        #expect(storedInner.parentID == outer.id)
+        #expect(exportedInner.parentID == exportedOuter.id)
+        #expect(exportedInner.position == storedInner.position)
+
+        // Ranks come from the store, so the once-only sort the user just ran
+        // is what the file records.
+        let exportedA = try #require(payload.sessions.first { $0.name == "a" })
+        let exportedB = try #require(payload.sessions.first { $0.name == "b" })
+        #expect(exportedA.position == 0)
+        #expect(exportedB.position == 1)
+    }
+
     @Test func applyImportCreatesEverythingAdditively() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }

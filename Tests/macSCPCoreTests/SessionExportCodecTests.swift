@@ -337,6 +337,53 @@ struct SessionExportCodecTests {
         #expect(cloud.fields["WebDAVField.baseURL"] == "https://cloud.example.com/remote.php/dav")
     }
 
+    // MARK: - Nesting and positions (D1/D2)
+
+    /// A folder's parent and everyone's rank travel in the file. `parentID`
+    /// names another `ExportedGroup.id` — file-local, like
+    /// `ExportedSession.groupID` — so the codec's job is only to carry it
+    /// intact; rekeying it is the import planner's.
+    @Test func nestingAndPositionsRoundtripThroughEncodeDecode() throws {
+        let outerID = UUID()
+        let innerID = UUID()
+        var session = ExportedSession(
+            id: UUID(), name: "web", kind: .ssh,
+            fields: sshExportFields(host: "h", username: "u"), groupID: innerID)
+        session.position = 4
+        let payload = SessionExportPayload(
+            includesSecrets: false,
+            groups: [
+                ExportedGroup(id: outerID, name: "Outer", position: 0),
+                ExportedGroup(id: innerID, name: "Inner", parentID: outerID, position: 1),
+            ],
+            sessions: [session])
+
+        let data = try SessionExportCodec.encode(payload, password: nil)
+        let decoded = try SessionExportCodec.decode(data, password: nil)
+        #expect(decoded == payload)
+        #expect(decoded.groups.last?.parentID == outerID)
+        #expect(decoded.groups.last?.position == 1)
+        #expect(decoded.sessions.first?.position == 4)
+    }
+
+    /// A file written before folders could nest carries neither key. It has
+    /// to decode: a `keyNotFound` on `position` would make every export
+    /// anybody already has unreadable, which is the same trap
+    /// `StoredGroup.init(from:)` avoids for `sessions-v2.json`.
+    @Test func aPayloadWithoutNestingKeysDecodesWithoutThem() throws {
+        let raw = Data("""
+        {"format":"macscp-sessions","version":2,"encrypted":false,"payload":{"includesSecrets":false,\
+        "groups":[{"id":"\(UUID().uuidString)","name":"Prod"}],\
+        "sessions":[{"id":"\(UUID().uuidString)","name":"web","kind":"ssh",\
+        "fields":{"SSHField.host":"h","SSHField.port":"22","SSHField.username":"u"}}]}}
+        """.utf8)
+        let payload = try SessionExportCodec.decode(raw, password: nil)
+        #expect(payload.groups.first?.name == "Prod")
+        #expect(payload.groups.first?.parentID == nil)
+        #expect(payload.groups.first?.position == nil)
+        #expect(payload.sessions.first?.position == nil)
+    }
+
     /// A v2 file round-trips through the bag with no column-shaped loss.
     @Test(arguments: ConnectionKind.allCases)
     func aSessionRoundTripsThroughTheBag(kind: ConnectionKind) throws {

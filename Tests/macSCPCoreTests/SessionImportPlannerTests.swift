@@ -179,6 +179,148 @@ struct SessionImportPlannerTests {
         #expect(plan.skipped.count == 1)
     }
 
+    // MARK: - Nesting and positions (D1/D2)
+
+    /// The old shape — a file written before folders could nest — imports
+    /// exactly as it did: top level, rank 0, and nothing reported as
+    /// straightened.
+    @Test func anExportWithoutNestingOrPositionsImportsUnchanged() async {
+        let fileGroup = ExportedGroup(id: UUID(), name: "Prod")
+        // The fixture IS the old shape, asserted rather than assumed: both
+        // fields absent is what every file on disk today carries.
+        #expect(fileGroup.parentID == nil)
+        #expect(fileGroup.position == nil)
+
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [],
+            incoming: incoming([exported(groupID: fileGroup.id)], groups: [fileGroup]),
+            arbiter: neverAsked)
+
+        #expect(plan.groupsToCreate.count == 1)
+        #expect(plan.groupsToCreate[0].parentID == nil)
+        #expect(plan.groupsToCreate[0].position == 0)
+        #expect(plan.sessionsToImport[0].session.position == 0)
+        #expect(plan.liftedGroups.isEmpty)
+    }
+
+    /// The trap this task exists for. `ExportedGroup.id` is FILE-LOCAL and
+    /// the planner mints fresh ids, so a `parentID` copied over raw would
+    /// name an id nothing in the store has. It has to travel through the very
+    /// same mapping `ExportedSession.groupID` already travels through.
+    @Test func aParentIDTravelsThroughTheSameRekeyingAsAGroupReference() async throws {
+        let outer = ExportedGroup(id: UUID(), name: "Outer")
+        let inner = ExportedGroup(id: UUID(), name: "Inner", parentID: outer.id, position: 3)
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [],
+            incoming: incoming([exported(groupID: inner.id)], groups: [outer, inner]),
+            arbiter: neverAsked)
+
+        let createdOuter = try #require(plan.groupsToCreate.first { $0.name == "Outer" })
+        let createdInner = try #require(plan.groupsToCreate.first { $0.name == "Inner" })
+        #expect(createdOuter.id != outer.id)
+        #expect(createdInner.id != inner.id)
+        #expect(createdInner.parentID == createdOuter.id)
+        // The file's own id must not survive anywhere: it is the id the
+        // rekeying replaced, and pointing at it is pointing at nothing.
+        #expect(createdInner.parentID != outer.id)
+        #expect(createdInner.position == 3)
+        #expect(plan.sessionsToImport[0].session.groupID == createdInner.id)
+        #expect(plan.liftedGroups.isEmpty)
+    }
+
+    /// A folder can also nest under one the store already has — the name
+    /// match resolves the parent to an EXISTING id, through the same map.
+    /// Nothing about that existing folder is changed by the import.
+    @Test func aParentThatMatchesAnExistingFolderByNameNestsUnderIt() async throws {
+        let existingGroup = StoredGroup(name: "Prod")
+        let fileProd = ExportedGroup(id: UUID(), name: "Prod")
+        let fileChild = ExportedGroup(id: UUID(), name: "EU", parentID: fileProd.id)
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [existingGroup],
+            incoming: incoming([exported(groupID: fileChild.id)], groups: [fileProd, fileChild]),
+            arbiter: neverAsked)
+
+        #expect(plan.groupsToCreate.map(\.name) == ["EU"])
+        #expect(try #require(plan.groupsToCreate.first).parentID == existingGroup.id)
+        #expect(plan.liftedGroups.isEmpty)
+    }
+
+    /// A folder that only holds other folders has no session of its own, so
+    /// the ghost-group rule (M9a Finding 2) would have dropped it and left
+    /// its child pointing at nothing. An ANCESTOR of a folder that is kept is
+    /// not a ghost — it is what the child hangs from. A folder nothing
+    /// references at all still is one.
+    @Test func anEmptyAncestorIsKeptWhileAnUnreferencedFolderIsStillDropped() async {
+        let outer = ExportedGroup(id: UUID(), name: "Outer")
+        let inner = ExportedGroup(id: UUID(), name: "Inner", parentID: outer.id)
+        let ghost = ExportedGroup(id: UUID(), name: "Ghost")
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [],
+            incoming: incoming(
+                [exported(groupID: inner.id)], groups: [outer, inner, ghost]),
+            arbiter: neverAsked)
+
+        #expect(plan.groupsToCreate.map(\.name) == ["Outer", "Inner"])
+    }
+
+    /// A foreign file can carry a ring. It imports COMPLETELY — additive,
+    /// never destructive — with the ring cut by lifting one member to the top
+    /// level, and the planner names which one it lifted.
+    @Test func aCycleImportsCompletelyWithOneFolderLiftedToTheTopLevel() async {
+        let aID = UUID()
+        let bID = UUID()
+        let a = ExportedGroup(id: aID, name: "A", parentID: bID)
+        let b = ExportedGroup(id: bID, name: "B", parentID: aID)
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [],
+            incoming: incoming(
+                [exported(name: "in-a", host: "h1", groupID: aID),
+                 exported(name: "in-b", host: "h2", groupID: bID)],
+                groups: [a, b]),
+            arbiter: neverAsked)
+
+        // Nothing discarded: both folders and both sessions arrive.
+        #expect(plan.groupsToCreate.map(\.name) == ["A", "B"])
+        #expect(plan.sessionsToImport.map(\.session.name) == ["in-a", "in-b"])
+        #expect(!GroupTree.hasCycle(plan.groupsToCreate))
+        #expect(plan.groupsToCreate.filter { $0.parentID == nil }.count == 1)
+        // `GroupTree.repaired` lifts the first member of the ring its walk
+        // reaches, which for this file is the first group in it.
+        #expect(plan.liftedGroups == ["A"])
+    }
+
+    /// The second damage, repaired by the same rule: a `parentID` naming a
+    /// folder the file does not carry at all.
+    @Test func aMissingParentImportsAtTheTopLevelAndIsReported() async {
+        let orphan = ExportedGroup(id: UUID(), name: "Orphan", parentID: UUID())
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [],
+            incoming: incoming([exported(groupID: orphan.id)], groups: [orphan]),
+            arbiter: neverAsked)
+
+        #expect(plan.groupsToCreate.map(\.name) == ["Orphan"])
+        #expect(plan.groupsToCreate[0].parentID == nil)
+        #expect(plan.sessionsToImport.count == 1)
+        #expect(plan.liftedGroups == ["Orphan"])
+    }
+
+    /// The other half of the ordering: a session carries its own rank, and an
+    /// entry written before the field existed reads back as 0 — the default
+    /// `StoredSession` itself carries.
+    @Test func aSessionPositionTravelsAndDefaultsToZero() async throws {
+        var ranked = exported(name: "ranked", host: "h1")
+        ranked.position = 7
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [],
+            incoming: incoming([ranked, exported(name: "unranked", host: "h2")]),
+            arbiter: neverAsked)
+
+        #expect(try #require(plan.sessionsToImport.first { $0.session.name == "ranked" })
+            .session.position == 7)
+        #expect(try #require(plan.sessionsToImport.first { $0.session.name == "unranked" })
+            .session.position == 0)
+    }
+
     // MARK: - Conflict resolution (M19)
 
     @Test func conflictCarriesTheSessionNameAndTheStableKindLabel() async {

@@ -456,6 +456,7 @@
 "import.result.passwordFailures %lld" = "Mots de passe n'ayant pas pu être enregistrés : %lld";
 "import.result.storeFailures %lld" = "Non enregistrés en raison d'une erreur : %lld";
 "import.result.rejected %lld" = "Non importés, car l'entrée était incomplète : %lld";
+"import.result.liftedGroups %lld" = "Dossiers déplacés au niveau supérieur, car l'imbrication du fichier était endommagée : %lld";
 "import.result.plaintextNotice" = "Le fichier contenait des mots de passe non chiffrés.";
 "import.error.notExport" = "Ce n'est pas un fichier de sessions macSCP.";
 "import.error.newerVersion" = "Ce fichier a été créé par une version plus récente de macSCP.";
