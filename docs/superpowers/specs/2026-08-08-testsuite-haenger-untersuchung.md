@@ -99,40 +99,66 @@ gezielte Frage statt einer Suche.
 
 ---
 
-## Nachtrag 2026-08-29: ein zweiter, anders geformter Flatterer
+## Nachtrag 2026-08-29: ein zweiter Flatterer — gemessen, und die erste Erklärung war falsch
 
-Nicht der M20-Hänger, aber im selben Feld und deshalb hier statt in einem
-eigenen Eintrag.
+**Erledigt und aufgeklärt.** Der Eintrag steht, weil die Aufklärung mehr wert
+ist als der Fehler.
 
-**`S3RedirectAuthorizationMeasurementTests` ist zweimal unabhängig fallen
-gesehen worden** — von zwei verschiedenen Läufen an zwei verschiedenen
-Aufgaben, jeweils mit 2 Issues, jeweils ohne Reproduktion danach. Ich selbst
-habe ihn in **elf** vollen Läufen und **fünf** isolierten nie fallen sehen.
+`S3RedirectAuthorizationMeasurementTests` fiel gelegentlich, zweimal
+unabhängig gesichtet. Die hier zuerst notierte Erklärung — knappe
+Wartezeiten unter Last — **ist widerlegt.** 80 volle Läufe in vier Runden:
 
-Was gemessen ist und den Unterschied zum M20-Hänger ausmacht:
-
-| | isoliert | im vollen Lauf |
+| Runde | Aufbau | S3-Suite rot |
 |---|---|---|
-| Dauer der Suite | 0,054–0,066 s | 2,27–2,52 s |
+| 1 | vier parallele Builds als Last | 3 / 20 |
+| 2 | gleiche Last, instrumentiert | 3 / 20 |
+| 3 | **ohne jede Last** | **7 / 20** |
+| 4 | ohne Last, `URLCache.shared` je Fall geleert | **0 / 20** |
 
-Also **Faktor vierzig unter Last** — und beide Fehlschläge traten auf, während
-gleichzeitig gebaut wurde. Der M20-Hänger dagegen steht bei 0 % CPU und
-terminiert nie; das hier läuft und wird nur langsam.
+**Ohne Last war die Rate höher.** Last ist Zuschauer. Und die Wartezeit war
+es auch nicht: bei jedem der 13 Fehlschläge verstrichen danach noch
+**60 Sekunden ungenutzt** (`extra=60.01 s`), wo ein grüner Lauf dieselbe
+Wartezeit in Mikrosekunden durchläuft. Es gibt keine Schranke, die das
+abgedeckt hätte — eine größere hätte nur jeden roten Lauf verlängert.
 
-**Warum es zählt und nicht bloß eine Unbequemlichkeit ist:** dieser Test
-beantwortet eine Sicherheitsfrage (nimmt Foundation den `Authorization`-Header
-über eine Weiterleitung mit?) und ist ausdrücklich committet worden, damit CI
-sie auf jeder Plattform neu stellt. Ein Test, der unter Last gelegentlich
-fällt, wird nach der dritten roten CI ignoriert — und dann beantwortet er die
-Frage nicht mehr, sondern verdeckt sie.
+### Die Ursache: `URLCache.shared`
 
-**Verdacht, ausdrücklich ungeprüft:** der Stub bindet Loopback-Listener und
-misst echte HTTP-Umläufe; die Wartezeiten stammen aus
-`waitForRequests(atLeast:within:)`. Eine Schranke, die isoliert um Faktor
-tausend großzügig ist, kann unter Last knapp werden.
+`S3FileSystem` fährt über `URLSession.shared` und damit über
+`URLCache.shared` — einen **persistenten Platten-Cache, den alle Prozesse
+teilen**. Die 301- und 308-Antworten des Stubs sind cachebar und werden nach
+`http://127.0.0.1:<ephemerer Port>/bucket?…` verschlüsselt. Ephemere Ports
+kehren wieder: trifft ein Lauf einen Port, für den ein **früherer
+`swift test`-Prozess** einen Eintrag hinterlassen hat, beantwortet die Platte
+die signierte Anfrage, und der Stub sieht sie nie.
 
-**Vor einer Änderung zu messen:** ob die Fehlschläge tatsächlich an einer
-Wartezeit hängen (dann sagt die Fehlermeldung es) oder an etwas anderem.
-Beide Sichtungen liegen in Agentenberichten unter `.superpowers/sdd/` — das
-ist gitignoriert und verschwindet, also gehört das Wesentliche hierher und
-nicht dorthin.
+Belegt über zwei Prozesse: PROC1 setzt die Stubs, PROC2 — getrennt, ohne
+eigenen Listener — findet `cachedEntry=true status=308` und folgt dem
+Location, ohne die erste Origin je zu berühren. Gemessen wird gecacht bei
+**301 und 308**, nicht bei 302/303/307.
+
+Dass die Form meist harmlos aussah (zwei Issues), hat einen Grund: der zweite
+Stub wird zuerst angelegt, also gilt immer `p1 == p2 + 1`, und der veraltete
+Location zeigt auf den zweiten Stub des *laufenden* Falls.
+
+**Die Sicherheitszusicherung ist nie gefallen.** Gefallen ist jedes Mal eine
+**positive** Prüfung — „die erste Origin wurde nie erreicht" —, und sie fiel
+zu Recht. Genau dafür steht sie neben der negativen.
+
+### Was daraus folgt
+
+- **Am Test:** der Cache-Schlüssel darf nicht wiederkehren. Ein je Lauf
+  einzigartiger Bucket-Name genügt und ändert keine Zusicherung — besser als
+  `removeAllCachedResponses()`, das den Cache des Entwicklers und fremder
+  Suiten mit leert.
+- **In der Produktion, und das ist der schwerere Teil:** siehe
+  `2026-08-29-backlog-s3-teilt-die-url-session.md`.
+
+### Eine Lehre über diesen Fall hinaus
+
+Die erste Erklärung war plausibel, passte zu den Beobachtungen und war
+falsch. Sie stammte aus einer **Korrelation** — beide Sichtungen traten
+während eines Builds auf — und wurde erst widerlegt, als jemand ohne Last
+maß und die Rate stieg. Eine Ursache, die man aus dem Zusammentreffen
+erschließt, ist eine Hypothese, bis eine Runde sie gezielt auszuschließen
+versucht hat.
+

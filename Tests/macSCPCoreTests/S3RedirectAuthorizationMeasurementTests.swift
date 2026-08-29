@@ -80,6 +80,26 @@ struct S3RedirectAuthorizationMeasurementTests {
     /// request and not as some other request that happened to arrive.
     private static let secondOriginPathMarker = "/redirected-to-the-second-origin/bucket"
 
+    /// A bucket name nothing has used before, and the reason it is not just
+    /// `"bucket"`.
+    ///
+    /// `S3FileSystem` runs over `URLSession.shared`, hence over
+    /// `URLCache.shared` — a persistent on-disk cache shared by every
+    /// process on the machine. The stub's 301 and 308 answers are cacheable
+    /// and get keyed by `http://127.0.0.1:<ephemeral port>/<bucket>?…`, and
+    /// ephemeral ports come round again: a later run that draws a port some
+    /// EARLIER `swift test` process left an entry for is answered from disk,
+    /// and the stub never sees the request. Measured over 80 runs, that
+    /// turned this suite red 13 times — and never under load, which is what
+    /// made it look like a timing problem for two days. Round four, with the
+    /// cache cleared per case, was 20 green out of 20.
+    ///
+    /// A fresh name per call makes the key unrepeatable. It is preferred
+    /// over `URLCache.shared.removeAllCachedResponses()`, which would empty
+    /// the cache of whoever is running the suite along with every other
+    /// suite's.
+    private static func freshBucket() -> String { "bucket-\(UUID().uuidString)" }
+
     /// Drives the REAL signed request: `S3FileSystem.connect` with its
     /// default transport, i.e. `URLSessionHTTPTransport()` over
     /// `URLSession.shared`. Not a hand-built `URLRequest` that merely looks
@@ -99,7 +119,7 @@ struct S3RedirectAuthorizationMeasurementTests {
         let config = S3ConnectionConfig(
             accessKeyID: "AKIAMEASUREMENT", secretAccessKey: "measurement-secret-key",
             region: "us-east-1", endpoint: "http://127.0.0.1:\(first.port)",
-            bucket: "bucket", usePathStyle: true, sessionToken: nil)
+            bucket: Self.freshBucket(), usePathStyle: true, sessionToken: nil)
 
         var succeeded = false
         var failure: String?
@@ -224,7 +244,7 @@ struct S3RedirectAuthorizationMeasurementTests {
         let config = S3ConnectionConfig(
             accessKeyID: "AKIAMEASUREMENT", secretAccessKey: "measurement-secret-key",
             region: "us-east-1", endpoint: "http://127.0.0.1:\(stub.port)",
-            bucket: "bucket", usePathStyle: true, sessionToken: nil)
+            bucket: Self.freshBucket(), usePathStyle: true, sessionToken: nil)
         var failure: String?
         do { _ = try await S3FileSystem.connect(config) } catch { failure = "\(error)" }
         _ = await stub.waitForRequests(atLeast: 2)
