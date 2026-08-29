@@ -96,3 +96,43 @@ sample <pid> 3 -mayDie -f /tmp/hang.txt   # vor dem Kill!
 und die **letzte Zeile der Testausgabe** notieren. Das ist der eine Datenpunkt,
 der noch fehlt: der Name des Tests. Mit ihm wird aus der Untersuchung eine
 gezielte Frage statt einer Suche.
+
+---
+
+## Nachtrag 2026-08-29: ein zweiter, anders geformter Flatterer
+
+Nicht der M20-Hänger, aber im selben Feld und deshalb hier statt in einem
+eigenen Eintrag.
+
+**`S3RedirectAuthorizationMeasurementTests` ist zweimal unabhängig fallen
+gesehen worden** — von zwei verschiedenen Läufen an zwei verschiedenen
+Aufgaben, jeweils mit 2 Issues, jeweils ohne Reproduktion danach. Ich selbst
+habe ihn in **elf** vollen Läufen und **fünf** isolierten nie fallen sehen.
+
+Was gemessen ist und den Unterschied zum M20-Hänger ausmacht:
+
+| | isoliert | im vollen Lauf |
+|---|---|---|
+| Dauer der Suite | 0,054–0,066 s | 2,27–2,52 s |
+
+Also **Faktor vierzig unter Last** — und beide Fehlschläge traten auf, während
+gleichzeitig gebaut wurde. Der M20-Hänger dagegen steht bei 0 % CPU und
+terminiert nie; das hier läuft und wird nur langsam.
+
+**Warum es zählt und nicht bloß eine Unbequemlichkeit ist:** dieser Test
+beantwortet eine Sicherheitsfrage (nimmt Foundation den `Authorization`-Header
+über eine Weiterleitung mit?) und ist ausdrücklich committet worden, damit CI
+sie auf jeder Plattform neu stellt. Ein Test, der unter Last gelegentlich
+fällt, wird nach der dritten roten CI ignoriert — und dann beantwortet er die
+Frage nicht mehr, sondern verdeckt sie.
+
+**Verdacht, ausdrücklich ungeprüft:** der Stub bindet Loopback-Listener und
+misst echte HTTP-Umläufe; die Wartezeiten stammen aus
+`waitForRequests(atLeast:within:)`. Eine Schranke, die isoliert um Faktor
+tausend großzügig ist, kann unter Last knapp werden.
+
+**Vor einer Änderung zu messen:** ob die Fehlschläge tatsächlich an einer
+Wartezeit hängen (dann sagt die Fehlermeldung es) oder an etwas anderem.
+Beide Sichtungen liegen in Agentenberichten unter `.superpowers/sdd/` — das
+ist gitignoriert und verschwindet, also gehört das Wesentliche hierher und
+nicht dorthin.
