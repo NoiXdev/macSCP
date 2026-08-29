@@ -107,7 +107,16 @@ Erfreulich: das Kontextmenü derselben Zeile hat bereits einen Eintrag
 **„Verbinden"**. Der Weg geht also nicht verloren, wenn der Tipp zur Auswahl
 wird. Das ist der kleinste Punkt der ganzen Liste.
 
-### C2. Sitzung ist schon offen
+### C2. Sitzung ist schon offen — **erledigt 2026-08-29** (`71b86c0`)
+
+Entworfen in `2026-08-29-sitzung-schon-offen-design.md`. Identität ist
+`activeStoredSessionID`, eine Ad-hoc-Verbindung zählt nicht, es wird jedes
+Mal gefragt. Bei mehreren Haltern gewinnt der erste in Reiter-Reihenfolge;
+der aktive Reiter zählt wie jeder andere. Der Panel-Wunsch aus „Terminal
+öffnen" reist in der Abfrage mit, damit eine beantwortete Abfrage daraus
+nicht stillschweigend ein gewöhnliches Verbinden macht.
+
+*Die ursprüngliche Notiz, als Beleg der offenen Fragen:*
 
 Beim Starten einer bereits offenen Sitzung fragen: **neu öffnen** oder **zur
 bestehenden springen**. Zu entscheiden: merkt sich macSCP die Antwort
