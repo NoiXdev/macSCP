@@ -127,7 +127,28 @@ Sitzung, oder auch dasselbe Ziel über eine Ad-hoc-Verbindung?
 
 ## D. Seitenleiste
 
-### D1. Verschachtelte Ordner + D2. Freie Sortierung — **ein Vorgang**
+### D1. Verschachtelte Ordner + D2. Freie Sortierung — **erledigt 2026-08-29**
+
+Entworfen in `2026-08-29-ordner-und-sortierung-design.md`, umgesetzt in vier
+Schritten (`6a7a1be`, `5afdfa5`, `8ade149`, `22da6a9`). Additiv in
+`sessions-v2.json`, Ganzzahl-Position am Element, beliebige Tiefe über
+`parentID` mit Zyklenprüfung in Core. Die Ansicht rechnet keine Position —
+geprüft von einem Scanner, dem vier positive Wächter zur Seite stehen.
+
+**Zwei Befunde beim Bauen, beide festgehalten:** `SidebarVisibility` warf
+Ordner weg, die keine eigene Treffersitzung trugen — flach richtig,
+verschachtelt verlor es Treffer, bis eine Sitzung zwei Ebenen tiefer auf
+keinem Weg mehr erreichbar war. Und die **Ausfuhr** trägt jetzt die Vorfahren
+eines ausgeführten Ordners mit, sonst überlebt Verschachtelung keinen
+Rundlauf.
+
+**Offen und Maintainer-Sache:** ein Ordner lässt sich nicht direkt **vor**
+einen anderen ziehen — auf einen Ordner fallen heißt „hinein". Jede Anordnung
+bleibt erreichbar, aber die Geste fehlt. Die Behebung ist ausdrücklich
+**keine** Einfügemarke: eine zweite Zielzone auf der Ordnerzeile wäre wieder
+eine Koordinate.
+
+*Die ursprüngliche Notiz:*
 
 `StoredGroup` trägt heute **nur `id` und `name`**. Kein Elternteil, keine
 Reihenfolge. Beides — Verschachtelung *und* freie Sortierung — braucht neue
