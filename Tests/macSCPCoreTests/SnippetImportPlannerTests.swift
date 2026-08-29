@@ -106,6 +106,43 @@ struct SnippetImportPlannerTests {
         #expect(plan.snippetsToImport.map(\.snippet.variables) == [[variable]])
     }
 
+    /// The opposite carry-over, and the reason `ExportedSnippet` exists:
+    /// `Snippet.skipsPlaceholderPlacementCheck` must NOT survive the trip.
+    /// Asserted on all three paths a planned snippet is built on — fresh,
+    /// renamed, and replacing — because each one constructs its own
+    /// `Snippet` and any of them could start passing the field along.
+    ///
+    /// The exporting side sets the waiver here, so the test is not passing
+    /// merely because nothing ever set it. What stops it is structural: the
+    /// export type does not name the field, so `ExportedSnippet.init(_:)`
+    /// has nothing to copy and `makeSnippet` has nothing to read.
+    @Test func anImportNeverCarriesThePlacementCheckWaiver() async {
+        let waived = Snippet(
+            name: "Dump", command: "[ -f {{PATH}} ]", skipsPlaceholderPlacementCheck: true)
+        #expect(waived.skipsPlaceholderPlacementCheck)
+
+        let fresh = await SnippetImportPlanner.plan(
+            existing: [], incoming: payload([waived]), arbiter: arbiterThatMustNotBeAsked())
+        #expect(fresh.snippetsToImport.map(\.snippet.skipsPlaceholderPlacementCheck) == [false])
+
+        let renamed = await SnippetImportPlanner.plan(
+            existing: [snippet("Dump")], incoming: payload([waived]),
+            arbiter: arbiterAnswering(.rename))
+        #expect(renamed.renamed == ["Dump (2)"])
+        #expect(renamed.snippetsToImport.map(\.snippet.skipsPlaceholderPlacementCheck) == [false])
+
+        // The replacing path takes an EXISTING snippet's id — and here that
+        // existing snippet has the waiver on. It is not inherited either:
+        // what lands in the store is built from the file's fields.
+        let existingWaived = Snippet(
+            name: "Dump", command: "echo old", skipsPlaceholderPlacementCheck: true)
+        let replacing = await SnippetImportPlanner.plan(
+            existing: [existingWaived], incoming: payload([waived]),
+            arbiter: arbiterAnswering(.replace))
+        #expect(replacing.replaced == ["Dump"])
+        #expect(replacing.snippetsToImport.map(\.snippet.skipsPlaceholderPlacementCheck) == [false])
+    }
+
     @Test func aNameCollidingOnlyByCaseAndWhitespaceStillCollides() async {
         let plan = await SnippetImportPlanner.plan(
             existing: [snippet("Clean up")],

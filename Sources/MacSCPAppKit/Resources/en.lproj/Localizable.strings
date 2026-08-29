@@ -901,6 +901,8 @@
 "snippets.variables.kind.freeText" = "Free text";
 "snippets.variables.kind.selection" = "Choice";
 "snippets.variables.hint" = "A value is inserted as a single shell word. An environment variable is exported ahead of the command and stays set in the session after the run.";
+"snippets.editor.skipPlacementCheck" = "Don't check where values are placed in this command";
+"snippets.editor.skipPlacementCheck.hint" = "Only for this snippet, and it is not shared: an imported snippet always arrives with the check on. Values are still quoted, but macSCP stops requiring each one to stand as a plain, unquoted argument — and where it does not, quoting alone cannot keep a value from being read as shell code.";
 "snippets.editor.preview" = "Preview";
 "snippets.editor.preview.sample" = "sample";
 "snippets.variables.error.invalidName" = "A variable name must start with a letter or underscore and may contain only letters, digits and underscores.";

@@ -11,6 +11,12 @@ import Foundation
 /// expressed by the file at all, and no import-side cleanup rule has to
 /// remember to strip it.
 ///
+/// `Snippet.skipsPlaceholderPlacementCheck` is the first field that
+/// boundary actually holds back, and the reason it was drawn: a shared
+/// snippet must never arrive with its placement check already switched
+/// off. Nothing here refuses it — there is simply no property to write it
+/// into and no argument on `init(_:)` to pass it through.
+///
 /// The bytes are unchanged by this: its fields carry `Snippet`'s own
 /// coding keys, so a file written while the payload was `[Snippet]` decodes
 /// here key for key (`SnippetExportCodecTests

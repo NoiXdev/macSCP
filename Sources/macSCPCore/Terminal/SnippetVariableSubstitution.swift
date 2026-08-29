@@ -279,8 +279,15 @@ public enum SnippetVariableSubstitution {
     /// so the argument span starts one scalar inside the occurrence), and it
     /// is pinned by its own cases in the test corpus, because a default
     /// nothing exercises is a default nothing protects.
+    ///
+    /// `skipsPlacementCheck` is that whole positive rule switched off for
+    /// ONE snippet — `Snippet.skipsPlaceholderPlacementCheck`, ticked by
+    /// hand in the editor. It defaults to `false`, so a caller that says
+    /// nothing gets the check, and it reaches nothing else: the name rule
+    /// above it and the unused check still run, and neither `resolve`'s
+    /// quoting nor `SnippetSendPlanner` can see it at all.
     public static func firstDeclarationProblem(
-        command: String, variables: [SnippetVariable]
+        command: String, variables: [SnippetVariable], skipsPlacementCheck: Bool = false
     ) -> Problem? {
         for variable in variables where !SnippetVariable.isValidName(variable.name) {
             return .invalidName(name: variable.name)
@@ -288,6 +295,33 @@ public enum SnippetVariableSubstitution {
 
         let placeholders = variables.filter { $0.placement == .placeholder }
         guard !placeholders.isEmpty else { return nil }
+
+        // The waiver (`Snippet.skipsPlaceholderPlacementCheck`) switches off
+        // the POSITION question and returns before the survey is consulted
+        // at all — so all four answers that question can give (inside
+        // quotes, not a plain argument, an argument its own command
+        // re-parses, and a command the survey refuses to read) stop
+        // arising. It reaches here only from a snippet somebody ticked the
+        // box on: an export file cannot express it (`ExportedSnippet` does
+        // not name the field), so an imported snippet always arrives with
+        // the check on.
+        //
+        // The unused check still runs, because "this declaration is asked
+        // for and reaches nothing" is not a question about position. It
+        // runs here rather than below only because the survey the code
+        // below starts with is precisely what was skipped; the answer for
+        // any given declaration is the same either way.
+        //
+        // What the waiver deliberately does NOT change: `resolve` still
+        // wraps every value in `PosixQuoting.singleQuoted`. The value is
+        // quoted exactly as before — what is gone is the promise that the
+        // place it lands in is one where that quoting keeps it inert.
+        if skipsPlacementCheck {
+            for variable in placeholders where occurrences(of: variable.name, in: command).isEmpty {
+                return .unusedPlaceholder(name: variable.name)
+            }
+            return nil
+        }
 
         let spans: [SnippetCommandSurvey.Span]
         switch SnippetCommandSurvey.survey(command) {

@@ -902,6 +902,8 @@
 "snippets.variables.kind.freeText" = "Freitext";
 "snippets.variables.kind.selection" = "Auswahl";
 "snippets.variables.hint" = "Ein Wert wird als ein einzelnes Shell-Wort eingesetzt. Eine Umgebungsvariable wird vor dem Kommando exportiert und bleibt nach dem Lauf in der Sitzung gesetzt.";
+"snippets.editor.skipPlacementCheck" = "Nicht prüfen, wo Werte in diesem Befehl stehen";
+"snippets.editor.skipPlacementCheck.hint" = "Gilt nur für dieses Snippet und wird nicht weitergegeben: ein importiertes Snippet kommt immer mit eingeschalteter Prüfung an. Werte werden weiterhin gequotet, aber macSCP verlangt nicht mehr, dass jeder Wert als einfaches, ungequotetes Argument steht — und wo das nicht so ist, hält Quoting allein einen Wert nicht davon ab, als Shell-Code gelesen zu werden.";
 "snippets.editor.preview" = "Vorschau";
 "snippets.editor.preview.sample" = "Beispiel";
 "snippets.variables.error.invalidName" = "Ein Variablenname beginnt mit einem Buchstaben oder Unterstrich und enthält nur Buchstaben, Ziffern und Unterstriche.";

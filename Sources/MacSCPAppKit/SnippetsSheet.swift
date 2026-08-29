@@ -576,6 +576,10 @@ private struct SnippetEditorView: View {
     /// `SnippetVariable` directly — see `VariableDraft`'s own doc comment for
     /// why.
     @State private var variableDrafts: [VariableDraft]
+    /// `Snippet.skipsPlaceholderPlacementCheck` while it is being edited.
+    /// A plain `Bool` rather than a draft type: unlike a declaration it has
+    /// no half-typed intermediate state a checkbox could be in.
+    @State private var skipsPlacementCheck: Bool
     @State private var errorMessage: String?
 
     init(
@@ -591,6 +595,8 @@ private struct SnippetEditorView: View {
         _tags = State(initialValue: existing?.tags ?? [])
         _variableDrafts = State(
             initialValue: (existing?.variables ?? []).map(VariableDraft.init(variable:)))
+        _skipsPlacementCheck = State(
+            initialValue: existing?.skipsPlaceholderPlacementCheck ?? false)
     }
 
     private var isEditing: Bool { existing != nil }
@@ -650,6 +656,13 @@ private struct SnippetEditorView: View {
     /// from a file without it ever passing this field. The loop stays
     /// because it is the only one of the three that can say WHICH field the
     /// user has to fix while they are typing in it.
+    ///
+    /// `skipsPlacementCheck` is handed to `firstDeclarationProblem` so the
+    /// checkbox below the variables actually unblocks Save. It removes ONE
+    /// of that function's questions — where a `{{NAME}}` sits — and neither
+    /// of the two checks above it: an invalid or duplicate name still
+    /// blocks Save with the waiver ticked, as does a declaration whose
+    /// placeholder appears nowhere in the command.
     private var variablesError: String? {
         for draft in variableDrafts {
             let trimmedName = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -668,7 +681,8 @@ private struct SnippetEditorView: View {
         }
         guard
             let problem = SnippetVariableSubstitution.firstDeclarationProblem(
-                command: command, variables: variables)
+                command: command, variables: variables,
+                skipsPlacementCheck: skipsPlacementCheck)
         else { return nil }
         return snippetVariableProblemText(for: problem)
     }
@@ -789,7 +803,8 @@ private struct SnippetEditorView: View {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let snippet = Snippet(
             id: existing?.id ?? UUID(), name: trimmedName, command: command,
-            tags: tags, variables: variables)
+            tags: tags, variables: variables,
+            skipsPlaceholderPlacementCheck: skipsPlacementCheck)
         do {
             try store.save(snippet)
             onSaved()
@@ -844,6 +859,37 @@ private struct SnippetEditorView: View {
             Text(L10n.string(
                 "snippets.variables.hint",
                 "A value is inserted as a single shell word. An environment variable is exported ahead of the command and stays set in the session after the run."))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            // The per-snippet exit from the placement check. Its label
+            // names what is switched off -- WHERE values may stand in this
+            // command -- rather than saying "check off", which is a switch
+            // whose effect is learned from the damage. The footnote below
+            // it carries the two facts a label cannot: values are still
+            // quoted, and the setting does not travel with an export.
+            //
+            // Never disabled. A snippet with no declarations yet is exactly
+            // where somebody may want to tick this first, and a greyed-out
+            // checkbox would explain neither itself nor when it would come
+            // back.
+            Toggle(
+                L10n.string(
+                    "snippets.editor.skipPlacementCheck",
+                    "Don't check where values are placed in this command"),
+                isOn: $skipsPlacementCheck)
+                .toggleStyle(.checkbox)
+                .font(.caption)
+            Text(L10n.string(
+                "snippets.editor.skipPlacementCheck.hint",
+                """
+                Only for this snippet, and it is not shared: an imported snippet always \
+                arrives with the check on. Values are still quoted, but macSCP stops \
+                requiring each one to stand as a plain, unquoted argument — and where it \
+                does not, quoting alone cannot keep a value from being read as shell code.
+                """))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

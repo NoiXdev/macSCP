@@ -1,11 +1,12 @@
 import Foundation
 import Testing
 
-/// Guards six properties of `SnippetsSheet.swift`'s snippet editor: five in
-/// `SnippetCommandEditor.swift`'s own wiring, raised by the whole-branch
-/// review of the snippet syntax-highlighting feature, plus a sixth
-/// (variable-declaration Save-gating, Task 5) in `SnippetEditorView` itself.
-/// None of the six are provable any other way in this project (no test here
+/// Guards seven properties of `SnippetsSheet.swift`'s snippet editor: five
+/// in `SnippetCommandEditor.swift`'s own wiring, raised by the whole-branch
+/// review of the snippet syntax-highlighting feature, plus two in
+/// `SnippetEditorView` itself (variable-declaration Save-gating, Task 5,
+/// and the per-snippet placement-check waiver).
+/// None of the seven are provable any other way in this project (no test here
 /// renders an `NSViewRepresentable` or a `View` body — see `SnippetsSheet
 /// .swift`'s own doc comment on that boundary):
 ///
@@ -49,6 +50,15 @@ import Testing
 ///    `Text` whenever it is non-nil: the brief is explicit that a greyed-out
 ///    Save button must not be the only signal, because a user who cannot
 ///    tell why does not experiment, they give up.
+/// 7. **The placement-check waiver is offered, consulted and stored.**
+///    `Snippet.skipsPlaceholderPlacementCheck` is the one per-snippet
+///    setting with no other surface in the app: `variablesSection` must
+///    render a control bound to it under its localized key,
+///    `variablesError` must pass it to `firstDeclarationProblem`, and
+///    `save()` must write it onto the `Snippet`. Losing the first makes it
+///    unreachable, the second makes it decoration, and the third — the
+///    quiet one — compiles, because `Snippet`'s initializer defaults the
+///    field to `false`.
 ///
 /// Each is a SOURCE-TEXT scan, same shape and same blind spots as
 /// `SnippetActionSheetKeyboardShortcutGuardTests`/
@@ -408,6 +418,96 @@ struct SnippetCommandEditorGuardTests {
         let body = try Self.functionBody(
             containing: "private var variablesSection: some View {", in: withoutErrorText)
         #expect(!body.contains("if let variablesError {"))
+    }
+
+    // MARK: - Finding 7: the placement-check waiver is offered, consulted and stored
+
+    /// The three halves have to hold TOGETHER, which is why they are three
+    /// checks and not one: a checkbox nobody consults is decoration, a
+    /// consulted flag nobody stores is forgotten on Save, and a stored flag
+    /// with no control is unreachable. Each of the three is a positive
+    /// `contains` — it names something that must be PRESENT, so it fails
+    /// loudly the moment the thing it names is renamed or moved, rather
+    /// than going quiet the way a `!contains` would.
+    @Test("the variables section offers the placement-check waiver as a control")
+    func variablesSectionOffersTheWaiver() throws {
+        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let body = try Self.functionBody(
+            containing: "private var variablesSection: some View {", in: source)
+        #expect(body.contains("isOn: $skipsPlacementCheck"), """
+            variablesSection must render a control bound to $skipsPlacementCheck -- the \
+            per-snippet exit from the placeholder placement check is only reachable where a \
+            snippet is edited, and nothing else in this project offers it. Scanned body: \
+            \(body)
+            """)
+        #expect(body.contains("snippets.editor.skipPlacementCheck"), """
+            the waiver's control must carry its localized label key -- a hardcoded English \
+            string would leave the German, French and Polish catalogs with nothing to \
+            translate. Scanned body: \(body)
+            """)
+    }
+
+    @Test("variablesError consults the waiver rather than checking regardless")
+    func variablesErrorConsultsTheWaiver() throws {
+        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let body = try Self.functionBody(
+            containing: "private var variablesError: String? {", in: source)
+        #expect(body.contains("skipsPlacementCheck: skipsPlacementCheck"), """
+            variablesError must pass skipsPlacementCheck to firstDeclarationProblem -- \
+            otherwise the checkbox is drawn, stored and ignored, and Save stays disabled \
+            with no way for the user to tell why ticking it changed nothing. Scanned body: \
+            \(body)
+            """)
+    }
+
+    @Test("save writes the waiver onto the snippet")
+    func saveWritesTheWaiver() throws {
+        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let body = try Self.functionBody(containing: "private func save() {", in: source)
+        #expect(body.contains("skipsPlaceholderPlacementCheck: skipsPlacementCheck"), """
+            save() must hand skipsPlacementCheck to Snippet's initializer -- the field \
+            defaults to false there, so a forgotten argument compiles and silently discards \
+            the setting on every save. Scanned body: \(body)
+            """)
+    }
+
+    /// One synthetic editor with all three anchors removed, scanned by all
+    /// three checks: each must react, so none of them is passing on
+    /// something a neighbouring line happens to contain.
+    @Test("the waiver scans react to a waiver that was dropped from the editor")
+    func waiverScansReactToARemovedWaiver() throws {
+        let withoutWaiver = """
+            private var variablesSection: some View {
+                VStack {
+                    Toggle("Remember last value", isOn: draft.remembersLastValue)
+                    if let variablesError {
+                        Text(variablesError)
+                    }
+                }
+            }
+            private var variablesError: String? {
+                guard let problem = SnippetVariableSubstitution.firstDeclarationProblem(
+                    command: command, variables: variables) else { return nil }
+                return snippetVariableProblemText(for: problem)
+            }
+            private func save() {
+                let snippet = Snippet(
+                    id: existing?.id ?? UUID(), name: name, command: command,
+                    tags: tags, variables: variables)
+                try? store.save(snippet)
+            }
+            """
+        let section = try Self.functionBody(
+            containing: "private var variablesSection: some View {", in: withoutWaiver)
+        #expect(!section.contains("isOn: $skipsPlacementCheck"))
+        #expect(!section.contains("snippets.editor.skipPlacementCheck"))
+
+        let error = try Self.functionBody(
+            containing: "private var variablesError: String? {", in: withoutWaiver)
+        #expect(!error.contains("skipsPlacementCheck: skipsPlacementCheck"))
+
+        let save = try Self.functionBody(containing: "private func save() {", in: withoutWaiver)
+        #expect(!save.contains("skipsPlaceholderPlacementCheck: skipsPlacementCheck"))
     }
 
     // MARK: - Scanner (shared)

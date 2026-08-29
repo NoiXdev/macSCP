@@ -918,8 +918,18 @@ struct ContentView: View {
             // with an attacker-chosen default under a template that reads
             // harmlessly. So the refusal is repeated on the run path, where
             // it is the last thing before a value is asked for at all.
+            //
+            // `skipsPlaceholderPlacementCheck` is passed rather than
+            // ignored, because a snippet whose owner switched the placement
+            // check off has to be runnable -- a waiver the editor honours
+            // and the trigger does not would be a switch with no effect.
+            // Passing it here does not weaken the paragraph above: the
+            // waiver cannot arrive from a file (`ExportedSnippet` does not
+            // name it), so it is only ever set by somebody who ticked the
+            // box in this app.
             if let problem = SnippetVariableSubstitution.firstDeclarationProblem(
-                command: snippet.command, variables: snippet.variables) {
+                command: snippet.command, variables: snippet.variables,
+                skipsPlacementCheck: snippet.skipsPlaceholderPlacementCheck) {
                 pendingSnippetVariableRefusal = snippetVariableProblemText(for: problem)
                 return
             }

@@ -214,12 +214,22 @@ public enum SnippetImportPlanner {
     /// still sees what the file actually said (the rule
     /// `SessionImportPlanner` follows for `ExportedSession.tags`).
     ///
-    /// Every field except `id` and `name` has to be listed here, and an
-    /// omission is invisible: `Snippet`'s initializer defaults `variables`
-    /// to `[]`, so a forgotten argument does not fail to compile — it
-    /// silently drops what the export wrote and `decode` read back.
+    /// Every field the FILE carries has to be listed here, and an omission
+    /// is invisible: `Snippet`'s initializer defaults `variables` to `[]`,
+    /// so a forgotten argument does not fail to compile — it silently drops
+    /// what the export wrote and `decode` read back.
     /// `SnippetImportPlannerTests.anImportedSnippetKeepsItsVariableDeclarations`
     /// exists because that is exactly what happened once.
+    ///
+    /// `Snippet` also has fields the file does NOT carry, and those are
+    /// absent here on purpose rather than forgotten:
+    /// `skipsPlaceholderPlacementCheck` is not a property of
+    /// `ExportedSnippet`, so there is nothing to read and an imported
+    /// snippet always arrives with the placement check on — including on
+    /// the Replace path, where the existing snippet's own waiver is not
+    /// inherited either, because what lands in the store is built here from
+    /// the file's fields. Pinned by
+    /// `SnippetImportPlannerTests.anImportNeverCarriesThePlacementCheckWaiver`.
     private static func makeSnippet(
         from fileSnippet: ExportedSnippet, id: UUID, name: String
     ) -> Snippet {

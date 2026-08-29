@@ -314,6 +314,79 @@ struct SnippetExportCodecTests {
         #expect(restored.variables == nil)
     }
 
+    /// The mandatory probe for `Snippet.skipsPlaceholderPlacementCheck`:
+    /// the waiver must not be expressible by a file.
+    ///
+    /// Attempted first at the only place it could enter — `ExportedSnippet
+    /// .init(id:name:command:tags:variables:)` and `ExportedSnippet
+    /// .init(_ snippet:)` — and it does not compile: the export type names
+    /// no such field, so there is no argument to pass and no property to
+    /// assign. That is the boundary, and it is the compiler's, not this
+    /// test's. What remains observable, and is asserted here, is the
+    /// consequence on the bytes: a stored snippet WITH the waiver set is
+    /// exported, and the written file mentions neither the key nor a
+    /// `true` for it. The stored side is asserted too, so the test cannot
+    /// pass because the waiver was never set in the first place.
+    @Test("the placement-check waiver cannot be written into an export file")
+    func thePlacementWaiverCannotBeExpressedByAFile() throws {
+        let stored = Snippet(
+            id: UUID(uuidString: "66666666-6666-6666-6666-666666666666")!, name: "Check",
+            command: "[ -f {{PATH}} ]",
+            variables: [SnippetVariable(
+                name: "PATH", prompt: "Path", kind: .freeText, placement: .placeholder,
+                defaultValue: "", remembersLastValue: false)],
+            skipsPlaceholderPlacementCheck: true)
+        #expect(stored.skipsPlaceholderPlacementCheck)
+
+        let data = try SnippetExportCodec.encode(
+            SnippetExportPayload(snippets: [ExportedSnippet(stored)]))
+        let text = String(decoding: data, as: UTF8.self)
+
+        #expect(!text.contains("skipsPlaceholderPlacementCheck"))
+        #expect(!text.contains("PlacementCheck"))
+        // The file says what it does carry, so the absence above is an
+        // absence in a file that was actually written, not in an empty one.
+        #expect(text.contains("[ -f {{PATH}} ]"))
+    }
+
+    /// The far end of the same boundary: a file that TRIES to carry the
+    /// waiver — hand-written, since this codec cannot produce one — is read
+    /// as a file that does not, because `ExportedSnippet` has nowhere to
+    /// put the key and `SnippetImportPlanner` builds the stored snippet
+    /// from `ExportedSnippet`'s fields alone. An unknown key does not
+    /// trouble `JSONDecoder`, so the file still imports; what it does not
+    /// do is arrive with the check switched off.
+    @Test("a hand-written file claiming the waiver imports with the check on")
+    func aFileClaimingTheWaiverImportsWithTheCheckOn() async throws {
+        let json = """
+            {
+              "encrypted" : false,
+              "format" : "macscp-snippets",
+              "payload" : {
+                "snippets" : [
+                  {
+                    "command" : "[ -f {{PATH}} ]",
+                    "id" : "77777777-7777-7777-7777-777777777777",
+                    "name" : "Check",
+                    "skipsPlaceholderPlacementCheck" : true
+                  }
+                ]
+              },
+              "version" : 1
+            }
+            """
+        let payload = try SnippetExportCodec.decode(Data(json.utf8))
+        let plan = await SnippetImportPlanner.plan(
+            existing: [], incoming: payload,
+            arbiter: ImportConflictArbiter { _ in
+                Issue.record("nothing collides here")
+                return nil
+            })
+        let imported = try #require(plan.snippetsToImport.first?.snippet)
+        #expect(imported.command == "[ -f {{PATH}} ]")
+        #expect(imported.skipsPlaceholderPlacementCheck == false)
+    }
+
     /// Pins the reason `SnippetVariableMemoryStore` exists as a store
     /// separate from `Snippet` (see that type's doc comment): a value
     /// someone typed and opted to have remembered must never travel with
