@@ -225,7 +225,7 @@ struct SnippetsPresentationTests {
             name: "prod", command: "docker compose up -d", tags: ["Docker", "docker"])
         let fresh = Snippet(name: "Disk", command: "df -h")
         let file = try SnippetExportCodec.encode(
-            SnippetExportPayload(snippets: [colliding, fresh]))
+            SnippetExportPayload(snippets: [colliding, fresh].map(ExportedSnippet.init)))
         let decoded = try SnippetExportCodec.decode(file)
 
         let arbiter = ImportConflictArbiter { _ in (resolution: .replace, applyToAll: false) }

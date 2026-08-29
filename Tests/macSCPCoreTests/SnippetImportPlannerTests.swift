@@ -26,8 +26,11 @@ struct SnippetImportPlannerTests {
         Snippet(name: name, command: command)
     }
 
+    /// Takes stored snippets and maps them the way the export does, so a
+    /// test still reads as "this is what the file carries" without every
+    /// case spelling out the conversion.
     private func payload(_ snippets: [Snippet]) -> SnippetExportPayload {
-        SnippetExportPayload(snippets: snippets)
+        SnippetExportPayload(snippets: snippets.map(ExportedSnippet.init))
     }
 
     /// An arbiter whose decider fails the test if it is ever asked —
@@ -191,6 +194,50 @@ struct SnippetImportPlannerTests {
         #expect(plan.snippetsToImport[0].snippet.command == "echo new")
         #expect(plan.snippetsToImport[0].replacesExisting)
         #expect(plan.replaced == ["Prod"])
+    }
+
+    /// `ExportedSnippet.id` is FILE-LOCAL: it names nothing outside the file
+    /// it came from, so an import must never adopt it as a store id — a
+    /// second import of the same file would otherwise overwrite the snippet
+    /// the first one created, without the user ever being asked. The
+    /// rekeying is the one `SessionImportPlanner` performs on
+    /// `ExportedSession.id`, and the Replace path (pinned by
+    /// `replaceKeepsTheExistingIDSoTheStoreOverwritesRatherThanDuplicates`)
+    /// is the only one that reuses an id at all — an EXISTING snippet's,
+    /// never the file's.
+    ///
+    /// Nothing else in this suite would notice: every other case builds its
+    /// incoming snippets with ids nobody looks at, so an id carried straight
+    /// through would leave all of them green.
+    @Test func theFilesOwnIDIsNeverAdoptedAsTheImportedID() async {
+        let fileID = UUID()
+        let incoming = SnippetExportPayload(snippets: [
+            ExportedSnippet(id: fileID, name: "Clean up", command: "docker system prune -f")
+        ])
+
+        let plan = await SnippetImportPlanner.plan(
+            existing: [], incoming: incoming, arbiter: arbiterThatMustNotBeAsked())
+
+        #expect(plan.snippetsToImport.count == 1)
+        #expect(plan.snippetsToImport[0].snippet.id != fileID)
+        #expect(plan.snippetsToImport[0].snippet.command == "docker system prune -f")
+    }
+
+    /// A file written before tags or declarations reached the format carries
+    /// neither key, which decodes as `nil` rather than as a failure. The
+    /// default is applied HERE, at import — `Snippet`'s own `[]` for both —
+    /// so a decoded payload still says what the file said.
+    @Test func aFileThatNamesNeitherTagsNorDeclarationsImportsWithTheStoredDefaults() async {
+        let incoming = SnippetExportPayload(snippets: [
+            ExportedSnippet(id: UUID(), name: "Disk", command: "df -h")
+        ])
+
+        let plan = await SnippetImportPlanner.plan(
+            existing: [], incoming: incoming, arbiter: arbiterThatMustNotBeAsked())
+
+        #expect(plan.snippetsToImport.count == 1)
+        #expect(plan.snippetsToImport[0].snippet.tags == [])
+        #expect(plan.snippetsToImport[0].snippet.variables == [])
     }
 
     @Test func renameGivesAUniqueNameAndAFreshID() async {

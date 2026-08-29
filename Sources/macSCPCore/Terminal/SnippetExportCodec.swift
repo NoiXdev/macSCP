@@ -1,13 +1,78 @@
 import Foundation
 
+/// One snippet as it travels in an export file — the export's OWN type, the
+/// way `ExportedSession` is the sessions format's own type.
+///
+/// Deliberately not `Snippet`. The stored type is what `SnippetStore`
+/// persists, and while the payload carried it directly, every field added
+/// there reached every export file by merely existing. What a snippet
+/// SHARES is decided here instead, field by field, and copied across by
+/// `init(_:)` — so a field the export type does not name cannot be
+/// expressed by the file at all, and no import-side cleanup rule has to
+/// remember to strip it.
+///
+/// The bytes are unchanged by this: its fields carry `Snippet`'s own
+/// coding keys, so a file written while the payload was `[Snippet]` decodes
+/// here key for key (`SnippetExportCodecTests
+/// .aFileFromBeforeTheExportTypeStillImports`), and the envelope stays at
+/// version 1.
+public struct ExportedSnippet: Codable, Equatable, Sendable {
+    /// File-local id — never imported as-is. `SnippetImportPlanner` mints a
+    /// fresh id for every snippet it takes over, and uses an EXISTING
+    /// snippet's id when the user chooses Replace, exactly as
+    /// `SessionImportPlanner` does for `ExportedSession.id`.
+    ///
+    /// Unlike `ExportedSession.id`, nothing inside the file refers to it:
+    /// `ExportedGroup` is a per-file catalogue `ExportedSession.groupID`
+    /// points into, and a snippet export has no such catalogue. It is
+    /// carried because it always was — dropping it would change the bytes
+    /// of a format that has no reason to change them.
+    public let id: UUID
+    public var name: String
+    public var command: String
+    /// Free-form labels (`Snippet.tags`). `nil` on a payload written before
+    /// this field reached the format; the import side then applies
+    /// `Snippet`'s own default (`[]`), mapped at import rather than at
+    /// decode so every reader sees what the file actually said — the same
+    /// rule `ExportedSession.tags` follows.
+    ///
+    /// A value, not a reference: no remapping on import, unlike `id`.
+    public var tags: [String]?
+    /// The values this snippet asks for before it runs
+    /// (`Snippet.variables`). `nil` on a payload written before
+    /// declarations existed; default applied at import, like `tags`.
+    public var variables: [SnippetVariable]?
+
+    public init(
+        id: UUID, name: String, command: String, tags: [String]? = nil,
+        variables: [SnippetVariable]? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.command = command
+        self.tags = tags
+        self.variables = variables
+    }
+
+    /// The one place a stored snippet becomes an exported one. Every field
+    /// that travels is named here; a field on `Snippet` that is not named
+    /// here does not reach a file, and adding one to `Snippet` does not
+    /// change what this writes.
+    public init(_ snippet: Snippet) {
+        self.init(
+            id: snippet.id, name: snippet.name, command: snippet.command,
+            tags: snippet.tags, variables: snippet.variables)
+    }
+}
+
 /// The on-disk payload of a snippet export (P3b spec, Task 1). The file
 /// extension and `UTType` this becomes are a later task's job (P3b Task 3,
 /// which the spec ties to `dev.noix.macscp.snippets`) — this type only
 /// defines the bytes, not how Finder or a file picker labels them.
 public struct SnippetExportPayload: Codable, Equatable, Sendable {
-    public var snippets: [Snippet]
+    public var snippets: [ExportedSnippet]
 
-    public init(snippets: [Snippet]) {
+    public init(snippets: [ExportedSnippet]) {
         self.snippets = snippets
     }
 }

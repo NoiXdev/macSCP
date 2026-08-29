@@ -301,7 +301,8 @@ struct SnippetsSheet: View {
 
     private func reload() { load = SnippetsLoad(reading: store) }
 
-    /// Builds the payload from exactly the snippets handed in — this
+    /// Builds the payload from exactly the snippets handed in, mapping each
+    /// stored `Snippet` to the export's own `ExportedSnippet` — this
     /// function does no filtering of its own. Two callers reach it: the
     /// export confirmation's own button, passing the resolved scope held in
     /// `pendingExport`, and the row menu, passing exactly the one
@@ -311,7 +312,8 @@ struct SnippetsSheet: View {
     /// doc comment on why).
     private func performExport(_ snippets: [Snippet]) {
         do {
-            let data = try SnippetExportCodec.encode(SnippetExportPayload(snippets: snippets))
+            let data = try SnippetExportCodec.encode(
+                SnippetExportPayload(snippets: snippets.map(ExportedSnippet.init)))
             exportDocument = SnippetExportDocument(data: data)
             errorMessage = nil
             variablesCleanupWarning = nil

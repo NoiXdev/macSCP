@@ -7,9 +7,10 @@ struct SnippetExportCodecTests {
     @Test func aRoundTripPreservesNameCommandAndTags() throws {
         let snippet = Snippet(name: "Clean up", command: "docker system prune -f",
                               tags: ["docker"])
-        let data = try SnippetExportCodec.encode(SnippetExportPayload(snippets: [snippet]))
+        let data = try SnippetExportCodec.encode(
+            SnippetExportPayload(snippets: [ExportedSnippet(snippet)]))
         let restored = try SnippetExportCodec.decode(data)
-        #expect(restored.snippets == [snippet])
+        #expect(restored.snippets == [ExportedSnippet(snippet)])
     }
 
     /// The other half of "pin, not comment" (see `SnippetExportCodec`'s doc
@@ -19,7 +20,8 @@ struct SnippetExportCodecTests {
     /// omitting the field.
     @Test func theWrittenFileIsPlainTextAndSaysSoInsteadOfClaimingEncryption() throws {
         let snippet = Snippet(name: "Clean up", command: "docker system prune -f")
-        let data = try SnippetExportCodec.encode(SnippetExportPayload(snippets: [snippet]))
+        let data = try SnippetExportCodec.encode(
+            SnippetExportPayload(snippets: [ExportedSnippet(snippet)]))
         let text = String(decoding: data, as: UTF8.self)
         #expect(text.contains("docker system prune -f"))
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -128,18 +130,188 @@ struct SnippetExportCodecTests {
         }
     }
 
-    /// The export payload is `[Snippet]`, so declarations travel without the
-    /// codec knowing about them. This test exists because that is easy to
-    /// break later by narrowing the payload, and nothing else would notice.
+    /// Declarations travel because `ExportedSnippet` names them and
+    /// `ExportedSnippet.init(_:)` copies them — no longer because the
+    /// payload happens to hold the stored type. This test exists because
+    /// that is easy to break later by narrowing the export type, and
+    /// nothing else would notice.
     @Test("declarations survive an export round trip")
     func declarationsSurviveExport() throws {
         let variable = SnippetVariable(
             name: "HOST", prompt: "Host", kind: .freeText,
             placement: .placeholder, defaultValue: "", remembersLastValue: false)
         let snippet = Snippet(name: "ping", command: "ping {{HOST}}", variables: [variable])
-        let data = try SnippetExportCodec.encode(SnippetExportPayload(snippets: [snippet]))
+        let data = try SnippetExportCodec.encode(
+            SnippetExportPayload(snippets: [ExportedSnippet(snippet)]))
         let decoded = try SnippetExportCodec.decode(data)
         #expect(decoded.snippets.first?.variables == [variable])
+    }
+
+    /// The OTHER direction of format compatibility, and the one a literal
+    /// decode test cannot see: what this version WRITES is still what an
+    /// earlier one reads. The keys below are `Snippet`'s own coding keys, in
+    /// the order `.sortedKeys` puts them, and the envelope is still
+    /// version 1 — so an installation that expects `[Snippet]` in the
+    /// payload decodes this file without knowing the export grew a type of
+    /// its own.
+    ///
+    /// Pinned as whole-text equality rather than as a handful of
+    /// `contains` checks: a key that silently disappeared, or one that
+    /// silently appeared, is exactly the damage this test exists to catch,
+    /// and only equality sees both.
+    @Test("what this version writes is what an earlier one reads")
+    func theWrittenBytesStillCarryTheKeysAnEarlierVersionExpects() throws {
+        let variable = SnippetVariable(
+            name: "DB", prompt: "Which database?", kind: .freeText, placement: .placeholder,
+            defaultValue: "staging", remembersLastValue: true)
+        let snippet = Snippet(
+            id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!, name: "Dump",
+            command: "mysqldump {{DB}}", tags: ["db"], variables: [variable])
+
+        let data = try SnippetExportCodec.encode(
+            SnippetExportPayload(snippets: [ExportedSnippet(snippet)]))
+
+        #expect(String(decoding: data, as: UTF8.self) == """
+            {
+              "encrypted" : false,
+              "format" : "macscp-snippets",
+              "payload" : {
+                "snippets" : [
+                  {
+                    "command" : "mysqldump {{DB}}",
+                    "id" : "22222222-2222-2222-2222-222222222222",
+                    "name" : "Dump",
+                    "tags" : [
+                      "db"
+                    ],
+                    "variables" : [
+                      {
+                        "defaultValue" : "staging",
+                        "kind" : {
+                          "freeText" : {
+
+                          }
+                        },
+                        "name" : "DB",
+                        "placement" : "placeholder",
+                        "prompt" : "Which database?",
+                        "remembersLastValue" : true
+                      }
+                    ]
+                  }
+                ]
+              },
+              "version" : 1
+            }
+            """)
+    }
+
+    /// The boundary this milestone exists for, stated where it can be
+    /// observed: a payload is built here with no `Snippet` anywhere in
+    /// sight. The file's shape is `ExportedSnippet`'s, so a field reaches a
+    /// file only if the export type names it AND `ExportedSnippet.init(_:)`
+    /// copies it across — a field that merely exists on `Snippet` cannot be
+    /// expressed by the file at all.
+    ///
+    /// `tags` and `variables` stand in for any later field on the stored
+    /// type: they travel because both halves name them, and the assertion
+    /// below is what fails if either half stops.
+    @Test("the file carries the export's own type, not the stored one")
+    func theFileCarriesTheExportsOwnTypeAndNotTheStoredOne() throws {
+        let variable = SnippetVariable(
+            name: "HOST", prompt: "Host", kind: .freeText,
+            placement: .placeholder, defaultValue: "", remembersLastValue: false)
+        let stored = Snippet(
+            name: "ping", command: "ping {{HOST}}", tags: ["net"], variables: [variable])
+        let handWritten = ExportedSnippet(
+            id: stored.id, name: "ping", command: "ping {{HOST}}", tags: ["net"],
+            variables: [variable])
+
+        #expect(ExportedSnippet(stored) == handWritten)
+
+        let data = try SnippetExportCodec.encode(SnippetExportPayload(snippets: [handWritten]))
+        #expect(try SnippetExportCodec.decode(data).snippets == [handWritten])
+    }
+
+    /// A file written by an earlier version — when the payload carried the
+    /// STORED `Snippet` type — still decodes, key for key. Literal JSON on
+    /// purpose: a round trip through today's types would only prove today's
+    /// types agree with themselves, which is exactly the thing a format
+    /// change breaks without noticing.
+    ///
+    /// The keys below are the ones `Snippet` encodes (`id`, `name`,
+    /// `command`, `tags`, `variables`), and the envelope is version 1 —
+    /// unchanged, because the bytes are unchanged.
+    @Test("a file written before the export had its own type still imports")
+    func aFileFromBeforeTheExportTypeStillImports() throws {
+        let json = """
+            {
+              "encrypted" : false,
+              "format" : "macscp-snippets",
+              "payload" : {
+                "snippets" : [
+                  {
+                    "command" : "mysqldump {{DB}}",
+                    "id" : "22222222-2222-2222-2222-222222222222",
+                    "name" : "Dump",
+                    "tags" : [ "db" ],
+                    "variables" : [
+                      {
+                        "defaultValue" : "staging",
+                        "kind" : { "freeText" : { } },
+                        "name" : "DB",
+                        "placement" : "placeholder",
+                        "prompt" : "Which database?",
+                        "remembersLastValue" : true
+                      }
+                    ]
+                  }
+                ]
+              },
+              "version" : 1
+            }
+            """
+        let decoded = try SnippetExportCodec.decode(Data(json.utf8))
+        let restored = try #require(decoded.snippets.first)
+        #expect(decoded.snippets.count == 1)
+        #expect(restored.id == UUID(uuidString: "22222222-2222-2222-2222-222222222222"))
+        #expect(restored.name == "Dump")
+        #expect(restored.command == "mysqldump {{DB}}")
+        #expect(restored.tags == ["db"])
+        #expect(restored.variables == [SnippetVariable(
+            name: "DB", prompt: "Which database?", kind: .freeText, placement: .placeholder,
+            defaultValue: "staging", remembersLastValue: true)])
+    }
+
+    /// The older shape still: an export written before declarations existed
+    /// carries no `variables` key, and one written before tags reached the
+    /// format carries no `tags` key either. Both are absent here, and both
+    /// decode as "the file said nothing" rather than as a decode failure —
+    /// the import side applies `Snippet`'s own defaults, the same way
+    /// `SessionImportPlanner` maps a `nil` `ExportedSession.tags`.
+    @Test("an export with neither tags nor declarations still imports")
+    func anExportWithoutTagsOrDeclarationsStillImports() throws {
+        let json = """
+            {
+              "encrypted" : false,
+              "format" : "macscp-snippets",
+              "payload" : {
+                "snippets" : [
+                  {
+                    "command" : "df -h",
+                    "id" : "33333333-3333-3333-3333-333333333333",
+                    "name" : "Disk"
+                  }
+                ]
+              },
+              "version" : 1
+            }
+            """
+        let restored = try #require(try SnippetExportCodec.decode(Data(json.utf8)).snippets.first)
+        #expect(restored.name == "Disk")
+        #expect(restored.command == "df -h")
+        #expect(restored.tags == nil)
+        #expect(restored.variables == nil)
     }
 
     /// Pins the reason `SnippetVariableMemoryStore` exists as a store
@@ -156,8 +328,10 @@ struct SnippetExportCodecTests {
     /// by hand: commenting out the `remember` call turns the FIRST
     /// assertion red (not the second), confirming the test actually
     /// exercises the store rather than passing vacuously. The second half
-    /// is what guards against a future stored property on `Snippet` (or on
-    /// the export payload) quietly reintroducing the value into an export.
+    /// is what guards against a future field on `ExportedSnippet` quietly
+    /// reintroducing the value into an export. It no longer has to watch
+    /// `Snippet` for the same thing: a stored property added there reaches
+    /// no file unless `ExportedSnippet` names it too.
     @Test("a remembered value never appears in the export bytes")
     func rememberedValueNeverReachesTheExport() throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -176,7 +350,8 @@ struct SnippetExportCodecTests {
             contentsOf: dir.appendingPathComponent("snippet-variables.json"), encoding: .utf8)
         #expect(variablesFileText.contains(secretRememberedValue))
 
-        let data = try SnippetExportCodec.encode(SnippetExportPayload(snippets: [snippet]))
+        let data = try SnippetExportCodec.encode(
+            SnippetExportPayload(snippets: [ExportedSnippet(snippet)]))
         let exportText = String(decoding: data, as: UTF8.self)
         #expect(!exportText.contains(secretRememberedValue))
     }

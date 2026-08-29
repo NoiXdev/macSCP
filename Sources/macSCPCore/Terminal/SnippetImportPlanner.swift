@@ -59,7 +59,8 @@ public struct SnippetImportPlan: Equatable, Sendable {
 /// anything else happens to it, and counted in `namelessDiscarded`. Import
 /// thereby agrees with the editor, which refuses to save such a name
 /// (`SnippetEditorView.isSaveDisabled`); only a hand-edited file can carry
-/// one, since `Snippet`'s initializer performs no validation of its own.
+/// one, since neither `ExportedSnippet`'s initializer nor `Snippet`'s
+/// performs any validation of its own.
 /// The drop lives HERE rather than in `Snippet` or in the applier: adding
 /// name validation to `Snippet` would make an existing store file holding a
 /// blank name fail to decode, turning a cosmetic problem into a store the
@@ -198,8 +199,20 @@ public enum SnippetImportPlanner {
         return candidate
     }
 
-    /// Rebuilds `fileSnippet` under a possibly-new id and name, carrying its
-    /// command, tags and variable declarations over unchanged.
+    /// Rebuilds `fileSnippet` as a stored `Snippet` under a possibly-new id
+    /// and name, carrying its command, tags and variable declarations over
+    /// unchanged.
+    ///
+    /// The `id` handed in is never the file's own: `ExportedSnippet.id` is
+    /// file-local, and every call site in `plan` passes either a fresh
+    /// `UUID()` or an EXISTING snippet's id (the Replace path) — the same
+    /// rekeying `SessionImportPlanner` performs on `ExportedSession.id`.
+    ///
+    /// `?? []` for both optionals: `nil` means a payload written before that
+    /// field reached the format, and resolves to `Snippet`'s own default —
+    /// mapped here rather than at decode, so a reader of a decoded payload
+    /// still sees what the file actually said (the rule
+    /// `SessionImportPlanner` follows for `ExportedSession.tags`).
     ///
     /// Every field except `id` and `name` has to be listed here, and an
     /// omission is invisible: `Snippet`'s initializer defaults `variables`
@@ -207,9 +220,11 @@ public enum SnippetImportPlanner {
     /// silently drops what the export wrote and `decode` read back.
     /// `SnippetImportPlannerTests.anImportedSnippetKeepsItsVariableDeclarations`
     /// exists because that is exactly what happened once.
-    private static func makeSnippet(from fileSnippet: Snippet, id: UUID, name: String) -> Snippet {
+    private static func makeSnippet(
+        from fileSnippet: ExportedSnippet, id: UUID, name: String
+    ) -> Snippet {
         Snippet(
-            id: id, name: name, command: fileSnippet.command, tags: fileSnippet.tags,
-            variables: fileSnippet.variables)
+            id: id, name: name, command: fileSnippet.command, tags: fileSnippet.tags ?? [],
+            variables: fileSnippet.variables ?? [])
     }
 }
