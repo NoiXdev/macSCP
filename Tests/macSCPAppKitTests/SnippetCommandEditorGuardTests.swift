@@ -1,12 +1,13 @@
 import Foundation
 import Testing
 
-/// Guards seven properties of `SnippetsSheet.swift`'s snippet editor: five
-/// in `SnippetCommandEditor.swift`'s own wiring, raised by the whole-branch
-/// review of the snippet syntax-highlighting feature, plus two in
+/// Guards eight properties of the snippet editor — `SnippetsSheet.swift`
+/// and the presentation functions it calls: five in
+/// `SnippetCommandEditor.swift`'s own wiring, raised by the whole-branch
+/// review of the snippet syntax-highlighting feature, plus three in
 /// `SnippetEditorView` itself (variable-declaration Save-gating, Task 5,
-/// and the per-snippet placement-check waiver).
-/// None of the seven are provable any other way in this project (no test here
+/// the per-snippet placement-check waiver, and folding the variable rows).
+/// None of the eight are provable any other way in this project (no test here
 /// renders an `NSViewRepresentable` or a `View` body — see `SnippetsSheet
 /// .swift`'s own doc comment on that boundary):
 ///
@@ -41,24 +42,37 @@ import Testing
 ///    make line breaks untypeable, and the failure would present as "the
 ///    editor saves when I try to add a line".
 /// 6. **Variable declarations gate Save, and say why (Task 5).**
-///    `isSaveDisabled` must also test `variablesError != nil`, and
-///    `variablesError` must actually run `SnippetVariable.isValidName`, a
-///    duplicate-name check and `SnippetVariableSubstitution
+///    `isSaveDisabled` must also test `variablesFault != nil`, and
+///    `snippetVariablesFault` must actually run `SnippetVariable
+///    .isValidName`, a duplicate-name check and `SnippetVariableSubstitution
 ///    .firstDeclarationProblem` — losing any one would let Save write a
 ///    snippet with an invalid, duplicate, unused or mis-quoted declaration.
-///    Separately, `variablesSection` must render `variablesError` as its own
+///    Separately, `variablesSection` must render `variablesFault` as its own
 ///    `Text` whenever it is non-nil: the brief is explicit that a greyed-out
 ///    Save button must not be the only signal, because a user who cannot
 ///    tell why does not experiment, they give up.
 /// 7. **The placement-check waiver is offered, consulted and stored.**
 ///    `Snippet.skipsPlaceholderPlacementCheck` is the one per-snippet
 ///    setting with no other surface in the app: `variablesSection` must
-///    render a control bound to it under its localized key,
-///    `variablesError` must pass it to `firstDeclarationProblem`, and
-///    `save()` must write it onto the `Snippet`. Losing the first makes it
-///    unreachable, the second makes it decoration, and the third — the
-///    quiet one — compiles, because `Snippet`'s initializer defaults the
-///    field to `false`.
+///    render a control bound to it under its localized key, the editor's
+///    `variablesFault` must hand it to `snippetVariablesFault` and that
+///    function must hand it on to `firstDeclarationProblem`, and `save()`
+///    must write it onto the `Snippet`. Losing the first makes it
+///    unreachable, either half of the second makes it decoration, and the
+///    third — the quiet one — compiles, because `Snippet`'s initializer
+///    defaults the field to `false`.
+/// 8. **The variable rows fold, and only where folding is possible.**
+///    `SnippetVariableFolding` decides all of it and is covered without a
+///    view by `SnippetVariableFoldingTests` — but a value nothing consults
+///    would leave that suite green over an editor that folds nothing. So:
+///    `variablesSection` must gate each bulk action on the matching
+///    `offers…` question rather than drawing it always, the add button must
+///    `open` the row it just created, and `variableRow` must consult
+///    `isExpanded` and `canCollapse`. Losing the first draws a control that
+///    does nothing, the second adds a row nobody can type into, and the
+///    third — the one the design turns on — would let a declaration with a
+///    problem be folded away behind a marker that says something is wrong
+///    without saying what.
 ///
 /// Each is a SOURCE-TEXT scan, same shape and same blind spots as
 /// `SnippetActionSheetKeyboardShortcutGuardTests`/
@@ -84,6 +98,13 @@ struct SnippetCommandEditorGuardTests {
         .appendingPathComponent("Sources/MacSCPAppKit/SnippetCommandEditor.swift")
     private static let sheetSourceFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/SnippetsSheet.swift")
+    /// Where the declaration checks live now that the editor needs both
+    /// halves of their answer — the sentence AND which row it is about
+    /// (`SnippetVariablesFault`). They moved out of the view so they can be
+    /// tested directly; the scans below moved with them rather than being
+    /// dropped.
+    private static let presentationSourceFile = repoRoot
+        .appendingPathComponent("Sources/MacSCPAppKit/SnippetsPresentation.swift")
 
     private enum ScanError: Error { case markerNotFound, unbalancedBraces }
 
@@ -320,13 +341,13 @@ struct SnippetCommandEditorGuardTests {
 
     // MARK: - Finding 6: variable declarations gate Save, and say why (Task 5)
 
-    @Test("isSaveDisabled also gates on the variables error")
-    func isSaveDisabledGatesOnVariablesError() throws {
+    @Test("isSaveDisabled also gates on the variables fault")
+    func isSaveDisabledGatesOnVariablesFault() throws {
         let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
         let body = try Self.functionBody(
             containing: "private var isSaveDisabled: Bool {", in: source)
-        #expect(body.contains("variablesError != nil"), """
-            isSaveDisabled must also test variablesError != nil -- Task 5 requires Save to \
+        #expect(body.contains("variablesFault != nil"), """
+            isSaveDisabled must also test variablesFault != nil -- Task 5 requires Save to \
             stay disabled while a variable name is invalid or duplicate, or while \
             SnippetVariableSubstitution.firstDeclarationProblem finds a problem. Scanned body: \
             \(body)
@@ -343,7 +364,7 @@ struct SnippetCommandEditorGuardTests {
             """
         let body = try Self.functionBody(
             containing: "private var isSaveDisabled: Bool {", in: reverted)
-        #expect(!body.contains("variablesError != nil"))
+        #expect(!body.contains("variablesFault != nil"))
     }
 
     /// `SnippetVariable.isValidName` has no caller before this feature (see
@@ -351,53 +372,80 @@ struct SnippetCommandEditorGuardTests {
     /// true going forward, alongside the duplicate-name check and
     /// `firstDeclarationProblem`, which together are the two things Step 2
     /// of the brief names explicitly.
-    @Test("variablesError runs all three declaration checks")
-    func variablesErrorRunsAllThreeChecks() throws {
-        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
-        let body = try Self.functionBody(
-            containing: "private var variablesError: String? {", in: source)
+    @Test("the declaration fault runs all three checks")
+    func theDeclarationFaultRunsAllThreeChecks() throws {
+        let source = try String(contentsOf: Self.presentationSourceFile, encoding: .utf8)
+        let body = try Self.functionBody(containing: "func snippetVariablesFault(", in: source)
         #expect(body.contains("SnippetVariable.isValidName("), """
-            variablesError must call SnippetVariable.isValidName -- an invalid variable name \
+            snippetVariablesFault must call SnippetVariable.isValidName -- an invalid variable \
+            name (Step 2 of the brief) would otherwise reach Snippet.save unchecked. Scanned \
+            body: \(body)
+            """)
+        // Anchored on what the check REPORTS rather than on how it counts:
+        // the catalogue key is the outcome, and the same idiom the waiver
+        // scan below uses for its own control.
+        #expect(body.contains("snippets.variables.error.duplicateName"), """
+            snippetVariablesFault must detect two variables sharing a name (Step 2 of the \
+            brief). Scanned body: \(body)
+            """)
+        #expect(body.contains("SnippetVariableSubstitution.firstDeclarationProblem("), """
+            snippetVariablesFault must call SnippetVariableSubstitution \
+            .firstDeclarationProblem -- an unused placeholder or one sitting inside quotes \
             (Step 2 of the brief) would otherwise reach Snippet.save unchecked. Scanned body: \
             \(body)
             """)
-        #expect(body.contains("Set(trimmedNames).count != trimmedNames.count"), """
-            variablesError must detect two variables sharing a name (Step 2 of the brief). \
-            Scanned body: \(body)
-            """)
-        #expect(body.contains("SnippetVariableSubstitution.firstDeclarationProblem("), """
-            variablesError must call SnippetVariableSubstitution.firstDeclarationProblem -- \
-            an unused placeholder or one sitting inside quotes (Step 2 of the brief) would \
-            otherwise reach Snippet.save unchecked. Scanned body: \(body)
+    }
+
+    /// And the editor must ASK it. The checks moved into a function that is
+    /// tested on its own, which is worth nothing to a sheet that stopped
+    /// calling it.
+    @Test("the editor asks for the declaration fault")
+    func theEditorAsksForTheDeclarationFault() throws {
+        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let body = try Self.functionBody(
+            containing: "private var variablesFault: SnippetVariablesFault? {", in: source)
+        #expect(body.contains("snippetVariablesFault("), """
+            the editor's variablesFault must call snippetVariablesFault -- it is the one place \
+            the three declaration checks run, and Save is gated on its answer. Scanned body: \
+            \(body)
             """)
     }
 
-    @Test("the variablesError scan reacts to a check silently dropped")
-    func variablesErrorScanReactsToADroppedCheck() throws {
+    @Test("the declaration-fault scan reacts to a check silently dropped")
+    func theDeclarationFaultScanReactsToADroppedCheck() throws {
         let missingIsValidName = """
-            private var variablesError: String? {
-                let trimmedNames = variableDrafts.map { $0.name }
-                if Set(trimmedNames).count != trimmedNames.count { return "duplicate" }
-                if let problem = SnippetVariableSubstitution.firstDeclarationProblem(
-                    command: command, variables: variables) { return "problem" }
-                return nil
+            func snippetVariablesFault(
+                command: String, variables: [SnippetVariable], skipsPlacementCheck: Bool
+            ) -> SnippetVariablesFault? {
+                var rowsByName: [String: Set<Int>] = [:]
+                for (index, variable) in variables.enumerated() {
+                    rowsByName[variable.name, default: []].insert(index)
+                }
+                if rowsByName.values.contains(where: { $0.count > 1 }) {
+                    return SnippetVariablesFault(
+                        message: L10n.string("snippets.variables.error.duplicateName", ""),
+                        declarations: [])
+                }
+                guard let problem = SnippetVariableSubstitution.firstDeclarationProblem(
+                    command: command, variables: variables) else { return nil }
+                return SnippetVariablesFault(message: "problem", declarations: [])
             }
             """
         let body = try Self.functionBody(
-            containing: "private var variablesError: String? {", in: missingIsValidName)
+            containing: "func snippetVariablesFault(", in: missingIsValidName)
         #expect(!body.contains("SnippetVariable.isValidName("))
     }
 
     /// A greyed-out Save button alone does not say why (brief, Step 2) --
     /// this proves the reason is rendered as its own `Text`, not only used
     /// to compute `isSaveDisabled`.
-    @Test("the variables section renders variablesError, not only uses it to disable Save")
+    @Test("the variables section renders variablesFault, not only uses it to disable Save")
     func variablesSectionRendersTheError() throws {
         let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
         let body = try Self.functionBody(
             containing: "private var variablesSection: some View {", in: source)
-        #expect(body.contains("if let variablesError {"), """
-            variablesSection must show variablesError as its own Text whenever it is \
+        #expect(body.contains("if let variablesFault {"), """
+            variablesSection must show variablesFault's message as its own Text whenever it is \
             non-nil -- otherwise the only signal a blocked save gives is a disabled button, \
             which the brief calls out by name as not enough. Scanned body: \(body)
             """)
@@ -417,7 +465,7 @@ struct SnippetCommandEditorGuardTests {
             """
         let body = try Self.functionBody(
             containing: "private var variablesSection: some View {", in: withoutErrorText)
-        #expect(!body.contains("if let variablesError {"))
+        #expect(!body.contains("if let variablesFault {"))
     }
 
     // MARK: - Finding 7: the placement-check waiver is offered, consulted and stored
@@ -447,16 +495,29 @@ struct SnippetCommandEditorGuardTests {
             """)
     }
 
-    @Test("variablesError consults the waiver rather than checking regardless")
-    func variablesErrorConsultsTheWaiver() throws {
-        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
-        let body = try Self.functionBody(
-            containing: "private var variablesError: String? {", in: source)
-        #expect(body.contains("skipsPlacementCheck: skipsPlacementCheck"), """
-            variablesError must pass skipsPlacementCheck to firstDeclarationProblem -- \
-            otherwise the checkbox is drawn, stored and ignored, and Save stays disabled \
+    /// Both halves of the hand-over, because the checks now sit one call
+    /// away from the checkbox: the editor has to pass the flag on, and the
+    /// function has to pass it further. Either half missing leaves the
+    /// checkbox drawn, stored and ignored.
+    @Test("the waiver reaches the check rather than being checked regardless")
+    func theWaiverReachesTheCheck() throws {
+        let sheet = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let editorBody = try Self.functionBody(
+            containing: "private var variablesFault: SnippetVariablesFault? {", in: sheet)
+        #expect(editorBody.contains("skipsPlacementCheck: skipsPlacementCheck"), """
+            the editor's variablesFault must pass skipsPlacementCheck to snippetVariablesFault \
+            -- otherwise the checkbox is drawn, stored and ignored, and Save stays disabled \
             with no way for the user to tell why ticking it changed nothing. Scanned body: \
-            \(body)
+            \(editorBody)
+            """)
+
+        let presentation = try String(contentsOf: Self.presentationSourceFile, encoding: .utf8)
+        let faultBody = try Self.functionBody(
+            containing: "func snippetVariablesFault(", in: presentation)
+        #expect(faultBody.contains("skipsPlacementCheck: skipsPlacementCheck"), """
+            snippetVariablesFault must pass skipsPlacementCheck on to \
+            firstDeclarationProblem -- receiving the flag and then checking regardless is the \
+            same silence as never receiving it. Scanned body: \(faultBody)
             """)
     }
 
@@ -487,15 +548,13 @@ struct SnippetCommandEditorGuardTests {
             private var variablesSection: some View {
                 VStack {
                     Toggle("Remember last value", isOn: draft.remembersLastValue)
-                    if let variablesError {
-                        Text(variablesError)
+                    if let variablesFault {
+                        Text(variablesFault.message)
                     }
                 }
             }
-            private var variablesError: String? {
-                guard let problem = SnippetVariableSubstitution.firstDeclarationProblem(
-                    command: command, variables: variables) else { return nil }
-                return snippetVariableProblemText(for: problem)
+            private var variablesFault: SnippetVariablesFault? {
+                snippetVariablesFault(command: command, variables: variables)
             }
             private var draftSnippet: Snippet {
                 Snippet(
@@ -509,12 +568,96 @@ struct SnippetCommandEditorGuardTests {
         #expect(!section.contains("snippets.editor.skipPlacementCheck"))
 
         let error = try Self.functionBody(
-            containing: "private var variablesError: String? {", in: withoutWaiver)
+            containing: "private var variablesFault: SnippetVariablesFault? {", in: withoutWaiver)
         #expect(!error.contains("skipsPlacementCheck: skipsPlacementCheck"))
 
         let draft = try Self.functionBody(
             containing: "private var draftSnippet: Snippet {", in: withoutWaiver)
         #expect(!draft.contains("skipsPlaceholderPlacementCheck: skipsPlacementCheck"))
+    }
+
+    // MARK: - Finding 8: the variable rows fold, and only where possible
+
+    /// Each bulk action must sit behind its own `offers…` question. A
+    /// `Button` drawn unconditionally is the failure the design names by
+    /// name: a control that is present when it can do nothing.
+    @Test("the variables section offers each bulk fold action only when it is possible")
+    func variablesSectionGatesTheBulkFoldActions() throws {
+        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let body = try Self.functionBody(
+            containing: "private var variablesSection: some View {", in: source)
+        #expect(body.contains("if folding.offersExpandAll(rows) {"), """
+            variablesSection must draw "expand all" only when SnippetVariableFolding says it \
+            would do something -- the design asks for absent, not greyed out. Scanned body: \
+            \(body)
+            """)
+        #expect(body.contains("if folding.offersCollapseAll(rows) {"), """
+            variablesSection must draw "collapse all" only when SnippetVariableFolding says it \
+            would do something -- with every open row faulty, and therefore unfoldable, the \
+            button would do nothing at all. Scanned body: \(body)
+            """)
+        #expect(body.contains("folding.open("), """
+            the add button must open the row it just created -- a row that is added closed is \
+            a row nobody can type into. Scanned body: \(body)
+            """)
+    }
+
+    /// The rule the whole design turns on, at the one place it is applied:
+    /// the row asks whether it is expanded AND whether it may fold at all.
+    /// Dropping the second question is the regression that matters — it
+    /// hides a declaration with a problem behind a marker that says
+    /// something is wrong without saying what.
+    @Test("a variable row consults the folding value for both of its questions")
+    func variableRowConsultsTheFolding() throws {
+        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let body = try Self.functionBody(containing: "private func variableRow(", in: source)
+        #expect(body.contains("folding.isExpanded(row)"), """
+            variableRow must ask the folding value whether this row is open -- otherwise the \
+            row draws its six fields whatever the fold state says. Scanned body: \(body)
+            """)
+        #expect(body.contains("folding.canCollapse(row)"), """
+            variableRow must ask the folding value whether this row may fold at all -- \
+            without it a declaration with a problem can be closed, and a closed row with an \
+            error marker says that something is wrong and not what. Scanned body: \(body)
+            """)
+    }
+
+    /// One synthetic section and one synthetic row, both reverted to the
+    /// shape they had before folding: every check above must react.
+    @Test("the folding scans react to an editor that folds nothing")
+    func foldingScansReactToAnEditorThatFoldsNothing() throws {
+        let unfolded = """
+            private var variablesSection: some View {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Variables")
+                        Spacer()
+                        Button { variableDrafts.append(VariableDraft()) } label: {
+                            Label("Add variable", systemImage: "plus")
+                        }
+                    }
+                    ForEach($variableDrafts) { draft in
+                        variableRow(draft) {}
+                    }
+                }
+            }
+            private func variableRow(
+                _ draft: Binding<VariableDraft>, onRemove: @escaping () -> Void
+            ) -> some View {
+                VStack(alignment: .leading, spacing: 6) {
+                    TextField("Name", text: draft.name)
+                }
+            }
+            """
+        let section = try Self.functionBody(
+            containing: "private var variablesSection: some View {", in: unfolded)
+        #expect(!section.contains("if folding.offersExpandAll(rows) {"))
+        #expect(!section.contains("if folding.offersCollapseAll(rows) {"))
+        #expect(!section.contains("folding.open("))
+
+        let row = try Self.functionBody(containing: "private func variableRow(", in: unfolded)
+        #expect(!row.contains("folding.isExpanded(row)"))
+        #expect(!row.contains("folding.canCollapse(row)"))
     }
 
     // MARK: - Scanner (shared)

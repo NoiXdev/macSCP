@@ -905,6 +905,13 @@
 "snippets.variables.kind.freeText" = "Texte libre";
 "snippets.variables.kind.selection" = "Choix";
 "snippets.variables.hint" = "Une valeur est insérée comme un seul mot du shell. Une variable d’environnement est exportée avant la commande et reste définie dans la session après l’exécution.";
+"snippets.variables.summary %@ %@ %@" = "%@ · %@ · %@";
+"snippets.variables.expandAll" = "Tout déplier";
+"snippets.variables.collapseAll" = "Tout replier";
+"snippets.variables.expandAll.hint" = "Ouvre toutes les variables.";
+"snippets.variables.collapseAll.hint" = "Ferme toutes les variables, sauf celles qui ont un problème.";
+"snippets.variables.expand" = "Déplier";
+"snippets.variables.collapse" = "Replier";
 "snippets.editor.skipPlacementCheck" = "Ne pas vérifier où les valeurs sont placées dans cette commande";
 "snippets.editor.skipPlacementCheck.hint" = "Uniquement pour ce snippet, et cela ne se partage pas : un snippet importé arrive toujours avec la vérification activée. Les valeurs restent protégées par des guillemets, mais macSCP n’exige plus que chacune soit un argument simple et non cité — et lorsque ce n’est pas le cas, les guillemets seuls n’empêchent pas une valeur d’être lue comme du code shell.";
 "snippets.editor.preview" = "Aperçu";

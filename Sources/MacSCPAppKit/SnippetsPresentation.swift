@@ -377,3 +377,233 @@ func snippetVariablePromptValues(
     }
     return values
 }
+
+// MARK: - The variable section's fault, and which declaration it is about
+
+/// What is wrong with a set of variable declarations right now: the one
+/// sentence the editor shows below them, and which of the declarations that
+/// sentence is about.
+///
+/// Two questions with one answer, deliberately. The editor asked only the
+/// first until folding needed the second, and the shortest way to the
+/// second would have been a separate pass over the same declarations — a
+/// second opinion on "is this one wrong", which is exactly the kind of pair
+/// that agrees on the day it is written.
+struct SnippetVariablesFault: Equatable {
+    /// The sentence. One fault at a time: the editor has a single line for
+    /// it, and a list of every complaint at once is what a user reads past.
+    let message: String
+    /// The declarations the fault is about, as offsets into the array that
+    /// was checked.
+    ///
+    /// EMPTY is a real answer, not a missing one: `.unanalyzableContext` is
+    /// a statement about the command — macSCP cannot read it far enough to
+    /// say where a value would land — and no declaration is at fault for
+    /// it. Rows stay foldable in that state, because opening them would
+    /// show nothing that explains the sentence.
+    let declarations: Set<Int>
+}
+
+/// The fault in `variables` for `command`, or `nil` when there is none.
+///
+/// The order is the order the editor has always checked in, and it is not
+/// arbitrary: an unusable name makes every question below it unanswerable
+/// (`SnippetVariableSubstitution.resolve` skips such a declaration outright),
+/// and two declarations sharing a name make "which row is this problem
+/// about" undecidable — which is why the name checks run before the one
+/// question whose answer arrives as a NAME.
+///
+/// Both name checks report EVERY row they find, while the command-side
+/// check reports the one row `SnippetVariableSubstitution
+/// .firstDeclarationProblem` names. That asymmetry is that function's,
+/// unchanged by this one: it answers with the first problem it meets, and
+/// folding is presentation — no reason to widen a security-critical gate
+/// for a layout question.
+func snippetVariablesFault(
+    command: String, variables: [SnippetVariable], skipsPlacementCheck: Bool
+) -> SnippetVariablesFault? {
+    let unusable = variables.indices.filter { !SnippetVariable.isValidName(variables[$0].name) }
+    if !unusable.isEmpty {
+        return SnippetVariablesFault(
+            message: L10n.string(
+                "snippets.variables.error.invalidName",
+                "A variable name must start with a letter or underscore and may contain only letters, digits and underscores."),
+            declarations: Set(unusable))
+    }
+
+    var rowsByName: [String: Set<Int>] = [:]
+    for (index, variable) in variables.enumerated() {
+        rowsByName[variable.name, default: []].insert(index)
+    }
+    let shared = rowsByName.values.filter { $0.count > 1 }.reduce(into: Set<Int>()) {
+        $0.formUnion($1)
+    }
+    if !shared.isEmpty {
+        return SnippetVariablesFault(
+            message: L10n.string(
+                "snippets.variables.error.duplicateName", "Two variables share a name."),
+            declarations: shared)
+    }
+
+    guard
+        let problem = SnippetVariableSubstitution.firstDeclarationProblem(
+            command: command, variables: variables, skipsPlacementCheck: skipsPlacementCheck)
+    else { return nil }
+    let named = snippetFaultedDeclarationName(problem)
+    return SnippetVariablesFault(
+        message: snippetVariableProblemText(for: problem),
+        declarations: Set(variables.indices.filter { variables[$0].name == named }))
+}
+
+/// The declaration a `Problem` names, or `nil` for one that names none.
+///
+/// Reads the payload the enum already carries rather than re-deriving which
+/// declaration is meant — the case that says `name:` is the mapping, and a
+/// second one would be a second answer.
+///
+/// `.invalidName` cannot arrive from `snippetVariablesFault`, its only
+/// caller, which returns on an unusable name before the survey is
+/// consulted. It is bound with its four siblings rather than sent to `nil`
+/// through a `default`, because a case that carries a name and answers "no
+/// name" would be wrong for any caller that did reach it.
+private func snippetFaultedDeclarationName(
+    _ problem: SnippetVariableSubstitution.Problem
+) -> String? {
+    switch problem {
+    case .invalidName(let name), .unusedPlaceholder(let name),
+        .placeholderInsideQuotes(let name), .placeholderNotInArgumentPosition(let name),
+        .placeholderIsReparsedByItsCommand(let name):
+        return name
+    case .unanalyzableContext:
+        return nil
+    }
+}
+
+// MARK: - Folding the variable rows (snippet editor operation, part 1)
+
+/// One variable row as folding sees it: which row it is, and whether
+/// something is wrong with it right now.
+///
+/// `hasProblem` is a fact about this moment, not a stored property of the
+/// declaration — the editor recomputes it from `snippetVariablesFault` on
+/// every keystroke, and a row can acquire and lose it while a name is being
+/// typed.
+struct SnippetVariableFoldRow: Equatable, Identifiable {
+    let id: UUID
+    let hasProblem: Bool
+}
+
+/// Which of the snippet editor's variable rows are drawn open, and which of
+/// the two bulk actions it offers.
+///
+/// **Nothing here is remembered.** Every opening of the editor starts with
+/// this value freshly built, so there is no question about where a fold
+/// state lives, whether it still matches its snippet after an edit, what
+/// happens to it when a declaration is deleted, or whether it travels with
+/// an export. Not having the state is the shorter answer than answering
+/// four questions about it.
+///
+/// A row is drawn open when the user opened it OR when it has a problem,
+/// and the second half is not a preference the first can override: a closed
+/// row with an error marker says that something is wrong and not what, so
+/// one opens it anyway. That single rule is what makes "collapse all"
+/// double as "show me only the problems".
+struct SnippetVariableFolding: Equatable {
+    /// The rows somebody asked to see. Not "the rows that are open" — a
+    /// faulty row is open without being in here, and stays open however
+    /// this set changes.
+    private var opened: Set<UUID> = []
+
+    func isExpanded(_ row: SnippetVariableFoldRow) -> Bool {
+        row.hasProblem || opened.contains(row.id)
+    }
+
+    /// Whether this row offers a control that would close it at all. A
+    /// faulty row does not — absent rather than disabled, the same choice
+    /// the editor's "Test" button already makes, because a greyed-out
+    /// control asks the reader to work out why.
+    func canCollapse(_ row: SnippetVariableFoldRow) -> Bool { !row.hasProblem }
+
+    /// What "Add variable" calls for the row it just created. The row is
+    /// unnamed at that moment and therefore faulty anyway, so this changes
+    /// nothing one keystroke later — and everything the keystroke after
+    /// that, when the name becomes valid and the row would otherwise shut
+    /// under the cursor.
+    mutating func open(_ id: UUID) { opened.insert(id) }
+
+    /// Records the opposite of what the user is looking at. No special case
+    /// for a faulty row: this expresses what somebody asked to see, and the
+    /// fault decides what is drawn. The editor draws no toggle on a faulty
+    /// row, so the question does not arise there either.
+    mutating func toggle(_ row: SnippetVariableFoldRow) {
+        if opened.contains(row.id) {
+            opened.remove(row.id)
+        } else {
+            opened.insert(row.id)
+        }
+    }
+
+    mutating func expandAll(_ rows: [SnippetVariableFoldRow]) {
+        opened.formUnion(rows.map(\.id))
+    }
+
+    /// Closes everything that can close, and REMEMBERS the faulty rows as
+    /// opened.
+    ///
+    /// Forgetting them instead would leave them open on the fault alone —
+    /// which reads the same until the fault is fixed, and then shuts the
+    /// row under the cursor of the person who just fixed it. "Collapse all"
+    /// is most useful as the way to get at exactly those rows, so it must
+    /// not take the row away as a reward for using it.
+    mutating func collapseAll(_ rows: [SnippetVariableFoldRow]) {
+        opened = Set(rows.filter(\.hasProblem).map(\.id))
+    }
+
+    /// Offered only when there is something left to open, and only when
+    /// there is something left to close — show what is possible, rather
+    /// than showing a control greyed out.
+    func offersExpandAll(_ rows: [SnippetVariableFoldRow]) -> Bool {
+        rows.contains { !isExpanded($0) }
+    }
+
+    /// A faulty row is open and cannot be closed, so a section whose only
+    /// open rows are faulty offers no "collapse all": it would be a button
+    /// that does nothing.
+    func offersCollapseAll(_ rows: [SnippetVariableFoldRow]) -> Bool {
+        rows.contains { isExpanded($0) && canCollapse($0) }
+    }
+}
+
+/// The one line a closed variable row shows: its name, its kind and its
+/// placement.
+///
+/// Enough to find the right declaration without opening it — and placement
+/// belongs there because it decides whether the declaration belongs in the
+/// command as a placeholder at all.
+///
+/// The kind and the placement are read through the same localization keys
+/// the editor's own two pickers use, so the closed row and the open one
+/// cannot end up wording the same choice differently. What a `.selection`
+/// actually allows is deliberately not here: that list grows with the
+/// declaration and would push the other two facts off a 460 pt row.
+func snippetCollapsedVariableSummary(for variable: SnippetVariable) -> String {
+    let kind: String
+    switch variable.kind {
+    case .freeText:
+        kind = L10n.string("snippets.variables.kind.freeText", "Free text")
+    case .selection:
+        kind = L10n.string("snippets.variables.kind.selection", "Choice")
+    }
+    let placement: String
+    switch variable.placement {
+    case .placeholder:
+        placement = L10n.string(
+            "snippets.variables.placement.placeholder", "Placeholder in the command")
+    case .environment:
+        placement = L10n.string(
+            "snippets.variables.placement.environment", "Environment variable")
+    }
+    return String(
+        format: L10n.string("snippets.variables.summary %@ %@ %@", "%@ · %@ · %@"),
+        variable.name, kind, placement)
+}

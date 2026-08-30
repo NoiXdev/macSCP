@@ -589,6 +589,11 @@ private struct SnippetEditorView: View {
     /// `SnippetVariable` directly — see `VariableDraft`'s own doc comment for
     /// why.
     @State private var variableDrafts: [VariableDraft]
+    /// Which declaration rows are drawn open. Starts empty — every
+    /// declaration this editor loaded opens closed — and is never read from
+    /// or written to anything outside this view: the design rules out a
+    /// remembered fold state in any form.
+    @State private var folding = SnippetVariableFolding()
     /// `Snippet.skipsPlaceholderPlacementCheck` while it is being edited.
     /// A plain `Bool` rather than a draft type: unlike a declaration it has
     /// no half-typed intermediate state a checkbox could be in.
@@ -682,62 +687,57 @@ private struct SnippetEditorView: View {
         return L10n.string("snippets.editor.preview.sample", "sample")
     }
 
-    /// What is wrong with the current variable declarations, or `nil`. Both
-    /// checks named in the brief: an invalid or duplicate name is caught
-    /// here directly, and `SnippetVariableSubstitution
-    /// .firstDeclarationProblem` catches the command-side mistakes (an
+    /// What is wrong with the current variable declarations, or `nil` —
+    /// the sentence to show, and which rows it is about.
+    ///
+    /// The checks themselves live in `snippetVariablesFault`, which is
+    /// where they can be tested without a view: an invalid or duplicate
+    /// name, and the command-side mistakes
+    /// `SnippetVariableSubstitution.firstDeclarationProblem` catches (an
     /// unused placeholder, one sitting inside quotes, a command whose
-    /// quoting it cannot analyse at all). An empty `variableDrafts`
-    /// short-circuits every check below to `nil`, matching a snippet with no
-    /// variables at all.
+    /// quoting it cannot analyse at all). An empty `variableDrafts` yields
+    /// `nil`, matching a snippet with no variables at all.
     ///
-    /// The name loop below is not the only enforcement of
-    /// `SnippetVariable.isValidName` any more: `firstDeclarationProblem`
-    /// checks it too, and `SnippetVariableSubstitution.resolve` skips a
-    /// declaration that fails it, because import can carry a declaration in
-    /// from a file without it ever passing this field. The loop stays
-    /// because it is the only one of the three that can say WHICH field the
-    /// user has to fix while they are typing in it.
+    /// The names handed over are `VariableDraft.variable`'s, already
+    /// trimmed there, so what blocks Save is what a save would write.
     ///
-    /// `skipsPlacementCheck` is handed to `firstDeclarationProblem` so the
-    /// checkbox below the variables actually unblocks Save. It removes ONE
-    /// of that function's questions — where a `{{NAME}}` sits — and neither
-    /// of the two checks above it: an invalid or duplicate name still
-    /// blocks Save with the waiver ticked, as does a declaration whose
-    /// placeholder appears nowhere in the command.
-    private var variablesError: String? {
-        for draft in variableDrafts {
-            let trimmedName = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !SnippetVariable.isValidName(trimmedName) {
-                return L10n.string(
-                    "snippets.variables.error.invalidName",
-                    "A variable name must start with a letter or underscore and may contain only letters, digits and underscores.")
-            }
-        }
-        let trimmedNames = variableDrafts.map {
-            $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        if Set(trimmedNames).count != trimmedNames.count {
-            return L10n.string(
-                "snippets.variables.error.duplicateName", "Two variables share a name.")
-        }
-        guard
-            let problem = SnippetVariableSubstitution.firstDeclarationProblem(
-                command: command, variables: variables,
-                skipsPlacementCheck: skipsPlacementCheck)
-        else { return nil }
-        return snippetVariableProblemText(for: problem)
+    /// `skipsPlacementCheck` travels with them so the checkbox below the
+    /// variables actually unblocks Save. It removes ONE of
+    /// `firstDeclarationProblem`'s questions — where a `{{NAME}}` sits —
+    /// and neither of the two name checks: an invalid or duplicate name
+    /// still blocks Save with the waiver ticked, as does a declaration
+    /// whose placeholder appears nowhere in the command.
+    private var variablesFault: SnippetVariablesFault? {
+        snippetVariablesFault(
+            command: command, variables: variables,
+            skipsPlacementCheck: skipsPlacementCheck)
     }
 
-    /// Only the required-fields check plus the two `variablesError` can
-    /// raise (Task 5). `command` may contain a newline by the time this is
+    /// The rows the variables section draws, each carrying whether the
+    /// current fault is about it — the input the fold rule reads.
+    ///
+    /// Built by walking the drafts and asking the fault about each
+    /// position, rather than by subscripting the drafts with the fault's
+    /// offsets: `variables` is `variableDrafts.map(\.variable)`, so the two
+    /// are aligned by construction, and this direction stays total even if
+    /// that ever stopped being true.
+    private var foldRows: [SnippetVariableFoldRow] {
+        let fault = variablesFault
+        return zip(variableDrafts.indices, variableDrafts).map { index, draft in
+            SnippetVariableFoldRow(
+                id: draft.id, hasProblem: fault?.declarations.contains(index) ?? false)
+        }
+    }
+
+    /// Only the required-fields check plus whatever `variablesFault`
+    /// reports (Task 5). `command` may contain a newline by the time this is
     /// evaluated — both a pasted multi-line string and a typed Return reach
     /// `SnippetCommandEditor`'s bound `command` as one — but nothing here
     /// needs to reject that; `Snippet`'s initializer accepts it too.
     private var isSaveDisabled: Bool {
         name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || variablesError != nil
+            || variablesFault != nil
     }
 
     var body: some View {
@@ -931,27 +931,80 @@ private struct SnippetEditorView: View {
 
     // MARK: - Variables (Task 5)
 
-    /// The variables section: one card per declaration (`variableRow`), an
-    /// add button, the hint text the brief requires (a value becomes a
-    /// single shell word; an environment variable outlives a multi-line
-    /// run), and — whenever `variablesError` is non-nil — the reason Save is
-    /// disabled. That last text is the point of this whole block: a greyed-
-    /// out Save button alone does not say WHY, and a user who cannot tell
-    /// why does not experiment, they give up (brief, Step 2).
+    /// The variables section: one card per declaration (`variableRow`), the
+    /// two bulk fold actions beside the add button, the hint text the brief
+    /// requires (a value becomes a single shell word; an environment
+    /// variable outlives a multi-line run), and — whenever `variablesFault`
+    /// is non-nil — the reason Save is disabled. That last text is the point
+    /// of this whole block: a greyed-out Save button alone does not say WHY,
+    /// and a user who cannot tell why does not experiment, they give up
+    /// (brief, Step 2).
+    ///
+    /// "Expand all" and "collapse all" appear only when they would do
+    /// something — absent, not disabled, which is what
+    /// `SnippetVariableFolding.offersExpandAll`/`offersCollapseAll` decide.
     @ViewBuilder
     private var variablesSection: some View {
-        // Deliberately NOT a `FormRow`: a variable row carries six controls
-        // of its own, so this block keeps the sheet's full width instead of
-        // the 300pt that would be left beside a label column (maintainer's
-        // visual check, 2026-08-21).
+        // Deliberately NOT a `FormRow`: an open variable row carries eight
+        // controls of its own — fold, name, kind, remove, prompt, placement,
+        // default, remember — and a ninth while a choice lists its values,
+        // so this block keeps the sheet's full width instead of the 300pt
+        // that would be left beside a label column (maintainer's visual
+        // check, 2026-08-21).
+        //
+        // Read once, per body evaluation, and handed to both the bulk
+        // buttons and every row: each read runs the declaration checks, so
+        // one read is also one answer to "which row is at fault".
+        let rows = foldRows
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(L10n.string("snippets.variables.title", "Variables"))
                     .font(.system(size: 12.5))
                     .foregroundStyle(DesignTokens.inkSecondary)
                 Spacer()
+                // Both carry the chevron their per-row control uses, so
+                // the bulk action and the single one read as the same verb.
+                if folding.offersExpandAll(rows) {
+                    Button {
+                        folding.expandAll(rows)
+                    } label: {
+                        Label(
+                            L10n.string("snippets.variables.expandAll", "Expand all"),
+                            systemImage: "chevron.down")
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundStyle(DesignTokens.inkSecondary)
+                    .help(L10n.string(
+                        "snippets.variables.expandAll.hint", "Opens every variable."))
+                }
+                if folding.offersCollapseAll(rows) {
+                    Button {
+                        folding.collapseAll(rows)
+                    } label: {
+                        Label(
+                            L10n.string("snippets.variables.collapseAll", "Collapse all"),
+                            systemImage: "chevron.right")
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundStyle(DesignTokens.inkSecondary)
+                    // Says the part the label cannot: the ones with a
+                    // problem stay open, which is what makes this button
+                    // double as "show me only the problems".
+                    .help(L10n.string(
+                        "snippets.variables.collapseAll.hint",
+                        "Closes every variable, except any with a problem."))
+                }
                 Button {
-                    variableDrafts.append(VariableDraft())
+                    // Opened as it is created: a row nobody can type into
+                    // is not a row. It is unnamed and therefore faulty at
+                    // this instant anyway — what this call buys is the
+                    // keystroke AFTER the name becomes valid, when the row
+                    // would otherwise shut under the cursor.
+                    let added = VariableDraft()
+                    variableDrafts.append(added)
+                    folding.open(added.id)
                 } label: {
                     Label(
                         L10n.string("snippets.variables.add", "Add variable"),
@@ -962,9 +1015,12 @@ private struct SnippetEditorView: View {
                 .foregroundStyle(DesignTokens.inkSecondary)
             }
 
-            ForEach($variableDrafts) { draft in
-                variableRow(draft) {
-                    variableDrafts.removeAll { $0.id == draft.wrappedValue.id }
+            // `rows` is built from `variableDrafts` in order, so zipping the
+            // two pairs each row with its own draft; the identity stays the
+            // draft's own `id`, for the reason `VariableDraft` documents.
+            ForEach(Array(zip(rows, $variableDrafts)), id: \.0.id) { entry in
+                variableRow(entry.1, row: entry.0) {
+                    variableDrafts.removeAll { $0.id == entry.0.id }
                 }
             }
 
@@ -1010,35 +1066,73 @@ private struct SnippetEditorView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            if let variablesError {
-                Text(variablesError).font(.caption).foregroundStyle(.red).lineLimit(2)
+            if let variablesFault {
+                Text(variablesFault.message).font(.caption).foregroundStyle(.red).lineLimit(2)
             }
         }
     }
 
-    /// One declaration's card: name + kind + remove on the first line,
-    /// prompt on its own line, the allowed-values field only for `.selection`
-    /// (comma-separated — this row has no nested list editor of its own),
-    /// placement + default value together, then the remember checkbox.
+    /// One declaration's card, open or closed.
+    ///
+    /// Open: name + kind + remove on the first line, prompt on its own line,
+    /// the allowed-values field only for `.selection` (comma-separated —
+    /// this row has no nested list editor of its own), placement + default
+    /// value together, then the remember checkbox.
+    ///
+    /// Closed: one line — `snippetCollapsedVariableSummary` — beside the
+    /// same fold and remove controls. A declaration's six fields — name,
+    /// kind, prompt, placement, default and remember — are more form than
+    /// sheet at three declarations, and the width is not where the space
+    /// is.
+    ///
+    /// The fold control is drawn only where folding is possible: a row with
+    /// a problem stays open and offers nothing that would close it, so the
+    /// reader is never asked to work out why a control is greyed out.
+    ///
     /// Chrome matches `SnippetCommandEditor`'s card (`DesignTokens.card` +
     /// hairline border) so the two multi-field blocks in this sheet read as
     /// the same kind of thing.
     @ViewBuilder
     private func variableRow(
-        _ draft: Binding<VariableDraft>, onRemove: @escaping () -> Void
+        _ draft: Binding<VariableDraft>, row: SnippetVariableFoldRow,
+        onRemove: @escaping () -> Void
     ) -> some View {
+        let isExpanded = folding.isExpanded(row)
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                TextField(
-                    L10n.string("snippets.variables.name", "Name"), text: draft.name,
-                    prompt: Text(L10n.string("snippets.variables.name", "Name")))
-                Picker("", selection: draft.isSelection) {
-                    Text(L10n.string("snippets.variables.kind.freeText", "Free text")).tag(false)
-                    Text(L10n.string("snippets.variables.kind.selection", "Choice")).tag(true)
+                if folding.canCollapse(row) {
+                    let foldLabel = isExpanded
+                        ? L10n.string("snippets.variables.collapse", "Collapse")
+                        : L10n.string("snippets.variables.expand", "Expand")
+                    Button {
+                        folding.toggle(row)
+                    } label: {
+                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(foldLabel)
+                    .help(foldLabel)
                 }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 150)
+                if isExpanded {
+                    TextField(
+                        L10n.string("snippets.variables.name", "Name"), text: draft.name,
+                        prompt: Text(L10n.string("snippets.variables.name", "Name")))
+                    Picker("", selection: draft.isSelection) {
+                        Text(L10n.string("snippets.variables.kind.freeText", "Free text"))
+                            .tag(false)
+                        Text(L10n.string("snippets.variables.kind.selection", "Choice")).tag(true)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 150)
+                } else {
+                    Text(snippetCollapsedVariableSummary(for: draft.wrappedValue.variable))
+                        .font(.caption)
+                        .foregroundStyle(DesignTokens.inkSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
                 Button(action: onRemove) {
                     Image(systemName: "minus.circle")
                 }
@@ -1052,36 +1146,40 @@ private struct SnippetEditorView: View {
                 .help(L10n.string("settings.openWith.rules.remove", "Remove"))
             }
 
-            TextField(
-                L10n.string("snippets.variables.prompt", "Prompt"), text: draft.prompt,
-                prompt: Text(L10n.string("snippets.variables.prompt", "Prompt")))
-
-            if draft.wrappedValue.isSelection {
+            if isExpanded {
                 TextField(
-                    "", text: draft.selectionValuesText,
-                    prompt: Text(verbatim: "a, b, c"))
-            }
+                    L10n.string("snippets.variables.prompt", "Prompt"), text: draft.prompt,
+                    prompt: Text(L10n.string("snippets.variables.prompt", "Prompt")))
 
-            HStack(spacing: 8) {
-                Picker("", selection: draft.placement) {
-                    Text(L10n.string(
-                        "snippets.variables.placement.placeholder", "Placeholder in the command"))
-                        .tag(SnippetVariable.Placement.placeholder)
-                    Text(L10n.string(
-                        "snippets.variables.placement.environment", "Environment variable"))
-                        .tag(SnippetVariable.Placement.environment)
+                if draft.wrappedValue.isSelection {
+                    TextField(
+                        "", text: draft.selectionValuesText,
+                        prompt: Text(verbatim: "a, b, c"))
                 }
-                .labelsHidden()
-                TextField(
-                    L10n.string("snippets.variables.default", "Default"), text: draft.defaultValue,
-                    prompt: Text(L10n.string("snippets.variables.default", "Default")))
-            }
 
-            Toggle(
-                L10n.string("snippets.variables.remember", "Remember last value"),
-                isOn: draft.remembersLastValue)
-                .toggleStyle(.checkbox)
-                .font(.caption)
+                HStack(spacing: 8) {
+                    Picker("", selection: draft.placement) {
+                        Text(L10n.string(
+                            "snippets.variables.placement.placeholder",
+                            "Placeholder in the command"))
+                            .tag(SnippetVariable.Placement.placeholder)
+                        Text(L10n.string(
+                            "snippets.variables.placement.environment", "Environment variable"))
+                            .tag(SnippetVariable.Placement.environment)
+                    }
+                    .labelsHidden()
+                    TextField(
+                        L10n.string("snippets.variables.default", "Default"),
+                        text: draft.defaultValue,
+                        prompt: Text(L10n.string("snippets.variables.default", "Default")))
+                }
+
+                Toggle(
+                    L10n.string("snippets.variables.remember", "Remember last value"),
+                    isOn: draft.remembersLastValue)
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
+            }
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 6).fill(DesignTokens.card))

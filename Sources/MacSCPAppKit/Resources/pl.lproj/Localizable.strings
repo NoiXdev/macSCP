@@ -904,6 +904,13 @@
 "snippets.variables.kind.freeText" = "Dowolny tekst";
 "snippets.variables.kind.selection" = "Wybór";
 "snippets.variables.hint" = "Wartość jest wstawiana jako jedno słowo powłoki. Zmienna środowiskowa jest eksportowana przed poleceniem i pozostaje ustawiona w sesji po wykonaniu.";
+"snippets.variables.summary %@ %@ %@" = "%@ · %@ · %@";
+"snippets.variables.expandAll" = "Rozwiń wszystkie";
+"snippets.variables.collapseAll" = "Zwiń wszystkie";
+"snippets.variables.expandAll.hint" = "Otwiera wszystkie zmienne.";
+"snippets.variables.collapseAll.hint" = "Zamyka wszystkie zmienne oprócz tych z problemem.";
+"snippets.variables.expand" = "Rozwiń";
+"snippets.variables.collapse" = "Zwiń";
 "snippets.editor.skipPlacementCheck" = "Nie sprawdzaj, gdzie w tym poleceniu znajdują się wartości";
 "snippets.editor.skipPlacementCheck.hint" = "Dotyczy tylko tego fragmentu i nie jest przenoszone: zaimportowany fragment zawsze przychodzi z włączonym sprawdzaniem. Wartości nadal są cytowane, ale macSCP nie wymaga już, aby każda z nich była zwykłym, niecytowanym argumentem — a gdy tak nie jest, samo cytowanie nie powstrzyma odczytania wartości jako kodu powłoki.";
 "snippets.editor.preview" = "Podgląd";
