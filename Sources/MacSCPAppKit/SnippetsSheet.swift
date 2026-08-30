@@ -713,6 +713,19 @@ private struct SnippetEditorView: View {
             skipsPlacementCheck: skipsPlacementCheck)
     }
 
+    /// What the editor says about a `{{NAME}}` in the command that no
+    /// declaration carries, or `nil`.
+    ///
+    /// Separate from `variablesFault` on purpose, and it does not reach
+    /// `isSaveDisabled`: `SnippetVariableSubstitution` decides what may be
+    /// sent, and an undeclared placeholder was sendable before this line
+    /// existed and stays sendable — it goes to the shell as the literal
+    /// characters it is. The user is told because the command then does
+    /// something other than what its author believes, and nothing said so.
+    private var undeclaredPlaceholderHint: String? {
+        snippetUndeclaredPlaceholderHint(command: command, variables: variables)
+    }
+
     /// The rows the variables section draws, each carrying whether the
     /// current fault is about it — the input the fold rule reads.
     ///
@@ -764,7 +777,13 @@ private struct SnippetEditorView: View {
                 // The chrome lives here, not in the representable: it has
                 // to match the `.roundedBorder` fields above and below,
                 // and an `NSScrollView` cannot draw a rounded border.
-                SnippetCommandEditor(text: $command, accessibilityLabel: commandLabel)
+                // `variables:` is what the completion list on the opening
+                // braces is built from (part 2 of the editor's operation)
+                // -- handed over whole, so the one rule about what belongs
+                // in a command as `{{NAME}}` is applied in one place for
+                // both entrances.
+                SnippetCommandEditor(
+                    text: $command, accessibilityLabel: commandLabel, variables: variables)
                     .frame(height: SnippetCommandEditor.intrinsicHeight(for: command))
                     // `FormRow` aligns on `.firstTextBaseline`, and SwiftUI
                     // cannot read one out of an `NSViewRepresentable` -- the
@@ -934,8 +953,10 @@ private struct SnippetEditorView: View {
     /// The variables section: one card per declaration (`variableRow`), the
     /// two bulk fold actions beside the add button, the hint text the brief
     /// requires (a value becomes a single shell word; an environment
-    /// variable outlives a multi-line run), and — whenever `variablesFault`
-    /// is non-nil — the reason Save is disabled. That last text is the point
+    /// variable outlives a multi-line run), the hint about a `{{NAME}}` in
+    /// the command that no declaration carries (a display, which blocks
+    /// nothing), and — whenever `variablesFault` is non-nil — the reason
+    /// Save is disabled. That last text is the point
     /// of this whole block: a greyed-out Save button alone does not say WHY,
     /// and a user who cannot tell why does not experiment, they give up
     /// (brief, Step 2).
@@ -945,12 +966,12 @@ private struct SnippetEditorView: View {
     /// `SnippetVariableFolding.offersExpandAll`/`offersCollapseAll` decide.
     @ViewBuilder
     private var variablesSection: some View {
-        // Deliberately NOT a `FormRow`: an open variable row carries eight
-        // controls of its own — fold, name, kind, remove, prompt, placement,
-        // default, remember — and a ninth while a choice lists its values,
-        // so this block keeps the sheet's full width instead of the 300pt
-        // that would be left beside a label column (maintainer's visual
-        // check, 2026-08-21).
+        // Deliberately NOT a `FormRow`: an open variable row carries nine
+        // controls of its own — fold, name, kind, insert, remove, prompt,
+        // placement, default, remember — and a tenth while a choice lists
+        // its values, so this block keeps the sheet's full width instead of
+        // the 300pt that would be left beside a label column (maintainer's
+        // visual check, 2026-08-21).
         //
         // Read once, per body evaluation, and handed to both the bulk
         // buttons and every row: each read runs the declaration checks, so
@@ -1069,21 +1090,39 @@ private struct SnippetEditorView: View {
             if let variablesFault {
                 Text(variablesFault.message).font(.caption).foregroundStyle(.red).lineLimit(2)
             }
+
+            // Amber and not red, because it blocks nothing: the snippet
+            // saves and sends exactly as before. The sentence exists
+            // because what it describes is otherwise silent -- a `{{NAME}}`
+            // nothing declares reaches the shell as the characters it is,
+            // and the command then does something other than what its
+            // author believes.
+            //
+            // `fixedSize` vertically for the reason the hint above it
+            // documents: without it the sentence lays out on one line and
+            // the sheet's fixed width truncates it mid-word.
+            if let undeclaredPlaceholderHint {
+                Text(undeclaredPlaceholderHint)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 
     /// One declaration's card, open or closed.
     ///
-    /// Open: name + kind + remove on the first line, prompt on its own line,
-    /// the allowed-values field only for `.selection` (comma-separated —
-    /// this row has no nested list editor of its own), placement + default
-    /// value together, then the remember checkbox.
+    /// Open: name + kind + insert + remove on the first line, prompt on its
+    /// own line, the allowed-values field only for `.selection`
+    /// (comma-separated — this row has no nested list editor of its own),
+    /// placement + default value together, then the remember checkbox.
     ///
     /// Closed: one line — `snippetCollapsedVariableSummary` — beside the
-    /// same fold and remove controls. A declaration's six fields — name,
-    /// kind, prompt, placement, default and remember — are more form than
-    /// sheet at three declarations, and the width is not where the space
-    /// is.
+    /// same fold, insert and remove controls. A declaration's six fields —
+    /// name, kind, prompt, placement, default and remember — are more form
+    /// than sheet at three declarations, and the width is not where the
+    /// space is.
     ///
     /// The fold control is drawn only where folding is possible: a row with
     /// a problem stays open and offers nothing that would close it, so the
@@ -1132,6 +1171,27 @@ private struct SnippetEditorView: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                // The way into the command that does not need the name
+                // typed -- for when it is no longer remembered. Drawn only
+                // where it is possible: a declaration whose placement is
+                // the environment does not belong in the command as
+                // `{{NAME}}` at all, and one whose name is not a shell
+                // identifier would put text there that nothing fills in.
+                // Absent rather than greyed out, the same choice the fold
+                // control and the "Test" button already make.
+                if snippetBelongsInCommandAsPlaceholder(draft.wrappedValue.variable) {
+                    let insertLabel = L10n.string(
+                        "snippets.variables.insert", "Insert in command")
+                    Button {
+                        command = snippetCommandInsertingPlaceholder(
+                            draft.wrappedValue.variable.name, into: command)
+                    } label: {
+                        Image(systemName: "curlybraces")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(insertLabel)
+                    .help(insertLabel)
                 }
                 Button(action: onRemove) {
                     Image(systemName: "minus.circle")

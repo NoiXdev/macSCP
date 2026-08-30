@@ -32,6 +32,13 @@ import macSCPCore
 ///    editor instead traverses focus. The `Coordinator` below claims both
 ///    selectors itself so Tab moves to the next field, like every other
 ///    field in this sheet.
+///
+/// It also carries the completion list that opens on the opening braces
+/// (snippet editor operation, part 2) — feasible here precisely because
+/// this is an `NSTextView`: a list on a SwiftUI `TextField` would have
+/// been a project of its own. What the list offers is decided by
+/// `snippetPlaceholderCompletions`, away from the view; the `Coordinator`
+/// below only supplies the text around the caret and shows the result.
 struct SnippetCommandEditor: NSViewRepresentable {
     @Binding var text: String
     /// VoiceOver's name for this field. The `TextField(commandLabel, ...)`
@@ -42,6 +49,13 @@ struct SnippetCommandEditor: NSViewRepresentable {
     /// for precisely this reason (see `FormRow`'s own doc comment: the
     /// wrapped control is expected to carry its own accessibility label).
     let accessibilityLabel: String
+    /// The declarations the completion list on the opening braces is built
+    /// from (snippet editor operation, part 2). Handed in whole rather than
+    /// pre-filtered, so the one rule about what belongs in a command as
+    /// `{{NAME}}` —
+    /// `snippetBelongsInCommandAsPlaceholder` — is applied in the one place
+    /// the variable row's insert control applies it too.
+    let variables: [SnippetVariable]
 
     /// How tall this field wants to be for `text`: one line's height per
     /// line, plus the container insets, clamped so a long script cannot push
@@ -204,6 +218,52 @@ struct SnippetCommandEditor: NSViewRepresentable {
             guard let textView = notification.object as? NSTextView else { return }
             parent.text = textView.string
             recolour(textView)
+            // The design's trigger: the opening braces, and nothing else.
+            // Once the list is up AppKit keeps it in step with what is
+            // typed after them, asking the delegate below again each time.
+            if Self.opensPlaceholderCompletion(textView) { textView.complete(nil) }
+        }
+
+        /// What the list offers at the caret, for the partial word AppKit
+        /// worked out on its own.
+        ///
+        /// `words` — the spell checker's guesses — is deliberately dropped:
+        /// this field holds a shell command, and the only completion it has
+        /// any business offering is a declared variable name.
+        ///
+        /// The decision itself is `snippetPlaceholderCompletions`, which
+        /// takes the text on either side rather than a text view, so every
+        /// part of the rule can be checked without one.
+        func textView(
+            _ textView: NSTextView, completions words: [String],
+            forPartialWordRange charRange: NSRange,
+            indexOfSelectedItem index: UnsafeMutablePointer<Int>?
+        ) -> [String] {
+            let text = textView.string as NSString
+            guard charRange.location != NSNotFound,
+                charRange.location >= 0, charRange.length >= 0,
+                NSMaxRange(charRange) <= text.length
+            else { return [] }
+            return snippetPlaceholderCompletions(
+                in: parent.variables,
+                textBeforePartialWord: text.substring(to: charRange.location),
+                partialWord: text.substring(with: charRange),
+                textAfterPartialWord: text.substring(from: NSMaxRange(charRange)))
+        }
+
+        /// Whether the caret has just come to rest right behind a pair of
+        /// opening braces.
+        ///
+        /// Only with an empty selection: a range selection has no single
+        /// "just typed here" position, and opening a list over one would
+        /// offer to replace text the user did not point at.
+        private static func opensPlaceholderCompletion(_ textView: NSTextView) -> Bool {
+            let selected = textView.selectedRange()
+            guard selected.length == 0 else { return false }
+            let text = textView.string as NSString
+            guard selected.location != NSNotFound, selected.location <= text.length
+            else { return false }
+            return text.substring(to: selected.location).hasSuffix("{{")
         }
 
         func apply(_ value: String, to textView: NSTextView) {

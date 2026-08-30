@@ -908,6 +908,9 @@
 "snippets.variables.collapseAll.hint" = "Closes every variable, except any with a problem.";
 "snippets.variables.expand" = "Expand";
 "snippets.variables.collapse" = "Collapse";
+"snippets.variables.insert" = "Insert in command";
+"snippets.variables.quotedName %@" = "“%@”";
+"snippets.variables.undeclared %@" = "Not declared as a variable: %@. Nothing is filled in there — the text goes to the shell exactly as it stands.";
 "snippets.editor.skipPlacementCheck" = "Don't check where values are placed in this command";
 "snippets.editor.skipPlacementCheck.hint" = "Only for this snippet, and it is not shared: an imported snippet always arrives with the check on. Values are still quoted, but macSCP stops requiring each one to stand as a plain, unquoted argument — and where it does not, quoting alone cannot keep a value from being read as shell code.";
 "snippets.editor.preview" = "Preview";

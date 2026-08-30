@@ -607,3 +607,187 @@ func snippetCollapsedVariableSummary(for variable: SnippetVariable) -> String {
         format: L10n.string("snippets.variables.summary %@ %@ %@", "%@ · %@ · %@"),
         variable.name, kind, placement)
 }
+
+// MARK: - Placeholder help (snippet editor operation, part 2)
+
+/// Whether `variable` belongs in the command as `{{NAME}}` — the ONE
+/// question both entrances ask before offering a name.
+///
+/// One question, so an environment declaration is missing from the row's
+/// insert control and from the completion list by construction, rather than
+/// through two filters that agree today. Its value is prepended as an
+/// `export NAME='value';` statement (see `SnippetVariable.Placement
+/// .environment`), so a `{{NAME}}` for it would produce the exact opposite
+/// of what its placement says: text nothing fills in, next to a value the
+/// command never mentions.
+///
+/// **And it is not offered as `$NAME` either**, in either entrance. In a
+/// single-line assignment PREFIX the shell expands `$NAME` before the
+/// assignment takes effect (`P=neu echo "$P"` prints the old value), so a
+/// control that inserted it would be silently wrong in a single-line
+/// command — and "offer it when the command has several lines" is a rule
+/// that changes while the command is being typed. Whoever writes `$NAME`
+/// by hand sees the consequence in the dry run, which resolves the command
+/// the same way the run path does.
+///
+/// A name `SnippetVariable.isValidName` rejects is not offered either:
+/// `SnippetVariableSubstitution.resolve` skips such a declaration, so its
+/// `{{NAME}}` would be text nothing ever fills in.
+func snippetBelongsInCommandAsPlaceholder(_ variable: SnippetVariable) -> Bool {
+    variable.placement == .placeholder && SnippetVariable.isValidName(variable.name)
+}
+
+/// The names either entrance may offer, in declaration order, without
+/// repeats.
+///
+/// Repeats are dropped because two declarations sharing a name is a state
+/// the editor lets the user be in while they fix it
+/// (`snippetVariablesFault`'s duplicate check) — offering the same name
+/// twice would say nothing about which of the two rows is meant.
+func snippetInsertablePlaceholderNames(in variables: [SnippetVariable]) -> [String] {
+    var seen: Set<String> = []
+    return variables
+        .filter { snippetBelongsInCommandAsPlaceholder($0) }
+        .map(\.name)
+        .filter { seen.insert($0).inserted }
+}
+
+/// `command` with `{{name}}` put at its end.
+///
+/// The end, because SwiftUI hands a `View` no caret position in the
+/// `NSTextView` below it — and a control that claimed to insert "where you
+/// are" while actually appending would be worse than one that says where it
+/// writes. Separated from what stands before it by one space, unless the
+/// command is empty or already ends in whitespace: a line break separates
+/// on its own, and turning it into a break plus a space would indent the
+/// new line for no reason.
+func snippetCommandInsertingPlaceholder(_ name: String, into command: String) -> String {
+    let placeholder = "{{\(name)}}"
+    guard let last = command.last else { return placeholder }
+    return last.isWhitespace ? command + placeholder : command + " " + placeholder
+}
+
+/// The entries the command field's completion list offers, given the text
+/// on either side of the partial word AppKit is completing.
+///
+/// Takes the surrounding text rather than a text view, so the whole rule is
+/// decidable without one: the list opens only where the opening braces
+/// stand immediately before the partial word, and nowhere else — an
+/// ordinary word in a command must not turn into a variable list.
+///
+/// An entry is what gets INSERTED, closing braces included, so completing
+/// leaves a finished `{{NAME}}` rather than a half-open one to close by
+/// hand. Only the braces that are missing are added: a placeholder being
+/// edited in place already carries its own, and a second pair would leave
+/// two closing braces too many behind.
+///
+/// Matching ignores case while the ENTRY keeps the declared spelling —
+/// inserting the spelling that was typed would write a name no declaration
+/// carries, and `SnippetVariableSubstitution.occurrences` compares
+/// exactly.
+func snippetPlaceholderCompletions(
+    in variables: [SnippetVariable], textBeforePartialWord: String,
+    partialWord: String, textAfterPartialWord: String
+) -> [String] {
+    guard textBeforePartialWord.hasSuffix("{{") else { return [] }
+    let alreadyClosed = textAfterPartialWord.prefix(2).prefix { $0 == "}" }.count
+    let closing = String(repeating: "}", count: 2 - alreadyClosed)
+    let typed = partialWord.lowercased()
+    return snippetInsertablePlaceholderNames(in: variables)
+        .filter { $0.lowercased().hasPrefix(typed) }
+        .map { $0 + closing }
+}
+
+/// Every `{{NAME}}` in `command`, left to right, as the names inside the
+/// braces.
+///
+/// A recogniser of its own rather than a call into
+/// `SnippetVariableSubstitution`: that type's finder answers "where does
+/// THIS declared name occur", which is the question the gate and the
+/// emitter ask, and it is not this one — nothing here knows a name to look
+/// for. The two agree about what a placeholder is by both deferring to
+/// `SnippetVariable.isValidName`, which is also what makes the agreement
+/// checkable: a brace run that is not a name is not a placeholder for
+/// either of them, and `resolve` would leave it standing whatever was
+/// declared.
+///
+/// Extra braces behave the way `occurrences` treats them, and for the same
+/// reason: a third opening brace is a literal character before the
+/// placeholder (the scan advances one scalar and finds `{{NAME}}` at the
+/// next position), and a third closing brace is one after it.
+private func snippetPlaceholderNames(in command: String) -> [String] {
+    let scalars = Array(command.unicodeScalars)
+    var names: [String] = []
+    var index = 0
+    while index < scalars.count {
+        guard scalars[index] == "{", index + 1 < scalars.count, scalars[index + 1] == "{"
+        else {
+            index += 1
+            continue
+        }
+        var cursor = index + 2
+        var name = String.UnicodeScalarView()
+        while cursor < scalars.count, scalars[cursor] != "}" {
+            name.append(scalars[cursor])
+            cursor += 1
+        }
+        let candidate = String(name)
+        guard cursor + 1 < scalars.count, scalars[cursor] == "}", scalars[cursor + 1] == "}",
+            SnippetVariable.isValidName(candidate)
+        else {
+            index += 1
+            continue
+        }
+        names.append(candidate)
+        index = cursor + 2
+    }
+    return names
+}
+
+/// The `{{NAME}}` placeholders in `command` that no declaration carries, in
+/// the order they appear, without repeats.
+///
+/// A declaration whose placement is the ENVIRONMENT counts as a
+/// declaration here. The sentence this feeds says the name is not declared,
+/// and for such a name that would be false — the mistake it makes is a
+/// different one, and naming it wrongly is worse than not naming it. (It is
+/// a real gap: `{{DB}}` for an environment declaration is left standing by
+/// `resolve` exactly like an undeclared one, and nothing says so. Recorded
+/// in the branch report rather than fixed here, because a second sentence
+/// is a design decision, not a rename.)
+func snippetUndeclaredPlaceholders(
+    in command: String, variables: [SnippetVariable]
+) -> [String] {
+    let declared = Set(variables.map(\.name))
+    var seen: Set<String> = []
+    return snippetPlaceholderNames(in: command)
+        .filter { !declared.contains($0) && seen.insert($0).inserted }
+}
+
+/// What the editor says about a `{{NAME}}` nothing declares, or `nil` when
+/// there is none.
+///
+/// **A display, not a gate.** `SnippetVariableSubstitution` decides what
+/// may be sent and none of that changed: an undeclared placeholder was
+/// sendable before this sentence existed and stays sendable — it just goes
+/// to the shell as the literal characters it is. Which is precisely why the
+/// user is told: the command then does something other than what its author
+/// believes, and until now nothing said so.
+///
+/// Every name at once rather than the first: unlike
+/// `SnippetVariablesFault`, this sentence blocks nothing, so there is no
+/// "fix this one, then see the next" to walk through.
+func snippetUndeclaredPlaceholderHint(
+    command: String, variables: [SnippetVariable]
+) -> String? {
+    let undeclared = snippetUndeclaredPlaceholders(in: command, variables: variables)
+    guard !undeclared.isEmpty else { return nil }
+    let quoted = undeclared
+        .map { String(format: L10n.string("snippets.variables.quotedName %@", "“%@”"), $0) }
+        .joined(separator: ", ")
+    return String(
+        format: L10n.string(
+            "snippets.variables.undeclared %@",
+            "Not declared as a variable: %@. Nothing is filled in there — the text goes to the shell exactly as it stands."),
+        quoted)
+}

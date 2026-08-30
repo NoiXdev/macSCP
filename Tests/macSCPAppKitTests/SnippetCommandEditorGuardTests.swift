@@ -1,13 +1,15 @@
 import Foundation
 import Testing
 
-/// Guards eight properties of the snippet editor — `SnippetsSheet.swift`
+/// Guards ten properties of the snippet editor — `SnippetsSheet.swift`
 /// and the presentation functions it calls: five in
 /// `SnippetCommandEditor.swift`'s own wiring, raised by the whole-branch
-/// review of the snippet syntax-highlighting feature, plus three in
+/// review of the snippet syntax-highlighting feature, plus five in
 /// `SnippetEditorView` itself (variable-declaration Save-gating, Task 5,
-/// the per-snippet placement-check waiver, and folding the variable rows).
-/// None of the eight are provable any other way in this project (no test here
+/// the per-snippet placement-check waiver, folding the variable rows, the
+/// two entrances that put a declared name into the command, and the hint
+/// about a placeholder no declaration carries).
+/// None of the ten are provable any other way in this project (no test here
 /// renders an `NSViewRepresentable` or a `View` body — see `SnippetsSheet
 /// .swift`'s own doc comment on that boundary):
 ///
@@ -73,6 +75,22 @@ import Testing
 ///    third — the one the design turns on — would let a declaration with a
 ///    problem be folded away behind a marker that says something is wrong
 ///    without saying what.
+/// 9. **Both ways into the command ask one question.** A declared name
+///    reaches the command from the variable row's insert control and from
+///    the completion list at the opening braces, and both must gate on
+///    `snippetBelongsInCommandAsPlaceholder`. An environment declaration
+///    offered by either would produce the exact opposite of what its
+///    placement says — its value is prepended as an assignment, so the
+///    placeholder would be text nothing fills in. The sheet must also hand
+///    the editor its declarations, or the list fails as silence.
+/// 10. **The undeclared hint is a display and stays one.**
+///    `variablesSection` must show it and `undeclaredPlaceholderHint` must
+///    come from `snippetUndeclaredPlaceholderHint` — but `isSaveDisabled`
+///    must NOT consult it, and `SnippetVariableSubstitution.Problem` must
+///    still carry six cases. An undeclared `{{NAME}}` was savable and
+///    sendable before the hint existed and stays so; a check that refused
+///    it would be a behaviour change at the one gate this project treats
+///    as security-critical.
 ///
 /// Each is a SOURCE-TEXT scan, same shape and same blind spots as
 /// `SnippetActionSheetKeyboardShortcutGuardTests`/
@@ -105,6 +123,11 @@ struct SnippetCommandEditorGuardTests {
     /// dropped.
     private static let presentationSourceFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/SnippetsPresentation.swift")
+    /// Core's own file, read by exactly one check below: the one that
+    /// counts the verdicts and so proves the placeholder hint did not
+    /// become one.
+    private static let substitutionSourceFile = repoRoot
+        .appendingPathComponent("Sources/macSCPCore/Terminal/SnippetVariableSubstitution.swift")
 
     private enum ScanError: Error { case markerNotFound, unbalancedBraces }
 
@@ -316,6 +339,13 @@ struct SnippetCommandEditorGuardTests {
             """)
     }
 
+    /// Re-anchored when the editor gained its `variables:` argument for the
+    /// completion list: the call no longer fits one line, so a scan for the
+    /// whole call as one string would have gone from "the label is wired"
+    /// to "this exact formatting". It now reads the command row's own
+    /// closure and asks the two things that actually matter inside it —
+    /// that the editor is built there at all, and that the argument it gets
+    /// is the row's own `commandLabel` local.
     @Test func sheetPassesTheSameLocalizedStringTheRowLabelUses() throws {
         let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
         #expect(source.contains("FormRow(label: commandLabel)"), """
@@ -323,19 +353,30 @@ struct SnippetCommandEditorGuardTests {
             this changed, the assertion below (that the editor gets the SAME `commandLabel`) \
             no longer proves anything.
             """)
-        #expect(
-            source.contains("SnippetCommandEditor(text: $command, accessibilityLabel: commandLabel)"),
-            """
+        let row = try Self.functionBody(
+            containing: "FormRow(label: commandLabel) {", in: source)
+        #expect(row.contains("SnippetCommandEditor("), """
+            Sanity check: the command row must still build the editor, or the argument check \
+            below would pass for the wrong reason. Scanned row: \(row)
+            """)
+        #expect(row.contains("accessibilityLabel: commandLabel"), """
             SnippetCommandEditor must be constructed with `accessibilityLabel: commandLabel` \
             -- the exact same local the row's own (VoiceOver-hidden) label uses -- so the two \
-            can never drift into two different wordings for the same field.
+            can never drift into two different wordings for the same field. Scanned row: \(row)
             """)
     }
 
-    @Test func scannerFlagsAMissingAccessibilityLabelArgument() {
-        let source = "SnippetCommandEditor(text: $command)\n    .frame(height: 24)"
-        #expect(
-            !source.contains("SnippetCommandEditor(text: $command, accessibilityLabel: commandLabel)"),
+    @Test func scannerFlagsAMissingAccessibilityLabelArgument() throws {
+        let source = """
+            FormRow(label: commandLabel) {
+                SnippetCommandEditor(text: $command)
+                    .frame(height: 24)
+            }
+            """
+        let row = try Self.functionBody(
+            containing: "FormRow(label: commandLabel) {", in: source)
+        #expect(row.contains("SnippetCommandEditor("))
+        #expect(!row.contains("accessibilityLabel: commandLabel"),
             "the scanner must see that the pre-fix call site (no accessibilityLabel argument) does not match")
     }
 
@@ -658,6 +699,179 @@ struct SnippetCommandEditorGuardTests {
         let row = try Self.functionBody(containing: "private func variableRow(", in: unfolded)
         #expect(!row.contains("folding.isExpanded(row)"))
         #expect(!row.contains("folding.canCollapse(row)"))
+    }
+
+    // MARK: - Finding 9: both entrances into the command ask the same question
+
+    /// The variable row's way into the command. Two positive checks,
+    /// because either half alone is useless: a control that inserts without
+    /// asking `snippetBelongsInCommandAsPlaceholder` would offer an
+    /// environment declaration a `{{NAME}}` its placement says it must not
+    /// have, and a gate with nothing behind it is a row that offers
+    /// nothing.
+    @Test("the variable row offers a way into the command, only where one belongs")
+    func variableRowOffersTheInsertion() throws {
+        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let body = try Self.functionBody(containing: "private func variableRow(", in: source)
+        #expect(body.contains("snippetBelongsInCommandAsPlaceholder("), """
+            variableRow must gate its insert control on \
+            snippetBelongsInCommandAsPlaceholder -- it is the one rule about what belongs in \
+            the command as a placeholder, and an environment declaration inserted that way \
+            produces the exact opposite of what its placement says. Scanned body: \(body)
+            """)
+        #expect(body.contains("snippetCommandInsertingPlaceholder("), """
+            variableRow must actually write the placeholder through \
+            snippetCommandInsertingPlaceholder -- the gate above is worth nothing without a \
+            control behind it. Scanned body: \(body)
+            """)
+    }
+
+    /// The completion entrance, in two places: the sheet has to hand the
+    /// declarations down, and the coordinator has to ask the same rule
+    /// about them. Handing them down and then offering something else is
+    /// the failure this pair catches.
+    @Test("the completion list is built from the declarations, by the same rule")
+    func theCompletionListAsksTheSameRule() throws {
+        let sheet = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let row = try Self.functionBody(
+            containing: "FormRow(label: commandLabel) {", in: sheet)
+        #expect(row.contains("variables: variables"), """
+            the command row must hand the editor the current declarations -- without them the \
+            completion list has nothing to offer, and it would fail as silence rather than as \
+            an error. Scanned row: \(row)
+            """)
+
+        let editor = try String(contentsOf: Self.editorSourceFile, encoding: .utf8)
+        let completions = try Self.functionBody(
+            containing: "forPartialWordRange charRange: NSRange", in: editor)
+        #expect(completions.contains("snippetPlaceholderCompletions("), """
+            the coordinator's completion callback must answer with \
+            snippetPlaceholderCompletions -- a second list built here would be a second \
+            answer to "what belongs in the command", and the half that drifted would be the \
+            one no test covers. Scanned body: \(completions)
+            """)
+    }
+
+    @Test("the entrance scans react to controls that ask nothing")
+    func entranceScansReactToUngatedControls() throws {
+        let ungated = """
+            private func variableRow(
+                _ draft: Binding<VariableDraft>, row: SnippetVariableFoldRow,
+                onRemove: @escaping () -> Void
+            ) -> some View {
+                VStack(alignment: .leading, spacing: 6) {
+                    TextField("Name", text: draft.name)
+                    Button { command += draft.wrappedValue.name } label: {
+                        Image(systemName: "curlybraces")
+                    }
+                }
+            }
+            """
+        let row = try Self.functionBody(containing: "private func variableRow(", in: ungated)
+        #expect(!row.contains("snippetBelongsInCommandAsPlaceholder("))
+        #expect(!row.contains("snippetCommandInsertingPlaceholder("))
+
+        let spellChecked = """
+            func textView(
+                _ textView: NSTextView, completions words: [String],
+                forPartialWordRange charRange: NSRange,
+                indexOfSelectedItem index: UnsafeMutablePointer<Int>?
+            ) -> [String] {
+                return words
+            }
+            """
+        let completions = try Self.functionBody(
+            containing: "forPartialWordRange charRange: NSRange", in: spellChecked)
+        #expect(!completions.contains("snippetPlaceholderCompletions("))
+    }
+
+    // MARK: - Finding 10: the undeclared hint is a display, and stays one
+
+    /// Shown, and computed by the one function that decides it.
+    @Test("the variables section shows the hint about an undeclared placeholder")
+    func variablesSectionShowsTheUndeclaredHint() throws {
+        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let section = try Self.functionBody(
+            containing: "private var variablesSection: some View {", in: source)
+        #expect(section.contains("if let undeclaredPlaceholderHint {"), """
+            variablesSection must render the hint about a `{{NAME}}` no declaration carries -- \
+            it is the one signal that such a placeholder reaches the shell as the characters \
+            it is, and without it the command goes on doing something other than what its \
+            author believes. Scanned body: \(section)
+            """)
+        let hint = try Self.functionBody(
+            containing: "private var undeclaredPlaceholderHint: String? {", in: source)
+        #expect(hint.contains("snippetUndeclaredPlaceholderHint("), """
+            the editor's hint must come from snippetUndeclaredPlaceholderHint -- it is where \
+            the rule is tested without a view. Scanned body: \(hint)
+            """)
+    }
+
+    /// The hint must not become a gate. A NEGATIVE check, so it is paired
+    /// with the positive one beside it: `isSaveDisabled` still has to name
+    /// the fault it does gate on, which is what keeps this scan from going
+    /// quiet over a property that was renamed or deleted.
+    @Test("the hint does not reach the Save gate")
+    func theHintDoesNotGateSave() throws {
+        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let body = try Self.functionBody(
+            containing: "private var isSaveDisabled: Bool {", in: source)
+        #expect(body.contains("variablesFault != nil"), """
+            Sanity check: isSaveDisabled must still gate on the declaration fault, or the \
+            check below would pass over a gate that had been rewritten entirely.
+            """)
+        #expect(!body.contains("undeclaredPlaceholder"), """
+            isSaveDisabled must NOT consult the undeclared-placeholder hint. An undeclared \
+            `{{NAME}}` was savable and sendable before the hint existed and stays so -- it \
+            just goes out literally. A check that blocked it would be a behaviour change \
+            wearing a display's clothes. Scanned body: \(body)
+            """)
+    }
+
+    /// And no new `Problem` case arrived to carry it. The design is
+    /// explicit that the hint is an editor display rather than a seventh
+    /// case: `SnippetVariableSubstitution` decides what may be sent, and
+    /// nothing about that changed.
+    ///
+    /// Six, counted in the pass that writes this: `invalidName`,
+    /// `unanalyzableContext`, `unusedPlaceholder`, `placeholderInsideQuotes`,
+    /// `placeholderNotInArgumentPosition`,
+    /// `placeholderIsReparsedByItsCommand`.
+    @Test("the substitution's verdict still carries six cases")
+    func theSubstitutionProblemStillCarriesSixCases() throws {
+        let source = try String(contentsOf: Self.substitutionSourceFile, encoding: .utf8)
+        let body = try Self.functionBody(containing: "public enum Problem", in: source)
+        #expect(Self.caseCount(in: body) == 6, """
+            SnippetVariableSubstitution.Problem must still carry exactly six cases. The hint \
+            about an undeclared placeholder is an EDITOR DISPLAY, not a seventh verdict: a \
+            check that refused to send such a snippet would be a behaviour change at the one \
+            gate this project treats as security-critical. Scanned body: \(body)
+            """)
+    }
+
+    @Test("the case count reacts to a seventh verdict")
+    func theCaseCountReactsToASeventhVerdict() throws {
+        let widened = """
+            public enum Problem: Equatable, Sendable {
+                case invalidName(name: String)
+                case unanalyzableContext(kind: Context)
+                case unusedPlaceholder(name: String)
+                case placeholderInsideQuotes(name: String)
+                case placeholderNotInArgumentPosition(name: String)
+                case placeholderIsReparsedByItsCommand(name: String)
+                case undeclaredPlaceholder(name: String)
+            }
+            """
+        let body = try Self.functionBody(containing: "public enum Problem", in: widened)
+        #expect(Self.caseCount(in: body) == 7)
+    }
+
+    /// Lines whose own text starts a case. Doc comments start with `///`
+    /// and so cannot be counted by accident.
+    private static func caseCount(in body: String) -> Int {
+        body.components(separatedBy: "\n")
+            .filter { $0.trimmingCharacters(in: .whitespaces).hasPrefix("case ") }
+            .count
     }
 
     // MARK: - Scanner (shared)

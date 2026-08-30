@@ -909,6 +909,9 @@
 "snippets.variables.collapseAll.hint" = "Schließt jede Variable — außer denen mit einem Problem.";
 "snippets.variables.expand" = "Aufklappen";
 "snippets.variables.collapse" = "Zuklappen";
+"snippets.variables.insert" = "In den Befehl einfügen";
+"snippets.variables.quotedName %@" = "„%@“";
+"snippets.variables.undeclared %@" = "Nicht als Variable deklariert: %@. Dort wird nichts eingesetzt — der Text geht genau so an die Shell.";
 "snippets.editor.skipPlacementCheck" = "Nicht prüfen, wo Werte in diesem Befehl stehen";
 "snippets.editor.skipPlacementCheck.hint" = "Gilt nur für dieses Snippet und wird nicht weitergegeben: ein importiertes Snippet kommt immer mit eingeschalteter Prüfung an. Werte werden weiterhin gequotet, aber macSCP verlangt nicht mehr, dass jeder Wert als einfaches, ungequotetes Argument steht — und wo das nicht so ist, hält Quoting allein einen Wert nicht davon ab, als Shell-Code gelesen zu werden.";
 "snippets.editor.preview" = "Vorschau";
