@@ -7,17 +7,26 @@ import macSCPCore
 /// anything the moment it sees `snippet.variables` is non-empty; a snippet
 /// with no declarations never reaches this view at all.
 ///
+/// Two presenters, counted here: `ContentView` opens it to RUN a snippet,
+/// and the snippet editor's "Test" button opens it to describe one
+/// (Snippet-Probelauf, Task 4). Deliberately the same view for both —
+/// a second prompt shape would be a second answer to "what is a value
+/// here", and the rehearsal would be the half that drifted. What differs
+/// is entirely in the caller's `onConfirm`: the editor's reaches
+/// `SnippetDryRun.describing` and stops there, remembering nothing.
+///
 /// Cancelling sends nothing: `onCancel` is the only other way out besides
 /// `onConfirm`, and neither `SnippetVariableSubstitution.resolve` nor
 /// `SnippetVariableMemoryStore.remember` is reached unless the user
-/// actually presses "Run" — both live in `ContentView`'s `onConfirm`
-/// closure, not here. This view only collects `values` and hands them
-/// back; it has no store access of its own.
+/// actually presses "Run" — both live in the caller's `onConfirm` closure,
+/// not here. This view only collects `values` and hands them back; it has
+/// no store access of its own.
 ///
 /// Each field starts from `initialValues[variable.name]` — the remembered
-/// value if there is one, else `SnippetVariable.defaultValue` — a fallback
-/// `ContentView.triggerSnippet` computes before presenting this sheet, not
-/// something this view looks up itself.
+/// value if there is one, else `SnippetVariable.defaultValue`. Both
+/// presenters compute that through `snippetVariablePromptValues` before
+/// presenting this sheet; this view looks nothing up itself, which is what
+/// keeps the two from opening on different values for the same snippet.
 ///
 /// ## The empty-`.selection` decision (carried forward from Task 5)
 ///

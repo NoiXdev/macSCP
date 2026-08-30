@@ -157,8 +157,20 @@ extension ContentView {
         // place a snippet can be added, edited or deleted, so re-reading the
         // store on dismiss is enough to keep the Terminal menu's entries
         // current.
+        // `rememberedValue` is a READ and nothing else (Snippet-Probelauf,
+        // Task 4): the editor's "Test" button opens the same value prompt
+        // the trigger path opens, seeded from the same remembered values —
+        // but a closure that returns a value cannot store one, so a
+        // rehearsal cannot pre-fill the next real run. It goes through
+        // `snippetVariableMemoryStore` per call rather than capturing an
+        // instance, which is that property's own "constructed fresh, never
+        // cached" discipline (see its doc comment).
         .sheet(isPresented: $showSnippetsSheet, onDismiss: { reloadSnippets() }) {
-            SnippetsSheet(store: snippetStore)
+            SnippetsSheet(
+                store: snippetStore,
+                rememberedValue: { snippetID, name in
+                    snippetVariableMemoryStore?.value(snippetID: snippetID, name: name)
+                })
         }
         // Hidden-imports sheet (M11f/T2) — `fullImportedHosts` is the SAME
         // full inventory `refreshImportedHosts()` reads from, so the sheet's

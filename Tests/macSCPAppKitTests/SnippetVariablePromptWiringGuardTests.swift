@@ -8,12 +8,14 @@ import Testing
 /// `PaneRenderConditionGuardTests` already exist to catch elsewhere in this
 /// project:
 ///
-/// 1. `runSnippet` must pass the ORIGINAL `snippet` — never the resolved
+/// 1. `sendSnippet` must pass the ORIGINAL `snippet` — never the resolved
 ///    command, nor a `Snippet` built around it — to
-///    `SnippetAuditDetail.text(for:)`. `SnippetAuditDetailTests
+///    `SnippetAuditDetail.text(for:)`. (It was `runSnippet` until the dry
+///    run split the description from the send; the audit call moved with
+///    the send, and this guard moved with it.) `SnippetAuditDetailTests
 ///    .variableValuesStayOutOfTheAuditLog` (Core layer) proves the
 ///    substitution mechanism WOULD leak a value into a resolved command if
-///    fed to `text(for:)`; it cannot see which argument `runSnippet` actually
+///    fed to `text(for:)`; it cannot see which argument `sendSnippet` actually
 ///    passes, because `SnippetAuditDetail.text(for:)` takes a `Snippet`, and
 ///    the wrong choice is entirely an App-layer call-site mistake. Proven
 ///    non-hypothetical by review: rewiring the real call site to log the
@@ -31,8 +33,9 @@ import Testing
 ///    other test in the suite.
 /// 3. `triggerSnippet` must still intercept on `snippet.variables.isEmpty`,
 ///    and must still seed the prompt from `SnippetVariableMemoryStore`
-///    rather than from `defaultValue` alone; `SnippetsSheet.save()` must
-///    still pass `variables: variables`. A later review mutated each of
+///    rather than from `defaultValue` alone; `SnippetsSheet`'s
+///    `draftSnippet` — the one construction both Save and the editor's
+///    "Test" button read — must still pass `variables: variables`. A later review mutated each of
 ///    these three lines and watched the full suite stay green: without the
 ///    interception the prompt never opens and every value resolves to `''`,
 ///    without the store lookup "remember last value" is an opt-in that does
@@ -76,23 +79,24 @@ struct SnippetVariablePromptWiringGuardTests {
 
     // MARK: - Guard 1: the audit call carries the template, not a resolved value
 
-    /// `runSnippet(_:execute:values:)` is the ONE place a resolved command
-    /// exists at all — the audit call inside it must still read
+    /// `sendSnippet(_:of:execute:)` is the ONE place bytes leave for the
+    /// shell, and the only place holding both a resolved command and the
+    /// snippet it came from — the audit call inside it must still read
     /// `SnippetAuditDetail.text(for: snippet)`, the exact literal shape that
     /// reads the template.
-    @Test func runSnippetAuditsTheTemplateNotTheResolvedCommand() throws {
+    @Test func sendSnippetAuditsTheTemplateNotTheResolvedCommand() throws {
         let source = try String(contentsOf: Self.contentViewFile, encoding: .utf8)
         let lines = source.components(separatedBy: "\n")
         guard let range = Self.range(
-            ofBlockStartingWith: "func runSnippet(_ snippet: Snippet, execute: Bool, values:",
+            ofBlockStartingWith: "func sendSnippet(_ dryRun: SnippetDryRun, of snippet: Snippet,",
             in: lines)
         else {
             Issue.record(
-                "`func runSnippet(_:execute:values:)` not found — re-anchor this guard")
+                "`func sendSnippet(_:of:execute:)` not found — re-anchor this guard")
             return
         }
         #expect(Self.auditCallPassesTheTemplate(in: lines, range: range), """
-            `runSnippet` no longer calls `SnippetAuditDetail.text(for: snippet)` — if it now \
+            `sendSnippet` no longer calls `SnippetAuditDetail.text(for: snippet)` — if it now \
             passes the resolved command (or a `Snippet` built from it) instead, a variable's \
             typed value would reach the audit log, which the project's rule forbids.
             """)
@@ -136,21 +140,19 @@ struct SnippetVariablePromptWiringGuardTests {
     @Test func scannerFlagsAnAuditCallBuiltFromTheResolvedCommand() {
         let source = """
             struct Fake {
-                func runSnippet(_ snippet: Snippet, execute: Bool, values: [String: String]) {
-                    let resolvedCommand = SnippetVariableSubstitution.resolve(
-                        command: snippet.command, variables: snippet.variables, values: values)
+                func sendSnippet(_ dryRun: SnippetDryRun, of snippet: Snippet, execute: Bool) {
                     terminal.send(bytes) {
                         recorder?.recordAction(AuditEvent(
                             kind: .snippetExecuted,
                             detail: SnippetAuditDetail.text(for: Snippet(
-                                name: snippet.name, command: resolvedCommand))))
+                                name: snippet.name, command: dryRun.resolvedCommand))))
                     }
                 }
             }
             """
         let lines = source.components(separatedBy: "\n")
         guard let range = Self.range(
-            ofBlockStartingWith: "func runSnippet(_ snippet: Snippet, execute: Bool, values:",
+            ofBlockStartingWith: "func sendSnippet(_ dryRun: SnippetDryRun, of snippet: Snippet,",
             in: lines)
         else {
             Issue.record("self-test source does not anchor — fix the synthetic source above")
@@ -163,7 +165,7 @@ struct SnippetVariablePromptWiringGuardTests {
     @Test func scannerAcceptsTheAuditCallBuiltFromTheTemplate() {
         let source = """
             struct Fake {
-                func runSnippet(_ snippet: Snippet, execute: Bool, values: [String: String]) {
+                func sendSnippet(_ dryRun: SnippetDryRun, of snippet: Snippet, execute: Bool) {
                     terminal.send(bytes) {
                         recorder?.recordAction(
                             AuditEvent(kind: .snippetExecuted, detail: SnippetAuditDetail.text(for: snippet)))
@@ -173,7 +175,7 @@ struct SnippetVariablePromptWiringGuardTests {
             """
         let lines = source.components(separatedBy: "\n")
         guard let range = Self.range(
-            ofBlockStartingWith: "func runSnippet(_ snippet: Snippet, execute: Bool, values:",
+            ofBlockStartingWith: "func sendSnippet(_ dryRun: SnippetDryRun, of snippet: Snippet,",
             in: lines)
         else {
             Issue.record("self-test source does not anchor — fix the synthetic source above")
@@ -259,22 +261,39 @@ struct SnippetVariablePromptWiringGuardTests {
             """)
     }
 
-    /// `SnippetsSheet.save()` must hand the edited declarations to
-    /// `Snippet`. Passing `variables: []` there persists none of them, and
-    /// `Snippet`'s initializer defaults that argument, so even DROPPING the
-    /// argument compiles.
+    /// `SnippetsSheet`'s `draftSnippet` must hand the edited declarations
+    /// to `Snippet`. Passing `variables: []` there persists none of them,
+    /// and `Snippet`'s initializer defaults that argument, so even DROPPING
+    /// the argument compiles.
+    ///
+    /// The anchor moved from `save()` to `draftSnippet` when the editor's
+    /// "Test" button arrived: both read the same construction now, which is
+    /// what keeps a rehearsal from describing a different snippet than the
+    /// one Save writes. The second check below is why the move is not a
+    /// weakening — `save()` must still be the thing that stores it.
     @Test func theSnippetEditorSavesTheEditedDeclarations() throws {
         let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
         let lines = source.components(separatedBy: "\n")
-        guard let range = Self.range(ofBlockStartingWith: "private func save() {", in: lines)
+        guard let range = Self.range(
+            ofBlockStartingWith: "private var draftSnippet: Snippet {", in: lines)
+        else {
+            Issue.record(
+                "`private var draftSnippet: Snippet` not found in SnippetsSheet — re-anchor this guard")
+            return
+        }
+        #expect(Self.savesTheEditedVariables(in: lines, range: range), """
+            `draftSnippet` no longer passes `variables: variables` to `Snippet` — the \
+            declarations the user just authored would never be persisted, and nothing else in \
+            the suite would notice.
+            """)
+        guard let saveRange = Self.range(ofBlockStartingWith: "private func save() {", in: lines)
         else {
             Issue.record("`private func save()` not found in SnippetsSheet — re-anchor this guard")
             return
         }
-        #expect(Self.savesTheEditedVariables(in: lines, range: range), """
-            `save()` no longer passes `variables: variables` to `Snippet` — the declarations \
-            the user just authored would never be persisted, and nothing else in the suite \
-            would notice.
+        #expect(Self.savesTheDraft(in: lines, range: saveRange), """
+            `save()` no longer stores `draftSnippet` — it would be writing something other than \
+            the snippet the editor's "Test" button rehearses.
             """)
     }
 
@@ -325,32 +344,32 @@ struct SnippetVariablePromptWiringGuardTests {
     @Test func scannerFlagsASaveThatPersistsNoDeclarations() {
         let source = """
             struct Fake {
-                private func save() {
-                    let snippet = Snippet(
-                        id: existing?.id ?? UUID(), name: trimmedName, command: command,
+                private var draftSnippet: Snippet {
+                    Snippet(
+                        id: draftID, name: trimmedName, command: command,
                         tags: tags, variables: [])
-                    try store.save(snippet)
                 }
             }
             """
         let lines = source.components(separatedBy: "\n")
-        let range = Self.range(ofBlockStartingWith: "private func save() {", in: lines)!
+        let range = Self.range(
+            ofBlockStartingWith: "private var draftSnippet: Snippet {", in: lines)!
         #expect(!Self.savesTheEditedVariables(in: lines, range: range))
     }
 
     @Test func scannerAcceptsASaveThatPersistsTheEditedDeclarations() {
         let source = """
             struct Fake {
-                private func save() {
-                    let snippet = Snippet(
-                        id: existing?.id ?? UUID(), name: trimmedName, command: command,
+                private var draftSnippet: Snippet {
+                    Snippet(
+                        id: draftID, name: trimmedName, command: command,
                         tags: tags, variables: variables)
-                    try store.save(snippet)
                 }
             }
             """
         let lines = source.components(separatedBy: "\n")
-        let range = Self.range(ofBlockStartingWith: "private func save() {", in: lines)!
+        let range = Self.range(
+            ofBlockStartingWith: "private var draftSnippet: Snippet {", in: lines)!
         #expect(Self.savesTheEditedVariables(in: lines, range: range))
     }
 
@@ -418,7 +437,9 @@ struct SnippetVariablePromptWiringGuardTests {
                     guard snippet.variables.isEmpty else {
                         if let problem = SnippetVariableSubstitution.firstDeclarationProblem(
                             command: snippet.command, variables: snippet.variables) {
-                            pendingSnippetVariableRefusal = snippetVariableProblemText(for: problem)
+                            pendingSnippetDryRun = PendingSnippetDryRun(
+                                snippet: snippet, execute: execute, values: [:],
+                                dryRun: dryRun)
                         }
                         pendingSnippetVariablePrompt = PendingSnippetVariablePrompt(
                             snippet: snippet, execute: execute, initialValues: [:])
@@ -446,7 +467,9 @@ struct SnippetVariablePromptWiringGuardTests {
                             snippet: snippet, execute: execute, initialValues: [:])
                         if let problem = SnippetVariableSubstitution.firstDeclarationProblem(
                             command: snippet.command, variables: snippet.variables) {
-                            pendingSnippetVariableRefusal = snippetVariableProblemText(for: problem)
+                            pendingSnippetDryRun = PendingSnippetDryRun(
+                                snippet: snippet, execute: execute, values: [:],
+                                dryRun: dryRun)
                             return
                         }
                         return
@@ -468,9 +491,11 @@ struct SnippetVariablePromptWiringGuardTests {
             struct Fake {
                 func triggerSnippet(_ snippet: Snippet, execute: Bool) {
                     guard snippet.variables.isEmpty else {
-                        if let problem = SnippetVariableSubstitution.firstDeclarationProblem(
-                            command: snippet.command, variables: snippet.variables) {
-                            pendingSnippetVariableRefusal = snippetVariableProblemText(for: problem)
+                        if SnippetVariableSubstitution.firstDeclarationProblem(
+                            command: snippet.command, variables: snippet.variables) != nil {
+                            pendingSnippetDryRun = PendingSnippetDryRun(
+                                snippet: snippet, execute: execute, values: [:],
+                                dryRun: dryRun)
                             return
                         }
                         pendingSnippetVariablePrompt = PendingSnippetVariablePrompt(
@@ -554,11 +579,18 @@ struct SnippetVariablePromptWiringGuardTests {
         range.contains { lines[$0].contains("value(snippetID:") }
     }
 
-    /// Whether `save()` still hands the edited declarations to `Snippet`.
+    /// Whether the draft construction still hands the edited declarations
+    /// to `Snippet`.
     private static func savesTheEditedVariables(
         in lines: [String], range: ClosedRange<Int>
     ) -> Bool {
         range.contains { lines[$0].contains("variables: variables") }
+    }
+
+    /// Whether `save()` still writes the SAME draft the "Test" button
+    /// rehearses, rather than a construction of its own.
+    private static func savesTheDraft(in lines: [String], range: ClosedRange<Int>) -> Bool {
+        range.contains { lines[$0].contains("store.save(draftSnippet)") }
     }
     /// Whether the run path still refuses before it asks: the declaration
     /// check is called, its refusal is raised, the method returns on it, and
@@ -572,7 +604,7 @@ struct SnippetVariablePromptWiringGuardTests {
             lines[$0].contains("SnippetVariableSubstitution.firstDeclarationProblem(")
         }),
         let refusalLine = range.first(where: {
-            lines[$0].contains("pendingSnippetVariableRefusal =")
+            lines[$0].contains("pendingSnippetDryRun =")
         }),
         let promptLine = range.first(where: {
             lines[$0].contains("pendingSnippetVariablePrompt =")

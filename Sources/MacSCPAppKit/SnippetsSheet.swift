@@ -25,6 +25,16 @@ import macSCPCore
 /// yet." — in `SnippetsPresentationTests`.
 struct SnippetsSheet: View {
     let store: SnippetStore
+    /// What was remembered for one declaration of one snippet, or `nil`.
+    ///
+    /// A READ, and the editor's whole access to the remembered values: the
+    /// "Test" button (Snippet-Probelauf, Task 4) opens the same prompt the
+    /// trigger path opens, seeded the same way, and a closure that returns
+    /// a value has no way to store one — so a rehearsal cannot pre-fill the
+    /// next real run. `SnippetDryRunEntranceGuardTests
+    /// .theEditorsRehearsalRemembersNothing` holds the other half of that:
+    /// nothing in this file reaches `remember`.
+    let rememberedValue: (Snippet.ID, String) -> String?
 
     @Environment(\.dismiss) private var dismiss
 
@@ -223,7 +233,7 @@ struct SnippetsSheet: View {
         .sheet(item: $editorTarget) { target in
             SnippetEditorView(
                 existing: target.existing, allSnippets: snippets, store: store,
-                onSaved: { reload() })
+                rememberedValue: rememberedValue, onSaved: { reload() })
         }
         .confirmationDialog(
             L10n.string("snippets.delete.title", "Delete this snippet?"),
@@ -566,6 +576,9 @@ private struct SnippetEditorView: View {
     /// (e.g. if the file changed between the two reads).
     let allSnippets: [Snippet]
     let store: SnippetStore
+    /// Passed straight down from `SnippetsSheet` — see its own doc comment
+    /// for why the editor holds a read and nothing else.
+    let rememberedValue: (Snippet.ID, String) -> String?
     let onSaved: () -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -582,14 +595,43 @@ private struct SnippetEditorView: View {
     @State private var skipsPlacementCheck: Bool
     @State private var errorMessage: String?
 
+    /// One dry run of the draft, waiting to be shown. Non-nil only between
+    /// the "Test" button (or the value prompt it opens) and the dry-run
+    /// sheet's own dismissal.
+    @State private var pendingTestRun: PendingTestRun?
+    /// The values prompt for a test run — `SnippetVariablePromptSheet`, the
+    /// same one the trigger path opens.
+    @State private var pendingTestValues: PendingTestValues?
+
+    /// The id the draft is saved under: `existing`'s, or one made once when
+    /// this editor opened. Fixed at init rather than computed, because both
+    /// `draftSnippet` readers would otherwise get a different new snippet
+    /// each time they looked.
+    private let draftID: UUID
+
+    private struct PendingTestValues: Identifiable {
+        let id = UUID()
+        let snippet: Snippet
+        let initialValues: [String: String]
+    }
+
+    private struct PendingTestRun: Identifiable {
+        let id = UUID()
+        let snippetName: String
+        let dryRun: SnippetDryRun
+    }
+
     init(
         existing: Snippet?, allSnippets: [Snippet], store: SnippetStore,
+        rememberedValue: @escaping (Snippet.ID, String) -> String?,
         onSaved: @escaping () -> Void
     ) {
         self.existing = existing
         self.allSnippets = allSnippets
         self.store = store
+        self.rememberedValue = rememberedValue
         self.onSaved = onSaved
+        self.draftID = existing?.id ?? UUID()
         _name = State(initialValue: existing?.name ?? "")
         _command = State(initialValue: existing?.command ?? "")
         _tags = State(initialValue: existing?.tags ?? [])
@@ -777,6 +819,16 @@ private struct SnippetEditorView: View {
             }
 
             HStack {
+                // Absent rather than disabled while there is no command to
+                // rehearse: a greyed-out control asks the reader to work
+                // out why, and the empty Command field above already says
+                // it. Not tied to `isSaveDisabled` either — a draft whose
+                // declarations are refused is exactly the one worth
+                // testing, and its dry run is what explains the refusal.
+                if !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button(L10n.string("snippets.editor.test", "Test")) { startTestRun() }
+                        .buttonStyle(.polished)
+                }
                 Spacer()
                 Button(L10n.string("common.cancel", "Cancel")) { dismiss() }
                     .buttonStyle(.polished)
@@ -789,6 +841,28 @@ private struct SnippetEditorView: View {
         .padding(20)
         .frame(width: 460)
         .textFieldStyle(.roundedBorder)
+        // The values for a test run, asked with the trigger path's own
+        // prompt. Confirming reaches `testRun` and NOTHING else: no
+        // `rememberOptedInValues`, no store, no send — see this view's
+        // `rememberedValue` for why that is structural rather than a rule
+        // somebody has to keep.
+        .sheet(item: $pendingTestValues) { prompt in
+            SnippetVariablePromptSheet(
+                snippet: prompt.snippet, initialValues: prompt.initialValues,
+                onConfirm: { values in
+                    pendingTestValues = nil
+                    pendingTestRun = testRun(of: prompt.snippet, values: values)
+                },
+                onCancel: { pendingTestValues = nil }
+            )
+        }
+        // No "Send anyway" here: there is no shell attached to an editor,
+        // so the button is not drawn at all rather than drawn and disabled.
+        .sheet(item: $pendingTestRun) { run in
+            SnippetDryRunSheet(
+                snippetName: run.snippetName, dryRun: run.dryRun, onSendAnyway: nil,
+                onClose: { pendingTestRun = nil })
+        }
     }
 
     /// Built from `allSnippets`/`tags` on every call rather than cached —
@@ -799,14 +873,55 @@ private struct SnippetEditorView: View {
         SnippetTagSuggestions.matching(query, in: allSnippets, excluding: tags)
     }
 
-    private func save() {
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let snippet = Snippet(
-            id: existing?.id ?? UUID(), name: trimmedName, command: command,
-            tags: tags, variables: variables,
+    /// The snippet as the fields currently stand: what Save would write,
+    /// and what the "Test" button rehearses.
+    ///
+    /// One construction for both. A rehearsal built from its own reading of
+    /// the fields could differ from the snippet that gets saved — most
+    /// easily in `skipsPlaceholderPlacementCheck`, where the difference is
+    /// exactly whether the dry run is refused.
+    private var draftSnippet: Snippet {
+        Snippet(
+            id: draftID, name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            command: command, tags: tags, variables: variables,
             skipsPlaceholderPlacementCheck: skipsPlacementCheck)
+    }
+
+    /// Shows what the draft would send, and sends nothing.
+    ///
+    /// A draft with declarations goes through `SnippetVariablePromptSheet`
+    /// first — the SAME prompt the trigger path opens, seeded from the same
+    /// remembered values (`snippetVariablePromptValues`). A second prompt
+    /// shape would be a second truth about what a value is.
+    ///
+    /// `execute: true` and `bracketedPaste: false` are not guesses about a
+    /// remote: this editor is not attached to one. An execution is the form
+    /// the planner never refuses, so the rehearsal describes what the
+    /// snippet IS rather than reporting a refusal that belongs to a
+    /// connection nobody has opened yet.
+    private func startTestRun() {
+        let snippet = draftSnippet
+        guard snippet.variables.isEmpty else {
+            pendingTestValues = PendingTestValues(
+                snippet: snippet,
+                initialValues: snippetVariablePromptValues(for: snippet) {
+                    rememberedValue(snippet.id, $0)
+                })
+            return
+        }
+        pendingTestRun = testRun(of: snippet, values: [:])
+    }
+
+    private func testRun(of snippet: Snippet, values: [String: String]) -> PendingTestRun {
+        PendingTestRun(
+            snippetName: snippet.name,
+            dryRun: SnippetDryRun.describing(
+                snippet, values: values, execute: true, bracketedPaste: false))
+    }
+
+    private func save() {
         do {
-            try store.save(snippet)
+            try store.save(draftSnippet)
             onSaved()
             dismiss()
         } catch {

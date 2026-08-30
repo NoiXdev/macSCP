@@ -922,6 +922,16 @@
 "snippets.variables.promptTitle %@" = "Werte für „%@“";
 "snippets.variables.promptRun" = "Ausführen";
 "snippets.variables.promptNoOptions" = "Für diese Variable sind keine Optionen hinterlegt.";
+"snippets.editor.test" = "Testen";
+"snippets.dryRun.title %@" = "Probelauf von „%@“";
+"snippets.dryRun.command" = "Ginge so an die Shell";
+"snippets.dryRun.form.singleLine" = "Geht als eine einzelne Zeile raus.";
+"snippets.dryRun.form.bracketedInsert" = "Wird am Stück eingefügt: Die Gegenseite nimmt alle Zeilen an, ohne eine davon auszuführen.";
+"snippets.dryRun.form.lineByLine" = "Geht Zeile für Zeile raus; jede Zeile läuft, sobald sie ankommt.";
+"snippets.dryRun.form.refused" = "Es würde nichts gesendet.";
+"snippets.dryRun.refusal.multilineInsert" = "Die Gegenseite kann diese Zeilen nicht am Stück annehmen; beim Einfügen würde jede Zeile außer der letzten sofort ausgeführt.";
+"snippets.dryRun.sendAnyway" = "Trotzdem senden";
+"snippets.dryRun.rehearsalNote" = "Es wird nichts gesendet und nichts gemerkt: Was du hier für einen Test eingibst, belegt den nächsten echten Lauf nicht vor.";
 "snippets.load.error" = "Die Snippet-Datei konnte nicht gelesen werden. Sie ist vorhanden, lässt sich aber nicht decodieren — es ging kein Snippet verloren, und es wird nichts darüber geschrieben.";
 "snippets.tags.label" = "Tags";
 "snippets.tags.placeholder" = "Tag hinzufügen…";

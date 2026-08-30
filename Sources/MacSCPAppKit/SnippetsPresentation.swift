@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import macSCPCore
 
 /// The outcome of reading `snippets.json`, in the two shapes the UI has to
@@ -197,10 +198,11 @@ func snippetImportErrorText(for error: SessionExportError) -> String {
 /// reads.
 ///
 /// One mapping for two surfaces: the editor shows it under the variables
-/// section while Save is disabled, and `ContentView` shows it in the alert
-/// that refuses to run a snippet whose declarations never passed an editor
-/// — an imported one. Two switches over the same enum would drift, and the
-/// half that drifted would be the one nobody looks at.
+/// section while Save is disabled, and `snippetDryRunRefusalText` shows it
+/// in the dry run that refuses to run a snippet whose declarations never
+/// passed an editor — an imported one. Two switches over the same enum
+/// would drift, and the half that drifted would be the one nobody looks
+/// at.
 ///
 /// Names are interpolated, values are NOT: a `Problem` never carries one,
 /// and this project's rule keeps a typed value out of every message.
@@ -267,4 +269,111 @@ func snippetVariableProblemText(for problem: SnippetVariableSubstitution.Problem
             "snippets.variables.error.unrecognizedSyntax",
             "macSCP can't read this command far enough to tell where a value would end up. It places values only into plain, unquoted arguments and refuses whatever it can't survey.")
     }
+}
+
+// MARK: - The dry run, as one description for both entrances
+
+/// Which colour one highlighter token gets. Core supplies none — see
+/// `SnippetToken`'s own doc comment — so this is where a kind becomes a
+/// design token.
+///
+/// The one map. `SnippetCommandEditor` colours an `NSTextView` while the
+/// user types and the dry-run sheet colours a SwiftUI `Text`; both read
+/// this, the editor bridging each answer through `NSColor(_:)`. Four of the
+/// seven kinds already went through that bridge before this function
+/// existed (`NSColor(DesignTokens.remoteBlue)` and its three siblings), and
+/// the other three name tokens whose `Color` is itself built from the
+/// `NSColor` the editor used (`DesignTokens.ink` is `Color(nsColor:
+/// inkNS)`), so nothing here asks the bridge for something it was not
+/// already doing.
+func snippetTokenColour(for kind: SnippetToken.Kind) -> Color {
+    switch kind {
+    case .command: return DesignTokens.remoteBlue
+    case .option: return DesignTokens.agentGreen
+    case .string: return DesignTokens.localAmber
+    // Its own hue: `.command` and `.variable` shared `remoteBlue` until a
+    // whole-branch review separated them.
+    case .variable: return DesignTokens.s3Violet
+    case .comment: return DesignTokens.inkTertiary
+    case .operator: return DesignTokens.inkSecondary
+    case .plain: return DesignTokens.ink
+    }
+}
+
+/// How the resolved command would reach the shell, as the sentence under
+/// the command in the dry-run sheet.
+///
+/// Reads `SnippetDryRun.SendForm` and nothing else: the four words are the
+/// value's, not this function's, so a surface cannot decide that a
+/// bracketed insert "is basically a single line".
+func snippetSendFormText(for form: SnippetDryRun.SendForm) -> String {
+    switch form {
+    case .singleLine:
+        return L10n.string("snippets.dryRun.form.singleLine", "Goes out as a single line.")
+    case .bracketedInsert:
+        return L10n.string(
+            "snippets.dryRun.form.bracketedInsert",
+            "Inserted in one piece: the remote shell takes every line without running any of them.")
+    case .lineByLine:
+        return L10n.string(
+            "snippets.dryRun.form.lineByLine", "Goes out line by line; each line runs as it arrives.")
+    case .refused:
+        return L10n.string("snippets.dryRun.form.refused", "Nothing would be sent.")
+    }
+}
+
+/// The heading and the reason for a refused dry run, or `nil` when nothing
+/// was refused.
+///
+/// The declaration arm hands straight to `snippetVariableProblemText` — the
+/// project's one mapping from that enum to a sentence — rather than
+/// wording the same verdict a second time.
+///
+/// The multi-line arm is not reachable from either entrance today: the
+/// trigger path opens a dry run only on a declaration refusal, and the
+/// editor's rehearsal describes an execution, which the planner never
+/// refuses. It is written as a statement rather than borrowing the alert's
+/// "Execute it instead?" body, because a dry run asks nothing.
+func snippetDryRunRefusalText(
+    for form: SnippetDryRun.SendForm
+) -> (title: String, reason: String)? {
+    guard case .refused(let refusal) = form else { return nil }
+    switch refusal {
+    case .declarationProblem(let problem):
+        return (
+            L10n.string(
+                "snippets.variables.refused.title", "This snippet's values can't be filled in"),
+            snippetVariableProblemText(for: problem)
+        )
+    case .multilineInsert:
+        return (
+            L10n.string(
+                "snippets.insert.multilineRefused.title", "This snippet has several lines"),
+            L10n.string(
+                "snippets.dryRun.refusal.multilineInsert",
+                "The remote shell cannot take these lines in one piece, so inserting them would run every line but the last.")
+        )
+    }
+}
+
+/// The values a snippet-variable prompt opens with: what was remembered for
+/// a declaration, else its `defaultValue`.
+///
+/// One function for both prompts. The trigger path opens the prompt to run
+/// a snippet and the editor's "Test" button opens the same prompt to
+/// rehearse one; computing the starting values twice would be two answers
+/// to "what is this value right now", and the one that drifted would be the
+/// rehearsal — the half nobody checks against a real run.
+///
+/// `remembered` is a READ, and that is the whole of the editor's access to
+/// what was remembered: a closure that returns a value can never store one,
+/// so the rehearsal cannot pre-fill the next real run even by mistake.
+func snippetVariablePromptValues(
+    for snippet: Snippet, remembered: (_ name: String) -> String?
+) -> [String: String] {
+    var values: [String: String] = [:]
+    for variable in snippet.variables {
+        values[variable.name] = remembered(variable.name) ?? variable.defaultValue
+    }
+    return values
 }

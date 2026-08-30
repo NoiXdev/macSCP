@@ -925,6 +925,16 @@
 "snippets.variables.promptTitle %@" = "Valeurs pour « %@ »";
 "snippets.variables.promptRun" = "Exécuter";
 "snippets.variables.promptNoOptions" = "Aucune option n’est configurée pour cette variable.";
+"snippets.editor.test" = "Tester";
+"snippets.dryRun.title %@" = "Essai de « %@ »";
+"snippets.dryRun.command" = "Serait envoyé au shell";
+"snippets.dryRun.form.singleLine" = "Part sur une seule ligne.";
+"snippets.dryRun.form.bracketedInsert" = "Inséré d’un seul tenant : le shell distant reçoit toutes les lignes sans en exécuter aucune.";
+"snippets.dryRun.form.lineByLine" = "Part ligne par ligne ; chaque ligne s’exécute dès son arrivée.";
+"snippets.dryRun.form.refused" = "Rien ne serait envoyé.";
+"snippets.dryRun.refusal.multilineInsert" = "Le shell distant ne peut pas recevoir ces lignes d’un seul tenant : les insérer exécuterait toutes les lignes sauf la dernière.";
+"snippets.dryRun.sendAnyway" = "Envoyer quand même";
+"snippets.dryRun.rehearsalNote" = "Rien n’est envoyé et rien n’est mémorisé : ce que vous saisissez pour un essai ne préremplit pas la prochaine exécution réelle.";
 "snippets.load.error" = "Le fichier de snippets n’a pas pu être lu. Il existe mais ne peut pas être décodé — aucun snippet n’a été perdu et rien ne sera écrit par-dessus.";
 "snippets.tags.label" = "Tags";
 "snippets.tags.placeholder" = "Ajouter un tag…";

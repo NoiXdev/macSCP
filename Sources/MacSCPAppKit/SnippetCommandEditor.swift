@@ -233,22 +233,21 @@ struct SnippetCommandEditor: NSViewRepresentable {
             textView.setSelectedRange(selected)
         }
 
-        /// The one place kinds become colours. Core supplies neither.
+        /// The `NSColor` side of the one kind-to-colour map, which lives in
+        /// `snippetTokenColour` (Snippet-Probelauf, Task 4) because the
+        /// dry-run sheet paints the same kinds in SwiftUI. Keeping a second
+        /// switch here would be two answers to "what colour is a
+        /// variable", and the review that gave `.variable` its own hue
+        /// would have had to be made twice.
+        ///
+        /// Four of the seven kinds already went through `NSColor(_:)`
+        /// before the map moved (`NSColor(DesignTokens.remoteBlue)` and its
+        /// three siblings); the other three named `inkNS`, `inkSecondaryNS`
+        /// and `inkTertiaryNS`, and the `Color` the map returns for them is
+        /// `Color(nsColor:)` of exactly those, so the bridge is asked for
+        /// nothing new.
         private static func colour(for kind: SnippetToken.Kind) -> NSColor {
-            switch kind {
-            case .command: return NSColor(DesignTokens.remoteBlue)
-            case .option: return NSColor(DesignTokens.agentGreen)
-            case .string: return NSColor(DesignTokens.localAmber)
-            // Its own hue (whole-branch review, finding 7): `.command` and
-            // `.variable` used to share `remoteBlue`, the only collision
-            // among the declared kinds. `s3Violet` is an existing design
-            // token (M15's S3 login-set badge), not a new hex value invented
-            // for this file.
-            case .variable: return NSColor(DesignTokens.s3Violet)
-            case .comment: return DesignTokens.inkTertiaryNS
-            case .operator: return DesignTokens.inkSecondaryNS
-            case .plain: return DesignTokens.inkNS
-            }
+            NSColor(snippetTokenColour(for: kind))
         }
     }
 }

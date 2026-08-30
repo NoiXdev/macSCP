@@ -460,14 +460,21 @@ struct SnippetCommandEditorGuardTests {
             """)
     }
 
-    @Test("save writes the waiver onto the snippet")
-    func saveWritesTheWaiver() throws {
+    /// The anchor is `draftSnippet` rather than `save()`: the editor's
+    /// "Test" button (Snippet-Probelauf, Task 4) rehearses the same draft
+    /// Save writes, so the `Snippet(...)` construction moved out of `save()`
+    /// into one property both read. That move is exactly why the waiver has
+    /// to be checked here — a rehearsal built without it would be refused
+    /// where the saved snippet is not, or the other way round.
+    @Test("the draft the editor saves and tests carries the waiver")
+    func theDraftCarriesTheWaiver() throws {
         let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
-        let body = try Self.functionBody(containing: "private func save() {", in: source)
+        let body = try Self.functionBody(
+            containing: "private var draftSnippet: Snippet {", in: source)
         #expect(body.contains("skipsPlaceholderPlacementCheck: skipsPlacementCheck"), """
-            save() must hand skipsPlacementCheck to Snippet's initializer -- the field \
+            draftSnippet must hand skipsPlacementCheck to Snippet's initializer -- the field \
             defaults to false there, so a forgotten argument compiles and silently discards \
-            the setting on every save. Scanned body: \(body)
+            the setting on every save AND on every test run. Scanned body: \(body)
             """)
     }
 
@@ -490,11 +497,10 @@ struct SnippetCommandEditorGuardTests {
                     command: command, variables: variables) else { return nil }
                 return snippetVariableProblemText(for: problem)
             }
-            private func save() {
-                let snippet = Snippet(
-                    id: existing?.id ?? UUID(), name: name, command: command,
+            private var draftSnippet: Snippet {
+                Snippet(
+                    id: draftID, name: name, command: command,
                     tags: tags, variables: variables)
-                try? store.save(snippet)
             }
             """
         let section = try Self.functionBody(
@@ -506,8 +512,9 @@ struct SnippetCommandEditorGuardTests {
             containing: "private var variablesError: String? {", in: withoutWaiver)
         #expect(!error.contains("skipsPlacementCheck: skipsPlacementCheck"))
 
-        let save = try Self.functionBody(containing: "private func save() {", in: withoutWaiver)
-        #expect(!save.contains("skipsPlaceholderPlacementCheck: skipsPlacementCheck"))
+        let draft = try Self.functionBody(
+            containing: "private var draftSnippet: Snippet {", in: withoutWaiver)
+        #expect(!draft.contains("skipsPlaceholderPlacementCheck: skipsPlacementCheck"))
     }
 
     // MARK: - Scanner (shared)

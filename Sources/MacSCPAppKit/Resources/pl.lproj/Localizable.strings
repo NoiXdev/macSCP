@@ -924,6 +924,16 @@
 "snippets.variables.promptTitle %@" = "Wartości dla „%@”";
 "snippets.variables.promptRun" = "Wykonaj";
 "snippets.variables.promptNoOptions" = "Dla tej zmiennej nie skonfigurowano żadnych opcji.";
+"snippets.editor.test" = "Testuj";
+"snippets.dryRun.title %@" = "Próba „%@”";
+"snippets.dryRun.command" = "Trafiłoby do powłoki";
+"snippets.dryRun.form.singleLine" = "Wychodzi jako jeden wiersz.";
+"snippets.dryRun.form.bracketedInsert" = "Wstawiane w całości: zdalna powłoka przyjmuje wszystkie wiersze, nie wykonując żadnego.";
+"snippets.dryRun.form.lineByLine" = "Wychodzi wiersz po wierszu; każdy wykonuje się zaraz po dotarciu.";
+"snippets.dryRun.form.refused" = "Nic nie zostałoby wysłane.";
+"snippets.dryRun.refusal.multilineInsert" = "Zdalna powłoka nie przyjmie tych wierszy w całości: ich wstawienie wykonałoby każdy wiersz oprócz ostatniego.";
+"snippets.dryRun.sendAnyway" = "Wyślij mimo to";
+"snippets.dryRun.rehearsalNote" = "Nic nie jest wysyłane i nic nie jest zapamiętywane: to, co wpiszesz na potrzeby testu, nie wypełni wstępnie następnego prawdziwego uruchomienia.";
 "snippets.load.error" = "Nie udało się odczytać pliku fragmentów. Plik istnieje, ale nie da się go zdekodować — żaden fragment nie został utracony i nic nie zostanie nadpisane.";
 "snippets.tags.label" = "Tagi";
 "snippets.tags.placeholder" = "Dodaj tag…";

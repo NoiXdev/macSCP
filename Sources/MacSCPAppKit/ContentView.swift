@@ -372,15 +372,40 @@ struct ContentView: View {
 
     @State var pendingSnippetVariablePrompt: PendingSnippetVariablePrompt?
 
-    /// The sentence explaining why a snippet's declared values cannot be
-    /// filled in, shown as an alert instead of the prompt. Non-nil only
-    /// between `triggerSnippet` finding a `SnippetVariableSubstitution
-    /// .Problem` and the alert's dismissal. Carries the finished message
-    /// rather than the `Problem`, so nothing downstream has to switch over
-    /// that enum a second time (`snippetVariableProblemText` is the one
-    /// mapping) — and it never carries a value the user typed, because a
-    /// `Problem` never holds one.
-    @State var pendingSnippetVariableRefusal: String?
+    /// One refused snippet, shown as a dry run instead of the prompt
+    /// (Snippet-Probelauf, Task 4) — drives `SnippetDryRunSheet` below.
+    /// Non-nil only between `triggerSnippet` finding a
+    /// `SnippetVariableSubstitution.Problem` and the sheet's own "Send
+    /// anyway"/"Close" action.
+    ///
+    /// Carries the `SnippetDryRun`, not a finished sentence. The sheet
+    /// shows four things — the resolved command, the send form, the reason
+    /// and the colouring — and only the reason is a sentence;
+    /// `snippetDryRunRefusalText` is still the one mapping that produces
+    /// it, so nothing downstream switches over
+    /// `SnippetVariableSubstitution.Problem` a second time. `values` and
+    /// `execute` ride along because "Send anyway" has to send exactly what
+    /// was shown, not a second reading of the same snippet.
+    ///
+    /// This is the one piece of snippet state that holds a substituted
+    /// value at all (inside `dryRun.resolvedCommand`). It reaches the
+    /// screen and nothing else: the audit line and the export both read
+    /// `snippet.command`, the template.
+    struct PendingSnippetDryRun: Identifiable {
+        let id = UUID()
+        let snippet: Snippet
+        /// The caller's original Insert/Execute choice, carried through
+        /// unchanged for the same reason `PendingSnippetVariablePrompt`
+        /// carries it.
+        let execute: Bool
+        /// The values the dry run was described with — the remembered ones,
+        /// or each declaration's default. Nothing new was typed to get
+        /// here: the refusal happens before the prompt would open.
+        let values: [String: String]
+        let dryRun: SnippetDryRun
+    }
+
+    @State var pendingSnippetDryRun: PendingSnippetDryRun?
 
     // MARK: - Session export/import (M9a/T3)
 
@@ -813,26 +838,40 @@ struct ContentView: View {
                     onCancel: { pendingSnippetVariablePrompt = nil }
                 )
             }
-            // Declared values refused: the snippet's declarations do not
-            // hold up, so the prompt never opens and nothing is sent. The
-            // message says what was found -- see
-            // `snippetVariableProblemText`; there is no "run it anyway"
-            // button, because the whole point is that macSCP cannot tell
-            // where the value would end up.
-            .alert(
-                L10n.string(
-                    "snippets.variables.refused.title",
-                    "This snippet's values can't be filled in"),
-                isPresented: Binding(
-                    get: { pendingSnippetVariableRefusal != nil },
-                    set: { if !$0 { pendingSnippetVariableRefusal = nil } }),
-                presenting: pendingSnippetVariableRefusal
-            ) { _ in
-                Button(L10n.string("common.ok", "OK")) {
-                    pendingSnippetVariableRefusal = nil
-                }
-            } message: { message in
-                Text(message)
+            // Declared values refused (Snippet-Probelauf, Task 4): the
+            // snippet's declarations do not hold up, so the prompt never
+            // opens and nothing is sent by itself. Instead of an alert
+            // carrying only the reason, the dry run shows what WOULD go to
+            // the shell -- and under it a "Send anyway", because macSCP
+            // cannot tell where the value would end up but the person
+            // reading the resolved command can. That is the whole trade:
+            // the way past the refusal is opened by reading it, not by
+            // clicking through it.
+            //
+            // Shown on a refusal and on nothing else. Triggering a snippet
+            // whose declarations hold up is unchanged -- no dry run, no
+            // extra step. A confirmation everybody clicks through is worth
+            // nothing on the one occasion it matters.
+            .sheet(item: $pendingSnippetDryRun) { pending in
+                SnippetDryRunSheet(
+                    snippetName: pending.snippet.name,
+                    dryRun: pending.dryRun,
+                    // Sends the dry run that was SHOWN, not a second
+                    // description of the same snippet: `sendSnippet` takes
+                    // the value rather than the three inputs it was built
+                    // from, so the bytes that go out are the ones the
+                    // reader just read. Describing again would re-read the
+                    // remote's bracketed-paste mode, and a send form that
+                    // changed between the sheet opening and this button
+                    // being pressed is exactly the surprise a dry run
+                    // exists to remove.
+                    onSendAnyway: {
+                        pendingSnippetDryRun = nil
+                        sendSnippet(
+                            pending.dryRun, of: pending.snippet, execute: pending.execute)
+                    },
+                    onClose: { pendingSnippetDryRun = nil }
+                )
             }
     }
 
@@ -892,8 +931,12 @@ struct ContentView: View {
     /// A snippet with declared variables (Snippet-Variablen, Task 6) is
     /// intercepted BEFORE any of the above: it is first run through
     /// `SnippetVariableSubstitution.firstDeclarationProblem`, and a problem
-    /// there raises `pendingSnippetVariableRefusal` and stops -- no prompt,
-    /// no bytes. Otherwise, instead of opening the panel
+    /// there raises `pendingSnippetDryRun` and stops -- no prompt, no
+    /// bytes. That dry run offers "Send anyway" (Snippet-Probelauf, Task
+    /// 4), so the refusal is a thing to read past rather than a wall; a
+    /// snippet whose declarations DO hold up never sees it, because a
+    /// confirmation step everybody clicks through is worth nothing on the
+    /// one occasion it matters. Otherwise, instead of opening the panel
     /// and sending anything, `pendingSnippetVariablePrompt` is set and this
     /// method returns. `SnippetVariablePromptSheet`'s own "Run" action
     /// (wired in `body` below) is what eventually calls `runSnippet` with
@@ -927,17 +970,24 @@ struct ContentView: View {
             // waiver cannot arrive from a file (`ExportedSnippet` does not
             // name it), so it is only ever set by somebody who ticked the
             // box in this app.
-            if let problem = SnippetVariableSubstitution.firstDeclarationProblem(
-                command: snippet.command, variables: snippet.variables,
-                skipsPlacementCheck: snippet.skipsPlaceholderPlacementCheck) {
-                pendingSnippetVariableRefusal = snippetVariableProblemText(for: problem)
-                return
-            }
             let store = snippetVariableMemoryStore
-            var initialValues: [String: String] = [:]
-            for variable in snippet.variables {
-                initialValues[variable.name] =
-                    store?.value(snippetID: snippet.id, name: variable.name) ?? variable.defaultValue
+            let initialValues = snippetVariablePromptValues(for: snippet) {
+                store?.value(snippetID: snippet.id, name: $0)
+            }
+            if SnippetVariableSubstitution.firstDeclarationProblem(
+                command: snippet.command, variables: snippet.variables,
+                skipsPlacementCheck: snippet.skipsPlaceholderPlacementCheck) != nil {
+                // The refusal opens the dry run, and the dry run is the
+                // only thing that opens here: `describing` asks the same
+                // function again, with the same arguments, so the reason
+                // shown is the verdict this branch was taken on rather
+                // than a second opinion about it.
+                pendingSnippetDryRun = PendingSnippetDryRun(
+                    snippet: snippet, execute: execute, values: initialValues,
+                    dryRun: SnippetDryRun.describing(
+                        snippet, values: initialValues, execute: execute,
+                        bracketedPaste: bracketedPasteOnActiveTab))
+                return
             }
             pendingSnippetVariablePrompt = PendingSnippetVariablePrompt(
                 snippet: snippet, execute: execute, initialValues: initialValues)
@@ -946,15 +996,54 @@ struct ContentView: View {
         runSnippet(snippet, execute: execute, values: [:])
     }
 
-    /// The part of `triggerSnippet` from the resolved command onward —
-    /// unchanged in shape since before snippet variables existed, just
-    /// extracted so `SnippetVariablePromptSheet`'s "Run" action can reach
-    /// it too, with the confirmed `values` in hand. Reveals the panel,
-    /// resolves `snippet.command` against `values` (a no-op substitution
-    /// when `snippet.variables` is empty — see `SnippetVariableSubstitution
-    /// .resolve`'s own doc comment), and sends it exactly as `triggerSnippet`
-    /// always has.
+    /// The part of `triggerSnippet` from the values onward — extracted so
+    /// `SnippetVariablePromptSheet`'s "Run" action can reach it too, with
+    /// the confirmed `values` in hand.
+    ///
+    /// Describes the run and hands the description to `sendSnippet`. The
+    /// resolve that used to sit here is inside `SnippetDryRun.describing`
+    /// (still a no-op substitution when `snippet.variables` is empty — see
+    /// `SnippetVariableSubstitution.resolve`'s own doc comment), and so is
+    /// the send plan, which is the point: what a snippet would send is
+    /// described in one place, and the dry-run sheet's "Send anyway"
+    /// reaches `sendSnippet` with the description the reader just saw
+    /// instead of coming back through here for a second one.
     func runSnippet(_ snippet: Snippet, execute: Bool, values: [String: String]) {
+        sendSnippet(
+            SnippetDryRun.describing(
+                snippet, values: values, execute: execute,
+                bracketedPaste: bracketedPasteOnActiveTab),
+            of: snippet, execute: execute)
+    }
+
+    /// Whether the active tab's remote has announced bracketed paste.
+    /// `false` for a tab with no terminal at all, which is the same answer
+    /// a remote that never announced the mode gets — and `sendSnippet`
+    /// leaves without sending anything in that case anyway.
+    var bracketedPasteOnActiveTab: Bool {
+        activeTab.session?.terminal.remoteWantsBracketedPaste ?? false
+    }
+
+    /// Turns a described dry run into bytes on the wire — the ONE place
+    /// that does, which is what lets the dry-run sheet's "Send anyway"
+    /// send exactly what it showed instead of describing the snippet a
+    /// second time.
+    ///
+    /// `snippet` travels alongside the dry run rather than being recovered
+    /// from it, because the two things wanted here are the TEMPLATE (for
+    /// the audit line) and the resolved bytes (for the wire), and
+    /// `SnippetDryRun` deliberately carries only the second.
+    ///
+    /// Only an EXECUTION is an event: an inserted snippet still sits in the
+    /// prompt and can be edited before it runs. Recorded from `send`'s
+    /// delivery callback rather than after the call, so a shell that never
+    /// opens -- the bytes buffered and then discarded -- leaves no entry
+    /// claiming the snippet ran. `SnippetAuditDetail.text(for:)` reads
+    /// `snippet.command` — the TEMPLATE, never the dry run's resolved
+    /// command — so a typed value never reaches the audit log; see
+    /// `SnippetAuditDetailTests.variableValuesStayOutOfTheAuditLog`, and
+    /// `SnippetVariablePromptWiringGuardTests` for the call site itself.
+    func sendSnippet(_ dryRun: SnippetDryRun, of snippet: Snippet, execute: Bool) {
         guard let terminal = activeTab.session?.terminal else { return }
         if !terminal.isVisible {
             terminal.toggle()
@@ -962,21 +1051,7 @@ struct ContentView: View {
         }
         terminal.openIfNeeded()
 
-        let resolvedCommand = SnippetVariableSubstitution.resolve(
-            command: snippet.command, variables: snippet.variables, values: values)
-
-        // Only an EXECUTION is an event: an inserted snippet still sits in
-        // the prompt and can be edited before it runs. Recorded from
-        // `send`'s delivery callback rather than after the call, so a shell
-        // that never opens -- the bytes buffered and then discarded -- leaves
-        // no entry claiming the snippet ran. `SnippetAuditDetail.text(for:)`
-        // reads `snippet.command` — the TEMPLATE, never `resolvedCommand` —
-        // so a typed value never reaches the audit log; see
-        // `SnippetAuditDetailTests.variableValuesStayOutOfTheAuditLog`.
-        let plan = SnippetSendPlanner.plan(
-            command: resolvedCommand, execute: execute,
-            bracketedPaste: terminal.remoteWantsBracketedPaste)
-        guard case .send(let bytes) = plan else {
+        guard case .send(let bytes) = dryRun.plan else {
             // The remote cannot take a multi-line paste without running it,
             // and this entry promised to insert. Explain instead of sending
             // bytes that would execute -- see `SnippetSendPlan`.

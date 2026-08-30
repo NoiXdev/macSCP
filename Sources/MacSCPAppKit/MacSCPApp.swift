@@ -148,9 +148,10 @@ final class TabCommands {
     /// Carries the read OUTCOME, not just a list: a store that cannot be read
     /// must not look like an empty one in the menu (see `SnippetsLoad`).
     var snippetsLoad: SnippetsLoad = .loaded([])
-    /// Triggers one snippet in the active tab's shell — `ContentView` runs
-    /// `SnippetSendPlanner.plan(command:execute:bracketedPaste:)` and sends
-    /// the resulting bytes to that tab's `TerminalPanelViewModel`. Same
+    /// Triggers one snippet in the active tab's shell — `ContentView`
+    /// describes the run (`SnippetDryRun.describing`, which is where the
+    /// send plan is made) and sends the resulting bytes to that tab's
+    /// `TerminalPanelViewModel`. Same
     /// bridge shape and key-window guard as `toggleTerminal` above.
     /// `execute` is the trigger's own choice (Terminal-Snippets, Task 6):
     /// every snippet offers both an Insert and an Execute action, so this

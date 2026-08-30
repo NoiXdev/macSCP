@@ -921,6 +921,16 @@
 "snippets.variables.promptTitle %@" = "Values for “%@”";
 "snippets.variables.promptRun" = "Run";
 "snippets.variables.promptNoOptions" = "No options are configured for this variable.";
+"snippets.editor.test" = "Test";
+"snippets.dryRun.title %@" = "Dry run of “%@”";
+"snippets.dryRun.command" = "Would go to the shell";
+"snippets.dryRun.form.singleLine" = "Goes out as a single line.";
+"snippets.dryRun.form.bracketedInsert" = "Inserted in one piece: the remote shell takes every line without running any of them.";
+"snippets.dryRun.form.lineByLine" = "Goes out line by line; each line runs as it arrives.";
+"snippets.dryRun.form.refused" = "Nothing would be sent.";
+"snippets.dryRun.refusal.multilineInsert" = "The remote shell cannot take these lines in one piece, so inserting them would run every line but the last.";
+"snippets.dryRun.sendAnyway" = "Send anyway";
+"snippets.dryRun.rehearsalNote" = "Nothing is sent, and nothing is remembered: what you enter for a test does not pre-fill the next real run.";
 "snippets.load.error" = "The snippets file couldn't be read. It exists but can't be decoded — no snippet was lost, and nothing will be written over it.";
 "snippets.tags.label" = "Tags";
 "snippets.tags.placeholder" = "Add a tag…";

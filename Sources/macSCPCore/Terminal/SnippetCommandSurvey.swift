@@ -195,7 +195,7 @@ extension SnippetCommandSurvey {
     ///
     /// ## The shell this is about is not the shell on this machine
     ///
-    /// A resolved snippet does not run here. `ContentView.runSnippet` hands
+    /// A resolved snippet does not run here. `ContentView.sendSnippet` hands
     /// it to the terminal panel, `CitadelShell` writes it into the PTY it
     /// opened with `withPTY`, and what reads it is the LOGIN SHELL OF THE
     /// REMOTE HOST — some version of bash, or zsh, or something else again.

@@ -54,7 +54,7 @@ struct SnippetAuditDetailTests {
     /// Fix round 1: the original version of this test asserted
     /// `!text.contains("kunden")` without ever putting `"kunden"` anywhere
     /// near the input — the review proved by mutation (rewiring
-    /// `ContentView.runSnippet`'s audit call to log the resolved command
+    /// `ContentView`'s audit call to log the resolved command
     /// instead of the template, full suite still green) that the assertion
     /// could not fail on its own terms. This version actually resolves
     /// `"kunden"` into a command via `SnippetVariableSubstitution.resolve`
@@ -63,12 +63,12 @@ struct SnippetAuditDetailTests {
     /// then checks that `SnippetAuditDetail.text(for:)`, built from the
     /// UNMODIFIED `snippet` (never from `resolved`), does not.
     ///
-    /// This still cannot see `ContentView.runSnippet`'s own call site — no
+    /// This still cannot see `ContentView.sendSnippet`'s own call site — no
     /// Core-layer test can, since `SnippetAuditDetail.text(for:)` takes a
     /// `Snippet`, not a resolved string, and the wrong-argument mistake the
     /// review demonstrated lives entirely in the App layer. That half of the
     /// property is pinned separately, by
-    /// `SnippetVariablePromptWiringGuardTests.runSnippetAuditsTheTemplateNotTheResolvedCommand`
+    /// `SnippetVariablePromptWiringGuardTests.sendSnippetAuditsTheTemplateNotTheResolvedCommand`
     /// in the App-layer test target — a source-text scan of the actual call
     /// site, the shape this project already uses (`SnippetAuditWiringGuardTests`,
     /// `PaneVisibilityWiringGuardTests`) for exactly this "no functional test
