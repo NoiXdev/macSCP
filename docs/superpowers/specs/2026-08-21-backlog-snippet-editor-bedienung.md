@@ -81,3 +81,41 @@ in einen einzeiligen Befehl setzt, bekommt still das Falsche. Siehe
 und dort **zuerst der Einfüge-Weg** über das Variablen-Menü: er löst den
 größten Teil des Bedarfs, ohne eine Vervollständigung samt ihrer Sonderfälle
 zu bauen.
+
+---
+
+## Erledigt 2026-08-30 (`bbd25c8`, `60dcea9`)
+
+Entworfen in `2026-08-30-snippet-editor-bedienung-design.md`.
+
+**Punkt 1:** Variablen falten, ohne gemerkten Zustand — bestehende zu, eine
+neue offen. Die zugeklappte Zeile trägt Name, Art und Platzierung. Eine
+Variable **mit Problem lässt sich nicht zuklappen**, woraus „alle zu" von
+selbst zu „zeig mir nur die Probleme" wird.
+
+**Punkt 2:** Einfügen über die Variablenzeile, Vervollständigung bei `{{`,
+und der Hinweis auf ein undeklariertes `{{NAME}}` — der Punkt, den dieser
+Eintrag als den eigentlichen Gewinn benannt hat. Der Hinweis ist eine
+**Anzeige**, kein `Problem`-Fall: gesendet werden darf wie zuvor.
+
+Umgebungsvariablen werden von **keinem** Zugang angeboten, auch nicht als
+`$NAME`. Beide fragen dieselbe Funktion, der Ausschluss ist also strukturell.
+
+## Was dabei offen blieb — eine Entwurfsfrage, kein Fehler
+
+**`{{DB}}` für eine Variable mit Platzierung „Umgebungsvariable" ist
+weiterhin stumm.** `resolve` setzt nur `.placeholder` ein; der Text bleibt
+wörtlich stehen, **genau wie bei einer undeklarierten**. Der neue Hinweis
+meldet es bewusst nicht, weil „nicht als Variable deklariert" für einen
+deklarierten Namen falsch wäre.
+
+Es ist **ein Klick im Platzierungs-Menü** von dem Fall entfernt, den der
+Hinweis behebt — und die Wirkung ist dieselbe. Was fehlt, ist ein zweiter
+Satz für diesen Fall („deklariert, aber als Umgebungsvariable — hier wird
+nichts eingesetzt"). Das ist zu entwerfen, nicht umzubenennen.
+
+Zwei weitere benannte Grenzen: der Einfüge-Weg an der Zeile hängt am Ende an
+(SwiftUI reicht einer `View` keine Cursorposition; die Vervollständigung ist
+der Zugang, der an der Stelle einfügt), und ein `{{foo}}` aus einer fremden
+Vorlagensprache wird mitgemeldet — es blockiert nichts, und was es sagt,
+stimmt.
