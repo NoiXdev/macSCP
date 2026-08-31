@@ -247,9 +247,64 @@ public enum ChecksumCommandForm: String, Sendable, Equatable, CaseIterable {
 
     /// The full command line. `--` ends the options so a path beginning with
     /// a dash stays a path, and the path itself is one shell word.
+    ///
+    /// Measured on 2026-08-31, because the `--` for BSD `md5` was carried out
+    /// of Task 1 unverified: `/sbin/md5 -r -- ./-p.txt` on macOS 26.6.2
+    /// answered a GNU-shaped line, and `/sbin/md5 -r -p.txt` — the same call
+    /// without the terminator — answered `invalid option -- .` and exited 1.
+    /// So the terminator is both accepted and load-bearing for that tool, and
+    /// nothing here needs a per-tool exception.
     public func command(for algorithm: ChecksumAlgorithm, path: String) -> String {
         let head = ([executable(for: algorithm)] + arguments(for: algorithm) + ["--"])
             .joined(separator: " ")
         return head + " " + PosixQuoting.singleQuoted(path)
+    }
+
+    /// The line that asks the far side whether this form is there at all,
+    /// without running any checksum tool.
+    ///
+    /// `command -v` is the POSIX shell's own answer to "do you have this":
+    /// exit 0 and the resolved path if the name is there, non-zero if it is
+    /// not. It executes nothing — which also rules out the accident of
+    /// starting a checksum tool with no operand, where every one of them
+    /// reads standard input and never returns.
+    ///
+    /// The tool it names is this form's executable for
+    /// `ChecksumAlgorithm.preferred`, read from `executable(for:)` rather
+    /// than spelled again: a form is a claim about a whole family of tools
+    /// on one far side, and the preferred algorithm's is the one that stands
+    /// for the family.
+    public func presenceProbeLine() -> ChecksumCommandLine {
+        ChecksumCommandLine(
+            text: "command -v " + PosixQuoting.singleQuoted(executable(for: .preferred)))
+    }
+
+    /// The line that asks for one file's digest.
+    public func commandLine(for algorithm: ChecksumAlgorithm, path: String) -> ChecksumCommandLine {
+        ChecksumCommandLine(text: command(for: algorithm, path: path))
+    }
+}
+
+/// One command line this module is willing to have run on a far side.
+///
+/// The initializer is `fileprivate` and there is no memberwise one, so the
+/// only expressions in the whole package that produce a value of this type
+/// are `ChecksumCommandForm.presenceProbeLine()` and
+/// `ChecksumCommandForm.commandLine(for:path:)` above — two lines whose only
+/// interpolated part is a path, and it goes through `PosixQuoting`.
+///
+/// That is why the type exists at all. `ChecksumCommandChannel`, the seam
+/// that actually runs something on a connection, takes THIS and not a
+/// `String`: "run this arbitrary text over there" is not an expression the
+/// package can form, in a test double no less than in production. A
+/// convention would have said the same thing and bought nothing — the same
+/// argument `FileChecksum` makes for its private init and
+/// `BoundedSFTPSession` makes for the unbounded close.
+public struct ChecksumCommandLine: Sendable, Equatable {
+    /// The line as the far side's shell will see it.
+    public let text: String
+
+    fileprivate init(text: String) {
+        self.text = text
     }
 }

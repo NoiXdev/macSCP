@@ -340,7 +340,8 @@ public struct BackendDescriptor: Sendable {
         capabilities: ProtocolCapabilities(
             supportsShell: true, permissionModel: .posixMode, supportsSymlinks: true,
             atomicRename: true, directoriesAreReal: true, resumeMode: .append,
-            supportsPresignedURL: false, transport: .alwaysEncrypted),
+            supportsPresignedURL: false, supportsRemoteChecksum: true,
+            transport: .alwaysEncrypted),
         connectionSchema: SSHFieldSchema.connection,
         credentialSchema: SSHFieldSchema.credential,
         makeConfig: { values, secret in try SSHFieldSchema.makeConfig(values, secret) },
@@ -371,7 +372,8 @@ public struct BackendDescriptor: Sendable {
         capabilities: ProtocolCapabilities(
             supportsShell: false, permissionModel: .none, supportsSymlinks: false,
             atomicRename: false, directoriesAreReal: false, resumeMode: .rangeGet,
-            supportsPresignedURL: true, transport: .optionalTLS),
+            supportsPresignedURL: true, supportsRemoteChecksum: false,
+            transport: .optionalTLS),
         connectionSchema: S3FieldSchema.connection,
         credentialSchema: S3FieldSchema.credential,
         makeConfig: { values, secret in try S3FieldSchema.makeConfig(values, secret) },
@@ -392,14 +394,16 @@ public struct BackendDescriptor: Sendable {
     /// The two capability axes that deliberately flip against S3 (M21): real
     /// directories and atomic rename, the exact two WebDAV actually has and
     /// S3 does not. Everything else mirrors S3 -- no shell, no POSIX
-    /// permissions, no symlinks, range-GET resume, no presigned URLs, and
-    /// optional TLS (WebDAV is commonly run over plain HTTP on a home NAS).
+    /// permissions, no symlinks, range-GET resume, no presigned URLs, no
+    /// remotely computed checksums, and optional TLS (WebDAV is commonly run
+    /// over plain HTTP on a home NAS).
     static let webdavDescriptor = BackendDescriptor(
         kind: .webdav,
         capabilities: ProtocolCapabilities(
             supportsShell: false, permissionModel: .none, supportsSymlinks: false,
             atomicRename: true, directoriesAreReal: true, resumeMode: .rangeGet,
-            supportsPresignedURL: false, transport: .optionalTLS),
+            supportsPresignedURL: false, supportsRemoteChecksum: false,
+            transport: .optionalTLS),
         connectionSchema: WebDAVFieldSchema.connection,
         credentialSchema: WebDAVFieldSchema.credential,
         makeConfig: { values, secret in try WebDAVFieldSchema.makeConfig(values, secret) },

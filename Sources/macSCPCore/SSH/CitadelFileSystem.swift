@@ -31,6 +31,12 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// why it must not be shut down there): the client's own channel still
     /// runs on this group's loop, so shutdown is deferred to `disconnect()`.
     private let dedicatedGroup: MultiThreadedEventLoopGroup?
+    /// Which checksum command form this far side has — asked at most once,
+    /// on the first request that needs it, and kept for the connection's
+    /// life. Not passed to `init`: nothing is known about the far side's
+    /// tools at connect time, and paying a round trip for a capability most
+    /// sessions never use would be a cost every connect carries.
+    private let checksumForm = ChecksumFormMemory()
 
     private init(
         client: SSHClient, sftp: BoundedSFTPSession, jumpClient: SSHClient? = nil,
@@ -1156,5 +1162,70 @@ extension CitadelFileSystem: RemoteShellProvider {
     ) async throws -> any RemoteShell {
         try await CitadelShell.open(
             client: client, terminal: terminal, cols: cols, rows: rows)
+    }
+}
+
+extension CitadelFileSystem: ChecksumCommandChannel {
+    /// Runs `line` as an SSH `exec` request on the SAME connection SFTP and
+    /// the terminal use — a third kind of child channel beside them — and
+    /// returns its STANDARD OUTPUT.
+    ///
+    /// Standard error is dropped, never merged. `ChecksumOutputReader`
+    /// refuses output of more than one line, so on any far side that writes
+    /// a word of its own — a banner, a shell complaining about a locale —
+    /// merging the two streams would report "no checksum" for every file.
+    /// Citadel offers this as `executeCommand(_:mergeStreams:)`, whose
+    /// default is not to merge; the stream API is used instead so that the
+    /// separation is a `case` in plain sight rather than a defaulted
+    /// argument nobody has to pass.
+    ///
+    /// `CitadelShell` is the other command path on this connection and was
+    /// read before this was written: it is not the one to reuse here. It
+    /// opens a PTY, which is exactly what makes it wrong for a value — a PTY
+    /// merges standard error into standard output at the terminal, echoes
+    /// what is written to it, and carries no exit status, so its output is
+    /// the shell's screen rather than a command's answer.
+    ///
+    /// A non-zero exit throws (Citadel finishes the stream with
+    /// `CommandFailed`), which is what makes the presence probe's answer a
+    /// simple "did this throw".
+    ///
+    /// What the bound above this does NOT do, said plainly because
+    /// `BoundedClose` abandons rather than stops: when `ChecksumBounds`
+    /// elapses, the caller is released but the far side keeps hashing, and
+    /// this exec channel stays open until the connection closes. That is one
+    /// idle child channel per abandoned request, on a connection that is
+    /// already in trouble — the same trade `BoundedSFTPSession.closeBounded`
+    /// makes, and the reason the run bound is minutes rather than seconds.
+    func standardOutput(of line: ChecksumCommandLine) async throws -> String {
+        var collected = ByteBuffer()
+        for try await chunk in try await client.executeCommandStream(line.text) {
+            switch chunk {
+            case .stderr:
+                continue
+            case .stdout(let buffer):
+                guard
+                    collected.readableBytes + buffer.readableBytes <= Self.maxStandardOutputBytes
+                else {
+                    throw RemoteFSError.protocolError(
+                        reason: "checksum output past \(Self.maxStandardOutputBytes) bytes")
+                }
+                collected.writeImmutableBuffer(buffer)
+            }
+        }
+        return String(buffer: collected)
+    }
+}
+
+extension CitadelFileSystem: RemoteChecksumProvider {
+    /// The narrow capability, wired to this connection: the channel above and
+    /// the form this connection was found to have. Everything decidable
+    /// happens in `RemoteChecksumRun`.
+    public func remoteChecksum(
+        forFileAt path: String, algorithm: ChecksumAlgorithm
+    ) async throws -> RemoteChecksumOutcome {
+        try await RemoteChecksumRun.checksum(
+            forFileAt: path, algorithm: algorithm,
+            over: self, rememberedIn: checksumForm, bounds: .standard)
     }
 }

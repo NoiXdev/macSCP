@@ -13,6 +13,7 @@ struct BackendDescriptorTests {
         #expect(c.directoriesAreReal)
         #expect(c.resumeMode == .append)
         #expect(!c.supportsPresignedURL)
+        #expect(c.supportsRemoteChecksum)
         #expect(c.transport == .alwaysEncrypted)
     }
 
@@ -25,6 +26,7 @@ struct BackendDescriptorTests {
         #expect(!c.directoriesAreReal)
         #expect(c.resumeMode == .rangeGet)
         #expect(c.supportsPresignedURL)          // capability is TRUE; M14 wires the action
+        #expect(!c.supportsRemoteChecksum)
         #expect(c.transport == .optionalTLS)
     }
 

@@ -21,6 +21,7 @@ struct WebDAVRegistrationTests {
         #expect(webdav.supportsSymlinks == false)
         #expect(webdav.resumeMode == .rangeGet)
         #expect(webdav.supportsPresignedURL == false)
+        #expect(webdav.supportsRemoteChecksum == false)
         #expect(webdav.transport == .optionalTLS)
     }
 
