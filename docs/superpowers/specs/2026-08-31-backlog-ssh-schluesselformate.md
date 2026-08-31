@@ -61,3 +61,93 @@ die Entscheidung an die falsche Stelle gelegt.
   Konflikt.
 - **Kein eigener Schlüsselparser.** Was Citadel nicht liest, liest macSCP
   nicht.
+
+---
+
+## Gemessen 2026-08-31 — und Befund 2 sieht danach anders aus
+
+Fünf Wegwerf-Schlüssel, eigener `ssh-agent` auf einem Scratch-Socket, gegen
+das Rig gefahren.
+
+| | aus der **Datei** | über den **Agenten** |
+|---|---|---|
+| ed25519 | **ja** | ja |
+| RSA | **nein** — parst, authentifiziert nicht | **ja** |
+| ECDSA P-256/384/521 | **nein** — kein Parser | **ja, alle drei** |
+
+### Warum RSA aus der Datei scheitert
+
+Nicht am Parsen. Der Schlüssel wird gelesen und die Anmeldung fällt danach:
+
+```
+rsa/openssh/file: PARSED
+rsa/openssh/file: AUTH FAILED: allAuthenticationOptionsFailed
+```
+
+Isoliert durch Ausführen — derselbe Schlüssel, derselbe Server, nur der
+Signaturalgorithmus variiert:
+
+```
+-o PubkeyAcceptedAlgorithms=ssh-rsa       → Permission denied
+-o PubkeyAcceptedAlgorithms=rsa-sha2-512  → RSA_SHA2_OK
+```
+
+**Citadels dateibasierter RSA-Signierer kann nur SHA-1** (`ssh-rsa`), und
+OpenSSH hat das seit 8.8 aus den Vorgaben genommen. Der Agent-Weg umgeht
+den Signierer und signiert `rsa-sha2-512` — deshalb funktioniert RSA dort.
+
+**Damit ist „RSA ist reine Verdrahtung" widerlegt.** Diese Aussage stammte
+aus dem Lesen der Abhängigkeit und war zweimal behauptet, bevor sie gemessen
+wurde.
+
+### Was der Agent-Weg schon konnte
+
+`agentAuthConnectsECDSA` existiert seit `387dd9b` — ECDSA über den Agenten
+war **nie** unmessbar, nur P-384 und P-521 hatten keine Abdeckung. Beide
+verbinden.
+
+### Weitere Funde
+
+- **PEM-RSA** (`-----BEGIN RSA PRIVATE KEY-----`) scheitert bereits am
+  Parser (`invalidOpenSSHBoundary`), also **anders** als OpenSSH-RSA. Nutzer
+  haben beide Formen auf der Platte, und sie scheitern verschieden.
+- Ein **verschlüsselter** RSA-Schlüssel parst über `decryptionKey:`
+  problemlos; ohne Passphrase kommt `missingDecryptionKey`, was der
+  bestehende Fehler-Abbilder schon behandelt.
+- **Nebenbefund, kein Sicherheitsproblem:** die gegatete Suite lässt
+  Agent-Sockets in `~/.ssh/agent/` liegen — `spawnAgent` beendet den Prozess,
+  räumt den Eintrag aber nicht. Zwei Altlasten vom 21. und 28.08. gefunden.
+- `AgentPrivateKeyFactory` führt dieselben fünf Typen als **zwei** Literale
+  (`supportedKeyTypes` und der `switch`). Heute deckungsgleich, gezählt —
+  eine Umbenennung kann sie still auseinanderziehen.
+
+## Upstream (geprüft 2026-08-31)
+
+Beide Lücken sind bei Citadel bekannt, beide haben Code, **keine ist
+gemerged**:
+
+| PR | Inhalt | Stand |
+|---|---|---|
+| **#135** | `rsa-sha2-256`/`-512` in neuer `RSASHA2.swift`, plus `rsaSHA2()` an `SSHAuthenticationMethod` | offen, **ohne Review**, letzte Aktivität 2026-07-26 |
+| **#131** | dasselbe, schmaler (nur SHA-256) | offen seit Juni |
+| **#136** | OpenSSH-Parsen für ECDSA P-256/384/521 | offen |
+
+#135 begründet sich wortgleich mit unserem Befund: OpenSSH 8.8 hat `ssh-rsa`
+aus den Vorgaben genommen.
+
+**Die Abwägung, die daran hängt:** `swift-nio-ssh` kommt bereits über
+`Wellz26/swift-nio-ssh` herein — den Fork eines Fremden, und der offene
+Befund des Abhängigkeits-Eintrags. Eine zweite Fremdquelle darüber
+verlängert dieselbe Kette. Warten, bis #135 landet, kostet nichts außer
+Zeit; forken kostet die Kette.
+
+## Was daraus für die Meldung folgt
+
+Sie darf **nicht** auf „RSA aus einer Datei" zeigen — das funktioniert
+nicht. Sie soll den erkannten Typ nennen (`SSHKeyType` kann das) und für RSA
+und ECDSA auf den **ssh-agent** verweisen, den einzigen gemessenen Weg.
+
+**Mit einem benannten Vorbehalt:** der RSA-Agent-Blob gilt als inkompatibel
+mit Go-Servern (Gitea, Forgejo, SFTPGo, `gitlab-sshd`). **Nicht gemessen** —
+gelesen. Wer die Meldung schreibt, sollte das entweder messen oder nicht
+behaupten.
