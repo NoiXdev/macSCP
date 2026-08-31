@@ -23,6 +23,21 @@ public enum ChecksumAlgorithm: String, Sendable, Equatable, CaseIterable {
         }
     }
 
+    /// The procedure's own name, as its standard spells it and as a
+    /// published figure spells it beside a download link.
+    ///
+    /// Deliberately NOT localized, and not a catalogue key: this is a name,
+    /// like `KB/s` in the transfer settings, and the whole point of showing
+    /// it is that it matches the label somebody is comparing against.
+    /// Translating it would make that comparison harder, not easier.
+    public var displayName: String {
+        switch self {
+        case .sha256: "SHA-256"
+        case .sha1: "SHA-1"
+        case .md5: "MD5"
+        }
+    }
+
     /// Whether collisions are producible for this procedure. A settings
     /// surface reads this instead of carrying its own list of which
     /// algorithms need the warning — the difference to say is that they still

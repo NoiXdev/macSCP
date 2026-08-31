@@ -41,6 +41,17 @@ struct BrowserPane: View {
     /// same set. Forwarded verbatim to `RemoteFileTableView`; its own
     /// default keeps this optional at every call site that predates M11m.
     var visibleColumns: Set<FileColumn> = Set(FileColumn.allCases.filter(\.defaultVisible))
+    /// Which digest procedure a checksum request asks for — mirrors
+    /// `SettingsStore.checksumAlgorithm`, app-global like the other display
+    /// settings.
+    var checksumAlgorithm: ChecksumAlgorithm = .preferred
+    /// Whether this pane's backend can answer the checksum question. The
+    /// remote pane's call site reads the capability
+    /// (`ChecksumAvailability.isOffered(for:)`); the local one asks the
+    /// local file system, which has no descriptor to read. `false` removes
+    /// the menu entry and turns the info sheet's block into the sentence
+    /// that says why — never into a disabled control.
+    var supportsChecksum: Bool = false
 
     @State private var isDropTargeted = false
     /// Whether this pane's search bar is showing (M11k/T2) — per-PANE, not
@@ -58,15 +69,21 @@ struct BrowserPane: View {
     /// responder (M11k/T2 step 5) — forwarded to `RemoteFileTableView` as
     /// `focusRequestToken`; see that property's doc comment.
     @State private var tableFocusToken = 0
-    // Sheet/alert state for the four dialogs the pane handles internally
-    // (M7b/T3) — rename/info/new-folder/delete never reach the external
-    // `onMenuAction` callback, see the wrapper below.
+    // Sheet/alert state for the context-menu entries the pane handles
+    // internally (M7b/T3): rename, info, new folder, new file, delete and
+    // the checksum run — six, counted in the pass that writes this — never
+    // reach the external `onMenuAction` callback; see the wrapper below.
+    // This comment said "four" until the count was taken.
     @State private var renameTarget: RemoteFileItem?
     @State private var infoTarget: RemoteFileItem?
     @State private var deleteRequest: [RemoteFileItem]?
     @State private var showNewFolderSheet = false
     @State private var showNewFileSheet = false
     @State private var deleteErrorMessage: String?
+    /// The selection's checksum run, from the moment the menu entry is
+    /// chosen until the sheet is closed. Held here rather than built inside
+    /// the sheet so the run and the sheet have the same lifetime.
+    @State private var checksumBatch: ChecksumBatch?
     /// Set only when a symlink double-click's `navigate(to:)` call FAILS
     /// (M11h/T1 review fix — see `onOpenSymlink` below): forwarded to
     /// `PathBar`, which reuses its existing failure overlay to show the
@@ -192,6 +209,9 @@ struct BrowserPane: View {
                         case .newFolder: showNewFolderSheet = true
                         case .newFile: showNewFileSheet = true
                         case .delete: deleteRequest = selection
+                        case .computeChecksum:
+                            checksumBatch = ChecksumBatch(
+                                selection: selection, algorithm: checksumAlgorithm)
                         default: onMenuAction?(entry, selection)
                         }
                     },
@@ -203,6 +223,7 @@ struct BrowserPane: View {
                     focusRequestToken: tableFocusToken,
                     crossSessionTargets: crossSessionTargets,
                     fileActions: fileActions,
+                    supportsChecksum: supportsChecksum,
                     visibleColumns: visibleColumns,
                     sortKey: viewModel.sortKey,
                     sortAscending: viewModel.sortAscending,
@@ -305,7 +326,17 @@ struct BrowserPane: View {
                     await viewModel.applyPermissionsRecursively(
                         filePermissions: filePerms, directoryPermissions: dirPerms,
                         to: target, progress: progress)
+                },
+                checksumAlgorithm: checksumAlgorithm,
+                supportsChecksum: supportsChecksum,
+                onComputeChecksum: {
+                    await viewModel.checksum(of: target, algorithm: checksumAlgorithm)
                 })
+        }
+        .sheet(item: $checksumBatch) { batch in
+            ChecksumBatchSheet(batch: batch) { item in
+                await viewModel.checksum(of: item, algorithm: batch.algorithm)
+            }
         }
         .alert(
             L10n.string("delete.title", "Delete?"),

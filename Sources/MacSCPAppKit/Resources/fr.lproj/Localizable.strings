@@ -1019,3 +1019,21 @@
 "knownHosts.facet.algorithm" = "Algorithme";
 "keys.facet.type" = "Type de clé";
 "loginSets.facet.kind" = "Service";
+
+// Sommes de contrôle de fichiers (conception 2026-08-31) : à la demande, toujours avec l’origine de la valeur
+"menu.checksum" = "Calculer la somme de contrôle…";
+"info.checksum" = "Somme de contrôle";
+"info.checksum.compute" = "Calculer %@";
+"checksum.computing" = "Calcul en cours…";
+"checksum.unavailable" = "Ce serveur ne fournit pas de sommes de contrôle.";
+"checksum.failed" = "La somme de contrôle n’a pas pu être calculée. %@";
+"checksum.origin.remote" = "%@, calculée sur le serveur.";
+"checksum.origin.local" = "%@, calculée sur ce Mac.";
+"checksum.origin.etag" = "%@, issue de l’ETag du stockage objet — la somme de contrôle du fichier stocké.";
+"checksum.origin.etagMultipart" = "%@, issue de l’ETag du stockage objet pour un envoi arrivé en plusieurs parties. Ce n’est pas la somme de contrôle du fichier et elle ne correspondra à aucune.";
+"checksum.batch.title" = "Sommes de contrôle";
+"checksum.batch.cancelled" = "Annulé. Les sommes de contrôle déjà calculées sont conservées.";
+"settings.checksum.header" = "Sommes de contrôle";
+"settings.checksum.algorithm" = "Algorithme de somme de contrôle";
+"settings.checksum.forComparisonOnly" = "pour comparaison seulement";
+"settings.checksum.footer" = "SHA-256 est la valeur par défaut. MD5 et SHA-1 sont proposés parce qu’une valeur publiée ailleurs est souvent de ce type : ils servent à comparer un fichier à une telle valeur, jamais à prouver que deux fichiers sont identiques.";

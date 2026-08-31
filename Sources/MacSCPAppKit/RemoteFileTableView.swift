@@ -64,6 +64,13 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// shows a backend action, since the local file system never contributes
     /// any.
     var fileActions: (() -> [FileActionContribution])? = nil
+    /// Whether this pane's backend can answer the checksum question — read
+    /// from the capability on the remote side and from the local file
+    /// system's own conformance on the local one (see
+    /// `ChecksumAvailability`). Forwarded verbatim to the menu model, which
+    /// leaves the entry OUT where this is `false` rather than adding a
+    /// disabled one.
+    var supportsChecksum: Bool = false
     /// Which columns to build, in `FileColumn.allCases` order (M11m/T2) —
     /// mirrors `SettingsStore.visibleColumns`. Defaults to the pre-M11m
     /// fixed three (`name`/`size`/`modified`) so any call site that doesn't
@@ -96,6 +103,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         coordinator.onOpenSearch = onOpenSearch
         coordinator.crossSessionTargets = crossSessionTargets
         coordinator.fileActions = fileActions
+        coordinator.supportsChecksum = supportsChecksum
         coordinator.onSortChange = onSortChange
         return coordinator
     }
@@ -219,6 +227,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.onOpenSearch = onOpenSearch
         context.coordinator.crossSessionTargets = crossSessionTargets
         context.coordinator.fileActions = fileActions
+        context.coordinator.supportsChecksum = supportsChecksum
         context.coordinator.onSortChange = onSortChange
         guard let table = nsView.documentView as? NSTableView else { return }
         // Column rebuild (M11m/T2): diffed against the last SET the
@@ -432,6 +441,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         var onOpenSearch: (() -> Void)?
         var crossSessionTargets: (() -> [CrossSessionTarget])?
         var fileActions: (() -> [FileActionContribution])?
+        var supportsChecksum = false
         var onSortChange: ((FileSortKey, Bool) -> Void)?
         let side: BrowserPaneSide
         weak var table: NSTableView?
@@ -766,7 +776,8 @@ struct RemoteFileTableView: NSViewRepresentable {
             menu.removeAllItems()
             let entries = BrowserContextMenu.entries(
                 for: selection, side: side, crossSessionTargets: crossSessionTargets?() ?? [],
-                fileActions: fileActions?() ?? [])
+                fileActions: fileActions?() ?? [],
+                supportsChecksum: supportsChecksum)
             // `.transferToOtherPane` is immediately followed (per the Core
             // model, `BrowserContextMenu.entries`) by zero or more
             // `.transferToSession` entries — those join the SAME "Transfer"
@@ -862,6 +873,10 @@ struct RemoteFileTableView: NSViewRepresentable {
                 return actionItem(title: L10n.string("menu.newFile", "New File…"), entry: entry, selection: selection)
             case .copyPath:
                 return actionItem(title: L10n.string("menu.copyPath", "Copy Path"), entry: entry, selection: selection)
+            case .computeChecksum:
+                return actionItem(
+                    title: L10n.string("menu.checksum", "Compute Checksum…"),
+                    entry: entry, selection: selection)
             case .delete:
                 let item = actionItem(title: L10n.string("menu.delete", "Delete…"), entry: entry, selection: selection)
                 return item

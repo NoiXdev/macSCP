@@ -1002,4 +1002,50 @@ struct SettingsStoreTests {
         store.sidebarWidth = Int.max
         #expect(store.sidebarWidth == SettingsStore.sidebarWidthRange.upperBound)
     }
+
+    // MARK: - Checksum algorithm (file checksums, Task 4)
+
+    /// SHA-256 is the default, and it is the algorithm's own `preferred`
+    /// rather than a second copy of that decision here.
+    @Test func checksumAlgorithmDefaultsToTheAlgorithmsOwnPreference() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+
+        #expect(store.checksumAlgorithm == ChecksumAlgorithm.preferred)
+        #expect(store.checksumAlgorithm == .sha256)
+    }
+
+    @Test func checksumAlgorithmRoundtripsThroughTheFile() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+
+        store.checksumAlgorithm = .md5
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.checksumAlgorithm == .md5)
+    }
+
+    /// An unrecognized raw value reads as the preferred algorithm rather
+    /// than as a broken one — the same fallback shape as
+    /// `presignedDefaultExpiryUnknownRawValueReadsAsOneHour`, and here it
+    /// matters more: falling back to MD5 would silently downgrade what the
+    /// app computes.
+    @Test func checksumAlgorithmUnknownRawValueReadsAsThePreferredOne() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(#"{"checksumAlgorithm": "crc32"}"#.utf8).write(to: fileURL(dir))
+
+        #expect(SettingsStore(directory: dir).checksumAlgorithm == ChecksumAlgorithm.preferred)
+    }
+
+    @Test func aSettingsFileWithoutTheKeyUsesThePreferredAlgorithm() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(#"{"maxConcurrentTransfers": 4}"#.utf8).write(to: fileURL(dir))
+
+        #expect(SettingsStore(directory: dir).checksumAlgorithm == ChecksumAlgorithm.preferred)
+    }
 }

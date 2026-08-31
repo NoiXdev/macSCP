@@ -847,6 +847,45 @@ public final class RemoteBrowserViewModel {
         return nil
     }
 
+    // MARK: - Checksums (file checksums, Task 4)
+
+    /// The digest of one file, on request — never as a side effect of a
+    /// transfer, and never by downloading anything (the maintainer ruled
+    /// that out on 2026-08-27, fallbacks included).
+    ///
+    /// The capability is reached the way every optional backend capability
+    /// in this project is reached: an `as?` on the file system. A backend
+    /// that does not conform, and a backend that conforms and answers that
+    /// it has nothing, come out of here as the SAME statement — because
+    /// they are the same fact for the person looking at the screen, and
+    /// neither is an error.
+    ///
+    /// `algorithm` is passed on untouched. S3 answers a SHA-256 request
+    /// with the ETag's MD5, and that substitution belongs to S3, which
+    /// labels it: the returned `FileChecksum` names its own algorithm and
+    /// its own origin, so nothing here has to second-guess the request.
+    ///
+    /// Not audited, unlike `rename`/`createFolder`/`createFile`/`delete`
+    /// above: those four change the far side, and the audit log is a record
+    /// of changes. Asking for a digest changes nothing.
+    public func checksum(
+        of item: RemoteFileItem, algorithm: ChecksumAlgorithm
+    ) async -> ChecksumRequestResult {
+        guard let provider = fs as? any RemoteChecksumProvider else {
+            return .unavailableOnThisConnection
+        }
+        do {
+            switch try await provider.remoteChecksum(forFileAt: item.path, algorithm: algorithm) {
+            case .checksum(let value):
+                return .checksum(value)
+            case .unavailableOnThisConnection:
+                return .unavailableOnThisConnection
+            }
+        } catch {
+            return .failed(Self.message(for: error, path: item.path))
+        }
+    }
+
     static func message(for error: Error, path: String) -> String {
         switch error {
         case RemoteFSError.notFound:

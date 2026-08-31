@@ -1015,3 +1015,21 @@
 "knownHosts.facet.algorithm" = "Algorithm";
 "keys.facet.type" = "Key type";
 "loginSets.facet.kind" = "Backend";
+
+// File checksums (design 2026-08-31): on request, and always with where the value came from
+"menu.checksum" = "Compute Checksum…";
+"info.checksum" = "Checksum";
+"info.checksum.compute" = "Compute %@";
+"checksum.computing" = "Computing…";
+"checksum.unavailable" = "This server does not provide checksums.";
+"checksum.failed" = "The checksum could not be computed. %@";
+"checksum.origin.remote" = "%@, computed on the server.";
+"checksum.origin.local" = "%@, computed on this Mac.";
+"checksum.origin.etag" = "%@, from the object store’s ETag — the checksum of the stored file.";
+"checksum.origin.etagMultipart" = "%@, from the object store’s ETag for an upload that arrived in several parts. It is not the checksum of the file and will not match one.";
+"checksum.batch.title" = "Checksums";
+"checksum.batch.cancelled" = "Cancelled. The checksums already computed are kept.";
+"settings.checksum.header" = "Checksums";
+"settings.checksum.algorithm" = "Checksum algorithm";
+"settings.checksum.forComparisonOnly" = "for comparison only";
+"settings.checksum.footer" = "SHA-256 is the default. MD5 and SHA-1 are offered because a figure published elsewhere is often one of them: they serve to compare a file against such a figure, never as proof that two files are the same.";

@@ -98,4 +98,71 @@ struct BrowserContextMenuTests {
         let entries = BrowserContextMenu.entries(for: [file("a")], side: .remote)
         #expect(!entries.contains { if case .backendFileAction = $0 { return true }; return false })
     }
+
+    // MARK: - Checksums (file checksums, Task 4)
+
+    /// Absent, not present-and-dead. A backend that cannot answer the
+    /// checksum question gets no entry at all; what it DOES get is the
+    /// sentence in the info sheet, which is an answer where a greyed-out
+    /// item is not.
+    @Test func aBackendThatCannotAnswerOffersNoChecksumEntry() {
+        #expect(!BrowserContextMenu.entries(
+            for: [file("a")], side: .remote, supportsChecksum: false)
+            .contains(.computeChecksum))
+    }
+
+    /// The default is the same absence, so every call site that predates
+    /// checksums keeps the shape it had.
+    @Test func theChecksumEntryIsAbsentUnlessAskedFor() {
+        #expect(!BrowserContextMenu.entries(for: [file("a")], side: .remote)
+            .contains(.computeChecksum))
+    }
+
+    @Test func aSingleFileOffersTheChecksumEntryWhereTheBackendCanAnswer() {
+        #expect(BrowserContextMenu.entries(
+            for: [file("a")], side: .remote, supportsChecksum: true) == [
+            .transferToOtherPane, .openInEditor, .rename, .infoAndPermissions,
+            .newFolder, .newFile, .copyPath, .computeChecksum, .delete,
+        ])
+    }
+
+    /// A selection is computed one file after another, so several files
+    /// are exactly as offerable as one.
+    @Test func aMultipleSelectionOffersTheChecksumEntry() {
+        #expect(BrowserContextMenu.entries(
+            for: [file("a"), file("b")], side: .remote, supportsChecksum: true) == [
+            .transferToOtherPane, .newFolder, .newFile, .copyPath,
+            .computeChecksum, .delete,
+        ])
+    }
+
+    /// A folder has no digest and neither has a symlink, so a selection
+    /// holding no file at all offers nothing to compute — the same
+    /// "only what is possible" rule, one level down from the backend.
+    @Test func aSelectionWithNoFileInItOffersNoChecksum() {
+        let dir = RemoteFileItem(name: "d", path: "/d", kind: .directory, size: nil)
+        #expect(!BrowserContextMenu.entries(
+            for: [dir, symlink("l")], side: .remote, supportsChecksum: true)
+            .contains(.computeChecksum))
+        #expect(!BrowserContextMenu.entries(
+            for: [], side: .remote, supportsChecksum: true)
+            .contains(.computeChecksum))
+    }
+
+    /// A mixed selection keeps the entry: the run covers the files in it
+    /// and there is nothing to explain away.
+    @Test func aMixedSelectionKeepsTheChecksumEntryForItsFiles() {
+        let dir = RemoteFileItem(name: "d", path: "/d", kind: .directory, size: nil)
+        #expect(BrowserContextMenu.entries(
+            for: [dir, file("a")], side: .remote, supportsChecksum: true)
+            .contains(.computeChecksum))
+    }
+
+    /// The local pane can compute too — the entry is not a remote-side
+    /// one, unlike the editor.
+    @Test func theLocalPaneOffersTheChecksumEntryAsWell() {
+        #expect(BrowserContextMenu.entries(
+            for: [file("a")], side: .local, supportsChecksum: true)
+            .contains(.computeChecksum))
+    }
 }

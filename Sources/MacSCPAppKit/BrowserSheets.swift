@@ -81,11 +81,31 @@ struct InfoPermissionsSheet: View {
         _ progress: @escaping @Sendable (PermissionsTreeResult) -> Void
     ) async -> PermissionsTreeResult
 
+    /// The procedure the checksum button asks for, from the settings.
+    let checksumAlgorithm: ChecksumAlgorithm
+    /// Whether this pane's backend can answer the checksum question at
+    /// all. `false` does NOT produce a disabled button — it produces the
+    /// sentence that says so, which is an answer where a greyed-out
+    /// control is not.
+    let supportsChecksum: Bool
+    /// Asks for THIS file's checksum, once, on request. Never called on
+    /// opening the sheet: a checksum reads the whole file on the far side,
+    /// so it happens because somebody asked for it.
+    let onComputeChecksum: @MainActor () async -> ChecksumRequestResult
+
     @Environment(\.dismiss) private var dismiss
     @State private var permissions = PosixPermissions(rawValue: 0)
     @State private var octalText = ""
     @State private var errorMessage: String?
     @State private var isWorking = false
+
+    /// The answer to the one checksum request this sheet can make, once it
+    /// is there. `nil` while nothing has been asked, which is the resting
+    /// state: nothing is computed by opening the sheet.
+    @State private var checksumResult: ChecksumRequestResult?
+    /// Non-nil exactly while a checksum is being computed — the handle the
+    /// Cancel button cancels, mirroring `recursiveTask` below.
+    @State private var checksumTask: Task<Void, Never>?
 
     /// Whether the recursive grid(s) and the same/separate picker apply
     /// files and directories independently — visible only for directory
@@ -252,6 +272,7 @@ struct InfoPermissionsSheet: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            checksumSection
             if let errorMessage {
                 Text(errorMessage).font(.caption).foregroundStyle(.red).lineLimit(2)
             }
@@ -327,6 +348,71 @@ struct InfoPermissionsSheet: View {
             Text(String(format: L10n.string(
                 "info.recursive.confirmMessage",
                 "Apply permissions to every item inside %@? This cannot be undone."), item.path))
+        }
+    }
+
+    /// The checksum block — files only, because a folder has no digest and
+    /// a symlink never reaches this sheet at all (the menu model excludes
+    /// it).
+    ///
+    /// Four branches, counted here, and not one of them is a disabled
+    /// control: a backend that cannot answer SAYS so; a request in flight
+    /// shows its progress with a way out; a result is shown with where it
+    /// came from; and a file not yet asked about offers a button naming the
+    /// procedure. Everything shown about a result comes out of
+    /// `ChecksumResultView`, so the digest and the sentence about where it
+    /// came from cannot be separated here.
+    @ViewBuilder
+    private var checksumSection: some View {
+        if item.kind == .file {
+            Divider()
+            Text(L10n.string("info.checksum", "Checksum"))
+                .font(.system(size: 12, weight: .semibold))
+            if !supportsChecksum {
+                ChecksumResultView(result: .unavailableOnThisConnection)
+            } else if checksumTask != nil {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(L10n.string("checksum.computing", "Computing…"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button(L10n.string("common.cancel", "Cancel")) { checksumTask?.cancel() }
+                        .buttonStyle(.polished)
+                }
+            } else if let checksumResult {
+                ChecksumResultView(result: checksumResult)
+                // A failure is about this ATTEMPT — a dropped connection, a
+                // far side that answered nothing — so asking again is
+                // offered. A value is not: the file has not changed under
+                // the sheet, and a second identical digest says nothing.
+                if case .failed = checksumResult { computeButton }
+            } else {
+                computeButton
+            }
+        }
+    }
+
+    private var computeButton: some View {
+        Button(String(
+            format: L10n.string("info.checksum.compute", "Compute %@"),
+            checksumAlgorithm.displayName)
+        ) { computeChecksum() }
+            .buttonStyle(.polished)
+    }
+
+    /// Asks once, and records the answer only if it is one — see
+    /// `ChecksumInterruption`, which is the same rule `ChecksumBatch`
+    /// applies to a selection, in one place rather than two.
+    private func computeChecksum() {
+        guard checksumTask == nil else { return }
+        checksumResult = nil
+        checksumTask = Task { @MainActor in
+            let result = await onComputeChecksum()
+            if ChecksumInterruption.isWorthRecording(result, cancelled: Task.isCancelled) {
+                checksumResult = result
+            }
+            checksumTask = nil
         }
     }
 

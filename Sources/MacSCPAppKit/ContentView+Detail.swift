@@ -315,14 +315,24 @@ extension ContentView {
                                             copyPaths(of: selection)
                                         case .openInEditor:
                                             break   // never emitted for the local pane (menu model)
-                                        case .rename, .infoAndPermissions, .newFolder, .newFile, .delete:
+                                        case .rename, .infoAndPermissions, .newFolder, .newFile,
+                                            .delete, .computeChecksum:
                                             break   // handled inside BrowserPane, never forwarded
                                         case .backendFileAction:
                                             break   // never contributed on the LOCAL pane (fileActions is nil here)
                                         }
                                     },
                                     crossSessionTargets: { CrossSessionTargets.targets(excluding: tab.id, in: tabsModel.tabs) },
-                                    visibleColumns: settingsStore.visibleColumns
+                                    visibleColumns: settingsStore.visibleColumns,
+                                    checksumAlgorithm: settingsStore.checksumAlgorithm,
+                                    // "local" is not a `ConnectionKind`, so
+                                    // there is no descriptor and no capability
+                                    // flag to read here — the local file
+                                    // system is asked instead, which for it is
+                                    // the same question. See
+                                    // `ChecksumAvailability`.
+                                    supportsChecksum: ChecksumAvailability.isOffered(
+                                        byLocalFileSystem: session.localFS)
                                 )
                                 .frame(minWidth: 280)
 
@@ -359,7 +369,8 @@ extension ContentView {
                                             }
                                         case .copyPath:
                                             copyPaths(of: selection)
-                                        case .rename, .infoAndPermissions, .newFolder, .newFile, .delete:
+                                        case .rename, .infoAndPermissions, .newFolder, .newFile,
+                                            .delete, .computeChecksum:
                                             break   // handled inside BrowserPane, never forwarded
                                         case .backendFileAction(let action):
                                             // Currently the only backend-contributed action is
@@ -390,7 +401,15 @@ extension ContentView {
                                         BackendDescriptor.descriptor(for: tab.connectionViewModel.kind)
                                             .fileActions
                                     },
-                                    visibleColumns: settingsStore.visibleColumns
+                                    visibleColumns: settingsStore.visibleColumns,
+                                    checksumAlgorithm: settingsStore.checksumAlgorithm,
+                                    // The capability, not the kind. Every
+                                    // backend conforms to the checksum
+                                    // protocol — WebDAV does so in order to
+                                    // SAY it has none — so only the flag can
+                                    // tell an offer from an empty one.
+                                    supportsChecksum: ChecksumAvailability.isOffered(
+                                        for: tab.connectionViewModel.kind)
                                 )
                                 .frame(minWidth: 280)
                             }

@@ -34,6 +34,7 @@ public enum BrowserMenuEntry: Equatable, Sendable {
     case newFolder             // always (also on background click)
     case newFile               // always (also on background click) — M18a
     case copyPath              // any non-empty selection
+    case computeChecksum       // any selection holding at least one FILE, and only where the backend can answer
     case delete                // any non-empty selection
     case backendFileAction(FileActionContribution)   // protocol-contributed file action (M14)
 }
@@ -43,10 +44,21 @@ public enum BrowserContextMenu {
     /// The `crossSessionTargets` parameter lists remote panes from other tabs
     /// that can receive transfers — these appear in the submenu right after
     /// the "to other pane" item when `transferToOtherPane` is present.
+    /// `supportsChecksum` says whether this pane's backend can answer the
+    /// checksum question at all — `ChecksumAvailability.isOffered(for:)` for
+    /// a remote pane, the local file system's own conformance for the local
+    /// one. Where it is `false` the entry is ABSENT rather than present and
+    /// disabled: a dead menu item is not an answer, and the answer that
+    /// belongs to such a backend ("this server does not provide checksums")
+    /// is shown in the info sheet, where there is room to say it.
+    ///
+    /// Defaulted to `false`, so a call site that predates checksums keeps
+    /// exactly the menu it had.
     public static func entries(
         for selection: [RemoteFileItem], side: BrowserPaneSide,
         crossSessionTargets: [CrossSessionTarget] = [],
-        fileActions: [FileActionContribution] = []
+        fileActions: [FileActionContribution] = [],
+        supportsChecksum: Bool = false
     ) -> [BrowserMenuEntry] {
         guard !selection.isEmpty else { return [.newFolder, .newFile] }
         var entries: [BrowserMenuEntry] = []
@@ -71,6 +83,14 @@ public enum BrowserContextMenu {
         entries.append(.newFolder)
         entries.append(.newFile)
         entries.append(.copyPath)
+        // Folders and symlinks have no digest, so a selection holding no
+        // file offers nothing to compute. A MIXED selection keeps the entry
+        // and the run covers its files — there is nothing to explain away
+        // in that case, whereas hiding the entry would leave the user
+        // guessing which of the selected rows caused it to vanish.
+        if supportsChecksum, selection.contains(where: { $0.kind == .file }) {
+            entries.append(.computeChecksum)
+        }
         entries.append(.delete)
         return entries
     }

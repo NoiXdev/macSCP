@@ -1016,3 +1016,21 @@
 "knownHosts.facet.algorithm" = "Algorithmus";
 "keys.facet.type" = "Schlüsseltyp";
 "loginSets.facet.kind" = "Backend";
+
+// Datei-Prüfsummen (Entwurf 2026-08-31): auf Anforderung, und stets mit der Herkunft des Werts
+"menu.checksum" = "Prüfsumme berechnen…";
+"info.checksum" = "Prüfsumme";
+"info.checksum.compute" = "%@ berechnen";
+"checksum.computing" = "Wird berechnet…";
+"checksum.unavailable" = "Dieser Server liefert keine Prüfsummen.";
+"checksum.failed" = "Die Prüfsumme konnte nicht berechnet werden. %@";
+"checksum.origin.remote" = "%@, auf dem Server berechnet.";
+"checksum.origin.local" = "%@, auf diesem Mac berechnet.";
+"checksum.origin.etag" = "%@, aus dem ETag des Objektspeichers — die Prüfsumme der gespeicherten Datei.";
+"checksum.origin.etagMultipart" = "%@, aus dem ETag des Objektspeichers für einen mehrteilig eingetroffenen Upload. Das ist nicht die Prüfsumme der Datei und stimmt mit keiner überein.";
+"checksum.batch.title" = "Prüfsummen";
+"checksum.batch.cancelled" = "Abgebrochen. Die bereits berechneten Prüfsummen bleiben stehen.";
+"settings.checksum.header" = "Prüfsummen";
+"settings.checksum.algorithm" = "Prüfsummen-Verfahren";
+"settings.checksum.forComparisonOnly" = "nur zum Abgleich";
+"settings.checksum.footer" = "SHA-256 ist voreingestellt. MD5 und SHA-1 stehen zur Wahl, weil eine anderswo veröffentlichte Angabe oft eine davon ist: zum Abgleich gegen eine solche Angabe taugen sie, als Nachweis, dass zwei Dateien gleich sind, nicht.";

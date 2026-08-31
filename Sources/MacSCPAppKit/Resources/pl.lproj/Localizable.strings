@@ -1018,3 +1018,21 @@
 "knownHosts.facet.algorithm" = "Algorytm";
 "keys.facet.type" = "Typ klucza";
 "loginSets.facet.kind" = "Usługa";
+
+// Sumy kontrolne plików (projekt 2026-08-31): na żądanie i zawsze z pochodzeniem wartości
+"menu.checksum" = "Oblicz sumę kontrolną…";
+"info.checksum" = "Suma kontrolna";
+"info.checksum.compute" = "Oblicz %@";
+"checksum.computing" = "Obliczanie…";
+"checksum.unavailable" = "Ten serwer nie udostępnia sum kontrolnych.";
+"checksum.failed" = "Nie udało się obliczyć sumy kontrolnej. %@";
+"checksum.origin.remote" = "%@, obliczona na serwerze.";
+"checksum.origin.local" = "%@, obliczona na tym Macu.";
+"checksum.origin.etag" = "%@, z ETagu magazynu obiektów — suma kontrolna zapisanego pliku.";
+"checksum.origin.etagMultipart" = "%@, z ETagu magazynu obiektów dla wysyłki, która dotarła w kilku częściach. To nie jest suma kontrolna pliku i nie będzie z żadną zgodna.";
+"checksum.batch.title" = "Sumy kontrolne";
+"checksum.batch.cancelled" = "Przerwano. Już obliczone sumy kontrolne pozostają.";
+"settings.checksum.header" = "Sumy kontrolne";
+"settings.checksum.algorithm" = "Algorytm sumy kontrolnej";
+"settings.checksum.forComparisonOnly" = "tylko do porównania";
+"settings.checksum.footer" = "SHA-256 jest ustawieniem domyślnym. MD5 i SHA-1 są dostępne, ponieważ wartość opublikowana gdzie indziej często jest jedną z nich: służą do porównania pliku z taką wartością, nigdy jako dowód, że dwa pliki są takie same.";

@@ -384,8 +384,10 @@ private struct AppearanceSettingsSection: View {
     }
 }
 
-/// The single "Transfers" section: concurrency and bandwidth limits. The S3
-/// presigned-link-expiry section moved to the protocol-specific
+/// The single "Transfers" section: concurrency limit, bandwidth limits, and
+/// the checksum procedure — computing a checksum reads the whole file on the
+/// far side, so it is asked for and cancelled like any other transfer. The
+/// S3 presigned-link-expiry section moved to the protocol-specific
 /// `S3SettingsSection` in M18/T7.
 private struct TransfersSettingsTab: View {
     var store: SettingsStore
@@ -468,9 +470,54 @@ private struct TransfersSettingsTab: View {
                 Text(L10n.string("settings.bandwidth.footer", "0 = unlimited"))
                     .foregroundStyle(.secondary)
             }
+
+            // Checksums live here because computing one IS a transfer: it
+            // reads the whole file on the far side, takes minutes on a
+            // large one, and is asked for and cancelled like any other.
+            //
+            // The order is `ChecksumAlgorithm.allCases`, which starts at
+            // the preferred one, and the marker on the other two is read
+            // off `isCryptographicallyBroken` rather than from a list kept
+            // here — so an algorithm added later arrives already labelled
+            // or already unlabelled, whichever it deserves, without this
+            // view being told about it.
+            Section {
+                Picker(
+                    L10n.string("settings.checksum.algorithm", "Checksum algorithm"),
+                    selection: Binding(
+                        get: { store.checksumAlgorithm },
+                        set: { store.checksumAlgorithm = $0 }
+                    )
+                ) {
+                    ForEach(ChecksumAlgorithm.allCases, id: \.self) { algorithm in
+                        Text(label(for: algorithm)).tag(algorithm)
+                    }
+                }
+            } header: {
+                Text(L10n.string("settings.checksum.header", "Checksums"))
+            } footer: {
+                Text(L10n.string(
+                    "settings.checksum.footer",
+                    """
+                    SHA-256 is the default. MD5 and SHA-1 are offered because a figure \
+                    published elsewhere is often one of them: they serve to compare a file \
+                    against such a figure, never as proof that two files are the same.
+                    """))
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    /// A broken procedure is still offered — it is what a published figure
+    /// is often written in — but it is not offered as an equal. The suffix
+    /// is what says so in the list itself, where the choice is made, rather
+    /// than only in the footer below it.
+    private func label(for algorithm: ChecksumAlgorithm) -> String {
+        guard algorithm.isCryptographicallyBroken else { return algorithm.displayName }
+        return algorithm.displayName + " — " + L10n.string(
+            "settings.checksum.forComparisonOnly", "for comparison only")
     }
 }
 

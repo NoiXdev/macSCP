@@ -81,6 +81,7 @@ public final class SettingsStore {
         static let connectTimeoutSeconds = "connectTimeoutSeconds"
         static let sidebarWidth = "sidebarWidth"
         static let sidebarTagFilterEnabled = "sidebarTagFilterEnabled"
+        static let checksumAlgorithm = "checksumAlgorithm"
     }
 
     private enum Defaults {
@@ -101,6 +102,10 @@ public final class SettingsStore {
         static let connectTimeoutSeconds = 10
         static let sidebarWidth = 190
         static let sidebarTagFilterEnabled = true
+        /// Read off the algorithm itself rather than spelled again here:
+        /// which procedure is preferred is a property of the procedures,
+        /// and a second copy of it is a second thing to keep in step.
+        static let checksumAlgorithm = ChecksumAlgorithm.preferred
     }
 
     /// Identical to `SessionStore.defaultDirectory` — both stores share the
@@ -470,6 +475,28 @@ public final class SettingsStore {
         }
         set {
             raw[Keys.presignedDefaultExpiry] = .string(newValue.rawValue)
+            persist()
+        }
+    }
+
+    /// Which digest procedure the checksum action asks for. SHA-256 by
+    /// default.
+    ///
+    /// An unrecognized raw value on disk (a future app version, or a
+    /// hand-edited file) reads as the preferred algorithm — the same
+    /// fallback shape as `presignedDefaultExpiry` and
+    /// `terminalCursorStyle`, and here it matters more than in either:
+    /// falling back to a broken procedure would quietly downgrade what the
+    /// app computes, without anything on screen saying so.
+    public var checksumAlgorithm: ChecksumAlgorithm {
+        get {
+            guard case .string(let value)? = raw[Keys.checksumAlgorithm] else {
+                return Defaults.checksumAlgorithm
+            }
+            return ChecksumAlgorithm(rawValue: value) ?? Defaults.checksumAlgorithm
+        }
+        set {
+            raw[Keys.checksumAlgorithm] = .string(newValue.rawValue)
             persist()
         }
     }
