@@ -15,6 +15,8 @@ im Eintrag und zieht hier höchstens die Zeile nach.
 | | Eintrag | Kern |
 |---|---|---|
 | **B-1** | [Fehlerliste](superpowers/specs/2026-08-20-bugs.md) | Verbinden zu einem toten Host blockiert die App. Ursache gemessen: Citadels Frist steht auf 30 s und wurde nie übergeben. **Teilweise behoben** — die Frist wird inzwischen übergeben und der Aufbau ist abbrechbar; offen bleibt, ob der Hauptthread tatsächlich blockiert. |
+| **B-2** | [SSH-Schlüsselformate](superpowers/specs/2026-08-31-backlog-ssh-schluesselformate.md) | Aus einem Fehlerbericht zu v1.3.0, und es sind **zwei** Dinge. Die Meldung „SSH key format is not supported (currently: OpenSSH ed25519)" meint „unterstützt wird ed25519" und liest sich als „dein ed25519 wird nicht unterstützt" — billig zu beheben und beantwortet zugleich, welcher Fall beim nächsten Bericht vorliegt. Dahinter: der Lader kann **nur** ed25519, RSA und ecdsa lassen sich verwalten, aber nicht verbinden. |
+| **B-3** | [S3 ohne Bucket verbinden](superpowers/specs/2026-08-31-backlog-s3-ohne-bucket.md) | Aus demselben Bericht: ohne Bucket und Region lässt macSCP nicht verbinden. Vorschlag des Maintainers: beide leer → Buckets laden und als Startpunkt zeigen. **`ListBuckets` gibt es im Baum nicht**, die Region kann nicht leer bleiben (SigV4 signiert mit ihr), und eine Bucket-Ebene ist eine **zweite Art Verzeichnis** — andere Spalten, andere mögliche Aktionen. Der billige Teil (Regions-Vorgabe + erklärende Meldung) ist davon abtrennbar. |
 
 ## Sicherheit und Prüfbarkeit
 
